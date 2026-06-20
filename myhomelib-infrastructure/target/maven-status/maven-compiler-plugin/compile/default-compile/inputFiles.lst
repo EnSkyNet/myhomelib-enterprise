@@ -1,0 +1,6 @@
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\DefaultImporterRegistry.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\fb2\Fb2Importer.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\inpx\InpxImporter.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\zip\ZipImporter.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\persistence\sqlite\SqliteAuthorRepository.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\persistence\sqlite\SqliteBookRepository.java

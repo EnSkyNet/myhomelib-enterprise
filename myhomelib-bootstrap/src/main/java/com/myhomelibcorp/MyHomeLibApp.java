@@ -43,7 +43,7 @@ public class MyHomeLibApp extends Application {
     @Override
     public void start(Stage primaryStage) throws Exception {
         log.info("Запуск JavaFX...");
-
+        System.setProperty("file.encoding", "UTF-8");
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
         loader.setControllerFactory(context::getBean);
         Parent root = loader.load();

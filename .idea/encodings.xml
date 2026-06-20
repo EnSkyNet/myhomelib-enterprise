@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="Encoding" native2AsciiForPropertiesFiles="true">
+    <file url="file://$PROJECT_DIR$/myhomelib-application/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-application/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-architecture-tests/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-architecture-tests/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-bootstrap/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-bootstrap/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-domain/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-domain/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-e2e-tests/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-e2e-tests/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-infrastructure/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-infrastructure/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-shared/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-shared/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-ui/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/myhomelib-ui/src/main/resources" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/java" charset="UTF-8" />
+    <file url="file://$PROJECT_DIR$/src/main/resources" charset="UTF-8" />
+  </component>
+</project>

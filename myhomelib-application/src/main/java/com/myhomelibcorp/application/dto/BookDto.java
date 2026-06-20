@@ -43,8 +43,6 @@ public class BookDto {
         this.progress = progress;
     }
 
-    // Додаткові методи для відображення
-
     public String getFileSizeFormatted() {
         if (fileSize <= 0) return "";
         if (fileSize < 1024) return fileSize + " B";

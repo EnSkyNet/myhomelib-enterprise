@@ -1,0 +1,6 @@
+com\myhomelibcorp\infrastructure\importer\DefaultImporterRegistry.class
+com\myhomelibcorp\infrastructure\importer\fb2\Fb2Importer.class
+com\myhomelibcorp\infrastructure\importer\zip\ZipImporter.class
+com\myhomelibcorp\infrastructure\importer\inpx\InpxImporter.class
+com\myhomelibcorp\infrastructure\persistence\sqlite\SqliteAuthorRepository.class
+com\myhomelibcorp\infrastructure\persistence\sqlite\SqliteBookRepository.class

@@ -2,13 +2,16 @@ package com.myhomelibcorp.ui.presentation.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.importer.api.ImporterApplicationService;
+import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
-import javafx.collections.FXCollections;
-import javafx.collections.ObservableList;
+import com.myhomelibcorp.domain.model.navigation.*;
+import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import javafx.application.Platform;
+import javafx.concurrent.Task;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
-import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import lombok.RequiredArgsConstructor;
@@ -19,6 +22,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.util.Comparator;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 @Component
@@ -28,9 +32,10 @@ public class MainController {
 
     private final ImporterApplicationService importerService;
     private final BookQueryRepository bookQueryRepository;
+    private final AuthorRepository authorRepository;
 
-    // Навігація (вкладки)
-    @FXML private TreeView<String> authorsTree;
+    // UI компоненти
+    @FXML private TreeView<LibraryNode> authorsTree;
     @FXML private ListView<String> seriesListView;
     @FXML private ListView<String> genresListView;
     @FXML private TextField searchTabField;
@@ -38,11 +43,9 @@ public class MainController {
     @FXML private ListView<String> groupsListView;
     @FXML private ListView<String> downloadsListView;
 
-    // Таблиця книг
     @FXML private TableView<BookDto> bookTableView;
     @FXML private Label bookCountLabel;
 
-    // Деталі книги
     @FXML private Label detailTitle;
     @FXML private Label detailAuthors;
     @FXML private Label detailSeries;
@@ -54,73 +57,149 @@ public class MainController {
     @FXML private Label detailSize;
     @FXML private TextArea detailAnnotation;
 
-    // Пошук (верхній)
     @FXML private TextField searchField;
-
-    // Статус
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
+    @FXML private Button cancelButton;
 
-    // Список всіх книг (для фільтрації)
-    private ObservableList<BookDto> allBooks = FXCollections.observableArrayList();
+    // Пагінація
+    private static final int PAGE_SIZE = 100;
+    private int currentPage = 0;
+    private int totalBooks = 0;
+
+    // Фільтри
+    private AuthorId currentAuthorId;
+    private String currentSeriesFilter;
+    private String currentGenreFilter;
+
+    // Для скасування
+    private final AtomicBoolean importCancelled = new AtomicBoolean(false);
+    private Task<?> currentImportTask;
 
     @FXML
     public void initialize() {
         log.info("MainController ініціалізовано");
 
-        setupAuthorsTree();
-        setupLists();
+        // Налаштування відображення вузлів дерева
+        authorsTree.setCellFactory(tv -> new TreeCell<>() {
+            @Override
+            protected void updateItem(LibraryNode item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                    setGraphic(null);
+                } else {
+                    String text = switch (item) {
+                        case AuthorNode an -> an.author().getFullName();
+                        case SeriesNode sn -> sn.series().getName();
+                        case GenreNode gn -> gn.genre().getName();
+                        case CollectionNode cn -> cn.collection().getName();
+                        case GroupNode gn -> gn.group().getName();
+                        case BookNode bn -> bn.book().getTitle();
+                        default -> item.toString();
+                    };
+                    setText(text);
+                }
+            }
+        });
 
-        // Налаштування таблиці
-        bookTableView.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> showBookDetails(newVal));
+        loadAuthorsAndSelectFirst();
+        setupLists();
+        setupTable();
+        setupCancelButton();
 
         searchField.setOnAction(event -> handleSearch());
-
-        // Завантажити книги при старті
-        refreshBookTable();
     }
 
-    private void setupAuthorsTree() {
-        TreeItem<String> root = new TreeItem<>("Автори");
-        root.setExpanded(true);
-        // Тестові дані - потім з БД
-        TreeItem<String> author1 = new TreeItem<>("Басов Микола");
-        TreeItem<String> author2 = new TreeItem<>("Виланов Олександр");
-        author1.getChildren().addAll(
-                new TreeItem<>("Мир Вічного Поляна (1-9)"),
-                new TreeItem<>("Мир Вічного Поляна (10-18)")
-        );
-        author2.getChildren().add(new TreeItem<>("Собери себя сам"));
-        root.getChildren().addAll(author1, author2);
-        authorsTree.setRoot(root);
-        authorsTree.setShowRoot(false);
+    private void loadAuthorsAndSelectFirst() {
+        try {
+            List<Author> authors = authorRepository.findAll();
+            TreeItem<LibraryNode> root = new TreeItem<>(new CollectionNode(null));
+            root.setExpanded(true);
 
-        authorsTree.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> {
-                    if (newVal != null && newVal.isLeaf()) {
-                        // Фільтрація за автором (поки що заглушка)
-                        statusLabel.setText("Вибрано автора: " + newVal.getValue());
+            authors.stream()
+                    .sorted(Comparator.comparing(Author::getLastName))
+                    .forEach(author -> {
+                        TreeItem<LibraryNode> authorItem = new TreeItem<>(new AuthorNode(author));
+                        root.getChildren().add(authorItem);
+                    });
+
+            authorsTree.setRoot(root);
+            authorsTree.setShowRoot(false);
+
+            // Обробка вибору
+            authorsTree.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, oldVal, newVal) -> {
+                        if (newVal != null) {
+                            LibraryNode node = newVal.getValue();
+                            switch (node) {
+                                case AuthorNode authorNode -> {
+                                    currentAuthorId = authorNode.author().getId();
+                                    currentSeriesFilter = null;
+                                    currentGenreFilter = null;
+                                    loadBooksPage(0);
+                                }
+                                case CollectionNode ignored -> {
+                                    currentAuthorId = null;
+                                    currentSeriesFilter = null;
+                                    currentGenreFilter = null;
+                                    loadBooksPage(0);
+                                }
+                                default -> {}
+                            }
+                        }
                     }
-                }
-        );
+            );
+
+            // Автоматично вибираємо першого автора, якщо він є
+            if (!root.getChildren().isEmpty()) {
+                TreeItem<LibraryNode> firstAuthor = root.getChildren().get(0);
+                authorsTree.getSelectionModel().select(firstAuthor);
+                // Це викличе listener і завантажить книги першого автора
+            } else {
+                // Якщо авторів немає, завантажуємо всі книги
+                loadBooksPage(0);
+            }
+
+            log.info("Завантажено {} авторів", authors.size());
+        } catch (Exception e) {
+            log.error("Помилка завантаження авторів", e);
+            statusLabel.setText("Помилка завантаження авторів: " + e.getMessage());
+            loadBooksPage(0);
+        }
+    }
+
+    private void setupTable() {
+        bookTableView.getSelectionModel().selectedItemProperty().addListener(
+                (obs, oldVal, newVal) -> showBookDetails(newVal));
+    }
+
+    private void setupCancelButton() {
+        if (cancelButton != null) {
+            cancelButton.setVisible(false);
+            cancelButton.setOnAction(e -> cancelImport());
+        }
     }
 
     private void setupLists() {
-        seriesListView.getItems().addAll("Мир Вічного Поляна", "CCC", "Грабитель", "Гремучий Коктейль");
         seriesListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, oldVal, newVal) -> {
                     if (newVal != null) {
-                        filterBooksBySeries(newVal);
+                        currentSeriesFilter = newVal;
+                        currentAuthorId = null;
+                        currentGenreFilter = null;
+                        loadBooksPage(0);
                     }
                 }
         );
 
-        genresListView.getItems().addAll("Наукова фантастика", "Детектив", "Історичний", "Фентезі");
         genresListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, oldVal, newVal) -> {
                     if (newVal != null) {
-                        filterBooksByGenre(newVal);
+                        currentGenreFilter = newVal;
+                        currentAuthorId = null;
+                        currentSeriesFilter = null;
+                        loadBooksPage(0);
                     }
                 }
         );
@@ -129,32 +208,52 @@ public class MainController {
         downloadsListView.getItems().addAll("Завантаження 1", "Завантаження 2");
     }
 
-    private void filterBooksBySeries(String series) {
-        List<BookDto> filtered = allBooks.stream()
-                .filter(b -> series.equals(b.getSeries()))
-                .collect(Collectors.toList());
-        bookTableView.getItems().setAll(filtered);
-        bookCountLabel.setText(filtered.size() + " книг");
-        if (!filtered.isEmpty()) {
-            bookTableView.getSelectionModel().selectFirst();
-        } else {
-            clearDetails();
-        }
-        statusLabel.setText("Показано серію: " + series);
-    }
+    private void loadBooksPage(int page) {
+        try {
+            int offset = page * PAGE_SIZE;
+            List<Book> books;
 
-    private void filterBooksByGenre(String genre) {
-        List<BookDto> filtered = allBooks.stream()
-                .filter(b -> b.getGenresText() != null && b.getGenresText().contains(genre))
-                .collect(Collectors.toList());
-        bookTableView.getItems().setAll(filtered);
-        bookCountLabel.setText(filtered.size() + " книг");
-        if (!filtered.isEmpty()) {
-            bookTableView.getSelectionModel().selectFirst();
-        } else {
-            clearDetails();
+            if (currentAuthorId != null) {
+                books = bookQueryRepository.findByAuthorId(currentAuthorId, PAGE_SIZE, offset);
+            } else if (currentSeriesFilter != null) {
+                books = bookQueryRepository.findAll(10000, 0).stream()
+                        .filter(b -> currentSeriesFilter.equals(b.getSeries()))
+                        .skip(offset)
+                        .limit(PAGE_SIZE)
+                        .collect(Collectors.toList());
+            } else if (currentGenreFilter != null) {
+                books = bookQueryRepository.findAll(10000, 0).stream()
+                        .filter(b -> b.genresText() != null && b.genresText().contains(currentGenreFilter))
+                        .skip(offset)
+                        .limit(PAGE_SIZE)
+                        .collect(Collectors.toList());
+            } else {
+                books = bookQueryRepository.findAll(PAGE_SIZE, offset);
+            }
+
+            // Сортування за серією, потім за номером у серії
+            books.sort(Comparator.comparing(Book::getSeries, Comparator.nullsLast(String::compareTo))
+                    .thenComparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)));
+
+            totalBooks = bookQueryRepository.getTotalCount();
+
+            List<BookDto> dtos = books.stream()
+                    .map(this::toDto)
+                    .collect(Collectors.toList());
+
+            bookTableView.getItems().setAll(dtos);
+            bookCountLabel.setText(dtos.size() + " / " + totalBooks + " книг");
+            currentPage = page;
+
+            if (!dtos.isEmpty()) {
+                bookTableView.getSelectionModel().selectFirst();
+            } else {
+                clearDetails();
+            }
+        } catch (Exception e) {
+            log.error("Помилка завантаження сторінки", e);
+            statusLabel.setText("Помилка: " + e.getMessage());
         }
-        statusLabel.setText("Показано жанр: " + genre);
     }
 
     private BookDto toDto(Book book) {
@@ -169,30 +268,10 @@ public class MainController {
                 .language(book.getLanguage() != null ? book.getLanguage().toString() : "")
                 .fileSize(book.getFileSize())
                 .fileName(book.getFileName())
+                .folder(book.getFolder())
                 .updateDate(book.getUpdateDate())
                 .annotation(book.getAnnotation())
                 .build();
-    }
-
-    private void refreshBookTable() {
-        try {
-            List<Book> books = bookQueryRepository.findAll(10000, 0);
-            allBooks.setAll(books.stream().map(this::toDto).collect(Collectors.toList()));
-            // Сортування за замовчуванням: спочатку за серією, потім за номером
-            allBooks.sort(Comparator.comparing(BookDto::getSeries, Comparator.nullsLast(String::compareTo))
-                    .thenComparing(BookDto::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)));
-            bookTableView.setItems(allBooks);
-            bookCountLabel.setText(allBooks.size() + " книг");
-            if (!allBooks.isEmpty()) {
-                bookTableView.getSelectionModel().selectFirst();
-            } else {
-                clearDetails();
-            }
-            statusLabel.setText("Показано всі книги");
-        } catch (Exception e) {
-            log.error("Помилка оновлення таблиці", e);
-            statusLabel.setText("Помилка завантаження книг: " + e.getMessage());
-        }
     }
 
     private void showBookDetails(BookDto book) {
@@ -207,7 +286,14 @@ public class MainController {
         detailLanguage.setText("Мова: " + (book.getLanguage() != null ? book.getLanguage() : ""));
         detailRate.setText("Рейтинг: " + book.getRate());
         detailProgress.setText("Прогрес: " + book.getProgress() + "%");
-        detailFile.setText("Файл: " + (book.getFileName() != null ? book.getFileName() : ""));
+
+        // Правильне відображення імені файлу
+        String displayName = book.getFileName();
+        if (book.getFolder() != null && !book.getFolder().isEmpty()) {
+            displayName = book.getFolder() + "/" + displayName;
+        }
+        detailFile.setText("Файл: " + (displayName != null ? displayName : ""));
+
         detailSize.setText("Розмір: " + book.getFileSizeFormatted());
         detailAnnotation.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
     }
@@ -225,12 +311,14 @@ public class MainController {
         detailAnnotation.setText("");
     }
 
+    // --- Обробники дій ---
+
     @FXML
     public void handleSearchTab() {
         String query = searchTabField.getText();
         if (query == null || query.isBlank()) return;
         try {
-            List<Book> books = bookQueryRepository.search(query, 1000);
+            List<Book> books = bookQueryRepository.search(query, 100);
             List<BookDto> dtos = books.stream().map(this::toDto).collect(Collectors.toList());
             searchResultsList.getItems().setAll(dtos);
             statusLabel.setText("Результатів пошуку: " + dtos.size());
@@ -244,11 +332,15 @@ public class MainController {
     public void handleSearch() {
         String query = searchField.getText();
         if (query == null || query.isBlank()) {
-            refreshBookTable();
+            currentAuthorId = null;
+            currentSeriesFilter = null;
+            currentGenreFilter = null;
+            loadBooksPage(0);
+            statusLabel.setText("Показано всі книги");
             return;
         }
         try {
-            List<Book> books = bookQueryRepository.search(query, 1000);
+            List<Book> books = bookQueryRepository.search(query, 100);
             List<BookDto> dtos = books.stream().map(this::toDto).collect(Collectors.toList());
             bookTableView.getItems().setAll(dtos);
             bookCountLabel.setText(dtos.size() + " книг");
@@ -264,83 +356,6 @@ public class MainController {
         }
     }
 
-    // --- Обробники меню ---
-    @FXML
-    public void handleOpenCollection() {
-        statusLabel.setText("Відкриття колекції... (ще не реалізовано)");
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Функція в розробці");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleNewCollection() {
-        statusLabel.setText("Створення колекції... (ще не реалізовано)");
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Функція в розробці");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleAddGroup() {
-        statusLabel.setText("Додати групу... (ще не реалізовано)");
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Функція в розробці");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleEditGroup() {
-        statusLabel.setText("Редагувати групу... (ще не реалізовано)");
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Функція в розробці");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleDeleteGroup() {
-        statusLabel.setText("Видалити групу... (ще не реалізовано)");
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Функція в розробці");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleEditMetadata() {
-        BookDto selected = bookTableView.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            Alert alert = new Alert(Alert.AlertType.WARNING, "Виберіть книгу для редагування");
-            alert.showAndWait();
-            return;
-        }
-        statusLabel.setText("Редагування метаданих для: " + selected.getTitle());
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Редагування метаданих (ще не реалізовано)");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleDeleteBook() {
-        BookDto selected = bookTableView.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            Alert alert = new Alert(Alert.AlertType.WARNING, "Виберіть книгу для видалення");
-            alert.showAndWait();
-            return;
-        }
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, "Видалити книгу '" + selected.getTitle() + "'?");
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                statusLabel.setText("Видалення книги (ще не реалізовано)");
-            }
-        });
-    }
-
-    @FXML
-    public void handleShowColumns() {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Налаштування колонок (ще не реалізовано)");
-        alert.showAndWait();
-    }
-
-    @FXML
-    public void handleExport() {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION, "Експорт (ще не реалізовано)");
-        alert.showAndWait();
-    }
-
     @FXML
     public void handleImportFb2() {
         FileChooser fileChooser = new FileChooser();
@@ -349,9 +364,7 @@ public class MainController {
                 new FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd")
         );
         File file = fileChooser.showOpenDialog(null);
-        if (file != null) {
-            importFile(file.toPath());
-        }
+        if (file != null) importFile(file.toPath());
     }
 
     @FXML
@@ -362,9 +375,7 @@ public class MainController {
                 new FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp")
         );
         File file = fileChooser.showOpenDialog(null);
-        if (file != null) {
-            importFile(file.toPath());
-        }
+        if (file != null) importFile(file.toPath());
     }
 
     @FXML
@@ -379,13 +390,15 @@ public class MainController {
 
     @FXML
     public void handleRefresh() {
-        refreshBookTable();
+        log.info("Оновлення");
+        statusLabel.setText("Оновлення...");
+        loadAuthorsAndSelectFirst();
         statusLabel.setText("Таблицю оновлено");
     }
 
     @FXML
     public void handleExit() {
-        javafx.application.Platform.exit();
+        Platform.exit();
     }
 
     @FXML
@@ -397,66 +410,111 @@ public class MainController {
         alert.showAndWait();
     }
 
-    // --- Допоміжні методи імпорту ---
+    // --- Імпорт з прогресом ---
+
     private void importFile(Path filePath) {
         progressBar.setVisible(true);
         statusLabel.setText("Імпорт: " + filePath.getFileName());
 
-        javafx.concurrent.Task<Integer> task = new javafx.concurrent.Task<>() {
+        Task<Integer> task = new Task<>() {
             @Override
             protected Integer call() throws Exception {
                 return importerService.importInpx(filePath);
             }
         };
 
-        task.setOnSucceeded(event -> {
-            int count = task.getValue();
+        task.setOnSucceeded(e -> {
             progressBar.setVisible(false);
-            statusLabel.setText("Імпорт завершено. Додано " + count + " книг");
-            refreshBookTable();
+            statusLabel.setText("Імпорт завершено. Додано " + task.getValue() + " книг");
+            loadAuthorsAndSelectFirst();
         });
 
-        task.setOnFailed(event -> {
+        task.setOnFailed(e -> {
             progressBar.setVisible(false);
             statusLabel.setText("Помилка імпорту: " + task.getException().getMessage());
             log.error("Помилка імпорту", task.getException());
-            Alert alert = new Alert(Alert.AlertType.ERROR);
-            alert.setTitle("Помилка імпорту");
-            alert.setContentText(task.getException().getMessage());
-            alert.showAndWait();
+            showErrorAlert("Помилка імпорту", task.getException().getMessage());
         });
 
         new Thread(task).start();
     }
 
     private void importDirectory(Path dirPath) {
+        importCancelled.set(false);
+        if (cancelButton != null) {
+            cancelButton.setVisible(true);
+            cancelButton.setDisable(false);
+            cancelButton.setText("Скасувати");
+        }
+
         progressBar.setVisible(true);
+        progressBar.setProgress(0);
         statusLabel.setText("Імпорт каталогу: " + dirPath.getFileName());
 
-        javafx.concurrent.Task<Integer> task = new javafx.concurrent.Task<>() {
+        Task<Integer> task = new Task<>() {
             @Override
             protected Integer call() throws Exception {
-                return importerService.importDirectory(dirPath);
+                return importerService.importDirectory(
+                        dirPath,
+                        progress -> updateProgress((long) (progress * 100), 100),
+                        importCancelled
+                );
             }
         };
 
-        task.setOnSucceeded(event -> {
-            int count = task.getValue();
+        currentImportTask = task;
+
+        task.setOnSucceeded(e -> {
             progressBar.setVisible(false);
-            statusLabel.setText("Імпорт каталогу завершено. Додано " + count + " книг");
-            refreshBookTable();
+            if (cancelButton != null) cancelButton.setVisible(false);
+            statusLabel.setText("Імпорт каталогу завершено. Додано " + task.getValue() + " книг");
+            loadAuthorsAndSelectFirst();
         });
 
-        task.setOnFailed(event -> {
+        task.setOnFailed(e -> {
             progressBar.setVisible(false);
-            statusLabel.setText("Помилка імпорту каталогу: " + task.getException().getMessage());
-            log.error("Помилка імпорту каталогу", task.getException());
-            Alert alert = new Alert(Alert.AlertType.ERROR);
-            alert.setTitle("Помилка імпорту");
-            alert.setContentText(task.getException().getMessage());
-            alert.showAndWait();
+            if (cancelButton != null) cancelButton.setVisible(false);
+            Throwable ex = task.getException();
+            if (ex != null && ex.getMessage() != null && ex.getMessage().contains("cancelled")) {
+                statusLabel.setText("Імпорт скасовано");
+            } else {
+                statusLabel.setText("Помилка імпорту каталогу: " + ex.getMessage());
+                log.error("Помилка імпорту каталогу", ex);
+                showErrorAlert("Помилка імпорту", ex.getMessage());
+            }
         });
 
         new Thread(task).start();
     }
+
+    private void cancelImport() {
+        if (currentImportTask != null && !currentImportTask.isDone()) {
+            importCancelled.set(true);
+            if (cancelButton != null) {
+                cancelButton.setDisable(true);
+                cancelButton.setText("Скасування...");
+            }
+            statusLabel.setText("Скасування імпорту...");
+            log.info("Запит на скасування імпорту");
+        }
+    }
+
+    private void showErrorAlert(String title, String content) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle(title);
+        alert.setHeaderText(title);
+        alert.setContentText(content);
+        alert.showAndWait();
+    }
+
+    // --- Заглушки для меню ---
+    @FXML public void handleOpenCollection() { log.info("Відкриття колекції"); statusLabel.setText("Відкриття колекції..."); }
+    @FXML public void handleNewCollection() { log.info("Створення колекції"); statusLabel.setText("Створення колекції..."); }
+    @FXML public void handleAddGroup() { log.info("Додати групу"); }
+    @FXML public void handleEditGroup() { log.info("Редагувати групу"); }
+    @FXML public void handleDeleteGroup() { log.info("Видалити групу"); }
+    @FXML public void handleEditMetadata() { log.info("Редагувати метадані"); }
+    @FXML public void handleDeleteBook() { log.info("Видалити книгу"); }
+    @FXML public void handleShowColumns() { log.info("Показати колонки"); }
+    @FXML public void handleExport() { log.info("Експорт"); }
 }
