@@ -10,6 +10,7 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Primary;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
@@ -23,9 +24,11 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
+@Primary
 @Slf4j
 public class SqliteBookRepository implements BookCommandRepository, BookQueryRepository {
 
@@ -236,16 +239,23 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
 
     @Override
     public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
+        log.info("🔍 findByAuthorId: authorId={}, limit={}, offset={}", authorId.asString(), limit, offset);
         String sql = """
-            SELECT b.* FROM books b
-            JOIN book_authors ba ON b.id = ba.book_id
-            WHERE ba.author_id = ?
-            LIMIT ? OFFSET ?
-            """;
+        SELECT b.* FROM books b
+        JOIN book_authors ba ON b.id = ba.book_id
+        WHERE ba.author_id = ?
+        LIMIT ? OFFSET ?
+        """;
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, authorId.asString(), limit, offset);
+        log.info("📚 Знайдено {} книг для автора {}", books.size(), authorId.asString());
         books.forEach(this::loadAuthors);
         books.forEach(this::loadGenres);
         return books;
+    }
+    public void debugBookAuthors() {
+        String sql = "SELECT * FROM book_authors LIMIT 10";
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+        log.info("🔍 book_authors (перші 10): {}", rows);
     }
 
     @Override
@@ -319,31 +329,36 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """;
 
-        jdbcTemplate.batchUpdate(sql, books, books.size(), (ps, book) -> {
-            int idx = 1;
-            ps.setString(idx++, book.getId().asString());
-            ps.setString(idx++, book.getTitle() != null ? book.getTitle() : "");
-            ps.setString(idx++, book.getSeries());
-            ps.setInt(idx++, book.getSequenceNumber() != null ? book.getSequenceNumber() : 0);
-            ps.setString(idx++, book.getFileName() != null ? book.getFileName() : "");
-            ps.setString(idx++, book.getFolder());
-            ps.setString(idx++, book.getArchiveEntry());
-            ps.setString(idx++, book.getLanguage() != null ? book.getLanguage().toString() : null);
-            ps.setLong(idx++, book.getFileSize());
-            ps.setString(idx++, book.getKeywords() != null ? book.getKeywords() : "");
-            ps.setString(idx++, book.getAnnotation() != null ? book.getAnnotation() : "");
-            ps.setInt(idx++, book.getRate());
-            ps.setInt(idx++, book.getProgress());
+        List<Object[]> batchArgs = new ArrayList<>(books.size());
+        for (Book book : books) {
+            Object[] args = new Object[17];
+            int idx = 0;
+            args[idx++] = book.getId().asString();
+            args[idx++] = book.getTitle() != null ? book.getTitle() : "";
+            args[idx++] = book.getSeries();
+            args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
+            args[idx++] = book.getFileName() != null ? book.getFileName() : "";
+            args[idx++] = book.getFolder();
+            args[idx++] = book.getArchiveEntry();
+            args[idx++] = book.getLanguage() != null ? book.getLanguage().toString() : null;
+            args[idx++] = book.getFileSize();
+            args[idx++] = book.getKeywords() != null ? book.getKeywords() : "";
+            args[idx++] = book.getAnnotation() != null ? book.getAnnotation() : "";
+            args[idx++] = book.getRate();
+            args[idx++] = book.getProgress();
             String formattedDate = book.getUpdateDate() != null
                     ? book.getUpdateDate().format(DATE_FORMATTER)
                     : null;
-            ps.setString(idx++, formattedDate);
-            ps.setString(idx++, book.getIsbn() != null ? book.getIsbn().toString() : null);
-            ps.setInt(idx++, book.isDeleted() ? 1 : 0);
-            ps.setInt(idx++, book.isLocal() ? 1 : 0);
-        });
+            args[idx++] = formattedDate;
+            args[idx++] = book.getIsbn() != null ? book.getIsbn().toString() : null;
+            args[idx++] = book.isDeleted() ? 1 : 0;
+            args[idx++] = book.isLocal() ? 1 : 0;
+            batchArgs.add(args);
+        }
 
-        // Автори та жанри поки що зберігаються окремо (можна оптимізувати пізніше)
+        jdbcTemplate.batchUpdate(sql, batchArgs);
+
+        // Автори та жанри поки що зберігаються окремо
         for (Book book : books) {
             if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
                 saveAuthors(book.getId(), book.getAuthors());

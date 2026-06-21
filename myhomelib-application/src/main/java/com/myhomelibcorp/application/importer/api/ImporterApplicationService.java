@@ -139,6 +139,7 @@ public class ImporterApplicationService implements ImportInpxUseCase {
     private int saveBatch(List<Book> batch) {
         // Тут потрібно викликати batch-збереження в репозиторії
         // Поки що зберігаємо по одному (але це тимчасово)
+        log.info("📊 Отримано {} книг з файлу", batch.size());
         int saved = 0;
         for (Book book : batch) {
             bookCommandRepository.save(book);

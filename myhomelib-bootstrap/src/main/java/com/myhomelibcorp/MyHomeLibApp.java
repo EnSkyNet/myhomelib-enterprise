@@ -25,25 +25,20 @@ public class MyHomeLibApp extends Application {
 
     @Override
     public void init() {
-        Path homeDir = Paths.get(System.getProperty("user.home"), ".myhomelibcorp");
-        File dir = homeDir.toFile();
-        if (!dir.exists()) {
-            boolean created = dir.mkdirs();
-            if (created) {
-                log.info("Створено домашню папку: {}", homeDir);
-            } else {
-                log.error("Не вдалося створити домашню папку: {}", homeDir);
-            }
+        try {
+            log.info("🚀 Запуск Spring Boot контексту...");
+            context = SpringApplication.run(MyHomeLibApp.class);
+            log.info("✅ Spring Boot контекст запущено");
+        } catch (Exception e) {
+            log.error("❌ Помилка ініціалізації Spring Boot", e);
+            e.printStackTrace(); // друкуємо повний стек у консоль
+            throw new RuntimeException("Не вдалося запустити Spring Boot", e);
         }
-
-        log.info("Запуск Spring Boot контексту...");
-        context = SpringApplication.run(MyHomeLibApp.class);
-        log.info("Spring Boot контекст запущено");
     }
 
     @Override
     public void start(Stage primaryStage) throws Exception {
-        log.info("Запуск JavaFX...");
+        log.info("🖥️ Запуск JavaFX...");
         System.setProperty("file.encoding", "UTF-8");
 
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
@@ -56,12 +51,12 @@ public class MyHomeLibApp extends Application {
         primaryStage.setMinHeight(600);
         primaryStage.show();
 
-        log.info("JavaFX вікно відкрито");
+        log.info("✅ JavaFX вікно відкрито");
     }
 
     @Override
     public void stop() {
-        log.info("Завершення програми...");
+        log.info("🛑 Завершення програми...");
         if (context != null) {
             context.close();
         }

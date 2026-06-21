@@ -21,7 +21,7 @@ import java.util.Optional;
  * Реалізація BookQueryRepository та BookCommandRepository для PostgreSQL.
  * Наразі використовується як заглушка для майбутньої міграції.
  */
-@Repository
+//@Repository
 @RequiredArgsConstructor
 @Slf4j
 public class PostgresBookRepository implements BookQueryRepository, BookCommandRepository {

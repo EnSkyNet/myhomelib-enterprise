@@ -48,14 +48,13 @@ public class InpxImporter implements BookImporterPort {
 
     @Override
     public Stream<Book> importBooks(Path file) {
-        log.info("Імпорт INPX з: {}", file);
+        log.info("📂 Імпорт INPX з: {}", file);
         try {
-            // Створюємо ітератор, який ліниво читає записи
             Iterator<Book> iterator = new InpxIterator(file);
             Spliterator<Book> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED);
             return StreamSupport.stream(spliterator, false);
         } catch (Exception e) {
-            log.error("Помилка імпорту INPX", e);
+            log.error("❌ Помилка імпорту INPX", e);
             throw new BusinessException(ErrorCode.IMPORT_FAILED, "Помилка імпорту INPX: " + e.getMessage(), e);
         }
     }
@@ -73,6 +72,8 @@ public class InpxImporter implements BookImporterPort {
         private final BufferedReader reader;
         private String nextLine;
         private boolean finished;
+        private int lineCount = 0;
+        private int bookCount = 0;
 
         public InpxIterator(Path file) throws Exception {
             this.zis = new ZipInputStream(Files.newInputStream(file));
@@ -80,12 +81,14 @@ public class InpxImporter implements BookImporterPort {
             BufferedReader tmpReader = null;
             while ((entry = zis.getNextEntry()) != null) {
                 if (entry.getName().endsWith(".inp")) {
+                    log.info("📄 Знайдено INP файл: {}", entry.getName());
                     tmpReader = new BufferedReader(new InputStreamReader(zis, StandardCharsets.UTF_8));
                     break;
                 }
                 zis.closeEntry();
             }
             if (tmpReader == null) {
+                log.warn("⚠️ INP файл не знайдено в архіві");
                 this.reader = null;
                 this.finished = true;
                 return;
@@ -93,6 +96,7 @@ public class InpxImporter implements BookImporterPort {
             this.reader = tmpReader;
             this.nextLine = reader.readLine();
             if (this.nextLine == null) {
+                log.warn("⚠️ INP файл порожній");
                 this.finished = true;
             }
         }
@@ -108,18 +112,29 @@ public class InpxImporter implements BookImporterPort {
                 return null;
             }
             String line = nextLine;
+            lineCount++;
             try {
                 nextLine = reader.readLine();
                 if (nextLine == null) {
                     finished = true;
                     reader.close();
                     zis.close();
+                    log.info("📊 Прочитано {} рядків, розпарсено {} книг", lineCount, bookCount);
                 }
             } catch (Exception e) {
                 finished = true;
-                log.error("Помилка читання INPX", e);
+                log.error("❌ Помилка читання INPX", e);
             }
-            return parseInpxLine(line);
+            Book book = parseInpxLine(line);
+            if (book != null) {
+                bookCount++;
+            } else {
+                // Логуємо перші 5 невдалих рядків для діагностики
+                if (bookCount == 0 && lineCount <= 5) {
+                    log.warn("⚠️ Рядок #{} не вдалося розпарсити: {}", lineCount, line);
+                }
+            }
+            return book;
         }
 
         private Book parseInpxLine(String line) {
@@ -132,8 +147,12 @@ public class InpxImporter implements BookImporterPort {
                 }
 
                 if (parts.length < 8) {
+                    log.debug("❌ Замало полів: {} (очікується >= 8)", parts.length);
                     return null;
                 }
+
+                // ... решта парсингу без змін ...
+                // (весь код парсингу від 1. Автори до 10. Анотація)
 
                 List<Author> authors = new ArrayList<>();
                 String authorsStr = parts[0].trim();
@@ -196,8 +215,9 @@ public class InpxImporter implements BookImporterPort {
                         .annotation(annotation)
                         .updateDate(LocalDateTime.now())
                         .build();
+
             } catch (Exception e) {
-                log.warn("Помилка парсингу рядка INPX: {}", line, e);
+                log.warn("❌ Помилка парсингу рядка: {}", line, e);
                 return null;
             }
         }

@@ -1,6 +1,7 @@
 spring:
   main:
     allow-circular-references: true
+    allow-bean-definition-overriding: true
   application:
     name: MyHomeLib Enterprise
 
@@ -25,7 +26,7 @@ spring:
 
 app:
   search:
-    index-path: ./search-index   # Шлях до індексу Lucene
+    index-path: ./search-index
 
 logging:
   level:
@@ -36,6 +37,5 @@ logging:
     org.apache.lucene: INFO
   charset:
     console: UTF-8
-
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

@@ -20,10 +20,6 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.function.Consumer;
 
-/**
- * Менеджер навігації – завантажує дані для дерева і обробляє вибір.
- * Працює асинхронно через BackgroundExecutor.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -33,11 +29,9 @@ public class NavigationManager {
     private final BookQueryRepository bookQueryRepository;
     private final BackgroundExecutor executor;
 
-    /**
-     * Асинхронно завантажує авторів і будує дерево з LibraryNode.
-     * При виборі автора викликається onAuthorSelected з AuthorId.
-     */
-    public void loadAuthors(TreeView<LibraryNode> authorsTree, Consumer<AuthorId> onAuthorSelected) {
+    public void loadAuthors(TreeView<LibraryNode> authorsTree,
+                            Consumer<AuthorId> onAuthorSelected,
+                            Runnable onLoaded) {
         executor.submit(() -> authorRepository.findAll())
                 .thenAccept(authors -> Platform.runLater(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
@@ -52,7 +46,6 @@ public class NavigationManager {
                     authorsTree.setRoot(root);
                     authorsTree.setShowRoot(false);
 
-                    // CellFactory для відображення різних типів вузлів
                     authorsTree.setCellFactory(tv -> new TreeCell<>() {
                         @Override
                         protected void updateItem(LibraryNode item, boolean empty) {
@@ -65,7 +58,6 @@ public class NavigationManager {
                         }
                     });
 
-                    // Слухач вибору
                     authorsTree.getSelectionModel().selectedItemProperty().addListener(
                             (obs, oldVal, newVal) -> {
                                 if (newVal != null && newVal.getValue() != null) {
@@ -73,14 +65,22 @@ public class NavigationManager {
                                     if (node instanceof AuthorNode authorNode) {
                                         Author author = authorNode.author();
                                         if (author != null) {
+                                            log.info("📌 Вибрано автора: {} (ID: {})", author.getFullName(), author.getId().asString());
                                             onAuthorSelected.accept(author.getId());
+                                        } else {
+                                            log.warn("⚠️ author == null у AuthorNode");
                                         }
+                                    } else {
+                                        log.debug("Вибрано не AuthorNode: {}", node);
                                     }
                                 }
                             }
                     );
 
                     log.info("Завантажено {} авторів", authors.size());
+                    if (onLoaded != null) {
+                        onLoaded.run();
+                    }
                 }))
                 .exceptionally(ex -> {
                     log.error("Помилка завантаження авторів", ex);
@@ -88,9 +88,6 @@ public class NavigationManager {
                 });
     }
 
-    /**
-     * Асинхронно завантажує книги автора, сортує за серією та номером.
-     */
     public void loadBooksByAuthor(AuthorId authorId, Consumer<List<BookDto>> onResult) {
         executor.submit(() -> bookQueryRepository.findByAuthorId(authorId, 10000, 0))
                 .thenAccept(books -> {
