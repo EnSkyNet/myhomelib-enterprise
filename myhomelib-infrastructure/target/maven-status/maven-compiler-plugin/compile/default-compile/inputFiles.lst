@@ -1,6 +1,14 @@
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\config\DatabaseConfig.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\event\BookEventHandler.java
 D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\DefaultImporterRegistry.java
 D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\fb2\Fb2Importer.java
 D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\inpx\InpxImporter.java
 D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\importer\zip\ZipImporter.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\persistence\postgres\PostgresAuthorRepository.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\persistence\postgres\PostgresBookRepository.java
 D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\persistence\sqlite\SqliteAuthorRepository.java
 D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\persistence\sqlite\SqliteBookRepository.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\search\LuceneSearchIndexer.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\search\LuceneSearchQueryService.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\search\SearchDocument.java
+D:\JavaLessons\myhomelib-enterprise\myhomelib-infrastructure\src\main\java\com\myhomelibcorp\infrastructure\search\SearchIndexConfig.java

@@ -20,6 +20,10 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 @Component
 @Slf4j
@@ -32,19 +36,15 @@ public class Fb2Importer implements BookImporterPort {
     }
 
     @Override
-    public List<Book> importBooks(Path file) {
+    public Stream<Book> importBooks(Path file) {
         log.info("Імпорт FB2 з: {}", file);
-        List<Book> books = new ArrayList<>();
-
-        try (InputStream inputStream = Files.newInputStream(file)) {
-            Book book = parseFb2(inputStream, file);
-            books.add(book);
+        try {
+            Book book = parseFb2(file);
+            return Stream.of(book);
         } catch (Exception e) {
             log.error("Помилка імпорту FB2", e);
             throw new BusinessException(ErrorCode.IMPORT_FAILED, "Помилка імпорту FB2: " + e.getMessage(), e);
         }
-
-        return books;
     }
 
     @Override
@@ -52,8 +52,8 @@ public class Fb2Importer implements BookImporterPort {
         return "FB2";
     }
 
-    private Book parseFb2(InputStream inputStream, Path file) {
-        try {
+    private Book parseFb2(Path file) throws Exception {
+        try (InputStream inputStream = Files.newInputStream(file)) {
             XMLInputFactory factory = XMLInputFactory.newInstance();
             factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
             factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
@@ -71,7 +71,6 @@ public class Fb2Importer implements BookImporterPort {
             String currentElement = "";
             boolean inTitleInfo = false;
             boolean inAnnotation = false;
-
             String firstName = "", middleName = "", lastName = "";
 
             while (reader.hasNext()) {
@@ -106,15 +105,12 @@ public class Fb2Importer implements BookImporterPort {
                         if (inTitleInfo && !inAnnotation) {
                             String trimmed = text.trim();
                             if (trimmed.isEmpty()) break;
-
                             switch (currentElement) {
                                 case "book-title": title = trimmed; break;
                                 case "first-name": firstName = trimmed; break;
                                 case "middle-name": middleName = trimmed; break;
                                 case "last-name": lastName = trimmed; break;
-                                case "genre":
-                                    genres.add(new Genre(trimmed, trimmed));
-                                    break;
+                                case "genre": genres.add(new Genre(trimmed, trimmed)); break;
                                 case "lang": language = trimmed.toLowerCase(); break;
                                 case "keywords": keywords = trimmed; break;
                             }
@@ -144,7 +140,6 @@ public class Fb2Importer implements BookImporterPort {
                         break;
                 }
             }
-
             reader.close();
 
             if (authors.isEmpty()) {
@@ -155,7 +150,6 @@ public class Fb2Importer implements BookImporterPort {
             }
 
             String annotationText = annotation.toString().replaceAll("\\s+", " ").trim();
-
             long fileSize = Files.size(file);
 
             return Book.builder()

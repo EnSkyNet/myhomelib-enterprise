@@ -43,14 +43,12 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     private final RowMapper<Book> bookRowMapper = (rs, rowNum) -> {
         BookId id = BookId.fromString(rs.getString("id"));
 
-        // Читаємо дату як рядок і парсимо вручну, щоб уникнути проблем із форматом
         LocalDateTime updateDate = null;
         String dateStr = rs.getString("update_date");
         if (dateStr != null && !dateStr.isEmpty()) {
             try {
                 updateDate = LocalDateTime.parse(dateStr, DATE_FORMATTER);
             } catch (Exception e) {
-                // Якщо не вдалося розпарсити, спробуємо стандартний ISO (з T) – для сумісності
                 try {
                     updateDate = LocalDateTime.parse(dateStr);
                 } catch (Exception ex) {
@@ -106,7 +104,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             ps.setString(idx++, book.getAnnotation() != null ? book.getAnnotation() : "");
             ps.setInt(idx++, book.getRate());
             ps.setInt(idx++, book.getProgress());
-            // Форматуємо дату у потрібний формат
             String formattedDate = book.getUpdateDate() != null
                     ? book.getUpdateDate().format(DATE_FORMATTER)
                     : null;
@@ -224,6 +221,20 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     }
 
     @Override
+    public List<Book> findByIds(List<BookId> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+        String placeholders = String.join(",", ids.stream().map(id -> "?").toArray(String[]::new));
+        String sql = "SELECT * FROM books WHERE id IN (" + placeholders + ")";
+        String[] idStrings = ids.stream().map(BookId::asString).toArray(String[]::new);
+        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, (Object[]) idStrings);
+        books.forEach(this::loadAuthors);
+        books.forEach(this::loadGenres);
+        return books;
+    }
+
+    @Override
     public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
         String sql = """
             SELECT b.* FROM books b
@@ -292,5 +303,56 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             log.warn("Не вдалося отримати кількість книг", e);
             return 0;
         }
+    }
+
+    @Override
+    @Transactional
+    public void saveBatch(List<Book> books) {
+        if (books == null || books.isEmpty()) {
+            return;
+        }
+        String sql = """
+        INSERT OR REPLACE INTO books (
+            id, title, series, sequence_number, file_name, folder,
+            archive_entry, language, file_size, keywords, annotation,
+            rate, progress, update_date, isbn, deleted, local
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """;
+
+        jdbcTemplate.batchUpdate(sql, books, books.size(), (ps, book) -> {
+            int idx = 1;
+            ps.setString(idx++, book.getId().asString());
+            ps.setString(idx++, book.getTitle() != null ? book.getTitle() : "");
+            ps.setString(idx++, book.getSeries());
+            ps.setInt(idx++, book.getSequenceNumber() != null ? book.getSequenceNumber() : 0);
+            ps.setString(idx++, book.getFileName() != null ? book.getFileName() : "");
+            ps.setString(idx++, book.getFolder());
+            ps.setString(idx++, book.getArchiveEntry());
+            ps.setString(idx++, book.getLanguage() != null ? book.getLanguage().toString() : null);
+            ps.setLong(idx++, book.getFileSize());
+            ps.setString(idx++, book.getKeywords() != null ? book.getKeywords() : "");
+            ps.setString(idx++, book.getAnnotation() != null ? book.getAnnotation() : "");
+            ps.setInt(idx++, book.getRate());
+            ps.setInt(idx++, book.getProgress());
+            String formattedDate = book.getUpdateDate() != null
+                    ? book.getUpdateDate().format(DATE_FORMATTER)
+                    : null;
+            ps.setString(idx++, formattedDate);
+            ps.setString(idx++, book.getIsbn() != null ? book.getIsbn().toString() : null);
+            ps.setInt(idx++, book.isDeleted() ? 1 : 0);
+            ps.setInt(idx++, book.isLocal() ? 1 : 0);
+        });
+
+        // Автори та жанри поки що зберігаються окремо (можна оптимізувати пізніше)
+        for (Book book : books) {
+            if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
+                saveAuthors(book.getId(), book.getAuthors());
+            }
+            if (book.getGenres() != null && !book.getGenres().isEmpty()) {
+                saveGenres(book.getId(), book.getGenres());
+            }
+        }
+
+        log.debug("Збережено батч: {} книг", books.size());
     }
 }

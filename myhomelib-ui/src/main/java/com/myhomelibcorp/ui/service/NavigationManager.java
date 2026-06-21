@@ -20,6 +20,10 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.function.Consumer;
 
+/**
+ * Менеджер навігації – завантажує дані для дерева і обробляє вибір.
+ * Працює асинхронно через BackgroundExecutor.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -36,7 +40,7 @@ public class NavigationManager {
     public void loadAuthors(TreeView<LibraryNode> authorsTree, Consumer<AuthorId> onAuthorSelected) {
         executor.submit(() -> authorRepository.findAll())
                 .thenAccept(authors -> Platform.runLater(() -> {
-                    TreeItem<LibraryNode> root = new TreeItem<>(new AuthorNode(null)); // корінь
+                    TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
 
                     authors.stream()
@@ -48,7 +52,7 @@ public class NavigationManager {
                     authorsTree.setRoot(root);
                     authorsTree.setShowRoot(false);
 
-                    // CellFactory для різних типів вузлів
+                    // CellFactory для відображення різних типів вузлів
                     authorsTree.setCellFactory(tv -> new TreeCell<>() {
                         @Override
                         protected void updateItem(LibraryNode item, boolean empty) {

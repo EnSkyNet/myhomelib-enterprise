@@ -9,11 +9,13 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 import java.util.List;
 import java.util.Optional;
 
 @Repository
+@ConditionalOnProperty(name = "app.database.type", havingValue = "sqlite", matchIfMissing = true)
 @RequiredArgsConstructor
 @Slf4j
 public class SqliteAuthorRepository implements AuthorRepository {

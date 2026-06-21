@@ -1,6 +1,5 @@
 package com.myhomelibcorp;
 
-import com.myhomelibcorp.ui.presentation.controller.MainController;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -11,12 +10,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
+import org.springframework.scheduling.annotation.EnableAsync;
 
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 @SpringBootApplication(scanBasePackages = "com.myhomelibcorp")
+@EnableAsync
 @Slf4j
 public class MyHomeLibApp extends Application {
 
@@ -24,7 +25,6 @@ public class MyHomeLibApp extends Application {
 
     @Override
     public void init() {
-        // Створюємо домашню папку для додатку, якщо вона не існує
         Path homeDir = Paths.get(System.getProperty("user.home"), ".myhomelibcorp");
         File dir = homeDir.toFile();
         if (!dir.exists()) {
@@ -45,6 +45,7 @@ public class MyHomeLibApp extends Application {
     public void start(Stage primaryStage) throws Exception {
         log.info("Запуск JavaFX...");
         System.setProperty("file.encoding", "UTF-8");
+
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
         loader.setControllerFactory(context::getBean);
         Parent root = loader.load();
@@ -61,12 +62,7 @@ public class MyHomeLibApp extends Application {
     @Override
     public void stop() {
         log.info("Завершення програми...");
-        // Завершуємо SearchManager та інші пули
         if (context != null) {
-            MainController controller = context.getBean(MainController.class);
-            if (controller != null) {
-                controller.shutdown();
-            }
             context.close();
         }
         Platform.exit();

@@ -13,6 +13,7 @@
     <artifactId>myhomelib-infrastructure</artifactId>
 
     <dependencies>
+        <!-- Існуючі залежності -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-application</artifactId>
@@ -47,5 +48,18 @@
             <artifactId>lombok</artifactId>
             <scope>provided</scope>
         </dependency>
+
+        <!-- 🔥 LUCENE (ТІЛЬКИ НЕОБХІДНЕ) -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+            <version>9.9.1</version>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-queryparser</artifactId>
+            <version>9.9.1</version>
+        </dependency>
+        <!-- lucene-analyzers-common НЕ ПОТРІБЕН – StandardAnalyzer вже в core -->
     </dependencies>
 </project>

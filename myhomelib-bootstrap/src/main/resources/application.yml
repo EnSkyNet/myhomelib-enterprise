@@ -8,7 +8,7 @@ spring:
     url: jdbc:sqlite:${user.home}/.myhomelibcorp/library.db
     driver-class-name: org.sqlite.JDBC
     hikari:
-      maximum-pool-size: 10          # Збільшено для багатопотоковості
+      maximum-pool-size: 10
       connection-timeout: 30000
       idle-timeout: 300000
       max-lifetime: 600000
@@ -23,12 +23,17 @@ spring:
     caffeine:
       spec: maximumSize=10000,expireAfterWrite=30m
 
+app:
+  search:
+    index-path: ./search-index   # Шлях до індексу Lucene
+
 logging:
   level:
     com.myhomelibcorp: DEBUG
     org.springframework: INFO
     org.flywaydb: INFO
     org.sqlite: WARN
+    org.apache.lucene: INFO
   charset:
     console: UTF-8
 
