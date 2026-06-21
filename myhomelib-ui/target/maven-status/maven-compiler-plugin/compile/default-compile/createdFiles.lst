@@ -1,4 +1,7 @@
 com\myhomelibcorp\ui\presentation\controller\MainController.class
-com\myhomelibcorp\ui\presentation\controller\MainController$2.class
+com\myhomelibcorp\ui\service\NavigationManager$1.class
+com\myhomelibcorp\ui\service\BackgroundExecutor.class
+com\myhomelibcorp\ui\presentation\BookDetailsPresenter.class
+com\myhomelibcorp\ui\service\SearchManager.class
+com\myhomelibcorp\ui\service\NavigationManager.class
 com\myhomelibcorp\ui\presentation\controller\MainController$1.class
-com\myhomelibcorp\ui\presentation\controller\MainController$3.class

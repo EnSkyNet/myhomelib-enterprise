@@ -16,9 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.DoubleConsumer;
-import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 @Service
@@ -46,73 +44,58 @@ public class ImporterApplicationService implements ImportInpxUseCase {
         return saved;
     }
 
+    // Простий метод без прогресу (для сумісності)
     @Transactional
-    public int importDirectory(Path directory, DoubleConsumer progressConsumer, AtomicBoolean cancelled) {
+    public int importDirectory(Path directory) {
+        return importDirectory(directory, progress -> {}, new AtomicBoolean(false));
+    }
+
+    // Основний метод з прогресом
+    @Transactional
+    public int importDirectory(Path directory, DoubleConsumer progressConsumer, AtomicBoolean cancelFlag) {
         if (!Files.isDirectory(directory)) {
             throw new IllegalArgumentException("Шлях не є каталогом: " + directory);
         }
 
         log.info("Початок імпорту каталогу: {}", directory);
-        AtomicInteger totalSaved = new AtomicInteger(0);
-        AtomicInteger totalFiles = new AtomicInteger(0);
-        AtomicInteger processedFiles = new AtomicInteger(0);
-        AtomicInteger unsupportedFiles = new AtomicInteger(0);
 
-        try (Stream<Path> pathStream = Files.walk(directory)) {
-            List<Path> files = pathStream
+        try (Stream<Path> paths = Files.walk(directory)) {
+            List<Path> files = paths
                     .filter(Files::isRegularFile)
                     .filter(path -> {
                         try {
-                            boolean supported = importerRegistry.findImporter(path) != null;
-                            if (!supported) {
-                                unsupportedFiles.incrementAndGet();
-                                log.debug("Непідтримуваний файл: {}", path.getFileName());
-                            }
-                            return supported;
+                            importerRegistry.findImporter(path);
+                            return true;
                         } catch (IllegalArgumentException e) {
-                            unsupportedFiles.incrementAndGet();
                             return false;
                         }
                     })
                     .toList();
 
-            totalFiles.set(files.size());
-            log.info("Знайдено {} підтримуваних файлів ({} непідтримуваних пропущено)",
-                    totalFiles.get(), unsupportedFiles.get());
+            int total = files.size();
+            int processed = 0;
+            int saved = 0;
 
-            int processedCount = 0;
             for (Path file : files) {
-                if (cancelled != null && cancelled.get()) {
-                    log.info("Імпорт скасовано користувачем");
-                    throw new RuntimeException("Імпорт скасовано");
+                if (cancelFlag.get()) {
+                    log.info("Імпорт скасовано");
+                    break;
                 }
-
-                processedCount++;
-                if (processedCount % 10 == 0) {
-                    log.info("Оброблено {} з {} файлів", processedCount, totalFiles.get());
-                }
-
                 try {
-                    int saved = importBooks(file);
-                    totalSaved.addAndGet(saved);
-                    log.debug("Файл {}: імпортовано {} книг", file.getFileName(), saved);
+                    saved += importBooks(file);
                 } catch (Exception e) {
                     log.error("Помилка імпорту файлу: {}", file, e);
                 }
-
-                int processed = processedFiles.incrementAndGet();
-                if (progressConsumer != null && totalFiles.get() > 0) {
-                    progressConsumer.accept((double) processed / totalFiles.get());
-                }
+                processed++;
+                progressConsumer.accept((double) processed / total);
             }
+
+            log.info("Імпорт каталогу завершено. Збережено {} книг", saved);
+            return saved;
         } catch (IOException e) {
             log.error("Помилка обходу каталогу: {}", directory, e);
             throw new RuntimeException("Помилка обходу каталогу", e);
         }
-
-        log.info("Імпорт каталогу завершено. Оброблено {} файлів, збережено {} книг",
-                totalFiles.get(), totalSaved.get());
-        return totalSaved.get();
     }
 
     private int saveBooks(List<Book> books) {

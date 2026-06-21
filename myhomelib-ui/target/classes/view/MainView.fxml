@@ -42,11 +42,17 @@
                 </Menu>
             </MenuBar>
 
+            <!-- ToolBar з полем пошуку та індикатором -->
             <ToolBar>
-                <Button text="Пошук" onAction="#handleSearch"/>
-                <TextField fx:id="searchField" promptText="Введіть запит..." prefWidth="200"/>
-                <Button text="Знайти" onAction="#handleSearch"/>
-                <Separator/>
+                <Label text="Пошук:"/>
+                <TextField fx:id="searchField"
+                           promptText="Назва, автор, серія..."
+                           prefWidth="350"/>
+                <ProgressIndicator fx:id="searchIndicator"
+                                   visible="false"
+                                   prefWidth="20"
+                                   prefHeight="20"/>
+                <Region HBox.hgrow="ALWAYS"/>
                 <Button text="Імпорт FB2" onAction="#handleImportFb2"/>
                 <Button text="Оновити" onAction="#handleRefresh"/>
             </ToolBar>
@@ -67,13 +73,6 @@
                     <Tab text="Жанри">
                         <ListView fx:id="genresListView" VBox.vgrow="ALWAYS"/>
                     </Tab>
-                    <Tab text="Пошук">
-                        <VBox spacing="5" style="-fx-padding: 5;">
-                            <TextField fx:id="searchTabField" promptText="Пошук..."/>
-                            <Button text="Знайти" onAction="#handleSearchTab" maxWidth="Infinity"/>
-                            <ListView fx:id="searchResultsList" VBox.vgrow="ALWAYS"/>
-                        </VBox>
-                    </Tab>
                     <Tab text="Групи">
                         <ListView fx:id="groupsListView" VBox.vgrow="ALWAYS"/>
                     </Tab>
@@ -82,80 +81,44 @@
                     </Tab>
                 </TabPane>
 
-                <!-- Права панель: розділена на дві частини -->
-                <SplitPane orientation="VERTICAL" dividerPositions="0.65">
-                    <items>
-                        <!-- Верхня частина: таблиця книг -->
-                        <VBox spacing="5" style="-fx-padding: 10;">
-                            <HBox spacing="10" alignment="CENTER_LEFT">
-                                <Label text="Книги:" style="-fx-font-weight: bold;"/>
-                                <Label fx:id="bookCountLabel" text="0"/>
-                            </HBox>
-                            <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
-                                <columns>
-                                    <TableColumn text="Серія" prefWidth="120">
-                                    <cellValueFactory>
-                                        <javafx.scene.control.cell.PropertyValueFactory property="series"/>
-                                    </cellValueFactory>
-                                </TableColumn>
-                                    <TableColumn text="Назва" prefWidth="200">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="title"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Жанр" prefWidth="120">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="genresText"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="№" prefWidth="50">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="sequenceNumber"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Розмір" prefWidth="80">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="fileSizeFormatted"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Моя оцінка" prefWidth="80">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="rateStars"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Додано" prefWidth="100">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="updateDateFormatted"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                </columns>
-                            </TableView>
-                        </VBox>
-
-                        <!-- Нижня частина: деталі книги -->
-                        <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #fafafa; -fx-border-color: #cccccc; -fx-border-width: 1 0 0 0;">
-                            <HBox spacing="20" alignment="TOP_LEFT">
-                                <VBox spacing="3" HBox.hgrow="ALWAYS">
-                                    <Label fx:id="detailTitle" text="Назва" wrapText="true" style="-fx-font-weight: bold; -fx-font-size: 14;"/>
-                                    <Label fx:id="detailAuthors" text="Автори"/>
-                                    <Label fx:id="detailSeries" text="Серія"/>
-                                    <Label fx:id="detailGenres" text="Жанри"/>
-                                    <Label fx:id="detailLanguage" text="Мова"/>
-                                    <Label fx:id="detailRate" text="Рейтинг: 0"/>
-                                    <Label fx:id="detailProgress" text="Прогрес: 0%"/>
-                                    <Label fx:id="detailFile" text="Файл: "/>
-                                    <Label fx:id="detailSize" text="Розмір: "/>
-                                </VBox>
-                            </HBox>
-                            <Separator/>
-                            <Label text="Анотація:" style="-fx-font-weight: bold;"/>
-                            <ScrollPane VBox.vgrow="ALWAYS" fitToWidth="true" prefHeight="100">
-                                <TextArea fx:id="detailAnnotation" editable="false" wrapText="true"
-                                          style="-fx-background-color: white; -fx-border-color: #cccccc;"/>
-                            </ScrollPane>
-                        </VBox>
-                    </items>
-                </SplitPane>
+                <!-- Права панель: таблиця книг -->
+                <VBox spacing="5" style="-fx-padding: 10;">
+                    <HBox spacing="10" alignment="CENTER_LEFT">
+                        <Label text="Книги:" style="-fx-font-weight: bold;"/>
+                        <Label fx:id="bookCountLabel" text="0"/>
+                    </HBox>
+                    <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
+                        <columns>
+                            <TableColumn text="Назва" prefWidth="250">
+                                <cellValueFactory>
+                                    <javafx.scene.control.cell.PropertyValueFactory property="title"/>
+                                </cellValueFactory>
+                            </TableColumn>
+                            <TableColumn text="№" prefWidth="50">
+                                <cellValueFactory>
+                                    <javafx.scene.control.cell.PropertyValueFactory property="sequenceNumber"/>
+                                </cellValueFactory>
+                            </TableColumn>
+                            <TableColumn text="Розмір" prefWidth="80">
+                                <cellValueFactory>
+                                    <javafx.scene.control.cell.PropertyValueFactory property="fileSizeFormatted"/>
+                                </cellValueFactory>
+                            </TableColumn>
+                            <TableColumn text="Моя оцінка" prefWidth="80">
+                                <cellValueFactory>
+                                    <javafx.scene.control.cell.PropertyValueFactory property="rateStars"/>
+                                </cellValueFactory>
+                            </TableColumn>
+                            <TableColumn text="Додано" prefWidth="100">
+                                <cellValueFactory>
+                                    <javafx.scene.control.cell.PropertyValueFactory property="updateDateFormatted"/>
+                                </cellValueFactory>
+                            </TableColumn>
+                        </columns>
+                        <!-- Для швидкодії при великій кількості рядків -->
+                        <fixedCellSize>28</fixedCellSize>
+                    </TableView>
+                </VBox>
             </items>
         </SplitPane>
     </center>
@@ -167,6 +130,8 @@
                 <Insets bottom="4" left="10" right="10" top="4"/>
             </padding>
             <Label fx:id="statusLabel" text="Готово до роботи" HBox.hgrow="ALWAYS"/>
+            <Region HBox.hgrow="ALWAYS"/>
+            <Label fx:id="memoryLabel" text=""/>
             <ProgressBar fx:id="progressBar" visible="false" prefWidth="150"/>
         </HBox>
     </bottom>

@@ -1,5 +1,6 @@
 package com.myhomelibcorp;
 
+import com.myhomelibcorp.ui.presentation.controller.MainController;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -59,8 +60,13 @@ public class MyHomeLibApp extends Application {
 
     @Override
     public void stop() {
-        log.info("Закриття програми...");
+        log.info("Завершення програми...");
+        // Завершуємо SearchManager та інші пули
         if (context != null) {
+            MainController controller = context.getBean(MainController.class);
+            if (controller != null) {
+                controller.shutdown();
+            }
             context.close();
         }
         Platform.exit();

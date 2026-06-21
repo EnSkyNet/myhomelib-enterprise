@@ -34,6 +34,7 @@ public class BookDto {
     private boolean deleted;
     private boolean local;
 
+    // Спеціальний конструктор для зручності (використовується в старому коді)
     public BookDto(String title, String authorsText, String series, String genresText, int rate, int progress) {
         this.title = title;
         this.authorsText = authorsText;
