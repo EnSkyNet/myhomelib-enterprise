@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.GenreService;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
@@ -37,10 +38,12 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
 
     private final JdbcTemplate jdbcTemplate;
     private final AuthorRepository authorRepository;
+    private final GenreService genreService;
 
-    public SqliteBookRepository(JdbcTemplate jdbcTemplate, AuthorRepository authorRepository) {
+    public SqliteBookRepository(JdbcTemplate jdbcTemplate, AuthorRepository authorRepository, GenreService genreService) {
         this.jdbcTemplate = jdbcTemplate;
         this.authorRepository = authorRepository;
+        this.genreService = genreService;
     }
 
     private final RowMapper<Book> bookRowMapper = (rs, rowNum) -> {
@@ -84,11 +87,28 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     @Transactional
     public Book save(Book book) {
         String sql = """
-            INSERT OR REPLACE INTO books (
+            INSERT INTO books (
                 id, title, series, sequence_number, file_name, folder,
                 archive_entry, language, file_size, keywords, annotation,
                 rate, progress, update_date, isbn, deleted, local
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                title = excluded.title,
+                series = excluded.series,
+                sequence_number = excluded.sequence_number,
+                file_name = excluded.file_name,
+                folder = excluded.folder,
+                archive_entry = excluded.archive_entry,
+                language = excluded.language,
+                file_size = excluded.file_size,
+                keywords = excluded.keywords,
+                annotation = excluded.annotation,
+                rate = excluded.rate,
+                progress = excluded.progress,
+                update_date = excluded.update_date,
+                isbn = excluded.isbn,
+                deleted = excluded.deleted,
+                local = excluded.local
             """;
 
         jdbcTemplate.update(connection -> {
@@ -149,18 +169,24 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
 
         for (Genre genre : genres) {
+            String code = genre.getId().asString();
+            String name = genreService.getGenreName(code);
             String insertGenreSql = """
-                INSERT OR IGNORE INTO genres (code, name, parent_code, fb2_code)
+                INSERT INTO genres (code, name, parent_code, fb2_code)
                 VALUES (?, ?, ?, ?)
+                ON CONFLICT(code) DO UPDATE SET
+                    name = excluded.name,
+                    parent_code = excluded.parent_code,
+                    fb2_code = excluded.fb2_code
                 """;
             jdbcTemplate.update(insertGenreSql,
-                    genre.getId().asString(),
-                    genre.getName(),
+                    code,
+                    name,
                     genre.getParentId() != null ? genre.getParentId().asString() : null,
                     genre.getFb2Code());
 
             jdbcTemplate.update("INSERT OR IGNORE INTO book_genres (book_id, genre_code) VALUES (?, ?)",
-                    bookId.asString(), genre.getId().asString());
+                    bookId.asString(), code);
         }
     }
 
@@ -261,12 +287,15 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     @Override
     public List<Book> search(String query, int limit) {
         String sql = """
-            SELECT b.* FROM books b
-            JOIN books_fts f ON b.id = f.book_id
-            WHERE books_fts MATCH ?
+            SELECT * FROM books
+            WHERE lower(title) LIKE ?
+               OR lower(series) LIKE ?
+               OR lower(keywords) LIKE ?
+               OR lower(annotation) LIKE ?
             LIMIT ?
             """;
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, query + "*", limit);
+        String pattern = "%" + (query != null ? query.toLowerCase() : "") + "%";
+        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, pattern, pattern, pattern, pattern, limit);
         books.forEach(this::loadAuthors);
         books.forEach(this::loadGenres);
         return books;
@@ -322,11 +351,28 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             return;
         }
         String sql = """
-        INSERT OR REPLACE INTO books (
+        INSERT INTO books (
             id, title, series, sequence_number, file_name, folder,
             archive_entry, language, file_size, keywords, annotation,
             rate, progress, update_date, isbn, deleted, local
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            series = excluded.series,
+            sequence_number = excluded.sequence_number,
+            file_name = excluded.file_name,
+            folder = excluded.folder,
+            archive_entry = excluded.archive_entry,
+            language = excluded.language,
+            file_size = excluded.file_size,
+            keywords = excluded.keywords,
+            annotation = excluded.annotation,
+            rate = excluded.rate,
+            progress = excluded.progress,
+            update_date = excluded.update_date,
+            isbn = excluded.isbn,
+            deleted = excluded.deleted,
+            local = excluded.local
         """;
 
         List<Object[]> batchArgs = new ArrayList<>(books.size());

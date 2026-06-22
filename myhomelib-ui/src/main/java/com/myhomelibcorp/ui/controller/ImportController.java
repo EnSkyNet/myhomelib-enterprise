@@ -76,7 +76,7 @@ public class ImportController {
         statusLabel.setText("Імпорт: " + filePath.getFileName());
 
         backgroundExecutor.submit(() -> {
-            int count = importerService.importInpx(filePath);
+            int count = importerService.importBooks(filePath);
             Platform.runLater(() -> {
                 progressBar.setVisible(false);
                 statusLabel.setText("Імпорт завершено. Додано " + count + " книг");

@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.service;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.GenreService;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.navigation.AuthorNode;
@@ -28,6 +29,7 @@ public class NavigationManager {
     private final AuthorRepository authorRepository;
     private final BookQueryRepository bookQueryRepository;
     private final BackgroundExecutor executor;
+    private final GenreService genreService;
 
     public void loadAuthors(TreeView<LibraryNode> authorsTree,
                             Consumer<AuthorId> onAuthorSelected,
@@ -103,11 +105,15 @@ public class NavigationManager {
     }
 
     private BookDto toDto(Book book) {
+        String genresText = book.getGenres().stream()
+                .map(genre -> genreService.getGenreName(genre.getId().asString()))
+                .collect(java.util.stream.Collectors.joining(", "));
+
         return BookDto.builder()
                 .title(book.getTitle())
                 .authorsText(book.authorsText())
                 .series(book.getSeries())
-                .genresText(book.genresText())
+                .genresText(genresText)
                 .sequenceNumber(book.getSequenceNumber())
                 .rate(book.getRate())
                 .progress(book.getProgress())

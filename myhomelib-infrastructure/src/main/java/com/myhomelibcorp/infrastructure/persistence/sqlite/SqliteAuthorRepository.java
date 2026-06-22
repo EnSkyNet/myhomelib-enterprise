@@ -56,8 +56,12 @@ public class SqliteAuthorRepository implements AuthorRepository {
                     author.getLastName());
         }
         String sql = """
-            INSERT OR REPLACE INTO authors (id, first_name, middle_name, last_name)
+            INSERT INTO authors (id, first_name, middle_name, last_name)
             VALUES (?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+                first_name = excluded.first_name,
+                middle_name = excluded.middle_name,
+                last_name = excluded.last_name
             """;
         jdbcTemplate.update(sql,
                 author.getId().asString(),

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.search;
 
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
+import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
@@ -29,7 +30,7 @@ public class SearchIndexConfig {
 
     @Bean
     public QueryParser queryParser(StandardAnalyzer analyzer) {
-        // Пошук за всіма текстовими полями
-        return new QueryParser("title", analyzer);
+        String[] fields = {"title", "authors", "series", "genres", "keywords", "annotation"};
+        return new MultiFieldQueryParser(fields, analyzer);
     }
 }

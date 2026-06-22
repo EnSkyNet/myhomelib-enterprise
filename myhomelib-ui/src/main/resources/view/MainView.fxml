@@ -12,30 +12,30 @@
         <VBox>
             <MenuBar>
                 <Menu text="Колекція">
-                    <MenuItem text="Відкрити колекцію..." onAction="#handleOpenCollection"/>
-                    <MenuItem text="Створити колекцію..." onAction="#handleNewCollection"/>
+                    <MenuItem text="Відкрити колекцію..." onAction="#handleOpenCollection" disable="true"/>
+                    <MenuItem text="Створити колекцію..." onAction="#handleNewCollection" disable="true"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Група">
-                    <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
-                    <MenuItem text="Редагувати групу..." onAction="#handleEditGroup"/>
-                    <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
+                    <MenuItem text="Додати групу..." onAction="#handleAddGroup" disable="true"/>
+                    <MenuItem text="Редагувати групу..." onAction="#handleEditGroup" disable="true"/>
+                    <MenuItem text="Видалити групу" onAction="#handleDeleteGroup" disable="true"/>
                 </Menu>
                 <Menu text="Редагування">
-                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
-                    <MenuItem text="Видалити книгу" onAction="#handleDeleteBook"/>
+                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata" disable="true"/>
+                    <MenuItem text="Видалити книгу" onAction="#handleDeleteBook" disable="true"/>
                 </Menu>
                 <Menu text="Вигляд">
                     <MenuItem text="Оновити" onAction="#handleRefresh"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
+                    <MenuItem text="Показати колонки..." onAction="#handleShowColumns" disable="true"/>
                 </Menu>
                 <Menu text="Інструменти">
                     <MenuItem text="Імпорт FB2..." onAction="#handleImportFb2"/>
                     <MenuItem text="Імпорт INPX..." onAction="#handleImportInpx"/>
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
-                    <MenuItem text="Експорт..." onAction="#handleExport"/>
+                    <MenuItem text="Експорт..." onAction="#handleExport" disable="true"/>
                 </Menu>
                 <Menu text="Допомога">
                     <MenuItem text="Про програму" onAction="#handleAbout"/>

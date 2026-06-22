@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.GenreService;
 import com.myhomelibcorp.application.port.out.SearchQueryService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -26,9 +27,10 @@ import java.util.stream.Collectors;
 @Slf4j
 public class SearchManager {
 
-    private final SearchQueryService searchQueryService;  // ← ПОРТ, а не реалізація
+    private final SearchQueryService searchQueryService;
     private final BookQueryRepository bookQueryRepository;
     private final BackgroundExecutor backgroundExecutor;
+    private final GenreService genreService; // ← порт
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
     private final AtomicReference<CompletableFuture<?>> currentSearch = new AtomicReference<>();
@@ -41,12 +43,7 @@ public class SearchManager {
     ) {
         searchField.textProperty().addListener((obs, oldValue, newValue) -> {
             debounce.stop();
-            debounce.setOnFinished(e -> executeSearch(
-                    newValue,
-                    tableView,
-                    statusLabel,
-                    progressIndicator
-            ));
+            debounce.setOnFinished(e -> executeSearch(newValue, tableView, statusLabel, progressIndicator));
             debounce.playFromStart();
         });
     }
@@ -58,9 +55,7 @@ public class SearchManager {
             ProgressIndicator progressIndicator
     ) {
         CompletableFuture<?> old = currentSearch.get();
-        if (old != null) {
-            old.cancel(true);
-        }
+        if (old != null) old.cancel(true);
 
         Platform.runLater(() -> {
             progressIndicator.setVisible(true);
@@ -70,19 +65,14 @@ public class SearchManager {
         CompletableFuture<Void> future = backgroundExecutor.submit(() -> {
             List<BookDto> result;
             if (query == null || query.isBlank()) {
-                // Якщо порожній запит – завантажуємо останні книги з БД
                 List<Book> books = bookQueryRepository.findAll(100, 0);
                 result = books.stream().map(this::toDto).collect(Collectors.toList());
             } else {
-                // Пошук через Lucene (порт)
                 List<String> bookIds = searchQueryService.searchBookIds(query, 100);
-                // batch-завантаження книг
                 if (bookIds.isEmpty()) {
                     result = List.of();
                 } else {
-                    List<BookId> ids = bookIds.stream()
-                            .map(BookId::fromString)
-                            .collect(Collectors.toList());
+                    List<BookId> ids = bookIds.stream().map(BookId::fromString).collect(Collectors.toList());
                     List<Book> books = bookQueryRepository.findByIds(ids);
                     result = books.stream().map(this::toDto).collect(Collectors.toList());
                 }
@@ -93,9 +83,7 @@ public class SearchManager {
             items.setAll(result);
             progressIndicator.setVisible(false);
             statusLabel.setText("Знайдено " + result.size() + " книг");
-            if (!result.isEmpty()) {
-                tableView.getSelectionModel().selectFirst();
-            }
+            if (!result.isEmpty()) tableView.getSelectionModel().selectFirst();
         })).exceptionally(ex -> {
             Platform.runLater(() -> {
                 progressIndicator.setVisible(false);
@@ -111,11 +99,15 @@ public class SearchManager {
     }
 
     private BookDto toDto(Book book) {
+        String genresText = book.getGenres().stream()
+                .map(g -> genreService.getGenreName(g.getId().asString()))
+                .collect(Collectors.joining(", "));
+
         return BookDto.builder()
                 .title(book.getTitle())
                 .authorsText(book.authorsText())
                 .series(book.getSeries())
-                .genresText(book.genresText())
+                .genresText(genresText)
                 .sequenceNumber(book.getSequenceNumber())
                 .rate(book.getRate())
                 .progress(book.getProgress())
