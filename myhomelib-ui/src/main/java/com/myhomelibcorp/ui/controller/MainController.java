@@ -65,7 +65,6 @@ public class MainController {
         bookTableView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, newVal) -> {
                     mainViewModel.selectedBookProperty().set(newVal);
-                    // Оновлюємо деталі при виборі книги
                     if (newVal != null) {
                         bookDetailsPresenter.showBookDetails(newVal);
                     } else {
@@ -109,7 +108,20 @@ public class MainController {
                 }
         );
 
-        // ---- Прив'язка BookDetailsPresenter до елементів UI ----
+        // ---- Автоматичний вибір першого автора після завантаження списку ----
+        navigationViewModel.authorsRootProperty().addListener((obs, oldRoot, newRoot) -> {
+            if (newRoot != null && !newRoot.getChildren().isEmpty()) {
+                TreeItem<LibraryNode> firstItem = newRoot.getChildren().get(0);
+                authorsTree.getSelectionModel().select(firstItem);
+                log.info("Автоматично вибрано першого автора");
+            } else {
+                // Якщо авторів немає, показати всі книги або повідомлення
+                mainViewModel.refreshBooks();
+                log.info("Авторів не знайдено, показано всі книги");
+            }
+        });
+
+        // ---- Прив'язка BookDetailsPresenter ----
         bookDetailsPresenter.bind(
                 detailTitle, detailAuthors, detailSeries, detailGenres,
                 detailLanguage, detailRate, detailProgress,
@@ -117,7 +129,8 @@ public class MainController {
         );
 
         // ---- Ініціалізація даних ----
-        mainViewModel.init();
+        // Завантажуємо жанри та налаштовуємо пошук, але книги завантажаться після вибору автора
+        mainViewModel.initWithoutBooks();
         navigationViewModel.loadAuthors();
 
         // ---- Тимчасові списки ----
@@ -129,7 +142,7 @@ public class MainController {
     // ---- Обробники дій ----
     @FXML
     public void handleRefresh() {
-        mainViewModel.refreshBooks();
+        // Оновлюємо авторів, а потім автоматично вибереться перший і завантажаться його книги
         navigationViewModel.loadAuthors();
     }
 
@@ -183,12 +196,9 @@ public class MainController {
         Platform.exit();
     }
 
-    // ---- Callback після завершення імпорту ----
     private void onImportComplete() {
-        // Оновлюємо дерево авторів, щоб показати нових авторів
+        // Оновлюємо дерево авторів – автоматично вибереться перший автор
         navigationViewModel.loadAuthors();
-        // Оновлюємо список книг
-        mainViewModel.refreshBooks();
     }
 
     @FXML public void handleOpenCollection() {}

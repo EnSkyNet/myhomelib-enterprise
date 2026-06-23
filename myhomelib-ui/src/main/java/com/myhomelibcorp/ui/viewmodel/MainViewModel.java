@@ -58,6 +58,14 @@ public class MainViewModel {
     public StringProperty searchQueryProperty() { return searchQuery; }
     public ObservableList<String> genreNamesProperty() { return genreNames; }
 
+    // Ініціалізація без завантаження книг (книги завантажаться після вибору автора)
+    public void initWithoutBooks() {
+        loadGenres();
+        bindSearch();
+        // Не викликаємо refreshBooks() тут
+    }
+
+    // Повна ініціалізація (для сумісності, можна використовувати за потреби)
     public void init() {
         loadGenres();
         refreshBooks();
@@ -74,7 +82,7 @@ public class MainViewModel {
     }
 
     public void refreshBooks() {
-        statusText.set("Завантаження книг...");
+        statusText.set("Завантаження всіх книг...");
         backgroundExecutor.submit(() -> loadBooksUseCase.loadAll(10000, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
@@ -117,7 +125,6 @@ public class MainViewModel {
                 });
     }
 
-    // Додано callback для оновлення UI після імпорту
     public void importFile(Path file, Runnable onComplete) {
         importInProgress.set(true);
         statusText.set("Імпорт файлу: " + file.getFileName());
@@ -217,7 +224,12 @@ public class MainViewModel {
             if (query != null && !query.isBlank()) {
                 searchBooks(query);
             } else {
-                refreshBooks();
+                // Якщо пошук очищено, повертаємося до книг поточного автора
+                if (currentAuthorId != null) {
+                    loadBooksByAuthor(currentAuthorId);
+                } else {
+                    refreshBooks();
+                }
             }
         });
     }
