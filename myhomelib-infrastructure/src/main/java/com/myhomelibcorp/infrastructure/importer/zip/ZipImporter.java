@@ -32,7 +32,6 @@ public class ZipImporter implements BookImporterPort {
     private ImporterRegistry importerRegistry;
 
     private static final int MAX_UNPACK_DEPTH = 5;
-
     private static final Charset[] ZIP_CHARSETS = {
             Charset.forName("CP866"),
             Charset.forName("Windows-1251"),
@@ -87,9 +86,6 @@ public class ZipImporter implements BookImporterPort {
         return "ZIP";
     }
 
-    /**
-     * Внутрішній ітератор для ZIP – використовує чергу для накопичення книг.
-     */
     private class ZipIterator implements java.util.Iterator<Book> {
         private final ZipInputStream zis;
         private final int nextDepth;
@@ -119,10 +115,6 @@ public class ZipImporter implements BookImporterPort {
             return bookQueue.poll();
         }
 
-        /**
-         * Обробляє наступний запис у ZIP-архіві, додаючи книги до черги.
-         * Повертає true, якщо черга поповнилася.
-         */
         private boolean processNextEntry() {
             if (finished) return false;
 
@@ -161,7 +153,6 @@ public class ZipImporter implements BookImporterPort {
                     return processNextEntry();
                 }
 
-                // Якщо це вкладений ZIP – рекурсивно
                 if (importer instanceof ZipImporter) {
                     Path tempFile = Files.createTempFile("zip_nested_", "_" + fileName);
                     try {
@@ -174,7 +165,6 @@ public class ZipImporter implements BookImporterPort {
                         Files.deleteIfExists(tempFile);
                     }
                 } else {
-                    // Звичайний файл
                     Path tempFile = Files.createTempFile("zip_import_", "_" + fileName);
                     try {
                         Files.copy(zis, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);

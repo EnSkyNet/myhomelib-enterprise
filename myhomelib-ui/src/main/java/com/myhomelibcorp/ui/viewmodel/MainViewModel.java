@@ -58,27 +58,9 @@ public class MainViewModel {
     public StringProperty searchQueryProperty() { return searchQuery; }
     public ObservableList<String> genreNamesProperty() { return genreNames; }
 
-    // Ініціалізація без завантаження книг (книги завантажаться після вибору автора)
     public void initWithoutBooks() {
         loadGenres();
         bindSearch();
-        // Не викликаємо refreshBooks() тут
-    }
-
-    // Повна ініціалізація (для сумісності, можна використовувати за потреби)
-    public void init() {
-        loadGenres();
-        refreshBooks();
-        bindSearch();
-    }
-
-    private void loadGenres() {
-        backgroundExecutor.submit(() -> loadGenresUseCase.getAllGenreNames())
-                .thenAccept(names -> Platform.runLater(() -> genreNames.setAll(names)))
-                .exceptionally(ex -> {
-                    log.error("Помилка завантаження жанрів", ex);
-                    return null;
-                });
     }
 
     public void refreshBooks() {
@@ -93,9 +75,7 @@ public class MainViewModel {
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Завантажено " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) {
-                            selectedBook.set(dtos.get(0));
-                        }
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
                     });
                 })
                 .exceptionally(ex -> {
@@ -113,9 +93,7 @@ public class MainViewModel {
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Знайдено " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) {
-                            selectedBook.set(dtos.get(0));
-                        }
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
                     });
                 })
                 .exceptionally(ex -> {
@@ -185,9 +163,7 @@ public class MainViewModel {
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Книги автора: " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) {
-                            selectedBook.set(dtos.get(0));
-                        }
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
                     });
                 })
                 .exceptionally(ex -> {
@@ -224,7 +200,6 @@ public class MainViewModel {
             if (query != null && !query.isBlank()) {
                 searchBooks(query);
             } else {
-                // Якщо пошук очищено, повертаємося до книг поточного автора
                 if (currentAuthorId != null) {
                     loadBooksByAuthor(currentAuthorId);
                 } else {
@@ -232,5 +207,14 @@ public class MainViewModel {
                 }
             }
         });
+    }
+
+    private void loadGenres() {
+        backgroundExecutor.submit(() -> loadGenresUseCase.getAllGenreNames())
+                .thenAccept(names -> Platform.runLater(() -> genreNames.setAll(names)))
+                .exceptionally(ex -> {
+                    log.error("Помилка завантаження жанрів", ex);
+                    return null;
+                });
     }
 }

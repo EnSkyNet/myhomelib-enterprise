@@ -20,9 +20,6 @@ public class BookDetailsPresenter {
     private Label detailSize;
     private TextArea detailAnnotation;
 
-    /**
-     * Прив'язує всі елементи UI для відображення деталей книги.
-     */
     public void bind(Label title, Label authors, Label series, Label genres,
                      Label language, Label rate, Label progress,
                      Label file, Label folder, Label size, TextArea annotation) {
@@ -39,10 +36,6 @@ public class BookDetailsPresenter {
         this.detailAnnotation = annotation;
     }
 
-    /**
-     * Відображає деталі книги в UI.
-     * @param book книга для відображення (може бути null)
-     */
     public void showBookDetails(BookDto book) {
         if (book == null) {
             clearDetails();
@@ -62,9 +55,6 @@ public class BookDetailsPresenter {
         detailAnnotation.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
     }
 
-    /**
-     * Очищає всі поля деталей.
-     */
     public void clearDetails() {
         detailTitle.setText("Назва");
         detailAuthors.setText("Автори");

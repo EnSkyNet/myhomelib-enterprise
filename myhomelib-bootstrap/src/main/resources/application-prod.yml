@@ -1,0 +1,9 @@
+# Специфічні налаштування для PROD профілю
+logging:
+  level:
+    com.myhomelibcorp: INFO
+    org.springframework: WARN
+  charset:
+    console: UTF-8
+  pattern:
+    console: ""  # JSON формат задається в logback-spring.xml

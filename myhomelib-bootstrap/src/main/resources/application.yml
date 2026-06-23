@@ -1,7 +1,9 @@
 spring:
+  profiles:
+    active: dev  # можна змінити на prod для продакшну
   main:
-    allow-circular-references: true
-    allow-bean-definition-overriding: true
+    allow-circular-references: false
+    allow-bean-definition-overriding: false
   application:
     name: MyHomeLib Enterprise
 
@@ -35,7 +37,3 @@ logging:
     org.flywaydb: INFO
     org.sqlite: WARN
     org.apache.lucene: INFO
-  charset:
-    console: UTF-8
-  pattern:
-    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"

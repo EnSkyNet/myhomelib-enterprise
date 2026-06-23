@@ -55,12 +55,10 @@ public class MainController {
 
     @FXML
     public void initialize() {
-        // ---- Прив'язка статусу та прогресу ----
         statusLabel.textProperty().bind(mainViewModel.statusTextProperty());
         progressBar.progressProperty().bind(mainViewModel.importProgressProperty());
         progressBar.visibleProperty().bind(mainViewModel.importInProgressProperty());
 
-        // ---- Прив'язка таблиці книг ----
         bookTableView.setItems(mainViewModel.booksProperty());
         bookTableView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, newVal) -> {
@@ -73,25 +71,18 @@ public class MainController {
                 }
         );
 
-        // ---- Прив'язка пошуку ----
         searchField.textProperty().bindBidirectional(mainViewModel.searchQueryProperty());
-
-        // ---- Прив'язка списку жанрів ----
         genresListView.setItems(mainViewModel.genreNamesProperty());
 
-        // ---- Інтеграція дерева авторів ----
+        // Дерево авторів
         authorsTree.rootProperty().bind(navigationViewModel.authorsRootProperty());
         authorsTree.setShowRoot(false);
-
         authorsTree.setCellFactory(tv -> new TreeCell<>() {
             @Override
             protected void updateItem(LibraryNode item, boolean empty) {
                 super.updateItem(item, empty);
-                if (empty || item == null) {
-                    setText(null);
-                } else {
-                    setText(item.toString());
-                }
+                if (empty || item == null) setText(null);
+                else setText(item.toString());
             }
         });
 
@@ -108,41 +99,32 @@ public class MainController {
                 }
         );
 
-        // ---- Автоматичний вибір першого автора після завантаження списку ----
+        // Автоматичний вибір першого автора
         navigationViewModel.authorsRootProperty().addListener((obs, oldRoot, newRoot) -> {
             if (newRoot != null && !newRoot.getChildren().isEmpty()) {
                 TreeItem<LibraryNode> firstItem = newRoot.getChildren().get(0);
                 authorsTree.getSelectionModel().select(firstItem);
-                log.info("Автоматично вибрано першого автора");
             } else {
-                // Якщо авторів немає, показати всі книги або повідомлення
                 mainViewModel.refreshBooks();
-                log.info("Авторів не знайдено, показано всі книги");
             }
         });
 
-        // ---- Прив'язка BookDetailsPresenter ----
         bookDetailsPresenter.bind(
                 detailTitle, detailAuthors, detailSeries, detailGenres,
                 detailLanguage, detailRate, detailProgress,
                 detailFile, detailFolder, detailSize, detailAnnotation
         );
 
-        // ---- Ініціалізація даних ----
-        // Завантажуємо жанри та налаштовуємо пошук, але книги завантажаться після вибору автора
         mainViewModel.initWithoutBooks();
         navigationViewModel.loadAuthors();
 
-        // ---- Тимчасові списки ----
+        // Тимчасові списки
         seriesListView.getItems().addAll("Серія 1", "Серія 2");
         groupsListView.getItems().addAll("Favorites", "To Read");
         downloadsListView.getItems().addAll("Завантаження 1");
     }
 
-    // ---- Обробники дій ----
-    @FXML
-    public void handleRefresh() {
-        // Оновлюємо авторів, а потім автоматично вибереться перший і завантажаться його книги
+    @FXML public void handleRefresh() {
         navigationViewModel.loadAuthors();
     }
 
@@ -187,17 +169,13 @@ public class MainController {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle("Про програму");
         alert.setHeaderText("MyHomeLib Enterprise");
-        alert.setContentText("Версія 1.0.0-SNAPSHOT\n\nJava-версія MyHomeLib\nJava 21, Spring Boot 3.4, JavaFX 21");
+        alert.setContentText("Версія 1.0.0-SNAPSHOT\n\nJava-версія MyHomeLib\nJava 21, Spring Boot 3.5, JavaFX 21");
         alert.showAndWait();
     }
 
-    @FXML
-    public void handleExit() {
-        Platform.exit();
-    }
+    @FXML public void handleExit() { Platform.exit(); }
 
     private void onImportComplete() {
-        // Оновлюємо дерево авторів – автоматично вибереться перший автор
         navigationViewModel.loadAuthors();
     }
 
