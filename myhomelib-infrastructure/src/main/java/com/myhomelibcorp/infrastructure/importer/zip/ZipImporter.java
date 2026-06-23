@@ -14,7 +14,8 @@ import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.Queue;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
@@ -32,7 +33,6 @@ public class ZipImporter implements BookImporterPort {
 
     private static final int MAX_UNPACK_DEPTH = 5;
 
-    // Список кодувань для спроби (в порядку пріоритету)
     private static final Charset[] ZIP_CHARSETS = {
             Charset.forName("CP866"),
             Charset.forName("Windows-1251"),
@@ -61,7 +61,6 @@ public class ZipImporter implements BookImporterPort {
         String zipFileName = file.getFileName().toString();
         String zipFolder = file.getParent() != null ? file.getParent().toString() : "";
 
-        // Пробуємо різні кодування
         Exception lastException = null;
         for (Charset charset : ZIP_CHARSETS) {
             try {
@@ -69,7 +68,7 @@ public class ZipImporter implements BookImporterPort {
                 ZipInputStream zis = new ZipInputStream(fis, charset);
                 log.debug("Спроба розпакувати з кодуванням: {}", charset);
 
-                Iterator<Book> iterator = new ZipIterator(zis, depth + 1, zipFileName, zipFolder, charset);
+                ZipIterator iterator = new ZipIterator(zis, depth + 1, zipFileName, zipFolder, charset);
                 Spliterator<Book> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED);
                 return StreamSupport.stream(spliterator, false);
             } catch (Exception e) {
@@ -78,7 +77,6 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
-        // Якщо жодне кодування не підійшло
         log.error("Не вдалося прочитати ZIP-архів жодним з підтримуваних кодувань: {}", file);
         throw new BusinessException(ErrorCode.IMPORT_FAILED,
                 "Не вдалося прочитати ZIP-архів: " + file.getFileName(), lastException);
@@ -90,15 +88,15 @@ public class ZipImporter implements BookImporterPort {
     }
 
     /**
-     * Внутрішній ітератор для ZIP – ліниве читання записів.
+     * Внутрішній ітератор для ZIP – використовує чергу для накопичення книг.
      */
-    private class ZipIterator implements Iterator<Book> {
+    private class ZipIterator implements java.util.Iterator<Book> {
         private final ZipInputStream zis;
         private final int nextDepth;
         private final String zipFileName;
         private final String zipFolder;
         private final Charset charset;
-        private ZipEntry nextEntry;
+        private final Queue<Book> bookQueue = new LinkedList<>();
         private boolean finished;
         private int entryCount = 0;
 
@@ -108,68 +106,70 @@ public class ZipImporter implements BookImporterPort {
             this.zipFileName = zipFileName;
             this.zipFolder = zipFolder;
             this.charset = charset;
-            moveToNextEntry();
+            processNextEntry();
         }
 
         @Override
         public boolean hasNext() {
-            if (finished) {
-                return false;
-            }
-            if (nextEntry == null && !finished) {
-                moveToNextEntry();
-            }
-            return !finished && nextEntry != null;
+            return !bookQueue.isEmpty() || (!finished && processNextEntry());
         }
 
         @Override
         public Book next() {
-            if (!hasNext()) {
-                return null;
-            }
+            return bookQueue.poll();
+        }
 
-            ZipEntry entry = nextEntry;
-            String entryName = entry.getName();
-            // Декодуємо ім'я з правильним кодуванням
-            String decodedName = decodeEntryName(entryName);
-            String fileName = Path.of(decodedName).getFileName().toString();
-            entryCount++;
+        /**
+         * Обробляє наступний запис у ZIP-архіві, додаючи книги до черги.
+         * Повертає true, якщо черга поповнилася.
+         */
+        private boolean processNextEntry() {
+            if (finished) return false;
 
             try {
+                ZipEntry entry = zis.getNextEntry();
+                if (entry == null) {
+                    finished = true;
+                    zis.close();
+                    log.info("ZIP-архів оброблено, всього записів: {}", entryCount);
+                    return false;
+                }
+                entryCount++;
+                String entryName = entry.getName();
+                String decodedName = decodeEntryName(entryName);
+                String fileName = Path.of(decodedName).getFileName().toString();
+
                 if (entry.isDirectory()) {
                     log.trace("Пропускаємо директорію: {}", decodedName);
-                    moveToNextEntry();
-                    return null;
+                    return processNextEntry();
                 }
 
                 log.debug("Обробка запису #{}: {}", entryCount, decodedName);
 
-                // Шукаємо імпортер
                 Path tempPath = Path.of(decodedName);
-                BookImporterPort importer = null;
+                BookImporterPort importer;
                 try {
                     importer = importerRegistry.findImporter(tempPath);
                 } catch (IllegalArgumentException e) {
                     log.debug("Немає імпортера для запису: {}", decodedName);
-                    moveToNextEntry();
-                    return null;
+                    zis.closeEntry();
+                    return processNextEntry();
                 }
 
                 if (importer == null) {
-                    moveToNextEntry();
-                    return null;
+                    zis.closeEntry();
+                    return processNextEntry();
                 }
-
-                Book result = null;
 
                 // Якщо це вкладений ZIP – рекурсивно
                 if (importer instanceof ZipImporter) {
                     Path tempFile = Files.createTempFile("zip_nested_", "_" + fileName);
                     try {
                         Files.copy(zis, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                        closeCurrentEntry();
-                        Stream<Book> nestedStream = ((ZipImporter) importer).importBooksInternal(tempFile, nextDepth);
-                        result = nestedStream.findFirst().orElse(null);
+                        zis.closeEntry();
+                        try (Stream<Book> nestedStream = ((ZipImporter) importer).importBooksInternal(tempFile, nextDepth)) {
+                            nestedStream.forEach(bookQueue::add);
+                        }
                     } finally {
                         Files.deleteIfExists(tempFile);
                     }
@@ -178,66 +178,56 @@ public class ZipImporter implements BookImporterPort {
                     Path tempFile = Files.createTempFile("zip_import_", "_" + fileName);
                     try {
                         Files.copy(zis, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                        closeCurrentEntry();
+                        zis.closeEntry();
                         String originalName = fileName;
                         String folder = zipFolder + java.io.File.separator + zipFileName;
 
                         try (Stream<Book> bookStream = importer.importBooks(tempFile)) {
-                            result = bookStream
-                                    .map(book -> {
-                                        String currentFileName = book.getFileName();
-                                        if (currentFileName == null || currentFileName.startsWith("zip_import_") || currentFileName.isEmpty()) {
-                                            currentFileName = originalName;
-                                        }
-                                        return Book.builder()
-                                                .id(book.getId())
-                                                .title(book.getTitle())
-                                                .authors(book.getAuthors())
-                                                .genres(book.getGenres())
-                                                .series(book.getSeries())
-                                                .sequenceNumber(book.getSequenceNumber())
-                                                .language(book.getLanguage())
-                                                .fileName(currentFileName)
-                                                .folder(folder)
-                                                .archiveEntry(decodedName)
-                                                .fileSize(book.getFileSize())
-                                                .keywords(book.getKeywords())
-                                                .annotation(book.getAnnotation())
-                                                .updateDate(book.getUpdateDate())
-                                                .build();
-                                    })
-                                    .findFirst()
-                                    .orElse(null);
+                            bookStream.forEach(book -> {
+                                String currentFileName = book.getFileName();
+                                if (currentFileName == null || currentFileName.startsWith("zip_import_") || currentFileName.isEmpty()) {
+                                    currentFileName = originalName;
+                                }
+                                Book enrichedBook = Book.builder()
+                                        .id(book.getId())
+                                        .title(book.getTitle())
+                                        .authors(book.getAuthors())
+                                        .genres(book.getGenres())
+                                        .series(book.getSeries())
+                                        .sequenceNumber(book.getSequenceNumber())
+                                        .language(book.getLanguage())
+                                        .fileName(currentFileName)
+                                        .folder(folder)
+                                        .archiveEntry(decodedName)
+                                        .fileSize(book.getFileSize())
+                                        .keywords(book.getKeywords())
+                                        .annotation(book.getAnnotation())
+                                        .updateDate(book.getUpdateDate())
+                                        .build();
+                                bookQueue.add(enrichedBook);
+                            });
                         }
                     } finally {
                         Files.deleteIfExists(tempFile);
                     }
                 }
 
-                moveToNextEntry();
-                return result;
+                return true;
 
             } catch (Exception e) {
-                log.error("Помилка обробки запису: {}", decodedName, e);
+                log.error("Помилка обробки запису", e);
+                finished = true;
                 try {
-                    closeCurrentEntry();
-                    moveToNextEntry();
+                    zis.close();
                 } catch (Exception ex) {
-                    finished = true;
-                    try {
-                        zis.close();
-                    } catch (java.io.IOException ignored) {}
+                    // ignore
                 }
-                return null;
+                return false;
             }
         }
 
-        /**
-         * Декодує ім'я файлу з використанням поточного кодування.
-         */
         private String decodeEntryName(String name) {
             try {
-                // Якщо ім'я вже виглядає як UTF-8 (без кракозябрів), пробуємо не чіпати
                 if (isValidUtf8(name)) {
                     return name;
                 }
@@ -248,14 +238,9 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
-        /**
-         * Проста перевірка, чи рядок схожий на UTF-8 (без кракозябрів).
-         */
         private boolean isValidUtf8(String s) {
             for (char c : s.toCharArray()) {
                 if (c > 0x7F) {
-                    // Якщо є символи > 127, це може бути UTF-8 або інше кодування
-                    // Перевіряємо, чи це валидний UTF-8 символ
                     try {
                         String test = new String(s.getBytes(java.nio.charset.StandardCharsets.UTF_8),
                                 java.nio.charset.StandardCharsets.UTF_8);
@@ -268,27 +253,6 @@ public class ZipImporter implements BookImporterPort {
                 }
             }
             return true;
-        }
-
-        private void closeCurrentEntry() throws java.io.IOException {
-            zis.closeEntry();
-        }
-
-        private void moveToNextEntry() {
-            try {
-                nextEntry = zis.getNextEntry();
-                if (nextEntry == null) {
-                    finished = true;
-                    zis.close();
-                    log.info("ZIP-архів оброблено, всього записів: {}", entryCount);
-                }
-            } catch (Exception e) {
-                log.error("Помилка переходу до наступного запису", e);
-                finished = true;
-                try {
-                    zis.close();
-                } catch (java.io.IOException ignored) {}
-            }
         }
     }
 }

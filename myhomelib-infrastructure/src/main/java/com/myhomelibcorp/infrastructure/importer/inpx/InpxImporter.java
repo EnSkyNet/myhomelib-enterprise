@@ -1,6 +1,5 @@
 package com.myhomelibcorp.infrastructure.importer.inpx;
 
-import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.BookImporterPort;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -9,7 +8,6 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.shared.exception.BusinessException;
 import com.myhomelibcorp.shared.exception.ErrorCode;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -22,7 +20,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Optional;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
@@ -31,14 +28,11 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipInputStream;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class InpxImporter implements BookImporterPort {
 
     private static final char FIELD_DELIMITER = (char) 4;
     private static final String FALLBACK_DELIMITER = "|";
-
-    private final AuthorRepository authorRepository;
 
     @Override
     public boolean supports(Path file) {
@@ -64,9 +58,6 @@ public class InpxImporter implements BookImporterPort {
         return "INPX";
     }
 
-    /**
-     * Внутрішній ітератор для INPX – ліниве читання записів.
-     */
     private class InpxIterator implements Iterator<Book> {
         private final ZipInputStream zis;
         private final BufferedReader reader;
@@ -129,7 +120,6 @@ public class InpxImporter implements BookImporterPort {
             if (book != null) {
                 bookCount++;
             } else {
-                // Логуємо перші 5 невдалих рядків для діагностики
                 if (bookCount == 0 && lineCount <= 5) {
                     log.warn("⚠️ Рядок #{} не вдалося розпарсити: {}", lineCount, line);
                 }
@@ -151,21 +141,22 @@ public class InpxImporter implements BookImporterPort {
                     return null;
                 }
 
-                // ... решта парсингу без змін ...
-                // (весь код парсингу від 1. Автори до 10. Анотація)
-
                 List<Author> authors = new ArrayList<>();
                 String authorsStr = parts[0].trim();
                 if (!authorsStr.isEmpty() && !authorsStr.equals(":")) {
                     for (String name : authorsStr.split(",")) {
                         String clean = name.trim();
                         if (!clean.isEmpty() && !clean.equals(":")) {
-                            authors.add(createOrGetAuthor(clean));
+                            String[] nameParts = clean.split(" ", 3);
+                            String lastName = nameParts[0];
+                            String firstName = nameParts.length > 1 ? nameParts[1] : "";
+                            String middleName = nameParts.length > 2 ? nameParts[2] : "";
+                            authors.add(new Author(firstName, middleName, lastName));
                         }
                     }
                 }
                 if (authors.isEmpty()) {
-                    authors.add(createOrGetAuthor("Невідомий Автор"));
+                    authors.add(new Author("", "", "Невідомий Автор"));
                 }
 
                 List<Genre> genres = new ArrayList<>();
@@ -220,20 +211,6 @@ public class InpxImporter implements BookImporterPort {
                 log.warn("❌ Помилка парсингу рядка: {}", line, e);
                 return null;
             }
-        }
-
-        private Author createOrGetAuthor(String fullName) {
-            String[] parts = fullName.split(" ", 3);
-            String lastName = parts[0];
-            String firstName = parts.length > 1 ? parts[1] : "";
-            String middleName = parts.length > 2 ? parts[2] : "";
-
-            Optional<Author> existing = authorRepository.findByFullName(firstName, lastName);
-            if (existing.isPresent()) {
-                return existing.get();
-            }
-            Author newAuthor = new Author(firstName, middleName, lastName);
-            return authorRepository.save(newAuthor);
         }
     }
 }
