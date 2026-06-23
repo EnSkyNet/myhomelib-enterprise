@@ -1,0 +1,17 @@
+target/
+*.class
+
+# Runtime/generated data
+search-index/
+*.log
+*.db
+*.sqlite
+*.sqlite3
+
+# IDE/local files
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
