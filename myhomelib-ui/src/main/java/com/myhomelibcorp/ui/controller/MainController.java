@@ -1,39 +1,30 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.importer.api.ImporterApplicationService;
-import com.myhomelibcorp.application.port.out.AuthorRepository;
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.GenreService; // ← порт
 import com.myhomelibcorp.domain.model.navigation.LibraryNode;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
-import com.myhomelibcorp.ui.service.BackgroundExecutor;
-import com.myhomelibcorp.ui.service.NavigationManager;
-import com.myhomelibcorp.ui.service.SearchManager;
+import com.myhomelibcorp.ui.viewmodel.MainViewModel;
+import com.myhomelibcorp.ui.viewmodel.NavigationViewModel;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.stage.DirectoryChooser;
+import javafx.stage.FileChooser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.io.File;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class MainController {
 
-    private final ImporterApplicationService importerService;
-    private final BookQueryRepository bookQueryRepository;
-    private final AuthorRepository authorRepository;
-    private final SearchManager searchManager;
-    private final BackgroundExecutor backgroundExecutor;
+    private final MainViewModel mainViewModel;
+    private final NavigationViewModel navigationViewModel;
     private final BookDetailsPresenter bookDetailsPresenter;
-    private final BooksTableController booksTableController;
-    private final SearchController searchController;
-    private final ImportController importController;
-    private final NavigationManager navigationManager;
-    private final GenreService genreService; // ← порт
 
     @FXML private TreeView<LibraryNode> authorsTree;
     @FXML private ListView<String> seriesListView;
@@ -62,123 +53,121 @@ public class MainController {
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
 
-    private AuthorId currentAuthorId;
-
     @FXML
     public void initialize() {
-        log.info("🔵 MainController.initialize() START");
+        // ---- Прив'язка статусу та прогресу ----
+        statusLabel.textProperty().bind(mainViewModel.statusTextProperty());
+        progressBar.progressProperty().bind(mainViewModel.importProgressProperty());
+        progressBar.visibleProperty().bind(mainViewModel.importInProgressProperty());
 
-        try {
-            bookDetailsPresenter.bind(
-                    detailTitle, detailAuthors, detailSeries, detailGenres,
-                    detailLanguage, detailRate, detailProgress,
-                    detailFile, detailFolder, detailSize, detailAnnotation
-            );
-
-            booksTableController.setupBookTable(bookTableView, bookCountLabel);
-            searchController.setupSearch(searchField, searchIndicator, bookTableView, statusLabel);
-            importController.setupImport(progressBar, statusLabel, this::onImportComplete);
-
-            navigationManager.loadAuthors(
-                    authorsTree,
-                    this::onAuthorSelected,
-                    this::onAuthorsLoaded
-            );
-
-            setupLists();
-            booksTableController.refresh();
-
-            log.info("🟢 MainController.initialize() END SUCCESS");
-        } catch (Exception e) {
-            log.error("🔴 Помилка в initialize()", e);
-            throw new RuntimeException("Помилка ініціалізації MainController", e);
-        }
-    }
-
-    private void onAuthorsLoaded() {
-        log.info("📚 Автори завантажені, вибираємо першого...");
-        TreeItem<LibraryNode> root = authorsTree.getRoot();
-        if (root != null && !root.getChildren().isEmpty()) {
-            TreeItem<LibraryNode> first = root.getChildren().get(0);
-            authorsTree.getSelectionModel().select(first);
-        }
-    }
-
-    private void onAuthorSelected(AuthorId authorId) {
-        if (authorId == null) return;
-        currentAuthorId = authorId;
-        booksTableController.loadBooksByAuthor(authorId);
-        String authorName = authorRepository.findById(authorId)
-                .map(a -> a.getFullName())
-                .orElse("Невідомий автор");
-        statusLabel.setText("Книги автора: " + authorName);
-    }
-
-    private void setupLists() {
-        seriesListView.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> {
+        // ---- Прив'язка таблиці книг ----
+        bookTableView.setItems(mainViewModel.booksProperty());
+        bookTableView.getSelectionModel().selectedItemProperty().addListener(
+                (obs, old, newVal) -> {
+                    mainViewModel.selectedBookProperty().set(newVal);
+                    // Оновлюємо деталі при виборі книги
                     if (newVal != null) {
-                        booksTableController.filterBooksBySeries(newVal);
-                        statusLabel.setText("Показано серію: " + newVal);
+                        bookDetailsPresenter.showBookDetails(newVal);
+                    } else {
+                        bookDetailsPresenter.clearDetails();
                     }
                 }
         );
 
-        refreshGenreList();
-        genresListView.getSelectionModel().selectedItemProperty().addListener(
+        // ---- Прив'язка пошуку ----
+        searchField.textProperty().bindBidirectional(mainViewModel.searchQueryProperty());
+
+        // ---- Прив'язка списку жанрів ----
+        genresListView.setItems(mainViewModel.genreNamesProperty());
+
+        // ---- Інтеграція дерева авторів ----
+        authorsTree.rootProperty().bind(navigationViewModel.authorsRootProperty());
+        authorsTree.setShowRoot(false);
+
+        authorsTree.setCellFactory(tv -> new TreeCell<>() {
+            @Override
+            protected void updateItem(LibraryNode item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) {
+                    setText(null);
+                } else {
+                    setText(item.toString());
+                }
+            }
+        });
+
+        authorsTree.getSelectionModel().selectedItemProperty().addListener(
                 (obs, oldVal, newVal) -> {
-                    if (newVal != null) {
-                        booksTableController.filterBooksByGenre(newVal);
-                        statusLabel.setText("Показано жанр: " + newVal);
+                    if (newVal != null && newVal.getValue() != null) {
+                        LibraryNode node = newVal.getValue();
+                        if (node instanceof com.myhomelibcorp.domain.model.navigation.AuthorNode authorNode) {
+                            AuthorId authorId = authorNode.author().getId();
+                            navigationViewModel.selectAuthor(authorId);
+                            mainViewModel.loadBooksByAuthor(authorId);
+                        }
                     }
                 }
         );
 
-        groupsListView.getItems().addAll("Favorites", "To Read", "Мої улюблені");
-        downloadsListView.getItems().addAll("Завантаження 1", "Завантаження 2");
+        // ---- Прив'язка BookDetailsPresenter до елементів UI ----
+        bookDetailsPresenter.bind(
+                detailTitle, detailAuthors, detailSeries, detailGenres,
+                detailLanguage, detailRate, detailProgress,
+                detailFile, detailFolder, detailSize, detailAnnotation
+        );
+
+        // ---- Ініціалізація даних ----
+        mainViewModel.init();
+        navigationViewModel.loadAuthors();
+
+        // ---- Тимчасові списки ----
+        seriesListView.getItems().addAll("Серія 1", "Серія 2");
+        groupsListView.getItems().addAll("Favorites", "To Read");
+        downloadsListView.getItems().addAll("Завантаження 1");
     }
 
-    private void refreshGenreList() {
-        genresListView.getItems().setAll(genreService.getAllGenreNames());
-    }
-
-    private void onImportComplete() {
-        refreshGenreList();
-        booksTableController.refresh();
-        navigationManager.loadAuthors(authorsTree, this::onAuthorSelected, this::onAuthorsLoaded);
-    }
-
-    // ---------- ОБРОБНИКИ МЕНЮ ----------
-    @FXML public void handleOpenCollection() { /* ... */ }
-    @FXML public void handleNewCollection() { /* ... */ }
-    @FXML public void handleAddGroup() { /* ... */ }
-    @FXML public void handleEditGroup() { /* ... */ }
-    @FXML public void handleDeleteGroup() { /* ... */ }
-    @FXML public void handleEditMetadata() { /* ... */ }
-    @FXML public void handleDeleteBook() { /* ... */ }
-    @FXML public void handleShowColumns() { /* ... */ }
-    @FXML public void handleExport() { /* ... */ }
-
-    @FXML public void handleImportFb2() {
-        importController.importFb2();
-    }
-
-    @FXML public void handleImportInpx() {
-        importController.importInpx();
-    }
-
-    @FXML public void handleImportDirectory() {
-        importController.importDirectory();
+    // ---- Обробники дій ----
+    @FXML
+    public void handleRefresh() {
+        mainViewModel.refreshBooks();
+        navigationViewModel.loadAuthors();
     }
 
     @FXML
-    public void handleRefresh() {
-        log.info("🔄 Оновлення");
-        booksTableController.refresh();
-        navigationManager.loadAuthors(authorsTree, this::onAuthorSelected, this::onAuthorsLoaded);
+    public void handleImportFb2() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Виберіть FB2 файл");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd")
+        );
+        File file = fileChooser.showOpenDialog(null);
+        if (file != null) {
+            mainViewModel.importFile(file.toPath(), this::onImportComplete);
+        }
     }
 
-    @FXML public void handleExit() { Platform.exit(); }
+    @FXML
+    public void handleImportInpx() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Виберіть INPX файл");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp")
+        );
+        File file = fileChooser.showOpenDialog(null);
+        if (file != null) {
+            mainViewModel.importFile(file.toPath(), this::onImportComplete);
+        }
+    }
+
+    @FXML
+    public void handleImportDirectory() {
+        DirectoryChooser directoryChooser = new DirectoryChooser();
+        directoryChooser.setTitle("Виберіть каталог з книгами");
+        File dir = directoryChooser.showDialog(null);
+        if (dir != null && dir.isDirectory()) {
+            mainViewModel.importDirectory(dir.toPath(), this::onImportComplete);
+        }
+    }
 
     @FXML
     public void handleAbout() {
@@ -189,10 +178,26 @@ public class MainController {
         alert.showAndWait();
     }
 
-    public void shutdown() {
-        log.info("🛑 MainController завершує роботу");
-        if (backgroundExecutor != null) {
-            backgroundExecutor.shutdown();
-        }
+    @FXML
+    public void handleExit() {
+        Platform.exit();
     }
+
+    // ---- Callback після завершення імпорту ----
+    private void onImportComplete() {
+        // Оновлюємо дерево авторів, щоб показати нових авторів
+        navigationViewModel.loadAuthors();
+        // Оновлюємо список книг
+        mainViewModel.refreshBooks();
+    }
+
+    @FXML public void handleOpenCollection() {}
+    @FXML public void handleNewCollection() {}
+    @FXML public void handleAddGroup() {}
+    @FXML public void handleEditGroup() {}
+    @FXML public void handleDeleteGroup() {}
+    @FXML public void handleEditMetadata() {}
+    @FXML public void handleDeleteBook() {}
+    @FXML public void handleShowColumns() {}
+    @FXML public void handleExport() {}
 }
