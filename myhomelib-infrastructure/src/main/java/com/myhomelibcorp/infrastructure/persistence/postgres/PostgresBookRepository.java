@@ -114,4 +114,10 @@ public class PostgresBookRepository implements BookQueryRepository, BookCommandR
     public void updateProgress(BookId bookId, int progress) {
         log.warn("PostgresBookRepository.updateProgress() ще не реалізовано");
     }
+
+    @Override
+    public List<Book> findByGenre(String genreCode, int limit, int offset) {
+        log.warn("PostgresBookRepository.findByGenre() ще не реалізовано");
+        return List.of();
+    }
 }

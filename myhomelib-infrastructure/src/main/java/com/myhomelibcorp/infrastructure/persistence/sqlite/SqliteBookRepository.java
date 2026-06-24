@@ -496,4 +496,21 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         books.forEach(this::loadGenres);
         return books;
     }
+    @Override
+    public List<Book> findByGenre(String genreCode, int limit, int offset) {
+        if (genreCode == null || genreCode.isBlank()) {
+            return List.of();
+        }
+        String sql = """
+        SELECT b.* FROM books b
+        JOIN book_genres bg ON b.id = bg.book_id
+        WHERE bg.genre_code = ?
+        ORDER BY b.title
+        LIMIT ? OFFSET ?
+        """;
+        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, genreCode, limit, offset);
+        books.forEach(this::loadAuthors);
+        books.forEach(this::loadGenres);
+        return books;
+    }
 }

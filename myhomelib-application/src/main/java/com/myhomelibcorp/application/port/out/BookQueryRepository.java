@@ -16,7 +16,6 @@ public interface BookQueryRepository {
     List<Book> searchByAuthor(String authorName, int limit);
     Optional<Book> findByTitleAndAuthor(String title, String authorLastName);
     int getTotalCount();
-
-    // +++ НОВИЙ МЕТОД +++
     List<Book> findBySeries(String seriesName, int limit, int offset);
+    List<Book> findByGenre(String genreCode, int limit, int offset); // +++ НОВИЙ МЕТОД +++
 }

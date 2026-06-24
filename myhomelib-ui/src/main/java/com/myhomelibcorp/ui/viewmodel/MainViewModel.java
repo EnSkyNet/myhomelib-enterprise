@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.book.LoadBooksByAuthorUseCase;
 import com.myhomelibcorp.application.book.LoadBooksBySeriesUseCase;
 import com.myhomelibcorp.application.book.LoadBooksUseCase;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.genre.LoadBooksByGenreUseCase;
 import com.myhomelibcorp.application.genre.LoadGenresUseCase;
 import com.myhomelibcorp.application.importing.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.importing.ImportFileUseCase;
@@ -45,6 +46,7 @@ public class MainViewModel {
     private final GenreService genreService;
     private final BackgroundExecutor backgroundExecutor;
     private final IndexRebuilder indexRebuilder;
+    private final LoadBooksByGenreUseCase loadBooksByGenreUseCase;
 
     private final ObservableList<BookDto> books = FXCollections.observableArrayList();
     private final ObjectProperty<BookDto> selectedBook = new SimpleObjectProperty<>();
@@ -275,6 +277,30 @@ public class MainViewModel {
                 .thenAccept(names -> Platform.runLater(() -> genreNames.setAll(names)))
                 .exceptionally(ex -> {
                     log.error("Помилка завантаження жанрів", ex);
+                    return null;
+                });
+    }
+    public void loadBooksByGenre(String genreCode) {
+        if (genreCode == null || genreCode.isBlank()) {
+            refreshBooks();
+            return;
+        }
+        statusText.set("Завантаження книг жанру...");
+        backgroundExecutor.submit(() -> loadBooksByGenreUseCase.loadByGenre(genreCode, 10000, 0))
+                .thenAccept(bookList -> {
+                    List<BookDto> dtos = bookList.stream()
+                            .sorted(Comparator.comparing(Book::getTitle))
+                            .map(this::toDto)
+                            .collect(Collectors.toList());
+                    Platform.runLater(() -> {
+                        books.setAll(dtos);
+                        statusText.set("Книги жанру: " + dtos.size() + " книг");
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                    });
+                })
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> statusText.set("Помилка: " + ex.getMessage()));
+                    log.error("Помилка завантаження книг жанру", ex);
                     return null;
                 });
     }

@@ -72,7 +72,7 @@
                         <ListView fx:id="seriesListView" VBox.vgrow="ALWAYS"/>
                     </Tab>
                     <Tab text="Жанри">
-                        <ListView fx:id="genresListView" VBox.vgrow="ALWAYS"/>
+                        <TreeView fx:id="genresTree" VBox.vgrow="ALWAYS"/>
                     </Tab>
                     <Tab text="Групи">
                         <ListView fx:id="groupsListView" VBox.vgrow="ALWAYS"/>

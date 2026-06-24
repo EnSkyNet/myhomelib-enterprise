@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.domain.model.genre.Genre;
+import com.myhomelibcorp.domain.model.navigation.GenreNode;
 import com.myhomelibcorp.domain.model.navigation.LibraryNode;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
@@ -28,7 +30,7 @@ public class MainController {
 
     @FXML private TreeView<LibraryNode> authorsTree;
     @FXML private ListView<String> seriesListView;
-    @FXML private ListView<String> genresListView;
+    @FXML private TreeView<LibraryNode> genresTree;  // <-- ТУТ ДЕРЕВО, А НЕ LISTVIEW
     @FXML private ListView<String> groupsListView;
     @FXML private ListView<String> downloadsListView;
 
@@ -59,7 +61,7 @@ public class MainController {
 
     @FXML
     public void initialize() {
-        log.info("🔵 MainController.initialize() started");
+        log.info("MainController.initialize() started");
 
         // Статус та прогрес
         statusLabel.textProperty().bind(mainViewModel.statusTextProperty());
@@ -82,9 +84,6 @@ public class MainController {
 
         // Пошук
         searchField.textProperty().bindBidirectional(mainViewModel.searchQueryProperty());
-
-        // Жанри
-        genresListView.setItems(mainViewModel.genreNamesProperty());
 
         // === АВТОРИ ===
         authorsTree.rootProperty().bind(navigationViewModel.authorsRootProperty());
@@ -120,23 +119,39 @@ public class MainController {
             }
         });
 
-        // === СЕРІЇ – ПРИВ'ЯЗКА ТА ОЧИЩЕННЯ ===
-        log.info("🔵 Налаштування списку серій...");
-
-        // Очищаємо список (на випадок, якщо раніше були заглушки)
-        seriesListView.getItems().clear();
-        log.info("🔵 seriesListView очищено. Розмір: {}", seriesListView.getItems().size());
-
-        // Прив'язуємо до даних
+        // === СЕРІЇ ===
         seriesListView.setItems(navigationViewModel.seriesNamesProperty());
-        log.info("🔵 seriesListView прив'язано до seriesNamesProperty. Розмір даних: {}", navigationViewModel.seriesNamesProperty().size());
-
-        // Слухач вибору
         seriesListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, oldVal, newVal) -> {
                     if (newVal != null && !newVal.isBlank()) {
-                        log.info("🔵 Вибрано серію: {}", newVal);
+                        log.info("Вибрано серію: {}", newVal);
                         mainViewModel.loadBooksBySeries(newVal);
+                    }
+                }
+        );
+
+        // === ЖАНРИ (ДЕРЕВО) ===
+        genresTree.rootProperty().bind(navigationViewModel.genresRootProperty());
+        genresTree.setShowRoot(false);
+        genresTree.setCellFactory(tv -> new TreeCell<>() {
+            @Override
+            protected void updateItem(LibraryNode item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) setText(null);
+                else setText(item.toString());
+            }
+        });
+
+        genresTree.getSelectionModel().selectedItemProperty().addListener(
+                (obs, oldVal, newVal) -> {
+                    if (newVal != null && newVal.getValue() != null) {
+                        LibraryNode node = newVal.getValue();
+                        if (node instanceof GenreNode genreNode) {
+                            Genre genre = genreNode.genre();
+                            String genreCode = genre.getId().asString();
+                            log.info("Вибрано жанр: {} ({})", genre.getName(), genreCode);
+                            mainViewModel.loadBooksByGenre(genreCode);
+                        }
                     }
                 }
         );
@@ -157,21 +172,7 @@ public class MainController {
         groupsListView.getItems().addAll("Favorites", "To Read");
         downloadsListView.getItems().addAll("Завантаження 1");
 
-        // Додаткова перевірка: через 2 секунди вивести стан списку (для діагностики)
-        new Thread(() -> {
-            try { Thread.sleep(2000); } catch (InterruptedException ignored) {}
-            Platform.runLater(() -> {
-                log.info("🔵 Через 2 секунди: seriesListView розмір = {}", seriesListView.getItems().size());
-                log.info("🔵 Через 2 секунди: seriesNamesProperty розмір = {}", navigationViewModel.seriesNamesProperty().size());
-                if (!seriesListView.getItems().isEmpty()) {
-                    log.info("🔵 Елементи в списку: {}", seriesListView.getItems());
-                } else {
-                    log.warn("⚠️ Список серій порожній!");
-                }
-            });
-        }).start();
-
-        log.info("🔵 MainController.initialize() finished");
+        log.info("MainController.initialize() finished");
     }
 
     private void setupBookTable() {
@@ -228,7 +229,6 @@ public class MainController {
     }
 
     @FXML public void handleRefresh() {
-        log.info("🔄 handleRefresh() called");
         navigationViewModel.refreshAll();
     }
 
@@ -290,7 +290,6 @@ public class MainController {
     }
 
     private void onImportComplete() {
-        log.info("✅ Імпорт завершено, оновлюємо навігацію");
         navigationViewModel.refreshAll();
     }
 
