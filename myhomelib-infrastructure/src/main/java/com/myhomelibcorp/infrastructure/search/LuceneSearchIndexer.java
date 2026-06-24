@@ -3,9 +3,14 @@ package com.myhomelibcorp.infrastructure.search;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
-import org.apache.lucene.analysis.standard.StandardAnalyzer;
-import org.apache.lucene.document.*;
-import org.apache.lucene.index.*;
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.document.Document;
+import org.apache.lucene.document.Field;
+import org.apache.lucene.document.StringField;
+import org.apache.lucene.document.TextField;
+import org.apache.lucene.index.IndexWriter;
+import org.apache.lucene.index.IndexWriterConfig;
+import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -17,20 +22,21 @@ import java.io.IOException;
 public class LuceneSearchIndexer {
 
     private final Directory directory;
-
+    private final Analyzer analyzer;
     private IndexWriter indexWriter;
 
     @Autowired
-    public LuceneSearchIndexer(Directory directory) {
+    public LuceneSearchIndexer(Directory directory, Analyzer analyzer) {
         this.directory = directory;
+        this.analyzer = analyzer;
     }
 
     @PostConstruct
     public void init() throws IOException {
-        IndexWriterConfig config = new IndexWriterConfig(new StandardAnalyzer());
+        IndexWriterConfig config = new IndexWriterConfig(analyzer);
         config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
         indexWriter = new IndexWriter(directory, config);
-        log.info("Lucene індексатор ініціалізовано");
+        log.info("Lucene індексатор ініціалізовано з NGramAnalyzer");
     }
 
     public void indexDocument(SearchDocument doc) {
@@ -69,6 +75,15 @@ public class LuceneSearchIndexer {
             log.info("Індекс очищено");
         } catch (IOException e) {
             log.error("Помилка очищення індексу", e);
+        }
+    }
+
+    public int getDocumentCount() {
+        try {
+            return indexWriter.getDocStats().numDocs;
+        } catch (Exception e) {
+            log.error("Помилка отримання кількості документів", e);
+            return 0;
         }
     }
 

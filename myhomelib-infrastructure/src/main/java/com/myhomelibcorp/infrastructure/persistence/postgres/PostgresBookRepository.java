@@ -9,7 +9,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
-import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
@@ -37,44 +36,49 @@ public class PostgresBookRepository implements BookQueryRepository, BookCommandR
 
     @Override
     public List<Book> findAll(int limit, int offset) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.findAll() ще не реалізовано");
         return List.of();
     }
 
     @Override
     public Optional<Book> findById(BookId id) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.findById() ще не реалізовано");
         return Optional.empty();
     }
 
     @Override
     public List<Book> findByIds(List<BookId> ids) {
-        // Заглушка – поки не реалізовано
-        log.warn("findByIds() not yet implemented for PostgreSQL");
+        log.warn("PostgresBookRepository.findByIds() ще не реалізовано");
         return List.of();
     }
 
     @Override
     public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.findByAuthorId() ще не реалізовано");
         return List.of();
     }
 
     @Override
     public List<Book> search(String query, int limit) {
-        // TODO: реалізувати (можливо через PostgreSQL full-text search)
+        log.warn("PostgresBookRepository.search() ще не реалізовано");
+        return List.of();
+    }
+
+    @Override
+    public List<Book> searchByAuthor(String authorName, int limit) {
+        log.warn("PostgresBookRepository.searchByAuthor() ще не реалізовано");
         return List.of();
     }
 
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.findByTitleAndAuthor() ще не реалізовано");
         return Optional.empty();
     }
 
     @Override
     public int getTotalCount() {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.getTotalCount() ще не реалізовано");
         return 0;
     }
 
@@ -83,35 +87,28 @@ public class PostgresBookRepository implements BookQueryRepository, BookCommandR
     @Override
     @Transactional
     public Book save(Book book) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.save() ще не реалізовано");
         return book;
     }
 
     @Override
     @Transactional
     public void saveBatch(List<Book> books) {
-        // Заглушка – поки не реалізовано
-        if (books == null || books.isEmpty()) {
-            return;
-        }
-        log.warn("saveBatch() not yet implemented for PostgreSQL, saving one by one");
-        for (Book book : books) {
-            save(book);
-        }
+        log.warn("PostgresBookRepository.saveBatch() ще не реалізовано");
     }
 
     @Override
     public void deleteById(BookId id) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.deleteById() ще не реалізовано");
     }
 
     @Override
     public void updateRate(BookId bookId, int rate) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.updateRate() ще не реалізовано");
     }
 
     @Override
     public void updateProgress(BookId bookId, int progress) {
-        // TODO: реалізувати
+        log.warn("PostgresBookRepository.updateProgress() ще не реалізовано");
     }
 }

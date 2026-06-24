@@ -179,6 +179,19 @@ public class MainController {
         navigationViewModel.loadAuthors();
     }
 
+    @FXML
+    public void handleRebuildIndex() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Перебудова індексу");
+        confirm.setHeaderText("Це може зайняти деякий час");
+        confirm.setContentText("Перебудувати Lucene індекс для пошуку?");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                mainViewModel.rebuildIndex();
+            }
+        });
+    }
+
     @FXML public void handleOpenCollection() {}
     @FXML public void handleNewCollection() {}
     @FXML public void handleAddGroup() {}

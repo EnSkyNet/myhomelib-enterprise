@@ -23,10 +23,9 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Map;
-import java.util.Optional;
+import java.util.*;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 @Repository
 @Primary
@@ -278,11 +277,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         books.forEach(this::loadGenres);
         return books;
     }
-    public void debugBookAuthors() {
-        String sql = "SELECT * FROM book_authors LIMIT 10";
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
-        log.info("🔍 book_authors (перші 10): {}", rows);
-    }
 
     @Override
     public List<Book> search(String query, int limit) {
@@ -300,6 +294,46 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         books.forEach(this::loadGenres);
         return books;
     }
+
+    @Override
+    public List<Book> searchByAuthor(String authorName, int limit) {
+        if (authorName == null || authorName.isBlank()) {
+            return List.of();
+        }
+
+        String pattern = authorName.trim().toLowerCase(Locale.ROOT);
+        log.debug("Пошук за автором (SQL fallback): pattern='{}'", pattern);
+
+        String sql = "SELECT DISTINCT b.* FROM books b";
+        List<Book> allBooks = jdbcTemplate.query(sql, bookRowMapper);
+
+        allBooks.forEach(this::loadAuthors);
+        allBooks.forEach(this::loadGenres);
+
+        return allBooks.stream()
+                .filter(book -> book.getAuthors().stream()
+                        .anyMatch(author -> {
+                            String fullName = Stream.of(
+                                            author.getLastName(),
+                                            author.getFirstName(),
+                                            author.getMiddleName())
+                                    .filter(Objects::nonNull)
+                                    .map(String::trim)
+                                    .filter(s -> !s.isEmpty())
+                                    .collect(Collectors.joining(" "))
+                                    .toLowerCase(Locale.ROOT);
+                            return fullName.contains(pattern);
+                        }))
+                .limit(limit)
+                .collect(Collectors.toList());
+    }
+
+    private String escapeLike(String value) {
+        return value.replace("\\", "\\\\")
+                .replace("%", "\\%")
+                .replace("_", "\\_");
+    }
+
 
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
@@ -404,7 +438,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
 
         jdbcTemplate.batchUpdate(sql, batchArgs);
 
-        // Автори та жанри поки що зберігаються окремо
         for (Book book : books) {
             if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
                 saveAuthors(book.getId(), book.getAuthors());

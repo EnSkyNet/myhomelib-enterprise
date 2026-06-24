@@ -12,7 +12,6 @@ import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.store.Directory;
 import org.springframework.stereotype.Service;
 
-import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -33,8 +32,8 @@ public class LuceneSearchQueryService implements SearchQueryService {
 
         try (IndexReader reader = DirectoryReader.open(directory)) {
             IndexSearcher searcher = new IndexSearcher(reader);
-            String escapedQuery = QueryParser.escape(queryText.trim());
-            Query query = queryParser.parse(escapedQuery + "*");
+            String escapedQuery = QueryParser.escape(queryText.trim().toLowerCase());
+            Query query = queryParser.parse(escapedQuery);
             ScoreDoc[] hits = searcher.search(query, limit).scoreDocs;
             for (ScoreDoc hit : hits) {
                 org.apache.lucene.document.Document doc = searcher.doc(hit.doc);
@@ -43,7 +42,7 @@ public class LuceneSearchQueryService implements SearchQueryService {
                     ids.add(id);
                 }
             }
-            log.debug("Знайдено {} результатів за запитом: {}", ids.size(), queryText);
+            log.debug("Знайдено {} ID для запиту '{}'", ids.size(), queryText);
         } catch (Exception e) {
             log.error("Помилка пошуку: {}", queryText, e);
         }

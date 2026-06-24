@@ -7,14 +7,17 @@ import com.myhomelibcorp.application.genre.LoadGenresUseCase;
 import com.myhomelibcorp.application.importing.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.importing.ImportFileUseCase;
 import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.application.port.out.IndexRebuilder; // <-- НОВИЙ ІМПОРТ
 import com.myhomelibcorp.application.search.SearchBooksUseCase;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
+import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -39,6 +42,7 @@ public class MainViewModel {
     private final LoadGenresUseCase loadGenresUseCase;
     private final GenreService genreService;
     private final BackgroundExecutor backgroundExecutor;
+    private final IndexRebuilder indexRebuilder; // <-- НОВА ЗАЛЕЖНІСТЬ
 
     private final ObservableList<BookDto> books = FXCollections.observableArrayList();
     private final ObjectProperty<BookDto> selectedBook = new SimpleObjectProperty<>();
@@ -49,6 +53,7 @@ public class MainViewModel {
     private final ObservableList<String> genreNames = FXCollections.observableArrayList();
 
     private AuthorId currentAuthorId;
+    private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
 
     public ObservableList<BookDto> booksProperty() { return books; }
     public ObjectProperty<BookDto> selectedBookProperty() { return selectedBook; }
@@ -60,7 +65,7 @@ public class MainViewModel {
 
     public void initWithoutBooks() {
         loadGenres();
-        bindSearch();
+        bindSearchWithDebounce();
     }
 
     public void refreshBooks() {
@@ -86,9 +91,23 @@ public class MainViewModel {
     }
 
     public void searchBooks(String query) {
-        statusText.set("Пошук...");
-        backgroundExecutor.submit(() -> searchBooksUseCase.search(query, 100))
+        log.debug("Пошук за запитом: '{}'", query);
+        if (query == null || query.isBlank()) {
+            if (currentAuthorId != null) {
+                loadBooksByAuthor(currentAuthorId);
+            } else {
+                refreshBooks();
+            }
+            return;
+        }
+
+        statusText.set("Пошук: " + query);
+        backgroundExecutor.submit(() -> {
+                    log.debug("Виклик searchBooksUseCase.search('{}', 100)", query);
+                    return searchBooksUseCase.search(query, 100);
+                })
                 .thenAccept(bookList -> {
+                    log.debug("Отримано {} результатів", bookList.size());
                     List<BookDto> dtos = bookList.stream().map(this::toDto).collect(Collectors.toList());
                     Platform.runLater(() -> {
                         books.setAll(dtos);
@@ -173,6 +192,19 @@ public class MainViewModel {
                 });
     }
 
+    public void rebuildIndex() {
+        statusText.set("Перебудова індексу...");
+        backgroundExecutor.submit(() -> {
+            indexRebuilder.rebuildIndex();
+            Platform.runLater(() -> statusText.set("Індекс перебудовано"));
+            return null;
+        }).exceptionally(ex -> {
+            Platform.runLater(() -> statusText.set("Помилка перебудови індексу: " + ex.getMessage()));
+            log.error("Помилка перебудови індексу", ex);
+            return null;
+        });
+    }
+
     private BookDto toDto(Book book) {
         String genresText = book.getGenres().stream()
                 .map(genre -> genreService.getGenreName(genre.getId().asString()))
@@ -195,17 +227,14 @@ public class MainViewModel {
                 .build();
     }
 
-    private void bindSearch() {
+    private void bindSearchWithDebounce() {
         searchQuery.addListener((obs, old, query) -> {
-            if (query != null && !query.isBlank()) {
+            searchDebounce.stop();
+            searchDebounce.setOnFinished(e -> {
+                log.debug("Запуск пошуку після дебаунсу: '{}'", query);
                 searchBooks(query);
-            } else {
-                if (currentAuthorId != null) {
-                    loadBooksByAuthor(currentAuthorId);
-                } else {
-                    refreshBooks();
-                }
-            }
+            });
+            searchDebounce.playFromStart();
         });
     }
 

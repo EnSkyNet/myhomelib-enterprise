@@ -36,6 +36,7 @@
                     <MenuItem text="Імпорт INPX..." onAction="#handleImportInpx"/>
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
                     <MenuItem text="Експорт..." onAction="#handleExport" disable="true"/>
+                    <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
                 </Menu>
                 <Menu text="Допомога">
                     <MenuItem text="Про програму" onAction="#handleAbout"/>
