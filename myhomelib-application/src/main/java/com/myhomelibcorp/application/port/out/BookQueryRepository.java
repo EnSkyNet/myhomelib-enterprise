@@ -13,7 +13,10 @@ public interface BookQueryRepository {
     List<Book> findByIds(List<BookId> ids);
     List<Book> findByAuthorId(AuthorId authorId, int limit, int offset);
     List<Book> search(String query, int limit);
-    List<Book> searchByAuthor(String authorName, int limit); // НОВИЙ МЕТОД
+    List<Book> searchByAuthor(String authorName, int limit);
     Optional<Book> findByTitleAndAuthor(String title, String authorLastName);
     int getTotalCount();
+
+    // +++ НОВИЙ МЕТОД +++
+    List<Book> findBySeries(String seriesName, int limit, int offset);
 }

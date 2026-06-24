@@ -62,6 +62,21 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             }
         }
 
+        // +++ НОВЕ: createdAt +++
+        LocalDateTime createdAt = null;
+        String createdStr = rs.getString("created_at");
+        if (createdStr != null && !createdStr.isEmpty()) {
+            try {
+                createdAt = LocalDateTime.parse(createdStr, DATE_FORMATTER);
+            } catch (Exception e) {
+                try {
+                    createdAt = LocalDateTime.parse(createdStr);
+                } catch (Exception ex) {
+                    log.warn("Не вдалося розпарсити created_at: {}", createdStr, ex);
+                }
+            }
+        }
+
         return Book.builder()
                 .id(id)
                 .title(rs.getString("title"))
@@ -79,6 +94,9 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
                 .updateDate(updateDate)
                 .deleted(rs.getInt("deleted") == 1)
                 .local(rs.getInt("local") == 1)
+                // +++ НОВЕ +++
+                .review(rs.getString("review"))
+                .createdAt(createdAt)
                 .build();
     };
 
@@ -89,8 +107,9 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             INSERT INTO books (
                 id, title, series, sequence_number, file_name, folder,
                 archive_entry, language, file_size, keywords, annotation,
-                rate, progress, update_date, isbn, deleted, local
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rate, progress, update_date, isbn, deleted, local,
+                review, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 series = excluded.series,
@@ -107,7 +126,9 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
                 update_date = excluded.update_date,
                 isbn = excluded.isbn,
                 deleted = excluded.deleted,
-                local = excluded.local
+                local = excluded.local,
+                review = excluded.review,
+                created_at = excluded.created_at
             """;
 
         jdbcTemplate.update(connection -> {
@@ -133,6 +154,12 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             ps.setString(idx++, book.getIsbn() != null ? book.getIsbn().toString() : null);
             ps.setInt(idx++, book.isDeleted() ? 1 : 0);
             ps.setInt(idx++, book.isLocal() ? 1 : 0);
+            // +++ НОВЕ +++
+            ps.setString(idx++, book.getReview() != null ? book.getReview() : "");
+            String formattedCreated = book.getCreatedAt() != null
+                    ? book.getCreatedAt().format(DATE_FORMATTER)
+                    : LocalDateTime.now().format(DATE_FORMATTER);
+            ps.setString(idx++, formattedCreated);
             return ps;
         });
 
@@ -388,8 +415,9 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         INSERT INTO books (
             id, title, series, sequence_number, file_name, folder,
             archive_entry, language, file_size, keywords, annotation,
-            rate, progress, update_date, isbn, deleted, local
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            rate, progress, update_date, isbn, deleted, local,
+            review, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
             title = excluded.title,
             series = excluded.series,
@@ -406,12 +434,14 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             update_date = excluded.update_date,
             isbn = excluded.isbn,
             deleted = excluded.deleted,
-            local = excluded.local
+            local = excluded.local,
+            review = excluded.review,
+            created_at = excluded.created_at
         """;
 
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[17];
+            Object[] args = new Object[19]; // було 17, тепер 19
             int idx = 0;
             args[idx++] = book.getId().asString();
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
@@ -433,6 +463,12 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             args[idx++] = book.getIsbn() != null ? book.getIsbn().toString() : null;
             args[idx++] = book.isDeleted() ? 1 : 0;
             args[idx++] = book.isLocal() ? 1 : 0;
+            // +++ НОВЕ +++
+            args[idx++] = book.getReview() != null ? book.getReview() : "";
+            String formattedCreated = book.getCreatedAt() != null
+                    ? book.getCreatedAt().format(DATE_FORMATTER)
+                    : LocalDateTime.now().format(DATE_FORMATTER);
+            args[idx++] = formattedCreated;
             batchArgs.add(args);
         }
 
@@ -448,5 +484,16 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         }
 
         log.debug("Збережено батч: {} книг", books.size());
+    }
+    @Override
+    public List<Book> findBySeries(String seriesName, int limit, int offset) {
+        if (seriesName == null || seriesName.isBlank()) {
+            return List.of();
+        }
+        String sql = "SELECT * FROM books WHERE series = ? ORDER BY sequence_number LIMIT ? OFFSET ?";
+        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, seriesName, limit, offset);
+        books.forEach(this::loadAuthors);
+        books.forEach(this::loadGenres);
+        return books;
     }
 }

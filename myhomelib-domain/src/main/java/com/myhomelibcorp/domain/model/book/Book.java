@@ -33,12 +33,18 @@ public class Book {
     private boolean deleted;
     private boolean local;
 
+    // +++ НОВЕ +++
+    private String review;
+    private LocalDateTime createdAt;
+
     private Book(BookId id) {
         this.id = id;
         this.authors = new ArrayList<>();
         this.genres = new ArrayList<>();
         this.updateDate = LocalDateTime.now();
         this.language = LanguageCode.of("uk");
+        // +++ НОВЕ +++
+        this.createdAt = LocalDateTime.now();
     }
 
     public Book(String title) {
@@ -70,11 +76,15 @@ public class Book {
         public Builder() {
             this.book = new Book(BookId.generate());
             this.book.language = LanguageCode.of("uk");
+            // +++ НОВЕ +++
+            this.book.createdAt = LocalDateTime.now();
         }
 
         public Builder id(BookId id) {
             this.book = new Book(id);
             this.book.language = LanguageCode.of("uk");
+            // +++ НОВЕ +++
+            this.book.createdAt = LocalDateTime.now();
             return this;
         }
 
@@ -172,6 +182,18 @@ public class Book {
 
         public Builder local(boolean local) {
             book.local = local;
+            return this;
+        }
+
+        // +++ НОВЕ +++
+        public Builder review(String review) {
+            book.review = review;
+            return this;
+        }
+
+        // +++ НОВЕ +++
+        public Builder createdAt(LocalDateTime createdAt) {
+            book.createdAt = createdAt;
             return this;
         }
 

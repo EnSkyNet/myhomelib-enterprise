@@ -1,13 +1,14 @@
 package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.book.LoadBooksByAuthorUseCase;
+import com.myhomelibcorp.application.book.LoadBooksBySeriesUseCase;
 import com.myhomelibcorp.application.book.LoadBooksUseCase;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.genre.LoadGenresUseCase;
 import com.myhomelibcorp.application.importing.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.importing.ImportFileUseCase;
 import com.myhomelibcorp.application.port.out.GenreService;
-import com.myhomelibcorp.application.port.out.IndexRebuilder; // <-- НОВИЙ ІМПОРТ
+import com.myhomelibcorp.application.port.out.IndexRebuilder;
 import com.myhomelibcorp.application.search.SearchBooksUseCase;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -36,13 +37,14 @@ public class MainViewModel {
 
     private final LoadBooksUseCase loadBooksUseCase;
     private final LoadBooksByAuthorUseCase loadBooksByAuthorUseCase;
+    private final LoadBooksBySeriesUseCase loadBooksBySeriesUseCase;
     private final SearchBooksUseCase searchBooksUseCase;
     private final ImportFileUseCase importFileUseCase;
     private final ImportDirectoryUseCase importDirectoryUseCase;
     private final LoadGenresUseCase loadGenresUseCase;
     private final GenreService genreService;
     private final BackgroundExecutor backgroundExecutor;
-    private final IndexRebuilder indexRebuilder; // <-- НОВА ЗАЛЕЖНІСТЬ
+    private final IndexRebuilder indexRebuilder;
 
     private final ObservableList<BookDto> books = FXCollections.observableArrayList();
     private final ObjectProperty<BookDto> selectedBook = new SimpleObjectProperty<>();
@@ -192,6 +194,32 @@ public class MainViewModel {
                 });
     }
 
+    // +++ НОВИЙ МЕТОД +++
+    public void loadBooksBySeries(String seriesName) {
+        if (seriesName == null || seriesName.isBlank()) {
+            refreshBooks();
+            return;
+        }
+        statusText.set("Завантаження книг серії: " + seriesName);
+        backgroundExecutor.submit(() -> loadBooksBySeriesUseCase.loadBySeries(seriesName, 10000, 0))
+                .thenAccept(bookList -> {
+                    List<BookDto> dtos = bookList.stream()
+                            .sorted(Comparator.comparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)))
+                            .map(this::toDto)
+                            .collect(Collectors.toList());
+                    Platform.runLater(() -> {
+                        books.setAll(dtos);
+                        statusText.set("Книги серії: " + dtos.size() + " книг");
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                    });
+                })
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> statusText.set("Помилка: " + ex.getMessage()));
+                    log.error("Помилка завантаження книг серії", ex);
+                    return null;
+                });
+    }
+
     public void rebuildIndex() {
         statusText.set("Перебудова індексу...");
         backgroundExecutor.submit(() -> {
@@ -224,6 +252,10 @@ public class MainViewModel {
                 .folder(book.getFolder())
                 .updateDate(book.getUpdateDate())
                 .annotation(book.getAnnotation())
+                .deleted(book.isDeleted())
+                .local(book.isLocal())
+                .review(book.getReview())
+                .createdAt(book.getCreatedAt())
                 .build();
     }
 

@@ -17,6 +17,8 @@
           <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
           <options>
             <option>-Dfile.encoding=UTF-8</option>
+            <option>--add-modules</option>
+            <option>javafx.controls,javafx.fxml</option>
           </options>
         </configuration>
       </plugin>
@@ -25,7 +27,7 @@
         <artifactId>spring-boot-maven-plugin</artifactId>
         <configuration>
           <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
-          <jvmArguments>--add-modules javafx.controls,javafx.fxml</jvmArguments>
+          <jvmArguments>--add-modules=javafx.controls,javafx.fxml</jvmArguments>
         </configuration>
       </plugin>
       <plugin>

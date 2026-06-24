@@ -15,6 +15,7 @@ public class DetailsController {
 
     private final BookDetailsPresenter bookDetailsPresenter;
 
+    // Базові поля
     private Label detailTitle;
     private Label detailAuthors;
     private Label detailSeries;
@@ -27,11 +28,21 @@ public class DetailsController {
     private Label detailSize;
     private TextArea detailAnnotation;
 
+    // Нові поля (додані)
+    private Label detailReview;
+    private Label detailCreated;
+    private Label detailKeywords;
+
+    /**
+     * Налаштовує всі елементи керування для деталей книги.
+     * Викликається з FXML-контролера після завантаження view.
+     */
     public void setupDetails(
             Label title, Label authors, Label series, Label genres,
             Label language, Label rate, Label progress,
-            Label file, Label folder, Label size, TextArea annotation
-    ) {
+            Label file, Label folder, Label size, TextArea annotation,
+            Label review, Label created, Label keywords) {
+
         this.detailTitle = title;
         this.detailAuthors = authors;
         this.detailSeries = series;
@@ -43,11 +54,16 @@ public class DetailsController {
         this.detailFolder = folder;
         this.detailSize = size;
         this.detailAnnotation = annotation;
+        this.detailReview = review;
+        this.detailCreated = created;
+        this.detailKeywords = keywords;
 
+        // Прив'язуємо всі елементи до презентера (14 аргументів)
         bookDetailsPresenter.bind(
                 title, authors, series, genres,
                 language, rate, progress,
-                file, folder, size, annotation
+                file, folder, size, annotation,
+                review, created, keywords
         );
     }
 

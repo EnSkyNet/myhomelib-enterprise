@@ -34,6 +34,10 @@ public class BookDto {
     private boolean deleted;
     private boolean local;
 
+    // +++ НОВЕ +++
+    private String review;
+    private LocalDateTime createdAt;
+
     // Спеціальний конструктор для зручності (використовується в старому коді)
     public BookDto(String title, String authorsText, String series, String genresText, int rate, int progress) {
         this.title = title;
@@ -60,5 +64,22 @@ public class BookDto {
     public String getUpdateDateFormatted() {
         if (updateDate == null) return "";
         return updateDate.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
+    }
+
+    // +++ НОВЕ +++
+    public String getLocalStatus() {
+        if (deleted) return "Видалена";
+        return local ? "Локальна" : "Онлайн";
+    }
+
+    // +++ НОВЕ +++
+    public String getProgressFormatted() {
+        return progress + "%";
+    }
+
+    // +++ НОВЕ +++
+    public String getCreatedAtFormatted() {
+        if (createdAt == null) return "";
+        return createdAt.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
     }
 }

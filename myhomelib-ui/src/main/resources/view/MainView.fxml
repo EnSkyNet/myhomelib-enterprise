@@ -92,53 +92,6 @@
                                 <Label fx:id="bookCountLabel" text="0"/>
                             </HBox>
                             <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
-                                <columns>
-                                    <TableColumn text="Назва" prefWidth="200">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="title"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Автор" prefWidth="150">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="authorsText"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Серія" prefWidth="100">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="series"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Жанри" prefWidth="100">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="genresText"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="№" prefWidth="40">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="sequenceNumber"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Мова" prefWidth="60">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="language"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Розмір" prefWidth="80">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="fileSizeFormatted"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Оцінка" prefWidth="80">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="rateStars"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                    <TableColumn text="Додано" prefWidth="100">
-                                        <cellValueFactory>
-                                            <javafx.scene.control.cell.PropertyValueFactory property="updateDateFormatted"/>
-                                        </cellValueFactory>
-                                    </TableColumn>
-                                </columns>
                                 <fixedCellSize>28</fixedCellSize>
                             </TableView>
                         </VBox>
@@ -157,6 +110,9 @@
                                     <Label fx:id="detailFile" text="Файл: "/>
                                     <Label fx:id="detailFolder" text="Папка: "/>
                                     <Label fx:id="detailSize" text="Розмір: "/>
+                                    <Label fx:id="detailReview" text="Рецензія:" wrapText="true"/>
+                                    <Label fx:id="detailCreated" text="Додано:"/>
+                                    <Label fx:id="detailKeywords" text="Ключові слова:" wrapText="true"/>
                                 </VBox>
                             </HBox>
                             <Separator/>

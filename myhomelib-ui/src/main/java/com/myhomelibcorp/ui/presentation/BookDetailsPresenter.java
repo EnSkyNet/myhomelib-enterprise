@@ -20,9 +20,16 @@ public class BookDetailsPresenter {
     private Label detailSize;
     private TextArea detailAnnotation;
 
+    // +++ НОВІ ПОЛЯ +++
+    private Label detailReview;
+    private Label detailCreated;
+    private Label detailKeywords;
+
+    // +++ ОНОВЛЕНИЙ МЕТОД BIND +++
     public void bind(Label title, Label authors, Label series, Label genres,
                      Label language, Label rate, Label progress,
-                     Label file, Label folder, Label size, TextArea annotation) {
+                     Label file, Label folder, Label size, TextArea annotation,
+                     Label review, Label created, Label keywords) {
         this.detailTitle = title;
         this.detailAuthors = authors;
         this.detailSeries = series;
@@ -34,6 +41,11 @@ public class BookDetailsPresenter {
         this.detailFolder = folder;
         this.detailSize = size;
         this.detailAnnotation = annotation;
+
+        // +++ НОВІ +++
+        this.detailReview = review;
+        this.detailCreated = created;
+        this.detailKeywords = keywords;
     }
 
     public void showBookDetails(BookDto book) {
@@ -53,6 +65,11 @@ public class BookDetailsPresenter {
         detailFolder.setText("Папка: " + (book.getFolder() != null ? book.getFolder() : ""));
         detailSize.setText("Розмір: " + book.getFileSizeFormatted());
         detailAnnotation.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
+
+        // +++ НОВІ ПОЛЯ +++
+        detailReview.setText("Рецензія: " + (book.getReview() != null ? book.getReview() : ""));
+        detailCreated.setText("Додано: " + book.getCreatedAtFormatted());
+        detailKeywords.setText("Ключові слова: " + (book.getKeywords() != null ? book.getKeywords() : ""));
     }
 
     public void clearDetails() {
@@ -67,5 +84,10 @@ public class BookDetailsPresenter {
         detailFolder.setText("Папка: ");
         detailSize.setText("Розмір: ");
         detailAnnotation.setText("");
+
+        // +++ НОВІ +++
+        detailReview.setText("Рецензія:");
+        detailCreated.setText("Додано:");
+        detailKeywords.setText("Ключові слова:");
     }
 }

@@ -63,6 +63,7 @@
 
     <build>
         <plugins>
+            <!-- Плагін для запуску JavaFX -->
             <plugin>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx-maven-plugin</artifactId>
@@ -71,19 +72,26 @@
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
                     <options>
                         <option>-Dfile.encoding=UTF-8</option>
+                        <option>--add-modules</option>
+                        <option>javafx.controls,javafx.fxml</option>
                     </options>
                 </configuration>
             </plugin>
+
+            <!-- Плагін Spring Boot для збірки JAR -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
+                    <!-- Додаємо JavaFX модулі при запуску через spring-boot:run -->
                     <jvmArguments>
-                        --add-modules javafx.controls,javafx.fxml
+                        --add-modules=javafx.controls,javafx.fxml
                     </jvmArguments>
                 </configuration>
             </plugin>
+
+            <!-- Shade plugin для створення fat JAR -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-shade-plugin</artifactId>

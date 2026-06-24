@@ -16,10 +16,6 @@ import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 
-/**
- * Реалізація BookQueryRepository та BookCommandRepository для PostgreSQL.
- * Наразі використовується як заглушка для майбутньої міграції.
- */
 //@Repository
 @RequiredArgsConstructor
 @Slf4j
@@ -80,6 +76,13 @@ public class PostgresBookRepository implements BookQueryRepository, BookCommandR
     public int getTotalCount() {
         log.warn("PostgresBookRepository.getTotalCount() ще не реалізовано");
         return 0;
+    }
+
+    // +++ НОВИЙ МЕТОД +++
+    @Override
+    public List<Book> findBySeries(String seriesName, int limit, int offset) {
+        log.warn("PostgresBookRepository.findBySeries() ще не реалізовано");
+        return List.of();
     }
 
     // === BookCommandRepository ===
