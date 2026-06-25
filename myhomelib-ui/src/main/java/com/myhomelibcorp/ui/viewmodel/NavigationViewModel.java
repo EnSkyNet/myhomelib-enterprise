@@ -2,9 +2,11 @@ package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.application.port.out.GroupService;
 import com.myhomelibcorp.application.port.out.SeriesService;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.navigation.AuthorNode;
 import com.myhomelibcorp.domain.model.navigation.GenreNode;
 import com.myhomelibcorp.domain.model.navigation.LibraryNode;
@@ -20,8 +22,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -31,28 +35,20 @@ public class NavigationViewModel {
     private final AuthorRepository authorRepository;
     private final SeriesService seriesService;
     private final GenreService genreService;
+    private final GroupService groupService;
     private final BackgroundExecutor backgroundExecutor;
 
     private final ObjectProperty<TreeItem<LibraryNode>> authorsRoot = new SimpleObjectProperty<>();
     private final ObjectProperty<AuthorId> selectedAuthorId = new SimpleObjectProperty<>();
     private final ObservableList<String> seriesNames = FXCollections.observableArrayList();
     private final ObjectProperty<TreeItem<LibraryNode>> genresRoot = new SimpleObjectProperty<>();
+    private final ObservableList<Group> groups = FXCollections.observableArrayList();
 
-    public ObjectProperty<TreeItem<LibraryNode>> authorsRootProperty() {
-        return authorsRoot;
-    }
-
-    public ObjectProperty<AuthorId> selectedAuthorIdProperty() {
-        return selectedAuthorId;
-    }
-
-    public ObservableList<String> seriesNamesProperty() {
-        return seriesNames;
-    }
-
-    public ObjectProperty<TreeItem<LibraryNode>> genresRootProperty() {
-        return genresRoot;
-    }
+    public ObjectProperty<TreeItem<LibraryNode>> authorsRootProperty() { return authorsRoot; }
+    public ObjectProperty<AuthorId> selectedAuthorIdProperty() { return selectedAuthorId; }
+    public ObservableList<String> seriesNamesProperty() { return seriesNames; }
+    public ObjectProperty<TreeItem<LibraryNode>> genresRootProperty() { return genresRoot; }
+    public ObservableList<Group> groupsProperty() { return groups; }
 
     public void loadAuthors() {
         log.info("📚 loadAuthors() called");
@@ -60,11 +56,9 @@ public class NavigationViewModel {
                 .thenAccept(authors -> Platform.runLater(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
-
                     authors.stream()
                             .sorted(Comparator.comparing(Author::getLastName))
                             .forEach(author -> root.getChildren().add(new TreeItem<>(new AuthorNode(author))));
-
                     authorsRoot.set(root);
                     log.info("✅ Завантажено {} авторів", authors.size());
                 }))
@@ -76,16 +70,10 @@ public class NavigationViewModel {
 
     public void loadSeries() {
         log.info("📚 loadSeries() called");
-        backgroundExecutor.submit(() -> {
-                    log.info("🔍 Виклик seriesService.getAllSeriesNames()...");
-                    List<String> names = seriesService.getAllSeriesNames();
-                    log.info("✅ Отримано {} назв серій з сервісу", names.size());
-                    return names;
-                })
+        backgroundExecutor.submit(() -> seriesService.getAllSeriesNames())
                 .thenAccept(names -> Platform.runLater(() -> {
-                    log.info("🖥️ Оновлення seriesNames у FX thread. Кількість: {}", names.size());
                     seriesNames.setAll(names);
-                    log.info("✅ Після setAll, seriesNames.size() = {}", seriesNames.size());
+                    log.info("✅ Оновлено серії, розмір: {}", seriesNames.size());
                 }))
                 .exceptionally(ex -> {
                     log.error("❌ Помилка завантаження серій", ex);
@@ -95,44 +83,44 @@ public class NavigationViewModel {
 
     public void loadGenres() {
         log.info("📚 loadGenres() called");
-        backgroundExecutor.submit(() -> {
-                    log.info("🔍 Виклик genreService.getAllGenresHierarchy()...");
-                    List<Genre> genres = genreService.getAllGenresHierarchy();
-                    log.info("✅ Отримано {} жанрів з сервісу", genres.size());
-                    return genres;
-                })
+        backgroundExecutor.submit(() -> genreService.getAllGenresHierarchy())
                 .thenAccept(genres -> Platform.runLater(() -> {
-                    log.info("🖥️ Побудова дерева жанрів у FX thread...");
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
-
-                    Map<String, TreeItem<LibraryNode>> nodeMap = new HashMap<>();
-
-                    for (Genre genre : genres) {
-                        TreeItem<LibraryNode> node = new TreeItem<>(new GenreNode(genre));
-                        nodeMap.put(genre.getId().asString(), node);
-                    }
-
-                    for (Genre genre : genres) {
-                        TreeItem<LibraryNode> node = nodeMap.get(genre.getId().asString());
-                        if (genre.getParentId() != null) {
-                            TreeItem<LibraryNode> parentNode = nodeMap.get(genre.getParentId().asString());
-                            if (parentNode != null) {
-                                parentNode.getChildren().add(node);
+                    if (!genres.isEmpty()) {
+                        Map<String, TreeItem<LibraryNode>> nodeMap = new HashMap<>();
+                        for (Genre genre : genres) {
+                            nodeMap.put(genre.getId().asString(), new TreeItem<>(new GenreNode(genre)));
+                        }
+                        for (Genre genre : genres) {
+                            TreeItem<LibraryNode> node = nodeMap.get(genre.getId().asString());
+                            if (genre.getParentId() != null) {
+                                TreeItem<LibraryNode> parent = nodeMap.get(genre.getParentId().asString());
+                                if (parent != null) parent.getChildren().add(node);
+                                else root.getChildren().add(node);
                             } else {
-                                log.warn("⚠️ Батьківський жанр {} не знайдено для {}", genre.getParentId().asString(), genre.getId().asString());
                                 root.getChildren().add(node);
                             }
-                        } else {
-                            root.getChildren().add(node);
                         }
                     }
-
                     genresRoot.set(root);
-                    log.info("✅ Дерево жанрів побудовано, всього вузлів: {}", nodeMap.size());
+                    log.info("✅ Дерево жанрів побудовано, вузлів: {}", genres.size());
                 }))
                 .exceptionally(ex -> {
                     log.error("❌ Помилка завантаження жанрів", ex);
+                    return null;
+                });
+    }
+
+    public void loadGroups() {
+        log.info("📚 loadGroups() called");
+        backgroundExecutor.submit(() -> groupService.getAllGroups())
+                .thenAccept(groupsList -> Platform.runLater(() -> {
+                    groups.setAll(groupsList);
+                    log.info("✅ Оновлено групи, розмір: {}", groups.size());
+                }))
+                .exceptionally(ex -> {
+                    log.error("❌ Помилка завантаження груп", ex);
                     return null;
                 });
     }
@@ -146,5 +134,6 @@ public class NavigationViewModel {
         loadAuthors();
         loadSeries();
         loadGenres();
+        loadGroups();
     }
 }

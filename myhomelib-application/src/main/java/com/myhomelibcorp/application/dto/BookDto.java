@@ -14,7 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class BookDto {
-    private Long id;
+    private String id;          // ОДНЕ ПОЛЕ id, використовуємо String для UUID
     private String title;
     private String authorsText;
     private List<String> genres;
@@ -33,8 +33,6 @@ public class BookDto {
     private LocalDateTime updateDate;
     private boolean deleted;
     private boolean local;
-
-    // +++ НОВЕ +++
     private String review;
     private LocalDateTime createdAt;
 
@@ -66,18 +64,15 @@ public class BookDto {
         return updateDate.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
     }
 
-    // +++ НОВЕ +++
     public String getLocalStatus() {
         if (deleted) return "Видалена";
         return local ? "Локальна" : "Онлайн";
     }
 
-    // +++ НОВЕ +++
     public String getProgressFormatted() {
         return progress + "%";
     }
 
-    // +++ НОВЕ +++
     public String getCreatedAtFormatted() {
         if (createdAt == null) return "";
         return createdAt.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));

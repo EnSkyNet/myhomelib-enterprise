@@ -216,7 +216,7 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         }
     }
 
-    private void loadAuthors(Book book) {
+    public void loadAuthors(Book book) {
         String sql = """
             SELECT a.id, a.first_name, a.middle_name, a.last_name
             FROM authors a
@@ -230,7 +230,7 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         book.setAuthors(authors);
     }
 
-    private void loadGenres(Book book) {
+    public void loadGenres(Book book) {
         String sql = """
             SELECT g.code, g.name, g.parent_code, g.fb2_code
             FROM genres g
@@ -512,5 +512,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         books.forEach(this::loadAuthors);
         books.forEach(this::loadGenres);
         return books;
+    }
+    public RowMapper<Book> getBookRowMapper() {
+        return bookRowMapper;
     }
 }

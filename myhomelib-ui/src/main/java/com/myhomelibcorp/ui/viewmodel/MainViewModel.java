@@ -6,12 +6,14 @@ import com.myhomelibcorp.application.book.LoadBooksUseCase;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.genre.LoadBooksByGenreUseCase;
 import com.myhomelibcorp.application.genre.LoadGenresUseCase;
+import com.myhomelibcorp.application.group.*;
 import com.myhomelibcorp.application.importing.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.importing.ImportFileUseCase;
 import com.myhomelibcorp.application.port.out.GenreService;
 import com.myhomelibcorp.application.port.out.IndexRebuilder;
 import com.myhomelibcorp.application.search.SearchBooksUseCase;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import javafx.animation.PauseTransition;
@@ -39,6 +41,7 @@ public class MainViewModel {
     private final LoadBooksUseCase loadBooksUseCase;
     private final LoadBooksByAuthorUseCase loadBooksByAuthorUseCase;
     private final LoadBooksBySeriesUseCase loadBooksBySeriesUseCase;
+    private final LoadBooksByGenreUseCase loadBooksByGenreUseCase;
     private final SearchBooksUseCase searchBooksUseCase;
     private final ImportFileUseCase importFileUseCase;
     private final ImportDirectoryUseCase importDirectoryUseCase;
@@ -46,7 +49,15 @@ public class MainViewModel {
     private final GenreService genreService;
     private final BackgroundExecutor backgroundExecutor;
     private final IndexRebuilder indexRebuilder;
-    private final LoadBooksByGenreUseCase loadBooksByGenreUseCase;
+
+    // === ГРУПИ ===
+    private final LoadGroupsUseCase loadGroupsUseCase;
+    private final LoadBooksByGroupUseCase loadBooksByGroupUseCase;
+    private final CreateGroupUseCase createGroupUseCase;
+    private final RenameGroupUseCase renameGroupUseCase;
+    private final DeleteGroupUseCase deleteGroupUseCase;
+    private final AddBookToGroupUseCase addBookToGroupUseCase;
+    private final RemoveBookFromGroupUseCase removeBookFromGroupUseCase;
 
     private final ObservableList<BookDto> books = FXCollections.observableArrayList();
     private final ObjectProperty<BookDto> selectedBook = new SimpleObjectProperty<>();
@@ -106,12 +117,8 @@ public class MainViewModel {
         }
 
         statusText.set("Пошук: " + query);
-        backgroundExecutor.submit(() -> {
-                    log.debug("Виклик searchBooksUseCase.search('{}', 100)", query);
-                    return searchBooksUseCase.search(query, 100);
-                })
+        backgroundExecutor.submit(() -> searchBooksUseCase.search(query, 100))
                 .thenAccept(bookList -> {
-                    log.debug("Отримано {} результатів", bookList.size());
                     List<BookDto> dtos = bookList.stream().map(this::toDto).collect(Collectors.toList());
                     Platform.runLater(() -> {
                         books.setAll(dtos);
@@ -196,7 +203,6 @@ public class MainViewModel {
                 });
     }
 
-    // +++ НОВИЙ МЕТОД +++
     public void loadBooksBySeries(String seriesName) {
         if (seriesName == null || seriesName.isBlank()) {
             refreshBooks();
@@ -222,6 +228,79 @@ public class MainViewModel {
                 });
     }
 
+    public void loadBooksByGenre(String genreCode) {
+        if (genreCode == null || genreCode.isBlank()) {
+            refreshBooks();
+            return;
+        }
+        statusText.set("Завантаження книг жанру...");
+        backgroundExecutor.submit(() -> loadBooksByGenreUseCase.loadByGenre(genreCode, 10000, 0))
+                .thenAccept(bookList -> {
+                    List<BookDto> dtos = bookList.stream()
+                            .sorted(Comparator.comparing(Book::getTitle))
+                            .map(this::toDto)
+                            .collect(Collectors.toList());
+                    Platform.runLater(() -> {
+                        books.setAll(dtos);
+                        statusText.set("Книги жанру: " + dtos.size() + " книг");
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                    });
+                })
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> statusText.set("Помилка: " + ex.getMessage()));
+                    log.error("Помилка завантаження книг жанру", ex);
+                    return null;
+                });
+    }
+
+    // === МЕТОДИ ДЛЯ ГРУП ===
+
+    public void loadBooksByGroup(Long groupId) {
+        if (groupId == null) {
+            refreshBooks();
+            return;
+        }
+        statusText.set("Завантаження книг групи...");
+        backgroundExecutor.submit(() -> loadBooksByGroupUseCase.loadByGroup(groupId))
+                .thenAccept(bookList -> {
+                    List<BookDto> dtos = bookList.stream()
+                            .sorted(Comparator.comparing(Book::getTitle))
+                            .map(this::toDto)
+                            .collect(Collectors.toList());
+                    Platform.runLater(() -> {
+                        books.setAll(dtos);
+                        statusText.set("Книги групи: " + dtos.size() + " книг");
+                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                    });
+                })
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> statusText.set("Помилка: " + ex.getMessage()));
+                    log.error("Помилка завантаження книг групи", ex);
+                    return null;
+                });
+    }
+
+    public Group createGroup(String name) {
+        return createGroupUseCase.execute(name);
+    }
+
+    public Group renameGroup(Long groupId, String newName) {
+        return renameGroupUseCase.execute(groupId, newName);
+    }
+
+    public void deleteGroup(Long groupId) {
+        deleteGroupUseCase.execute(groupId);
+    }
+
+    // Виправлені методи – приймають String bookId
+    public void addBookToGroup(Long groupId, String bookId) {
+        addBookToGroupUseCase.execute(groupId, bookId);
+    }
+
+    public void removeBookFromGroup(Long groupId, String bookId) {
+        removeBookFromGroupUseCase.execute(groupId, bookId);
+    }
+
     public void rebuildIndex() {
         statusText.set("Перебудова індексу...");
         backgroundExecutor.submit(() -> {
@@ -241,6 +320,7 @@ public class MainViewModel {
                 .collect(Collectors.joining(", "));
 
         return BookDto.builder()
+                .id(book.getId().asString()) // Важливо: встановлюємо String id
                 .title(book.getTitle())
                 .authorsText(book.authorsText())
                 .series(book.getSeries())
@@ -280,28 +360,7 @@ public class MainViewModel {
                     return null;
                 });
     }
-    public void loadBooksByGenre(String genreCode) {
-        if (genreCode == null || genreCode.isBlank()) {
-            refreshBooks();
-            return;
-        }
-        statusText.set("Завантаження книг жанру...");
-        backgroundExecutor.submit(() -> loadBooksByGenreUseCase.loadByGenre(genreCode, 10000, 0))
-                .thenAccept(bookList -> {
-                    List<BookDto> dtos = bookList.stream()
-                            .sorted(Comparator.comparing(Book::getTitle))
-                            .map(this::toDto)
-                            .collect(Collectors.toList());
-                    Platform.runLater(() -> {
-                        books.setAll(dtos);
-                        statusText.set("Книги жанру: " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
-                    });
-                })
-                .exceptionally(ex -> {
-                    Platform.runLater(() -> statusText.set("Помилка: " + ex.getMessage()));
-                    log.error("Помилка завантаження книг жанру", ex);
-                    return null;
-                });
+    public void setStatusText(String text) {
+        statusText.set(text);
     }
 }

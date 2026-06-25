@@ -18,9 +18,9 @@
                     <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Група">
-                    <MenuItem text="Додати групу..." onAction="#handleAddGroup" disable="true"/>
-                    <MenuItem text="Редагувати групу..." onAction="#handleEditGroup" disable="true"/>
-                    <MenuItem text="Видалити групу" onAction="#handleDeleteGroup" disable="true"/>
+                    <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
+                    <MenuItem text="Редагувати групу..." onAction="#handleEditGroup"/>
+                    <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
                 </Menu>
                 <Menu text="Редагування">
                     <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata" disable="true"/>
