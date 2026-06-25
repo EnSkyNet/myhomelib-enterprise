@@ -292,7 +292,6 @@ public class MainViewModel {
         deleteGroupUseCase.execute(groupId);
     }
 
-    // Виправлені методи – приймають String bookId
     public void addBookToGroup(Long groupId, String bookId) {
         addBookToGroupUseCase.execute(groupId, bookId);
     }
@@ -320,7 +319,7 @@ public class MainViewModel {
                 .collect(Collectors.joining(", "));
 
         return BookDto.builder()
-                .id(book.getId().asString()) // Важливо: встановлюємо String id
+                .id(book.getId().asString())
                 .title(book.getTitle())
                 .authorsText(book.authorsText())
                 .series(book.getSeries())
@@ -360,7 +359,17 @@ public class MainViewModel {
                     return null;
                 });
     }
+
     public void setStatusText(String text) {
         statusText.set(text);
+    }
+
+    // === ДОДАНО ДЛЯ BookInfoPanel ===
+    public void setSelectedBook(BookDto book) {
+        this.selectedBook.set(book);
+    }
+
+    public BookDto getSelectedBook() {
+        return selectedBook.get();
     }
 }

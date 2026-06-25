@@ -96,31 +96,15 @@
                             </TableView>
                         </VBox>
 
-                        <!-- Нижня права: деталі книги -->
-                        <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #fafafa; -fx-border-color: #cccccc; -fx-border-width: 1 0 0 0;">
-                            <HBox spacing="20" alignment="TOP_LEFT">
-                                <VBox spacing="3" HBox.hgrow="ALWAYS">
-                                    <Label fx:id="detailTitle" text="Назва" wrapText="true" style="-fx-font-weight: bold; -fx-font-size: 14;"/>
-                                    <Label fx:id="detailAuthors" text="Автори"/>
-                                    <Label fx:id="detailSeries" text="Серія"/>
-                                    <Label fx:id="detailGenres" text="Жанри"/>
-                                    <Label fx:id="detailLanguage" text="Мова"/>
-                                    <Label fx:id="detailRate" text="Рейтинг: 0"/>
-                                    <Label fx:id="detailProgress" text="Прогрес: 0%"/>
-                                    <Label fx:id="detailFile" text="Файл: "/>
-                                    <Label fx:id="detailFolder" text="Папка: "/>
-                                    <Label fx:id="detailSize" text="Розмір: "/>
-                                    <Label fx:id="detailReview" text="Рецензія:" wrapText="true"/>
-                                    <Label fx:id="detailCreated" text="Додано:"/>
-                                    <Label fx:id="detailKeywords" text="Ключові слова:" wrapText="true"/>
-                                </VBox>
-                            </HBox>
-                            <Separator/>
-                            <Label text="Анотація:" style="-fx-font-weight: bold;"/>
-                            <ScrollPane VBox.vgrow="ALWAYS" fitToWidth="true" prefHeight="100">
-                                <TextArea fx:id="detailAnnotation" editable="false" wrapText="true"
-                                          style="-fx-background-color: white; -fx-border-color: #cccccc;"/>
-                            </ScrollPane>
+                        <!-- Нижня права: BookInfoPanel -->
+                        <VBox fx:id="detailsPane"
+                              spacing="5"
+                              style="-fx-padding: 10;
+                                     -fx-background-color: #fafafa;
+                                     -fx-border-color: #cccccc;
+                                     -fx-border-width: 1 0 0 0;"
+                              VBox.vgrow="ALWAYS">
+                            <!-- BookInfoPanel буде вставлено програмно в MainController -->
                         </VBox>
                     </items>
                 </SplitPane>
@@ -129,8 +113,12 @@
     </center>
 
     <bottom>
-        <HBox style="-fx-background-color: #e0e0e0; -fx-border-color: #cccccc; -fx-border-width: 1 0 0 0;"
-              spacing="10" alignment="CENTER_LEFT" prefHeight="30">
+        <HBox style="-fx-background-color: #e0e0e0;
+                     -fx-border-color: #cccccc;
+                     -fx-border-width: 1 0 0 0;"
+              spacing="10"
+              alignment="CENTER_LEFT"
+              prefHeight="30">
             <padding>
                 <Insets bottom="4" left="10" right="10" top="4"/>
             </padding>

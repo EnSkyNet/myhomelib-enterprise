@@ -6,12 +6,14 @@ import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.navigation.GenreNode;
 import com.myhomelibcorp.domain.model.navigation.LibraryNode;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.ui.components.BookInfoPanel;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
 import com.myhomelibcorp.ui.viewmodel.MainViewModel;
 import com.myhomelibcorp.ui.viewmodel.NavigationViewModel;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
 import lombok.RequiredArgsConstructor;
@@ -30,36 +32,29 @@ public class MainController {
     private final NavigationViewModel navigationViewModel;
     private final BookDetailsPresenter bookDetailsPresenter;
 
+    // Ліва панель навігації
     @FXML private TreeView<LibraryNode> authorsTree;
     @FXML private ListView<String> seriesListView;
     @FXML private TreeView<LibraryNode> genresTree;
     @FXML private ListView<Group> groupsListView;
     @FXML private ListView<String> downloadsListView;
 
+    // Центральна таблиця
     @FXML private TableView<BookDto> bookTableView;
     @FXML private Label bookCountLabel;
 
-    @FXML private Label detailTitle;
-    @FXML private Label detailAuthors;
-    @FXML private Label detailSeries;
-    @FXML private Label detailGenres;
-    @FXML private Label detailLanguage;
-    @FXML private Label detailRate;
-    @FXML private Label detailProgress;
-    @FXML private Label detailFile;
-    @FXML private Label detailFolder;
-    @FXML private Label detailSize;
-    @FXML private TextArea detailAnnotation;
-
-    @FXML private Label detailReview;
-    @FXML private Label detailCreated;
-    @FXML private Label detailKeywords;
-
+    // Пошук
     @FXML private TextField searchField;
     @FXML private ProgressIndicator searchIndicator;
 
+    // Статус і прогрес
     @FXML private Label statusLabel;
     @FXML private ProgressBar progressBar;
+
+    // Права панель — BookInfoPanel
+    @FXML private VBox detailsPane;
+
+    private BookInfoPanel bookInfoPanel;
 
     private ContextMenu bookContextMenu;
     private MenuItem addToGroupMenuItem;
@@ -69,133 +64,180 @@ public class MainController {
     public void initialize() {
         log.info("🔵 MainController.initialize() started");
 
-        statusLabel.textProperty().bind(mainViewModel.statusTextProperty());
-        progressBar.progressProperty().bind(mainViewModel.importProgressProperty());
-        progressBar.visibleProperty().bind(mainViewModel.importInProgressProperty());
+        // Прив'язка статусу та прогресу
+        if (statusLabel != null) {
+            statusLabel.textProperty().bind(mainViewModel.statusTextProperty());
+        }
+        if (progressBar != null) {
+            progressBar.progressProperty().bind(mainViewModel.importProgressProperty());
+            progressBar.visibleProperty().bind(mainViewModel.importInProgressProperty());
+        }
 
+        // Ініціалізація BookInfoPanel з прокруткою
+        bookInfoPanel = new BookInfoPanel();
+        ScrollPane scrollPane = new ScrollPane(bookInfoPanel);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(false);
+        //scrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        //scrollPane.getStyleClass().add("edge-to-edge");
+        if (detailsPane != null) {
+            detailsPane.getChildren().setAll(scrollPane); // ВИПРАВЛЕНО
+        }
+
+        // MVVM Binding для BookInfoPanel
+        if (bookInfoPanel != null) {
+            bookInfoPanel.bookProperty().bind(mainViewModel.selectedBookProperty());
+            bookInfoPanel.setOnAuthorClicked(authorText -> {
+                log.info("Клік по автору: {}", authorText);
+                mainViewModel.searchBooks(authorText);
+            });
+            bookInfoPanel.setOnSeriesClicked(series -> {
+                if (series != null && !series.isBlank()) {
+                    log.info("Клік по серії: {}", series);
+                    mainViewModel.loadBooksBySeries(series);
+                }
+            });
+            bookInfoPanel.setOnGenreClicked(genres -> {
+                log.info("Клік по жанрах: {}", genres);
+            });
+            bookInfoPanel.setOnAnnotationClicked(book -> {
+                log.info("Клік по анотації: {}", book.getTitle());
+            });
+        }
+
+        // Налаштування таблиці
         setupBookTable();
-        bookTableView.setItems(mainViewModel.booksProperty());
-        bookTableView.getSelectionModel().selectedItemProperty().addListener(
-                (obs, old, newVal) -> {
-                    mainViewModel.selectedBookProperty().set(newVal);
-                    if (newVal != null) {
-                        bookDetailsPresenter.showBookDetails(newVal);
-                    } else {
-                        bookDetailsPresenter.clearDetails();
-                    }
-                }
-        );
-
-        searchField.textProperty().bindBidirectional(mainViewModel.searchQueryProperty());
-
-        // === АВТОРИ ===
-        authorsTree.rootProperty().bind(navigationViewModel.authorsRootProperty());
-        authorsTree.setShowRoot(false);
-        authorsTree.setCellFactory(tv -> new TreeCell<>() {
-            @Override
-            protected void updateItem(LibraryNode item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
-                else setText(item.toString());
-            }
-        });
-        authorsTree.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> {
-                    if (newVal != null && newVal.getValue() != null) {
-                        LibraryNode node = newVal.getValue();
-                        if (node instanceof com.myhomelibcorp.domain.model.navigation.AuthorNode authorNode) {
-                            AuthorId authorId = authorNode.author().getId();
-                            navigationViewModel.selectAuthor(authorId);
-                            mainViewModel.loadBooksByAuthor(authorId);
+        if (bookTableView != null) {
+            bookTableView.setItems(mainViewModel.booksProperty());
+            bookTableView.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, old, newVal) -> {
+                        mainViewModel.setSelectedBook(newVal);
+                        if (newVal != null) {
+                            bookInfoPanel.setBook(newVal);
+                        } else {
+                            bookInfoPanel.clear();
                         }
                     }
-                }
-        );
-        navigationViewModel.authorsRootProperty().addListener((obs, oldRoot, newRoot) -> {
-            if (newRoot != null && !newRoot.getChildren().isEmpty()) {
-                TreeItem<LibraryNode> firstItem = newRoot.getChildren().get(0);
-                authorsTree.getSelectionModel().select(firstItem);
-            } else {
-                mainViewModel.refreshBooks();
-            }
-        });
+            );
+        }
 
-        // === СЕРІЇ ===
-        seriesListView.setItems(navigationViewModel.seriesNamesProperty());
-        seriesListView.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> {
-                    if (newVal != null && !newVal.isBlank()) {
-                        log.info("Вибрано серію: {}", newVal);
-                        mainViewModel.loadBooksBySeries(newVal);
-                    }
-                }
-        );
+        // Пошук
+        if (searchField != null) {
+            searchField.textProperty().bindBidirectional(mainViewModel.searchQueryProperty());
+        }
 
-        // === ЖАНРИ ===
-        genresTree.rootProperty().bind(navigationViewModel.genresRootProperty());
-        genresTree.setShowRoot(false);
-        genresTree.setCellFactory(tv -> new TreeCell<>() {
-            @Override
-            protected void updateItem(LibraryNode item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
-                else setText(item.toString());
-            }
-        });
-        genresTree.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> {
-                    if (newVal != null && newVal.getValue() != null) {
-                        LibraryNode node = newVal.getValue();
-                        if (node instanceof GenreNode genreNode) {
-                            Genre genre = genreNode.genre();
-                            String genreCode = genre.getId().asString();
-                            log.info("Вибрано жанр: {} ({})", genre.getName(), genreCode);
-                            mainViewModel.loadBooksByGenre(genreCode);
-                        }
-                    }
-                }
-        );
+        // Навігація
+        setupNavigation();
 
-        // === ГРУПИ ===
-        groupsListView.setItems(navigationViewModel.groupsProperty());
-        groupsListView.setCellFactory(lv -> new ListCell<>() {
-            @Override
-            protected void updateItem(Group item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) setText(null);
-                else setText(item.getName());
-            }
-        });
-        groupsListView.getSelectionModel().selectedItemProperty().addListener(
-                (obs, oldVal, newVal) -> {
-                    if (newVal != null) {
-                        log.info("Вибрано групу: {} (id={})", newVal.getName(), newVal.getId());
-                        mainViewModel.loadBooksByGroup(newVal.getId());
-                    }
-                }
-        );
-
-        // === ДЕТАЛІ ===
-        bookDetailsPresenter.bind(
-                detailTitle, detailAuthors, detailSeries, detailGenres,
-                detailLanguage, detailRate, detailProgress,
-                detailFile, detailFolder, detailSize, detailAnnotation,
-                detailReview, detailCreated, detailKeywords
-        );
-
-        mainViewModel.initWithoutBooks();
-        navigationViewModel.refreshAll();
-
-        // === КОНТЕКСТНЕ МЕНЮ ===
+        // Контекстне меню для таблиці
         setupBookContextMenu();
 
-        // === ЗАГЛУШКИ ===
-        downloadsListView.getItems().addAll("Завантаження 1");
+        // Початкове завантаження
+        mainViewModel.initWithoutBooks();
+        navigationViewModel.refreshAll();
 
         log.info("🔵 MainController.initialize() finished");
     }
 
+    private void setupNavigation() {
+        // Автори
+        if (authorsTree != null) {
+            authorsTree.rootProperty().bind(navigationViewModel.authorsRootProperty());
+            authorsTree.setShowRoot(false);
+            authorsTree.setCellFactory(tv -> new TreeCell<>() {
+                @Override
+                protected void updateItem(LibraryNode item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) setText(null);
+                    else setText(item.toString());
+                }
+            });
+            authorsTree.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, oldVal, newVal) -> {
+                        if (newVal != null && newVal.getValue() != null) {
+                            LibraryNode node = newVal.getValue();
+                            if (node instanceof com.myhomelibcorp.domain.model.navigation.AuthorNode authorNode) {
+                                AuthorId authorId = authorNode.author().getId();
+                                navigationViewModel.selectAuthor(authorId);
+                                mainViewModel.loadBooksByAuthor(authorId);
+                            }
+                        }
+                    }
+            );
+            navigationViewModel.authorsRootProperty().addListener((obs, oldRoot, newRoot) -> {
+                if (newRoot != null && !newRoot.getChildren().isEmpty()) {
+                    TreeItem<LibraryNode> firstItem = newRoot.getChildren().get(0);
+                    authorsTree.getSelectionModel().select(firstItem);
+                } else {
+                    mainViewModel.refreshBooks();
+                }
+            });
+        }
+
+        // Серії
+        if (seriesListView != null) {
+            seriesListView.setItems(navigationViewModel.seriesNamesProperty());
+            seriesListView.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, oldVal, newVal) -> {
+                        if (newVal != null && !newVal.isBlank()) {
+                            log.info("Вибрано серію: {}", newVal);
+                            mainViewModel.loadBooksBySeries(newVal);
+                        }
+                    }
+            );
+        }
+
+        // Жанри
+        if (genresTree != null) {
+            genresTree.rootProperty().bind(navigationViewModel.genresRootProperty());
+            genresTree.setShowRoot(false);
+            genresTree.setCellFactory(tv -> new TreeCell<>() {
+                @Override
+                protected void updateItem(LibraryNode item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) setText(null);
+                    else setText(item.toString());
+                }
+            });
+            genresTree.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, oldVal, newVal) -> {
+                        if (newVal != null && newVal.getValue() != null) {
+                            LibraryNode node = newVal.getValue();
+                            if (node instanceof GenreNode genreNode) {
+                                Genre genre = genreNode.genre();
+                                String genreCode = genre.getId().asString();
+                                log.info("Вибрано жанр: {} ({})", genre.getName(), genreCode);
+                                mainViewModel.loadBooksByGenre(genreCode);
+                            }
+                        }
+                    }
+            );
+        }
+
+        // Групи
+        if (groupsListView != null) {
+            groupsListView.setItems(navigationViewModel.groupsProperty());
+            groupsListView.setCellFactory(lv -> new ListCell<>() {
+                @Override
+                protected void updateItem(Group item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) setText(null);
+                    else setText(item.getName());
+                }
+            });
+            groupsListView.getSelectionModel().selectedItemProperty().addListener(
+                    (obs, oldVal, newVal) -> {
+                        if (newVal != null) {
+                            log.info("Вибрано групу: {} (id={})", newVal.getName(), newVal.getId());
+                            mainViewModel.loadBooksByGroup(newVal.getId());
+                        }
+                    }
+            );
+        }
+    }
+
     private void setupBookTable() {
+        if (bookTableView == null) return;
         bookTableView.getColumns().clear();
 
         TableColumn<BookDto, String> titleCol = new TableColumn<>("Назва");
@@ -249,6 +291,7 @@ public class MainController {
     }
 
     private void setupBookContextMenu() {
+        if (bookTableView == null) return;
         bookContextMenu = new ContextMenu();
         addToGroupMenuItem = new MenuItem("Додати до групи");
         removeFromGroupMenuItem = new MenuItem("Видалити з групи");
@@ -259,6 +302,7 @@ public class MainController {
         bookContextMenu.getItems().addAll(addToGroupMenuItem, removeFromGroupMenuItem);
         bookTableView.setContextMenu(bookContextMenu);
 
+        // Оновлюємо стан меню залежно від вибору
         bookTableView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, newVal) -> {
                     boolean hasSelection = newVal != null;
@@ -268,7 +312,79 @@ public class MainController {
         );
     }
 
-    // === ОБРОБНИКИ ГРУП ===
+    // ==================== ОБРОБНИКИ ====================
+
+    @FXML
+    public void handleRefresh() {
+        log.info("🔄 handleRefresh() called");
+        navigationViewModel.refreshAll();
+        mainViewModel.refreshBooks();
+    }
+
+    @FXML
+    public void handleImportFb2() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Виберіть FB2 файл");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd")
+        );
+        File file = fileChooser.showOpenDialog(null);
+        if (file != null) {
+            mainViewModel.importFile(file.toPath(), this::onImportComplete);
+        }
+    }
+
+    @FXML
+    public void handleImportInpx() {
+        FileChooser fileChooser = new FileChooser();
+        fileChooser.setTitle("Виберіть INPX файл");
+        fileChooser.getExtensionFilters().add(
+                new FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp")
+        );
+        File file = fileChooser.showOpenDialog(null);
+        if (file != null) {
+            mainViewModel.importFile(file.toPath(), this::onImportComplete);
+        }
+    }
+
+    @FXML
+    public void handleImportDirectory() {
+        DirectoryChooser directoryChooser = new DirectoryChooser();
+        directoryChooser.setTitle("Виберіть каталог з книгами");
+        File dir = directoryChooser.showDialog(null);
+        if (dir != null && dir.isDirectory()) {
+            mainViewModel.importDirectory(dir.toPath(), this::onImportComplete);
+        }
+    }
+
+    @FXML
+    public void handleAbout() {
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Про програму");
+        alert.setHeaderText("MyHomeLib Enterprise");
+        alert.setContentText("Версія 1.0.0-SNAPSHOT\n\nJava-версія MyHomeLib\nJava 21, Spring Boot 3.5, JavaFX 21");
+        alert.showAndWait();
+    }
+
+    @FXML
+    public void handleExit() {
+        Platform.exit();
+    }
+
+    @FXML
+    public void handleRebuildIndex() {
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Перебудова індексу");
+        confirm.setHeaderText("Це може зайняти деякий час");
+        confirm.setContentText("Перебудувати Lucene індекс для пошуку?");
+        confirm.showAndWait().ifPresent(response -> {
+            if (response == ButtonType.OK) {
+                mainViewModel.rebuildIndex();
+            }
+        });
+    }
+
+    // ==================== РОБОТА З ГРУПАМИ ====================
 
     @FXML
     public void handleAddGroup() {
@@ -346,8 +462,6 @@ public class MainController {
         }
     }
 
-    // === ДОДАТИ/ВИДАЛИТИ КНИГУ З ГРУПИ ===
-
     private void handleAddBookToGroup() {
         BookDto selectedBook = bookTableView.getSelectionModel().getSelectedItem();
         if (selectedBook == null) {
@@ -359,10 +473,13 @@ public class MainController {
             showError("Помилка", "Немає жодної групи. Створіть групу спочатку.");
             return;
         }
+
+        // Використовуємо ChoiceDialog без конвертера – Group.toString() повертає назву
         ChoiceDialog<Group> dialog = new ChoiceDialog<>(groups.get(0), groups);
         dialog.setTitle("Додати до групи");
         dialog.setHeaderText("Виберіть групу для книги '" + selectedBook.getTitle() + "'");
         dialog.setContentText("Група:");
+
         Optional<Group> result = dialog.showAndWait();
         result.ifPresent(group -> {
             try {
@@ -401,7 +518,7 @@ public class MainController {
         }
     }
 
-    // === ДОПОМІЖНІ ===
+    // ==================== ДОПОМІЖНІ ====================
 
     private void showError(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.ERROR);
@@ -411,80 +528,40 @@ public class MainController {
         alert.showAndWait();
     }
 
-    // === ІНШІ ОБРОБНИКИ ===
-
-    @FXML public void handleRefresh() {
-        log.info("🔄 handleRefresh() called");
-        navigationViewModel.refreshAll();
-    }
-
-    @FXML public void handleImportFb2() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Виберіть FB2 файл");
-        fileChooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd")
-        );
-        File file = fileChooser.showOpenDialog(null);
-        if (file != null) {
-            mainViewModel.importFile(file.toPath(), this::onImportComplete);
-        }
-    }
-
-    @FXML public void handleImportInpx() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Виберіть INPX файл");
-        fileChooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp")
-        );
-        File file = fileChooser.showOpenDialog(null);
-        if (file != null) {
-            mainViewModel.importFile(file.toPath(), this::onImportComplete);
-        }
-    }
-
-    @FXML public void handleImportDirectory() {
-        DirectoryChooser directoryChooser = new DirectoryChooser();
-        directoryChooser.setTitle("Виберіть каталог з книгами");
-        File dir = directoryChooser.showDialog(null);
-        if (dir != null && dir.isDirectory()) {
-            mainViewModel.importDirectory(dir.toPath(), this::onImportComplete);
-        }
-    }
-
-    @FXML public void handleAbout() {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Про програму");
-        alert.setHeaderText("MyHomeLib Enterprise");
-        alert.setContentText("Версія 1.0.0-SNAPSHOT\n\nJava-версія MyHomeLib\nJava 21, Spring Boot 3.5, JavaFX 21");
-        alert.showAndWait();
-    }
-
-    @FXML public void handleExit() {
-        Platform.exit();
-    }
-
-    @FXML public void handleRebuildIndex() {
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Перебудова індексу");
-        confirm.setHeaderText("Це може зайняти деякий час");
-        confirm.setContentText("Перебудувати Lucene індекс для пошуку?");
-        confirm.showAndWait().ifPresent(response -> {
-            if (response == ButtonType.OK) {
-                mainViewModel.rebuildIndex();
-            }
-        });
-    }
-
     private void onImportComplete() {
-        log.info("✅ Імпорт завершено, оновлюємо навігацію");
         navigationViewModel.refreshAll();
+        mainViewModel.setStatusText("Імпорт завершено. Оновлено дані.");
     }
 
-    // === ЗАГОТОВКИ ===
-    @FXML public void handleOpenCollection() {}
-    @FXML public void handleNewCollection() {}
-    @FXML public void handleEditMetadata() {}
-    @FXML public void handleDeleteBook() {}
-    @FXML public void handleShowColumns() {}
-    @FXML public void handleExport() {}
+    // ==================== ЗАГОТОВКИ ДЛЯ ІНШИХ ФУНКЦІЙ ====================
+
+    @FXML
+    public void handleOpenCollection() {
+        // TODO
+    }
+
+    @FXML
+    public void handleNewCollection() {
+        // TODO
+    }
+
+    @FXML
+    public void handleEditMetadata() {
+        // TODO
+    }
+
+    @FXML
+    public void handleDeleteBook() {
+        // TODO
+    }
+
+    @FXML
+    public void handleShowColumns() {
+        // TODO
+    }
+
+    @FXML
+    public void handleExport() {
+        // TODO
+    }
 }
