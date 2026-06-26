@@ -38,15 +38,13 @@ public class CoverExtractorService {
         try {
             String fullPath = buildFullPath(book);
             if (fullPath == null) {
-                log.error("Не вдалося побудувати шлях до файлу");
+                log.warn("Не вдалося побудувати шлях");
                 return null;
             }
 
             Path path = Paths.get(fullPath);
-            log.debug("Повний шлях: {}", fullPath);
-
             if (!Files.exists(path)) {
-                log.error("Файл НЕ ЗНАЙДЕНО: {}", fullPath);
+                log.warn("Файл не знайдено: {}", fullPath);
                 return null;
             }
 
@@ -55,27 +53,18 @@ public class CoverExtractorService {
                     fileNameLower.endsWith(".zip") || fileNameLower.endsWith(".fbd") ||
                     fileNameLower.endsWith(".fb2.zip");
 
-            Image result;
             if (isArchive) {
                 log.info("→ Обробка архіву");
-                result = extractCoverFromArchive(path, book.getArchiveEntry());
+                return extractCoverFromArchive(path, book.getArchiveEntry());
             } else if (fileNameLower.endsWith(".fb2")) {
-                log.info("→ Обробка FB2 файлу");
-                result = extractCoverFromFb2File(path);
+                log.info("→ Обробка FB2");
+                return extractCoverFromFb2File(path);
             } else {
-                log.info("→ Sidecar обкладинка");
-                result = extractFromSidecar(path);
+                log.info("→ Sidecar");
+                return extractFromSidecar(path);
             }
-
-            if (result != null && !result.isError()) {
-                log.info("Обкладинку УСПІШНО завантажено");
-            } else {
-                log.warn("Обкладинку НЕ знайдено (null або error)");
-            }
-            return result;
-
         } catch (Exception e) {
-            log.error("Критична помилка в extractCover для " + book.getTitle(), e);
+            log.error("Критична помилка extractCover для " + book.getTitle(), e);
             return null;
         }
     }
@@ -86,143 +75,95 @@ public class CoverExtractorService {
      */
     private String buildFullPath(BookDto book) {
         String fileName = book.getFileName() != null ? book.getFileName() : "";
-        if (fileName.isBlank()) {
-            log.warn("fileName порожній для книги: {}", book.getTitle());
-            return null;
-        }
+        if (fileName.isBlank()) return null;
 
         String folder = book.getFolder() != null ? book.getFolder() : "";
 
-        // === ОСНОВНА ЛОГІКА ДЛЯ ZIP ===
         if (book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank()) {
-            // Це книга з архіву — повертаємо шлях саме до ZIP-файлу
-            if (folder.toLowerCase().endsWith(".zip") ||
-                    folder.toLowerCase().endsWith(".fbd") ||
-                    folder.toLowerCase().endsWith(".fb2.zip")) {
-
-                log.debug("Книга з архіву → повертаємо шлях до ZIP: {}", folder);
-                return folder;
-            }
+            return folder; // шлях до ZIP
         }
 
-        // Якщо folder вже виглядає як повний шлях до файлу
-        if (folder.toLowerCase().endsWith(".fb2") ||
-                folder.toLowerCase().endsWith(".zip") ||
-                folder.toLowerCase().endsWith(".fbd")) {
-
-            log.debug("folder вже вказує на файл/архів → {}", folder);
+        if (folder.toLowerCase().endsWith(".zip") || folder.toLowerCase().endsWith(".fbd")) {
             return folder;
         }
 
-        // Звичайний випадок (не в архіві)
         if (book.getCollectionRoot() != null && !book.getCollectionRoot().isBlank()) {
-            String full = Paths.get(book.getCollectionRoot(), folder, fileName).toString();
-            log.debug("collectionRoot + folder + fileName → {}", full);
-            return full;
+            return Paths.get(book.getCollectionRoot(), folder, fileName).toString();
         }
 
-        log.warn("Fallback: folder + fileName");
         return Paths.get(folder, fileName).toString();
     }
 
     private Image extractCoverFromArchive(Path archivePath, String archiveEntry) {
         File archiveFile = archivePath.toFile();
         if (!archiveFile.exists()) {
-            log.error("Архів не знайдено: {}", archiveFile.getAbsolutePath());
+            log.error("Архів не існує: {}", archiveFile);
             return null;
         }
 
         log.info("Відкриваємо архів: {} ({} байт)", archiveFile.getName(), archiveFile.length());
 
-        // Спробуємо різні кодування, як у ZipImporter
-        Charset[] charsets = {
-                Charset.forName("CP866"),
-                Charset.forName("Windows-1251"),
-                Charset.forName("UTF-8"),
-                Charset.forName("IBM-866")
-        };
+        Charset[] charsets = {Charset.forName("CP866"), Charset.forName("Windows-1251"),
+                Charset.forName("UTF-8"), Charset.forName("IBM-866")};
 
-        for (Charset charset : charsets) {
-            try (ZipFile zipFile = new ZipFile(archiveFile, charset)) {
-                log.debug("Успішно відкрито архів з кодуванням: {}", charset);
+        for (Charset cs : charsets) {
+            try (ZipFile zipFile = new ZipFile(archiveFile, cs)) {
+                log.debug("Успішно відкрито з кодуванням: {}", cs);
 
-                // 1. Стандартні обкладинки
-                String[] coverNames = {"cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "preview.jpg"};
-                for (String name : coverNames) {
-                    ZipEntry entry = zipFile.getEntry(name);
-                    if (entry != null) {
-                        log.info("Знайдено обкладинку: {}", name);
-                        try (InputStream is = zipFile.getInputStream(entry)) {
-                            Image image = new Image(is, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
-                            if (!image.isError()) return image;
-                        }
-                    }
+                // Стандартні обкладинки
+                String[] covers = {"cover.jpg", "cover.jpeg", "cover.png", "folder.jpg", "preview.jpg"};
+                for (String name : covers) {
+                    ZipEntry e = zipFile.getEntry(name);
+                    if (e != null) return loadImage(zipFile, e);
                 }
 
-                // 2. По archiveEntry
+                // По archiveEntry
                 if (archiveEntry != null && !archiveEntry.isBlank()) {
-                    ZipEntry fb2Entry = zipFile.getEntry(archiveEntry);
-                    if (fb2Entry != null) {
-                        log.info("Знайдено FB2 за archiveEntry");
-                        return extractCoverFromFb2Stream(zipFile, fb2Entry);
+                    ZipEntry fb2 = zipFile.getEntry(archiveEntry);
+                    if (fb2 != null) {
+                        Image img = extractCoverFromFb2Stream(zipFile, fb2);
+                        if (img != null) return img;
                     }
                 }
 
-                // 3. Будь-який FB2
-                ZipEntry fb2Entry = findFb2Entry(zipFile);
-                if (fb2Entry != null) {
-                    log.info("Знайдено FB2: {}", fb2Entry.getName());
-                    return extractCoverFromFb2Stream(zipFile, fb2Entry);
+                // Будь-який FB2
+                ZipEntry fb2 = findFb2Entry(zipFile);
+                if (fb2 != null) {
+                    Image img = extractCoverFromFb2Stream(zipFile, fb2);
+                    if (img != null) return img;
                 }
+
+                // Шукаємо будь-яке зображення
+                return searchAnyImageInArchive(zipFile);
 
             } catch (Exception e) {
-                log.debug("Не вдалося відкрити з кодуванням {}: {}", charset, e.getMessage());
+                log.debug("Не вдалося з кодуванням {}: {}", cs, e.getMessage());
             }
         }
-
-        log.error("Не вдалося відкрити архів жодним кодуванням");
         return null;
     }
 
     private Image extractCoverFromFb2Stream(ZipFile zipFile, ZipEntry fb2Entry) {
         try (InputStream is = zipFile.getInputStream(fb2Entry)) {
             String content = new String(is.readAllBytes(), "UTF-8");
-            log.debug("FB2 прочитано, довжина: {} символів", content.length());
 
-            String coverImageId = extractCoverImageIdFromFb2(content);
-            if (coverImageId == null) {
-                log.warn("Не знайдено <coverpage>");
-                return searchAnyImageInArchive(zipFile);
-            }
+            String coverId = extractCoverImageIdFromFb2(content);
+            if (coverId != null) {
+                ZipEntry binary = zipFile.getEntry(coverId);
+                if (binary != null) return loadImage(zipFile, binary);
 
-            log.info("coverImageId з FB2: {}", coverImageId);
-
-            // Спроба 1: точне співпадіння
-            ZipEntry binary = zipFile.getEntry(coverImageId);
-            if (binary != null) {
-                log.info("Binary знайдено за точним id");
-                return loadImageFromEntry(zipFile, binary);
-            }
-
-            // Спроба 2: варіанти з розширенням
-            String base = coverImageId.replaceAll("\\.(jpg|jpeg|png|gif|bmp)$", "");
-            String[] exts = {".jpg", ".jpeg", ".png", ".gif", ".bmp"};
-            for (String ext : exts) {
-                ZipEntry tryEntry = zipFile.getEntry(base + ext);
-                if (tryEntry != null) {
-                    log.info("Binary знайдено за варіантом: {}", tryEntry.getName());
-                    return loadImageFromEntry(zipFile, tryEntry);
+                // Спроба без розширення + варіанти
+                String base = coverId.replaceAll("\\.(jpg|png|jpeg|gif)$", "");
+                String[] exts = {".jpg",".jpeg",".png",".gif"};
+                for (String ext : exts) {
+                    ZipEntry tryE = zipFile.getEntry(base + ext);
+                    if (tryE != null) return loadImage(zipFile, tryE);
                 }
             }
-
-            // Спроба 3: шукаємо будь-яке зображення в архіві
-            log.debug("Шукаємо будь-яку обкладинку в архіві...");
-            return searchAnyImageInArchive(zipFile);
-
         } catch (Exception e) {
-            log.error("Помилка обробки FB2", e);
-            return null;
+            log.error("Помилка FB2 stream", e);
         }
+        return searchAnyImageInArchive(zipFile);
     }
 
     private Image searchAnyImageInArchive(ZipFile zipFile) {
@@ -230,18 +171,24 @@ public class CoverExtractorService {
             for (ZipEntry entry : zipFile.stream().toList()) {
                 if (entry.isDirectory()) continue;
                 String name = entry.getName().toLowerCase();
-                if (name.endsWith(".jpg") || name.endsWith(".jpeg") ||
-                        name.endsWith(".png") || name.endsWith(".gif")) {
-
-                    if (name.contains("cover") || name.contains("dozor") ||
-                            name.contains("preview") || name.contains("folder")) {
-                        log.info("Знайдено ймовірну обкладинку: {}", entry.getName());
-                        return loadImageFromEntry(zipFile, entry);
-                    }
+                if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png")) {
+                    log.info("Знайдено альтернативну обкладинку: {}", entry.getName());
+                    return loadImage(zipFile, entry);
                 }
             }
         } catch (Exception e) {
-            log.warn("Помилка при пошуку будь-якого зображення", e);
+            log.warn("Помилка пошуку будь-якого зображення", e);
+        }
+        return null;
+    }
+
+    private Image loadImage(ZipFile zipFile, ZipEntry entry) throws Exception {
+        try (InputStream is = zipFile.getInputStream(entry)) {
+            Image image = new Image(is, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
+            if (!image.isError()) {
+                log.info("✅ Обкладинку завантажено: {}", entry.getName());
+                return image;
+            }
         }
         return null;
     }
