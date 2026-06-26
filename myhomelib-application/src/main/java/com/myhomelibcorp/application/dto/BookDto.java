@@ -14,7 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class BookDto {
-    private String id;          // ОДНЕ ПОЛЕ id, використовуємо String для UUID
+    private String id;
     private String title;
     private String authorsText;
     private List<String> genres;
@@ -24,7 +24,7 @@ public class BookDto {
     private String language;
     private String fileName;
     private String folder;
-    private String archiveEntry;
+    private String archiveEntry;          // ← ім'я файлу всередині архіву (FBD/ZIP)
     private long fileSize;
     private String keywords;
     private String annotation;
@@ -36,7 +36,9 @@ public class BookDto {
     private String review;
     private LocalDateTime createdAt;
 
-    // Спеціальний конструктор для зручності (використовується в старому коді)
+    // Корінь колекції (автоматично заповнюється з MainViewModel)
+    private String collectionRoot;
+
     public BookDto(String title, String authorsText, String series, String genresText, int rate, int progress) {
         this.title = title;
         this.authorsText = authorsText;

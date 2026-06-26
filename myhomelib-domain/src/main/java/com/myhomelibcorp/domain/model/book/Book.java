@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import lombok.Getter;
+import lombok.Setter;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -32,10 +33,12 @@ public class Book {
     private Isbn isbn;
     private boolean deleted;
     private boolean local;
-
-    // +++ НОВЕ +++
     private String review;
     private LocalDateTime createdAt;
+
+    // +++ ДОДАНО +++
+    @Setter
+    private String collectionRoot;
 
     private Book(BookId id) {
         this.id = id;
@@ -43,7 +46,6 @@ public class Book {
         this.genres = new ArrayList<>();
         this.updateDate = LocalDateTime.now();
         this.language = LanguageCode.of("uk");
-        // +++ НОВЕ +++
         this.createdAt = LocalDateTime.now();
     }
 
@@ -76,14 +78,12 @@ public class Book {
         public Builder() {
             this.book = new Book(BookId.generate());
             this.book.language = LanguageCode.of("uk");
-            // +++ НОВЕ +++
             this.book.createdAt = LocalDateTime.now();
         }
 
         public Builder id(BookId id) {
             this.book = new Book(id);
             this.book.language = LanguageCode.of("uk");
-            // +++ НОВЕ +++
             this.book.createdAt = LocalDateTime.now();
             return this;
         }
@@ -185,15 +185,19 @@ public class Book {
             return this;
         }
 
-        // +++ НОВЕ +++
         public Builder review(String review) {
             book.review = review;
             return this;
         }
 
-        // +++ НОВЕ +++
         public Builder createdAt(LocalDateTime createdAt) {
             book.createdAt = createdAt;
+            return this;
+        }
+
+        // +++ ДОДАНО +++
+        public Builder collectionRoot(String collectionRoot) {
+            book.collectionRoot = collectionRoot;
             return this;
         }
 

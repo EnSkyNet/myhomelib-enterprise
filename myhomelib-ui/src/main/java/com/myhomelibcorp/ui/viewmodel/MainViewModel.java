@@ -27,6 +27,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.Comparator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -50,7 +51,6 @@ public class MainViewModel {
     private final BackgroundExecutor backgroundExecutor;
     private final IndexRebuilder indexRebuilder;
 
-    // === ГРУПИ ===
     private final LoadGroupsUseCase loadGroupsUseCase;
     private final LoadBooksByGroupUseCase loadBooksByGroupUseCase;
     private final CreateGroupUseCase createGroupUseCase;
@@ -67,8 +67,16 @@ public class MainViewModel {
     private final StringProperty searchQuery = new SimpleStringProperty("");
     private final ObservableList<String> genreNames = FXCollections.observableArrayList();
 
+    private String currentCollectionRoot = "";
     private AuthorId currentAuthorId;
+    private String currentSeriesName;
+    private String currentGenreCode;
+    private Long currentGroupId;
+    private boolean isSearchMode = false;
+
     private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
+
+    // ==================== ГЕТЕРИ / СЕТЕРИ ====================
 
     public ObservableList<BookDto> booksProperty() { return books; }
     public ObjectProperty<BookDto> selectedBookProperty() { return selectedBook; }
@@ -78,122 +86,164 @@ public class MainViewModel {
     public StringProperty searchQueryProperty() { return searchQuery; }
     public ObservableList<String> genreNamesProperty() { return genreNames; }
 
+    public void setCurrentCollectionRoot(String collectionRoot) {
+        this.currentCollectionRoot = collectionRoot != null ? collectionRoot : "";
+        log.info("📁 CollectionRoot встановлено: {}", this.currentCollectionRoot);
+        Platform.runLater(() -> {
+            for (BookDto book : books) {
+                book.setCollectionRoot(this.currentCollectionRoot);
+            }
+        });
+    }
+
+    public String getCurrentCollectionRoot() {
+        return currentCollectionRoot;
+    }
+
+    // ==================== ЗБЕРЕЖЕННЯ КОНТЕКСТУ ====================
+
+    private void saveCurrentContext() {
+        // Зберігаємо поточний контекст (якщо є)
+        if (currentAuthorId != null) {
+            log.debug("Збережено контекст автора: {}", currentAuthorId);
+        } else if (currentSeriesName != null && !currentSeriesName.isBlank()) {
+            log.debug("Збережено контекст серії: {}", currentSeriesName);
+        } else if (currentGenreCode != null && !currentGenreCode.isBlank()) {
+            log.debug("Збережено контекст жанру: {}", currentGenreCode);
+        } else if (currentGroupId != null) {
+            log.debug("Збережено контекст групи: {}", currentGroupId);
+        } else if (isSearchMode) {
+            log.debug("Збережено контекст пошуку");
+        } else {
+            log.debug("Немає активного контексту, буде завантажено всі книги");
+        }
+    }
+
+    public void restoreContextAndRefresh() {
+        // Відновлюємо контекст
+        if (currentAuthorId != null) {
+            loadBooksByAuthor(currentAuthorId);
+        } else if (currentSeriesName != null && !currentSeriesName.isBlank()) {
+            loadBooksBySeries(currentSeriesName);
+        } else if (currentGenreCode != null && !currentGenreCode.isBlank()) {
+            loadBooksByGenre(currentGenreCode);
+        } else if (currentGroupId != null) {
+            loadBooksByGroup(currentGroupId);
+        } else if (isSearchMode && searchQuery.get() != null && !searchQuery.get().isBlank()) {
+            searchBooks(searchQuery.get());
+        } else {
+            refreshBooks();
+        }
+    }
+
+    // ==================== ІНІЦІАЛІЗАЦІЯ ====================
+
     public void initWithoutBooks() {
         loadGenres();
         bindSearchWithDebounce();
     }
 
+    // ==================== ЗАВАНТАЖЕННЯ КНИГ ====================
+
     public void refreshBooks() {
+        // Скидаємо контекст
+        currentAuthorId = null;
+        currentSeriesName = null;
+        currentGenreCode = null;
+        currentGroupId = null;
+        isSearchMode = false;
+
         statusText.set("Завантаження всіх книг...");
-        backgroundExecutor.submit(() -> loadBooksUseCase.loadAll(10000, 0))
+        log.info("🔄 refreshBooks() викликано");
+
+        backgroundExecutor.submit(() -> {
+                    try {
+                        List<Book> bookList = loadBooksUseCase.loadAll(10000, 0);
+                        log.info("📚 Отримано {} книг з БД", bookList != null ? bookList.size() : 0);
+                        return bookList;
+                    } catch (Exception e) {
+                        log.error("❌ Помилка в loadAll", e);
+                        throw new RuntimeException("Помилка завантаження книг", e);
+                    }
+                })
                 .thenAccept(bookList -> {
+                    if (bookList == null || bookList.isEmpty()) {
+                        log.warn("⚠️ Список книг порожній");
+                        Platform.runLater(() -> {
+                            books.clear();
+                            statusText.set("Книг не знайдено");
+                        });
+                        return;
+                    }
+
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getSeries, Comparator.nullsLast(String::compareTo))
                                     .thenComparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)))
-                            .map(this::toDto)
+                            .map(this::toDtoSafe)
+                            .filter(dto -> dto != null)
                             .collect(Collectors.toList());
+
+                    log.info("📋 Перетворено {} DTO", dtos.size());
+
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Завантажено " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                        log.info("✅ Таблиця оновлена, книг у списку: {}", dtos.size());
+
+                        if (!dtos.isEmpty()) {
+                            selectedBook.set(dtos.get(0));
+                            if (currentCollectionRoot.isEmpty()) {
+                                detectAndSetRoot(dtos.get(0));
+                            }
+                        } else {
+                            selectedBook.set(null);
+                        }
                     });
                 })
                 .exceptionally(ex -> {
-                    Platform.runLater(() -> statusText.set("Помилка: " + ex.getMessage()));
-                    log.error("Помилка завантаження книг", ex);
-                    return null;
-                });
-    }
-
-    public void searchBooks(String query) {
-        log.debug("Пошук за запитом: '{}'", query);
-        if (query == null || query.isBlank()) {
-            if (currentAuthorId != null) {
-                loadBooksByAuthor(currentAuthorId);
-            } else {
-                refreshBooks();
-            }
-            return;
-        }
-
-        statusText.set("Пошук: " + query);
-        backgroundExecutor.submit(() -> searchBooksUseCase.search(query, 100))
-                .thenAccept(bookList -> {
-                    List<BookDto> dtos = bookList.stream().map(this::toDto).collect(Collectors.toList());
+                    log.error("💥 Критична помилка в refreshBooks", ex);
                     Platform.runLater(() -> {
-                        books.setAll(dtos);
-                        statusText.set("Знайдено " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                        statusText.set("Помилка завантаження: " + ex.getMessage());
+                        books.clear();
                     });
-                })
-                .exceptionally(ex -> {
-                    Platform.runLater(() -> statusText.set("Помилка пошуку: " + ex.getMessage()));
-                    log.error("Помилка пошуку", ex);
                     return null;
                 });
     }
 
-    public void importFile(Path file, Runnable onComplete) {
-        importInProgress.set(true);
-        statusText.set("Імпорт файлу: " + file.getFileName());
-        backgroundExecutor.submit(() -> importFileUseCase.importFile(file))
-                .thenAccept(count -> Platform.runLater(() -> {
-                    importInProgress.set(false);
-                    statusText.set("Імпорт завершено. Додано " + count + " книг");
-                    if (onComplete != null) onComplete.run();
-                }))
-                .exceptionally(ex -> {
-                    Platform.runLater(() -> {
-                        importInProgress.set(false);
-                        statusText.set("Помилка імпорту: " + ex.getMessage());
-                    });
-                    log.error("Помилка імпорту файлу", ex);
-                    return null;
-                });
-    }
-
-    public void importDirectory(Path directory, Runnable onComplete) {
-        importInProgress.set(true);
-        statusText.set("Імпорт каталогу: " + directory.getFileName());
-        AtomicBoolean cancelFlag = new AtomicBoolean(false);
-        DoubleConsumer progressConsumer = progress -> Platform.runLater(() -> importProgress.set(progress));
-
-        backgroundExecutor.submit(() -> importDirectoryUseCase.importDirectory(directory, progressConsumer, cancelFlag))
-                .thenAccept(count -> Platform.runLater(() -> {
-                    importInProgress.set(false);
-                    importProgress.set(0);
-                    statusText.set("Імпорт каталогу завершено. Додано " + count + " книг");
-                    if (onComplete != null) onComplete.run();
-                }))
-                .exceptionally(ex -> {
-                    Platform.runLater(() -> {
-                        importInProgress.set(false);
-                        importProgress.set(0);
-                        statusText.set("Помилка імпорту каталогу: " + ex.getMessage());
-                    });
-                    log.error("Помилка імпорту каталогу", ex);
-                    return null;
-                });
-    }
+    // ==================== МЕТОДИ ЗАВАНТАЖЕННЯ З КОНТЕКСТОМ ====================
 
     public void loadBooksByAuthor(AuthorId authorId) {
         if (authorId == null) {
             refreshBooks();
             return;
         }
+        // Зберігаємо контекст
         currentAuthorId = authorId;
+        currentSeriesName = null;
+        currentGenreCode = null;
+        currentGroupId = null;
+        isSearchMode = false;
+
         statusText.set("Завантаження книг автора...");
+        log.info("📖 Завантаження книг автора: {}", authorId);
+
         backgroundExecutor.submit(() -> loadBooksByAuthorUseCase.loadByAuthor(authorId, 10000, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getSeries, Comparator.nullsLast(String::compareTo))
                                     .thenComparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)))
-                            .map(this::toDto)
+                            .map(this::toDtoSafe)
+                            .filter(dto -> dto != null)
                             .collect(Collectors.toList());
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Книги автора: " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                        if (!dtos.isEmpty()) {
+                            selectedBook.set(dtos.get(0));
+                            if (currentCollectionRoot.isEmpty()) {
+                                detectAndSetRoot(dtos.get(0));
+                            }
+                        }
                     });
                 })
                 .exceptionally(ex -> {
@@ -208,17 +258,31 @@ public class MainViewModel {
             refreshBooks();
             return;
         }
+        currentAuthorId = null;
+        currentSeriesName = seriesName;
+        currentGenreCode = null;
+        currentGroupId = null;
+        isSearchMode = false;
+
         statusText.set("Завантаження книг серії: " + seriesName);
+        log.info("📚 Завантаження серії: {}", seriesName);
+
         backgroundExecutor.submit(() -> loadBooksBySeriesUseCase.loadBySeries(seriesName, 10000, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)))
-                            .map(this::toDto)
+                            .map(this::toDtoSafe)
+                            .filter(dto -> dto != null)
                             .collect(Collectors.toList());
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Книги серії: " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                        if (!dtos.isEmpty()) {
+                            selectedBook.set(dtos.get(0));
+                            if (currentCollectionRoot.isEmpty()) {
+                                detectAndSetRoot(dtos.get(0));
+                            }
+                        }
                     });
                 })
                 .exceptionally(ex -> {
@@ -233,17 +297,31 @@ public class MainViewModel {
             refreshBooks();
             return;
         }
+        currentAuthorId = null;
+        currentSeriesName = null;
+        currentGenreCode = genreCode;
+        currentGroupId = null;
+        isSearchMode = false;
+
         statusText.set("Завантаження книг жанру...");
+        log.info("🎭 Завантаження жанру: {}", genreCode);
+
         backgroundExecutor.submit(() -> loadBooksByGenreUseCase.loadByGenre(genreCode, 10000, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getTitle))
-                            .map(this::toDto)
+                            .map(this::toDtoSafe)
+                            .filter(dto -> dto != null)
                             .collect(Collectors.toList());
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Книги жанру: " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                        if (!dtos.isEmpty()) {
+                            selectedBook.set(dtos.get(0));
+                            if (currentCollectionRoot.isEmpty()) {
+                                detectAndSetRoot(dtos.get(0));
+                            }
+                        }
                     });
                 })
                 .exceptionally(ex -> {
@@ -253,24 +331,36 @@ public class MainViewModel {
                 });
     }
 
-    // === МЕТОДИ ДЛЯ ГРУП ===
-
     public void loadBooksByGroup(Long groupId) {
         if (groupId == null) {
             refreshBooks();
             return;
         }
+        currentAuthorId = null;
+        currentSeriesName = null;
+        currentGenreCode = null;
+        currentGroupId = groupId;
+        isSearchMode = false;
+
         statusText.set("Завантаження книг групи...");
+        log.info("👥 Завантаження групи: {}", groupId);
+
         backgroundExecutor.submit(() -> loadBooksByGroupUseCase.loadByGroup(groupId))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getTitle))
-                            .map(this::toDto)
+                            .map(this::toDtoSafe)
+                            .filter(dto -> dto != null)
                             .collect(Collectors.toList());
                     Platform.runLater(() -> {
                         books.setAll(dtos);
                         statusText.set("Книги групи: " + dtos.size() + " книг");
-                        if (!dtos.isEmpty()) selectedBook.set(dtos.get(0));
+                        if (!dtos.isEmpty()) {
+                            selectedBook.set(dtos.get(0));
+                            if (currentCollectionRoot.isEmpty()) {
+                                detectAndSetRoot(dtos.get(0));
+                            }
+                        }
                     });
                 })
                 .exceptionally(ex -> {
@@ -279,6 +369,130 @@ public class MainViewModel {
                     return null;
                 });
     }
+
+    // ==================== ПОШУК ====================
+
+    public void searchBooks(String query) {
+        log.debug("🔍 Пошук за запитом: '{}'", query);
+        if (query == null || query.isBlank()) {
+            // Скидаємо режим пошуку
+            isSearchMode = false;
+            if (currentAuthorId != null) {
+                loadBooksByAuthor(currentAuthorId);
+            } else if (currentSeriesName != null && !currentSeriesName.isBlank()) {
+                loadBooksBySeries(currentSeriesName);
+            } else if (currentGenreCode != null && !currentGenreCode.isBlank()) {
+                loadBooksByGenre(currentGenreCode);
+            } else if (currentGroupId != null) {
+                loadBooksByGroup(currentGroupId);
+            } else {
+                refreshBooks();
+            }
+            return;
+        }
+
+        // Зберігаємо контекст пошуку
+        isSearchMode = true;
+        currentAuthorId = null;
+        currentSeriesName = null;
+        currentGenreCode = null;
+        currentGroupId = null;
+
+        statusText.set("Пошук: " + query);
+        log.info("🔍 Виконуємо пошук за запитом: {}", query);
+
+        backgroundExecutor.submit(() -> searchBooksUseCase.search(query, 100))
+                .thenAccept(bookList -> {
+                    List<BookDto> dtos = bookList.stream()
+                            .map(this::toDtoSafe)
+                            .filter(dto -> dto != null)
+                            .collect(Collectors.toList());
+                    Platform.runLater(() -> {
+                        books.setAll(dtos);
+                        statusText.set("Знайдено " + dtos.size() + " книг");
+                        if (!dtos.isEmpty()) {
+                            selectedBook.set(dtos.get(0));
+                            if (currentCollectionRoot.isEmpty()) {
+                                detectAndSetRoot(dtos.get(0));
+                            }
+                        }
+                    });
+                })
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> statusText.set("Помилка пошуку: " + ex.getMessage()));
+                    log.error("Помилка пошуку", ex);
+                    return null;
+                });
+    }
+
+    // ==================== ІМПОРТ ====================
+
+    public void importFile(Path file, Runnable onComplete) {
+        importInProgress.set(true);
+        statusText.set("Імпорт файлу: " + file.getFileName());
+        log.info("📥 Імпорт файлу: {}", file);
+
+        backgroundExecutor.submit(() -> importFileUseCase.importFile(file))
+                .thenAccept(count -> Platform.runLater(() -> {
+                    importInProgress.set(false);
+                    statusText.set("Імпорт завершено. Додано " + count + " книг");
+                    log.info("✅ Імпорт файлу завершено, додано {} книг", count);
+                    // Відновлюємо контекст після імпорту
+                    delayAndRefresh(onComplete);
+                }))
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> {
+                        importInProgress.set(false);
+                        statusText.set("Помилка імпорту: " + ex.getMessage());
+                    });
+                    log.error("❌ Помилка імпорту файлу", ex);
+                    return null;
+                });
+    }
+
+    public void importDirectory(Path directory, Runnable onComplete) {
+        importInProgress.set(true);
+        statusText.set("Імпорт каталогу: " + directory.getFileName());
+        log.info("📥 Імпорт каталогу: {}", directory);
+
+        AtomicBoolean cancelFlag = new AtomicBoolean(false);
+        DoubleConsumer progressConsumer = progress -> Platform.runLater(() -> importProgress.set(progress));
+
+        backgroundExecutor.submit(() -> importDirectoryUseCase.importDirectory(directory, progressConsumer, cancelFlag))
+                .thenAccept(count -> Platform.runLater(() -> {
+                    importInProgress.set(false);
+                    importProgress.set(0);
+                    statusText.set("Імпорт каталогу завершено. Додано " + count + " книг");
+                    log.info("✅ Імпорт каталогу завершено, додано {} книг", count);
+                    delayAndRefresh(onComplete);
+                }))
+                .exceptionally(ex -> {
+                    Platform.runLater(() -> {
+                        importInProgress.set(false);
+                        importProgress.set(0);
+                        statusText.set("Помилка імпорту каталогу: " + ex.getMessage());
+                    });
+                    log.error("❌ Помилка імпорту каталогу", ex);
+                    return null;
+                });
+    }
+
+    // ==================== ОНОВЛЕННЯ ПІСЛЯ ІМПОРТУ ====================
+
+    private void delayAndRefresh(Runnable onComplete) {
+        new Thread(() -> {
+            try {
+                Thread.sleep(500);
+            } catch (InterruptedException ignored) {}
+            Platform.runLater(() -> {
+                if (onComplete != null) onComplete.run();
+                // Відновлюємо контекст (автор, серія, тощо) замість повного скидання
+                restoreContextAndRefresh();
+            });
+        }).start();
+    }
+
+    // ==================== ГРУПИ ====================
 
     public Group createGroup(String name) {
         return createGroupUseCase.execute(name);
@@ -300,6 +514,8 @@ public class MainViewModel {
         removeBookFromGroupUseCase.execute(groupId, bookId);
     }
 
+    // ==================== ІНДЕКС ====================
+
     public void rebuildIndex() {
         statusText.set("Перебудова індексу...");
         backgroundExecutor.submit(() -> {
@@ -313,31 +529,46 @@ public class MainViewModel {
         });
     }
 
-    private BookDto toDto(Book book) {
-        String genresText = book.getGenres().stream()
-                .map(genre -> genreService.getGenreName(genre.getId().asString()))
-                .collect(Collectors.joining(", "));
+    // ==================== ДОПОМІЖНІ МЕТОДИ ====================
 
-        return BookDto.builder()
-                .id(book.getId().asString())
-                .title(book.getTitle())
-                .authorsText(book.authorsText())
-                .series(book.getSeries())
-                .genresText(genresText)
-                .sequenceNumber(book.getSequenceNumber())
-                .rate(book.getRate())
-                .progress(book.getProgress())
-                .language(book.getLanguage() != null ? book.getLanguage().toString() : "")
-                .fileSize(book.getFileSize())
-                .fileName(book.getFileName())
-                .folder(book.getFolder())
-                .updateDate(book.getUpdateDate())
-                .annotation(book.getAnnotation())
-                .deleted(book.isDeleted())
-                .local(book.isLocal())
-                .review(book.getReview())
-                .createdAt(book.getCreatedAt())
-                .build();
+    private BookDto toDtoSafe(Book book) {
+        try {
+            if (book == null) return null;
+            String genresText = "";
+            try {
+                genresText = book.getGenres().stream()
+                        .map(genre -> genreService.getGenreName(genre.getId().asString()))
+                        .collect(Collectors.joining(", "));
+            } catch (Exception e) {
+                log.warn("Помилка отримання назви жанру: {}", e.getMessage());
+            }
+
+            return BookDto.builder()
+                    .id(book.getId() != null ? book.getId().asString() : "")
+                    .title(book.getTitle() != null ? book.getTitle() : "")
+                    .authorsText(book.authorsText() != null ? book.authorsText() : "")
+                    .series(book.getSeries() != null ? book.getSeries() : "")
+                    .genresText(genresText)
+                    .sequenceNumber(book.getSequenceNumber())
+                    .rate(book.getRate())
+                    .progress(book.getProgress())
+                    .language(book.getLanguage() != null ? book.getLanguage().toString() : "")
+                    .fileSize(book.getFileSize())
+                    .fileName(book.getFileName() != null ? book.getFileName() : "")
+                    .folder(book.getFolder() != null ? book.getFolder() : "")
+                    .archiveEntry(book.getArchiveEntry() != null ? book.getArchiveEntry() : "")
+                    .updateDate(book.getUpdateDate())
+                    .annotation(book.getAnnotation() != null ? book.getAnnotation() : "")
+                    .deleted(book.isDeleted())
+                    .local(book.isLocal())
+                    .review(book.getReview() != null ? book.getReview() : "")
+                    .createdAt(book.getCreatedAt())
+                    .collectionRoot(currentCollectionRoot)  // автоматично
+                    .build();
+        } catch (Exception e) {
+            log.error("Помилка перетворення книги {}: {}", book.getTitle(), e.getMessage(), e);
+            return null;
+        }
     }
 
     private void bindSearchWithDebounce() {
@@ -360,11 +591,34 @@ public class MainViewModel {
                 });
     }
 
+    private void detectAndSetRoot(BookDto firstBook) {
+        if (firstBook == null) return;
+
+        String folder = firstBook.getFolder();
+        if (folder == null || folder.isBlank()) return;
+
+        try {
+            // Якщо folder вже абсолютний — беремо його батьківську папку як collectionRoot
+            Path folderPath = Paths.get(folder);
+            Path rootPath;
+
+            if (folderPath.isAbsolute()) {
+                rootPath = folderPath.getParent() != null ? folderPath.getParent() : folderPath;
+            } else {
+                rootPath = Paths.get(System.getProperty("user.dir"));
+            }
+
+            setCurrentCollectionRoot(rootPath.toString());
+            log.info("Автоматично визначено collectionRoot: {}", rootPath);
+        } catch (Exception e) {
+            log.warn("Не вдалося визначити collectionRoot", e);
+        }
+    }
+
     public void setStatusText(String text) {
         statusText.set(text);
     }
 
-    // === ДОДАНО ДЛЯ BookInfoPanel ===
     public void setSelectedBook(BookDto book) {
         this.selectedBook.set(book);
     }

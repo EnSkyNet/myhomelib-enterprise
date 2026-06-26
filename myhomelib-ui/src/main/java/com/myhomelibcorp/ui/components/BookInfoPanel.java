@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.components;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.ui.service.CoverExtractorService;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Insets;
@@ -42,20 +43,17 @@ public class BookInfoPanel extends VBox {
         setPadding(new Insets(15));
         setStyle("-fx-background-color: #ffffff; -fx-border-color: #e0e0e0; -fx-border-width: 1;");
 
-        // Обкладинка
         coverView.setFitWidth(180);
         coverView.setFitHeight(250);
         coverView.setPreserveRatio(true);
-        coverView.setStyle("-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.25), 10, 0, 0, 4);");
+        coverView.setStyle("-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);");
 
         HBox coverBox = new HBox(coverView);
         coverBox.setAlignment(Pos.CENTER);
 
-        // Назва
         titleLabel.setFont(Font.font("System", FontWeight.BOLD, 17));
         titleLabel.setWrapText(true);
 
-        // Посилання
         VBox linksBox = new VBox(10);
         linksBox.getChildren().addAll(
                 createLinkRow("Автори:", authorsLink),
@@ -63,7 +61,6 @@ public class BookInfoPanel extends VBox {
                 createLinkRow("Жанри:", genresLink)
         );
 
-        // Анотація
         Label annLabel = new Label("Анотація:");
         annLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
 
@@ -72,21 +69,15 @@ public class BookInfoPanel extends VBox {
         annotationArea.setPrefRowCount(8);
         annotationArea.setStyle("-fx-font-size: 13.5px;");
 
-        // Метадані
         Label metaLabel = new Label("Метадані:");
         metaLabel.setFont(Font.font("System", FontWeight.BOLD, 13));
 
-        metaListView.setPrefHeight(170);
+        metaListView.setPrefHeight(160);
+        metaListView.setStyle("-fx-font-size: 13px;");
 
-        getChildren().addAll(
-                coverBox,
-                titleLabel,
-                linksBox,
-                annLabel,
-                annotationArea,
-                metaLabel,
-                metaListView
-        );
+        VBox.setVgrow(metaListView, Priority.ALWAYS);
+
+        getChildren().addAll(coverBox, titleLabel, linksBox, annLabel, annotationArea, metaLabel, metaListView);
     }
 
     private HBox createLinkRow(String labelText, Hyperlink link) {
@@ -153,12 +144,21 @@ public class BookInfoPanel extends VBox {
         });
     }
 
-    public void setBook(BookDto book) {
-        bookProperty.set(book);
-    }
-
     public ObjectProperty<BookDto> bookProperty() {
         return bookProperty;
+    }
+
+    public void setCover(Image image) {
+        coverView.setImage(image);
+    }
+
+    public void loadCoverFromBook(BookDto book, CoverExtractorService extractor) {
+        if (book == null || extractor == null) {
+            coverView.setImage(null);
+            return;
+        }
+        Image cover = extractor.extractCover(book);
+        setCover(cover);
     }
 
     public void setOnAuthorClicked(Consumer<String> handler) {
@@ -175,10 +175,6 @@ public class BookInfoPanel extends VBox {
 
     public void setOnAnnotationClicked(Consumer<BookDto> handler) {
         this.onAnnotationClicked = handler;
-    }
-
-    public void setCover(Image image) {
-        coverView.setImage(image);
     }
 
     public void clear() {
