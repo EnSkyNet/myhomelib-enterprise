@@ -76,9 +76,9 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
+        // ВИПРАВЛЕНО: замість throw повертаємо порожній потік, щоб не переривати імпорт
         log.error("Не вдалося прочитати ZIP-архів жодним з підтримуваних кодувань: {}", file);
-        throw new BusinessException(ErrorCode.IMPORT_FAILED,
-                "Не вдалося прочитати ZIP-архів: " + file.getFileName(), lastException);
+        return Stream.empty();
     }
 
     @Override

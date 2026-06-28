@@ -1,7 +1,6 @@
 package com.myhomelibcorp.ui.components;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.ui.service.CoverExtractorService;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Insets;
@@ -152,14 +151,8 @@ public class BookInfoPanel extends VBox {
         coverView.setImage(image);
     }
 
-    public void loadCoverFromBook(BookDto book, CoverExtractorService extractor) {
-        if (book == null || extractor == null) {
-            coverView.setImage(null);
-            return;
-        }
-        Image cover = extractor.extractCover(book);
-        setCover(cover);
-    }
+    // ========== ВИДАЛЕНО МЕТОД loadCoverFromBook ==========
+    // Більше не потрібен, оскільки завантаження обкладинки виконується в MainController
 
     public void setOnAuthorClicked(Consumer<String> handler) {
         this.onAuthorClicked = handler;

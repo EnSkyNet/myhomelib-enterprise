@@ -78,48 +78,19 @@
                 </configuration>
             </plugin>
 
-            <!-- Плагін Spring Boot для збірки JAR -->
+            <!-- Spring Boot Plugin для створення виконуваного JAR -->
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
-                    <!-- Додаємо JavaFX модулі при запуску через spring-boot:run -->
                     <jvmArguments>
                         --add-modules=javafx.controls,javafx.fxml
                     </jvmArguments>
                 </configuration>
             </plugin>
 
-            <!-- Shade plugin для створення fat JAR -->
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.5.1</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
-                                </transformer>
-                            </transformers>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>module-info.class</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                        </configuration>
-                    </execution>
-                </executions>
-            </plugin>
+            <!-- maven-shade-plugin ВИДАЛЕНО – зайвий -->
         </plugins>
     </build>
 </project>

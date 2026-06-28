@@ -13,17 +13,28 @@
     <artifactId>myhomelib-infrastructure</artifactId>
 
     <dependencies>
-        <!-- Існуючі залежності -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-application</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
+
+        <!-- LUCENE -->
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-queryparser</artifactId>
+        </dependency>
+        <!-- ВИПРАВЛЕНО: правильна назва артефакту -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-analysis-common</artifactId>
-            <version>9.9.1</version>
+            <version>${lucene.version}</version>
         </dependency>
+
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-jdbc</artifactId>
@@ -48,11 +59,20 @@
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
         </dependency>
+
+        <dependency>
+            <groupId>org.openjfx</groupId>
+            <artifactId>javafx-graphics</artifactId>
+            <version>${javafx.version}</version>
+            <scope>compile</scope>
+        </dependency>
+
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <scope>provided</scope>
         </dependency>
+
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>
@@ -63,18 +83,5 @@
             <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
-
-        <!-- 🔥 LUCENE (ТІЛЬКИ НЕОБХІДНЕ) -->
-        <dependency>
-            <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-core</artifactId>
-            <version>9.9.1</version>
-        </dependency>
-        <dependency>
-            <groupId>org.apache.lucene</groupId>
-            <artifactId>lucene-queryparser</artifactId>
-            <version>9.9.1</version>
-        </dependency>
-        <!-- lucene-analyzers-common НЕ ПОТРІБЕН – StandardAnalyzer вже в core -->
     </dependencies>
 </project>

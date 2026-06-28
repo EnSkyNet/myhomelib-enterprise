@@ -103,7 +103,6 @@ public class MainViewModel {
     // ==================== ЗБЕРЕЖЕННЯ КОНТЕКСТУ ====================
 
     private void saveCurrentContext() {
-        // Зберігаємо поточний контекст (якщо є)
         if (currentAuthorId != null) {
             log.debug("Збережено контекст автора: {}", currentAuthorId);
         } else if (currentSeriesName != null && !currentSeriesName.isBlank()) {
@@ -120,7 +119,6 @@ public class MainViewModel {
     }
 
     public void restoreContextAndRefresh() {
-        // Відновлюємо контекст
         if (currentAuthorId != null) {
             loadBooksByAuthor(currentAuthorId);
         } else if (currentSeriesName != null && !currentSeriesName.isBlank()) {
@@ -139,14 +137,13 @@ public class MainViewModel {
     // ==================== ІНІЦІАЛІЗАЦІЯ ====================
 
     public void initWithoutBooks() {
-        loadGenres();
-        bindSearchWithDebounce();
+        loadGenres();                   // ВИПРАВЛЕНО: метод додано нижче
+        bindSearchWithDebounce();       // ВИПРАВЛЕНО: метод додано нижче
     }
 
     // ==================== ЗАВАНТАЖЕННЯ КНИГ ====================
 
     public void refreshBooks() {
-        // Скидаємо контекст
         currentAuthorId = null;
         currentSeriesName = null;
         currentGenreCode = null;
@@ -158,7 +155,7 @@ public class MainViewModel {
 
         backgroundExecutor.submit(() -> {
                     try {
-                        List<Book> bookList = loadBooksUseCase.loadAll(10000, 0);
+                        List<Book> bookList = loadBooksUseCase.loadAll(Integer.MAX_VALUE, 0);
                         log.info("📚 Отримано {} книг з БД", bookList != null ? bookList.size() : 0);
                         return bookList;
                     } catch (Exception e) {
@@ -217,7 +214,6 @@ public class MainViewModel {
             refreshBooks();
             return;
         }
-        // Зберігаємо контекст
         currentAuthorId = authorId;
         currentSeriesName = null;
         currentGenreCode = null;
@@ -227,7 +223,7 @@ public class MainViewModel {
         statusText.set("Завантаження книг автора...");
         log.info("📖 Завантаження книг автора: {}", authorId);
 
-        backgroundExecutor.submit(() -> loadBooksByAuthorUseCase.loadByAuthor(authorId, 10000, 0))
+        backgroundExecutor.submit(() -> loadBooksByAuthorUseCase.loadByAuthor(authorId, Integer.MAX_VALUE, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getSeries, Comparator.nullsLast(String::compareTo))
@@ -267,7 +263,7 @@ public class MainViewModel {
         statusText.set("Завантаження книг серії: " + seriesName);
         log.info("📚 Завантаження серії: {}", seriesName);
 
-        backgroundExecutor.submit(() -> loadBooksBySeriesUseCase.loadBySeries(seriesName, 10000, 0))
+        backgroundExecutor.submit(() -> loadBooksBySeriesUseCase.loadBySeries(seriesName, Integer.MAX_VALUE, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)))
@@ -306,7 +302,7 @@ public class MainViewModel {
         statusText.set("Завантаження книг жанру...");
         log.info("🎭 Завантаження жанру: {}", genreCode);
 
-        backgroundExecutor.submit(() -> loadBooksByGenreUseCase.loadByGenre(genreCode, 10000, 0))
+        backgroundExecutor.submit(() -> loadBooksByGenreUseCase.loadByGenre(genreCode, Integer.MAX_VALUE, 0))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .sorted(Comparator.comparing(Book::getTitle))
@@ -375,7 +371,6 @@ public class MainViewModel {
     public void searchBooks(String query) {
         log.debug("🔍 Пошук за запитом: '{}'", query);
         if (query == null || query.isBlank()) {
-            // Скидаємо режим пошуку
             isSearchMode = false;
             if (currentAuthorId != null) {
                 loadBooksByAuthor(currentAuthorId);
@@ -391,7 +386,6 @@ public class MainViewModel {
             return;
         }
 
-        // Зберігаємо контекст пошуку
         isSearchMode = true;
         currentAuthorId = null;
         currentSeriesName = null;
@@ -401,7 +395,7 @@ public class MainViewModel {
         statusText.set("Пошук: " + query);
         log.info("🔍 Виконуємо пошук за запитом: {}", query);
 
-        backgroundExecutor.submit(() -> searchBooksUseCase.search(query, 100))
+        backgroundExecutor.submit(() -> searchBooksUseCase.search(query, 1000))
                 .thenAccept(bookList -> {
                     List<BookDto> dtos = bookList.stream()
                             .map(this::toDtoSafe)
@@ -437,7 +431,6 @@ public class MainViewModel {
                     importInProgress.set(false);
                     statusText.set("Імпорт завершено. Додано " + count + " книг");
                     log.info("✅ Імпорт файлу завершено, додано {} книг", count);
-                    // Відновлюємо контекст після імпорту
                     delayAndRefresh(onComplete);
                 }))
                 .exceptionally(ex -> {
@@ -486,7 +479,6 @@ public class MainViewModel {
             } catch (InterruptedException ignored) {}
             Platform.runLater(() -> {
                 if (onComplete != null) onComplete.run();
-                // Відновлюємо контекст (автор, серія, тощо) замість повного скидання
                 restoreContextAndRefresh();
             });
         }).start();
@@ -563,7 +555,7 @@ public class MainViewModel {
                     .local(book.isLocal())
                     .review(book.getReview() != null ? book.getReview() : "")
                     .createdAt(book.getCreatedAt())
-                    .collectionRoot(currentCollectionRoot)  // автоматично
+                    .collectionRoot(currentCollectionRoot)
                     .build();
         } catch (Exception e) {
             log.error("Помилка перетворення книги {}: {}", book.getTitle(), e.getMessage(), e);
@@ -571,6 +563,7 @@ public class MainViewModel {
         }
     }
 
+    // ========== ДОДАНІ МЕТОДИ ==========
     private void bindSearchWithDebounce() {
         searchQuery.addListener((obs, old, query) -> {
             searchDebounce.stop();
@@ -590,24 +583,20 @@ public class MainViewModel {
                     return null;
                 });
     }
+    // ==================================
 
     private void detectAndSetRoot(BookDto firstBook) {
         if (firstBook == null) return;
-
         String folder = firstBook.getFolder();
         if (folder == null || folder.isBlank()) return;
-
         try {
-            // Якщо folder вже абсолютний — беремо його батьківську папку як collectionRoot
             Path folderPath = Paths.get(folder);
             Path rootPath;
-
             if (folderPath.isAbsolute()) {
                 rootPath = folderPath.getParent() != null ? folderPath.getParent() : folderPath;
             } else {
                 rootPath = Paths.get(System.getProperty("user.dir"));
             }
-
             setCurrentCollectionRoot(rootPath.toString());
             log.info("Автоматично визначено collectionRoot: {}", rootPath);
         } catch (Exception e) {

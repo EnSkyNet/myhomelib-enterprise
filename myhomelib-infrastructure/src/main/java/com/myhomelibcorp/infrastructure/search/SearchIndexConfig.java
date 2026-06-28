@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.search;
 
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.FSDirectory;
@@ -24,13 +25,15 @@ public class SearchIndexConfig {
 
     @Bean
     public Analyzer luceneAnalyzer() {
-        // Використовуємо NGramAnalyzer для підтримки пошуку за підрядками
         return new NGramAnalyzer();
     }
 
     @Bean
     public QueryParser queryParser(Analyzer analyzer) {
-        // Пошук тільки за полем "authors"
-        return new QueryParser("authors", analyzer);
+        // ВИПРАВЛЕНО: пошук за кількома полями (замість одного "authors")
+        return new MultiFieldQueryParser(
+                new String[]{"title", "authors", "series", "genres", "keywords", "annotation"},
+                analyzer
+        );
     }
 }

@@ -18,6 +18,7 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.DoubleConsumer;
 import java.util.stream.Stream;
 
@@ -26,7 +27,7 @@ import java.util.stream.Stream;
 @Slf4j
 public class ImporterApplicationService implements ImportInpxUseCase {
 
-    private static final int BATCH_SIZE = 500; // 500 книг за одну транзакцію
+    private static final int BATCH_SIZE = 500;
 
     private final ImporterRegistry importerRegistry;
     private final BookCommandRepository bookCommandRepository;
@@ -63,49 +64,65 @@ public class ImporterApplicationService implements ImportInpxUseCase {
 
         log.info("Початок імпорту каталогу: {}", directory);
 
-        try (Stream<Path> paths = Files.walk(directory)) {
-            // Не накопичуємо всі шляхи – обробляємо потоково
-            List<Path> files = paths
-                    .filter(Files::isRegularFile)
-                    .filter(path -> {
-                        try {
-                            importerRegistry.findImporter(path);
-                            return true;
-                        } catch (IllegalArgumentException e) {
-                            return false;
-                        }
-                    })
-                    .toList(); // поки що так, але можна замінити на forEach
+        // ВИПРАВЛЕНО: потокова обробка БЕЗ збору всіх файлів у List
+        try (Stream<Path> pathStream = Files.walk(directory)) {
+            AtomicInteger processed = new AtomicInteger(0);
+            AtomicInteger saved = new AtomicInteger(0);
 
-            int total = files.size();
-            int processed = 0;
-            int saved = 0;
-
-            for (Path file : files) {
-                if (cancelFlag.get()) {
-                    log.info("Імпорт скасовано");
-                    break;
-                }
-                try {
-                    saved += importBooks(file);
-                } catch (Exception e) {
-                    log.error("Помилка імпорту файлу: {}", file, e);
-                }
-                processed++;
-                progressConsumer.accept((double) processed / total);
+            // Підрахунок загальної кількості підтримуваних файлів (для прогресу)
+            long total;
+            try (Stream<Path> countStream = Files.walk(directory)) {
+                total = countStream
+                        .filter(Files::isRegularFile)
+                        .filter(path -> {
+                            try {
+                                importerRegistry.findImporter(path);
+                                return true;
+                            } catch (IllegalArgumentException e) {
+                                return false;
+                            }
+                        })
+                        .count();
             }
 
-            log.info("Імпорт каталогу завершено. Збережено {} книг", saved);
-            return saved;
+            // Другий прохід – власне обробка
+            try (Stream<Path> processStream = Files.walk(directory)) {
+                processStream
+                        .filter(Files::isRegularFile)
+                        .filter(path -> {
+                            try {
+                                importerRegistry.findImporter(path);
+                                return true;
+                            } catch (IllegalArgumentException e) {
+                                return false;
+                            }
+                        })
+                        .forEach(file -> {
+                            if (cancelFlag.get()) {
+                                log.info("Імпорт скасовано");
+                                return;
+                            }
+                            try {
+                                saved.addAndGet(importBooks(file));
+                            } catch (Exception e) {
+                                log.error("Помилка імпорту файлу: {}", file, e);
+                            }
+                            int processedCount = processed.incrementAndGet();
+                            if (total > 0) {
+                                progressConsumer.accept((double) processedCount / total);
+                            }
+                        });
+            }
+
+            log.info("Імпорт каталогу завершено. Збережено {} книг", saved.get());
+            return saved.get();
+
         } catch (IOException e) {
             log.error("Помилка обходу каталогу: {}", directory, e);
             throw new RuntimeException("Помилка обходу каталогу", e);
         }
     }
 
-    /**
-     * Зберігає книги батчами по BATCH_SIZE штук.
-     */
     private int saveBooksBatch(Stream<Book> bookStream) {
         List<Book> batch = new ArrayList<>(BATCH_SIZE);
         int totalSaved = 0;
@@ -125,7 +142,6 @@ public class ImporterApplicationService implements ImportInpxUseCase {
                     }
                 }
             }
-            // Зберегти залишок
             if (!batch.isEmpty()) {
                 totalSaved += saveBatch(batch);
                 log.debug("Збережено останній батч ({} книг)", batch.size());

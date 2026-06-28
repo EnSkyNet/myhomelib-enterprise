@@ -20,14 +20,13 @@
             <version>${project.parent.version}</version>
         </dependency>
 
-        <!-- Залежність від infrastructure не потрібна – DI вирішує -->
-        <!-- Видаляємо:
+
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-infrastructure</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        -->
+
 
         <dependency>
             <groupId>org.openjfx</groupId>

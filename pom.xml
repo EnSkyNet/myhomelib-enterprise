@@ -38,6 +38,9 @@
         <testcontainers.version>1.19.7</testcontainers.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
+
+        <!-- НОВІ ВЛАСТИВОСТІ ДЛЯ LUCENE -->
+        <lucene.version>9.9.1</lucene.version>
     </properties>
 
     <modules>
@@ -110,6 +113,18 @@
                 <groupId>com.github.ben-manes.caffeine</groupId>
                 <artifactId>caffeine</artifactId>
                 <version>${caffeine.version}</version>
+            </dependency>
+
+            <!-- ДОДАНО УПРАВЛІННЯ ВЕРСІЯМИ LUCENE -->
+            <dependency>
+                <groupId>org.apache.lucene</groupId>
+                <artifactId>lucene-core</artifactId>
+                <version>${lucene.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.lucene</groupId>
+                <artifactId>lucene-queryparser</artifactId>
+                <version>${lucene.version}</version>
             </dependency>
 
             <dependency>

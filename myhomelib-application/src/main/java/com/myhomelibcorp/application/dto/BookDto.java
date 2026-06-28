@@ -14,7 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class BookDto {
-    private String id;
+    private String id; // ЗМІНЕНО: Long → String
     private String title;
     private String authorsText;
     private List<String> genres;
@@ -24,7 +24,7 @@ public class BookDto {
     private String language;
     private String fileName;
     private String folder;
-    private String archiveEntry;          // ← ім'я файлу всередині архіву (FBD/ZIP)
+    private String archiveEntry;
     private long fileSize;
     private String keywords;
     private String annotation;
@@ -33,11 +33,9 @@ public class BookDto {
     private LocalDateTime updateDate;
     private boolean deleted;
     private boolean local;
+    private String collectionRoot;
     private String review;
     private LocalDateTime createdAt;
-
-    // Корінь колекції (автоматично заповнюється з MainViewModel)
-    private String collectionRoot;
 
     public BookDto(String title, String authorsText, String series, String genresText, int rate, int progress) {
         this.title = title;
@@ -66,11 +64,6 @@ public class BookDto {
         return updateDate.format(DateTimeFormatter.ofPattern("dd.MM.yyyy"));
     }
 
-    public String getLocalStatus() {
-        if (deleted) return "Видалена";
-        return local ? "Локальна" : "Онлайн";
-    }
-
     public String getProgressFormatted() {
         return progress + "%";
     }
@@ -78,5 +71,9 @@ public class BookDto {
     public String getCreatedAtFormatted() {
         if (createdAt == null) return "";
         return createdAt.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
+    }
+
+    public String getLocalStatus() {
+        return local ? "Локальна" : "Хмарна";
     }
 }
