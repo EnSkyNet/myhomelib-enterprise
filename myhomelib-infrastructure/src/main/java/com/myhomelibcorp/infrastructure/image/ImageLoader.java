@@ -1,4 +1,4 @@
-package com.myhomelibcorp.infrastructure.cover;
+package com.myhomelibcorp.infrastructure.image;
 
 import javafx.scene.image.Image;
 import lombok.extern.slf4j.Slf4j;
