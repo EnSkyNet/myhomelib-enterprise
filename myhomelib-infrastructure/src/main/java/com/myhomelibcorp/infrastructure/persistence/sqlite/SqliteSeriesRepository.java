@@ -2,12 +2,12 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.SeriesRepository;
 import com.myhomelibcorp.domain.model.series.Series;
+import com.myhomelibcorp.infrastructure.persistence.mapper.SeriesRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -20,13 +20,7 @@ import java.util.Optional;
 public class SqliteSeriesRepository implements SeriesRepository {
 
     private final JdbcTemplate jdbcTemplate;
-
-    private final RowMapper<Series> seriesRowMapper = (rs, rowNum) -> {
-        String id = rs.getString("id");
-        String name = rs.getString("name");
-        // Якщо є поле description, додати
-        return new Series(id, name, null);
-    };
+    private final SeriesRowMapper seriesRowMapper;
 
     @Override
     public List<Series> findAll() {
@@ -48,8 +42,6 @@ public class SqliteSeriesRepository implements SeriesRepository {
     @Override
     public Series save(Series series) {
         if (series.getId() == null) {
-            // Вставляємо нову серію з генерованим UUID або використовуємо автоінкремент?
-            // У нас рядок id, тому згенеруємо
             String newId = java.util.UUID.randomUUID().toString();
             String sql = "INSERT INTO series (id, name) VALUES (?, ?)";
             jdbcTemplate.update(sql, newId, series.getName());

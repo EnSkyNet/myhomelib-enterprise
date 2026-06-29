@@ -2,16 +2,14 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.GroupRepository;
 import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.infrastructure.persistence.mapper.GroupRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 
@@ -22,13 +20,7 @@ import java.util.Optional;
 public class SqliteGroupRepository implements GroupRepository {
 
     private final JdbcTemplate jdbcTemplate;
-
-    private final RowMapper<Group> groupRowMapper = (rs, rowNum) -> {
-        Long id = rs.getLong("id");
-        String name = rs.getString("name");
-        boolean allowDelete = rs.getInt("allow_delete") == 1;
-        return new Group(id, name, allowDelete);
-    };
+    private final GroupRowMapper groupRowMapper;
 
     @Override
     public List<Group> findAll() {

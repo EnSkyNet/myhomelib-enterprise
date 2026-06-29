@@ -10,17 +10,17 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
@@ -39,66 +39,26 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     private final AuthorRepository authorRepository;
     private final GenreService genreService;
 
-    public SqliteBookRepository(JdbcTemplate jdbcTemplate, AuthorRepository authorRepository, GenreService genreService) {
+    // Впроваджені мапери (замість внутрішніх)
+    private final BookRowMapper bookRowMapper;
+    private final AuthorRowMapper authorRowMapper;
+    private final GenreRowMapper genreRowMapper;
+
+    public SqliteBookRepository(JdbcTemplate jdbcTemplate,
+                                AuthorRepository authorRepository,
+                                GenreService genreService,
+                                BookRowMapper bookRowMapper,
+                                AuthorRowMapper authorRowMapper,
+                                GenreRowMapper genreRowMapper) {
         this.jdbcTemplate = jdbcTemplate;
         this.authorRepository = authorRepository;
         this.genreService = genreService;
+        this.bookRowMapper = bookRowMapper;
+        this.authorRowMapper = authorRowMapper;
+        this.genreRowMapper = genreRowMapper;
     }
 
-    private final RowMapper<Book> bookRowMapper = (rs, rowNum) -> {
-        BookId id = BookId.fromString(rs.getString("id"));
-
-        LocalDateTime updateDate = null;
-        String dateStr = rs.getString("update_date");
-        if (dateStr != null && !dateStr.isEmpty()) {
-            try {
-                updateDate = LocalDateTime.parse(dateStr, DATE_FORMATTER);
-            } catch (Exception e) {
-                try {
-                    updateDate = LocalDateTime.parse(dateStr);
-                } catch (Exception ex) {
-                    log.warn("Не вдалося розпарсити дату: {}", dateStr, ex);
-                }
-            }
-        }
-
-        // +++ НОВЕ: createdAt +++
-        LocalDateTime createdAt = null;
-        String createdStr = rs.getString("created_at");
-        if (createdStr != null && !createdStr.isEmpty()) {
-            try {
-                createdAt = LocalDateTime.parse(createdStr, DATE_FORMATTER);
-            } catch (Exception e) {
-                try {
-                    createdAt = LocalDateTime.parse(createdStr);
-                } catch (Exception ex) {
-                    log.warn("Не вдалося розпарсити created_at: {}", createdStr, ex);
-                }
-            }
-        }
-
-        return Book.builder()
-                .id(id)
-                .title(rs.getString("title"))
-                .series(rs.getString("series"))
-                .sequenceNumber(rs.getInt("sequence_number"))
-                .language(rs.getString("language"))
-                .fileName(rs.getString("file_name"))
-                .folder(rs.getString("folder"))
-                .archiveEntry(rs.getString("archive_entry"))
-                .fileSize(rs.getLong("file_size"))
-                .keywords(rs.getString("keywords"))
-                .annotation(rs.getString("annotation"))
-                .rate(rs.getInt("rate"))
-                .progress(rs.getInt("progress"))
-                .updateDate(updateDate)
-                .deleted(rs.getInt("deleted") == 1)
-                .local(rs.getInt("local") == 1)
-                // +++ НОВЕ +++
-                .review(rs.getString("review"))
-                .createdAt(createdAt)
-                .build();
-    };
+    // ==================== COMMAND ====================
 
     @Override
     @Transactional
@@ -154,7 +114,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             ps.setString(idx++, book.getIsbn() != null ? book.getIsbn().toString() : null);
             ps.setInt(idx++, book.isDeleted() ? 1 : 0);
             ps.setInt(idx++, book.isLocal() ? 1 : 0);
-            // +++ НОВЕ +++
             ps.setString(idx++, book.getReview() != null ? book.getReview() : "");
             String formattedCreated = book.getCreatedAt() != null
                     ? book.getCreatedAt().format(DATE_FORMATTER)
@@ -216,6 +175,108 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         }
     }
 
+    @Override
+    @Transactional
+    public void saveBatch(List<Book> books) {
+        if (books == null || books.isEmpty()) {
+            return;
+        }
+        String sql = """
+        INSERT INTO books (
+            id, title, series, sequence_number, file_name, folder,
+            archive_entry, language, file_size, keywords, annotation,
+            rate, progress, update_date, isbn, deleted, local,
+            review, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+            title = excluded.title,
+            series = excluded.series,
+            sequence_number = excluded.sequence_number,
+            file_name = excluded.file_name,
+            folder = excluded.folder,
+            archive_entry = excluded.archive_entry,
+            language = excluded.language,
+            file_size = excluded.file_size,
+            keywords = excluded.keywords,
+            annotation = excluded.annotation,
+            rate = excluded.rate,
+            progress = excluded.progress,
+            update_date = excluded.update_date,
+            isbn = excluded.isbn,
+            deleted = excluded.deleted,
+            local = excluded.local,
+            review = excluded.review,
+            created_at = excluded.created_at
+        """;
+
+        List<Object[]> batchArgs = new ArrayList<>(books.size());
+        for (Book book : books) {
+            Object[] args = new Object[19];
+            int idx = 0;
+            args[idx++] = book.getId().asString();
+            args[idx++] = book.getTitle() != null ? book.getTitle() : "";
+            args[idx++] = book.getSeries();
+            args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
+            args[idx++] = book.getFileName() != null ? book.getFileName() : "";
+            args[idx++] = book.getFolder();
+            args[idx++] = book.getArchiveEntry();
+            args[idx++] = book.getLanguage() != null ? book.getLanguage().toString() : null;
+            args[idx++] = book.getFileSize();
+            args[idx++] = book.getKeywords() != null ? book.getKeywords() : "";
+            args[idx++] = book.getAnnotation() != null ? book.getAnnotation() : "";
+            args[idx++] = book.getRate();
+            args[idx++] = book.getProgress();
+            String formattedDate = book.getUpdateDate() != null
+                    ? book.getUpdateDate().format(DATE_FORMATTER)
+                    : null;
+            args[idx++] = formattedDate;
+            args[idx++] = book.getIsbn() != null ? book.getIsbn().toString() : null;
+            args[idx++] = book.isDeleted() ? 1 : 0;
+            args[idx++] = book.isLocal() ? 1 : 0;
+            args[idx++] = book.getReview() != null ? book.getReview() : "";
+            String formattedCreated = book.getCreatedAt() != null
+                    ? book.getCreatedAt().format(DATE_FORMATTER)
+                    : LocalDateTime.now().format(DATE_FORMATTER);
+            args[idx++] = formattedCreated;
+            batchArgs.add(args);
+        }
+
+        jdbcTemplate.batchUpdate(sql, batchArgs);
+
+        for (Book book : books) {
+            if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
+                saveAuthors(book.getId(), book.getAuthors());
+            }
+            if (book.getGenres() != null && !book.getGenres().isEmpty()) {
+                saveGenres(book.getId(), book.getGenres());
+            }
+        }
+
+        log.debug("Збережено батч: {} книг", books.size());
+    }
+
+    @Override
+    public void deleteById(BookId id) {
+        jdbcTemplate.update("DELETE FROM books WHERE id = ?", id.asString());
+        log.debug("Книгу видалено: id={}", id.asString());
+    }
+
+    @Override
+    @Transactional
+    public void updateRate(BookId bookId, int rate) {
+        String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+        jdbcTemplate.update(sql, rate, bookId.asString());
+    }
+
+    @Override
+    @Transactional
+    public void updateProgress(BookId bookId, int progress) {
+        String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+        jdbcTemplate.update(sql, progress, bookId.asString());
+    }
+
+    // ==================== QUERY ====================
+
     public void loadAuthors(Book book) {
         String sql = """
             SELECT a.id, a.first_name, a.middle_name, a.last_name
@@ -223,10 +284,7 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             JOIN book_authors ba ON a.id = ba.author_id
             WHERE ba.book_id = ?
             """;
-        List<Author> authors = jdbcTemplate.query(sql, (rs, rowNum) -> {
-            AuthorId id = AuthorId.fromString(rs.getString("id"));
-            return new Author(id, rs.getString("first_name"), rs.getString("middle_name"), rs.getString("last_name"));
-        }, book.getId().asString());
+        List<Author> authors = jdbcTemplate.query(sql, authorRowMapper, book.getId().asString());
         book.setAuthors(authors);
     }
 
@@ -237,20 +295,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             JOIN book_genres bg ON g.code = bg.genre_code
             WHERE bg.book_id = ?
             """;
-        List<Genre> genres = jdbcTemplate.query(sql, (rs, rowNum) -> {
-            GenreId id = GenreId.fromCode(rs.getString("code"));
-            GenreId parentId = rs.getString("parent_code") != null
-                    ? GenreId.fromCode(rs.getString("parent_code"))
-                    : null;
-            return new Genre(id, rs.getString("name"), parentId, rs.getString("fb2_code"));
-        }, book.getId().asString());
+        List<Genre> genres = jdbcTemplate.query(sql, genreRowMapper, book.getId().asString());
         book.setGenres(genres);
-    }
-
-    @Override
-    public void deleteById(BookId id) {
-        jdbcTemplate.update("DELETE FROM books WHERE id = ?", id.asString());
-        log.debug("Книгу видалено: id={}", id.asString());
     }
 
     @Override
@@ -355,13 +401,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
                 .collect(Collectors.toList());
     }
 
-    private String escapeLike(String value) {
-        return value.replace("\\", "\\\\")
-                .replace("%", "\\%")
-                .replace("_", "\\_");
-    }
-
-
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
         String sql = """
@@ -382,20 +421,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     }
 
     @Override
-    @Transactional
-    public void updateRate(BookId bookId, int rate) {
-        String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
-        jdbcTemplate.update(sql, rate, bookId.asString());
-    }
-
-    @Override
-    @Transactional
-    public void updateProgress(BookId bookId, int progress) {
-        String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
-        jdbcTemplate.update(sql, progress, bookId.asString());
-    }
-
-    @Override
     public int getTotalCount() {
         try {
             return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM books", Integer.class);
@@ -405,86 +430,6 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         }
     }
 
-    @Override
-    @Transactional
-    public void saveBatch(List<Book> books) {
-        if (books == null || books.isEmpty()) {
-            return;
-        }
-        String sql = """
-        INSERT INTO books (
-            id, title, series, sequence_number, file_name, folder,
-            archive_entry, language, file_size, keywords, annotation,
-            rate, progress, update_date, isbn, deleted, local,
-            review, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            series = excluded.series,
-            sequence_number = excluded.sequence_number,
-            file_name = excluded.file_name,
-            folder = excluded.folder,
-            archive_entry = excluded.archive_entry,
-            language = excluded.language,
-            file_size = excluded.file_size,
-            keywords = excluded.keywords,
-            annotation = excluded.annotation,
-            rate = excluded.rate,
-            progress = excluded.progress,
-            update_date = excluded.update_date,
-            isbn = excluded.isbn,
-            deleted = excluded.deleted,
-            local = excluded.local,
-            review = excluded.review,
-            created_at = excluded.created_at
-        """;
-
-        List<Object[]> batchArgs = new ArrayList<>(books.size());
-        for (Book book : books) {
-            Object[] args = new Object[19]; // було 17, тепер 19
-            int idx = 0;
-            args[idx++] = book.getId().asString();
-            args[idx++] = book.getTitle() != null ? book.getTitle() : "";
-            args[idx++] = book.getSeries();
-            args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
-            args[idx++] = book.getFileName() != null ? book.getFileName() : "";
-            args[idx++] = book.getFolder();
-            args[idx++] = book.getArchiveEntry();
-            args[idx++] = book.getLanguage() != null ? book.getLanguage().toString() : null;
-            args[idx++] = book.getFileSize();
-            args[idx++] = book.getKeywords() != null ? book.getKeywords() : "";
-            args[idx++] = book.getAnnotation() != null ? book.getAnnotation() : "";
-            args[idx++] = book.getRate();
-            args[idx++] = book.getProgress();
-            String formattedDate = book.getUpdateDate() != null
-                    ? book.getUpdateDate().format(DATE_FORMATTER)
-                    : null;
-            args[idx++] = formattedDate;
-            args[idx++] = book.getIsbn() != null ? book.getIsbn().toString() : null;
-            args[idx++] = book.isDeleted() ? 1 : 0;
-            args[idx++] = book.isLocal() ? 1 : 0;
-            // +++ НОВЕ +++
-            args[idx++] = book.getReview() != null ? book.getReview() : "";
-            String formattedCreated = book.getCreatedAt() != null
-                    ? book.getCreatedAt().format(DATE_FORMATTER)
-                    : LocalDateTime.now().format(DATE_FORMATTER);
-            args[idx++] = formattedCreated;
-            batchArgs.add(args);
-        }
-
-        jdbcTemplate.batchUpdate(sql, batchArgs);
-
-        for (Book book : books) {
-            if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
-                saveAuthors(book.getId(), book.getAuthors());
-            }
-            if (book.getGenres() != null && !book.getGenres().isEmpty()) {
-                saveGenres(book.getId(), book.getGenres());
-            }
-        }
-
-        log.debug("Збережено батч: {} книг", books.size());
-    }
     @Override
     public List<Book> findBySeries(String seriesName, int limit, int offset) {
         if (seriesName == null || seriesName.isBlank()) {
@@ -496,6 +441,7 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         books.forEach(this::loadGenres);
         return books;
     }
+
     @Override
     public List<Book> findByGenre(String genreCode, int limit, int offset) {
         if (genreCode == null || genreCode.isBlank()) {
@@ -513,7 +459,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         books.forEach(this::loadGenres);
         return books;
     }
-    public RowMapper<Book> getBookRowMapper() {
+
+    public BookRowMapper getBookRowMapper() {
         return bookRowMapper;
     }
 }

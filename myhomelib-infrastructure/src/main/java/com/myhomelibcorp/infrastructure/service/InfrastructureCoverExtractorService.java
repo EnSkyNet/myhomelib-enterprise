@@ -54,7 +54,7 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
             boolean isArchive = fileName.endsWith(".zip") || fileName.endsWith(".fb2zip") || fileName.endsWith(".fbd");
 
             Image cover = isArchive
-                    ? extractFromArchive(fullPath, book.getArchiveEntry())
+                    ? extractFromArchive(fullPath, book)   // передаємо book
                     : extractFromFb2File(fullPath);
 
             if (cover != null) {
@@ -83,7 +83,8 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
         return folderPath;
     }
 
-    private Image extractFromArchive(Path archivePath, String archiveEntry) {
+    // ========== ОНОВЛЕНО: передаємо book, щоб шукати правильний FB2 ==========
+    private Image extractFromArchive(Path archivePath, BookDto book) {
         File file = archivePath.toFile();
         Charset[] charsets = {Charset.forName("CP866"), Charset.forName("Windows-1251"), StandardCharsets.UTF_8};
 
@@ -95,14 +96,17 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
                 log.debug("Файли в архіві:");
                 entries.forEach(e -> log.debug("  - {}", e.getName()));
 
-                // FB2 + binary
-                ZipEntry fb2Entry = findFb2Entry(entries);
+                // 1. Шукаємо FB2 за назвою книги
+                ZipEntry fb2Entry = findFb2EntryForBook(zip, book);
                 if (fb2Entry != null) {
+                    log.debug("Знайдено FB2 для книги: {}", fb2Entry.getName());
                     Image img = extractCoverFromFb2Entry(zip, fb2Entry);
                     if (img != null) return img;
+                } else {
+                    log.debug("Не знайдено FB2 для книги за назвою");
                 }
 
-                // Зображення в архіві
+                // 2. Якщо не знайшли – шукаємо будь-яке зображення в архіві
                 Image img = searchAnyImageInArchive(zip, entries);
                 if (img != null) return img;
 
@@ -113,12 +117,65 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
         return null;
     }
 
-    private ZipEntry findFb2Entry(List<? extends ZipEntry> entries) {
-        return entries.stream()
-                .filter(e -> !e.isDirectory() && e.getName().toLowerCase().endsWith(".fb2"))
+    /**
+     * Шукає запис FB2, що відповідає книзі: за archiveEntry або за fileName.
+     */
+    private ZipEntry findFb2EntryForBook(ZipFile zip, BookDto book) {
+        String archiveEntry = book.getArchiveEntry();
+        String fileName = book.getFileName();
+
+        // 1) Якщо є archiveEntry – пробуємо його
+        if (archiveEntry != null && !archiveEntry.isBlank()) {
+            ZipEntry entry = zip.getEntry(archiveEntry);
+            if (entry != null && isFb2Entry(entry)) {
+                log.debug("Знайдено FB2 за archiveEntry: {}", archiveEntry);
+                return entry;
+            }
+            // Якщо archiveEntry не FB2, але, можливо, це шлях до FB2 – спробуємо знайти за іменем
+            String simpleName = Paths.get(archiveEntry).getFileName().toString();
+            if (!simpleName.equals(archiveEntry)) {
+                ZipEntry byName = findFb2EntryByName(zip, simpleName);
+                if (byName != null) return byName;
+            }
+        }
+
+        // 2) Шукаємо за fileName (якщо він закінчується на .fb2)
+        if (fileName != null && !fileName.isBlank()) {
+            String name = fileName.toLowerCase();
+            if (name.endsWith(".fb2")) {
+                ZipEntry byName = findFb2EntryByName(zip, fileName);
+                if (byName != null) {
+                    log.debug("Знайдено FB2 за fileName: {}", fileName);
+                    return byName;
+                }
+            }
+        }
+
+        // 3) Якщо нічого не знайшли – повертаємо null, далі буде фолбек на перший FB2
+        return null;
+    }
+
+    /**
+     * Шукає запис із заданим ім'ям (може бути повний шлях або просте ім'я).
+     */
+    private ZipEntry findFb2EntryByName(ZipFile zip, String targetName) {
+        if (targetName == null || targetName.isBlank()) return null;
+        String target = targetName.toLowerCase();
+        return zip.stream()
+                .filter(e -> !e.isDirectory() && isFb2Entry(e))
+                .filter(e -> {
+                    String name = e.getName().toLowerCase();
+                    return name.equals(target) || name.endsWith("/" + target);
+                })
                 .findFirst()
                 .orElse(null);
     }
+
+    private boolean isFb2Entry(ZipEntry entry) {
+        return entry.getName().toLowerCase().endsWith(".fb2");
+    }
+
+    // ========== Інші методи без змін ==========
 
     private Image extractCoverFromFb2Entry(ZipFile zip, ZipEntry fb2Entry) {
         log.debug("Парсимо FB2: {}", fb2Entry.getName());
@@ -135,7 +192,7 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
 
                     if (event == XMLStreamConstants.START_ELEMENT) {
                         String localName = xml.getLocalName().toLowerCase();
-                        String fullName = xml.getName().toString(); // для діагностики
+                        String fullName = xml.getName().toString();
 
                         if ("image".equals(localName) || "img".equals(localName) || fullName.contains("image")) {
                             String href = xml.getAttributeValue("http://www.w3.org/1999/xlink", "href");
@@ -155,7 +212,7 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
                             if (id != null && (coverId == null || id.equalsIgnoreCase(coverId) ||
                                     (contentType != null && contentType.startsWith("image/")))) {
                                 binaryContent = xml.getElementText();
-                                log.info("✅ Витягнуто binary обкладинку! id={}", id);
+                                log.info("✅ Витягнуто binary обкладинки! id={}", id);
                                 break;
                             }
                         }
@@ -181,6 +238,7 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
         }
         return null;
     }
+
     private Image searchAnyImageInArchive(ZipFile zip, List<? extends ZipEntry> entries) {
         log.debug("Запускаємо агресивний пошук зображень в архіві...");
 
@@ -231,7 +289,7 @@ public class InfrastructureCoverExtractorService implements CoverExtractor {
     }
 
     private Image extractFromFb2File(Path fb2Path) {
-        // можна реалізувати пізніше
+        // Можна реалізувати пізніше
         return null;
     }
 

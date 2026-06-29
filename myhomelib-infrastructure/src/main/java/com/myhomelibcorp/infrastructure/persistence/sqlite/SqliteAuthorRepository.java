@@ -3,12 +3,12 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import jakarta.annotation.PostConstruct;
@@ -25,25 +25,16 @@ import java.util.stream.Stream;
 public class SqliteAuthorRepository implements AuthorRepository {
 
     private final JdbcTemplate jdbcTemplate;
-
-    private final RowMapper<Author> authorRowMapper = (rs, rowNum) -> {
-        AuthorId id = AuthorId.fromString(rs.getString("id"));
-        return new Author(id,
-                rs.getString("first_name"),
-                rs.getString("middle_name"),
-                rs.getString("last_name"));
-    };
+    private final AuthorRowMapper authorRowMapper;
 
     @PostConstruct
     public void init() {
-        // Переконуємося, що колонка search_name існує (якщо міграція не спрацювала)
         try {
             jdbcTemplate.execute("ALTER TABLE authors ADD COLUMN search_name TEXT");
             log.info("Колонку search_name додано (якщо не існувала)");
         } catch (Exception e) {
             // Колонка вже існує
         }
-        // Оновлюємо search_name для всіх існуючих авторів, у яких він NULL
         updateSearchNamesForAllAuthors();
     }
 
@@ -68,8 +59,6 @@ public class SqliteAuthorRepository implements AuthorRepository {
                 .map(s -> s.toLowerCase(java.util.Locale.ROOT))
                 .collect(Collectors.joining(" "));
     }
-
-    // --- решта методів ---
 
     @Override
     public List<Author> findAll() {
