@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.mapper;
 
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.*;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 
@@ -20,6 +20,26 @@ public class BookRowMapper implements RowMapper<Book> {
     public Book mapRow(ResultSet rs, int rowNum) throws SQLException {
         BookId id = BookId.fromString(rs.getString("id"));
 
+        // Створюємо BookFile
+        BookFile file = new BookFile(
+                rs.getString("file_name"),
+                rs.getString("folder"),
+                rs.getString("archive_entry"),
+                rs.getLong("file_size"),
+                null // collectionRoot – буде встановлено пізніше в ViewModel
+        );
+
+        // Створюємо BookMetadata
+        BookMetadata metadata = BookMetadata.builder()
+                .annotation(rs.getString("annotation"))
+                .keywords(rs.getString("keywords"))
+                .language(rs.getString("language") != null ? LanguageCode.of(rs.getString("language")) : LanguageCode.of("uk"))
+                .isbn(rs.getString("isbn") != null ? Isbn.of(rs.getString("isbn")) : null)
+                .review(rs.getString("review"))
+                .rate(rs.getInt("rate"))
+                .progress(rs.getInt("progress"))
+                .build();
+
         LocalDateTime updateDate = parseDate(rs.getString("update_date"));
         LocalDateTime createdAt = parseDate(rs.getString("created_at"));
 
@@ -28,20 +48,12 @@ public class BookRowMapper implements RowMapper<Book> {
                 .title(rs.getString("title"))
                 .series(rs.getString("series"))
                 .sequenceNumber(rs.getInt("sequence_number"))
-                .language(rs.getString("language"))
-                .fileName(rs.getString("file_name"))
-                .folder(rs.getString("folder"))
-                .archiveEntry(rs.getString("archive_entry"))
-                .fileSize(rs.getLong("file_size"))
-                .keywords(rs.getString("keywords"))
-                .annotation(rs.getString("annotation"))
-                .rate(rs.getInt("rate"))
-                .progress(rs.getInt("progress"))
+                .metadata(metadata)
+                .file(file)
                 .updateDate(updateDate)
+                .createdAt(createdAt)
                 .deleted(rs.getInt("deleted") == 1)
                 .local(rs.getInt("local") == 1)
-                .review(rs.getString("review"))
-                .createdAt(createdAt)
                 .build();
     }
 

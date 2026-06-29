@@ -8,6 +8,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -221,17 +222,28 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         jdbcTemplate.update(sql, progress, bookId.asString());
     }
 
-    // ==================== QUERY ====================
+    // ==================== QUERY (з використанням BookQueryBuilder) ====================
+
+    private List<Book> executeQuery(BookQueryBuilder.Query query, int limit, int offset) {
+        query.limit(limit);
+        if (offset > 0) {
+            query.offset(offset);
+        }
+        String sql = query.getSql();
+        Object[] params = query.getParams();
+        log.debug("Executing query: {}, params={}", sql, Arrays.toString(params));
+        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, params);
+        books.forEach(book -> {
+            book.getAuthors().addAll(bookAuthorHelper.loadAuthors(book.getId()));
+            book.getGenres().addAll(bookGenreHelper.loadGenres(book.getId()));
+        });
+        return books;
+    }
 
     @Override
     public List<Book> findAll(int limit, int offset) {
-        String sql = "SELECT * FROM books LIMIT ? OFFSET ?";
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, limit, offset);
-        books.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
-        });
-        return books;
+        BookQueryBuilder.Query query = BookQueryBuilder.query();
+        return executeQuery(query, limit, offset);
     }
 
     @Override
@@ -239,8 +251,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
             Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, id.asString());
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+            book.getAuthors().addAll(bookAuthorHelper.loadAuthors(book.getId()));
+            book.getGenres().addAll(bookGenreHelper.loadGenres(book.getId()));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -257,8 +269,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         String[] idStrings = ids.stream().map(BookId::asString).toArray(String[]::new);
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, (Object[]) idStrings);
         books.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+            book.getAuthors().addAll(bookAuthorHelper.loadAuthors(book.getId()));
+            book.getGenres().addAll(bookGenreHelper.loadGenres(book.getId()));
         });
         return books;
     }
@@ -266,38 +278,25 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
     @Override
     public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
         log.info("🔍 findByAuthorId: authorId={}, limit={}, offset={}", authorId.asString(), limit, offset);
-        String sql = """
-        SELECT b.* FROM books b
-        JOIN book_authors ba ON b.id = ba.book_id
-        WHERE ba.author_id = ?
-        LIMIT ? OFFSET ?
-        """;
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, authorId.asString(), limit, offset);
-        log.info("📚 Знайдено {} книг для автора {}", books.size(), authorId.asString());
-        books.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
-        });
-        return books;
+        BookQueryBuilder.Query query = BookQueryBuilder.query()
+                .whereAuthorId(authorId)
+                .orderBy("ORDER BY b.series, b.sequence_number");
+        return executeQuery(query, limit, offset);
     }
 
     @Override
     public List<Book> search(String query, int limit) {
-        String sql = """
-            SELECT * FROM books
-            WHERE lower(title) LIKE ?
-               OR lower(series) LIKE ?
-               OR lower(keywords) LIKE ?
-               OR lower(annotation) LIKE ?
-            LIMIT ?
-            """;
-        String pattern = "%" + (query != null ? query.toLowerCase() : "") + "%";
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, pattern, pattern, pattern, pattern, limit);
-        books.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
-        });
-        return books;
+        if (query == null || query.isBlank()) {
+            return findAll(limit, 0);
+        }
+        BookQueryBuilder.Query searchQuery = BookQueryBuilder.query()
+                .whereTitleLike(query)
+                .whereSeriesLike(query)
+                .whereKeywordsLike(query)
+                .whereAnnotationLike(query);
+        // Для пошуку використовуємо ORDER BY b.title
+        searchQuery.orderBy("ORDER BY b.title");
+        return executeQuery(searchQuery, limit, 0);
     }
 
     @Override
@@ -305,16 +304,14 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         if (authorName == null || authorName.isBlank()) {
             return List.of();
         }
-
         String pattern = authorName.trim().toLowerCase(Locale.ROOT);
         log.debug("Пошук за автором (SQL fallback): pattern='{}'", pattern);
 
         String sql = "SELECT DISTINCT b.* FROM books b";
         List<Book> allBooks = jdbcTemplate.query(sql, bookRowMapper);
-
         allBooks.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+            book.getAuthors().addAll(bookAuthorHelper.loadAuthors(book.getId()));
+            book.getGenres().addAll(bookGenreHelper.loadGenres(book.getId()));
         });
 
         return allBooks.stream()
@@ -346,8 +343,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             """;
         try {
             Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, title, authorLastName);
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+            book.getAuthors().addAll(bookAuthorHelper.loadAuthors(book.getId()));
+            book.getGenres().addAll(bookGenreHelper.loadGenres(book.getId()));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -369,13 +366,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         if (seriesName == null || seriesName.isBlank()) {
             return List.of();
         }
-        String sql = "SELECT * FROM books WHERE series = ? ORDER BY sequence_number LIMIT ? OFFSET ?";
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, seriesName, limit, offset);
-        books.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
-        });
-        return books;
+        BookQueryBuilder.Query query = BookQueryBuilder.query()
+                .whereSeries(seriesName)
+                .orderBy("ORDER BY b.sequence_number");
+        return executeQuery(query, limit, offset);
     }
 
     @Override
@@ -383,22 +377,9 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         if (genreCode == null || genreCode.isBlank()) {
             return List.of();
         }
-        String sql = """
-        SELECT b.* FROM books b
-        JOIN book_genres bg ON b.id = bg.book_id
-        WHERE bg.genre_code = ?
-        ORDER BY b.title
-        LIMIT ? OFFSET ?
-        """;
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, genreCode, limit, offset);
-        books.forEach(book -> {
-            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
-            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
-        });
-        return books;
-    }
-
-    public BookRowMapper getBookRowMapper() {
-        return bookRowMapper;
+        BookQueryBuilder.Query query = BookQueryBuilder.query()
+                .whereGenre(genreCode)
+                .orderBy("ORDER BY b.title");
+        return executeQuery(query, limit, offset);
     }
 }

@@ -15,9 +15,7 @@ public class BookMapper {
     private final GenreService genreService;
 
     public BookDto toDto(Book book) {
-        if (book == null) {
-            return null;
-        }
+        if (book == null) return null;
 
         String genresText = book.getGenres().stream()
                 .map(genre -> genreService.getGenreName(genre.getId().asString()))
