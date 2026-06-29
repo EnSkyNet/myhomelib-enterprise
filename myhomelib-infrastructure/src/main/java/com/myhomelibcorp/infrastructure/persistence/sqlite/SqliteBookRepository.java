@@ -1,18 +1,13 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.GenreService;
-import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.domain.model.valueobject.GenreId;
-import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
-import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -36,26 +31,18 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private final JdbcTemplate jdbcTemplate;
-    private final AuthorRepository authorRepository;
-    private final GenreService genreService;
-
-    // Впроваджені мапери (замість внутрішніх)
     private final BookRowMapper bookRowMapper;
-    private final AuthorRowMapper authorRowMapper;
-    private final GenreRowMapper genreRowMapper;
+    private final BookAuthorHelper bookAuthorHelper;
+    private final BookGenreHelper bookGenreHelper;
 
     public SqliteBookRepository(JdbcTemplate jdbcTemplate,
-                                AuthorRepository authorRepository,
-                                GenreService genreService,
                                 BookRowMapper bookRowMapper,
-                                AuthorRowMapper authorRowMapper,
-                                GenreRowMapper genreRowMapper) {
+                                BookAuthorHelper bookAuthorHelper,
+                                BookGenreHelper bookGenreHelper) {
         this.jdbcTemplate = jdbcTemplate;
-        this.authorRepository = authorRepository;
-        this.genreService = genreService;
         this.bookRowMapper = bookRowMapper;
-        this.authorRowMapper = authorRowMapper;
-        this.genreRowMapper = genreRowMapper;
+        this.bookAuthorHelper = bookAuthorHelper;
+        this.bookGenreHelper = bookGenreHelper;
     }
 
     // ==================== COMMAND ====================
@@ -123,56 +110,15 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         });
 
         if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
-            saveAuthors(book.getId(), book.getAuthors());
+            bookAuthorHelper.saveAuthors(book.getId(), book.getAuthors());
         }
 
         if (book.getGenres() != null && !book.getGenres().isEmpty()) {
-            saveGenres(book.getId(), book.getGenres());
+            bookGenreHelper.saveGenres(book.getId(), book.getGenres());
         }
 
         log.debug("Книгу збережено: id={}, title={}", book.getId().asString(), book.getTitle());
         return book;
-    }
-
-    private void saveAuthors(BookId bookId, List<Author> authors) {
-        jdbcTemplate.update("DELETE FROM book_authors WHERE book_id = ?", bookId.asString());
-
-        for (Author author : authors) {
-            Author existing = authorRepository.findByFullName(author.getFirstName(), author.getLastName())
-                    .orElse(null);
-            if (existing != null) {
-                author = existing;
-            } else {
-                author = authorRepository.save(author);
-            }
-            jdbcTemplate.update("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
-                    bookId.asString(), author.getId().asString());
-        }
-    }
-
-    private void saveGenres(BookId bookId, List<Genre> genres) {
-        jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
-
-        for (Genre genre : genres) {
-            String code = genre.getId().asString();
-            String name = genreService.getGenreName(code);
-            String insertGenreSql = """
-                INSERT INTO genres (code, name, parent_code, fb2_code)
-                VALUES (?, ?, ?, ?)
-                ON CONFLICT(code) DO UPDATE SET
-                    name = excluded.name,
-                    parent_code = excluded.parent_code,
-                    fb2_code = excluded.fb2_code
-                """;
-            jdbcTemplate.update(insertGenreSql,
-                    code,
-                    name,
-                    genre.getParentId() != null ? genre.getParentId().asString() : null,
-                    genre.getFb2Code());
-
-            jdbcTemplate.update("INSERT OR IGNORE INTO book_genres (book_id, genre_code) VALUES (?, ?)",
-                    bookId.asString(), code);
-        }
     }
 
     @Override
@@ -245,10 +191,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
 
         for (Book book : books) {
             if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
-                saveAuthors(book.getId(), book.getAuthors());
+                bookAuthorHelper.saveAuthors(book.getId(), book.getAuthors());
             }
             if (book.getGenres() != null && !book.getGenres().isEmpty()) {
-                saveGenres(book.getId(), book.getGenres());
+                bookGenreHelper.saveGenres(book.getId(), book.getGenres());
             }
         }
 
@@ -277,34 +223,14 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
 
     // ==================== QUERY ====================
 
-    public void loadAuthors(Book book) {
-        String sql = """
-            SELECT a.id, a.first_name, a.middle_name, a.last_name
-            FROM authors a
-            JOIN book_authors ba ON a.id = ba.author_id
-            WHERE ba.book_id = ?
-            """;
-        List<Author> authors = jdbcTemplate.query(sql, authorRowMapper, book.getId().asString());
-        book.setAuthors(authors);
-    }
-
-    public void loadGenres(Book book) {
-        String sql = """
-            SELECT g.code, g.name, g.parent_code, g.fb2_code
-            FROM genres g
-            JOIN book_genres bg ON g.code = bg.genre_code
-            WHERE bg.book_id = ?
-            """;
-        List<Genre> genres = jdbcTemplate.query(sql, genreRowMapper, book.getId().asString());
-        book.setGenres(genres);
-    }
-
     @Override
     public List<Book> findAll(int limit, int offset) {
         String sql = "SELECT * FROM books LIMIT ? OFFSET ?";
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, limit, offset);
-        books.forEach(this::loadAuthors);
-        books.forEach(this::loadGenres);
+        books.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
         return books;
     }
 
@@ -313,8 +239,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
             Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, id.asString());
-            loadAuthors(book);
-            loadGenres(book);
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -330,8 +256,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         String sql = "SELECT * FROM books WHERE id IN (" + placeholders + ")";
         String[] idStrings = ids.stream().map(BookId::asString).toArray(String[]::new);
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, (Object[]) idStrings);
-        books.forEach(this::loadAuthors);
-        books.forEach(this::loadGenres);
+        books.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
         return books;
     }
 
@@ -346,8 +274,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         """;
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, authorId.asString(), limit, offset);
         log.info("📚 Знайдено {} книг для автора {}", books.size(), authorId.asString());
-        books.forEach(this::loadAuthors);
-        books.forEach(this::loadGenres);
+        books.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
         return books;
     }
 
@@ -363,8 +293,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             """;
         String pattern = "%" + (query != null ? query.toLowerCase() : "") + "%";
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, pattern, pattern, pattern, pattern, limit);
-        books.forEach(this::loadAuthors);
-        books.forEach(this::loadGenres);
+        books.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
         return books;
     }
 
@@ -380,8 +312,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         String sql = "SELECT DISTINCT b.* FROM books b";
         List<Book> allBooks = jdbcTemplate.query(sql, bookRowMapper);
 
-        allBooks.forEach(this::loadAuthors);
-        allBooks.forEach(this::loadGenres);
+        allBooks.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
 
         return allBooks.stream()
                 .filter(book -> book.getAuthors().stream()
@@ -412,8 +346,8 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
             """;
         try {
             Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, title, authorLastName);
-            loadAuthors(book);
-            loadGenres(book);
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -437,8 +371,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         }
         String sql = "SELECT * FROM books WHERE series = ? ORDER BY sequence_number LIMIT ? OFFSET ?";
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, seriesName, limit, offset);
-        books.forEach(this::loadAuthors);
-        books.forEach(this::loadGenres);
+        books.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
         return books;
     }
 
@@ -455,8 +391,10 @@ public class SqliteBookRepository implements BookCommandRepository, BookQueryRep
         LIMIT ? OFFSET ?
         """;
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, genreCode, limit, offset);
-        books.forEach(this::loadAuthors);
-        books.forEach(this::loadGenres);
+        books.forEach(book -> {
+            book.setAuthors(bookAuthorHelper.loadAuthors(book.getId()));
+            book.setGenres(bookGenreHelper.loadGenres(book.getId()));
+        });
         return books;
     }
 

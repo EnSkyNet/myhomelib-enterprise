@@ -1,4 +1,4 @@
-package com.myhomelibcorp.application.genre;
+package com.myhomelibcorp.application.usecase.genre;
 
 import com.myhomelibcorp.application.port.out.GenreService;
 import lombok.RequiredArgsConstructor;

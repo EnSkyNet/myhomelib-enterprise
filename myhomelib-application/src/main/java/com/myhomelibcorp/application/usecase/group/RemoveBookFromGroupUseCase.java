@@ -1,4 +1,4 @@
-package com.myhomelibcorp.application.group;
+package com.myhomelibcorp.application.usecase.group;
 
 import com.myhomelibcorp.application.port.out.GroupRepository;
 import lombok.RequiredArgsConstructor;
@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-public class AddBookToGroupUseCase {
+public class RemoveBookFromGroupUseCase {
 
     private final GroupRepository groupRepository;
 
@@ -14,6 +14,6 @@ public class AddBookToGroupUseCase {
         if (groupId == null || bookId == null || bookId.isBlank()) {
             throw new IllegalArgumentException("Group ID and Book ID cannot be null");
         }
-        groupRepository.addBookToGroup(groupId, bookId);
+        groupRepository.removeBookFromGroup(groupId, bookId);
     }
 }

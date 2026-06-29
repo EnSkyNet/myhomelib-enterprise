@@ -1,4 +1,4 @@
-package com.myhomelibcorp.application.group;
+package com.myhomelibcorp.application.usecase.group;
 
 import com.myhomelibcorp.application.port.out.GroupRepository;
 import lombok.RequiredArgsConstructor;
