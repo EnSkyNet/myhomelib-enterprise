@@ -202,4 +202,7 @@ public class BookInfoPanel extends VBox {
         metaBox.getChildren().clear();
         coverView.setImage(null);
     }
+    public ImageView getCoverImageView() {
+        return coverView;
+    }
 }

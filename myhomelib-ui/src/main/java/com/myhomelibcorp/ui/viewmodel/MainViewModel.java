@@ -130,6 +130,7 @@ public class MainViewModel {
     // ==================== ЗАВАНТАЖЕННЯ КНИГ ====================
 
     public void refreshBooks() {
+        log.info("refreshBooks() called! Stack trace:", new Exception());
         currentAuthorId = null;
         currentSeriesName = null;
         currentGenreCode = null;
