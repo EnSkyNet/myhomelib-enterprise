@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.postgres;
 
 import com.myhomelibcorp.application.port.out.BookCommandRepository;
+import com.myhomelibcorp.application.port.out.BookQuery;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -78,10 +79,22 @@ public class PostgresBookRepository implements BookQueryRepository, BookCommandR
         return 0;
     }
 
-    // +++ НОВИЙ МЕТОД +++
     @Override
     public List<Book> findBySeries(String seriesName, int limit, int offset) {
         log.warn("PostgresBookRepository.findBySeries() ще не реалізовано");
+        return List.of();
+    }
+
+    @Override
+    public List<Book> findByGenre(String genreCode, int limit, int offset) {
+        log.warn("PostgresBookRepository.findByGenre() ще не реалізовано");
+        return List.of();
+    }
+
+    // ========== НОВИЙ МЕТОД ==========
+    @Override
+    public List<Book> find(BookQuery query) {
+        log.warn("PostgresBookRepository.find() ще не реалізовано");
         return List.of();
     }
 
@@ -113,11 +126,5 @@ public class PostgresBookRepository implements BookQueryRepository, BookCommandR
     @Override
     public void updateProgress(BookId bookId, int progress) {
         log.warn("PostgresBookRepository.updateProgress() ще не реалізовано");
-    }
-
-    @Override
-    public List<Book> findByGenre(String genreCode, int limit, int offset) {
-        log.warn("PostgresBookRepository.findByGenre() ще не реалізовано");
-        return List.of();
     }
 }

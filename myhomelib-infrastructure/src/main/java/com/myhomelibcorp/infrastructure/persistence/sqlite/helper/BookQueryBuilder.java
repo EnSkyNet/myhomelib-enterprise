@@ -1,8 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import lombok.Builder;
-import lombok.Getter;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;

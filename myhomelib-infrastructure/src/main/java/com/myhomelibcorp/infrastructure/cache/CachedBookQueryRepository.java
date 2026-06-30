@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.cache;
 
+import com.myhomelibcorp.application.port.out.BookQuery;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -12,7 +13,6 @@ import org.springframework.stereotype.Repository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
 
 @Repository
 @Primary
@@ -20,7 +20,7 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CachedBookQueryRepository implements BookQueryRepository {
 
-    private final BookQueryRepository delegate; // SqliteBookQueryRepository
+    private final BookQueryRepository delegate;
     private final BookCache bookCache;
 
     @Override
@@ -62,13 +62,11 @@ public class CachedBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findAll(int limit, int offset) {
-        // Не кешуємо findAll через потенційно великий обсяг
         return delegate.findAll(limit, offset);
     }
 
     @Override
     public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
-        // Можна кешувати, але поки пропускаємо
         return delegate.findByAuthorId(authorId, limit, offset);
     }
 
@@ -100,5 +98,12 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     @Override
     public List<Book> findByGenre(String genreCode, int limit, int offset) {
         return delegate.findByGenre(genreCode, limit, offset);
+    }
+
+    // ========== НОВИЙ МЕТОД ==========
+    @Override
+    public List<Book> find(BookQuery query) {
+        // Просто делегуємо, бо кешувати складні запити важко
+        return delegate.find(query);
     }
 }

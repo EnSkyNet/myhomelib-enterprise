@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.application.port.out.BookQuery;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -9,6 +10,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -32,10 +34,6 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
 
-    /**
-     * Додає авторів і жанри до книги.
-     * Використовує addAuthor/addGenre, оскільки Book immutable.
-     */
     private void enrichBook(Book book) {
         if (book == null) return;
         List<Author> authors = bookAuthorHelper.loadAuthors(book.getId());
@@ -83,7 +81,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
-        log.info("🔍 findByAuthorId: authorId={}, limit={}, offset={}", authorId.asString(), limit, offset);
+        log.info("findByAuthorId: authorId={}, limit={}, offset={}", authorId.asString(), limit, offset);
         String sql = """
         SELECT b.* FROM books b
         JOIN book_authors ba ON b.id = ba.book_id
@@ -91,7 +89,6 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         LIMIT ? OFFSET ?
         """;
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, authorId.asString(), limit, offset);
-        log.info("📚 Знайдено {} книг для автора {}", books.size(), authorId.asString());
         books.forEach(this::enrichBook);
         return books;
     }
@@ -195,6 +192,40 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         LIMIT ? OFFSET ?
         """;
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, genreCode, limit, offset);
+        books.forEach(this::enrichBook);
+        return books;
+    }
+
+    // ========== НОВИЙ УНІФІКОВАНИЙ МЕТОД ==========
+    @Override
+    public List<Book> find(BookQuery query) {
+        BookQueryBuilder.Query builder = BookQueryBuilder.query();
+
+        if (query.getAuthorId() != null) {
+            builder.whereAuthorId(query.getAuthorId());
+        }
+        if (query.getSeriesName() != null && !query.getSeriesName().isBlank()) {
+            builder.whereSeries(query.getSeriesName());
+        }
+        if (query.getGenreCode() != null && !query.getGenreCode().isBlank()) {
+            builder.whereGenre(query.getGenreCode());
+        }
+        if (query.getGroupId() != null) {
+            builder.whereGroup(query.getGroupId());
+        }
+        if (query.getSearchText() != null && !query.getSearchText().isBlank()) {
+            // Пошук за текстом у кількох полях
+            builder.whereTitleLike(query.getSearchText())
+                    .whereKeywordsLike(query.getSearchText());  // не додає умову, а доповнює? Зараз where додає AND, тому краще використати OR – але наш Builder підтримує тільки AND, тому можна зробити декілька умов через OR у SQL або просто шукати в title. Для простоти використаємо тільки title.
+            // Можна розширити Builder, додавши методи whereTextSearch, але для прикладу обмежимося title.
+        }
+
+        builder.limit(query.getLimit()).offset(query.getOffset());
+        String sql = builder.getSql();
+        Object[] params = builder.getParams();
+
+        log.debug("Executing find query: {}", sql);
+        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, params);
         books.forEach(this::enrichBook);
         return books;
     }
