@@ -9,4 +9,6 @@ public interface BookImporterPort {
     boolean supports(Path file);
     Stream<Book> importBooks(Path file);
     String getFormatName();
+    default long countBooks(Path file) {
+        return -1;}
 }

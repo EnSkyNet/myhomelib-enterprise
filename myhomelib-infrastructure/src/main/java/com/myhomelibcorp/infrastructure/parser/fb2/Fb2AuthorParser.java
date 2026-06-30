@@ -2,43 +2,65 @@ package com.myhomelibcorp.infrastructure.parser.fb2;
 
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import lombok.extern.slf4j.Slf4j;
 
+import javax.xml.stream.XMLStreamConstants;
+import javax.xml.stream.XMLStreamReader;
+import java.util.ArrayList;
+import java.util.List;
+
+@Slf4j
 public class Fb2AuthorParser {
 
-    public void parse(String elementName, String text, Fb2ParserContext context) {
-        if ("title-info".equals(elementName)) {
-            context.setInTitleInfo(true);
-        }
+    public List<Author> parse(XMLStreamReader reader) throws Exception {
+        List<Author> authors = new ArrayList<>();
+        String firstName = "", middleName = "", lastName = "";
+        boolean inAuthor = false;
+        boolean inTitleInfo = false;
 
-        if (context.isInTitleInfo()) {
-            if ("author".equals(elementName)) {
-                context.setInAuthor(true);
-                context.setFirstName("");
-                context.setMiddleName("");
-                context.setLastName("");
+        while (reader.hasNext()) {
+            int event = reader.next();
+
+            if (event == XMLStreamConstants.START_ELEMENT) {
+                String localName = reader.getLocalName();
+
+                if ("title-info".equalsIgnoreCase(localName)) {
+                    inTitleInfo = true;
+                }
+
+                if (inTitleInfo && "author".equalsIgnoreCase(localName)) {
+                    inAuthor = true;
+                    firstName = middleName = lastName = "";
+                }
+
+                if (inAuthor) {
+                    if ("first-name".equalsIgnoreCase(localName)) {
+                        firstName = reader.getElementText().trim();
+                    } else if ("middle-name".equalsIgnoreCase(localName)) {
+                        middleName = reader.getElementText().trim();
+                    } else if ("last-name".equalsIgnoreCase(localName)) {
+                        lastName = reader.getElementText().trim();
+                    }
+                }
             }
 
-            if (context.isInAuthor()) {
-                switch (elementName) {
-                    case "first-name" -> context.setFirstName(text.trim());
-                    case "middle-name" -> context.setMiddleName(text.trim());
-                    case "last-name" -> context.setLastName(text.trim());
+            if (event == XMLStreamConstants.END_ELEMENT) {
+                String localName = reader.getLocalName();
+
+                if (inTitleInfo && "author".equalsIgnoreCase(localName) && inAuthor) {
+                    if (!lastName.isEmpty() || !firstName.isEmpty()) {
+                        authors.add(new Author(AuthorId.generate(), firstName, middleName, lastName));
+                    }
+                    inAuthor = false;
+                }
+
+                if ("title-info".equalsIgnoreCase(localName)) {
+                    inTitleInfo = false;
+                    break;
                 }
             }
         }
-    }
 
-    public void finalizeAuthor(Fb2ParserContext context) {
-        if (context.isInAuthor()) {
-            if (!context.getLastName().isEmpty() || !context.getFirstName().isEmpty()) {
-                context.getAuthors().add(new Author(
-                        AuthorId.generate(),
-                        context.getFirstName(),
-                        context.getMiddleName(),
-                        context.getLastName()
-                ));
-            }
-            context.setInAuthor(false);
-        }
+        return authors;
     }
 }

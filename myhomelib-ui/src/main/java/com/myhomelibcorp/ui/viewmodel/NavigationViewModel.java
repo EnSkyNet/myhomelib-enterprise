@@ -44,11 +44,25 @@ public class NavigationViewModel {
     private final ObjectProperty<TreeItem<LibraryNode>> genresRoot = new SimpleObjectProperty<>();
     private final ObservableList<Group> groups = FXCollections.observableArrayList();
 
-    public ObjectProperty<TreeItem<LibraryNode>> authorsRootProperty() { return authorsRoot; }
-    public ObjectProperty<AuthorId> selectedAuthorIdProperty() { return selectedAuthorId; }
-    public ObservableList<String> seriesNamesProperty() { return seriesNames; }
-    public ObjectProperty<TreeItem<LibraryNode>> genresRootProperty() { return genresRoot; }
-    public ObservableList<Group> groupsProperty() { return groups; }
+    public ObjectProperty<TreeItem<LibraryNode>> authorsRootProperty() {
+        return authorsRoot;
+    }
+
+    public ObjectProperty<AuthorId> selectedAuthorIdProperty() {
+        return selectedAuthorId;
+    }
+
+    public ObservableList<String> seriesNamesProperty() {
+        return seriesNames;
+    }
+
+    public ObjectProperty<TreeItem<LibraryNode>> genresRootProperty() {
+        return genresRoot;
+    }
+
+    public ObservableList<Group> groupsProperty() {
+        return groups;
+    }
 
     public void loadAuthors() {
         log.info("📚 loadAuthors() called");
@@ -96,8 +110,11 @@ public class NavigationViewModel {
                             TreeItem<LibraryNode> node = nodeMap.get(genre.getId().asString());
                             if (genre.getParentId() != null) {
                                 TreeItem<LibraryNode> parent = nodeMap.get(genre.getParentId().asString());
-                                if (parent != null) parent.getChildren().add(node);
-                                else root.getChildren().add(node);
+                                if (parent != null) {
+                                    parent.getChildren().add(node);
+                                } else {
+                                    root.getChildren().add(node);
+                                }
                             } else {
                                 root.getChildren().add(node);
                             }

@@ -18,6 +18,7 @@ import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.image.Image;
+import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
 import javafx.stage.FileChooser;
@@ -86,10 +87,22 @@ public class MainController {
             );
         }
 
-        // === BookInfoPanel ===
+        // === BookInfoPanel зі скролом ===
         bookInfoPanel = new BookInfoPanel();
+
+        ScrollPane scrollPane = new ScrollPane(bookInfoPanel);
+        scrollPane.setFitToWidth(true);
+        scrollPane.setFitToHeight(false); // ГОЛОВНЕ ВИПРАВЛЕННЯ
+        //scrollPane.setStyle("-fx-background: transparent; -fx-background-color: transparent;");
+        //scrollPane.getStyleClass().add("edge-to-edge");
+        scrollPane.setVbarPolicy(ScrollPane.ScrollBarPolicy.AS_NEEDED);
+        scrollPane.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+
+        VBox.setVgrow(scrollPane, Priority.ALWAYS);
+
         if (detailsPane != null) {
-            detailsPane.getChildren().setAll(bookInfoPanel);
+            detailsPane.getChildren().setAll(scrollPane);
+            VBox.setVgrow(detailsPane, Priority.ALWAYS);
         }
 
         if (bookInfoPanel != null) {
@@ -100,12 +113,8 @@ public class MainController {
                     mainViewModel.loadBooksBySeries(series);
                 }
             });
-            bookInfoPanel.setOnGenreClicked(genres -> {
-                // поки що нічого
-            });
-            bookInfoPanel.setOnAnnotationClicked(book -> {
-                // поки що нічого
-            });
+            bookInfoPanel.setOnGenreClicked(genres -> {});
+            bookInfoPanel.setOnAnnotationClicked(book -> {});
         }
 
         // === Таблиця книг ===
@@ -115,15 +124,21 @@ public class MainController {
 
             bookTableView.getSelectionModel().selectedItemProperty().addListener(
                     (obs, oldVal, newVal) -> {
-                        mainViewModel.setSelectedBook(newVal);
                         if (newVal != null) {
-                            loadCoverAsync(newVal);
-                        } else {
-                            bookInfoPanel.clear();
+                            mainViewModel.setSelectedBook(newVal);
                         }
                     }
             );
         }
+
+        // === Слухач для автоматичного завантаження обкладинки ===
+        mainViewModel.selectedBookProperty().addListener((obs, oldVal, newVal) -> {
+            if (newVal != null) {
+                loadCoverAsync(newVal);
+            } else {
+                bookInfoPanel.clear();
+            }
+        });
 
         // === Пошук ===
         if (searchField != null) {
@@ -142,9 +157,6 @@ public class MainController {
 
         // === CollectionRoot ===
         detectAndSetRoot();
-
-        // === Завантаження книг ===
-        mainViewModel.refreshBooks();
 
         log.info("🔵 MainController.initialize() finished");
     }
@@ -200,6 +212,15 @@ public class MainController {
                     setText((empty || item == null) ? null : item.toString());
                 }
             });
+
+            // Слухач для автоматичного вибору першого автора
+            navigationViewModel.authorsRootProperty().addListener((obs, oldRoot, newRoot) -> {
+                if (newRoot != null && !newRoot.getChildren().isEmpty()) {
+                    TreeItem<LibraryNode> firstItem = newRoot.getChildren().get(0);
+                    authorsTree.getSelectionModel().select(firstItem);
+                }
+            });
+
             authorsTree.getSelectionModel().selectedItemProperty().addListener(
                     (obs, oldVal, newVal) -> {
                         if (newVal != null && newVal.getValue() != null) {
@@ -331,7 +352,7 @@ public class MainController {
     public void handleImportDirectory() {
         DirectoryChooser directoryChooser = new DirectoryChooser();
         directoryChooser.setTitle("Виберіть каталог з книгами");
-        File dir = directoryChooser.showDialog(null); // ВИПРАВЛЕНО
+        File dir = directoryChooser.showDialog(null);
         if (dir != null && dir.isDirectory()) {
             mainViewModel.importDirectory(dir.toPath(), this::onImportComplete);
         }

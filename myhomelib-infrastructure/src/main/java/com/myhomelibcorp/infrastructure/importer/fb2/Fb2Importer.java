@@ -13,7 +13,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
-import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 import java.nio.file.Files;
@@ -30,9 +29,6 @@ public class Fb2Importer implements BookImporterPort {
     private final Fb2GenreParser genreParser = new Fb2GenreParser();
     private final Fb2TitleParser titleParser = new Fb2TitleParser();
     private final Fb2AnnotationParser annotationParser = new Fb2AnnotationParser();
-    private final Fb2SequenceParser sequenceParser = new Fb2SequenceParser();
-    private final Fb2LanguageParser languageParser = new Fb2LanguageParser();
-    private final Fb2KeywordsParser keywordsParser = new Fb2KeywordsParser();
 
     @Override
     public boolean supports(Path file) {
@@ -42,12 +38,16 @@ public class Fb2Importer implements BookImporterPort {
 
     @Override
     public Stream<Book> importBooks(Path file) {
-        log.info("Імпорт FB2 з: {}", file);
+        log.info("📚 Імпорт FB2 з: {}", file);
         try {
             Book book = parseFb2(file);
+            log.info("✅ Успішно імпортовано книгу: '{}', авторів: {}, анотація: {}",
+                    book.getTitle(),
+                    book.getAuthors().size(),
+                    book.getAnnotation() != null && !book.getAnnotation().isEmpty() ? "є" : "немає");
             return Stream.of(book);
         } catch (Exception e) {
-            log.error("Помилка імпорту FB2", e);
+            log.error("❌ Помилка імпорту FB2: {}", file, e);
             throw new BusinessException(ErrorCode.IMPORT_FAILED, "Помилка імпорту FB2: " + e.getMessage(), e);
         }
     }
@@ -57,102 +57,71 @@ public class Fb2Importer implements BookImporterPort {
         return "FB2";
     }
 
+    @Override
+    public long countBooks(Path file) {
+        return 1;
+    }
+
     private Book parseFb2(Path file) throws Exception {
-        try (InputStream inputStream = Files.newInputStream(file)) {
-            XMLInputFactory factory = XMLInputFactory.newInstance();
-            factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
-            factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
-            XMLStreamReader reader = factory.createXMLStreamReader(inputStream);
+        log.debug("Парсинг файлу: {}", file);
 
-            Fb2ParserContext context = new Fb2ParserContext();
+        XMLInputFactory factory = XMLInputFactory.newInstance();
+        factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+        factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
 
-            while (reader.hasNext()) {
-                int event = reader.next();
-
-                switch (event) {
-                    case XMLStreamConstants.START_ELEMENT:
-                        String localName = reader.getLocalName();
-                        context.setCurrentElement(localName);
-
-                        if ("title-info".equals(localName)) {
-                            context.setInTitleInfo(true);
-                        }
-
-                        // Обробка через парсери
-                        titleParser.parse(localName, "", context); // title отримаємо через characters
-                        genreParser.parse(localName, "", context);
-                        languageParser.parse(localName, "", context);
-                        keywordsParser.parse(localName, "", context);
-                        annotationParser.parse(localName, "", context);
-
-                        if ("sequence".equals(localName)) {
-                            sequenceParser.parse(reader, context);
-                        }
-                        break;
-
-                    case XMLStreamConstants.CHARACTERS:
-                        String text = reader.getText();
-                        if (text == null || text.isBlank()) break;
-
-                        // Передаємо текст у відповідні парсери
-                        titleParser.parse(context.getCurrentElement(), text, context);
-                        genreParser.parse(context.getCurrentElement(), text, context);
-                        languageParser.parse(context.getCurrentElement(), text, context);
-                        keywordsParser.parse(context.getCurrentElement(), text, context);
-                        annotationParser.parse(context.getCurrentElement(), text, context);
-                        authorParser.parse(context.getCurrentElement(), text, context);
-                        break;
-
-                    case XMLStreamConstants.END_ELEMENT:
-                        String endName = reader.getLocalName();
-
-                        if ("title-info".equals(endName)) {
-                            context.setInTitleInfo(false);
-                        }
-
-                        if ("author".equals(endName)) {
-                            authorParser.finalizeAuthor(context);
-                        }
-
-                        if ("annotation".equals(endName)) {
-                            annotationParser.finishAnnotation(context);
-                        }
-
-                        context.setCurrentElement("");
-                        break;
-                }
-            }
-            reader.close();
-
-            // Якщо авторів немає – додаємо "Невідомий Автор"
-            List<Author> authors = context.getAuthors();
-            if (authors.isEmpty()) {
-                authors.add(new Author("", "", "Невідомий Автор"));
-            }
-
-            // Жанри
-            List<Genre> genres = context.getGenres();
-
-            // Аннотація
-            String annotationText = context.getAnnotation().toString().replaceAll("\\s+", " ").trim();
-
-            long fileSize = Files.size(file);
-
-            return Book.builder()
-                    .id(BookId.generate())
-                    .title(context.getTitle())
-                    .authors(authors)
-                    .genres(genres)
-                    .series(context.getSeries())
-                    .sequenceNumber(context.getSequenceNumber())
-                    .language(LanguageCode.of(context.getLanguage()))
-                    .fileName(file.getFileName().toString())
-                    .folder(file.getParent() != null ? file.getParent().toString() : "")
-                    .fileSize(fileSize)
-                    .keywords(context.getKeywords())
-                    .annotation(annotationText)
-                    .updateDate(LocalDateTime.now())
-                    .build();
+        // Парсимо Title
+        String title;
+        try (InputStream is = Files.newInputStream(file)) {
+            XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
+            title = titleParser.parse(xmlReader);
+            log.debug("Назва книги: '{}'", title);
         }
+
+        // Парсимо Авторів
+        List<Author> authors;
+        try (InputStream is = Files.newInputStream(file)) {
+            XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
+            authors = authorParser.parse(xmlReader);
+            log.debug("Знайдено {} авторів", authors.size());
+        }
+
+        // Парсимо Жанри
+        List<Genre> genres;
+        try (InputStream is = Files.newInputStream(file)) {
+            XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
+            genres = genreParser.parse(xmlReader);
+            log.debug("Знайдено {} жанрів", genres.size());
+        }
+
+        // Парсимо Анотацію
+        String annotation;
+        try (InputStream is = Files.newInputStream(file)) {
+            XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
+            annotation = annotationParser.parse(xmlReader);
+            log.debug("Анотація: '{}'", annotation);
+        }
+
+        if (authors.isEmpty()) {
+            log.warn("Автори не знайдені, додаємо 'Невідомий Автор'");
+            authors.add(new Author("", "", "Невідомий Автор"));
+        }
+
+        long fileSize = Files.size(file);
+
+        return Book.builder()
+                .id(BookId.generate())
+                .title(title)
+                .authors(authors)
+                .genres(genres)
+                .series("")
+                .sequenceNumber(0)
+                .language(LanguageCode.of("ru"))
+                .fileName(file.getFileName().toString())
+                .folder(file.getParent() != null ? file.getParent().toString() : "")
+                .fileSize(fileSize)
+                .keywords("")
+                .annotation(annotation)
+                .updateDate(LocalDateTime.now())
+                .build();
     }
 }

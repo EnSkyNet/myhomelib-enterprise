@@ -23,8 +23,8 @@ public class BookInfoPanel extends VBox {
     private final Hyperlink authorsLink = new Hyperlink();
     private final Hyperlink seriesLink = new Hyperlink();
     private final Hyperlink genresLink = new Hyperlink();
-    private final TextArea annotationArea = new TextArea();
-    private final ListView<String> metaListView = new ListView<>();
+    private final Label annotationLabel = new Label(); // ТІЛЬКИ LABEL
+    private final VBox metaBox = new VBox(4);
 
     private Consumer<String> onAuthorClicked;
     private Consumer<String> onSeriesClicked;
@@ -41,6 +41,8 @@ public class BookInfoPanel extends VBox {
         setSpacing(12);
         setPadding(new Insets(15));
         setStyle("-fx-background-color: #ffffff; -fx-border-color: #e0e0e0; -fx-border-width: 1;");
+        setFillWidth(true);
+        setMaxWidth(Double.MAX_VALUE);
 
         coverView.setFitWidth(180);
         coverView.setFitHeight(250);
@@ -52,6 +54,7 @@ public class BookInfoPanel extends VBox {
 
         titleLabel.setFont(Font.font("System", FontWeight.BOLD, 17));
         titleLabel.setWrapText(true);
+        titleLabel.setMaxWidth(Double.MAX_VALUE);
 
         VBox linksBox = new VBox(10);
         linksBox.getChildren().addAll(
@@ -63,28 +66,42 @@ public class BookInfoPanel extends VBox {
         Label annLabel = new Label("Анотація:");
         annLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
 
-        annotationArea.setEditable(false);
-        annotationArea.setWrapText(true);
-        annotationArea.setPrefRowCount(8);
-        annotationArea.setStyle("-fx-font-size: 13.5px;");
+        // --- НАЛАШТУВАННЯ LABEL ДЛЯ АНОТАЦІЇ ---
+        annotationLabel.setWrapText(true);
+        annotationLabel.setStyle("-fx-font-size: 13.5px; -fx-padding: 4 0 4 0;");
+        annotationLabel.setMaxWidth(Double.MAX_VALUE);
+        annotationLabel.setMaxHeight(Double.MAX_VALUE);
+        annotationLabel.setPrefHeight(Region.USE_COMPUTED_SIZE);
+        annotationLabel.setMinHeight(100); // щоб завжди було видно хоч щось
 
         Label metaLabel = new Label("Метадані:");
         metaLabel.setFont(Font.font("System", FontWeight.BOLD, 13));
 
-        metaListView.setPrefHeight(160);
-        metaListView.setStyle("-fx-font-size: 13px;");
+        metaBox.setStyle("-fx-padding: 0;");
+        metaBox.setFillWidth(true);
 
-        VBox.setVgrow(metaListView, Priority.ALWAYS);
+        // Анотація займає весь вільний простір
+        VBox.setVgrow(annotationLabel, Priority.ALWAYS);
 
-        getChildren().addAll(coverBox, titleLabel, linksBox, annLabel, annotationArea, metaLabel, metaListView);
+        getChildren().addAll(
+                coverBox,
+                titleLabel,
+                linksBox,
+                annLabel,
+                annotationLabel,
+                metaLabel,
+                metaBox
+        );
     }
 
     private HBox createLinkRow(String labelText, Hyperlink link) {
         Label label = new Label(labelText);
         label.setPrefWidth(70);
         label.setStyle("-fx-font-weight: bold;");
+        label.setMaxWidth(Double.MAX_VALUE);
         HBox row = new HBox(10, label, link);
         row.setAlignment(Pos.CENTER_LEFT);
+        row.setMaxWidth(Double.MAX_VALUE);
         return row;
     }
 
@@ -103,18 +120,26 @@ public class BookInfoPanel extends VBox {
         authorsLink.setText(book.getAuthorsText() != null ? book.getAuthorsText() : "—");
         seriesLink.setText(book.getSeries() != null && !book.getSeries().isBlank() ? book.getSeries() : "—");
         genresLink.setText(book.getGenresText() != null ? book.getGenresText() : "—");
-        annotationArea.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
+        annotationLabel.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
 
-        metaListView.getItems().setAll(
-                "Файл: " + (book.getFileName() != null ? book.getFileName() : "—"),
-                "Папка: " + (book.getFolder() != null ? book.getFolder() : "—"),
-                "Розмір: " + book.getFileSizeFormatted(),
-                "Мова: " + (book.getLanguage() != null ? book.getLanguage() : "—"),
-                "Рейтинг: " + book.getRateStars(),
-                "Прогрес: " + book.getProgressFormatted(),
-                "Додано: " + book.getCreatedAtFormatted(),
-                "Оновлено: " + book.getUpdateDateFormatted()
+        metaBox.getChildren().clear();
+        metaBox.getChildren().addAll(
+                createMetaLabel("Файл: " + (book.getFileName() != null ? book.getFileName() : "—")),
+                createMetaLabel("Папка: " + (book.getFolder() != null ? book.getFolder() : "—")),
+                createMetaLabel("Розмір: " + book.getFileSizeFormatted()),
+                createMetaLabel("Мова: " + (book.getLanguage() != null ? book.getLanguage() : "—")),
+                createMetaLabel("Рейтинг: " + book.getRateStars()),
+                createMetaLabel("Прогрес: " + book.getProgressFormatted()),
+                createMetaLabel("Додано: " + book.getCreatedAtFormatted()),
+                createMetaLabel("Оновлено: " + book.getUpdateDateFormatted())
         );
+    }
+
+    private Label createMetaLabel(String text) {
+        Label label = new Label(text);
+        label.setStyle("-fx-font-size: 13px; -fx-padding: 1 0 1 0;");
+        label.setMaxWidth(Double.MAX_VALUE);
+        return label;
     }
 
     private void setupEventHandlers() {
@@ -136,7 +161,7 @@ public class BookInfoPanel extends VBox {
             }
         });
 
-        annotationArea.setOnMouseClicked(e -> {
+        annotationLabel.setOnMouseClicked(e -> {
             if (onAnnotationClicked != null && bookProperty.get() != null) {
                 onAnnotationClicked.accept(bookProperty.get());
             }
@@ -150,9 +175,6 @@ public class BookInfoPanel extends VBox {
     public void setCover(Image image) {
         coverView.setImage(image);
     }
-
-    // ========== ВИДАЛЕНО МЕТОД loadCoverFromBook ==========
-    // Більше не потрібен, оскільки завантаження обкладинки виконується в MainController
 
     public void setOnAuthorClicked(Consumer<String> handler) {
         this.onAuthorClicked = handler;
@@ -176,8 +198,8 @@ public class BookInfoPanel extends VBox {
         authorsLink.setText("");
         seriesLink.setText("");
         genresLink.setText("");
-        annotationArea.clear();
-        metaListView.getItems().clear();
+        annotationLabel.setText("");
+        metaBox.getChildren().clear();
         coverView.setImage(null);
     }
 }

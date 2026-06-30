@@ -185,7 +185,7 @@ public class MainViewModel {
                     books.setAll(dtos);
                     statusText.set("Книги автора: " + dtos.size() + " книг");
                     if (!dtos.isEmpty()) {
-                        selectedBook.set(dtos.get(0));
+                        selectedBook.set(dtos.get(0)); // ВИБІР ПЕРШОЇ КНИГИ
                         if (currentCollectionRoot.isEmpty()) {
                             detectAndSetRoot(dtos.get(0));
                         }
