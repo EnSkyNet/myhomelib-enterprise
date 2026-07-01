@@ -79,14 +79,16 @@ public class MainController {
 
         bookTableService.setupBookTable(bookTableView);
         bookTableView.setItems(mainViewModel.booksProperty());
-        bookTableView.getSelectionModel().selectedItemProperty().addListener(
-                (obs, old, newBook) -> {
-                    if (newBook != null) {
-                        bookSelectionService.selectBook(newBook);
-                        mainViewModel.setSelectedBook(newBook);
-                        coverPresenter.showCover(newBook);
-                    }
-                });
+
+        // ЄДИНИЙ СЛУХАЧ – через ViewModel
+        mainViewModel.selectedBookProperty().addListener((obs, oldBook, newBook) -> {
+            if (newBook != null) {
+                bookSelectionService.selectBook(newBook);
+                coverPresenter.showCover(newBook);
+            } else {
+                coverPresenter.clearCover();
+            }
+        });
 
         bookSearchPresenter.bind(mainViewModel.booksProperty(), () -> {
             if (!mainViewModel.booksProperty().isEmpty()) {
@@ -94,7 +96,6 @@ public class MainController {
             }
         });
         searchField.textProperty().bindBidirectional(bookSearchPresenter.queryProperty());
-
         // ---------- ІНІЦІАЛІЗАЦІЯ ----------
         mainViewModel.initWithoutBooks();
 

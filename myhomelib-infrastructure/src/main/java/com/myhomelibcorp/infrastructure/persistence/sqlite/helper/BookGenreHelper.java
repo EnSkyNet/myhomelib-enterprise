@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
 import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -10,7 +11,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -21,13 +23,9 @@ public class BookGenreHelper {
     private final GenreService genreService;
     private final GenreRowMapper genreRowMapper;
 
-    /**
-     * Зберігає жанри для книги.
-     * Видаляє старі зв'язки та створює нові.
-     */
+    // --- ЗБЕРЕЖЕННЯ ---
     public void saveGenres(BookId bookId, List<Genre> genres) {
         jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
-
         for (Genre genre : genres) {
             String code = genre.getId().asString();
             String name = genreService.getGenreName(code);
@@ -51,9 +49,7 @@ public class BookGenreHelper {
         log.debug("Збережено {} жанрів для книги {}", genres.size(), bookId.asString());
     }
 
-    /**
-     * Завантажує жанри для книги.
-     */
+    // --- ЗАВАНТАЖЕННЯ ДЛЯ ОДНІЄЇ КНИГИ ---
     public List<Genre> loadGenres(BookId bookId) {
         String sql = """
             SELECT g.code, g.name, g.parent_code, g.fb2_code
@@ -61,16 +57,33 @@ public class BookGenreHelper {
             JOIN book_genres bg ON g.code = bg.genre_code
             WHERE bg.book_id = ?
             """;
-        List<Genre> genres = jdbcTemplate.query(sql, genreRowMapper, bookId.asString());
-        log.debug("Завантажено {} жанрів для книги {}", genres.size(), bookId.asString());
-        return genres;
+        return jdbcTemplate.query(sql, genreRowMapper, bookId.asString());
     }
 
-    /**
-     * Видаляє всі зв'язки жанру з книгами (для видалення жанру).
-     */
-    public void deleteAllBookLinksForGenre(GenreId genreId) {
-        jdbcTemplate.update("DELETE FROM book_genres WHERE genre_code = ?", genreId.asString());
-        log.debug("Видалено всі зв'язки для жанру {}", genreId.asString());
+    // --- НОВИЙ МЕТОД: BATCH-ЗАВАНТАЖЕННЯ ДЛЯ СПИСКУ КНИГ ---
+    public void loadGenresForBooks(List<Book> books) {
+        if (books.isEmpty()) return;
+        List<String> bookIds = books.stream().map(b -> b.getId().asString()).collect(Collectors.toList());
+        String placeholders = String.join(",", bookIds.stream().map(id -> "?").toArray(String[]::new));
+        String sql = """
+            SELECT bg.book_id, g.code, g.name, g.parent_code, g.fb2_code
+            FROM book_genres bg
+            JOIN genres g ON bg.genre_code = g.code
+            WHERE bg.book_id IN (""" + placeholders + ")";
+
+        Map<String, List<Genre>> genreMap = new HashMap<>();
+        jdbcTemplate.query(sql, (rs) -> {
+            String bookId = rs.getString("book_id");
+            Genre genre = genreRowMapper.mapRow(rs, 0);
+            genreMap.computeIfAbsent(bookId, k -> new ArrayList<>()).add(genre);
+        }, bookIds.toArray());
+
+        for (Book book : books) {
+            List<Genre> genres = genreMap.getOrDefault(book.getId().asString(), List.of());
+            for (Genre genre : genres) {
+                book.addGenre(genre);
+            }
+        }
+        log.debug("Завантажено жанрів для {} книг", books.size());
     }
 }

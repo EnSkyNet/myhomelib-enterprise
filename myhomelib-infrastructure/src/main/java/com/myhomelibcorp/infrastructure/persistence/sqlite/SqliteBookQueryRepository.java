@@ -1,11 +1,10 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.BookQuery;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.application.query.BookQuery;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
@@ -18,11 +17,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
-import java.util.Locale;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Repository
 @RequiredArgsConstructor
@@ -33,25 +28,13 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     private final BookRowMapper bookRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
+    private final BookQueryBuilder queryBuilder;
 
-    private void enrichBook(Book book) {
-        if (book == null) return;
-        List<Author> authors = bookAuthorHelper.loadAuthors(book.getId());
-        for (Author author : authors) {
-            book.addAuthor(author);
-        }
-        List<Genre> genres = bookGenreHelper.loadGenres(book.getId());
-        for (Genre genre : genres) {
-            book.addGenre(genre);
-        }
-    }
-
-    @Override
-    public List<Book> findAll(int limit, int offset) {
-        String sql = "SELECT * FROM books LIMIT ? OFFSET ?";
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, limit, offset);
-        books.forEach(this::enrichBook);
-        return books;
+    // --- ВИПРАВЛЕННЯ N+1: завантажуємо авторів та жанри одним запитом ---
+    private void enrichBooks(List<Book> books) {
+        if (books.isEmpty()) return;
+        bookAuthorHelper.loadAuthorsForBooks(books);
+        bookGenreHelper.loadGenresForBooks(books);
     }
 
     @Override
@@ -59,7 +42,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
             Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, id.asString());
-            enrichBook(book);
+            enrichBooks(List.of(book));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -75,69 +58,23 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT * FROM books WHERE id IN (" + placeholders + ")";
         String[] idStrings = ids.stream().map(BookId::asString).toArray(String[]::new);
         List<Book> books = jdbcTemplate.query(sql, bookRowMapper, (Object[]) idStrings);
-        books.forEach(this::enrichBook);
+        enrichBooks(books);
         return books;
     }
 
     @Override
-    public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
-        log.info("findByAuthorId: authorId={}, limit={}, offset={}", authorId.asString(), limit, offset);
-        String sql = """
-        SELECT b.* FROM books b
-        JOIN book_authors ba ON b.id = ba.book_id
-        WHERE ba.author_id = ?
-        LIMIT ? OFFSET ?
-        """;
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, authorId.asString(), limit, offset);
-        books.forEach(this::enrichBook);
+    public List<Book> find(BookQuery query) {
+        var sqlQuery = queryBuilder.build(query);
+        List<Book> books = jdbcTemplate.query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
+        enrichBooks(books);
         return books;
     }
 
     @Override
-    public List<Book> search(String query, int limit) {
-        String sql = """
-            SELECT * FROM books
-            WHERE lower(title) LIKE ?
-               OR lower(series) LIKE ?
-               OR lower(keywords) LIKE ?
-               OR lower(annotation) LIKE ?
-            LIMIT ?
-            """;
-        String pattern = "%" + (query != null ? query.toLowerCase() : "") + "%";
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, pattern, pattern, pattern, pattern, limit);
-        books.forEach(this::enrichBook);
-        return books;
-    }
-
-    @Override
-    public List<Book> searchByAuthor(String authorName, int limit) {
-        if (authorName == null || authorName.isBlank()) {
-            return List.of();
-        }
-
-        String pattern = authorName.trim().toLowerCase(Locale.ROOT);
-        log.debug("Пошук за автором (SQL fallback): pattern='{}'", pattern);
-
-        String sql = "SELECT DISTINCT b.* FROM books b";
-        List<Book> allBooks = jdbcTemplate.query(sql, bookRowMapper);
-        allBooks.forEach(this::enrichBook);
-
-        return allBooks.stream()
-                .filter(book -> book.getAuthors().stream()
-                        .anyMatch(author -> {
-                            String fullName = Stream.of(
-                                            author.getLastName(),
-                                            author.getFirstName(),
-                                            author.getMiddleName())
-                                    .filter(Objects::nonNull)
-                                    .map(String::trim)
-                                    .filter(s -> !s.isEmpty())
-                                    .collect(Collectors.joining(" "))
-                                    .toLowerCase(Locale.ROOT);
-                            return fullName.contains(pattern);
-                        }))
-                .limit(limit)
-                .collect(Collectors.toList());
+    public long count(BookQuery query) {
+        var sqlQuery = queryBuilder.buildCount(query);
+        Long result = jdbcTemplate.queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
+        return result != null ? result : 0L;
     }
 
     @Override
@@ -151,82 +88,10 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             """;
         try {
             Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, title, authorLastName);
-            enrichBook(book);
+            enrichBooks(List.of(book));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
-    }
-
-    @Override
-    public int getTotalCount() {
-        try {
-            return jdbcTemplate.queryForObject("SELECT COUNT(*) FROM books", Integer.class);
-        } catch (Exception e) {
-            log.warn("Не вдалося отримати кількість книг", e);
-            return 0;
-        }
-    }
-
-    @Override
-    public List<Book> findBySeries(String seriesName, int limit, int offset) {
-        if (seriesName == null || seriesName.isBlank()) {
-            return List.of();
-        }
-        String sql = "SELECT * FROM books WHERE series = ? ORDER BY sequence_number LIMIT ? OFFSET ?";
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, seriesName, limit, offset);
-        books.forEach(this::enrichBook);
-        return books;
-    }
-
-    @Override
-    public List<Book> findByGenre(String genreCode, int limit, int offset) {
-        if (genreCode == null || genreCode.isBlank()) {
-            return List.of();
-        }
-        String sql = """
-        SELECT b.* FROM books b
-        JOIN book_genres bg ON b.id = bg.book_id
-        WHERE bg.genre_code = ?
-        ORDER BY b.title
-        LIMIT ? OFFSET ?
-        """;
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, genreCode, limit, offset);
-        books.forEach(this::enrichBook);
-        return books;
-    }
-
-    // ========== НОВИЙ УНІФІКОВАНИЙ МЕТОД ==========
-    @Override
-    public List<Book> find(BookQuery query) {
-        BookQueryBuilder.Query builder = BookQueryBuilder.query();
-
-        if (query.getAuthorId() != null) {
-            builder.whereAuthorId(query.getAuthorId());
-        }
-        if (query.getSeriesName() != null && !query.getSeriesName().isBlank()) {
-            builder.whereSeries(query.getSeriesName());
-        }
-        if (query.getGenreCode() != null && !query.getGenreCode().isBlank()) {
-            builder.whereGenre(query.getGenreCode());
-        }
-        if (query.getGroupId() != null) {
-            builder.whereGroup(query.getGroupId());
-        }
-        if (query.getSearchText() != null && !query.getSearchText().isBlank()) {
-            // Пошук за текстом у кількох полях
-            builder.whereTitleLike(query.getSearchText())
-                    .whereKeywordsLike(query.getSearchText());  // не додає умову, а доповнює? Зараз where додає AND, тому краще використати OR – але наш Builder підтримує тільки AND, тому можна зробити декілька умов через OR у SQL або просто шукати в title. Для простоти використаємо тільки title.
-            // Можна розширити Builder, додавши методи whereTextSearch, але для прикладу обмежимося title.
-        }
-
-        builder.limit(query.getLimit()).offset(query.getOffset());
-        String sql = builder.getSql();
-        Object[] params = builder.getParams();
-
-        log.debug("Executing find query: {}", sql);
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, params);
-        books.forEach(this::enrichBook);
-        return books;
     }
 }

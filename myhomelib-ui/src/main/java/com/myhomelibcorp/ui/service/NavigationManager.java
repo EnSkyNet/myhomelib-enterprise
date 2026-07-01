@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.AuthorRepository;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.application.query.BookQuery;
+import com.myhomelibcorp.application.query.Pagination;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.navigation.AuthorNode;
@@ -20,6 +22,7 @@ import org.springframework.stereotype.Service;
 import java.util.Comparator;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -38,51 +41,30 @@ public class NavigationManager {
                 .thenAccept(authors -> Platform.runLater(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
-
                     authors.stream()
                             .sorted(Comparator.comparing(Author::getLastName))
                             .forEach(author ->
                                     root.getChildren().add(new TreeItem<>(new AuthorNode(author)))
                             );
-
                     authorsTree.setRoot(root);
                     authorsTree.setShowRoot(false);
-
                     authorsTree.setCellFactory(tv -> new TreeCell<>() {
                         @Override
                         protected void updateItem(LibraryNode item, boolean empty) {
                             super.updateItem(item, empty);
-                            if (empty || item == null) {
-                                setText(null);
-                            } else {
-                                setText(item.toString());
-                            }
+                            if (empty || item == null) setText(null);
+                            else setText(item.toString());
                         }
                     });
-
                     authorsTree.getSelectionModel().selectedItemProperty().addListener(
                             (obs, oldVal, newVal) -> {
-                                if (newVal != null && newVal.getValue() != null) {
-                                    LibraryNode node = newVal.getValue();
-                                    if (node instanceof AuthorNode authorNode) {
-                                        Author author = authorNode.author();
-                                        if (author != null) {
-                                            log.info("📌 Вибрано автора: {} (ID: {})", author.getFullName(), author.getId().asString());
-                                            onAuthorSelected.accept(author.getId());
-                                        } else {
-                                            log.warn("⚠️ author == null у AuthorNode");
-                                        }
-                                    } else {
-                                        log.debug("Вибрано не AuthorNode: {}", node);
-                                    }
+                                if (newVal != null && newVal.getValue() instanceof AuthorNode) {
+                                    AuthorId id = ((AuthorNode) newVal.getValue()).author().getId();
+                                    onAuthorSelected.accept(id);
                                 }
                             }
                     );
-
-                    log.info("Завантажено {} авторів", authors.size());
-                    if (onLoaded != null) {
-                        onLoaded.run();
-                    }
+                    if (onLoaded != null) onLoaded.run();
                 }))
                 .exceptionally(ex -> {
                     log.error("Помилка завантаження авторів", ex);
@@ -91,11 +73,16 @@ public class NavigationManager {
     }
 
     public void loadBooksByAuthor(AuthorId authorId, Consumer<List<BookDto>> onResult) {
-        executor.submit(() -> bookQueryRepository.findByAuthorId(authorId, 10000, 0))
+        BookQuery query = BookQuery.builder()
+                .authorId(authorId)
+                .pagination(Pagination.of(10000, 0))
+                .build();
+
+        executor.submit(() -> bookQueryRepository.find(query))
                 .thenAccept(books -> {
                     books.sort(Comparator.comparing(Book::getSeries, Comparator.nullsLast(String::compareTo))
                             .thenComparing(Book::getSequenceNumber, Comparator.nullsLast(Integer::compareTo)));
-                    List<BookDto> dtos = books.stream().map(this::toDto).toList();
+                    List<BookDto> dtos = books.stream().map(this::toDto).collect(Collectors.toList());
                     Platform.runLater(() -> onResult.accept(dtos));
                 })
                 .exceptionally(ex -> {
@@ -107,8 +94,7 @@ public class NavigationManager {
     private BookDto toDto(Book book) {
         String genresText = book.getGenres().stream()
                 .map(genre -> genreService.getGenreName(genre.getId().asString()))
-                .collect(java.util.stream.Collectors.joining(", "));
-
+                .collect(Collectors.joining(", "));
         return BookDto.builder()
                 .title(book.getTitle())
                 .authorsText(book.authorsText())

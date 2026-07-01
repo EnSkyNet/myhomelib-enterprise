@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.GenreService;
 import com.myhomelibcorp.application.port.out.SearchQueryService;
+import com.myhomelibcorp.application.query.BookQuery;
+import com.myhomelibcorp.application.query.Pagination;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import javafx.animation.PauseTransition;
@@ -30,7 +32,7 @@ public class SearchManager {
     private final SearchQueryService searchQueryService;
     private final BookQueryRepository bookQueryRepository;
     private final BackgroundExecutor backgroundExecutor;
-    private final GenreService genreService; // ← порт
+    private final GenreService genreService;
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
     private final AtomicReference<CompletableFuture<?>> currentSearch = new AtomicReference<>();
@@ -65,7 +67,10 @@ public class SearchManager {
         CompletableFuture<Void> future = backgroundExecutor.submit(() -> {
             List<BookDto> result;
             if (query == null || query.isBlank()) {
-                List<Book> books = bookQueryRepository.findAll(100, 0);
+                BookQuery bookQuery = BookQuery.builder()
+                        .pagination(Pagination.of(100, 0))
+                        .build();
+                List<Book> books = bookQueryRepository.find(bookQuery);
                 result = books.stream().map(this::toDto).collect(Collectors.toList());
             } else {
                 List<String> bookIds = searchQueryService.searchBookIds(query, 100);
@@ -102,7 +107,6 @@ public class SearchManager {
         String genresText = book.getGenres().stream()
                 .map(g -> genreService.getGenreName(g.getId().asString()))
                 .collect(Collectors.joining(", "));
-
         return BookDto.builder()
                 .title(book.getTitle())
                 .authorsText(book.authorsText())

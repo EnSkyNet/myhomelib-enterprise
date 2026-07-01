@@ -1,9 +1,8 @@
 package com.myhomelibcorp.infrastructure.cache;
 
-import com.myhomelibcorp.application.port.out.BookQuery;
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.application.query.BookQuery;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -38,7 +37,6 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     public List<Book> findByIds(List<BookId> ids) {
         List<Book> result = new ArrayList<>();
         List<BookId> missingIds = new ArrayList<>();
-
         for (BookId id : ids) {
             Optional<Book> cached = bookCache.get(id);
             if (cached.isPresent()) {
@@ -47,63 +45,29 @@ public class CachedBookQueryRepository implements BookQueryRepository {
                 missingIds.add(id);
             }
         }
-
-        if (missingIds.isEmpty()) {
-            return result;
+        if (!missingIds.isEmpty()) {
+            List<Book> loaded = delegate.findByIds(missingIds);
+            for (Book book : loaded) {
+                bookCache.put(book.getId(), book);
+            }
+            result.addAll(loaded);
         }
-
-        List<Book> loaded = delegate.findByIds(missingIds);
-        for (Book book : loaded) {
-            bookCache.put(book.getId(), book);
-        }
-        result.addAll(loaded);
         return result;
     }
 
     @Override
-    public List<Book> findAll(int limit, int offset) {
-        return delegate.findAll(limit, offset);
+    public List<Book> find(BookQuery query) {
+        // Кешування для складних запитів поки що не реалізовано – делегуємо
+        return delegate.find(query);
     }
 
     @Override
-    public List<Book> findByAuthorId(AuthorId authorId, int limit, int offset) {
-        return delegate.findByAuthorId(authorId, limit, offset);
-    }
-
-    @Override
-    public List<Book> search(String query, int limit) {
-        return delegate.search(query, limit);
-    }
-
-    @Override
-    public List<Book> searchByAuthor(String authorName, int limit) {
-        return delegate.searchByAuthor(authorName, limit);
+    public long count(BookQuery query) {
+        return delegate.count(query);
     }
 
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
         return delegate.findByTitleAndAuthor(title, authorLastName);
-    }
-
-    @Override
-    public int getTotalCount() {
-        return delegate.getTotalCount();
-    }
-
-    @Override
-    public List<Book> findBySeries(String seriesName, int limit, int offset) {
-        return delegate.findBySeries(seriesName, limit, offset);
-    }
-
-    @Override
-    public List<Book> findByGenre(String genreCode, int limit, int offset) {
-        return delegate.findByGenre(genreCode, limit, offset);
-    }
-
-    // ========== НОВИЙ МЕТОД ==========
-    @Override
-    public List<Book> find(BookQuery query) {
-        // Просто делегуємо, бо кешувати складні запити важко
-        return delegate.find(query);
     }
 }

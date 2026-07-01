@@ -1,6 +1,8 @@
 package com.myhomelibcorp;
 
 import com.myhomelibcorp.application.port.out.BookQueryRepository;
+import com.myhomelibcorp.application.query.BookQuery;
+import com.myhomelibcorp.application.query.Pagination;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
@@ -41,7 +43,11 @@ public class DatabaseTest {
 
     @Test
     void testDatabaseConnection() {
-        var books = bookQueryRepository.findAll(10, 0);
+        // Використовуємо новий метод find з BookQuery
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(10, 0))
+                .build();
+        var books = bookQueryRepository.find(query);
         assertThat(books).isNotNull();
     }
 }

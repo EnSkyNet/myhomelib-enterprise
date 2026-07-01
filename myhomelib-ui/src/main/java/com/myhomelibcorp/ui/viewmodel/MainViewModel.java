@@ -1,7 +1,8 @@
 package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.dto.BookFilter;
+import com.myhomelibcorp.application.query.BookQuery;
+import com.myhomelibcorp.application.query.Pagination;
 import com.myhomelibcorp.application.usecase.book.LoadBooksUseCase;
 import com.myhomelibcorp.application.usecase.genre.LoadGenresUseCase;
 import com.myhomelibcorp.application.usecase.group.*;
@@ -11,6 +12,8 @@ import com.myhomelibcorp.application.usecase.index.RebuildIndexUseCase;
 import com.myhomelibcorp.application.usecase.search.SearchBooksUseCase;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -33,10 +36,7 @@ import java.util.function.DoubleConsumer;
 @Slf4j
 public class MainViewModel {
 
-    // Новий уніфікований UseCase
     private final LoadBooksUseCase loadBooksUseCase;
-
-    // Інші Use Cases
     private final CreateGroupUseCase createGroupUseCase;
     private final RenameGroupUseCase renameGroupUseCase;
     private final DeleteGroupUseCase deleteGroupUseCase;
@@ -47,7 +47,6 @@ public class MainViewModel {
     private final ImportDirectoryUseCase importDirectoryUseCase;
     private final LoadGenresUseCase loadGenresUseCase;
     private final RebuildIndexUseCase rebuildIndexUseCase;
-
     private final BackgroundExecutor backgroundExecutor;
 
     private final ObservableList<BookDto> books = FXCollections.observableArrayList();
@@ -59,14 +58,11 @@ public class MainViewModel {
     private final ObservableList<String> genreNames = FXCollections.observableArrayList();
 
     private String currentCollectionRoot = "";
-    private AuthorId currentAuthorId;
-    private String currentSeriesName;
-    private String currentGenreCode;
-    private Long currentGroupId;
+    private BookQuery currentQuery;
     private boolean isSearchMode = false;
-
     private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
 
+    // === ГЕТЕРИ / СЕТЕРИ ===
     public ObservableList<BookDto> booksProperty() { return books; }
     public ObjectProperty<BookDto> selectedBookProperty() { return selectedBook; }
     public StringProperty statusTextProperty() { return statusText; }
@@ -89,93 +85,12 @@ public class MainViewModel {
         return currentCollectionRoot;
     }
 
-    // ========== МЕТОДИ ЗАВАНТАЖЕННЯ КНИГ (ОБГОРТКИ) ==========
+    // === ЗАВАНТАЖЕННЯ КНИГ (з використанням BookQuery) ===
 
-    public void loadBooksByAuthor(AuthorId authorId) {
-        currentAuthorId = authorId;
-        currentSeriesName = null;
-        currentGenreCode = null;
-        currentGroupId = null;
-        isSearchMode = false;
-        BookFilter filter = BookFilter.builder()
-                .authorId(authorId)
-                .limit(Integer.MAX_VALUE)
-                .build();
-        executeLoad(filter);
-    }
-
-    public void loadBooksBySeries(String seriesName) {
-        currentAuthorId = null;
-        currentSeriesName = seriesName;
-        currentGenreCode = null;
-        currentGroupId = null;
-        isSearchMode = false;
-        BookFilter filter = BookFilter.builder()
-                .seriesName(seriesName)
-                .limit(Integer.MAX_VALUE)
-                .build();
-        executeLoad(filter);
-    }
-
-    public void loadBooksByGenre(String genreCode) {
-        currentAuthorId = null;
-        currentSeriesName = null;
-        currentGenreCode = genreCode;
-        currentGroupId = null;
-        isSearchMode = false;
-        BookFilter filter = BookFilter.builder()
-                .genreCode(genreCode)
-                .limit(Integer.MAX_VALUE)
-                .build();
-        executeLoad(filter);
-    }
-
-    public void loadBooksByGroup(Long groupId) {
-        currentAuthorId = null;
-        currentSeriesName = null;
-        currentGenreCode = null;
-        currentGroupId = groupId;
-        isSearchMode = false;
-        BookFilter filter = BookFilter.builder()
-                .groupId(groupId)
-                .limit(Integer.MAX_VALUE)
-                .build();
-        executeLoad(filter);
-    }
-
-    public void searchBooks(String query) {
-        if (query == null || query.isBlank()) {
-            // Якщо порожній запит – повертаємося до попереднього контексту
-            restoreContextAndRefresh();
-            return;
-        }
-        isSearchMode = true;
-        currentAuthorId = null;
-        currentSeriesName = null;
-        currentGenreCode = null;
-        currentGroupId = null;
-        BookFilter filter = BookFilter.builder()
-                .searchText(query)
-                .limit(1000)
-                .build();
-        executeLoad(filter);
-    }
-
-    public void refreshBooks() {
-        currentAuthorId = null;
-        currentSeriesName = null;
-        currentGenreCode = null;
-        currentGroupId = null;
-        isSearchMode = false;
-        BookFilter filter = BookFilter.builder()
-                .limit(Integer.MAX_VALUE)
-                .build();
-        executeLoad(filter);
-    }
-
-    private void executeLoad(BookFilter filter) {
+    public void loadBooks(BookQuery query) {
+        this.currentQuery = query;
         statusText.set("Завантаження...");
-        backgroundExecutor.submit(() -> loadBooksUseCase.execute(filter))
+        backgroundExecutor.submit(() -> loadBooksUseCase.execute(query))
                 .thenAccept(dtos -> Platform.runLater(() -> {
                     books.setAll(dtos);
                     statusText.set("Завантажено " + dtos.size() + " книг");
@@ -195,31 +110,81 @@ public class MainViewModel {
                 });
     }
 
-    // ========== ІНІЦІАЛІЗАЦІЯ ==========
+    // === МЕТОДИ-ОБГОРТКИ (для зручності виклику з UI) ===
 
-    public void initWithoutBooks() {
-        loadGenres();
-        bindSearchWithDebounce();
+    public void loadBooksByAuthor(AuthorId authorId) {
+        isSearchMode = false;
+        BookQuery query = BookQuery.builder()
+                .authorId(authorId)
+                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksBySeries(String seriesName) {
+        // Поки що шукаємо за текстом, але в майбутньому замінимо на SeriesId
+        isSearchMode = false;
+        BookQuery query = BookQuery.builder()
+                .text(seriesName)
+                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksByGenre(String genreCode) {
+        isSearchMode = false;
+        BookQuery query = BookQuery.builder()
+                .genreId(GenreId.fromCode(genreCode))
+                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksByGroup(Long groupId) {
+        isSearchMode = false;
+        BookQuery query = BookQuery.builder()
+                .groupId(GroupId.fromLong(groupId))
+                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .build();
+        loadBooks(query);
+    }
+
+    public void searchBooks(String text) {
+        if (text == null || text.isBlank()) {
+            restoreContextAndRefresh();
+            return;
+        }
+        isSearchMode = true;
+        BookQuery query = BookQuery.builder()
+                .text(text)
+                .pagination(Pagination.of(1000, 0))
+                .build();
+        loadBooks(query);
+    }
+
+    public void refreshBooks() {
+        isSearchMode = false;
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .build();
+        loadBooks(query);
     }
 
     public void restoreContextAndRefresh() {
-        if (currentAuthorId != null) {
-            loadBooksByAuthor(currentAuthorId);
-        } else if (currentSeriesName != null && !currentSeriesName.isBlank()) {
-            loadBooksBySeries(currentSeriesName);
-        } else if (currentGenreCode != null && !currentGenreCode.isBlank()) {
-            loadBooksByGenre(currentGenreCode);
-        } else if (currentGroupId != null) {
-            loadBooksByGroup(currentGroupId);
-        } else if (isSearchMode && searchQuery.get() != null && !searchQuery.get().isBlank()) {
-            searchBooks(searchQuery.get());
+        if (currentQuery != null) {
+            loadBooks(currentQuery);
         } else {
             refreshBooks();
         }
     }
 
-    // ========== ІМПОРТ ==========
+    // === ІНІЦІАЛІЗАЦІЯ ===
+    public void initWithoutBooks() {
+        loadGenres();
+        bindSearchWithDebounce();
+    }
 
+    // === ІМПОРТ ===
     public void importFile(Path file, Runnable onComplete) {
         importInProgress.set(true);
         statusText.set("Імпорт файлу: " + file.getFileName());
@@ -274,16 +239,14 @@ public class MainViewModel {
         }).start();
     }
 
-    // ========== ГРУПИ ==========
-
+    // === ГРУПИ ===
     public Group createGroup(String name) { return createGroupUseCase.execute(name); }
     public Group renameGroup(Long groupId, String newName) { return renameGroupUseCase.execute(groupId, newName); }
     public void deleteGroup(Long groupId) { deleteGroupUseCase.execute(groupId); }
     public void addBookToGroup(Long groupId, String bookId) { addBookToGroupUseCase.execute(groupId, bookId); }
     public void removeBookFromGroup(Long groupId, String bookId) { removeBookFromGroupUseCase.execute(groupId, bookId); }
 
-    // ========== ІНДЕКС ==========
-
+    // === ІНДЕКС ===
     public void rebuildIndex() {
         statusText.set("Перебудова індексу...");
         backgroundExecutor.submit(() -> {
@@ -297,8 +260,7 @@ public class MainViewModel {
         });
     }
 
-    // ========== ДОПОМІЖНІ ==========
-
+    // === ДОПОМІЖНІ ===
     private void bindSearchWithDebounce() {
         searchQuery.addListener((obs, old, query) -> {
             searchDebounce.stop();
