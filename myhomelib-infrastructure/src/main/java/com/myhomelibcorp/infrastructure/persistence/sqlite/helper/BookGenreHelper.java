@@ -23,7 +23,6 @@ public class BookGenreHelper {
     private final GenreService genreService;
     private final GenreRowMapper genreRowMapper;
 
-    // --- ЗБЕРЕЖЕННЯ ---
     public void saveGenres(BookId bookId, List<Genre> genres) {
         jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
         for (Genre genre : genres) {
@@ -49,7 +48,6 @@ public class BookGenreHelper {
         log.debug("Збережено {} жанрів для книги {}", genres.size(), bookId.asString());
     }
 
-    // --- ЗАВАНТАЖЕННЯ ДЛЯ ОДНІЄЇ КНИГИ ---
     public List<Genre> loadGenres(BookId bookId) {
         String sql = """
             SELECT g.code, g.name, g.parent_code, g.fb2_code
@@ -60,7 +58,6 @@ public class BookGenreHelper {
         return jdbcTemplate.query(sql, genreRowMapper, bookId.asString());
     }
 
-    // --- НОВИЙ МЕТОД: BATCH-ЗАВАНТАЖЕННЯ ДЛЯ СПИСКУ КНИГ ---
     public void loadGenresForBooks(List<Book> books) {
         if (books.isEmpty()) return;
         List<String> bookIds = books.stream().map(b -> b.getId().asString()).collect(Collectors.toList());

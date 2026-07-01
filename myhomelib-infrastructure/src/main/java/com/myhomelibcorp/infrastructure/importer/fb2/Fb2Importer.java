@@ -108,6 +108,23 @@ public class Fb2Importer implements BookImporterPort {
 
         long fileSize = Files.size(file);
 
+        // Створюємо BookMetadata та BookFile
+        var metadata = com.myhomelibcorp.domain.model.valueobject.BookMetadata.builder()
+                .annotation(annotation)
+                .keywords("")
+                .language(LanguageCode.of("ru"))
+                .rate(0)
+                .progress(0)
+                .build();
+
+        var bookFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
+                file.getFileName().toString(),
+                file.getParent() != null ? file.getParent().toString() : "",
+                "",
+                fileSize,
+                null
+        );
+
         return Book.builder()
                 .id(BookId.generate())
                 .title(title)
@@ -115,12 +132,8 @@ public class Fb2Importer implements BookImporterPort {
                 .genres(genres)
                 .series("")
                 .sequenceNumber(0)
-                .language(LanguageCode.of("ru"))
-                .fileName(file.getFileName().toString())
-                .folder(file.getParent() != null ? file.getParent().toString() : "")
-                .fileSize(fileSize)
-                .keywords("")
-                .annotation(annotation)
+                .metadata(metadata)
+                .file(bookFile)
                 .updateDate(LocalDateTime.now())
                 .build();
     }

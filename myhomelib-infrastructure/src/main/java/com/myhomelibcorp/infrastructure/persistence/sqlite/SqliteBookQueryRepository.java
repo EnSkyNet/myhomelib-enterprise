@@ -30,7 +30,6 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     private final BookGenreHelper bookGenreHelper;
     private final BookQueryBuilder queryBuilder;
 
-    // --- ВИПРАВЛЕННЯ N+1: завантажуємо авторів та жанри одним запитом ---
     private void enrichBooks(List<Book> books) {
         if (books.isEmpty()) return;
         bookAuthorHelper.loadAuthorsForBooks(books);

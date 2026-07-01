@@ -27,7 +27,6 @@ public class LuceneIndexRebuilder implements IndexRebuilder {
         log.info("Початок перебудови Lucene індексу...");
         indexer.rebuildIndex();
 
-        // Використовуємо пагінацію, щоб не завантажувати всі книги в пам'ять
         int pageSize = 1000;
         int offset = 0;
         int totalIndexed = 0;
@@ -53,8 +52,8 @@ public class LuceneIndexRebuilder implements IndexRebuilder {
                             .authors(book.authorsText())
                             .series(book.getSeries() != null ? book.getSeries() : "")
                             .genres(genresText)
-                            .keywords(book.getKeywords() != null ? book.getKeywords() : "")
-                            .annotation(book.getAnnotation() != null ? book.getAnnotation() : "")
+                            .keywords(book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "")
+                            .annotation(book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "")
                             .build();
 
                     indexer.indexDocument(doc);

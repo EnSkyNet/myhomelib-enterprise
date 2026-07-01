@@ -37,11 +37,11 @@ public class BookEventHandler {
         SearchDocument doc = SearchDocument.builder()
                 .id(book.getId().asString())
                 .title(book.getTitle() != null ? book.getTitle() : "")
-                .authors(book.authorsText())  // індексуємо авторів
+                .authors(book.authorsText())
                 .series(book.getSeries() != null ? book.getSeries() : "")
                 .genres(genresText)
-                .keywords(book.getKeywords() != null ? book.getKeywords() : "")
-                .annotation(book.getAnnotation() != null ? book.getAnnotation() : "")
+                .keywords(book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "")
+                .annotation(book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "")
                 .build();
 
         log.debug("Індексація книги: id={}, title={}, authors={}", doc.getId(), doc.getTitle(), doc.getAuthors());

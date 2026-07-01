@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.GroupRepository;
 import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GroupRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,14 +53,14 @@ public class SqliteGroupRepository implements GroupRepository {
 
     @Override
     public Group save(Group group) {
-        if (group.getId() == null) {
+        if (group.getId() == null || group.getId().asLong() == null) {
             String sql = "INSERT INTO groups (name, allow_delete) VALUES (?, ?)";
             jdbcTemplate.update(sql, group.getName(), group.isAllowDelete() ? 1 : 0);
             Long id = jdbcTemplate.queryForObject("SELECT last_insert_rowid()", Long.class);
-            return new Group(id, group.getName(), group.isAllowDelete());
+            return new Group(GroupId.fromLong(id), group.getName(), group.isAllowDelete());
         } else {
             String sql = "UPDATE groups SET name = ?, allow_delete = ? WHERE id = ?";
-            jdbcTemplate.update(sql, group.getName(), group.isAllowDelete() ? 1 : 0, group.getId());
+            jdbcTemplate.update(sql, group.getName(), group.isAllowDelete() ? 1 : 0, group.getId().asLong());
             return group;
         }
     }

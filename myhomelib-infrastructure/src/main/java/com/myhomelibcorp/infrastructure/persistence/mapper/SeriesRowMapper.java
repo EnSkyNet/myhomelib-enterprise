@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.mapper;
 
 import com.myhomelibcorp.domain.model.series.Series;
+import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 
@@ -14,6 +15,6 @@ public class SeriesRowMapper implements RowMapper<Series> {
     public Series mapRow(ResultSet rs, int rowNum) throws SQLException {
         String id = rs.getString("id");
         String name = rs.getString("name");
-        return new Series(id, name, null);
+        return new Series(SeriesId.fromString(id), name, null);
     }
 }

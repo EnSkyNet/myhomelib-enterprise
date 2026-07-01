@@ -96,30 +96,26 @@ public class MainController {
             }
         });
         searchField.textProperty().bindBidirectional(bookSearchPresenter.queryProperty());
+
         // ---------- ІНІЦІАЛІЗАЦІЯ ----------
         mainViewModel.initWithoutBooks();
 
         // Завантажуємо авторів
         navigationPresenter.loadAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
                 .thenRun(() -> {
-                    // Виконуємо на UI-потоку, щоб переконатися, що дерево вже оновлене
                     Platform.runLater(() -> {
                         TreeItem<LibraryNode> root = authorsTree.getRoot();
                         if (root != null && !root.getChildren().isEmpty()) {
-                            // Беремо першого автора
                             TreeItem<LibraryNode> firstItem = root.getChildren().get(0);
                             LibraryNode firstNode = firstItem.getValue();
                             if (firstNode instanceof com.myhomelibcorp.domain.model.navigation.AuthorNode) {
                                 AuthorId firstAuthorId = ((com.myhomelibcorp.domain.model.navigation.AuthorNode) firstNode).author().getId();
                                 log.info("Перший автор: {}, завантажуємо його книги", firstAuthorId.asString());
-                                // Явно завантажуємо книги першого автора
                                 mainViewModel.loadBooksByAuthor(firstAuthorId);
-                                // Виділяємо в дереві
                                 authorsTree.getSelectionModel().select(firstItem);
                                 initialLoadDone = true;
                             }
                         } else {
-                            // Якщо авторів немає – завантажуємо всі книги
                             log.warn("Авторів не знайдено, завантажуємо всі книги");
                             mainViewModel.refreshBooks();
                             initialLoadDone = true;
@@ -132,11 +128,15 @@ public class MainController {
         navigationPresenter.loadGenres(genresTree, mainViewModel::loadBooksByGenre);
         navigationPresenter.loadGroups(groupsListView.getItems());
 
+        // Вибір групи – використовуємо asLong()
         groupsListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, group) -> {
-                    if (group != null) mainViewModel.loadBooksByGroup(group.getId());
+                    if (group != null) {
+                        mainViewModel.loadBooksByGroup(group.getId().asLong());
+                    }
                 });
 
+        // Слухач для вибору книги
         mainViewModel.selectedBookProperty().addListener((obs, old, newBook) -> {
             if (newBook != null) {
                 bookSelectionService.selectBook(newBook);
@@ -149,8 +149,8 @@ public class MainController {
         bookCountLabel.textProperty().bind(
                 javafx.beans.binding.Bindings.size(mainViewModel.booksProperty()).asString()
         );
+
         if (!initialLoadDone) {
-            // Якщо з якоїсь причини не спрацювало, робимо fallback
             mainViewModel.refreshBooks();
         }
     }
@@ -196,7 +196,7 @@ public class MainController {
     public void handleImportDirectory() {
         DirectoryChooser directoryChooser = new DirectoryChooser();
         directoryChooser.setTitle("Виберіть каталог з книгами");
-        File dir = directoryChooser.showDialog(null); // Правильний метод
+        File dir = directoryChooser.showDialog(null);
         if (dir != null) {
             bookImportPresenter.importDirectory(dir.toPath(), this::onImportComplete);
         }
@@ -242,7 +242,7 @@ public class MainController {
         result.ifPresent(newName -> {
             if (!newName.isBlank() && !newName.equals(selected.getName())) {
                 try {
-                    mainViewModel.renameGroup(selected.getId(), newName);
+                    mainViewModel.renameGroup(selected.getId().asLong(), newName);
                     navigationPresenter.loadGroups(groupsListView.getItems());
                     statusBarPresenter.setStatus("Групу перейменовано на '" + newName + "'");
                 } catch (Exception e) {
@@ -266,7 +266,7 @@ public class MainController {
                 "Видалити групу '" + selected.getName() + "'?",
                 "Книги не будуть видалені, але зв'язок буде втрачено.")) {
             try {
-                mainViewModel.deleteGroup(selected.getId());
+                mainViewModel.deleteGroup(selected.getId().asLong());
                 navigationPresenter.loadGroups(groupsListView.getItems());
                 statusBarPresenter.setStatus("Групу видалено");
             } catch (Exception e) {

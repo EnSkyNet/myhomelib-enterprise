@@ -67,23 +67,23 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             ps.setString(idx++, book.getTitle() != null ? book.getTitle() : "");
             ps.setString(idx++, book.getSeries());
             ps.setInt(idx++, book.getSequenceNumber() != null ? book.getSequenceNumber() : 0);
-            ps.setString(idx++, book.getFileName() != null ? book.getFileName() : "");
-            ps.setString(idx++, book.getFolder());
-            ps.setString(idx++, book.getArchiveEntry());
-            ps.setString(idx++, book.getLanguage() != null ? book.getLanguage().toString() : null);
-            ps.setLong(idx++, book.getFileSize());
-            ps.setString(idx++, book.getKeywords() != null ? book.getKeywords() : "");
-            ps.setString(idx++, book.getAnnotation() != null ? book.getAnnotation() : "");
-            ps.setInt(idx++, book.getRate());
-            ps.setInt(idx++, book.getProgress());
+            ps.setString(idx++, book.getFile().getFileName() != null ? book.getFile().getFileName() : "");
+            ps.setString(idx++, book.getFile().getFolder());
+            ps.setString(idx++, book.getFile().getArchiveEntry());
+            ps.setString(idx++, book.getMetadata().getLanguage() != null ? book.getMetadata().getLanguage().toString() : null);
+            ps.setLong(idx++, book.getFile().getFileSize());
+            ps.setString(idx++, book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "");
+            ps.setString(idx++, book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "");
+            ps.setInt(idx++, book.getMetadata().getRate());
+            ps.setInt(idx++, book.getMetadata().getProgress());
             String formattedDate = book.getUpdateDate() != null
                     ? book.getUpdateDate().format(DATE_FORMATTER)
                     : null;
             ps.setString(idx++, formattedDate);
-            ps.setString(idx++, book.getIsbn() != null ? book.getIsbn().toString() : null);
+            ps.setString(idx++, book.getMetadata().getIsbn() != null ? book.getMetadata().getIsbn().toString() : null);
             ps.setInt(idx++, book.isDeleted() ? 1 : 0);
             ps.setInt(idx++, book.isLocal() ? 1 : 0);
-            ps.setString(idx++, book.getReview() != null ? book.getReview() : "");
+            ps.setString(idx++, book.getMetadata().getReview() != null ? book.getMetadata().getReview() : "");
             String formattedCreated = book.getCreatedAt() != null
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);
@@ -105,9 +105,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     @Override
     @Transactional
     public void saveBatch(List<Book> books) {
-        if (books == null || books.isEmpty()) {
-            return;
-        }
+        if (books == null || books.isEmpty()) return;
 
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
@@ -117,23 +115,23 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
             args[idx++] = book.getSeries();
             args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
-            args[idx++] = book.getFileName() != null ? book.getFileName() : "";
-            args[idx++] = book.getFolder();
-            args[idx++] = book.getArchiveEntry();
-            args[idx++] = book.getLanguage() != null ? book.getLanguage().toString() : null;
-            args[idx++] = book.getFileSize();
-            args[idx++] = book.getKeywords() != null ? book.getKeywords() : "";
-            args[idx++] = book.getAnnotation() != null ? book.getAnnotation() : "";
-            args[idx++] = book.getRate();
-            args[idx++] = book.getProgress();
+            args[idx++] = book.getFile().getFileName() != null ? book.getFile().getFileName() : "";
+            args[idx++] = book.getFile().getFolder();
+            args[idx++] = book.getFile().getArchiveEntry();
+            args[idx++] = book.getMetadata().getLanguage() != null ? book.getMetadata().getLanguage().toString() : null;
+            args[idx++] = book.getFile().getFileSize();
+            args[idx++] = book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "";
+            args[idx++] = book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "";
+            args[idx++] = book.getMetadata().getRate();
+            args[idx++] = book.getMetadata().getProgress();
             String formattedDate = book.getUpdateDate() != null
                     ? book.getUpdateDate().format(DATE_FORMATTER)
                     : null;
             args[idx++] = formattedDate;
-            args[idx++] = book.getIsbn() != null ? book.getIsbn().toString() : null;
+            args[idx++] = book.getMetadata().getIsbn() != null ? book.getMetadata().getIsbn().toString() : null;
             args[idx++] = book.isDeleted() ? 1 : 0;
             args[idx++] = book.isLocal() ? 1 : 0;
-            args[idx++] = book.getReview() != null ? book.getReview() : "";
+            args[idx++] = book.getMetadata().getReview() != null ? book.getMetadata().getReview() : "";
             String formattedCreated = book.getCreatedAt() != null
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);

@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.SeriesRepository;
 import com.myhomelibcorp.domain.model.series.Series;
+import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.SeriesRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,13 +43,13 @@ public class SqliteSeriesRepository implements SeriesRepository {
     @Override
     public Series save(Series series) {
         if (series.getId() == null) {
-            String newId = java.util.UUID.randomUUID().toString();
+            SeriesId newId = SeriesId.generate();
             String sql = "INSERT INTO series (id, name) VALUES (?, ?)";
-            jdbcTemplate.update(sql, newId, series.getName());
+            jdbcTemplate.update(sql, newId.asString(), series.getName());
             return new Series(newId, series.getName(), series.getDescription());
         } else {
             String sql = "UPDATE series SET name = ? WHERE id = ?";
-            jdbcTemplate.update(sql, series.getName(), series.getId());
+            jdbcTemplate.update(sql, series.getName(), series.getId().asString());
             return series;
         }
     }

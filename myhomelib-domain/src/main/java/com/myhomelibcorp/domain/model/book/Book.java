@@ -8,66 +8,154 @@ import lombok.Getter;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 @Getter
 public class Book {
     private final BookId id;
-    private String title;
-    private List<Author> authors;
-    private List<Genre> genres;
-    private String series;
-    private Integer sequenceNumber;
-    private BookMetadata metadata;
-    private BookFile file;
-    private Cover cover;
-    private LocalDateTime updateDate;
-    private LocalDateTime createdAt;
-    private boolean deleted;
-    private boolean local;
+    private final String title;
+    private final List<Author> authors;
+    private final List<Genre> genres;
+    private final String series;
+    private final Integer sequenceNumber;
+    private final BookMetadata metadata;
+    private final BookFile file;
+    private final Cover cover;
+    private final LocalDateTime updateDate;
+    private final LocalDateTime createdAt;
+    private final boolean deleted;
+    private final boolean local;
 
     private Book(Builder builder) {
-        this.id = builder.id != null ? builder.id : BookId.generate();
-        this.title = builder.title;
-        this.authors = builder.authors != null ? builder.authors : new ArrayList<>();
-        this.genres = builder.genres != null ? builder.genres : new ArrayList<>();
+        this.id = Objects.requireNonNull(builder.id, "BookId cannot be null");
+        this.title = Objects.requireNonNull(builder.title, "Title cannot be null");
+        if (this.title.isBlank()) {
+            throw new IllegalArgumentException("Book title cannot be blank");
+        }
+        this.authors = Objects.requireNonNullElse(builder.authors, new ArrayList<>());
+        this.genres = Objects.requireNonNullElse(builder.genres, new ArrayList<>());
+        this.metadata = Objects.requireNonNull(builder.metadata, "BookMetadata cannot be null");
+        this.file = Objects.requireNonNull(builder.file, "BookFile cannot be null");
+        this.cover = Objects.requireNonNullElse(builder.cover, Cover.empty());
         this.series = builder.series;
         this.sequenceNumber = builder.sequenceNumber;
-
-        // Створюємо BookMetadata, якщо його не було встановлено явно
-        if (builder.metadata != null) {
-            this.metadata = builder.metadata;
-        } else {
-            this.metadata = BookMetadata.builder()
-                    .annotation(builder.annotation)
-                    .keywords(builder.keywords)
-                    .language(builder.language != null ? builder.language : LanguageCode.of("uk"))
-                    .isbn(builder.isbn)
-                    .review(builder.review)
-                    .rate(builder.rate)
-                    .progress(builder.progress)
-                    .build();
-        }
-
-        // Створюємо BookFile, якщо його не було встановлено явно
-        if (builder.file != null) {
-            this.file = builder.file;
-        } else {
-            this.file = new BookFile(
-                    builder.fileName,
-                    builder.folder,
-                    builder.archiveEntry,
-                    builder.fileSize,
-                    builder.collectionRoot
-            );
-        }
-
-        this.cover = builder.cover != null ? builder.cover : Cover.empty();
-        this.updateDate = builder.updateDate != null ? builder.updateDate : LocalDateTime.now();
-        this.createdAt = builder.createdAt != null ? builder.createdAt : LocalDateTime.now();
+        this.updateDate = Objects.requireNonNullElse(builder.updateDate, LocalDateTime.now());
+        this.createdAt = Objects.requireNonNullElse(builder.createdAt, LocalDateTime.now());
         this.deleted = builder.deleted;
         this.local = builder.local;
     }
 
+    // === ДЕЛЕГУЮЧІ МЕТОДИ ДЛЯ ЗРУЧНОСТІ (не порушують інкапсуляцію) ===
+    public String getFileName() { return file != null ? file.getFileName() : ""; }
+    public String getFolder() { return file != null ? file.getFolder() : ""; }
+    public String getArchiveEntry() { return file != null ? file.getArchiveEntry() : ""; }
+    public long getFileSize() { return file != null ? file.getFileSize() : 0; }
+    public String getCollectionRoot() { return file != null ? file.getCollectionRoot() : ""; }
+
+    public String getAnnotation() { return metadata != null ? metadata.getAnnotation() : ""; }
+    public String getKeywords() { return metadata != null ? metadata.getKeywords() : ""; }
+    public LanguageCode getLanguage() { return metadata != null ? metadata.getLanguage() : LanguageCode.of("uk"); }
+    public Isbn getIsbn() { return metadata != null ? metadata.getIsbn() : null; }
+    public String getReview() { return metadata != null ? metadata.getReview() : ""; }
+    public int getRate() { return metadata != null ? metadata.getRate() : 0; }
+    public int getProgress() { return metadata != null ? metadata.getProgress() : 0; }
+
+    // === МЕТОДИ ДЛЯ ДОДАВАННЯ (потрібні для наповнення з БД) ===
+    public void addAuthor(Author author) {
+        if (author != null && !this.authors.contains(author)) {
+            this.authors.add(author);
+        }
+    }
+
+    public void addGenre(Genre genre) {
+        if (genre != null && !this.genres.contains(genre)) {
+            this.genres.add(genre);
+        }
+    }
+
+    // === ІНШІ ЗРУЧНІ МЕТОДИ ===
+    public String authorsText() {
+        if (authors.isEmpty()) return "Невідомий Автор";
+        return authors.stream()
+                .map(Author::getFullName)
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    public String genresText() {
+        return genres.stream()
+                .map(Genre::getName)
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    public boolean hasArchiveEntry() {
+        return file != null && file.hasArchiveEntry();
+    }
+
+    // === ПОВЕДІНКОВІ МЕТОДИ ===
+    public Book changeTitle(String newTitle) {
+        if (newTitle == null || newTitle.isBlank()) {
+            throw new IllegalArgumentException("New title cannot be empty");
+        }
+        return builder()
+                .id(this.id)
+                .title(newTitle)
+                .authors(this.authors)
+                .genres(this.genres)
+                .series(this.series)
+                .sequenceNumber(this.sequenceNumber)
+                .metadata(this.metadata)
+                .file(this.file)
+                .cover(this.cover)
+                .updateDate(LocalDateTime.now())
+                .createdAt(this.createdAt)
+                .deleted(this.deleted)
+                .local(this.local)
+                .build();
+    }
+
+    public Book changeMetadata(BookMetadata newMetadata) {
+        if (newMetadata == null) {
+            throw new IllegalArgumentException("Metadata cannot be null");
+        }
+        return builder()
+                .id(this.id)
+                .title(this.title)
+                .authors(this.authors)
+                .genres(this.genres)
+                .series(this.series)
+                .sequenceNumber(this.sequenceNumber)
+                .metadata(newMetadata)
+                .file(this.file)
+                .cover(this.cover)
+                .updateDate(LocalDateTime.now())
+                .createdAt(this.createdAt)
+                .deleted(this.deleted)
+                .local(this.local)
+                .build();
+    }
+
+    public Book changeFile(BookFile newFile) {
+        if (newFile == null) {
+            throw new IllegalArgumentException("File cannot be null");
+        }
+        return builder()
+                .id(this.id)
+                .title(this.title)
+                .authors(this.authors)
+                .genres(this.genres)
+                .series(this.series)
+                .sequenceNumber(this.sequenceNumber)
+                .metadata(this.metadata)
+                .file(newFile)
+                .cover(this.cover)
+                .updateDate(LocalDateTime.now())
+                .createdAt(this.createdAt)
+                .deleted(this.deleted)
+                .local(this.local)
+                .build();
+    }
+
+    // === BUILDER ===
     public static Builder builder() {
         return new Builder();
     }
@@ -75,35 +163,18 @@ public class Book {
     public static class Builder {
         private BookId id;
         private String title;
-        private List<Author> authors;
-        private List<Genre> genres;
+        private List<Author> authors = new ArrayList<>();
+        private List<Genre> genres = new ArrayList<>();
         private String series;
         private Integer sequenceNumber;
         private BookMetadata metadata;
         private BookFile file;
-        private Cover cover;
+        private Cover cover = Cover.empty();
         private LocalDateTime updateDate;
         private LocalDateTime createdAt;
         private boolean deleted;
         private boolean local;
 
-        // Поля для зручного створення BookMetadata
-        private String annotation;
-        private String keywords;
-        private LanguageCode language;
-        private Isbn isbn;
-        private String review;
-        private int rate;
-        private int progress;
-
-        // Поля для зручного створення BookFile
-        private String fileName;
-        private String folder;
-        private String archiveEntry;
-        private long fileSize;
-        private String collectionRoot;
-
-        // === Основні методи ===
         public Builder id(BookId id) { this.id = id; return this; }
         public Builder title(String title) { this.title = title; return this; }
         public Builder authors(List<Author> authors) { this.authors = authors; return this; }
@@ -118,192 +189,16 @@ public class Book {
         public Builder deleted(boolean deleted) { this.deleted = deleted; return this; }
         public Builder local(boolean local) { this.local = local; return this; }
 
-        // === Зручні методи для BookMetadata ===
-        public Builder language(LanguageCode language) {
-            this.language = language;
-            return this;
-        }
-
-        public Builder language(String languageCode) {
-            this.language = LanguageCode.of(languageCode);
-            return this;
-        }
-
-        public Builder isbn(String isbn) {
-            this.isbn = isbn != null ? Isbn.of(isbn) : null;
-            return this;
-        }
-
-        public Builder annotation(String annotation) {
-            this.annotation = annotation;
-            return this;
-        }
-
-        public Builder keywords(String keywords) {
-            this.keywords = keywords;
-            return this;
-        }
-
-        public Builder review(String review) {
-            this.review = review;
-            return this;
-        }
-
-        public Builder rate(int rate) {
-            this.rate = rate;
-            return this;
-        }
-
-        public Builder progress(int progress) {
-            this.progress = progress;
-            return this;
-        }
-
-        // === Зручні методи для BookFile ===
-        public Builder fileName(String fileName) {
-            this.fileName = fileName;
-            return this;
-        }
-
-        public Builder folder(String folder) {
-            this.folder = folder;
-            return this;
-        }
-
-        public Builder archiveEntry(String archiveEntry) {
-            this.archiveEntry = archiveEntry;
-            return this;
-        }
-
-        public Builder fileSize(long fileSize) {
-            this.fileSize = fileSize;
-            return this;
-        }
-
-        public Builder collectionRoot(String collectionRoot) {
-            this.collectionRoot = collectionRoot;
-            return this;
-        }
+        // Зручні методи для створення VO всередині (можна використовувати, але краще передавати готові)
+        public Builder metadataFrom(BookMetadata metadata) { this.metadata = metadata; return this; }
+        public Builder fileFrom(BookFile file) { this.file = file; return this; }
+        public Builder coverFrom(Cover cover) { this.cover = cover; return this; }
 
         public Book build() {
+            if (id == null) id = BookId.generate();
+            if (metadata == null) metadata = BookMetadata.empty();
+            if (file == null) file = BookFile.empty();
             return new Book(this);
         }
-    }
-
-    // === Зручні методи доступу до полів ===
-    public String getFileName() {
-        return file != null ? file.getDisplayName() : "";
-    }
-
-    public String getFolder() {
-        return file != null ? file.getFolder() : "";
-    }
-
-    public String getArchiveEntry() {
-        return file != null ? file.getArchiveEntryName() : "";
-    }
-
-    public long getFileSize() {
-        return file != null ? file.getFileSize() : 0;
-    }
-
-    public String getCollectionRoot() {
-        return file != null ? file.getCollectionRoot() : "";
-    }
-
-    public String getAnnotation() {
-        return metadata != null ? metadata.getAnnotation() : "";
-    }
-
-    public String getKeywords() {
-        return metadata != null ? metadata.getKeywords() : "";
-    }
-
-    public LanguageCode getLanguage() {
-        return metadata != null ? metadata.getLanguage() : LanguageCode.of("uk");
-    }
-
-    public Isbn getIsbn() {
-        return metadata != null ? metadata.getIsbn() : null;
-    }
-
-    public String getReview() {
-        return metadata != null ? metadata.getReview() : "";
-    }
-
-    public int getRate() {
-        return metadata != null ? metadata.getRate() : 0;
-    }
-
-    public int getProgress() {
-        return metadata != null ? metadata.getProgress() : 0;
-    }
-
-    public boolean hasArchiveEntry() {
-        return file != null && file.hasArchiveEntry();
-    }
-
-    public String authorsText() {
-        if (authors == null || authors.isEmpty()) {
-            return "Невідомий Автор";
-        }
-        return authors.stream()
-                .map(Author::getFullName)
-                .collect(java.util.stream.Collectors.joining(", "));
-    }
-
-    public String genresText() {
-        if (genres == null || genres.isEmpty()) {
-            return "";
-        }
-        return genres.stream()
-                .map(Genre::getName)
-                .collect(java.util.stream.Collectors.joining(", "));
-    }
-
-    public void addAuthor(Author author) {
-        if (this.authors == null) {
-            this.authors = new ArrayList<>();
-        }
-        this.authors.add(author);
-    }
-
-    public void addGenre(Genre genre) {
-        if (this.genres == null) {
-            this.genres = new ArrayList<>();
-        }
-        this.genres.add(genre);
-    }
-
-    public void updateRate(int rate) {
-        if (rate < 0 || rate > 5) {
-            throw new IllegalArgumentException("Rate must be between 0 and 5");
-        }
-        this.metadata = BookMetadata.builder()
-                .annotation(metadata.getAnnotation())
-                .keywords(metadata.getKeywords())
-                .language(metadata.getLanguage())
-                .isbn(metadata.getIsbn())
-                .review(metadata.getReview())
-                .rate(rate)
-                .progress(metadata.getProgress())
-                .build();
-        this.updateDate = LocalDateTime.now();
-    }
-
-    public void updateProgress(int progress) {
-        if (progress < 0 || progress > 100) {
-            throw new IllegalArgumentException("Progress must be between 0 and 100");
-        }
-        this.metadata = BookMetadata.builder()
-                .annotation(metadata.getAnnotation())
-                .keywords(metadata.getKeywords())
-                .language(metadata.getLanguage())
-                .isbn(metadata.getIsbn())
-                .review(metadata.getReview())
-                .rate(metadata.getRate())
-                .progress(progress)
-                .build();
-        this.updateDate = LocalDateTime.now();
     }
 }

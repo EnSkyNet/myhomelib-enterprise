@@ -76,7 +76,6 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
-        // ВИПРАВЛЕНО: замість throw повертаємо порожній потік, щоб не переривати імпорт
         log.error("Не вдалося прочитати ZIP-архів жодним з підтримуваних кодувань: {}", file);
         return Stream.empty();
     }
@@ -178,6 +177,17 @@ public class ZipImporter implements BookImporterPort {
                                 if (currentFileName == null || currentFileName.startsWith("zip_import_") || currentFileName.isEmpty()) {
                                     currentFileName = originalName;
                                 }
+
+                                // Створюємо нову книгу зі збагаченими даними
+                                // Використовуємо існуючі metadata та file, але змінюємо file
+                                var newFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
+                                        currentFileName,
+                                        folder,
+                                        decodedName,
+                                        book.getFileSize(),
+                                        null
+                                );
+
                                 Book enrichedBook = Book.builder()
                                         .id(book.getId())
                                         .title(book.getTitle())
@@ -185,13 +195,8 @@ public class ZipImporter implements BookImporterPort {
                                         .genres(book.getGenres())
                                         .series(book.getSeries())
                                         .sequenceNumber(book.getSequenceNumber())
-                                        .language(book.getLanguage())
-                                        .fileName(currentFileName)
-                                        .folder(folder)
-                                        .archiveEntry(decodedName)
-                                        .fileSize(book.getFileSize())
-                                        .keywords(book.getKeywords())
-                                        .annotation(book.getAnnotation())
+                                        .metadata(book.getMetadata())
+                                        .file(newFile)
                                         .updateDate(book.getUpdateDate())
                                         .build();
                                 bookQueue.add(enrichedBook);

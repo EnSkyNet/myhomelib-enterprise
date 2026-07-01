@@ -5,9 +5,6 @@ import lombok.Value;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
-/**
- * Value Object, що представляє фізичний файл книги.
- */
 @Value
 public class BookFile {
     String fileName;
@@ -15,6 +12,10 @@ public class BookFile {
     String archiveEntry;
     long fileSize;
     String collectionRoot;
+
+    public static BookFile empty() {
+        return new BookFile("", "", "", 0, "");
+    }
 
     public String getFullPath() {
         if (folder == null || folder.isBlank()) {

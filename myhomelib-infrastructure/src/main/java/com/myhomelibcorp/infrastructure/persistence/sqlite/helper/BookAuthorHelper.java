@@ -23,7 +23,6 @@ public class BookAuthorHelper {
     private final AuthorRepository authorRepository;
     private final AuthorRowMapper authorRowMapper;
 
-    // --- ЗБЕРЕЖЕННЯ ---
     public void saveAuthors(BookId bookId, List<Author> authors) {
         jdbcTemplate.update("DELETE FROM book_authors WHERE book_id = ?", bookId.asString());
         for (Author author : authors) {
@@ -40,7 +39,6 @@ public class BookAuthorHelper {
         log.debug("Збережено {} авторів для книги {}", authors.size(), bookId.asString());
     }
 
-    // --- ЗАВАНТАЖЕННЯ ДЛЯ ОДНІЄЇ КНИГИ (для зворотної сумісності) ---
     public List<Author> loadAuthors(BookId bookId) {
         String sql = """
             SELECT a.id, a.first_name, a.middle_name, a.last_name
@@ -51,7 +49,6 @@ public class BookAuthorHelper {
         return jdbcTemplate.query(sql, authorRowMapper, bookId.asString());
     }
 
-    // --- НОВИЙ МЕТОД: BATCH-ЗАВАНТАЖЕННЯ ДЛЯ СПИСКУ КНИГ (N+1 FIX) ---
     public void loadAuthorsForBooks(List<Book> books) {
         if (books.isEmpty()) return;
         List<String> bookIds = books.stream().map(b -> b.getId().asString()).collect(Collectors.toList());

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.mapper;
 
 import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 
@@ -15,6 +16,6 @@ public class GroupRowMapper implements RowMapper<Group> {
         Long id = rs.getLong("id");
         String name = rs.getString("name");
         boolean allowDelete = rs.getInt("allow_delete") == 1;
-        return new Group(id, name, allowDelete);
+        return new Group(GroupId.fromLong(id), name, allowDelete);
     }
 }

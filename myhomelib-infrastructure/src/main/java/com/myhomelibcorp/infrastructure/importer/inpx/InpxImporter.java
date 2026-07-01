@@ -17,11 +17,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Spliterator;
-import java.util.Spliterators;
+import java.util.*;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import java.util.zip.ZipEntry;
@@ -99,9 +95,7 @@ public class InpxImporter implements BookImporterPort {
 
         @Override
         public Book next() {
-            if (finished || nextLine == null) {
-                return null;
-            }
+            if (finished || nextLine == null) return null;
             String line = nextLine;
             lineCount++;
             try {
@@ -117,13 +111,7 @@ public class InpxImporter implements BookImporterPort {
                 log.error("❌ Помилка читання INPX", e);
             }
             Book book = parseInpxLine(line);
-            if (book != null) {
-                bookCount++;
-            } else {
-                if (bookCount == 0 && lineCount <= 5) {
-                    log.warn("⚠️ Рядок #{} не вдалося розпарсити: {}", lineCount, line);
-                }
-            }
+            if (book != null) bookCount++;
             return book;
         }
 
@@ -185,11 +173,28 @@ public class InpxImporter implements BookImporterPort {
                 long fileSize = parts.length > 6 && !parts[6].trim().isEmpty() ?
                         Long.parseLong(parts[6].trim()) : 0;
 
-                String language = parts.length > 8 && !parts[8].trim().isEmpty() ?
+                String languageCode = parts.length > 8 && !parts[8].trim().isEmpty() ?
                         parts[8].trim() : "ru";
 
                 String keywords = parts.length > 12 ? parts[12].trim() : "";
                 String annotation = parts.length > 13 ? parts[13].trim() : "";
+
+                // Створюємо metadata та file
+                var metadata = com.myhomelibcorp.domain.model.valueobject.BookMetadata.builder()
+                        .annotation(annotation)
+                        .keywords(keywords)
+                        .language(LanguageCode.of(languageCode))
+                        .rate(0)
+                        .progress(0)
+                        .build();
+
+                var bookFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
+                        fileName,
+                        "",
+                        "",
+                        fileSize,
+                        null
+                );
 
                 return Book.builder()
                         .id(BookId.generate())
@@ -198,12 +203,8 @@ public class InpxImporter implements BookImporterPort {
                         .genres(genres)
                         .series(series)
                         .sequenceNumber(seqNumber)
-                        .language(LanguageCode.of(language))
-                        .fileName(fileName)
-                        .folder("")
-                        .fileSize(fileSize)
-                        .keywords(keywords)
-                        .annotation(annotation)
+                        .metadata(metadata)
+                        .file(bookFile)
                         .updateDate(LocalDateTime.now())
                         .build();
 

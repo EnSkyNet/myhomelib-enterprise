@@ -101,13 +101,13 @@ public class NavigationManager {
                 .series(book.getSeries())
                 .genresText(genresText)
                 .sequenceNumber(book.getSequenceNumber())
-                .rate(book.getRate())
-                .progress(book.getProgress())
-                .language(book.getLanguage() != null ? book.getLanguage().toString() : "")
-                .fileSize(book.getFileSize())
-                .fileName(book.getFileName())
+                .rate(book.getMetadata().getRate())
+                .progress(book.getMetadata().getProgress())
+                .language(book.getMetadata().getLanguage() != null ? book.getMetadata().getLanguage().toString() : "")
+                .fileSize(book.getFile().getFileSize())
+                .fileName(book.getFile().getFileName())
                 .updateDate(book.getUpdateDate())
-                .annotation(book.getAnnotation())
+                .annotation(book.getMetadata().getAnnotation())
                 .build();
     }
 }
