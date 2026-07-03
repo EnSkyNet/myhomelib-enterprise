@@ -1,86 +1,124 @@
 package com.myhomelibcorp.application.usecase.imports;
 
-import com.myhomelibcorp.application.port.out.ImporterRegistry;
+import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
+import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
+import com.myhomelibcorp.application.port.out.event.EventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.DoubleConsumer;
-import java.util.stream.Stream;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class ImportDirectoryUseCase {
 
-    private final ImportFileUseCase importFileUseCase;
-    private final ImporterRegistry importerRegistry;
+    @Value("${app.import.batch-size:500}")
+    private int defaultBatchSize;
 
+    private final ImportFileUseCase importFileUseCase;
+    private final LibraryScanner libraryScanner;
+    private final EventPublisher eventPublisher;
+
+    // ========== СТАРИЙ МЕТОД (зворотна сумісність) ==========
+
+    @Deprecated
     public int execute(Path directory, DoubleConsumer progressConsumer, AtomicBoolean cancelFlag) {
-        if (!Files.isDirectory(directory)) {
-            throw new IllegalArgumentException("Шлях не є каталогом: " + directory);
+        ImportContext context = ImportContext.builder()
+                .rootDirectory(directory)
+                .batchSize(defaultBatchSize)
+                .indexAfterSave(true)
+                .progressListener(progressConsumer)
+                .cancelFlag(cancelFlag)
+                .build();
+        ImportResult result = execute(context);
+        return (int) result.imported();
+    }
+
+    // ========== НОВИЙ МЕТОД ==========
+
+    public ImportResult execute(ImportContext context) {
+        Path directory = context.getRootDirectory();
+        if (directory == null) {
+            throw new IllegalArgumentException("Root directory cannot be null");
+        }
+
+        // Якщо в контексті не задано batchSize, беремо з конфігурації
+        int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
+        if (context.getBatchSize() <= 0) {
+            context = ImportContext.builder()
+                    .rootDirectory(directory)
+                    .updateExisting(context.isUpdateExisting())
+                    .indexAfterSave(context.isIndexAfterSave())
+                    .batchSize(batchSize)
+                    .cancelFlag(context.getCancelFlag())
+                    .progressListener(context.getProgressListener())
+                    .build();
         }
 
         log.info("Початок імпорту каталогу: {}", directory);
+        ImportStatistics totalStats = new ImportStatistics();
 
-        try (Stream<Path> pathStream = Files.walk(directory)) {
-            AtomicInteger processed = new AtomicInteger(0);
-            AtomicInteger saved = new AtomicInteger(0);
+        try {
+            List<Path> files = libraryScanner.scan(directory);
+            long totalFiles = files.size();
+            log.info("Знайдено {} файлів для імпорту", totalFiles);
 
-            long total;
-            try (Stream<Path> countStream = Files.walk(directory)) {
-                total = countStream
-                        .filter(Files::isRegularFile)
-                        .filter(path -> {
-                            try {
-                                importerRegistry.findImporter(path);
-                                return true;
-                            } catch (IllegalArgumentException e) {
-                                return false;
-                            }
-                        })
-                        .count();
+            AtomicLong processed = new AtomicLong(0);
+
+            for (Path file : files) {
+                if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
+                    log.info("Імпорт скасовано");
+                    break;
+                }
+
+                try {
+                    ImportContext fileContext = ImportContext.builder()
+                            .file(file)
+                            .rootDirectory(directory)
+                            .updateExisting(context.isUpdateExisting())
+                            .indexAfterSave(context.isIndexAfterSave())
+                            .batchSize(batchSize)
+                            .cancelFlag(context.getCancelFlag())
+                            .progressListener(context.getProgressListener())
+                            .build();
+
+                    ImportResult result = importFileUseCase.execute(fileContext);
+
+                    totalStats.getImported().addAndGet(result.imported());
+                    totalStats.getSkipped().addAndGet(result.skipped());
+                    totalStats.getDuplicates().addAndGet(result.duplicates());
+                    totalStats.getErrors().addAndGet(result.errors());
+
+                } catch (Exception e) {
+                    log.error("Помилка імпорту файлу: {}", file, e);
+                    totalStats.incrementErrors();
+                }
+
+                long processedCount = processed.incrementAndGet();
+                if (context.getProgressListener() != null && totalFiles > 0) {
+                    context.getProgressListener().accept((double) processedCount / totalFiles);
+                }
             }
-
-            try (Stream<Path> processStream = Files.walk(directory)) {
-                processStream
-                        .filter(Files::isRegularFile)
-                        .filter(path -> {
-                            try {
-                                importerRegistry.findImporter(path);
-                                return true;
-                            } catch (IllegalArgumentException e) {
-                                return false;
-                            }
-                        })
-                        .forEach(file -> {
-                            if (cancelFlag.get()) {
-                                log.info("Імпорт скасовано");
-                                return;
-                            }
-                            try {
-                                saved.addAndGet(importFileUseCase.execute(file));
-                            } catch (Exception e) {
-                                log.error("Помилка імпорту файлу: {}", file, e);
-                            }
-                            int processedCount = processed.incrementAndGet();
-                            if (total > 0) {
-                                progressConsumer.accept((double) processedCount / total);
-                            }
-                        });
-            }
-
-            log.info("Імпорт каталогу завершено. Збережено {} книг", saved.get());
-            return saved.get();
 
         } catch (IOException e) {
-            log.error("Помилка обходу каталогу: {}", directory, e);
-            throw new RuntimeException("Помилка обходу каталогу", e);
+            log.error("Помилка сканування каталогу: {}", directory, e);
+            throw new RuntimeException("Помилка сканування каталогу", e);
         }
+
+        ImportResult finalResult = ImportResult.fromStatistics(totalStats);
+        log.info("Імпорт каталогу завершено. {}", finalResult);
+
+        eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(directory, finalResult));
+        return finalResult;
     }
 }

@@ -2,10 +2,12 @@ package com.myhomelibcorp.application.usecase.search;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.SearchQueryService;
-import com.myhomelibcorp.application.query.BookQuery;
-import com.myhomelibcorp.application.query.Pagination;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.search.SearchQueryService;
+import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.Pagination;
+import com.myhomelibcorp.application.query.search.SearchRequest;
+import com.myhomelibcorp.application.query.search.SearchResult;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -33,9 +35,13 @@ public class SearchBooksUseCase {
                     .collect(Collectors.toList());
         }
 
-        log.debug("Пошук через Lucene: '{}'", query);
-        List<String> ids = searchQueryService.searchBookIds(query, limit);
-        if (ids.isEmpty()) {
+        SearchRequest request = SearchRequest.builder()
+                .text(query)
+                .limit(limit)
+                .build();
+
+        SearchResult result = searchQueryService.search(request);
+        if (result.isEmpty()) {
             log.debug("Lucene не знайшов результатів, використовуємо SQL пошук за текстом");
             BookQuery bookQuery = BookQuery.builder()
                     .text(query)
@@ -46,9 +52,7 @@ public class SearchBooksUseCase {
                     .collect(Collectors.toList());
         }
 
-        List<BookId> bookIds = ids.stream()
-                .map(BookId::fromString)
-                .collect(Collectors.toList());
+        List<BookId> bookIds = result.bookIds();
         return bookQueryRepository.findByIds(bookIds).stream()
                 .map(bookMapper::toDto)
                 .collect(Collectors.toList());

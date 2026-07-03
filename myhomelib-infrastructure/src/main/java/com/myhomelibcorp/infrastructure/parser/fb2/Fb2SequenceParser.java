@@ -14,7 +14,8 @@ public class Fb2SequenceParser {
             if (numAttr != null && !numAttr.isBlank()) {
                 try {
                     context.setSequenceNumber(Integer.parseInt(numAttr.trim()));
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException ignored) {
+                }
             }
         }
     }

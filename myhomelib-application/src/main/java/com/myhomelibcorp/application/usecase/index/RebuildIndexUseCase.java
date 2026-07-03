@@ -1,6 +1,6 @@
 package com.myhomelibcorp.application.usecase.index;
 
-import com.myhomelibcorp.application.port.out.IndexRebuilder;
+import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 

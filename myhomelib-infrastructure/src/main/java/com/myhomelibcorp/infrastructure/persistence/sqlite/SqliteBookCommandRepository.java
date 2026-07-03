@@ -1,10 +1,12 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.BookCommandRepository;
+import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -14,7 +16,6 @@ import org.springframework.transaction.annotation.Transactional;
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 
 @Repository
@@ -28,62 +29,35 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     private final JdbcTemplate jdbcTemplate;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
-
-    private static final String INSERT_OR_UPDATE_SQL = """
-        INSERT INTO books (
-            id, title, series, sequence_number, file_name, folder,
-            archive_entry, language, file_size, keywords, annotation,
-            rate, progress, update_date, isbn, deleted, local,
-            review, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(id) DO UPDATE SET
-            title = excluded.title,
-            series = excluded.series,
-            sequence_number = excluded.sequence_number,
-            file_name = excluded.file_name,
-            folder = excluded.folder,
-            archive_entry = excluded.archive_entry,
-            language = excluded.language,
-            file_size = excluded.file_size,
-            keywords = excluded.keywords,
-            annotation = excluded.annotation,
-            rate = excluded.rate,
-            progress = excluded.progress,
-            update_date = excluded.update_date,
-            isbn = excluded.isbn,
-            deleted = excluded.deleted,
-            local = excluded.local,
-            review = excluded.review,
-            created_at = excluded.created_at
-        """;
+    private final BookBatchWriter batchWriter;
 
     @Override
     @Transactional
     public Book save(Book book) {
         jdbcTemplate.update(connection -> {
-            PreparedStatement ps = connection.prepareStatement(INSERT_OR_UPDATE_SQL);
+            PreparedStatement ps = connection.prepareStatement(BookQueries.INSERT_OR_UPDATE_BOOK);
             int idx = 1;
             ps.setString(idx++, book.getId().asString());
             ps.setString(idx++, book.getTitle() != null ? book.getTitle() : "");
             ps.setString(idx++, book.getSeries());
             ps.setInt(idx++, book.getSequenceNumber() != null ? book.getSequenceNumber() : 0);
-            ps.setString(idx++, book.getFile().getFileName() != null ? book.getFile().getFileName() : "");
-            ps.setString(idx++, book.getFile().getFolder());
-            ps.setString(idx++, book.getFile().getArchiveEntry());
-            ps.setString(idx++, book.getMetadata().getLanguage() != null ? book.getMetadata().getLanguage().toString() : null);
-            ps.setLong(idx++, book.getFile().getFileSize());
-            ps.setString(idx++, book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "");
-            ps.setString(idx++, book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "");
-            ps.setInt(idx++, book.getMetadata().getRate());
-            ps.setInt(idx++, book.getMetadata().getProgress());
+            ps.setString(idx++, book.getFileName() != null ? book.getFileName() : "");
+            ps.setString(idx++, book.getFolder());
+            ps.setString(idx++, book.getArchiveEntry());
+            ps.setString(idx++, book.getLanguage() != null ? book.getLanguage().toString() : null);
+            ps.setLong(idx++, book.getFileSize());
+            ps.setString(idx++, book.getKeywords() != null ? book.getKeywords() : "");
+            ps.setString(idx++, book.getAnnotation() != null ? book.getAnnotation() : "");
+            ps.setInt(idx++, book.getRate());
+            ps.setInt(idx++, book.getProgress());
             String formattedDate = book.getUpdateDate() != null
                     ? book.getUpdateDate().format(DATE_FORMATTER)
                     : null;
             ps.setString(idx++, formattedDate);
-            ps.setString(idx++, book.getMetadata().getIsbn() != null ? book.getMetadata().getIsbn().toString() : null);
+            ps.setString(idx++, book.getIsbn() != null ? book.getIsbn().toString() : null);
             ps.setInt(idx++, book.isDeleted() ? 1 : 0);
             ps.setInt(idx++, book.isLocal() ? 1 : 0);
-            ps.setString(idx++, book.getMetadata().getReview() != null ? book.getMetadata().getReview() : "");
+            ps.setString(idx++, book.getReview() != null ? book.getReview() : "");
             String formattedCreated = book.getCreatedAt() != null
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);
@@ -103,44 +77,13 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     }
 
     @Override
-    @Transactional
     public void saveBatch(List<Book> books) {
         if (books == null || books.isEmpty()) return;
 
-        List<Object[]> batchArgs = new ArrayList<>(books.size());
-        for (Book book : books) {
-            Object[] args = new Object[19];
-            int idx = 0;
-            args[idx++] = book.getId().asString();
-            args[idx++] = book.getTitle() != null ? book.getTitle() : "";
-            args[idx++] = book.getSeries();
-            args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
-            args[idx++] = book.getFile().getFileName() != null ? book.getFile().getFileName() : "";
-            args[idx++] = book.getFile().getFolder();
-            args[idx++] = book.getFile().getArchiveEntry();
-            args[idx++] = book.getMetadata().getLanguage() != null ? book.getMetadata().getLanguage().toString() : null;
-            args[idx++] = book.getFile().getFileSize();
-            args[idx++] = book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "";
-            args[idx++] = book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "";
-            args[idx++] = book.getMetadata().getRate();
-            args[idx++] = book.getMetadata().getProgress();
-            String formattedDate = book.getUpdateDate() != null
-                    ? book.getUpdateDate().format(DATE_FORMATTER)
-                    : null;
-            args[idx++] = formattedDate;
-            args[idx++] = book.getMetadata().getIsbn() != null ? book.getMetadata().getIsbn().toString() : null;
-            args[idx++] = book.isDeleted() ? 1 : 0;
-            args[idx++] = book.isLocal() ? 1 : 0;
-            args[idx++] = book.getMetadata().getReview() != null ? book.getMetadata().getReview() : "";
-            String formattedCreated = book.getCreatedAt() != null
-                    ? book.getCreatedAt().format(DATE_FORMATTER)
-                    : LocalDateTime.now().format(DATE_FORMATTER);
-            args[idx++] = formattedCreated;
-            batchArgs.add(args);
-        }
+        // Спочатку зберігаємо книги
+        batchWriter.batchInsert(books);
 
-        jdbcTemplate.batchUpdate(INSERT_OR_UPDATE_SQL, batchArgs);
-
+        // Потім зберігаємо авторів та жанри для кожної книги
         for (Book book : books) {
             if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
                 bookAuthorHelper.saveAuthors(book.getId(), book.getAuthors());
@@ -150,24 +93,24 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             }
         }
 
-        log.debug("Збережено батч: {} книг", books.size());
+        log.debug("Batch збережено {} книг", books.size());
     }
 
     @Override
     public void deleteById(BookId id) {
-        jdbcTemplate.update("DELETE FROM books WHERE id = ?", id.asString());
+        jdbcTemplate.update(BookQueries.DELETE_BY_ID, id.asString());
         log.debug("Книгу видалено: id={}", id.asString());
     }
 
     @Override
     @Transactional
     public void updateRate(BookId bookId, int rate) {
-        jdbcTemplate.update("UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?", rate, bookId.asString());
+        jdbcTemplate.update(BookQueries.UPDATE_RATE, rate, bookId.asString());
     }
 
     @Override
     @Transactional
     public void updateProgress(BookId bookId, int progress) {
-        jdbcTemplate.update("UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?", progress, bookId.asString());
+        jdbcTemplate.update(BookQueries.UPDATE_PROGRESS, progress, bookId.asString());
     }
 }

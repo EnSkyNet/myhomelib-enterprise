@@ -1,10 +1,8 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.query.BookQuery;
-import com.myhomelibcorp.domain.model.author.Author;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;

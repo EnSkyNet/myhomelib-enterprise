@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.GroupRepository;
+import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GroupRowMapper;

@@ -2,12 +2,15 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.group.Group;
-import com.myhomelibcorp.domain.model.navigation.LibraryNode;
+import com.myhomelibcorp.ui.model.navigation.AuthorNode;
+import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.components.BookInfoPanel;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
 import com.myhomelibcorp.ui.presenter.*;
-import com.myhomelibcorp.ui.service.*;
+import com.myhomelibcorp.ui.service.BookSelectionService;
+import com.myhomelibcorp.ui.service.BookTableService;
+import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.MainViewModel;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -80,7 +83,16 @@ public class MainController {
         bookTableService.setupBookTable(bookTableView);
         bookTableView.setItems(mainViewModel.booksProperty());
 
-        // ЄДИНИЙ СЛУХАЧ – через ViewModel
+        // ========== СЛУХАЧ ДЛЯ ВИБОРУ В ТАБЛИЦІ ==========
+        bookTableView.getSelectionModel().selectedItemProperty().addListener(
+                (obs, oldVal, newVal) -> {
+                    if (newVal != null) {
+                        mainViewModel.setSelectedBook(newVal);
+                    }
+                }
+        );
+
+        // ========== СЛУХАЧ ДЛЯ ЗМІНИ ВИБРАНОЇ КНИГИ В VIEWMODEL ==========
         mainViewModel.selectedBookProperty().addListener((obs, oldBook, newBook) -> {
             if (newBook != null) {
                 bookSelectionService.selectBook(newBook);
@@ -108,8 +120,8 @@ public class MainController {
                         if (root != null && !root.getChildren().isEmpty()) {
                             TreeItem<LibraryNode> firstItem = root.getChildren().get(0);
                             LibraryNode firstNode = firstItem.getValue();
-                            if (firstNode instanceof com.myhomelibcorp.domain.model.navigation.AuthorNode) {
-                                AuthorId firstAuthorId = ((com.myhomelibcorp.domain.model.navigation.AuthorNode) firstNode).author().getId();
+                            if (firstNode instanceof AuthorNode) {
+                                AuthorId firstAuthorId = ((AuthorNode) firstNode).author().getId();
                                 log.info("Перший автор: {}, завантажуємо його книги", firstAuthorId.asString());
                                 mainViewModel.loadBooksByAuthor(firstAuthorId);
                                 authorsTree.getSelectionModel().select(firstItem);
@@ -135,16 +147,6 @@ public class MainController {
                         mainViewModel.loadBooksByGroup(group.getId().asLong());
                     }
                 });
-
-        // Слухач для вибору книги
-        mainViewModel.selectedBookProperty().addListener((obs, old, newBook) -> {
-            if (newBook != null) {
-                bookSelectionService.selectBook(newBook);
-                coverPresenter.showCover(newBook);
-            } else {
-                coverPresenter.clearCover();
-            }
-        });
 
         bookCountLabel.textProperty().bind(
                 javafx.beans.binding.Bindings.size(mainViewModel.booksProperty()).asString()

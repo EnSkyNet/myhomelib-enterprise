@@ -1,6 +1,6 @@
 spring:
   profiles:
-    active: dev  # можна змінити на prod для продакшну
+    active: dev
   main:
     allow-circular-references: false
     allow-bean-definition-overriding: false
@@ -28,7 +28,9 @@ spring:
 
 app:
   search:
-    index-path: ./search-index
+    index-path: ${user.home}/.myhomelibcorp/search-index   # абсолютний шлях
+  import:
+    batch-size: 500   # розмір батча для імпорту та індексації
 
 logging:
   level:

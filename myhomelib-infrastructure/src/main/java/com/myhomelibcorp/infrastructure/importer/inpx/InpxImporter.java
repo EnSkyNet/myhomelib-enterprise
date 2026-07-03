@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.importer.inpx;
 
-import com.myhomelibcorp.application.port.out.BookImporterPort;
+import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;

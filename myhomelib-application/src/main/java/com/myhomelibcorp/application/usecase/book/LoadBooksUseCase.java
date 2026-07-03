@@ -2,9 +2,9 @@ package com.myhomelibcorp.application.usecase.book;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.GroupRepository;
-import com.myhomelibcorp.application.query.BookQuery;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.repository.GroupRepository;
+import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;

@@ -1,15 +1,15 @@
 package com.myhomelibcorp.ui.viewmodel;
 
-import com.myhomelibcorp.application.port.out.AuthorRepository;
-import com.myhomelibcorp.application.port.out.GenreService;
-import com.myhomelibcorp.application.port.out.GroupService;
-import com.myhomelibcorp.application.port.out.SeriesService;
+import com.myhomelibcorp.application.usecase.author.LoadAuthorsUseCase;
+import com.myhomelibcorp.application.usecase.genre.LoadGenresUseCase;
+import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
+import com.myhomelibcorp.application.usecase.series.LoadSeriesUseCase;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.group.Group;
-import com.myhomelibcorp.domain.model.navigation.AuthorNode;
-import com.myhomelibcorp.domain.model.navigation.GenreNode;
-import com.myhomelibcorp.domain.model.navigation.LibraryNode;
+import com.myhomelibcorp.ui.model.navigation.AuthorNode;
+import com.myhomelibcorp.ui.model.navigation.GenreNode;
+import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import javafx.application.Platform;
@@ -24,7 +24,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 
 @Component
@@ -32,10 +31,10 @@ import java.util.Map;
 @Slf4j
 public class NavigationViewModel {
 
-    private final AuthorRepository authorRepository;
-    private final SeriesService seriesService;
-    private final GenreService genreService;
-    private final GroupService groupService;
+    private final LoadAuthorsUseCase loadAuthorsUseCase;
+    private final LoadSeriesUseCase loadSeriesUseCase;
+    private final LoadGenresUseCase loadGenresUseCase;
+    private final LoadGroupsUseCase loadGroupsUseCase;
     private final BackgroundExecutor backgroundExecutor;
 
     private final ObjectProperty<TreeItem<LibraryNode>> authorsRoot = new SimpleObjectProperty<>();
@@ -44,29 +43,10 @@ public class NavigationViewModel {
     private final ObjectProperty<TreeItem<LibraryNode>> genresRoot = new SimpleObjectProperty<>();
     private final ObservableList<Group> groups = FXCollections.observableArrayList();
 
-    public ObjectProperty<TreeItem<LibraryNode>> authorsRootProperty() {
-        return authorsRoot;
-    }
-
-    public ObjectProperty<AuthorId> selectedAuthorIdProperty() {
-        return selectedAuthorId;
-    }
-
-    public ObservableList<String> seriesNamesProperty() {
-        return seriesNames;
-    }
-
-    public ObjectProperty<TreeItem<LibraryNode>> genresRootProperty() {
-        return genresRoot;
-    }
-
-    public ObservableList<Group> groupsProperty() {
-        return groups;
-    }
+    // ... гетери ...
 
     public void loadAuthors() {
-        log.info("📚 loadAuthors() called");
-        backgroundExecutor.submit(() -> authorRepository.findAll())
+        backgroundExecutor.submit(() -> loadAuthorsUseCase.execute())
                 .thenAccept(authors -> Platform.runLater(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
@@ -74,30 +54,24 @@ public class NavigationViewModel {
                             .sorted(Comparator.comparing(Author::getLastName))
                             .forEach(author -> root.getChildren().add(new TreeItem<>(new AuthorNode(author))));
                     authorsRoot.set(root);
-                    log.info("✅ Завантажено {} авторів", authors.size());
                 }))
                 .exceptionally(ex -> {
-                    log.error("❌ Помилка завантаження авторів", ex);
+                    log.error("Помилка завантаження авторів", ex);
                     return null;
                 });
     }
 
     public void loadSeries() {
-        log.info("📚 loadSeries() called");
-        backgroundExecutor.submit(() -> seriesService.getAllSeriesNames())
-                .thenAccept(names -> Platform.runLater(() -> {
-                    seriesNames.setAll(names);
-                    log.info("✅ Оновлено серії, розмір: {}", seriesNames.size());
-                }))
+        backgroundExecutor.submit(() -> loadSeriesUseCase.execute())
+                .thenAccept(names -> Platform.runLater(() -> seriesNames.setAll(names)))
                 .exceptionally(ex -> {
-                    log.error("❌ Помилка завантаження серій", ex);
+                    log.error("Помилка завантаження серій", ex);
                     return null;
                 });
     }
 
     public void loadGenres() {
-        log.info("📚 loadGenres() called");
-        backgroundExecutor.submit(() -> genreService.getAllGenresHierarchy())
+        backgroundExecutor.submit(() -> loadGenresUseCase.getAllGenresHierarchy())
                 .thenAccept(genres -> Platform.runLater(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
@@ -110,44 +84,31 @@ public class NavigationViewModel {
                             TreeItem<LibraryNode> node = nodeMap.get(genre.getId().asString());
                             if (genre.getParentId() != null) {
                                 TreeItem<LibraryNode> parent = nodeMap.get(genre.getParentId().asString());
-                                if (parent != null) {
-                                    parent.getChildren().add(node);
-                                } else {
-                                    root.getChildren().add(node);
-                                }
+                                if (parent != null) parent.getChildren().add(node);
+                                else root.getChildren().add(node);
                             } else {
                                 root.getChildren().add(node);
                             }
                         }
                     }
                     genresRoot.set(root);
-                    log.info("✅ Дерево жанрів побудовано, вузлів: {}", genres.size());
                 }))
                 .exceptionally(ex -> {
-                    log.error("❌ Помилка завантаження жанрів", ex);
+                    log.error("Помилка завантаження жанрів", ex);
                     return null;
                 });
     }
 
     public void loadGroups() {
-        log.info("📚 loadGroups() called");
-        backgroundExecutor.submit(() -> groupService.getAllGroups())
-                .thenAccept(groupsList -> Platform.runLater(() -> {
-                    groups.setAll(groupsList);
-                    log.info("✅ Оновлено групи, розмір: {}", groups.size());
-                }))
+        backgroundExecutor.submit(() -> loadGroupsUseCase.execute())
+                .thenAccept(groupsList -> Platform.runLater(() -> groups.setAll(groupsList)))
                 .exceptionally(ex -> {
-                    log.error("❌ Помилка завантаження груп", ex);
+                    log.error("Помилка завантаження груп", ex);
                     return null;
                 });
     }
 
-    public void selectAuthor(AuthorId authorId) {
-        selectedAuthorId.set(authorId);
-    }
-
     public void refreshAll() {
-        log.info("🔄 refreshAll() called");
         loadAuthors();
         loadSeries();
         loadGenres();

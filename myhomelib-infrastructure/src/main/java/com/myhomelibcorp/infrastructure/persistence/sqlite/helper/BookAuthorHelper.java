@@ -1,9 +1,8 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
-import com.myhomelibcorp.application.port.out.AuthorRepository;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import lombok.RequiredArgsConstructor;

@@ -210,4 +210,12 @@ public class Fb2CoverParser {
             return null;
         }
     }
+    public javafx.scene.image.Image parseImageOnly(InputStream inputStream) {
+        try (java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(inputStream.readAllBytes())) {
+            return new javafx.scene.image.Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
+        } catch (Exception e) {
+            log.trace("Failed to parse image", e);
+            return null;
+        }
+    }
 }

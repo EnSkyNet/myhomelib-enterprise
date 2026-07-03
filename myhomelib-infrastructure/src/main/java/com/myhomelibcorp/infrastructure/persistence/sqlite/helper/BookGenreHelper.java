@@ -1,10 +1,9 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
-import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,14 +19,14 @@ import java.util.stream.Collectors;
 public class BookGenreHelper {
 
     private final JdbcTemplate jdbcTemplate;
-    private final GenreService genreService;
+    private final GenreRepository genreRepository;
     private final GenreRowMapper genreRowMapper;
 
     public void saveGenres(BookId bookId, List<Genre> genres) {
         jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
         for (Genre genre : genres) {
             String code = genre.getId().asString();
-            String name = genreService.getGenreName(code);
+            String name = genreRepository.getGenreName(code);
             String insertGenreSql = """
                 INSERT INTO genres (code, name, parent_code, fb2_code)
                 VALUES (?, ?, ?, ?)

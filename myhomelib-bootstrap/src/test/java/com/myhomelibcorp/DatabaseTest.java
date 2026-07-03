@@ -1,8 +1,8 @@
 package com.myhomelibcorp;
 
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.query.BookQuery;
-import com.myhomelibcorp.application.query.Pagination;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.Pagination;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;

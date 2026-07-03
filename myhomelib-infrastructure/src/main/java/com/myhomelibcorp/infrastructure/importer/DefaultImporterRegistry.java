@@ -1,7 +1,8 @@
 package com.myhomelibcorp.infrastructure.importer;
 
-import com.myhomelibcorp.application.port.out.BookImporterPort;
-import com.myhomelibcorp.application.port.out.ImporterRegistry;
+import com.myhomelibcorp.application.imports.detector.BookFormatDetector;
+import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -9,15 +10,13 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.util.List;
 
-/**
- * Дефолтна реалізація реєстру імпортерів.
- * Автоматично збирає всі бини типу {@link BookImporterPort}.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class DefaultImporterRegistry implements ImporterRegistry {
+
     private final List<BookImporterPort> importers;
+    private final BookFormatDetector formatDetector;
 
     @Override
     public BookImporterPort findImporter(Path file) {
@@ -26,7 +25,10 @@ public class DefaultImporterRegistry implements ImporterRegistry {
                 .filter(importer -> importer.supports(file))
                 .findFirst()
                 .orElseThrow(() -> {
-                    String formats = String.join(", ", getSupportedFormats());
+                    String formats = importers.stream()
+                            .map(BookImporterPort::getFormatName)
+                            .reduce((a, b) -> a + ", " + b)
+                            .orElse("немає");
                     throw new IllegalArgumentException(
                             "Непідтримуваний формат файлу: " + file.getFileName() +
                                     ". Доступні формати: " + formats

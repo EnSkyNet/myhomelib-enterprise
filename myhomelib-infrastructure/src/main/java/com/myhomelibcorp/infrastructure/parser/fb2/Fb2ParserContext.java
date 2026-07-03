@@ -17,7 +17,9 @@ public class Fb2ParserContext {
     private String language = "ru";
     private String keywords = "";
     private StringBuilder annotation = new StringBuilder();
-    private String firstName = "", middleName = "", lastName = "";
+    private String firstName = "";
+    private String middleName = "";
+    private String lastName = "";
     private boolean inTitleInfo = false;
     private boolean inAnnotation = false;
     private boolean inAuthor = false;

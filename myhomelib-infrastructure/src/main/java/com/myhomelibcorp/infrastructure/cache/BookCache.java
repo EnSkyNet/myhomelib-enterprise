@@ -1,37 +1,39 @@
 package com.myhomelibcorp.infrastructure.cache;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
+import com.myhomelibcorp.application.port.out.cache.Cache;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import jakarta.annotation.PostConstruct;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
-import java.util.concurrent.TimeUnit;
 
 @Component
+@RequiredArgsConstructor
 public class BookCache {
 
-    private final Cache<BookId, Book> cache = Caffeine.newBuilder()
-            .maximumSize(10_000)
-            .expireAfterWrite(30, TimeUnit.MINUTES)
-            .build();
+    private final CacheFactory cacheFactory;
+    private Cache<BookId, Book> cache;
+
+    @PostConstruct
+    public void init() {
+        this.cache = cacheFactory.createCache(10_000, 30);
+    }
 
     public Optional<Book> get(BookId id) {
-        return Optional.ofNullable(cache.getIfPresent(id));
+        return cache.get(id);
     }
 
     public void put(BookId id, Book book) {
-        if (book != null) {
-            cache.put(id, book);
-        }
+        cache.put(id, book);
     }
 
     public void evict(BookId id) {
-        cache.invalidate(id);
+        cache.evict(id);
     }
 
     public void clear() {
-        cache.invalidateAll();
+        cache.clear();
     }
 }

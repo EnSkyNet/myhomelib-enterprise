@@ -1,6 +1,6 @@
 package com.myhomelibcorp.application.usecase.group;
 
-import com.myhomelibcorp.application.port.out.GroupRepository;
+import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 

@@ -1,34 +1,34 @@
 package com.myhomelibcorp.infrastructure.importer.fb2;
 
-import com.myhomelibcorp.application.port.out.BookImporterPort;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
+import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
+import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import com.myhomelibcorp.infrastructure.parser.fb2.*;
-import com.myhomelibcorp.shared.exception.BusinessException;
-import com.myhomelibcorp.shared.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
+import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.stream.Stream;
 
 @Component
 @Slf4j
-public class Fb2Importer implements BookImporterPort {
+public class Fb2Importer extends AbstractBookImporter {
 
     private final Fb2AuthorParser authorParser = new Fb2AuthorParser();
     private final Fb2GenreParser genreParser = new Fb2GenreParser();
     private final Fb2TitleParser titleParser = new Fb2TitleParser();
     private final Fb2AnnotationParser annotationParser = new Fb2AnnotationParser();
+    private final Fb2SequenceParser sequenceParser = new Fb2SequenceParser();
 
     @Override
     public boolean supports(Path file) {
@@ -37,33 +37,13 @@ public class Fb2Importer implements BookImporterPort {
     }
 
     @Override
-    public Stream<Book> importBooks(Path file) {
-        log.info("📚 Імпорт FB2 з: {}", file);
-        try {
-            Book book = parseFb2(file);
-            log.info("✅ Успішно імпортовано книгу: '{}', авторів: {}, анотація: {}",
-                    book.getTitle(),
-                    book.getAuthors().size(),
-                    book.getAnnotation() != null && !book.getAnnotation().isEmpty() ? "є" : "немає");
-            return Stream.of(book);
-        } catch (Exception e) {
-            log.error("❌ Помилка імпорту FB2: {}", file, e);
-            throw new BusinessException(ErrorCode.IMPORT_FAILED, "Помилка імпорту FB2: " + e.getMessage(), e);
-        }
-    }
-
-    @Override
     public String getFormatName() {
         return "FB2";
     }
 
     @Override
-    public long countBooks(Path file) {
-        return 1;
-    }
-
-    private Book parseFb2(Path file) throws Exception {
-        log.debug("Парсинг файлу: {}", file);
+    protected Book parseBook(Path file) throws Exception {
+        log.debug("Парсинг FB2 файлу: {}", file);
 
         XMLInputFactory factory = XMLInputFactory.newInstance();
         factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
@@ -74,7 +54,6 @@ public class Fb2Importer implements BookImporterPort {
         try (InputStream is = Files.newInputStream(file)) {
             XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
             title = titleParser.parse(xmlReader);
-            log.debug("Назва книги: '{}'", title);
         }
 
         // Парсимо Авторів
@@ -82,7 +61,6 @@ public class Fb2Importer implements BookImporterPort {
         try (InputStream is = Files.newInputStream(file)) {
             XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
             authors = authorParser.parse(xmlReader);
-            log.debug("Знайдено {} авторів", authors.size());
         }
 
         // Парсимо Жанри
@@ -90,7 +68,6 @@ public class Fb2Importer implements BookImporterPort {
         try (InputStream is = Files.newInputStream(file)) {
             XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
             genres = genreParser.parse(xmlReader);
-            log.debug("Знайдено {} жанрів", genres.size());
         }
 
         // Парсимо Анотацію
@@ -98,26 +75,51 @@ public class Fb2Importer implements BookImporterPort {
         try (InputStream is = Files.newInputStream(file)) {
             XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
             annotation = annotationParser.parse(xmlReader);
-            log.debug("Анотація: '{}'", annotation);
+        }
+
+        // Парсимо серію
+        String series = "";
+        int sequenceNumber = 0;
+        try (InputStream is = Files.newInputStream(file)) {
+            XMLStreamReader xmlReader = factory.createXMLStreamReader(is);
+            Fb2ParserContext context = new Fb2ParserContext();
+            while (xmlReader.hasNext()) {
+                int event = xmlReader.next();
+                if (event == XMLStreamConstants.START_ELEMENT) {
+                    String localName = xmlReader.getLocalName();
+                    if ("title-info".equalsIgnoreCase(localName)) {
+                        context.setInTitleInfo(true);
+                    }
+                    if (context.isInTitleInfo() && "sequence".equalsIgnoreCase(localName)) {
+                        sequenceParser.parse(xmlReader, context);
+                    }
+                }
+                if (event == XMLStreamConstants.END_ELEMENT) {
+                    if ("title-info".equalsIgnoreCase(xmlReader.getLocalName())) {
+                        break;
+                    }
+                }
+            }
+            series = context.getSeries() != null ? context.getSeries() : "";
+            sequenceNumber = context.getSequenceNumber();
         }
 
         if (authors.isEmpty()) {
             log.warn("Автори не знайдені, додаємо 'Невідомий Автор'");
-            authors.add(new Author("", "", "Невідомий Автор"));
+            authors.add(createAuthor("", "", "Невідомий Автор"));
         }
 
         long fileSize = Files.size(file);
 
-        // Створюємо BookMetadata та BookFile
-        var metadata = com.myhomelibcorp.domain.model.valueobject.BookMetadata.builder()
+        BookMetadata metadata = BookMetadata.builder()
                 .annotation(annotation)
                 .keywords("")
-                .language(LanguageCode.of("ru"))
+                .language(createLanguage("ru"))
                 .rate(0)
                 .progress(0)
                 .build();
 
-        var bookFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
+        BookFile bookFile = new BookFile(
                 file.getFileName().toString(),
                 file.getParent() != null ? file.getParent().toString() : "",
                 "",
@@ -125,16 +127,15 @@ public class Fb2Importer implements BookImporterPort {
                 null
         );
 
-        return Book.builder()
-                .id(BookId.generate())
-                .title(title)
-                .authors(authors)
-                .genres(genres)
-                .series("")
-                .sequenceNumber(0)
-                .metadata(metadata)
-                .file(bookFile)
-                .updateDate(LocalDateTime.now())
-                .build();
+        return createBook(
+                title,
+                authors,
+                genres,
+                series,
+                sequenceNumber,
+                metadata,
+                bookFile,
+                LocalDateTime.now()
+        );
     }
 }

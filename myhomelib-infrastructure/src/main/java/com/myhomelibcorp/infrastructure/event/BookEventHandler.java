@@ -1,15 +1,11 @@
 package com.myhomelibcorp.infrastructure.event;
 
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.GenreService;
-import com.myhomelibcorp.domain.event.book.BookImportedEvent;
-import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.infrastructure.search.LuceneSearchIndexer;
-import com.myhomelibcorp.infrastructure.search.SearchDocument;
+import com.myhomelibcorp.application.event.BookImportedEvent;
+import com.myhomelibcorp.application.port.out.search.SearchIndexer;
+import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
+import jakarta.annotation.PostConstruct;  // <-- ВАЖЛИВО: правильний імпорт
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.event.EventListener;
-import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -17,35 +13,26 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class BookEventHandler {
 
-    private final LuceneSearchIndexer indexer;
-    private final BookQueryRepository bookQueryRepository;
-    private final GenreService genreService;
+    private final SimpleEventBus eventBus;
+    private final SearchIndexer searchIndexer;
 
-    @Async
-    @EventListener
-    public void handleBookImported(BookImportedEvent event) {
-        log.info("Отримано подію імпорту книги: {}", event.getBookId());
-        bookQueryRepository.findById(event.getBookId())
-                .ifPresent(this::indexBook);
+    @PostConstruct
+    public void init() {
+        eventBus.register(BookImportedEvent.class, this::handleBookImported);
+        eventBus.register(BookDeletedEvent.class, this::handleBookDeleted);
+        log.info("BookEventHandler зареєстровано");
     }
 
-    private void indexBook(Book book) {
-        String genresText = book.getGenres().stream()
-                .map(genre -> genreService.getGenreName(genre.getId().asString()))
-                .collect(java.util.stream.Collectors.joining(", "));
+    private void handleBookImported(BookImportedEvent event) {
+        log.info("Отримано подію імпорту книги: {}", event.bookId());
+        if (event.snapshot() != null) {
+            searchIndexer.indexSnapshot(event.snapshot());
+            log.info("Книгу проіндексовано: {}", event.bookId());
+        }
+    }
 
-        SearchDocument doc = SearchDocument.builder()
-                .id(book.getId().asString())
-                .title(book.getTitle() != null ? book.getTitle() : "")
-                .authors(book.authorsText())
-                .series(book.getSeries() != null ? book.getSeries() : "")
-                .genres(genresText)
-                .keywords(book.getMetadata().getKeywords() != null ? book.getMetadata().getKeywords() : "")
-                .annotation(book.getMetadata().getAnnotation() != null ? book.getMetadata().getAnnotation() : "")
-                .build();
-
-        log.debug("Індексація книги: id={}, title={}, authors={}", doc.getId(), doc.getTitle(), doc.getAuthors());
-        indexer.indexDocument(doc);
-        log.info("Книгу проіндексовано: {}", book.getId().asString());
+    private void handleBookDeleted(BookDeletedEvent event) {
+        log.info("Отримано подію видалення книги: {}", event.getBookId());
+        searchIndexer.deleteBook(event.getBookId());
     }
 }

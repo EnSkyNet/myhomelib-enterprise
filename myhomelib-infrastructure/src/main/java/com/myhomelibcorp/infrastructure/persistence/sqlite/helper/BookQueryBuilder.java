@@ -1,8 +1,8 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
-import com.myhomelibcorp.application.query.BookQuery;
-import com.myhomelibcorp.application.query.SortBy;
-import com.myhomelibcorp.application.query.SortDirection;
+import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.SortBy;
+import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqlQuery;
 import org.springframework.stereotype.Component;
 

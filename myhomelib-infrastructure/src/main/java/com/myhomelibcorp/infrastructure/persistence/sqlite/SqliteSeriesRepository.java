@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.SeriesRepository;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.domain.model.series.Series;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.SeriesRowMapper;
@@ -30,10 +30,10 @@ public class SqliteSeriesRepository implements SeriesRepository {
     }
 
     @Override
-    public Optional<Series> findById(String id) {
+    public Optional<Series> findById(SeriesId id) {
         String sql = "SELECT id, name FROM series WHERE id = ?";
         try {
-            Series series = jdbcTemplate.queryForObject(sql, seriesRowMapper, id);
+            Series series = jdbcTemplate.queryForObject(sql, seriesRowMapper, id.asString());
             return Optional.of(series);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -55,7 +55,13 @@ public class SqliteSeriesRepository implements SeriesRepository {
     }
 
     @Override
-    public void deleteById(String id) {
-        jdbcTemplate.update("DELETE FROM series WHERE id = ?", id);
+    public void deleteById(SeriesId id) {
+        jdbcTemplate.update("DELETE FROM series WHERE id = ?", id.asString());
+    }
+
+    @Override
+    public List<String> getAllSeriesNames() {
+        String sql = "SELECT DISTINCT TRIM(series) FROM books WHERE series IS NOT NULL AND TRIM(series) != '' ORDER BY TRIM(series)";
+        return jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString(1));
     }
 }

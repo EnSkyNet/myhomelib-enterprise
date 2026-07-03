@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.genre;
 
-import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.application.port.out.repository.GenreRepository;
+import com.myhomelibcorp.domain.model.genre.Genre;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -11,13 +12,17 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class LoadGenresUseCase {
 
-    private final GenreService genreService;
+    private final GenreRepository genreRepository;
 
     public List<String> getAllGenreNames() {
-        return genreService.getAllGenreNames();
+        return genreRepository.getAllGenreNames();
     }
 
     public Map<String, String> getAllGenres() {
-        return genreService.getAllGenres();
+        return genreRepository.getAllGenres();
+    }
+
+    public List<Genre> getAllGenresHierarchy() {
+        return genreRepository.getAllGenresHierarchy();
     }
 }

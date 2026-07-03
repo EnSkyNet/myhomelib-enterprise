@@ -1,8 +1,8 @@
 package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.query.BookQuery;
-import com.myhomelibcorp.application.query.Pagination;
+import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.usecase.book.LoadBooksUseCase;
 import com.myhomelibcorp.application.usecase.genre.LoadGenresUseCase;
 import com.myhomelibcorp.application.usecase.group.*;
@@ -27,7 +27,6 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.DoubleConsumer;
 
@@ -35,6 +34,10 @@ import java.util.function.DoubleConsumer;
 @RequiredArgsConstructor
 @Slf4j
 public class MainViewModel {
+
+    // Константи пагінації – використовуємо розумні ліміти замість Integer.MAX_VALUE
+    private static final int DEFAULT_PAGE_SIZE = 10000;  // для завантаження списку книг
+    private static final int SEARCH_PAGE_SIZE = 1000;    // для пошуку
 
     private final LoadBooksUseCase loadBooksUseCase;
     private final CreateGroupUseCase createGroupUseCase;
@@ -116,17 +119,16 @@ public class MainViewModel {
         isSearchMode = false;
         BookQuery query = BookQuery.builder()
                 .authorId(authorId)
-                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0)) // замість Integer.MAX_VALUE
                 .build();
         loadBooks(query);
     }
 
     public void loadBooksBySeries(String seriesName) {
-        // Поки що шукаємо за текстом, але в майбутньому замінимо на SeriesId
         isSearchMode = false;
         BookQuery query = BookQuery.builder()
                 .text(seriesName)
-                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .build();
         loadBooks(query);
     }
@@ -135,7 +137,7 @@ public class MainViewModel {
         isSearchMode = false;
         BookQuery query = BookQuery.builder()
                 .genreId(GenreId.fromCode(genreCode))
-                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .build();
         loadBooks(query);
     }
@@ -144,7 +146,7 @@ public class MainViewModel {
         isSearchMode = false;
         BookQuery query = BookQuery.builder()
                 .groupId(GroupId.fromLong(groupId))
-                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .build();
         loadBooks(query);
     }
@@ -157,7 +159,7 @@ public class MainViewModel {
         isSearchMode = true;
         BookQuery query = BookQuery.builder()
                 .text(text)
-                .pagination(Pagination.of(1000, 0))
+                .pagination(Pagination.of(SEARCH_PAGE_SIZE, 0)) // для пошуку менший ліміт
                 .build();
         loadBooks(query);
     }
@@ -165,7 +167,7 @@ public class MainViewModel {
     public void refreshBooks() {
         isSearchMode = false;
         BookQuery query = BookQuery.builder()
-                .pagination(Pagination.of(Integer.MAX_VALUE, 0))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .build();
         loadBooks(query);
     }

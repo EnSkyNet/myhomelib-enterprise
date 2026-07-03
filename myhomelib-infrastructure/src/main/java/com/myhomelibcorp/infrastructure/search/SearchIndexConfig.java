@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.search;
 
 import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.queryparser.classic.MultiFieldQueryParser;
 import org.apache.lucene.queryparser.classic.QueryParser;
 import org.apache.lucene.store.Directory;
@@ -23,14 +24,21 @@ public class SearchIndexConfig {
         return FSDirectory.open(Paths.get(indexPath));
     }
 
+    /**
+     * Використовуємо StandardAnalyzer для точного пошуку за словами.
+     * Він нормалізує текст (приводить до нижнього регістру, видаляє зайві символи),
+     * але НЕ розбиває на n-грами.
+     */
     @Bean
     public Analyzer luceneAnalyzer() {
-        return new NGramAnalyzer();
+        return new StandardAnalyzer();
     }
 
+    /**
+     * Багатопольовий парсер для пошуку за кількома полями.
+     */
     @Bean
     public QueryParser queryParser(Analyzer analyzer) {
-        // ВИПРАВЛЕНО: пошук за кількома полями (замість одного "authors")
         return new MultiFieldQueryParser(
                 new String[]{"title", "authors", "series", "genres", "keywords", "annotation"},
                 analyzer

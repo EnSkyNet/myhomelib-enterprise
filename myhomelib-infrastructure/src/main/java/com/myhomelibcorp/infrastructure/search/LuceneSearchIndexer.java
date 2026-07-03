@@ -1,5 +1,9 @@
 package com.myhomelibcorp.infrastructure.search;
 
+import com.myhomelibcorp.application.port.out.search.SearchIndexer;
+import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookSnapshot;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -16,10 +20,11 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.util.List;
 
 @Component
 @Slf4j
-public class LuceneSearchIndexer {
+public class LuceneSearchIndexer implements SearchIndexer {
 
     private final Directory directory;
     private final Analyzer analyzer;
@@ -39,7 +44,115 @@ public class LuceneSearchIndexer {
         log.info("Lucene індексатор ініціалізовано з NGramAnalyzer");
     }
 
-    public void indexDocument(SearchDocument doc) {
+    @Override
+    public void indexBook(Book book) {
+        if (book == null) return;
+        SearchDocument doc = buildSearchDocument(
+                book.getId().asString(),
+                book.getTitle(),
+                book.authorsText(),
+                book.getSeries(),
+                book.genresText(),
+                book.getKeywords(),
+                book.getAnnotation()
+        );
+        indexDocument(doc);
+        // Коміт винесено на рівень батча
+    }
+
+    @Override
+    public void indexSnapshot(BookSnapshot snapshot) {
+        if (snapshot == null) return;
+        SearchDocument doc = buildSearchDocument(
+                snapshot.getId().asString(),
+                snapshot.getTitle(),
+                snapshot.getAuthorsText(),
+                snapshot.getSeries(),
+                snapshot.getGenresText(),
+                snapshot.getKeywords(),
+                snapshot.getAnnotation()
+        );
+        indexDocument(doc);
+        // Коміт винесено на рівень батча
+    }
+
+    @Override
+    public void indexAll(List<Book> books) {
+        if (books == null || books.isEmpty()) return;
+        int batchSize = 500;
+        int count = 0;
+        for (Book book : books) {
+            indexBook(book);
+            count++;
+            if (count % batchSize == 0) {
+                commit();
+                log.debug("Commit після {} книг", count);
+            }
+        }
+        commit();
+        log.info("Проіндексовано {} книг", books.size());
+    }
+
+    @Override
+    public void deleteBook(BookId bookId) {
+        if (bookId == null) return;
+        try {
+            indexWriter.deleteDocuments(new Term("id", bookId.asString()));
+            commit();
+            log.debug("Видалено з індексу: {}", bookId.asString());
+        } catch (IOException e) {
+            log.error("Помилка видалення з індексу: {}", bookId.asString(), e);
+        }
+    }
+
+    @Override
+    public void rebuildIndex() {
+        try {
+            indexWriter.deleteAll();
+            commit();
+            log.info("Індекс очищено");
+        } catch (IOException e) {
+            log.error("Помилка очищення індексу", e);
+        }
+    }
+
+    @Override
+    public int getDocumentCount() {
+        try {
+            return indexWriter.getDocStats().numDocs;
+        } catch (Exception e) {
+            log.error("Помилка отримання кількості документів", e);
+            return 0;
+        }
+    }
+
+    @Override
+    public void commit() {
+        try {
+            if (indexWriter != null) {
+                indexWriter.commit();
+                log.debug("Lucene індекс закомічено");
+            }
+        } catch (IOException e) {
+            log.error("Помилка commit", e);
+        }
+    }
+
+    private SearchDocument buildSearchDocument(String id, String title, String authors,
+                                               String series, String genres,
+                                               String keywords, String annotation) {
+        return SearchDocument.builder()
+                .id(id)
+                .title(title != null ? title : "")
+                .authors(authors != null ? authors : "")
+                .series(series != null ? series : "")
+                .genres(genres != null ? genres : "")
+                .keywords(keywords != null ? keywords : "")
+                .annotation(annotation != null ? annotation : "")
+                .build();
+    }
+
+    private void indexDocument(SearchDocument doc) {
         try {
             Document luceneDoc = new Document();
             luceneDoc.add(new StringField("id", doc.getId(), Field.Store.YES));
@@ -51,39 +164,9 @@ public class LuceneSearchIndexer {
             luceneDoc.add(new TextField("annotation", doc.getAnnotation(), Field.Store.YES));
 
             indexWriter.updateDocument(new Term("id", doc.getId()), luceneDoc);
-            indexWriter.commit();
-            log.debug("Індексовано книгу: {}", doc.getId());
+            log.debug("Індексовано документ: {}", doc.getId());
         } catch (IOException e) {
-            log.error("Помилка індексації книги: {}", doc.getId(), e);
-        }
-    }
-
-    public void deleteDocument(String id) {
-        try {
-            indexWriter.deleteDocuments(new Term("id", id));
-            indexWriter.commit();
-            log.debug("Видалено з індексу: {}", id);
-        } catch (IOException e) {
-            log.error("Помилка видалення з індексу: {}", id, e);
-        }
-    }
-
-    public void rebuildIndex() {
-        try {
-            indexWriter.deleteAll();
-            indexWriter.commit();
-            log.info("Індекс очищено");
-        } catch (IOException e) {
-            log.error("Помилка очищення індексу", e);
-        }
-    }
-
-    public int getDocumentCount() {
-        try {
-            return indexWriter.getDocStats().numDocs;
-        } catch (Exception e) {
-            log.error("Помилка отримання кількості документів", e);
-            return 0;
+            log.error("Помилка індексації документа: {}", doc.getId(), e);
         }
     }
 

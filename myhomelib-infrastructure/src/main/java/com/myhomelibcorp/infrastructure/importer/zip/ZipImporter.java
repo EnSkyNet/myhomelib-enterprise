@@ -1,10 +1,8 @@
 package com.myhomelibcorp.infrastructure.importer.zip;
 
-import com.myhomelibcorp.application.port.out.BookImporterPort;
-import com.myhomelibcorp.application.port.out.ImporterRegistry;
+import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.shared.exception.BusinessException;
-import com.myhomelibcorp.shared.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;

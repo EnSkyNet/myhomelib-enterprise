@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.cache;
 
-import com.myhomelibcorp.application.port.out.BookQueryRepository;
-import com.myhomelibcorp.application.query.BookQuery;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
@@ -57,7 +57,6 @@ public class CachedBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> find(BookQuery query) {
-        // Кешування для складних запитів поки що не реалізовано – делегуємо
         return delegate.find(query);
     }
 

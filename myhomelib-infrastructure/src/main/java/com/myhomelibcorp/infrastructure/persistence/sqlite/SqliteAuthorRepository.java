@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
-import com.myhomelibcorp.application.port.out.AuthorRepository;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;

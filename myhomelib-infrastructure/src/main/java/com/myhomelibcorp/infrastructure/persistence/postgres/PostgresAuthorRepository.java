@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.postgres;
 
-import com.myhomelibcorp.application.port.out.AuthorRepository;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import lombok.RequiredArgsConstructor;
@@ -10,8 +10,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 

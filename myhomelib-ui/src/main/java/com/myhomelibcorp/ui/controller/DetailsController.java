@@ -1,7 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.port.out.CoverExtractor;
+import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
 import javafx.application.Platform;
 import javafx.concurrent.Task;

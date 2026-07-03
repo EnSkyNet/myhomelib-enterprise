@@ -1,13 +1,19 @@
 package com.myhomelibcorp.application.usecase.imports;
 
-import com.myhomelibcorp.application.port.in.imports.ImportInpxUseCase;
-import com.myhomelibcorp.application.port.out.ImporterRegistry;
-import com.myhomelibcorp.application.port.out.BookCommandRepository;
-import com.myhomelibcorp.domain.event.book.BookImportedEvent;
+import com.myhomelibcorp.application.event.ImportFinishedEvent;
+import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
+import com.myhomelibcorp.application.imports.error.ImportErrorHandler;
+import com.myhomelibcorp.application.imports.saver.BookSaver;
+import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
+import com.myhomelibcorp.application.imports.transaction.ImportTransaction;
+import com.myhomelibcorp.application.port.out.event.EventPublisher;
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -20,61 +26,126 @@ import java.util.stream.Stream;
 @Slf4j
 public class ImportFileUseCase {
 
-    private static final int BATCH_SIZE = 500;
-
     private final ImporterRegistry importerRegistry;
-    private final BookCommandRepository bookCommandRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    private final BookSaver bookSaver;
+    private final ImportTransaction importTransaction;
+    private final ImportErrorHandler errorHandler;
+    private final EventPublisher eventPublisher;
 
+    @Value("${app.import.batch-size:500}")
+    private int defaultBatchSize;
+
+    // ========== СТАРИЙ МЕТОД (зворотна сумісність) ==========
+
+    @Deprecated
     public int execute(Path file) {
-        log.info("Початок імпорту файлу: {}", file);
-        var importer = importerRegistry.findImporter(file);
-        try (Stream<Book> bookStream = importer.importBooks(file)) {
-            return saveBooksBatch(bookStream);
-        } catch (Exception e) {
-            log.error("Помилка імпорту файлу: {}", file, e);
-            throw new RuntimeException("Помилка імпорту", e);
-        }
+        ImportContext context = ImportContext.builder()
+                .file(file)
+                .batchSize(defaultBatchSize)
+                .indexAfterSave(true)
+                .build();
+        ImportResult result = execute(context);
+        return (int) result.imported();
     }
 
-    private int saveBooksBatch(Stream<Book> bookStream) {
-        List<Book> batch = new ArrayList<>(BATCH_SIZE);
-        int totalSaved = 0;
-        int batchCounter = 0;
+    // ========== НОВИЙ МЕТОД ==========
+
+    public ImportResult execute(ImportContext context) {
+        if (context == null || context.getFile() == null) {
+            throw new IllegalArgumentException("File cannot be null");
+        }
+
+        // Якщо в контексті не задано batchSize, беремо з конфігурації
+        int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
+        if (context.getBatchSize() <= 0) {
+            context = ImportContext.builder()
+                    .file(context.getFile())
+                    .rootDirectory(context.getRootDirectory())
+                    .updateExisting(context.isUpdateExisting())
+                    .indexAfterSave(context.isIndexAfterSave())
+                    .batchSize(batchSize)
+                    .cancelFlag(context.getCancelFlag())
+                    .progressListener(context.getProgressListener())
+                    .build();
+        }
+
+        ImportStatistics stats = new ImportStatistics();
+        log.info("Початок імпорту файлу: {}", context.getFile());
+
+        try {
+            var importer = importerRegistry.findImporter(context.getFile());
+            try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
+                saveBooksBatch(bookStream, context, stats);
+            }
+        } catch (Exception e) {
+            log.error("Помилка імпорту файлу: {}", context.getFile(), e);
+            ImportErrorHandler.ErrorAction action = errorHandler.handleError(context.getFile(), e, 1);
+            if (action == ImportErrorHandler.ErrorAction.STOP_IMPORT) {
+                throw new RuntimeException("Імпорт зупинено через критичну помилку", e);
+            }
+            stats.incrementErrors();
+        }
+
+        ImportResult result = ImportResult.fromStatistics(stats);
+        log.info("Імпорт файлу завершено: {}", result);
+
+        eventPublisher.publish(new ImportFinishedEvent(context.getFile(), result));
+        return result;
+    }
+
+    // ========== ВНУТРІШНІ МЕТОДИ ==========
+
+    private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats) {
+        int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
+        List<Book> batch = new ArrayList<>(batchSize);
+        DuplicatePolicy policy = DuplicatePolicy.SKIP;
 
         try (Stream<Book> stream = bookStream) {
             var iterator = stream.iterator();
             while (iterator.hasNext()) {
+                if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
+                    log.info("Імпорт скасовано");
+                    break;
+                }
+
                 Book book = iterator.next();
                 if (book != null) {
                     batch.add(book);
-                    if (batch.size() >= BATCH_SIZE) {
-                        totalSaved += saveBatch(batch);
+
+                    if (batch.size() >= batchSize) {
+                        int saved = importTransaction.saveBatchInTransaction(
+                                batch,
+                                context.isIndexAfterSave(),
+                                policy
+                        );
+                        stats.incrementImported(saved);
+                        stats.getSkipped().addAndGet(batch.size() - saved);
                         batch.clear();
-                        batchCounter++;
-                        log.debug("Збережено батч #{} ({} книг)", batchCounter, BATCH_SIZE);
+                        updateProgress(stats, context);
                     }
                 }
             }
-            if (!batch.isEmpty()) {
-                totalSaved += saveBatch(batch);
-                log.debug("Збережено останній батч ({} книг)", batch.size());
-            }
-        }
 
-        log.info("Всього збережено {} книг", totalSaved);
-        return totalSaved;
+            // Збереження останнього неповного батча
+            if (!batch.isEmpty()) {
+                int saved = importTransaction.saveBatchInTransaction(
+                        batch,
+                        context.isIndexAfterSave(),
+                        policy
+                );
+                stats.incrementImported(saved);
+                stats.getSkipped().addAndGet(batch.size() - saved);
+            }
+
+        } catch (Exception e) {
+            log.error("Помилка збереження батча", e);
+            stats.incrementErrors();
+        }
     }
 
-    private int saveBatch(List<Book> batch) {
-        log.info("📚 Отримано {} книг з файлу", batch.size());
-        int saved = 0;
-        for (Book book : batch) {
-            bookCommandRepository.save(book);
-            log.debug("Публікація події для книги: {}", book.getId().asString());
-            eventPublisher.publishEvent(new BookImportedEvent(book.getId()));
-            saved++;
+    private void updateProgress(ImportStatistics stats, ImportContext context) {
+        if (context.getProgressListener() != null) {
+            context.getProgressListener().accept((double) stats.getImported().get());
         }
-        return saved;
     }
 }

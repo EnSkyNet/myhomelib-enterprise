@@ -1,7 +1,7 @@
 package com.myhomelibcorp.application.mapper;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.port.out.GenreService;
+import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -12,13 +12,13 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class BookMapper {
 
-    private final GenreService genreService;
+    private final GenreRepository genreRepository;
 
     public BookDto toDto(Book book) {
         if (book == null) return null;
 
         String genresText = book.getGenres().stream()
-                .map(genre -> genreService.getGenreName(genre.getId().asString()))
+                .map(genre -> genreRepository.getGenreName(genre.getId().asString()))
                 .collect(Collectors.joining(", "));
 
         return BookDto.builder()
@@ -30,9 +30,7 @@ public class BookMapper {
                 .sequenceNumber(book.getSequenceNumber())
                 .rate(book.getMetadata().getRate())
                 .progress(book.getMetadata().getProgress())
-                .language(book.getMetadata().getLanguage() != null
-                        ? book.getMetadata().getLanguage().toString()
-                        : "")
+                .language(book.getMetadata().getLanguage() != null ? book.getMetadata().getLanguage().toString() : "")
                 .fileSize(book.getFile().getFileSize())
                 .fileName(book.getFile().getFileName())
                 .folder(book.getFile().getFolder())
