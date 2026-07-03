@@ -1,9 +1,11 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.application.port.out.cache.SeriesCache;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.domain.model.series.Series;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.SeriesRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.query.SeriesQueries;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -22,19 +24,33 @@ public class SqliteSeriesRepository implements SeriesRepository {
 
     private final JdbcTemplate jdbcTemplate;
     private final SeriesRowMapper seriesRowMapper;
+    private final SeriesCache seriesCache;
 
     @Override
     public List<Series> findAll() {
-        String sql = "SELECT id, name FROM series ORDER BY name";
-        return jdbcTemplate.query(sql, seriesRowMapper);
+        return jdbcTemplate.query(SeriesQueries.FIND_ALL, seriesRowMapper);
     }
 
     @Override
     public Optional<Series> findById(SeriesId id) {
-        String sql = "SELECT id, name FROM series WHERE id = ?";
+        if (id == null) return Optional.empty();
+
+        Optional<Series> cached = seriesCache.get(id);
+        if (cached.isPresent()) {
+            log.debug("Серію знайдено в кеші: {}", id.asString());
+            return cached;
+        }
+
         try {
-            Series series = jdbcTemplate.queryForObject(sql, seriesRowMapper, id.asString());
-            return Optional.of(series);
+            Series series = jdbcTemplate.queryForObject(
+                    SeriesQueries.FIND_BY_ID,
+                    seriesRowMapper,
+                    id.asString()
+            );
+            if (series != null) {
+                seriesCache.put(id, series);
+            }
+            return Optional.ofNullable(series);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
@@ -44,24 +60,26 @@ public class SqliteSeriesRepository implements SeriesRepository {
     public Series save(Series series) {
         if (series.getId() == null) {
             SeriesId newId = SeriesId.generate();
-            String sql = "INSERT INTO series (id, name) VALUES (?, ?)";
-            jdbcTemplate.update(sql, newId.asString(), series.getName());
-            return new Series(newId, series.getName(), series.getDescription());
+            jdbcTemplate.update(SeriesQueries.INSERT_SERIES, newId.asString(), series.getName());
+            series = new Series(newId, series.getName(), series.getDescription());
         } else {
-            String sql = "UPDATE series SET name = ? WHERE id = ?";
-            jdbcTemplate.update(sql, series.getName(), series.getId().asString());
-            return series;
+            jdbcTemplate.update(SeriesQueries.UPDATE_SERIES, series.getName(), series.getId().asString());
         }
+
+        seriesCache.put(series.getId(), series);
+        log.debug("Серію збережено: id={}", series.getId().asString());
+        return series;
     }
 
     @Override
     public void deleteById(SeriesId id) {
-        jdbcTemplate.update("DELETE FROM series WHERE id = ?", id.asString());
+        jdbcTemplate.update(SeriesQueries.DELETE_BY_ID, id.asString());
+        seriesCache.evict(id);
+        log.debug("Серію видалено: id={}", id.asString());
     }
 
     @Override
     public List<String> getAllSeriesNames() {
-        String sql = "SELECT DISTINCT TRIM(series) FROM books WHERE series IS NOT NULL AND TRIM(series) != '' ORDER BY TRIM(series)";
-        return jdbcTemplate.query(sql, (rs, rowNum) -> rs.getString(1));
+        return jdbcTemplate.query(SeriesQueries.FIND_DISTINCT_NAMES, (rs, rowNum) -> rs.getString(1));
     }
 }

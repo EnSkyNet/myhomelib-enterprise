@@ -1,9 +1,11 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.application.port.out.cache.AuthorCache;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.query.AuthorQueries;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -11,12 +13,8 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import jakarta.annotation.PostConstruct;
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Repository
 @ConditionalOnProperty(name = "app.database.type", havingValue = "sqlite", matchIfMissing = true)
@@ -26,52 +24,37 @@ public class SqliteAuthorRepository implements AuthorRepository {
 
     private final JdbcTemplate jdbcTemplate;
     private final AuthorRowMapper authorRowMapper;
-
-    @PostConstruct
-    public void init() {
-        try {
-            jdbcTemplate.execute("ALTER TABLE authors ADD COLUMN search_name TEXT");
-            log.info("Колонку search_name додано (якщо не існувала)");
-        } catch (Exception e) {
-            // Колонка вже існує
-        }
-        updateSearchNamesForAllAuthors();
-    }
-
-    private void updateSearchNamesForAllAuthors() {
-        List<Author> all = findAll();
-        int updated = 0;
-        for (Author author : all) {
-            String searchName = buildSearchName(author);
-            String sql = "UPDATE authors SET search_name = ? WHERE id = ?";
-            int rows = jdbcTemplate.update(sql, searchName, author.getId().asString());
-            if (rows > 0) updated++;
-        }
-        log.info("Оновлено search_name для {} авторів", updated);
-    }
-
-    private String buildSearchName(Author author) {
-        return Stream.of(
-                        author.getLastName(),
-                        author.getFirstName(),
-                        author.getMiddleName())
-                .filter(Objects::nonNull)
-                .map(s -> s.toLowerCase(java.util.Locale.ROOT))
-                .collect(Collectors.joining(" "));
-    }
+    private final AuthorCache authorCache;
 
     @Override
     public List<Author> findAll() {
-        String sql = "SELECT * FROM authors";
-        return jdbcTemplate.query(sql, authorRowMapper);
+        // findAll не кешуємо — повертаємо всіх авторів
+        return jdbcTemplate.query(AuthorQueries.FIND_ALL, authorRowMapper);
     }
 
     @Override
     public Optional<Author> findById(AuthorId id) {
-        String sql = "SELECT * FROM authors WHERE id = ?";
+        if (id == null) return Optional.empty();
+
+        // 1. Перевіряємо кеш
+        Optional<Author> cached = authorCache.get(id);
+        if (cached.isPresent()) {
+            log.debug("Автор знайдено в кеші: {}", id.asString());
+            return cached;
+        }
+
+        // 2. Завантажуємо з БД
         try {
-            Author author = jdbcTemplate.queryForObject(sql, authorRowMapper, id.asString());
-            return Optional.of(author);
+            Author author = jdbcTemplate.queryForObject(
+                    AuthorQueries.FIND_BY_ID,
+                    authorRowMapper,
+                    id.asString()
+            );
+            // 3. Зберігаємо в кеш
+            if (author != null) {
+                authorCache.put(id, author);
+            }
+            return Optional.ofNullable(author);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
@@ -80,45 +63,58 @@ public class SqliteAuthorRepository implements AuthorRepository {
     @Override
     public Author save(Author author) {
         if (author.getId() == null) {
-            author = new Author(AuthorId.generate(),
+            author = new Author(
+                    AuthorId.generate(),
                     author.getFirstName(),
                     author.getMiddleName(),
-                    author.getLastName());
+                    author.getLastName()
+            );
         }
+
         String searchName = buildSearchName(author);
-        String sql = """
-            INSERT INTO authors (id, first_name, middle_name, last_name, search_name)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-                first_name = excluded.first_name,
-                middle_name = excluded.middle_name,
-                last_name = excluded.last_name,
-                search_name = excluded.search_name
-            """;
-        jdbcTemplate.update(sql,
+        jdbcTemplate.update(AuthorQueries.INSERT_OR_UPDATE_AUTHOR,
                 author.getId().asString(),
                 author.getFirstName(),
                 author.getMiddleName(),
                 author.getLastName(),
-                searchName);
-        log.debug("Автора збережено: id={}, name={}", author.getId().asString(), author.getFullName());
+                searchName
+        );
+
+        // Оновлюємо кеш
+        authorCache.put(author.getId(), author);
+
+        log.debug("Автора збережено: id={}", author.getId().asString());
         return author;
     }
 
     @Override
     public void deleteById(AuthorId id) {
-        jdbcTemplate.update("DELETE FROM authors WHERE id = ?", id.asString());
+        jdbcTemplate.update(AuthorQueries.DELETE_BY_ID, id.asString());
+        // Видаляємо з кешу
+        authorCache.evict(id);
         log.debug("Автора видалено: id={}", id.asString());
     }
 
     @Override
     public Optional<Author> findByFullName(String firstName, String lastName) {
-        String sql = "SELECT * FROM authors WHERE first_name = ? AND last_name = ?";
+        // findByFullName не кешуємо — це пошук за ім'ям, зазвичай використовується рідко
         try {
-            Author author = jdbcTemplate.queryForObject(sql, authorRowMapper, firstName, lastName);
+            Author author = jdbcTemplate.queryForObject(
+                    AuthorQueries.FIND_BY_FULL_NAME,
+                    authorRowMapper,
+                    firstName, lastName
+            );
             return Optional.of(author);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
+    }
+
+    private String buildSearchName(Author author) {
+        return String.join(" ",
+                author.getLastName() != null ? author.getLastName().toLowerCase() : "",
+                author.getFirstName() != null ? author.getFirstName().toLowerCase() : "",
+                author.getMiddleName() != null ? author.getMiddleName().toLowerCase() : ""
+        ).trim().replaceAll("\\s+", " ");
     }
 }
