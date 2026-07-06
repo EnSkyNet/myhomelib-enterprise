@@ -1,35 +1,33 @@
 package com.myhomelibcorp.infrastructure.cache;
 
-import com.myhomelibcorp.application.port.out.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.application.port.out.cache.GenreCache;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
-import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class CaffeineGenreCache implements GenreCache {
 
-    private final CacheFactory cacheFactory;
-    private Cache<GenreId, Genre> cache;
+    private final com.github.benmanes.caffeine.cache.Cache<GenreId, Genre> cache;
 
-    @PostConstruct
-    public void init() {
-        this.cache = cacheFactory.createCache(2_000, 60);
-        log.info("GenreCache ініціалізовано (maxSize=2000, expire=60min)");
+    public CaffeineGenreCache() {
+        this.cache = Caffeine.newBuilder()
+                .maximumSize(5000)
+                .expireAfterWrite(60, TimeUnit.MINUTES)
+                .recordStats()
+                .build();
+        log.info("CaffeineGenreCache створено");
     }
 
     @Override
     public Optional<Genre> get(GenreId id) {
-
-        if (id == null) return Optional.empty();
-        return cache.get(id);
+        return Optional.ofNullable(cache.getIfPresent(id));
     }
 
     @Override
@@ -41,13 +39,11 @@ public class CaffeineGenreCache implements GenreCache {
 
     @Override
     public void evict(GenreId id) {
-        if (id != null) {
-            cache.evict(id);
-        }
+        cache.invalidate(id);
     }
 
     @Override
     public void clear() {
-        cache.clear();
+        cache.invalidateAll();
     }
 }

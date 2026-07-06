@@ -1,8 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
-import com.myhomelibcorp.application.dto.BookDto;
-import javafx.beans.property.SimpleObjectProperty;
-import javafx.beans.property.SimpleStringProperty;
+import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import org.springframework.stereotype.Service;
@@ -10,54 +8,51 @@ import org.springframework.stereotype.Service;
 @Service
 public class BookTableService {
 
-    /**
-     * Налаштовує колонки таблиці книг.
-     */
-    public void setupBookTable(TableView<BookDto> tableView) {
+    public void setupBookTable(TableView<BookViewModel> tableView) {
         tableView.getColumns().clear();
 
-        TableColumn<BookDto, String> titleCol = new TableColumn<>("Назва");
-        titleCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getTitle()));
+        TableColumn<BookViewModel, String> titleCol = new TableColumn<>("Назва");
+        titleCol.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         titleCol.setPrefWidth(200);
 
-        TableColumn<BookDto, String> authorCol = new TableColumn<>("Автор");
-        authorCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getAuthorsText()));
+        TableColumn<BookViewModel, String> authorCol = new TableColumn<>("Автор");
+        authorCol.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
         authorCol.setPrefWidth(150);
 
-        TableColumn<BookDto, String> seriesCol = new TableColumn<>("Серія");
-        seriesCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getSeries()));
+        TableColumn<BookViewModel, String> seriesCol = new TableColumn<>("Серія");
+        seriesCol.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
         seriesCol.setPrefWidth(100);
 
-        TableColumn<BookDto, String> genresCol = new TableColumn<>("Жанри");
-        genresCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getGenresText()));
+        TableColumn<BookViewModel, String> genresCol = new TableColumn<>("Жанри");
+        genresCol.setCellValueFactory(cellData -> cellData.getValue().genresTextProperty());
         genresCol.setPrefWidth(100);
 
-        TableColumn<BookDto, Integer> seqCol = new TableColumn<>("№");
-        seqCol.setCellValueFactory(cellData -> new SimpleObjectProperty<>(cellData.getValue().getSequenceNumber()));
+        TableColumn<BookViewModel, Number> seqCol = new TableColumn<>("№");
+        seqCol.setCellValueFactory(cellData -> cellData.getValue().sequenceNumberProperty());
         seqCol.setPrefWidth(40);
 
-        TableColumn<BookDto, String> langCol = new TableColumn<>("Мова");
-        langCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getLanguage()));
+        TableColumn<BookViewModel, String> langCol = new TableColumn<>("Мова");
+        langCol.setCellValueFactory(cellData -> cellData.getValue().languageProperty());
         langCol.setPrefWidth(60);
 
-        TableColumn<BookDto, String> sizeCol = new TableColumn<>("Розмір");
-        sizeCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getFileSizeFormatted()));
+        TableColumn<BookViewModel, String> sizeCol = new TableColumn<>("Розмір");
+        sizeCol.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         sizeCol.setPrefWidth(80);
 
-        TableColumn<BookDto, String> rateCol = new TableColumn<>("Оцінка");
-        rateCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getRateStars()));
+        TableColumn<BookViewModel, String> rateCol = new TableColumn<>("Оцінка");
+        rateCol.setCellValueFactory(cellData -> cellData.getValue().rateStarsProperty());
         rateCol.setPrefWidth(80);
 
-        TableColumn<BookDto, String> dateCol = new TableColumn<>("Додано");
-        dateCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getUpdateDateFormatted()));
+        TableColumn<BookViewModel, String> dateCol = new TableColumn<>("Додано");
+        dateCol.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
         dateCol.setPrefWidth(100);
 
-        TableColumn<BookDto, String> statusCol = new TableColumn<>("Статус");
-        statusCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getLocalStatus()));
+        TableColumn<BookViewModel, String> statusCol = new TableColumn<>("Статус");
+        statusCol.setCellValueFactory(cellData -> cellData.getValue().localStatusProperty());
         statusCol.setPrefWidth(70);
 
-        TableColumn<BookDto, String> progressCol = new TableColumn<>("Прогрес");
-        progressCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getProgressFormatted()));
+        TableColumn<BookViewModel, String> progressCol = new TableColumn<>("Прогрес");
+        progressCol.setCellValueFactory(cellData -> cellData.getValue().progressFormattedProperty());
         progressCol.setPrefWidth(80);
 
         tableView.getColumns().addAll(

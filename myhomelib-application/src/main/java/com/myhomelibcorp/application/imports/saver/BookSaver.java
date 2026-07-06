@@ -1,6 +1,6 @@
 package com.myhomelibcorp.application.imports.saver;
 
-import com.myhomelibcorp.application.event.BookImportedEvent;
+import com.myhomelibcorp.application.event.BookImportedEvent; // <-- ДОДАНО
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
@@ -12,6 +12,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
+import com.myhomelibcorp.domain.event.book.BookAddedEvent;
 
 import java.util.List;
 import java.util.Optional;
@@ -80,6 +81,7 @@ public class BookSaver {
         });
         if (indexAfterSave) {
             eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
+            eventPublisher.publishEvent(new BookAddedEvent(BookSnapshot.fromBook(book)));
         }
         log.debug("Книгу збережено: {}", book.getTitle());
         return true;
@@ -123,6 +125,7 @@ public class BookSaver {
             // Публікуємо події для кожної книги
             for (Book book : booksToSave) {
                 eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
+                eventPublisher.publishEvent(new BookAddedEvent(BookSnapshot.fromBook(book)));
             }
         }
 

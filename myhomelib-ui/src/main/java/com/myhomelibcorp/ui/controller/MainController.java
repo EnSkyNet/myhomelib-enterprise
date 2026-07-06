@@ -2,29 +2,24 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.group.Group;
-import com.myhomelibcorp.ui.model.navigation.AuthorNode;
-import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.components.BookInfoPanel;
+import com.myhomelibcorp.ui.model.navigation.AuthorNode;
+import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
 import com.myhomelibcorp.ui.presenter.*;
-import com.myhomelibcorp.ui.service.BookSelectionService;
-import com.myhomelibcorp.ui.service.BookTableService;
-import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.*;
+import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import com.myhomelibcorp.ui.viewmodel.MainViewModel;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
-import javafx.stage.DirectoryChooser;
-import javafx.stage.FileChooser;
+import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-
-import java.io.File;
-import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -40,15 +35,20 @@ public class MainController {
     private final StatusBarPresenter statusBarPresenter;
     private final ProgressPresenter progressPresenter;
     private final LibraryNavigationPresenter navigationPresenter;
+    private final GroupPresenter groupPresenter;
+    private final RefreshPresenter refreshPresenter;
+    private final LibraryPresenter libraryPresenter;
+    private final SettingsPresenter settingsPresenter;
     private final DialogService dialogService;
     private final BookTableService bookTableService;
+    private final FileChooserService fileChooserService;
 
     @FXML private TreeView<LibraryNode> authorsTree;
     @FXML private ListView<String> seriesListView;
     @FXML private TreeView<LibraryNode> genresTree;
     @FXML private ListView<Group> groupsListView;
     @FXML private ListView<String> downloadsListView;
-    @FXML private TableView<BookDto> bookTableView;
+    @FXML private TableView<BookViewModel> bookTableView;
     @FXML private Label bookCountLabel;
     @FXML private TextField searchField;
     @FXML private Label statusLabel;
@@ -140,7 +140,7 @@ public class MainController {
         navigationPresenter.loadGenres(genresTree, mainViewModel::loadBooksByGenre);
         navigationPresenter.loadGroups(groupsListView.getItems());
 
-        // Вибір групи – використовуємо asLong()
+        // Вибір групи
         groupsListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, group) -> {
                     if (group != null) {
@@ -158,50 +158,34 @@ public class MainController {
     }
 
     // ==================== ОБРОБНИКИ ====================
+
     @FXML public void handleRefresh() {
-        mainViewModel.refreshBooks();
-        navigationPresenter.loadAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
-                .thenRun(() -> Platform.runLater(() -> {
-                    if (authorsTree.getRoot() != null && !authorsTree.getRoot().getChildren().isEmpty()) {
-                        authorsTree.getSelectionModel().selectFirst();
-                    }
-                }));
-        navigationPresenter.loadSeries(seriesListView.getItems());
-        navigationPresenter.loadGenres(genresTree, mainViewModel::loadBooksByGenre);
-        navigationPresenter.loadGroups(groupsListView.getItems());
-        statusBarPresenter.setStatus("Оновлено");
+        refreshPresenter.refreshAll(
+                authorsTree,
+                seriesListView.getItems(),
+                genresTree,
+                groupsListView.getItems(),
+                () -> {
+                    // Після оновлення вибираємо першого автора
+                    Platform.runLater(() -> {
+                        if (authorsTree.getRoot() != null && !authorsTree.getRoot().getChildren().isEmpty()) {
+                            authorsTree.getSelectionModel().selectFirst();
+                        }
+                    });
+                }
+        );
     }
 
     @FXML public void handleImportFb2() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Виберіть FB2 файл");
-        fileChooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd"));
-        File file = fileChooser.showOpenDialog(null);
-        if (file != null) {
-            bookImportPresenter.importFile(file.toPath(), this::onImportComplete);
-        }
+        bookImportPresenter.importFb2();
     }
 
     @FXML public void handleImportInpx() {
-        FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Виберіть INPX файл");
-        fileChooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp"));
-        File file = fileChooser.showOpenDialog(null);
-        if (file != null) {
-            bookImportPresenter.importFile(file.toPath(), this::onImportComplete);
-        }
+        bookImportPresenter.importInpx();
     }
 
-    @FXML
-    public void handleImportDirectory() {
-        DirectoryChooser directoryChooser = new DirectoryChooser();
-        directoryChooser.setTitle("Виберіть каталог з книгами");
-        File dir = directoryChooser.showDialog(null);
-        if (dir != null) {
-            bookImportPresenter.importDirectory(dir.toPath(), this::onImportComplete);
-        }
+    @FXML public void handleImportDirectory() {
+        bookImportPresenter.importDirectory();
     }
 
     @FXML public void handleRebuildIndex() {
@@ -214,67 +198,47 @@ public class MainController {
     }
 
     @FXML public void handleAddGroup() {
-        Optional<String> result = dialogService.showTextInput("Додати групу",
-                "Введіть назву нової групи", "Назва:", "");
-        result.ifPresent(name -> {
-            if (!name.isBlank()) {
-                try {
-                    mainViewModel.createGroup(name);
-                    navigationPresenter.loadGroups(groupsListView.getItems());
-                    statusBarPresenter.setStatus("Групу '" + name + "' створено");
-                } catch (Exception e) {
-                    dialogService.showError("Помилка", e.getMessage());
-                }
-            }
+        groupPresenter.showAddGroupDialog(groupsListView, () -> {
+            navigationPresenter.loadGroups(groupsListView.getItems());
         });
     }
 
     @FXML public void handleEditGroup() {
-        Group selected = groupsListView.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            dialogService.showError("Помилка", "Не вибрано жодної групи");
-            return;
-        }
-        if (!selected.isAllowDelete()) {
-            dialogService.showError("Помилка", "Цю групу не можна перейменовувати (системна)");
-            return;
-        }
-        Optional<String> result = dialogService.showTextInput("Редагування групи",
-                "Введіть нову назву групи", "Назва:", selected.getName());
-        result.ifPresent(newName -> {
-            if (!newName.isBlank() && !newName.equals(selected.getName())) {
-                try {
-                    mainViewModel.renameGroup(selected.getId().asLong(), newName);
-                    navigationPresenter.loadGroups(groupsListView.getItems());
-                    statusBarPresenter.setStatus("Групу перейменовано на '" + newName + "'");
-                } catch (Exception e) {
-                    dialogService.showError("Помилка", e.getMessage());
-                }
-            }
+        groupPresenter.showEditGroupDialog(groupsListView, () -> {
+            navigationPresenter.loadGroups(groupsListView.getItems());
         });
     }
 
     @FXML public void handleDeleteGroup() {
-        Group selected = groupsListView.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            dialogService.showError("Помилка", "Не вибрано жодної групи");
-            return;
-        }
-        if (!selected.isAllowDelete()) {
-            dialogService.showError("Помилка", "Цю групу не можна видалити (системна)");
-            return;
-        }
-        if (dialogService.showConfirmation("Підтвердження",
-                "Видалити групу '" + selected.getName() + "'?",
-                "Книги не будуть видалені, але зв'язок буде втрачено.")) {
-            try {
-                mainViewModel.deleteGroup(selected.getId().asLong());
-                navigationPresenter.loadGroups(groupsListView.getItems());
-                statusBarPresenter.setStatus("Групу видалено");
-            } catch (Exception e) {
-                dialogService.showError("Помилка", e.getMessage());
-            }
-        }
+        groupPresenter.showDeleteGroupDialog(groupsListView, () -> {
+            navigationPresenter.loadGroups(groupsListView.getItems());
+        });
+    }
+
+    @FXML public void handleOpenCollection() {
+        libraryPresenter.openCollection((Stage) bookTableView.getScene().getWindow());
+    }
+
+    @FXML public void handleNewCollection() {
+        libraryPresenter.createNewCollection((Stage) bookTableView.getScene().getWindow());
+    }
+
+    @FXML public void handleExport() {
+        libraryPresenter.exportLibrary((Stage) bookTableView.getScene().getWindow());
+    }
+
+    @FXML public void handleShowColumns() {
+        settingsPresenter.showColumnsDialog();
+    }
+
+    @FXML public void handleEditMetadata() {
+        // TODO: реалізувати редагування метаданих
+        dialogService.showInfo("Інформація", "Редагування метаданих", "Функція поки що не реалізована");
+    }
+
+    @FXML public void handleDeleteBook() {
+        // TODO: реалізувати видалення книги
+        dialogService.showInfo("Інформація", "Видалення книги", "Функція поки що не реалізована");
     }
 
     @FXML public void handleAbout() {
@@ -285,13 +249,6 @@ public class MainController {
     @FXML public void handleExit() {
         Platform.exit();
     }
-
-    @FXML public void handleOpenCollection() { /* TODO */ }
-    @FXML public void handleNewCollection() { /* TODO */ }
-    @FXML public void handleEditMetadata() { /* TODO */ }
-    @FXML public void handleDeleteBook() { /* TODO */ }
-    @FXML public void handleShowColumns() { /* TODO */ }
-    @FXML public void handleExport() { /* TODO */ }
 
     private void onImportComplete() {
         log.info("Імпорт завершено, оновлення...");

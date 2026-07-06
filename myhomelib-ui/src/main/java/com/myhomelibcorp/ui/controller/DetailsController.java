@@ -1,8 +1,8 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.ui.presentation.BookDetailsPresenter;
+import com.myhomelibcorp.ui.presenter.CoverPresenter;
+import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.application.Platform;
 import javafx.concurrent.Task;
 import javafx.scene.control.Label;
@@ -19,22 +19,12 @@ import org.springframework.stereotype.Component;
 public class DetailsController {
 
     private final BookDetailsPresenter bookDetailsPresenter;
-    private final CoverExtractor coverExtractor;
+    private final CoverPresenter coverPresenter;
 
-    private Label detailTitle;
-    private Label detailAuthors;
-    private Label detailSeries;
-    private Label detailGenres;
-    private Label detailLanguage;
-    private Label detailRate;
-    private Label detailProgress;
-    private Label detailFile;
-    private Label detailFolder;
-    private Label detailSize;
+    private Label detailTitle, detailAuthors, detailSeries, detailGenres, detailLanguage, detailRate, detailProgress, detailFile, detailFolder, detailSize;
     private TextArea detailAnnotation;
     private ImageView coverImageView;
 
-    // Виправлено: передаємо рівно 11 параметрів
     public void setupDetails(
             Label title, Label authors, Label series, Label genres,
             Label language, Label rate, Label progress,
@@ -60,50 +50,20 @@ public class DetailsController {
                 language, rate, progress,
                 file, folder, size, annotation
         );
+        coverPresenter.bind(coverImageView);
     }
 
-    public void showBookDetails(BookDto book) {
+    public void showBookDetails(BookViewModel book) {
         if (book == null) {
             clearDetails();
             return;
         }
-
         bookDetailsPresenter.showBookDetails(book);
-
-        if (coverImageView != null) {
-            coverImageView.setImage(null);
-
-            Task<Image> task = new Task<Image>() {
-                @Override
-                protected Image call() {
-                    try {
-                        return coverExtractor.extractCover(book);
-                    } catch (Exception e) {
-                        log.warn("Failed to extract cover for: {}", book.getTitle(), e);
-                        return null;
-                    }
-                }
-            };
-
-            task.setOnSucceeded(e -> {
-                Image img = task.getValue();
-                if (img != null) {
-                    Platform.runLater(() -> coverImageView.setImage(img));
-                }
-            });
-
-            task.setOnFailed(e -> {
-                log.warn("Failed to load cover for: {}", book.getTitle(), task.getException());
-            });
-
-            new Thread(task).start();
-        }
+        coverPresenter.showCover(book);
     }
 
     public void clearDetails() {
         bookDetailsPresenter.clearDetails();
-        if (coverImageView != null) {
-            Platform.runLater(() -> coverImageView.setImage(null));
-        }
+        coverPresenter.clearCover();
     }
 }

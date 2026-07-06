@@ -1,6 +1,6 @@
 package com.myhomelibcorp.ui.presentation;
 
-import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import org.springframework.stereotype.Component;
@@ -8,19 +8,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class BookDetailsPresenter {
 
-    private Label detailTitle;
-    private Label detailAuthors;
-    private Label detailSeries;
-    private Label detailGenres;
-    private Label detailLanguage;
-    private Label detailRate;
-    private Label detailProgress;
-    private Label detailFile;
-    private Label detailFolder;
-    private Label detailSize;
+    private Label detailTitle, detailAuthors, detailSeries, detailGenres, detailLanguage, detailRate, detailProgress, detailFile, detailFolder, detailSize;
     private TextArea detailAnnotation;
 
-    // ЗМІНЕНО: 11 параметрів (без review, created, keywords)
     public void bind(Label title, Label authors, Label series, Label genres,
                      Label language, Label rate, Label progress,
                      Label file, Label folder, Label size, TextArea annotation) {
@@ -37,12 +27,8 @@ public class BookDetailsPresenter {
         this.detailAnnotation = annotation;
     }
 
-    public void showBookDetails(BookDto book) {
-        if (book == null) {
-            clearDetails();
-            return;
-        }
-
+    public void showBookDetails(BookViewModel book) {
+        if (book == null) { clearDetails(); return; }
         detailTitle.setText(book.getTitle() != null ? book.getTitle() : "Без назви");
         detailAuthors.setText("Автори: " + (book.getAuthorsText() != null ? book.getAuthorsText() : ""));
         detailSeries.setText("Серія: " + (book.getSeries() != null ? book.getSeries() : ""));

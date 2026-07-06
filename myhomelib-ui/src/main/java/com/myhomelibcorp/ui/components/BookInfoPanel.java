@@ -1,6 +1,6 @@
 package com.myhomelibcorp.ui.components;
 
-import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.geometry.Insets;
@@ -16,20 +16,20 @@ import java.util.function.Consumer;
 
 public class BookInfoPanel extends VBox {
 
-    private final ObjectProperty<BookDto> bookProperty = new SimpleObjectProperty<>();
+    private final ObjectProperty<BookViewModel> bookProperty = new SimpleObjectProperty<>();
 
     private final ImageView coverView = new ImageView();
     private final Label titleLabel = new Label();
     private final Hyperlink authorsLink = new Hyperlink();
     private final Hyperlink seriesLink = new Hyperlink();
     private final Hyperlink genresLink = new Hyperlink();
-    private final Label annotationLabel = new Label(); // ТІЛЬКИ LABEL
+    private final Label annotationLabel = new Label();
     private final VBox metaBox = new VBox(4);
 
     private Consumer<String> onAuthorClicked;
     private Consumer<String> onSeriesClicked;
     private Consumer<String> onGenreClicked;
-    private Consumer<BookDto> onAnnotationClicked;
+    private Consumer<BookViewModel> onAnnotationClicked;
 
     public BookInfoPanel() {
         configureUI();
@@ -66,13 +66,12 @@ public class BookInfoPanel extends VBox {
         Label annLabel = new Label("Анотація:");
         annLabel.setFont(Font.font("System", FontWeight.BOLD, 14));
 
-        // --- НАЛАШТУВАННЯ LABEL ДЛЯ АНОТАЦІЇ ---
         annotationLabel.setWrapText(true);
         annotationLabel.setStyle("-fx-font-size: 13.5px; -fx-padding: 4 0 4 0;");
         annotationLabel.setMaxWidth(Double.MAX_VALUE);
         annotationLabel.setMaxHeight(Double.MAX_VALUE);
         annotationLabel.setPrefHeight(Region.USE_COMPUTED_SIZE);
-        annotationLabel.setMinHeight(100); // щоб завжди було видно хоч щось
+        annotationLabel.setMinHeight(100);
 
         Label metaLabel = new Label("Метадані:");
         metaLabel.setFont(Font.font("System", FontWeight.BOLD, 13));
@@ -80,7 +79,6 @@ public class BookInfoPanel extends VBox {
         metaBox.setStyle("-fx-padding: 0;");
         metaBox.setFillWidth(true);
 
-        // Анотація займає весь вільний простір
         VBox.setVgrow(annotationLabel, Priority.ALWAYS);
 
         getChildren().addAll(
@@ -115,7 +113,7 @@ public class BookInfoPanel extends VBox {
         });
     }
 
-    private void updateUI(BookDto book) {
+    private void updateUI(BookViewModel book) {
         titleLabel.setText(book.getTitle() != null ? book.getTitle() : "Без назви");
         authorsLink.setText(book.getAuthorsText() != null ? book.getAuthorsText() : "—");
         seriesLink.setText(book.getSeries() != null && !book.getSeries().isBlank() ? book.getSeries() : "—");
@@ -168,29 +166,14 @@ public class BookInfoPanel extends VBox {
         });
     }
 
-    public ObjectProperty<BookDto> bookProperty() {
-        return bookProperty;
-    }
+    public ObjectProperty<BookViewModel> bookProperty() { return bookProperty; }
 
-    public void setCover(Image image) {
-        coverView.setImage(image);
-    }
+    public void setCover(Image image) { coverView.setImage(image); }
 
-    public void setOnAuthorClicked(Consumer<String> handler) {
-        this.onAuthorClicked = handler;
-    }
-
-    public void setOnSeriesClicked(Consumer<String> handler) {
-        this.onSeriesClicked = handler;
-    }
-
-    public void setOnGenreClicked(Consumer<String> handler) {
-        this.onGenreClicked = handler;
-    }
-
-    public void setOnAnnotationClicked(Consumer<BookDto> handler) {
-        this.onAnnotationClicked = handler;
-    }
+    public void setOnAuthorClicked(Consumer<String> handler) { this.onAuthorClicked = handler; }
+    public void setOnSeriesClicked(Consumer<String> handler) { this.onSeriesClicked = handler; }
+    public void setOnGenreClicked(Consumer<String> handler) { this.onGenreClicked = handler; }
+    public void setOnAnnotationClicked(Consumer<BookViewModel> handler) { this.onAnnotationClicked = handler; }
 
     public void clear() {
         bookProperty.set(null);
@@ -202,7 +185,6 @@ public class BookInfoPanel extends VBox {
         metaBox.getChildren().clear();
         coverView.setImage(null);
     }
-    public ImageView getCoverImageView() {
-        return coverView;
-    }
+
+    public ImageView getCoverImageView() { return coverView; }
 }

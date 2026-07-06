@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.scene.image.ImageView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -16,7 +17,6 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class CoverPresenter {
 
-
     private final CoverExtractor coverExtractor;
     private final BackgroundExecutor backgroundExecutor;
 
@@ -27,41 +27,38 @@ public class CoverPresenter {
         this.coverImageView = coverImageView;
     }
 
-    public void showCover(BookDto book) {
-        log.info("showCover викликано для книги: {}", book != null ? book.getTitle() : "null");
-        if (coverImageView == null) {
-            log.warn("coverImageView == null");
-            return;
-        }
+    public void showCover(BookViewModel book) {
+        if (coverImageView == null || book == null) return;
         clearCover();
-        if (book == null) {
-            log.warn("book == null");
-            return;
-        }
+
+        // Конвертуємо ViewModel у DTO для витягування обкладинки
+        BookDto dto = new BookDto();
+        dto.setId(book.getId());
+        dto.setTitle(book.getTitle());
+        dto.setAuthorsText(book.getAuthorsText());
+        dto.setSeries(book.getSeries());
+        dto.setGenresText(book.getGenresText());
+        dto.setFolder(book.getFolder());
+        dto.setFileName(book.getFileName());
+        dto.setArchiveEntry(book.getArchiveEntry());
+        dto.setCollectionRoot(book.getCollectionRoot());
 
         String bookId = book.getId();
-        log.info("bookId: {}, title: {}, folder: {}, fileName: {}",
-                bookId, book.getTitle(), book.getFolder(), book.getFileName());
         currentLoadingBookId.set(bookId);
 
-        backgroundExecutor.submit(() -> {
-            log.info("Починаємо завантаження обкладинки для: {}", book.getTitle());
-            return coverExtractor.extractCover(book);
-        }).thenAccept(image -> UiExecutor.runOnUiThread(() -> {
-            if (coverImageView != null && bookId.equals(currentLoadingBookId.get())) {
-                if (image != null) {
-                    log.info("Обкладинку завантажено, встановлюємо в ImageView");
-                    coverImageView.setImage(image);
-                } else {
-                    log.warn("image == null для книги: {}", book.getTitle());
-                }
-            } else {
-                log.debug("Пропускаємо встановлення – книга вже не вибрана або ImageView null");
-            }
-        })).exceptionally(ex -> {
-            log.error("Помилка завантаження обкладинки для: {}", book.getTitle(), ex);
-            return null;
-        });
+        backgroundExecutor.submit(() -> coverExtractor.extractCover(dto))
+                .thenAccept(image -> UiExecutor.runOnUiThread(() -> {
+                    if (coverImageView != null && bookId.equals(currentLoadingBookId.get())) {
+                        coverImageView.setImage(image);
+                        if (image != null) {
+                            book.setCover(image);
+                        }
+                    }
+                }))
+                .exceptionally(ex -> {
+                    log.error("Failed to load cover for {}", book.getTitle(), ex);
+                    return null;
+                });
     }
 
     public void clearCover() {

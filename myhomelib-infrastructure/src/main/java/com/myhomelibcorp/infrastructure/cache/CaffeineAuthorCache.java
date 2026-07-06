@@ -1,34 +1,33 @@
 package com.myhomelibcorp.infrastructure.cache;
 
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.application.port.out.cache.AuthorCache;
-import com.myhomelibcorp.application.port.out.cache.Cache;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class CaffeineAuthorCache implements AuthorCache {
 
-    private final CacheFactory cacheFactory;
-    private Cache<AuthorId, Author> cache;
+    private final com.github.benmanes.caffeine.cache.Cache<AuthorId, Author> cache;
 
-    @PostConstruct
-    public void init() {
-        this.cache = cacheFactory.createCache(5_000, 60);
-        log.info("AuthorCache ініціалізовано (maxSize=5000, expire=60min)");
+    public CaffeineAuthorCache() {
+        this.cache = Caffeine.newBuilder()
+                .maximumSize(10000)
+                .expireAfterWrite(30, TimeUnit.MINUTES)
+                .recordStats()
+                .build();
+        log.info("CaffeineAuthorCache створено");
     }
 
     @Override
     public Optional<Author> get(AuthorId id) {
-        if (id == null) return Optional.empty();
-        return cache.get(id);
+        return Optional.ofNullable(cache.getIfPresent(id));
     }
 
     @Override
@@ -40,13 +39,11 @@ public class CaffeineAuthorCache implements AuthorCache {
 
     @Override
     public void evict(AuthorId id) {
-        if (id != null) {
-            cache.evict(id);
-        }
+        cache.invalidate(id);
     }
 
     @Override
     public void clear() {
-        cache.clear();
+        cache.invalidateAll();
     }
 }

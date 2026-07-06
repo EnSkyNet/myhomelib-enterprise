@@ -7,7 +7,6 @@ import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
@@ -19,8 +18,8 @@ public class CaffeineSeriesCache implements SeriesCache {
 
     public CaffeineSeriesCache() {
         this.cache = Caffeine.newBuilder()
-                .maximumSize(10000)
-                .expireAfterWrite(30, TimeUnit.MINUTES)
+                .maximumSize(5000)
+                .expireAfterWrite(60, TimeUnit.MINUTES)
                 .recordStats()
                 .build();
         log.info("CaffeineSeriesCache створено");

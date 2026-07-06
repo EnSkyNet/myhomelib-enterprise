@@ -24,11 +24,9 @@ public class CacheEvictor {
     @EventListener
     public void onBookUpdated(BookUpdatedEvent event) {
         log.debug("Очищення кешів при оновленні книги: {}", event.getBookId());
-        // Очищаємо всі кеші, бо оновлення книги може вплинути на авторів, жанри, серії
         authorCache.clear();
         genreCache.clear();
         seriesCache.clear();
-        log.debug("Кеші очищено");
     }
 
     @Async
@@ -38,6 +36,5 @@ public class CacheEvictor {
         authorCache.clear();
         genreCache.clear();
         seriesCache.clear();
-        log.debug("Кеші очищено");
     }
 }

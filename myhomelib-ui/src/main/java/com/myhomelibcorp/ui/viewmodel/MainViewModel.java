@@ -14,6 +14,7 @@ import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
+import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
@@ -26,18 +27,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
-import java.nio.file.Paths;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.DoubleConsumer;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class MainViewModel {
 
-    // Константи пагінації – використовуємо розумні ліміти замість Integer.MAX_VALUE
-    private static final int DEFAULT_PAGE_SIZE = 10000;  // для завантаження списку книг
-    private static final int SEARCH_PAGE_SIZE = 1000;    // для пошуку
+    private static final int DEFAULT_PAGE_SIZE = 10000;
+    private static final int SEARCH_PAGE_SIZE = 1000;
 
     private final LoadBooksUseCase loadBooksUseCase;
     private final CreateGroupUseCase createGroupUseCase;
@@ -51,9 +52,10 @@ public class MainViewModel {
     private final LoadGenresUseCase loadGenresUseCase;
     private final RebuildIndexUseCase rebuildIndexUseCase;
     private final BackgroundExecutor backgroundExecutor;
+    private final BookViewModelMapper viewModelMapper;
 
-    private final ObservableList<BookDto> books = FXCollections.observableArrayList();
-    private final ObjectProperty<BookDto> selectedBook = new SimpleObjectProperty<>();
+    private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
+    private final ObjectProperty<BookViewModel> selectedBook = new SimpleObjectProperty<>();
     private final StringProperty statusText = new SimpleStringProperty("Готово до роботи");
     private final DoubleProperty importProgress = new SimpleDoubleProperty(0);
     private final BooleanProperty importInProgress = new SimpleBooleanProperty(false);
@@ -65,43 +67,28 @@ public class MainViewModel {
     private boolean isSearchMode = false;
     private final PauseTransition searchDebounce = new PauseTransition(Duration.millis(300));
 
-    // === ГЕТЕРИ / СЕТЕРИ ===
-    public ObservableList<BookDto> booksProperty() { return books; }
-    public ObjectProperty<BookDto> selectedBookProperty() { return selectedBook; }
+    // ====== ГЕТЕРИ ======
+    public ObservableList<BookViewModel> booksProperty() { return books; }
+    public ObjectProperty<BookViewModel> selectedBookProperty() { return selectedBook; }
     public StringProperty statusTextProperty() { return statusText; }
     public DoubleProperty importProgressProperty() { return importProgress; }
     public BooleanProperty importInProgressProperty() { return importInProgress; }
     public StringProperty searchQueryProperty() { return searchQuery; }
     public ObservableList<String> genreNamesProperty() { return genreNames; }
 
-    public void setCurrentCollectionRoot(String collectionRoot) {
-        this.currentCollectionRoot = collectionRoot != null ? collectionRoot : "";
-        log.info("CollectionRoot встановлено: {}", this.currentCollectionRoot);
-        Platform.runLater(() -> {
-            for (BookDto book : books) {
-                book.setCollectionRoot(this.currentCollectionRoot);
-            }
-        });
-    }
-
-    public String getCurrentCollectionRoot() {
-        return currentCollectionRoot;
-    }
-
-    // === ЗАВАНТАЖЕННЯ КНИГ (з використанням BookQuery) ===
-
+    // ====== ЗАВАНТАЖЕННЯ ======
     public void loadBooks(BookQuery query) {
         this.currentQuery = query;
         statusText.set("Завантаження...");
         backgroundExecutor.submit(() -> loadBooksUseCase.execute(query))
                 .thenAccept(dtos -> Platform.runLater(() -> {
-                    books.setAll(dtos);
-                    statusText.set("Завантажено " + dtos.size() + " книг");
-                    if (!dtos.isEmpty()) {
-                        selectedBook.set(dtos.get(0));
-                        if (currentCollectionRoot.isEmpty()) {
-                            detectAndSetRoot(dtos.get(0));
-                        }
+                    List<BookViewModel> vms = dtos.stream()
+                            .map(viewModelMapper::toViewModel)
+                            .collect(Collectors.toList());
+                    books.setAll(vms);
+                    statusText.set("Завантажено " + vms.size() + " книг");
+                    if (!vms.isEmpty()) {
+                        selectedBook.set(vms.get(0));
                     } else {
                         selectedBook.set(null);
                     }
@@ -113,13 +100,11 @@ public class MainViewModel {
                 });
     }
 
-    // === МЕТОДИ-ОБГОРТКИ (для зручності виклику з UI) ===
-
     public void loadBooksByAuthor(AuthorId authorId) {
         isSearchMode = false;
         BookQuery query = BookQuery.builder()
                 .authorId(authorId)
-                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0)) // замість Integer.MAX_VALUE
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .build();
         loadBooks(query);
     }
@@ -159,7 +144,7 @@ public class MainViewModel {
         isSearchMode = true;
         BookQuery query = BookQuery.builder()
                 .text(text)
-                .pagination(Pagination.of(SEARCH_PAGE_SIZE, 0)) // для пошуку менший ліміт
+                .pagination(Pagination.of(SEARCH_PAGE_SIZE, 0))
                 .build();
         loadBooks(query);
     }
@@ -180,13 +165,13 @@ public class MainViewModel {
         }
     }
 
-    // === ІНІЦІАЛІЗАЦІЯ ===
+    // ====== ІНІЦІАЛІЗАЦІЯ ======
     public void initWithoutBooks() {
         loadGenres();
         bindSearchWithDebounce();
     }
 
-    // === ІМПОРТ ===
+    // ====== ІМПОРТ ======
     public void importFile(Path file, Runnable onComplete) {
         importInProgress.set(true);
         statusText.set("Імпорт файлу: " + file.getFileName());
@@ -231,9 +216,7 @@ public class MainViewModel {
 
     private void delayAndRefresh(Runnable onComplete) {
         new Thread(() -> {
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException ignored) {}
+            try { Thread.sleep(500); } catch (InterruptedException ignored) {}
             Platform.runLater(() -> {
                 if (onComplete != null) onComplete.run();
                 restoreContextAndRefresh();
@@ -241,14 +224,14 @@ public class MainViewModel {
         }).start();
     }
 
-    // === ГРУПИ ===
+    // ====== ГРУПИ ======
     public Group createGroup(String name) { return createGroupUseCase.execute(name); }
     public Group renameGroup(Long groupId, String newName) { return renameGroupUseCase.execute(groupId, newName); }
     public void deleteGroup(Long groupId) { deleteGroupUseCase.execute(groupId); }
     public void addBookToGroup(Long groupId, String bookId) { addBookToGroupUseCase.execute(groupId, bookId); }
     public void removeBookFromGroup(Long groupId, String bookId) { removeBookFromGroupUseCase.execute(groupId, bookId); }
 
-    // === ІНДЕКС ===
+    // ====== ІНДЕКС ======
     public void rebuildIndex() {
         statusText.set("Перебудова індексу...");
         backgroundExecutor.submit(() -> {
@@ -262,7 +245,7 @@ public class MainViewModel {
         });
     }
 
-    // === ДОПОМІЖНІ ===
+    // ====== ДОПОМІЖНІ ======
     private void bindSearchWithDebounce() {
         searchQuery.addListener((obs, old, query) -> {
             searchDebounce.stop();
@@ -280,32 +263,15 @@ public class MainViewModel {
                 });
     }
 
-    private void detectAndSetRoot(BookDto firstBook) {
-        if (firstBook == null) return;
-        String folder = firstBook.getFolder();
-        if (folder == null || folder.isBlank()) return;
-        try {
-            Path folderPath = Paths.get(folder);
-            if (folderPath.isAbsolute()) {
-                setCurrentCollectionRoot("");
-                return;
-            }
-            Path rootPath = folderPath.getParent() != null ? folderPath.getParent() : folderPath;
-            setCurrentCollectionRoot(rootPath.toString());
-        } catch (Exception e) {
-            log.warn("Не вдалося визначити collectionRoot", e);
-        }
-    }
-
     public void setStatusText(String text) {
         statusText.set(text);
     }
 
-    public void setSelectedBook(BookDto book) {
+    public void setSelectedBook(BookViewModel book) {
         this.selectedBook.set(book);
     }
 
-    public BookDto getSelectedBook() {
+    public BookViewModel getSelectedBook() {
         return selectedBook.get();
     }
 }
