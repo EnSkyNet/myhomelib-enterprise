@@ -3,7 +3,8 @@ package com.myhomelibcorp.infrastructure.event;
 import com.myhomelibcorp.application.event.BookImportedEvent;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
-import jakarta.annotation.PostConstruct;  // <-- ВАЖЛИВО: правильний імпорт
+import com.myhomelibcorp.domain.event.book.BookUpdatedEvent;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,6 +21,7 @@ public class BookEventHandler {
     public void init() {
         eventBus.register(BookImportedEvent.class, this::handleBookImported);
         eventBus.register(BookDeletedEvent.class, this::handleBookDeleted);
+        eventBus.register(BookUpdatedEvent.class, this::handleBookUpdated); // <-- додано
         log.info("BookEventHandler зареєстровано");
     }
 
@@ -34,5 +36,15 @@ public class BookEventHandler {
     private void handleBookDeleted(BookDeletedEvent event) {
         log.info("Отримано подію видалення книги: {}", event.getBookId());
         searchIndexer.deleteBook(event.getBookId());
+    }
+
+    private void handleBookUpdated(BookUpdatedEvent event) {
+        log.info("Отримано подію оновлення книги: {}", event.getBookId());
+        if (event.getBookSnapshot() != null) {
+            searchIndexer.indexSnapshot(event.getBookSnapshot());
+            log.info("Індекс оновлено для книги: {}", event.getBookId());
+        } else {
+            log.warn("Snapshot відсутній для оновлення книги: {}", event.getBookId());
+        }
     }
 }

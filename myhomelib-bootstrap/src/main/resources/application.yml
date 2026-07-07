@@ -30,7 +30,8 @@ app:
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index   # абсолютний шлях
   import:
-    batch-size: 500   # розмір батча для імпорту та індексації
+    batch-size: 10000                     # збільшено для швидкості
+    index-disable-threshold: 500000      # кількість книг, після якої індексація вимикається
 
 logging:
   level:

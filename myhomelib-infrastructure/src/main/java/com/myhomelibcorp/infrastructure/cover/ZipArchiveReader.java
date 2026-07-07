@@ -21,11 +21,11 @@ import java.util.zip.ZipFile;
 public class ZipArchiveReader implements ArchiveReader {
 
     private static final Charset[] CHARSETS = {
-            Charset.forName("UTF-8"),
-            Charset.forName("CP866"),
             Charset.forName("Windows-1251"),
+            Charset.forName("CP866"),
+            Charset.forName("UTF-8"),
             Charset.forName("IBM-866"),
-            Charset.forName("KOI8-R")  // <-- додано
+            Charset.forName("KOI8-R")
     };
 
     @Override
@@ -43,10 +43,13 @@ public class ZipArchiveReader implements ArchiveReader {
                 while (enumeration.hasMoreElements()) {
                     ZipEntry entry = enumeration.nextElement();
                     if (!entry.isDirectory()) {
+                        // Повертаємо оригінальне ім'я без перекодування
                         entries.add(entry.getName());
                     }
                 }
-                log.debug("Архів прочитано з кодуванням {}, знайдено {} записів", charset, entries.size());
+                if (!entries.isEmpty()) {
+                    log.debug("Архів прочитано з кодуванням {}, знайдено {} записів", charset, entries.size());
+                }
                 return entries;
             } catch (Exception e) {
                 log.debug("Не вдалося прочитати архів з кодуванням {}: {}", charset, e.getMessage());
@@ -60,6 +63,7 @@ public class ZipArchiveReader implements ArchiveReader {
     public Optional<InputStream> readEntry(Path archivePath, String entryName) {
         for (Charset charset : CHARSETS) {
             try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
+                // Шукаємо за оригінальним ім'ям
                 ZipEntry entry = zip.getEntry(entryName);
                 if (entry != null) {
                     log.debug("Запис знайдено з кодуванням {}", charset);
@@ -81,10 +85,13 @@ public class ZipArchiveReader implements ArchiveReader {
                 Enumeration<? extends ZipEntry> enumeration = zip.entries();
                 while (enumeration.hasMoreElements()) {
                     ZipEntry entry = enumeration.nextElement();
-                    if (!entry.isDirectory() && filter.test(entry.getName())) {
-                        log.debug("Знайдено запис з кодуванням {}", charset);
-                        byte[] data = zip.getInputStream(entry).readAllBytes();
-                        return Optional.of(new ByteArrayInputStream(data));
+                    if (!entry.isDirectory()) {
+                        // Для фільтра використовуємо оригінальне ім'я
+                        if (filter.test(entry.getName())) {
+                            log.debug("Знайдено запис з кодуванням {}", charset);
+                            byte[] data = zip.getInputStream(entry).readAllBytes();
+                            return Optional.of(new ByteArrayInputStream(data));
+                        }
                     }
                 }
             } catch (Exception e) {

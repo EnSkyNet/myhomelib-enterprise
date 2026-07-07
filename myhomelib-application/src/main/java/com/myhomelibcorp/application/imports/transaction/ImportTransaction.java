@@ -2,7 +2,6 @@ package com.myhomelibcorp.application.imports.transaction;
 
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
-import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,31 +17,8 @@ import java.util.List;
 public class ImportTransaction {
 
     private final TransactionTemplate transactionTemplate;
-    private final BookCommandRepository bookCommandRepository;
     private final BookSaver bookSaver;
 
-    /**
-     * Виконує операцію в транзакції.
-     */
-    public void executeInTransaction(Runnable operation) {
-        transactionTemplate.execute(status -> {
-            operation.run();
-            return null;
-        });
-    }
-
-    /**
-     * Зберігає книгу в транзакції.
-     */
-    public boolean saveBookInTransaction(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
-        return transactionTemplate.execute(status -> {
-            return bookSaver.saveBook(book, indexAfterSave, policy);
-        });
-    }
-
-    /**
-     * Зберігає батч книг в транзакції.
-     */
     public int saveBatchInTransaction(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
         return transactionTemplate.execute(status -> {
             return bookSaver.saveBatch(books, indexAfterSave, policy);

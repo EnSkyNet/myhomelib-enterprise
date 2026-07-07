@@ -88,7 +88,10 @@ public class BookSaver {
     }
 
     /**
-     * Зберігає батч книг з індексацією.
+     * Зберігає батч книг з можливістю вимкнути індексацію.
+     * @param books список книг
+     * @param indexAfterSave чи виконувати індексацію після збереження
+     * @param policy політика дублювання
      * @return кількість збережених книг
      */
     public int saveBatch(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
@@ -117,16 +120,20 @@ public class BookSaver {
             return null;
         });
 
-        // ---- Індексація батчем ----
+        // ---- Індексація батчем (якщо потрібно) ----
         if (indexAfterSave) {
             searchIndexer.indexAll(booksToSave);
-            // Після indexAll вже є commit, але для надійності викличемо ще раз
             searchIndexer.commit();
             // Публікуємо події для кожної книги
             for (Book book : booksToSave) {
                 eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
-                eventPublisher.publishEvent(new BookAddedEvent(BookSnapshot.fromBook(book)));
             }
+        } else {
+            // Якщо індексація вимкнена, все одно публікуємо події для інших систем
+            for (Book book : booksToSave) {
+                eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
+            }
+            log.debug("Індексація вимкнена для батча, книги збережено без індексації");
         }
 
         log.info("Збережено {} книг", booksToSave.size());

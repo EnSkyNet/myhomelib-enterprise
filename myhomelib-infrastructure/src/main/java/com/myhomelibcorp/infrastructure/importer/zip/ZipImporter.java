@@ -30,9 +30,11 @@ public class ZipImporter implements BookImporterPort {
     private ImporterRegistry importerRegistry;
 
     private static final int MAX_UNPACK_DEPTH = 5;
+
+    // Порядок кодувань узгоджено з ZipArchiveReader
     private static final Charset[] ZIP_CHARSETS = {
-            Charset.forName("CP866"),
             Charset.forName("Windows-1251"),
+            Charset.forName("CP866"),
             Charset.forName("UTF-8"),
             Charset.forName("IBM-866")
     };
@@ -74,7 +76,7 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
-        log.error("Не вдалося прочитати ZIP-архів жодним з підтримуваних кодувань: {}", file);
+        log.error("Не вдалося прочитати ZIP-архів жодним з підтримуваних кодувань: {}", file, lastException);
         return Stream.empty();
     }
 
@@ -125,11 +127,14 @@ public class ZipImporter implements BookImporterPort {
                 }
                 entryCount++;
                 String entryName = entry.getName();
+                // Для відображення та пошуку імпортера використовуємо decodedName,
+                // але для archiveEntry зберігаємо оригінальне ім'я.
                 String decodedName = decodeEntryName(entryName);
                 String fileName = Path.of(decodedName).getFileName().toString();
 
                 if (entry.isDirectory()) {
                     log.trace("Пропускаємо директорію: {}", decodedName);
+                    zis.closeEntry();
                     return processNextEntry();
                 }
 
@@ -169,6 +174,9 @@ public class ZipImporter implements BookImporterPort {
                         String originalName = fileName;
                         String folder = zipFolder + java.io.File.separator + zipFileName;
 
+                        // Зберігаємо ОРИГІНАЛЬНЕ ім'я запису (entry.getName()) як archiveEntry
+                        final String archiveEntryOriginal = entryName;
+
                         try (Stream<Book> bookStream = importer.importBooks(tempFile)) {
                             bookStream.forEach(book -> {
                                 String currentFileName = book.getFileName();
@@ -176,12 +184,10 @@ public class ZipImporter implements BookImporterPort {
                                     currentFileName = originalName;
                                 }
 
-                                // Створюємо нову книгу зі збагаченими даними
-                                // Використовуємо існуючі metadata та file, але змінюємо file
                                 var newFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
                                         currentFileName,
                                         folder,
-                                        decodedName,
+                                        archiveEntryOriginal, // оригінал без перекодування
                                         book.getFileSize(),
                                         null
                                 );
@@ -227,6 +233,7 @@ public class ZipImporter implements BookImporterPort {
                 byte[] bytes = name.getBytes(charset);
                 return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
             } catch (Exception e) {
+                log.warn("Не вдалося декодувати ім'я запису: {}", name, e);
                 return name;
             }
         }

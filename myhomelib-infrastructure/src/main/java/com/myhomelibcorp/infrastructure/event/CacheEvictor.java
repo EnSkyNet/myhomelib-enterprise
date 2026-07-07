@@ -27,6 +27,7 @@ public class CacheEvictor {
         authorCache.clear();
         genreCache.clear();
         seriesCache.clear();
+        log.debug("Кеші очищено");
     }
 
     @Async
@@ -36,5 +37,6 @@ public class CacheEvictor {
         authorCache.clear();
         genreCache.clear();
         seriesCache.clear();
+        log.debug("Кеші очищено");
     }
 }

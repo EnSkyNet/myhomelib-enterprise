@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.controller;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.ui.components.BookInfoPanel;
 import com.myhomelibcorp.ui.model.navigation.AuthorNode;
 import com.myhomelibcorp.ui.model.navigation.LibraryNode;
@@ -16,10 +17,14 @@ import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
+import javafx.stage.DirectoryChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
+
+import java.io.File;
 
 @Component
 @RequiredArgsConstructor
@@ -184,8 +189,14 @@ public class MainController {
         bookImportPresenter.importInpx();
     }
 
-    @FXML public void handleImportDirectory() {
-        bookImportPresenter.importDirectory();
+    @FXML
+    public void handleImportDirectory() {
+        DirectoryChooser directoryChooser = new DirectoryChooser();
+        directoryChooser.setTitle("Виберіть каталог з книгами");
+        File dir = directoryChooser.showDialog(null);
+        if (dir != null) {
+            bookImportPresenter.importDirectory(dir.toPath(), this::onImportComplete);
+        }
     }
 
     @FXML public void handleRebuildIndex() {
@@ -250,18 +261,44 @@ public class MainController {
         Platform.exit();
     }
 
+    @Autowired
+    private BookCache bookCache; // додати залежність
+
     private void onImportComplete() {
         log.info("Імпорт завершено, оновлення...");
-        mainViewModel.restoreContextAndRefresh();
+
+        // Очищуємо кеш книг, щоб уникнути старих даних
+        bookCache.clear();
+
+        // Оновлюємо дерево авторів і після цього вибираємо першого автора
         navigationPresenter.loadAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
-                .thenRun(() -> Platform.runLater(() -> {
-                    if (authorsTree.getRoot() != null && !authorsTree.getRoot().getChildren().isEmpty()) {
-                        authorsTree.getSelectionModel().selectFirst();
-                    }
-                }));
+                .thenRun(() -> {
+                    // Невелика затримка, щоб дерево встигло відмалюватися
+                    Platform.runLater(() -> {
+                        selectFirstAuthorAndLoadBooks();
+                        statusBarPresenter.setStatus("Імпорт завершено. Таблицю оновлено.");
+                    });
+                });
+
+        // Оновлюємо інші розділи без очікування
         navigationPresenter.loadSeries(seriesListView.getItems());
         navigationPresenter.loadGenres(genresTree, mainViewModel::loadBooksByGenre);
         navigationPresenter.loadGroups(groupsListView.getItems());
-        statusBarPresenter.setStatus("Імпорт завершено. Таблицю оновлено.");
+    }
+    private void selectFirstAuthorAndLoadBooks() {
+        TreeItem<LibraryNode> root = authorsTree.getRoot();
+        if (root != null && !root.getChildren().isEmpty()) {
+            TreeItem<LibraryNode> firstItem = root.getChildren().get(0);
+            LibraryNode firstNode = firstItem.getValue();
+            if (firstNode instanceof AuthorNode) {
+                AuthorId firstAuthorId = ((AuthorNode) firstNode).author().getId();
+                log.info("Вибираємо першого автора: {}", firstAuthorId.asString());
+                mainViewModel.loadBooksByAuthor(firstAuthorId);
+                authorsTree.getSelectionModel().select(firstItem);
+            }
+        } else {
+            log.warn("Авторів не знайдено, завантажуємо всі книги");
+            mainViewModel.loadAllBooks();
+        }
     }
 }

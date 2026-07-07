@@ -8,7 +8,10 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -17,14 +20,20 @@ public class CoverLocatorImpl implements CoverLocator {
 
     private final ZipArchiveReader archiveReader;
 
-    /**
-     * Перевіряє, чи є шлях архівом (за розширенням).
-     */
     private boolean isArchivePath(String path) {
         if (path == null) return false;
         String lower = path.toLowerCase();
         return lower.endsWith(".zip") || lower.endsWith(".fb2zip") || lower.endsWith(".fbd");
     }
+
+    // Нормалізація: приводимо до нижнього регістру, видаляємо пробіли, дефіси, підкреслення,
+    // залишаємо тільки букви, цифри та крапку
+    private final Function<String, String> normalize = s -> {
+        if (s == null) return "";
+        return s.toLowerCase()
+                .replaceAll("[\\s_\\-]+", "")
+                .replaceAll("[^a-zа-я0-9.]", "");
+    };
 
     @Override
     public Optional<Path> locateCoverFile(BookDto book) {
@@ -37,7 +46,6 @@ public class CoverLocatorImpl implements CoverLocator {
         log.debug("locateCoverFile: folder='{}', fileName='{}', collectionRoot='{}'",
                 folder, fileName, root);
 
-        // Якщо немає папки – використовуємо лише fileName
         if (folder == null || folder.isBlank()) {
             if (fileName == null || fileName.isBlank()) {
                 return Optional.empty();
@@ -47,7 +55,6 @@ public class CoverLocatorImpl implements CoverLocator {
             return Optional.of(path);
         }
 
-        // Якщо папка є архівом – повертаємо її як шлях до файлу
         if (isArchivePath(folder)) {
             Path archivePath;
             if (root != null && !root.isBlank() && !Paths.get(folder).isAbsolute()) {
@@ -59,7 +66,6 @@ public class CoverLocatorImpl implements CoverLocator {
             return Optional.of(archivePath);
         }
 
-        // Якщо папка не архів – будуємо повний шлях до файлу
         Path folderPath = Paths.get(folder);
         if (folderPath.isAbsolute()) {
             if (fileName != null && !fileName.isBlank()) {
@@ -72,7 +78,6 @@ public class CoverLocatorImpl implements CoverLocator {
             }
         }
 
-        // Якщо є collectionRoot – додаємо його
         if (root != null && !root.isBlank()) {
             Path resolved = Paths.get(root, folder);
             if (fileName != null && !fileName.isBlank()) {
@@ -82,7 +87,6 @@ public class CoverLocatorImpl implements CoverLocator {
             return Optional.of(resolved);
         }
 
-        // Відносний шлях (без root) – об'єднуємо з fileName
         if (fileName != null && !fileName.isBlank()) {
             Path fullPath = folderPath.resolve(fileName);
             log.debug("Відносний шлях (папка + файл): {}", fullPath);
@@ -99,37 +103,81 @@ public class CoverLocatorImpl implements CoverLocator {
 
         log.debug("Пошук обкладинки в архіві: {}, книга: {}", archivePath, book.getTitle());
 
-        // Шукаємо за archiveEntry
-        if (book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank()) {
-            String entry = book.getArchiveEntry();
-            if (archiveReader.listEntries(archivePath).contains(entry)) {
-                log.debug("Знайдено за archiveEntry: {}", entry);
-                return Optional.of(entry);
+        List<String> entries = archiveReader.listEntries(archivePath);
+        if (entries.isEmpty()) {
+            log.warn("Архів порожній або не вдалося прочитати: {}", archivePath);
+            return Optional.empty();
+        }
+
+        log.info("Знайдено {} записів у архіві, перші 5: {}", entries.size(),
+                entries.stream().limit(5).collect(Collectors.toList()));
+
+        String archiveEntry = book.getArchiveEntry();
+        String fileName = book.getFileName();
+        String title = book.getTitle();
+
+        // 1. Пошук за archiveEntry (з нормалізацією)
+        if (archiveEntry != null && !archiveEntry.isBlank()) {
+            log.debug("Шукаємо за archiveEntry: '{}'", archiveEntry);
+            String normalizedArchive = normalize.apply(archiveEntry);
+            for (String entry : entries) {
+                if (normalize.apply(entry).equals(normalizedArchive)) {
+                    log.debug("Знайдено за нормалізованим archiveEntry: {}", entry);
+                    return Optional.of(entry);
+                }
+            }
+            // Якщо не знайшли, пробуємо шукати за ім'ям файлу (без шляху) з archiveEntry
+            String fileNameFromEntry = Paths.get(archiveEntry).getFileName().toString();
+            String normalizedFileName = normalize.apply(fileNameFromEntry);
+            for (String entry : entries) {
+                if (normalize.apply(entry).contains(normalizedFileName)) {
+                    log.debug("Знайдено за ім'ям файлу з archiveEntry: {}", entry);
+                    return Optional.of(entry);
+                }
             }
         }
 
-        // Шукаємо FB2 за назвою файлу книги
-        String bookFileName = book.getFileName();
-        if (bookFileName != null && !bookFileName.isBlank()) {
-            String target = bookFileName.toLowerCase();
-            Optional<String> found = archiveReader.listEntries(archivePath).stream()
-                    .filter(e -> {
-                        String lower = e.toLowerCase();
-                        return lower.equals(target) || lower.endsWith("/" + target);
-                    })
-                    .findFirst();
-            if (found.isPresent()) {
-                log.debug("Знайдено FB2 за назвою файлу: {}", found.get());
-                return found;
+        // 2. Пошук за fileName (з нормалізацією)
+        if (fileName != null && !fileName.isBlank()) {
+            log.debug("Шукаємо за fileName: '{}'", fileName);
+            String normalizedFileName = normalize.apply(fileName);
+            for (String entry : entries) {
+                if (normalize.apply(entry).contains(normalizedFileName)) {
+                    log.debug("Знайдено за нормалізованим fileName: {}", entry);
+                    return Optional.of(entry);
+                }
+            }
+            // Без розширення
+            String baseName = fileName.replaceFirst("\\.[^.]+$", "");
+            if (!baseName.equals(fileName)) {
+                String normalizedBase = normalize.apply(baseName);
+                for (String entry : entries) {
+                    if (normalize.apply(entry).contains(normalizedBase)) {
+                        log.debug("Знайдено за базовою назвою: {}", entry);
+                        return Optional.of(entry);
+                    }
+                }
             }
         }
 
-        // Перший FB2
-        Optional<String> firstFb2 = archiveReader.listEntries(archivePath).stream()
+        // 3. Пошук за назвою книги (з нормалізацією)
+        if (title != null && !title.isBlank()) {
+            String normalizedTitle = normalize.apply(title);
+            log.debug("Шукаємо за назвою книги: '{}'", normalizedTitle);
+            for (String entry : entries) {
+                if (normalize.apply(entry).contains(normalizedTitle)) {
+                    log.debug("Знайдено за назвою книги: {}", entry);
+                    return Optional.of(entry);
+                }
+            }
+        }
+
+        // 4. Перший FB2 (як крайній випадок)
+        Optional<String> firstFb2 = entries.stream()
                 .filter(e -> e.toLowerCase().endsWith(".fb2"))
                 .findFirst();
         if (firstFb2.isPresent()) {
-            log.debug("Використовуємо перший FB2: {}", firstFb2.get());
+            log.warn("Не вдалося знайти точний FB2 для '{}', використовуємо перший: {}", title, firstFb2.get());
             return firstFb2;
         }
 

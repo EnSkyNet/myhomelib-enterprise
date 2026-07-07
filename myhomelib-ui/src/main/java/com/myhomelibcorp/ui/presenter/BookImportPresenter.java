@@ -5,7 +5,6 @@ import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExecutor;
-import javafx.scene.control.Alert;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -47,33 +46,7 @@ public class BookImportPresenter {
         }
     }
 
-    public void importDirectory() {
-        Stage stage = new Stage();
-        File dir = fileChooserService.chooseDirectory(stage, "Виберіть каталог з книгами");
-        if (dir != null) {
-            importDirectory(dir.toPath());
-        }
-    }
-
-    public void importFile(Path file) {
-        statusBarPresenter.setStatus("Імпорт файлу: " + file.getFileName());
-        progressPresenter.showProgress(true);
-        backgroundExecutor.submit(() -> importFileUseCase.execute(file))
-                .thenAccept(count -> UiExecutor.runOnUiThread(() -> {
-                    progressPresenter.hideProgress();
-                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + count + " книг");
-                }))
-                .exceptionally(ex -> {
-                    UiExecutor.runOnUiThread(() -> {
-                        progressPresenter.hideProgress();
-                        statusBarPresenter.setStatus("Помилка імпорту: " + ex.getMessage());
-                    });
-                    log.error("File import failed", ex);
-                    return null;
-                });
-    }
-
-    public void importDirectory(Path directory) {
+    public void importDirectory(Path directory, Runnable onComplete) {
         statusBarPresenter.setStatus("Імпорт каталогу: " + directory.getFileName());
         progressPresenter.showProgress(true);
         AtomicBoolean cancelFlag = new AtomicBoolean(false);
@@ -84,6 +57,9 @@ public class BookImportPresenter {
                 .thenAccept(count -> UiExecutor.runOnUiThread(() -> {
                     progressPresenter.hideProgress();
                     statusBarPresenter.setStatus("Імпорт завершено. Додано " + count + " книг");
+                    if (onComplete != null) {
+                        onComplete.run();
+                    }
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
@@ -91,6 +67,36 @@ public class BookImportPresenter {
                         statusBarPresenter.setStatus("Помилка імпорту: " + ex.getMessage());
                     });
                     log.error("Directory import failed", ex);
+                    return null;
+                });
+    }
+
+    // ---- Методи для зворотної сумісності ----
+    public void importDirectory(Path directory) {
+        importDirectory(directory, null);
+    }
+
+    public void importFile(Path file) {
+        importFile(file, null);
+    }
+
+    public void importFile(Path file, Runnable onComplete) {
+        statusBarPresenter.setStatus("Імпорт файлу: " + file.getFileName());
+        progressPresenter.showProgress(true);
+        backgroundExecutor.submit(() -> importFileUseCase.execute(file))
+                .thenAccept(count -> UiExecutor.runOnUiThread(() -> {
+                    progressPresenter.hideProgress();
+                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + count + " книг");
+                    if (onComplete != null) {
+                        onComplete.run();
+                    }
+                }))
+                .exceptionally(ex -> {
+                    UiExecutor.runOnUiThread(() -> {
+                        progressPresenter.hideProgress();
+                        statusBarPresenter.setStatus("Помилка імпорту: " + ex.getMessage());
+                    });
+                    log.error("File import failed", ex);
                     return null;
                 });
     }

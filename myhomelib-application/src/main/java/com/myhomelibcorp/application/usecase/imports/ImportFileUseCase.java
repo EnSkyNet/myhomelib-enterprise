@@ -35,8 +35,10 @@ public class ImportFileUseCase {
     @Value("${app.import.batch-size:500}")
     private int defaultBatchSize;
 
-    // ========== СТАРИЙ МЕТОД (зворотна сумісність) ==========
+    // Якщо файл більше цього порогу, вимикаємо індексацію
+    private static final long INDEX_DISABLE_THRESHOLD = 500_000; // книг
 
+    // ========== СТАРИЙ МЕТОД (зворотна сумісність) ==========
     @Deprecated
     public int execute(Path file) {
         ImportContext context = ImportContext.builder()
@@ -49,7 +51,6 @@ public class ImportFileUseCase {
     }
 
     // ========== НОВИЙ МЕТОД ==========
-
     public ImportResult execute(ImportContext context) {
         if (context == null || context.getFile() == null) {
             throw new IllegalArgumentException("File cannot be null");
@@ -69,13 +70,29 @@ public class ImportFileUseCase {
                     .build();
         }
 
+        // ---- Автоматичне вимкнення індексації для великих файлів ----
+        boolean indexAfterSave = context.isIndexAfterSave();
+        if (indexAfterSave) {
+            // Спроба оцінити кількість книг у файлі
+            try {
+                var importer = importerRegistry.findImporter(context.getFile());
+                long count = importer.countBooks(context.getFile());
+                if (count > INDEX_DISABLE_THRESHOLD) {
+                    log.info("Файл містить {} книг (поріг {}), індексація вимкнена для прискорення", count, INDEX_DISABLE_THRESHOLD);
+                    indexAfterSave = false;
+                }
+            } catch (Exception e) {
+                log.debug("Не вдалося оцінити кількість книг, індексація залишена увімкненою");
+            }
+        }
+
         ImportStatistics stats = new ImportStatistics();
-        log.info("Початок імпорту файлу: {}", context.getFile());
+        log.info("Початок імпорту файлу: {}, індексація: {}", context.getFile(), indexAfterSave);
 
         try {
             var importer = importerRegistry.findImporter(context.getFile());
             try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
-                saveBooksBatch(bookStream, context, stats);
+                saveBooksBatch(bookStream, context, stats, indexAfterSave);
             }
         } catch (Exception e) {
             log.error("Помилка імпорту файлу: {}", context.getFile(), e);
@@ -89,13 +106,16 @@ public class ImportFileUseCase {
         ImportResult result = ImportResult.fromStatistics(stats);
         log.info("Імпорт файлу завершено: {}", result);
 
+        // Якщо індексацію було вимкнено, публікуємо подію про завершення імпорту без індексації
+        // (можна додати окрему подію для подальшої індексації)
         eventPublisher.publish(new ImportFinishedEvent(context.getFile(), result));
+
         return result;
     }
 
     // ========== ВНУТРІШНІ МЕТОДИ ==========
 
-    private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats) {
+    private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats, boolean indexAfterSave) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         List<Book> batch = new ArrayList<>(batchSize);
         DuplicatePolicy policy = DuplicatePolicy.SKIP;
@@ -115,7 +135,7 @@ public class ImportFileUseCase {
                     if (batch.size() >= batchSize) {
                         int saved = importTransaction.saveBatchInTransaction(
                                 batch,
-                                context.isIndexAfterSave(),
+                                indexAfterSave, // передаємо параметр
                                 policy
                         );
                         stats.incrementImported(saved);
@@ -130,7 +150,7 @@ public class ImportFileUseCase {
             if (!batch.isEmpty()) {
                 int saved = importTransaction.saveBatchInTransaction(
                         batch,
-                        context.isIndexAfterSave(),
+                        indexAfterSave,
                         policy
                 );
                 stats.incrementImported(saved);
@@ -145,6 +165,7 @@ public class ImportFileUseCase {
 
     private void updateProgress(ImportStatistics stats, ImportContext context) {
         if (context.getProgressListener() != null) {
+            // Прогрес оновлюється рідше для великих файлів
             context.getProgressListener().accept((double) stats.getImported().get());
         }
     }
