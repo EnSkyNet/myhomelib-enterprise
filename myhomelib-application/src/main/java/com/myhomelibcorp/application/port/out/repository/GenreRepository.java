@@ -15,7 +15,7 @@ public interface GenreRepository {
 
     String getGenreName(String code);
     List<String> getAllGenreNames();
-    Map<String, String> getAllGenres();     // <-- додано
+    Map<String, String> getAllGenres();
     List<String> getAllGenreCodes();
     List<Genre> getAllGenresHierarchy();
 }

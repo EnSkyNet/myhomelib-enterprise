@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.presenter;
 
+import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
@@ -8,6 +9,7 @@ import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -27,6 +29,9 @@ public class BookImportPresenter {
     private final StatusBarPresenter statusBarPresenter;
     private final ProgressPresenter progressPresenter;
     private final FileChooserService fileChooserService;
+
+    @Value("${app.import.batch-size:500}")
+    private int defaultBatchSize;
 
     public void importFb2() {
         Stage stage = new Stage();
@@ -53,10 +58,19 @@ public class BookImportPresenter {
         DoubleConsumer progressConsumer = progress -> UiExecutor.runOnUiThread(() ->
                 progressPresenter.setProgress(progress));
 
-        backgroundExecutor.submit(() -> importDirectoryUseCase.execute(directory, progressConsumer, cancelFlag))
-                .thenAccept(count -> UiExecutor.runOnUiThread(() -> {
+        ImportContext context = ImportContext.builder()
+                .rootDirectory(directory)
+                .batchSize(defaultBatchSize)
+                .indexAfterSave(true)
+                .progressListener(progressConsumer)
+                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBarPresenter.setStatus(status)))
+                .cancelFlag(cancelFlag)
+                .build();
+
+        backgroundExecutor.submit(() -> importDirectoryUseCase.execute(context))
+                .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     progressPresenter.hideProgress();
-                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + count + " книг");
+                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + result.imported() + " книг");
                     if (onComplete != null) {
                         onComplete.run();
                     }
@@ -71,7 +85,6 @@ public class BookImportPresenter {
                 });
     }
 
-    // ---- Методи для зворотної сумісності ----
     public void importDirectory(Path directory) {
         importDirectory(directory, null);
     }
@@ -83,10 +96,19 @@ public class BookImportPresenter {
     public void importFile(Path file, Runnable onComplete) {
         statusBarPresenter.setStatus("Імпорт файлу: " + file.getFileName());
         progressPresenter.showProgress(true);
-        backgroundExecutor.submit(() -> importFileUseCase.execute(file))
-                .thenAccept(count -> UiExecutor.runOnUiThread(() -> {
+
+        ImportContext context = ImportContext.builder()
+                .file(file)
+                .batchSize(defaultBatchSize)
+                .indexAfterSave(true)
+                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBarPresenter.setStatus(status)))
+                .progressListener(progress -> UiExecutor.runOnUiThread(() -> progressPresenter.setProgress(progress)))
+                .build();
+
+        backgroundExecutor.submit(() -> importFileUseCase.execute(context))
+                .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     progressPresenter.hideProgress();
-                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + count + " книг");
+                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + result.imported() + " книг");
                     if (onComplete != null) {
                         onComplete.run();
                     }

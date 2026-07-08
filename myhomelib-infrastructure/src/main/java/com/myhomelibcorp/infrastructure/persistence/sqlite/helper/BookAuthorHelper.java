@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,11 +19,16 @@ import java.util.stream.Collectors;
 @Slf4j
 public class BookAuthorHelper {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final CollectionManager collectionManager;
     private final AuthorRepository authorRepository;
     private final AuthorRowMapper authorRowMapper;
 
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
+    }
+
     public void saveAuthors(BookId bookId, List<Author> authors) {
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         jdbcTemplate.update("DELETE FROM book_authors WHERE book_id = ?", bookId.asString());
         for (Author author : authors) {
             Author existing = authorRepository.findByFullName(author.getFirstName(), author.getLastName())
@@ -39,6 +45,7 @@ public class BookAuthorHelper {
     }
 
     public List<Author> loadAuthors(BookId bookId) {
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         String sql = """
             SELECT a.id, a.first_name, a.middle_name, a.last_name
             FROM authors a
@@ -50,6 +57,7 @@ public class BookAuthorHelper {
 
     public void loadAuthorsForBooks(List<Book> books) {
         if (books.isEmpty()) return;
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<String> bookIds = books.stream().map(b -> b.getId().asString()).collect(Collectors.toList());
         String placeholders = String.join(",", bookIds.stream().map(id -> "?").toArray(String[]::new));
         String sql = """

@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,11 +19,16 @@ import java.util.stream.Collectors;
 @Slf4j
 public class BookGenreHelper {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final CollectionManager collectionManager;
     private final GenreRepository genreRepository;
     private final GenreRowMapper genreRowMapper;
 
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
+    }
+
     public void saveGenres(BookId bookId, List<Genre> genres) {
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
         for (Genre genre : genres) {
             String code = genre.getId().asString();
@@ -48,6 +54,7 @@ public class BookGenreHelper {
     }
 
     public List<Genre> loadGenres(BookId bookId) {
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         String sql = """
             SELECT g.code, g.name, g.parent_code, g.fb2_code
             FROM genres g
@@ -59,6 +66,7 @@ public class BookGenreHelper {
 
     public void loadGenresForBooks(List<Book> books) {
         if (books.isEmpty()) return;
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<String> bookIds = books.stream().map(b -> b.getId().asString()).collect(Collectors.toList());
         String placeholders = String.join(",", bookIds.stream().map(id -> "?").toArray(String[]::new));
         String sql = """

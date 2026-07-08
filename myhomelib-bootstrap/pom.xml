@@ -12,6 +12,11 @@
     <modelVersion>4.0.0</modelVersion>
 
     <artifactId>myhomelib-bootstrap</artifactId>
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
+    </properties>
 
     <dependencies>
         <dependency>
@@ -72,6 +77,8 @@
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
                     <options>
                         <option>-Dfile.encoding=UTF-8</option>
+                        <option>-Dconsole.encoding=UTF-8</option>
+                        <option>-Dsun.jnu.encoding=UTF-8</option>
                         <option>--add-modules</option>
                         <option>javafx.controls,javafx.fxml</option>
                     </options>
@@ -83,6 +90,7 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
+                    <jvmArguments>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8</jvmArguments>
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
                     <jvmArguments>
                         --add-modules=javafx.controls,javafx.fxml

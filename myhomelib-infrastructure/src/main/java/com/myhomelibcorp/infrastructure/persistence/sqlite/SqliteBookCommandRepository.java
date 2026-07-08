@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
@@ -11,7 +12,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
@@ -26,15 +26,19 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
-    private final JdbcTemplate jdbcTemplate;
+    private final CollectionManager collectionManager;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
     private final BookBatchWriter batchWriter;
 
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
+    }
+
     @Override
-    @Transactional
+
     public Book save(Book book) {
-        jdbcTemplate.update(connection -> {
+        getJdbcTemplate().update(connection -> {
             PreparedStatement ps = connection.prepareStatement(BookQueries.INSERT_OR_UPDATE_BOOK);
             int idx = 1;
             ps.setString(idx++, book.getId().asString());
@@ -79,11 +83,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     @Override
     public void saveBatch(List<Book> books) {
         if (books == null || books.isEmpty()) return;
-
-        // Спочатку зберігаємо книги
         batchWriter.batchInsert(books);
-
-        // Потім зберігаємо авторів та жанри для кожної книги
         for (Book book : books) {
             if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
                 bookAuthorHelper.saveAuthors(book.getId(), book.getAuthors());
@@ -92,25 +92,24 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                 bookGenreHelper.saveGenres(book.getId(), book.getGenres());
             }
         }
-
         log.debug("Batch збережено {} книг", books.size());
     }
 
     @Override
     public void deleteById(BookId id) {
-        jdbcTemplate.update(BookQueries.DELETE_BY_ID, id.asString());
+        getJdbcTemplate().update(BookQueries.DELETE_BY_ID, id.asString());
         log.debug("Книгу видалено: id={}", id.asString());
     }
 
     @Override
-    @Transactional
+
     public void updateRate(BookId bookId, int rate) {
-        jdbcTemplate.update(BookQueries.UPDATE_RATE, rate, bookId.asString());
+        getJdbcTemplate().update(BookQueries.UPDATE_RATE, rate, bookId.asString());
     }
 
     @Override
-    @Transactional
+
     public void updateProgress(BookId bookId, int progress) {
-        jdbcTemplate.update(BookQueries.UPDATE_PROGRESS, progress, bookId.asString());
+        getJdbcTemplate().update(BookQueries.UPDATE_PROGRESS, progress, bookId.asString());
     }
 }

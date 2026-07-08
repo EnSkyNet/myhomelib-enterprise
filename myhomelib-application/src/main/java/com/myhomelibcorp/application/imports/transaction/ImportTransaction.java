@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -16,8 +17,9 @@ import java.util.List;
 @Slf4j
 public class ImportTransaction {
 
-    private final TransactionTemplate transactionTemplate;
+    private final @Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate;
     private final BookSaver bookSaver;
+
 
     public int saveBatchInTransaction(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
         return transactionTemplate.execute(status -> {

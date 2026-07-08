@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.batch;
 
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,11 +21,16 @@ public class BookBatchWriter {
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
-    private final JdbcTemplate jdbcTemplate;
+    private final CollectionManager collectionManager;
+
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
+    }
 
     public void batchInsert(List<Book> books) {
         if (books == null || books.isEmpty()) return;
 
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
             Object[] args = new Object[19];
@@ -64,6 +70,7 @@ public class BookBatchWriter {
     public void batchUpdate(List<Book> books) {
         if (books == null || books.isEmpty()) return;
 
+        JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
             Object[] args = new Object[19];

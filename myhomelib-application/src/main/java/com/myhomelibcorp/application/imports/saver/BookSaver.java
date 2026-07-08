@@ -1,6 +1,6 @@
 package com.myhomelibcorp.application.imports.saver;
 
-import com.myhomelibcorp.application.event.BookImportedEvent; // <-- ДОДАНО
+import com.myhomelibcorp.application.event.BookImportedEvent;
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
@@ -9,13 +9,12 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
-import com.myhomelibcorp.domain.event.book.BookAddedEvent;
 
 import java.util.List;
-import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -24,14 +23,12 @@ public class BookSaver {
 
     private final BookCommandRepository bookCommandRepository;
     private final ApplicationEventPublisher eventPublisher;
-    private final TransactionTemplate transactionTemplate;
     private final DuplicateDetector duplicateDetector;
     private final SearchIndexer searchIndexer;
 
-    /**
-     * Зберігає одну книгу з індексацією (для одиночних операцій).
-     * @return true, якщо книга була збережена
-     */
+    @Qualifier("collectionTransactionTemplate")
+    private final TransactionTemplate transactionTemplate;
+
     public boolean saveBook(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
         if (book == null) {
             return false;
@@ -43,7 +40,7 @@ public class BookSaver {
         }
 
         if (policy == DuplicatePolicy.REPLACE) {
-            Optional<Book> existing = duplicateDetector.findDuplicate(book);
+            var existing = duplicateDetector.findDuplicate(book);
             if (existing.isPresent()) {
                 log.debug("Дублікат замінено: {}", book.getTitle());
                 transactionTemplate.execute(status -> {
@@ -59,7 +56,7 @@ public class BookSaver {
         }
 
         if (policy == DuplicatePolicy.MERGE) {
-            Optional<Book> existing = duplicateDetector.findDuplicate(book);
+            var existing = duplicateDetector.findDuplicate(book);
             if (existing.isPresent()) {
                 log.debug("Дублікат об'єднано: {}", book.getTitle());
                 Book merged = mergeBooks(existing.get(), book);
@@ -81,27 +78,22 @@ public class BookSaver {
         });
         if (indexAfterSave) {
             eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
-            eventPublisher.publishEvent(new BookAddedEvent(BookSnapshot.fromBook(book)));
         }
         log.debug("Книгу збережено: {}", book.getTitle());
         return true;
     }
 
-    /**
-     * Зберігає батч книг з можливістю вимкнути індексацію.
-     * @param books список книг
-     * @param indexAfterSave чи виконувати індексацію після збереження
-     * @param policy політика дублювання
-     * @return кількість збережених книг
-     */
     public int saveBatch(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
         if (books == null || books.isEmpty()) {
             return 0;
         }
 
-        // Відфільтровуємо дублікати згідно з політикою
         List<Book> booksToSave = books.stream()
                 .filter(book -> {
+                    // Якщо політика SAVE_AS_NEW – пропускаємо перевірку дублікатів
+                    if (policy == DuplicatePolicy.SAVE_AS_NEW) {
+                        return true;
+                    }
                     if (policy == DuplicatePolicy.SKIP && duplicateDetector.isDuplicate(book)) {
                         log.debug("Дублікат пропущено (батч): {}", book.getTitle());
                         return false;
@@ -124,25 +116,20 @@ public class BookSaver {
         if (indexAfterSave) {
             searchIndexer.indexAll(booksToSave);
             searchIndexer.commit();
-            // Публікуємо події для кожної книги
             for (Book book : booksToSave) {
                 eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
             }
         } else {
-            // Якщо індексація вимкнена, все одно публікуємо події для інших систем
             for (Book book : booksToSave) {
                 eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
             }
-            log.debug("Індексація вимкнена для батча, книги збережено без індексації");
+            log.debug("Індексацію вимкнено для батча, книги збережено без індексації");
         }
 
         log.info("Збережено {} книг", booksToSave.size());
         return booksToSave.size();
     }
 
-    /**
-     * Об'єднує дві книги (при MERGE).
-     */
     private Book mergeBooks(Book existing, Book incoming) {
         return Book.builder()
                 .id(existing.getId())

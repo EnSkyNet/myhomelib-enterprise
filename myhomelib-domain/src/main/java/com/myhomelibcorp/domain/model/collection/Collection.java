@@ -5,9 +5,6 @@ import lombok.RequiredArgsConstructor;
 
 import java.nio.file.Path;
 
-/**
- * Модель колекції книг (відповідає Collection з Delphi).
- */
 @Getter
 @RequiredArgsConstructor
 public class Collection {
@@ -31,5 +28,10 @@ public class Collection {
         this.password = null;
         this.url = null;
         this.notes = null;
+    }
+
+    @Override
+    public String toString() {
+        return name != null && !name.isBlank() ? name : "Без назви";
     }
 }

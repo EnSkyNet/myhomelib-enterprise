@@ -5,6 +5,7 @@ import lombok.Value;
 
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 
 @Value
@@ -16,6 +17,7 @@ public class ImportContext {
     @Builder.Default boolean updateExisting = false;
     @Builder.Default boolean indexAfterSave = true;
     DoubleConsumer progressListener;
+    Consumer<String> statusConsumer; // додано
     AtomicBoolean cancelFlag;
     @Builder.Default int batchSize = 500;
 

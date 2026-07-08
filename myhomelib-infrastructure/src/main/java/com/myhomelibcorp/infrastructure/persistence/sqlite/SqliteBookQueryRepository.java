@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
@@ -22,11 +23,15 @@ import java.util.Optional;
 @Slf4j
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
-    private final JdbcTemplate jdbcTemplate;
+    private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
     private final BookQueryBuilder queryBuilder;
+
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
+    }
 
     private void enrichBooks(List<Book> books) {
         if (books.isEmpty()) return;
@@ -38,7 +43,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     public Optional<Book> findById(BookId id) {
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
-            Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, id.asString());
+            Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper, id.asString());
             enrichBooks(List.of(book));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
@@ -54,7 +59,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String placeholders = String.join(",", ids.stream().map(id -> "?").toArray(String[]::new));
         String sql = "SELECT * FROM books WHERE id IN (" + placeholders + ")";
         String[] idStrings = ids.stream().map(BookId::asString).toArray(String[]::new);
-        List<Book> books = jdbcTemplate.query(sql, bookRowMapper, (Object[]) idStrings);
+        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, (Object[]) idStrings);
         enrichBooks(books);
         return books;
     }
@@ -62,7 +67,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     @Override
     public List<Book> find(BookQuery query) {
         var sqlQuery = queryBuilder.build(query);
-        List<Book> books = jdbcTemplate.query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
+        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
         enrichBooks(books);
         return books;
     }
@@ -70,7 +75,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     @Override
     public long count(BookQuery query) {
         var sqlQuery = queryBuilder.buildCount(query);
-        Long result = jdbcTemplate.queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
+        Long result = getJdbcTemplate().queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
         return result != null ? result : 0L;
     }
 
@@ -84,7 +89,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             LIMIT 1
             """;
         try {
-            Book book = jdbcTemplate.queryForObject(sql, bookRowMapper, title, authorLastName);
+            Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper, title, authorLastName);
             enrichBooks(List.of(book));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {

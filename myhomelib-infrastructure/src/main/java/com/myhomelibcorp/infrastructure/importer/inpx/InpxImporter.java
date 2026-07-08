@@ -32,7 +32,6 @@ public class InpxImporter implements BookImporterPort {
 
     private static final char FIELD_DELIMITER = (char) 4;
     private static final String FALLBACK_DELIMITER = "|";
-    private static final int BATCH_FLUSH_SIZE = 1000; // для прогресу
 
     @Autowired
     private AuthorRepository authorRepository;
@@ -40,7 +39,6 @@ public class InpxImporter implements BookImporterPort {
     @Autowired
     private GenreRepository genreRepository;
 
-    // Кеші для швидкого доступу
     private final Map<String, Author> authorCache = new HashMap<>();
     private final Map<String, Genre> genreCache = new HashMap<>();
 
@@ -54,7 +52,6 @@ public class InpxImporter implements BookImporterPort {
     public Stream<Book> importBooks(Path file) {
         log.info("Початок імпорту INPX: {}", file);
         try {
-            // Очищення кешів перед початком
             authorCache.clear();
             genreCache.clear();
             Iterator<Book> iterator = new InpxIterator(file);
@@ -73,7 +70,6 @@ public class InpxImporter implements BookImporterPort {
 
     @Override
     public long countBooks(Path file) {
-        // Оцінка кількості – читаємо перший рядок INP або рахуємо рядки
         try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(file))) {
             ZipEntry entry;
             while ((entry = zis.getNextEntry()) != null) {
@@ -137,7 +133,6 @@ public class InpxImporter implements BookImporterPort {
             String line = nextLine;
             lineCount++;
             try {
-                // Читаємо наступний рядок заздалегідь (для потоковості)
                 nextLine = reader.readLine();
                 if (nextLine == null) {
                     finished = true;
@@ -155,7 +150,6 @@ public class InpxImporter implements BookImporterPort {
         }
 
         private Book parseInpxLine(String line) {
-            // Оптимізований парсинг – використовуємо масив, уникаємо зайвих split
             try {
                 String[] parts;
                 if (line.indexOf(FIELD_DELIMITER) > 0) {
@@ -173,23 +167,26 @@ public class InpxImporter implements BookImporterPort {
                 List<Author> authors = new ArrayList<>();
                 String authorsStr = parts[0].trim();
                 if (!authorsStr.isEmpty() && !authorsStr.equals(":")) {
-                    for (String name : authorsStr.split(",")) {
-                        String clean = name.trim();
-                        if (!clean.isEmpty() && !clean.equals(":")) {
-                            String[] nameParts = clean.split(" ", 3);
-                            String lastName = nameParts[0];
-                            String firstName = nameParts.length > 1 ? nameParts[1] : "";
-                            String middleName = nameParts.length > 2 ? nameParts[2] : "";
-                            // Шукаємо автора в кеші, щоб уникнути дублювання
-                            String key = firstName + "|" + middleName + "|" + lastName;
-                            Author author = authorCache.get(key);
-                            if (author == null) {
-                                author = new Author(firstName, middleName, lastName);
-                                // Зберігаємо в кеш (буде збережено пізніше в BookSaver)
-                                authorCache.put(key, author);
-                            }
-                            authors.add(author);
+                    // Розділяємо авторів за двокрапкою
+                    String[] authorEntries = authorsStr.split(":");
+                    for (String authorEntry : authorEntries) {
+                        authorEntry = authorEntry.trim();
+                        if (authorEntry.isEmpty()) continue;
+                        // Розділяємо частини автора за комами: прізвище,ім'я,по-батькові
+                        String[] nameParts = authorEntry.split(",");
+                        String lastName = nameParts.length > 0 ? nameParts[0].trim() : "";
+                        String firstName = nameParts.length > 1 ? nameParts[1].trim() : "";
+                        String middleName = nameParts.length > 2 ? nameParts[2].trim() : "";
+                        // Якщо всі поля порожні – пропускаємо
+                        if (lastName.isEmpty() && firstName.isEmpty() && middleName.isEmpty()) continue;
+                        // Шукаємо автора в кеші
+                        String key = firstName + "|" + middleName + "|" + lastName;
+                        Author author = authorCache.get(key);
+                        if (author == null) {
+                            author = new Author(firstName, middleName, lastName);
+                            authorCache.put(key, author);
                         }
+                        authors.add(author);
                     }
                 }
                 if (authors.isEmpty()) {
@@ -211,7 +208,7 @@ public class InpxImporter implements BookImporterPort {
                         if (!clean.isEmpty()) {
                             Genre genre = genreCache.get(clean);
                             if (genre == null) {
-                                genre = new Genre(clean, clean); // назва = код
+                                genre = new Genre(clean, clean);
                                 genreCache.put(clean, genre);
                             }
                             genres.add(genre);
@@ -243,7 +240,12 @@ public class InpxImporter implements BookImporterPort {
 
                 // ---- Мова ----
                 String languageCode = parts.length > 8 && !parts[8].trim().isEmpty() ?
-                        parts[8].trim() : "ru";
+                        parts[8].trim() : "uk";
+                try {
+                    LanguageCode.of(languageCode);
+                } catch (IllegalArgumentException e) {
+                    languageCode = "uk";
+                }
 
                 // ---- Ключові слова ----
                 String keywords = parts.length > 12 ? parts[12].trim() : "";
@@ -262,8 +264,8 @@ public class InpxImporter implements BookImporterPort {
 
                 var bookFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
                         fileName,
-                        "", // папка – буде заповнена пізніше
-                        "", // archiveEntry – не використовується для INPX
+                        "",
+                        "",
                         fileSize,
                         null
                 );

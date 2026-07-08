@@ -1,10 +1,12 @@
 package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
+import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.Pagination;
-import com.myhomelibcorp.application.usecase.book.UpdateBookUseCase; // <-- додано
 import com.myhomelibcorp.application.usecase.book.LoadBooksUseCase;
+import com.myhomelibcorp.application.usecase.book.UpdateBookUseCase;
 import com.myhomelibcorp.application.usecase.genre.LoadGenresUseCase;
 import com.myhomelibcorp.application.usecase.group.*;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
@@ -18,6 +20,7 @@ import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
+import com.myhomelibcorp.ui.presenter.StatusBarPresenter;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.beans.property.*;
@@ -43,7 +46,7 @@ public class MainViewModel {
     private static final int SEARCH_PAGE_SIZE = 1000;
 
     private final LoadBooksUseCase loadBooksUseCase;
-    private final UpdateBookUseCase updateBookUseCase; // <-- додано
+    private final UpdateBookUseCase updateBookUseCase;
     private final CreateGroupUseCase createGroupUseCase;
     private final RenameGroupUseCase renameGroupUseCase;
     private final DeleteGroupUseCase deleteGroupUseCase;
@@ -56,6 +59,9 @@ public class MainViewModel {
     private final RebuildIndexUseCase rebuildIndexUseCase;
     private final BackgroundExecutor backgroundExecutor;
     private final BookViewModelMapper viewModelMapper;
+    private final AuthorRepository authorRepository;
+    private final GenreRepository genreRepository;
+    private final StatusBarPresenter statusBarPresenter;
 
     private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
     private final ObjectProperty<BookViewModel> selectedBook = new SimpleObjectProperty<>();
@@ -78,6 +84,20 @@ public class MainViewModel {
     public BooleanProperty importInProgressProperty() { return importInProgress; }
     public StringProperty searchQueryProperty() { return searchQuery; }
     public ObservableList<String> genreNamesProperty() { return genreNames; }
+
+    // ====== СТАТИСТИКА КОЛЕКЦІЇ ======
+    public void updateCollectionStats() {
+        backgroundExecutor.submit(() -> {
+                    long bookCount = loadBooksUseCase.count(BookQuery.builder().pagination(Pagination.of(1, 0)).build());
+                    long authorCount = authorRepository.findAll().size();
+                    long genreCount = genreRepository.getAllGenres().size();
+                    return String.format("Книг: %d, Авторів: %d, Жанрів: %d", bookCount, authorCount, genreCount);
+                }).thenAccept(stats -> Platform.runLater(() -> statusBarPresenter.setStatus(stats)))
+                .exceptionally(ex -> {
+                    log.error("Помилка отримання статистики", ex);
+                    return null;
+                });
+    }
 
     // ====== ЗАВАНТАЖЕННЯ ======
     public void loadBooks(BookQuery query) {
@@ -157,7 +177,7 @@ public class MainViewModel {
 
     public void refreshBooks() {
         isSearchMode = false;
-        currentQuery = null; // Скидаємо фільтр, щоб завантажити всі книги
+        currentQuery = null;
         BookQuery query = BookQuery.builder()
                 .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .build();
@@ -170,14 +190,19 @@ public class MainViewModel {
         } else {
             refreshBooks();
         }
+    }
 
-
+    public void loadAllBooks() {
+        log.info("loadAllBooks() викликано");
+        isSearchMode = false;
+        currentQuery = null;
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .build();
+        loadBooks(query);
     }
 
     // ====== ОНОВЛЕННЯ КНИГИ ======
-    /**
-     * Оновлює рейтинг вибраної книги.
-     */
     public void updateRating(BookDto book, int rating) {
         if (book == null || book.getId() == null) return;
         backgroundExecutor.submit(() -> {
@@ -190,9 +215,6 @@ public class MainViewModel {
         });
     }
 
-    /**
-     * Оновлює прогрес читання вибраної книги.
-     */
     public void updateProgress(BookDto book, int progress) {
         if (book == null || book.getId() == null) return;
         backgroundExecutor.submit(() -> {
@@ -209,6 +231,7 @@ public class MainViewModel {
     public void initWithoutBooks() {
         loadGenres();
         bindSearchWithDebounce();
+        updateCollectionStats(); // додано
     }
 
     // ====== ІМПОРТ ======
@@ -219,6 +242,7 @@ public class MainViewModel {
                 .thenAccept(count -> Platform.runLater(() -> {
                     importInProgress.set(false);
                     statusText.set("Імпорт завершено. Додано " + count + " книг");
+                    updateCollectionStats(); // додано
                     delayAndRefresh(onComplete);
                 }))
                 .exceptionally(ex -> {
@@ -241,6 +265,7 @@ public class MainViewModel {
                     importInProgress.set(false);
                     importProgress.set(0);
                     statusText.set("Імпорт завершено. Додано " + count + " книг");
+                    updateCollectionStats(); // додано
                     delayAndRefresh(onComplete);
                 }))
                 .exceptionally(ex -> {
@@ -309,20 +334,6 @@ public class MainViewModel {
 
     public void setSelectedBook(BookViewModel book) {
         this.selectedBook.set(book);
-    }
-
-    /**
-     * Завантажує всі книги без фільтрів.
-     * Використовується після імпорту для повного оновлення таблиці.
-     */
-    public void loadAllBooks() {
-        log.info("loadAllBooks() викликано");
-        isSearchMode = false;
-        currentQuery = null;
-        BookQuery query = BookQuery.builder()
-                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
-                .build();
-        loadBooks(query);
     }
 
     public BookViewModel getSelectedBook() {

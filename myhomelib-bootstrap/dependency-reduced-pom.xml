@@ -17,6 +17,8 @@
           <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
           <options>
             <option>-Dfile.encoding=UTF-8</option>
+            <option>-Dconsole.encoding=UTF-8</option>
+            <option>-Dsun.jnu.encoding=UTF-8</option>
             <option>--add-modules</option>
             <option>javafx.controls,javafx.fxml</option>
           </options>

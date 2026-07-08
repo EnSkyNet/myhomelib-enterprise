@@ -28,7 +28,7 @@ public class UpdateBookUseCase {
      * @param book книга з оновленими даними
      * @throws IllegalArgumentException якщо книга не існує
      */
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public void execute(Book book) {
         if (book == null || book.getId() == null) {
             throw new IllegalArgumentException("Book and BookId must not be null");
@@ -54,7 +54,7 @@ public class UpdateBookUseCase {
     /**
      * Оновлює рейтинг книги.
      */
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public void updateRate(BookId bookId, int rate) {
         if (bookId == null) {
             throw new IllegalArgumentException("BookId must not be null");
@@ -78,7 +78,7 @@ public class UpdateBookUseCase {
     /**
      * Оновлює прогрес читання книги.
      */
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public void updateProgress(BookId bookId, int progress) {
         if (bookId == null) {
             throw new IllegalArgumentException("BookId must not be null");

@@ -12,10 +12,12 @@
         <VBox>
             <MenuBar>
                 <Menu text="Колекція">
-                    <MenuItem text="Відкрити колекцію..." onAction="#handleOpenCollection" disable="true"/>
-                    <MenuItem text="Створити колекцію..." onAction="#handleNewCollection" disable="true"/>
+                    <MenuItem text="Створити колекцію..." onAction="#handleNewCollection"/>
+                    <MenuItem text="Перейменувати колекцію..." onAction="#handleRenameCollection"/>
+                    <MenuItem text="Видалити колекцію" onAction="#handleDeleteCollection"/>
+                    <MenuItem text="Вибрати колекцію" onAction="#handleSelectCollection"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Вийти" onAction="#handleExit"/>
+                    <MenuItem text="Вихід" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Група">
                     <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
@@ -77,8 +79,8 @@
                     <Tab text="Групи">
                         <ListView fx:id="groupsListView" VBox.vgrow="ALWAYS"/>
                     </Tab>
-                    <Tab text="Список завантажень">
-                        <ListView fx:id="downloadsListView" VBox.vgrow="ALWAYS"/>
+                    <Tab text="Колекції">
+                        <ListView fx:id="collectionsListView" VBox.vgrow="ALWAYS"/>
                     </Tab>
                 </TabPane>
 

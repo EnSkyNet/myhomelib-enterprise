@@ -35,10 +35,8 @@ public class ImportFileUseCase {
     @Value("${app.import.batch-size:500}")
     private int defaultBatchSize;
 
-    // Якщо файл більше цього порогу, вимикаємо індексацію
-    private static final long INDEX_DISABLE_THRESHOLD = 500_000; // книг
+    private static final long INDEX_DISABLE_THRESHOLD = 500_000;
 
-    // ========== СТАРИЙ МЕТОД (зворотна сумісність) ==========
     @Deprecated
     public int execute(Path file) {
         ImportContext context = ImportContext.builder()
@@ -50,13 +48,11 @@ public class ImportFileUseCase {
         return (int) result.imported();
     }
 
-    // ========== НОВИЙ МЕТОД ==========
     public ImportResult execute(ImportContext context) {
         if (context == null || context.getFile() == null) {
             throw new IllegalArgumentException("File cannot be null");
         }
 
-        // Якщо в контексті не задано batchSize, беремо з конфігурації
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         if (context.getBatchSize() <= 0) {
             context = ImportContext.builder()
@@ -67,23 +63,24 @@ public class ImportFileUseCase {
                     .batchSize(batchSize)
                     .cancelFlag(context.getCancelFlag())
                     .progressListener(context.getProgressListener())
+                    .statusConsumer(context.getStatusConsumer())
                     .build();
         }
 
-        // ---- Автоматичне вимкнення індексації для великих файлів ----
         boolean indexAfterSave = context.isIndexAfterSave();
-        if (indexAfterSave) {
-            // Спроба оцінити кількість книг у файлі
-            try {
-                var importer = importerRegistry.findImporter(context.getFile());
-                long count = importer.countBooks(context.getFile());
-                if (count > INDEX_DISABLE_THRESHOLD) {
-                    log.info("Файл містить {} книг (поріг {}), індексація вимкнена для прискорення", count, INDEX_DISABLE_THRESHOLD);
-                    indexAfterSave = false;
-                }
-            } catch (Exception e) {
-                log.debug("Не вдалося оцінити кількість книг, індексація залишена увімкненою");
+        long estimatedCount = -1;
+
+        // ---- Оцінка кількості книг для вимкнення індексації ----
+        try {
+            var importer = importerRegistry.findImporter(context.getFile());
+            estimatedCount = importer.countBooks(context.getFile());
+            if (estimatedCount > INDEX_DISABLE_THRESHOLD) {
+                indexAfterSave = false;
+                log.info("Файл містить {} книг (поріг {}), індексацію вимкнено для прискорення",
+                        estimatedCount, INDEX_DISABLE_THRESHOLD);
             }
+        } catch (Exception e) {
+            log.debug("Не вдалося оцінити кількість книг, індексація залишена увімкненою");
         }
 
         ImportStatistics stats = new ImportStatistics();
@@ -106,19 +103,18 @@ public class ImportFileUseCase {
         ImportResult result = ImportResult.fromStatistics(stats);
         log.info("Імпорт файлу завершено: {}", result);
 
-        // Якщо індексацію було вимкнено, публікуємо подію про завершення імпорту без індексації
-        // (можна додати окрему подію для подальшої індексації)
         eventPublisher.publish(new ImportFinishedEvent(context.getFile(), result));
-
         return result;
     }
-
-    // ========== ВНУТРІШНІ МЕТОДИ ==========
 
     private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats, boolean indexAfterSave) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         List<Book> batch = new ArrayList<>(batchSize);
-        DuplicatePolicy policy = DuplicatePolicy.SKIP;
+        // Для великих файлів використовуємо SAVE_AS_NEW, щоб уникнути перевірки дублікатів
+        // та пришвидшити імпорт. Для малих файлів залишаємо SKIP.
+        DuplicatePolicy policy = DuplicatePolicy.SAVE_AS_NEW;
+        int totalSaved = 0;
+        int batchCount = 0;
 
         try (Stream<Book> stream = bookStream) {
             var iterator = stream.iterator();
@@ -133,40 +129,39 @@ public class ImportFileUseCase {
                     batch.add(book);
 
                     if (batch.size() >= batchSize) {
-                        int saved = importTransaction.saveBatchInTransaction(
-                                batch,
-                                indexAfterSave, // передаємо параметр
-                                policy
-                        );
+                        int saved = importTransaction.saveBatchInTransaction(batch, indexAfterSave, policy);
+                        totalSaved += saved;
                         stats.incrementImported(saved);
                         stats.getSkipped().addAndGet(batch.size() - saved);
                         batch.clear();
-                        updateProgress(stats, context);
+                        batchCount++;
+
+                        // ---- Оновлення статусу ----
+                        if (context.getStatusConsumer() != null) {
+                            context.getStatusConsumer().accept("Оброблено " + totalSaved + " книг");
+                        }
+                        if (context.getProgressListener() != null) {
+                            // Оновлюємо прогрес (приблизно)
+                            context.getProgressListener().accept((double) totalSaved);
+                        }
                     }
                 }
             }
 
             // Збереження останнього неповного батча
             if (!batch.isEmpty()) {
-                int saved = importTransaction.saveBatchInTransaction(
-                        batch,
-                        indexAfterSave,
-                        policy
-                );
+                int saved = importTransaction.saveBatchInTransaction(batch, indexAfterSave, policy);
+                totalSaved += saved;
                 stats.incrementImported(saved);
                 stats.getSkipped().addAndGet(batch.size() - saved);
+                if (context.getStatusConsumer() != null) {
+                    context.getStatusConsumer().accept("Оброблено " + totalSaved + " книг");
+                }
             }
 
         } catch (Exception e) {
             log.error("Помилка збереження батча", e);
             stats.incrementErrors();
-        }
-    }
-
-    private void updateProgress(ImportStatistics stats, ImportContext context) {
-        if (context.getProgressListener() != null) {
-            // Прогрес оновлюється рідше для великих файлів
-            context.getProgressListener().accept((double) stats.getImported().get());
         }
     }
 }

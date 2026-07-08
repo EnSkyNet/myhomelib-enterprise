@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.service;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.ClassPathResource;
@@ -19,16 +20,20 @@ import java.util.*;
 public class GenreServiceImpl implements GenreRepository {
 
     private final Map<String, String> genreMap = new LinkedHashMap<>();
-    private final JdbcTemplate jdbcTemplate;
+    private final CollectionManager collectionManager;
 
-    public GenreServiceImpl(JdbcTemplate jdbcTemplate) {
-        this.jdbcTemplate = jdbcTemplate;
+    public GenreServiceImpl(CollectionManager collectionManager) {
+        this.collectionManager = collectionManager;
+    }
+
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
     }
 
     @PostConstruct
     public void init() {
         loadGenresFromResource();
-        loadGenresFromDatabase();
+        // Завантаження з БД тепер ліниве – у getGenreName()
     }
 
     private void loadGenresFromResource() {
@@ -69,31 +74,27 @@ public class GenreServiceImpl implements GenreRepository {
         }
     }
 
-    private void loadGenresFromDatabase() {
-        try {
-            String sql = "SELECT code, name FROM genres";
-            List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
-            for (Map<String, Object> row : rows) {
-                String code = (String) row.get("code");
-                String name = (String) row.get("name");
-                if (code != null && name != null && !genreMap.containsKey(code)) {
-                    genreMap.put(code, name);
-                }
-            }
-            log.info("Додано {} жанрів з БД", rows.size());
-        } catch (Exception e) {
-            log.warn("Не вдалося завантажити жанри з БД", e);
-        }
-    }
-
     @Override
     public String getGenreName(String code) {
         if (code == null) return "";
         String name = genreMap.get(code);
         if (name != null) return name;
-        name = genreMap.get(code.replace(".", ""));
-        if (name != null) return name;
-        log.warn("Жанр з кодом '{}' не знайдено", code);
+
+        // Ліниве завантаження з БД
+        try {
+            String sql = "SELECT name FROM genres WHERE code = ?";
+            String dbName = getJdbcTemplate().queryForObject(sql, String.class, code);
+            if (dbName != null) {
+                genreMap.put(code, dbName);
+                String noDots = code.replace(".", "");
+                if (!noDots.equals(code)) {
+                    genreMap.put(noDots, dbName);
+                }
+                return dbName;
+            }
+        } catch (Exception e) {
+            log.debug("Жанр з кодом '{}' не знайдено в БД", code);
+        }
         return code;
     }
 
@@ -116,7 +117,7 @@ public class GenreServiceImpl implements GenreRepository {
     public List<Genre> getAllGenresHierarchy() {
         try {
             String sql = "SELECT code, name, parent_code, fb2_code FROM genres";
-            return jdbcTemplate.query(sql, (rs, rowNum) -> {
+            return getJdbcTemplate().query(sql, (rs, rowNum) -> {
                 GenreId id = GenreId.fromCode(rs.getString("code"));
                 GenreId parentId = rs.getString("parent_code") != null
                         ? GenreId.fromCode(rs.getString("parent_code"))
@@ -138,7 +139,7 @@ public class GenreServiceImpl implements GenreRepository {
     public Optional<Genre> findById(GenreId id) {
         try {
             String sql = "SELECT code, name, parent_code, fb2_code FROM genres WHERE code = ?";
-            Genre genre = jdbcTemplate.queryForObject(sql, (rs, rowNum) -> {
+            Genre genre = getJdbcTemplate().queryForObject(sql, (rs, rowNum) -> {
                 GenreId gid = GenreId.fromCode(rs.getString("code"));
                 GenreId parentId = rs.getString("parent_code") != null
                         ? GenreId.fromCode(rs.getString("parent_code"))
@@ -161,7 +162,7 @@ public class GenreServiceImpl implements GenreRepository {
                 parent_code = excluded.parent_code,
                 fb2_code = excluded.fb2_code
             """;
-        jdbcTemplate.update(sql,
+        getJdbcTemplate().update(sql,
                 genre.getId().asString(),
                 genre.getName(),
                 genre.getParentId() != null ? genre.getParentId().asString() : null,
@@ -172,6 +173,6 @@ public class GenreServiceImpl implements GenreRepository {
 
     @Override
     public void deleteById(GenreId id) {
-        jdbcTemplate.update("DELETE FROM genres WHERE code = ?", id.asString());
+        getJdbcTemplate().update("DELETE FROM genres WHERE code = ?", id.asString());
     }
 }
