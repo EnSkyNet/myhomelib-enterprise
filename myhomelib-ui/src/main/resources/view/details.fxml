@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.details.BookDetailsController"
+      spacing="5" style="-fx-padding: 10; -fx-background-color: #fafafa;">
+
+    <Label text="Деталі книги" style="-fx-font-weight: bold; -fx-font-size: 16px;"/>
+    <Label fx:id="titleLabel" text="Назва" wrapText="true" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+    <Label fx:id="authorsLabel" text="Автори"/>
+    <Label fx:id="seriesLabel" text="Серія"/>
+    <Label fx:id="genresLabel" text="Жанри"/>
+    <Label fx:id="languageLabel" text="Мова"/>
+    <Label fx:id="yearLabel" text="Рік"/>
+    <Label fx:id="publisherLabel" text="Видавництво"/>
+    <Label fx:id="isbnLabel" text="ISBN"/>
+    <TextArea fx:id="annotationArea" wrapText="true" prefHeight="100" editable="false"/>
+    <HBox spacing="10">
+        <Button text="Відкрити" onAction="#onOpen"/>
+        <Button text="Читати" onAction="#onRead"/>
+        <Button text="Редагувати" onAction="#onEdit"/>
+    </HBox>
+</VBox>

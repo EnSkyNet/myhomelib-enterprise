@@ -14,7 +14,7 @@ import java.util.List;
 @NoArgsConstructor
 @AllArgsConstructor
 public class BookDto {
-    private String id; // ЗМІНЕНО: Long → String
+    private String id;
     private String title;
     private String authorsText;
     private List<String> genres;
@@ -37,14 +37,10 @@ public class BookDto {
     private String review;
     private LocalDateTime createdAt;
 
-    public BookDto(String title, String authorsText, String series, String genresText, int rate, int progress) {
-        this.title = title;
-        this.authorsText = authorsText;
-        this.series = series;
-        this.genresText = genresText;
-        this.rate = rate;
-        this.progress = progress;
-    }
+    // ДОДАНІ ПОЛЯ
+    private Integer year;
+    private String publisher;
+    private String isbn;
 
     public String getFileSizeFormatted() {
         if (fileSize <= 0) return "";

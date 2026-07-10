@@ -6,6 +6,8 @@ import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.ui.service.BackgroundExecutor;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.viewmodel.StatusBarViewModel;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -26,9 +28,8 @@ public class BookImportPresenter {
     private final ImportFileUseCase importFileUseCase;
     private final ImportDirectoryUseCase importDirectoryUseCase;
     private final BackgroundExecutor backgroundExecutor;
-    private final StatusBarPresenter statusBarPresenter;
-    private final ProgressPresenter progressPresenter;
     private final FileChooserService fileChooserService;
+    private final ApplicationState appState;
 
     @Value("${app.import.batch-size:500}")
     private int defaultBatchSize;
@@ -52,33 +53,32 @@ public class BookImportPresenter {
     }
 
     public void importDirectory(Path directory, Runnable onComplete) {
-        statusBarPresenter.setStatus("Імпорт каталогу: " + directory.getFileName());
-        progressPresenter.showProgress(true);
+        StatusBarViewModel statusBar = appState.getStatusBar();
+        statusBar.setStatusText("Імпорт каталогу: " + directory.getFileName());
+        statusBar.setProgressVisible(true);
         AtomicBoolean cancelFlag = new AtomicBoolean(false);
         DoubleConsumer progressConsumer = progress -> UiExecutor.runOnUiThread(() ->
-                progressPresenter.setProgress(progress));
+                statusBar.setProgress(progress));
 
         ImportContext context = ImportContext.builder()
                 .rootDirectory(directory)
                 .batchSize(defaultBatchSize)
                 .indexAfterSave(true)
                 .progressListener(progressConsumer)
-                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBarPresenter.setStatus(status)))
+                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBar.setStatusText(status)))
                 .cancelFlag(cancelFlag)
                 .build();
 
         backgroundExecutor.submit(() -> importDirectoryUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
-                    progressPresenter.hideProgress();
-                    statusBarPresenter.setStatus("Імпорт каталогу завершено. Додано " + result.imported() + " книг");
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
+                    statusBar.setProgressVisible(false);
+                    statusBar.setStatusText("Імпорт каталогу завершено. Додано " + result.imported() + " книг");
+                    if (onComplete != null) onComplete.run();
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
-                        progressPresenter.hideProgress();
-                        statusBarPresenter.setStatus("Помилка імпорту каталогу: " + ex.getMessage());
+                        statusBar.setProgressVisible(false);
+                        statusBar.setStatusText("Помилка імпорту: " + ex.getMessage());
                     });
                     log.error("Directory import failed", ex);
                     return null;
@@ -89,37 +89,36 @@ public class BookImportPresenter {
         importDirectory(directory, null);
     }
 
-    public void importFile(Path file) {
-        importFile(file, null);
-    }
-
     public void importFile(Path file, Runnable onComplete) {
-        statusBarPresenter.setStatus("Імпорт файлу: " + file.getFileName());
-        progressPresenter.showProgress(true);
+        StatusBarViewModel statusBar = appState.getStatusBar();
+        statusBar.setStatusText("Імпорт файлу: " + file.getFileName());
+        statusBar.setProgressVisible(true);
 
         ImportContext context = ImportContext.builder()
                 .file(file)
                 .batchSize(defaultBatchSize)
                 .indexAfterSave(true)
-                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBarPresenter.setStatus(status)))
-                .progressListener(progress -> UiExecutor.runOnUiThread(() -> progressPresenter.setProgress(progress)))
+                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBar.setStatusText(status)))
+                .progressListener(progress -> UiExecutor.runOnUiThread(() -> statusBar.setProgress(progress)))
                 .build();
 
         backgroundExecutor.submit(() -> importFileUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
-                    progressPresenter.hideProgress();
-                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + result.imported() + " книг");
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
+                    statusBar.setProgressVisible(false);
+                    statusBar.setStatusText("Імпорт завершено. Додано " + result.imported() + " книг");
+                    if (onComplete != null) onComplete.run();
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
-                        progressPresenter.hideProgress();
-                        statusBarPresenter.setStatus("Помилка імпорту: " + ex.getMessage());
+                        statusBar.setProgressVisible(false);
+                        statusBar.setStatusText("Помилка імпорту: " + ex.getMessage());
                     });
                     log.error("File import failed", ex);
                     return null;
                 });
+    }
+
+    public void importFile(Path file) {
+        importFile(file, null);
     }
 }

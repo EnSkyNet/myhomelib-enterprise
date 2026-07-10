@@ -1,0 +1,8 @@
+package com.myhomelibcorp.application.port.out.repository;
+
+import com.myhomelibcorp.application.dto.LibraryStatistics;
+
+public interface StatisticsRepository {
+    LibraryStatistics getStatistics();
+    void refreshStatistics();
+}

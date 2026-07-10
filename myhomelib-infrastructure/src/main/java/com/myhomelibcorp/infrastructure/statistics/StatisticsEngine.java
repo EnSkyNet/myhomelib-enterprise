@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.statistics;
 
+import com.myhomelibcorp.application.dto.LibraryStatistics;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteStatisticsRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,8 +20,11 @@ public class StatisticsEngine {
     }
 
     public void logStatistics() {
-        var stats = statisticsRepository.getStatistics();
-        log.info("📊 Library stats: books={}, authors={}, genres={}, series={}, groups={}",
-                stats.books(), stats.authors(), stats.genres(), stats.series(), stats.groups());
+        LibraryStatistics stats = statisticsRepository.getStatistics();
+        if (stats != null) {
+            log.info("📊 Library stats: books={}, authors={}, genres={}, series={}, groups={}",
+                    stats.getBooksCount(), stats.getAuthorsCount(),
+                    stats.getGenresCount(), stats.getSeriesCount(), 0);
+        }
     }
 }

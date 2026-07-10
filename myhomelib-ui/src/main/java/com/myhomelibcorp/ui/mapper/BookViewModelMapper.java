@@ -62,7 +62,6 @@ public class BookViewModelMapper {
         vm.setAnnotation(item.getAnnotation());
         vm.setLanguage(item.getLanguage());
 
-        // Розпарсити дати, якщо вони не порожні
         if (item.getCreatedAt() != null && !item.getCreatedAt().isEmpty()) {
             try {
                 vm.setCreatedAt(LocalDateTime.parse(item.getCreatedAt(), DATE_FORMATTER));
@@ -74,7 +73,6 @@ public class BookViewModelMapper {
             } catch (Exception ignored) {}
         }
 
-        // Інші поля за замовчуванням
         vm.setSequenceNumber(0);
         vm.setKeywords("");
         vm.setReview("");

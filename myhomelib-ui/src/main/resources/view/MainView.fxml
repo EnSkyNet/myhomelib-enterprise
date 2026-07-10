@@ -5,6 +5,7 @@
 <?import javafx.scene.layout.*?>
 
 <BorderPane xmlns:fx="http://javafx.com/fxml/1"
+            fx:id="mainPane"
             fx:controller="com.myhomelibcorp.ui.controller.MainController"
             style="-fx-background-color: #f0f0f0;">
 
@@ -17,7 +18,7 @@
                     <MenuItem text="Видалити колекцію" onAction="#handleDeleteCollection"/>
                     <MenuItem text="Вибрати колекцію" onAction="#handleSelectCollection"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Вихід" onAction="#handleExit"/>
+                    <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Група">
                     <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
@@ -25,19 +26,19 @@
                     <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
                 </Menu>
                 <Menu text="Редагування">
-                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata" disable="true"/>
-                    <MenuItem text="Видалити книгу" onAction="#handleDeleteBook" disable="true"/>
+                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
+                    <MenuItem text="Видалити книгу" onAction="#handleDeleteBook"/>
                 </Menu>
                 <Menu text="Вигляд">
                     <MenuItem text="Оновити" onAction="#handleRefresh"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Показати колонки..." onAction="#handleShowColumns" disable="true"/>
+                    <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
                 </Menu>
                 <Menu text="Інструменти">
                     <MenuItem text="Імпорт FB2..." onAction="#handleImportFb2"/>
                     <MenuItem text="Імпорт INPX..." onAction="#handleImportInpx"/>
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
-                    <MenuItem text="Експорт..." onAction="#handleExport" disable="true"/>
+                    <MenuItem text="Експорт..." onAction="#handleExport"/>
                     <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
                 </Menu>
                 <Menu text="Допомога">
@@ -45,88 +46,29 @@
                 </Menu>
             </MenuBar>
 
-            <!-- ToolBar -->
-            <ToolBar>
-                <Label text="Пошук:"/>
-                <TextField fx:id="searchField"
-                           promptText="Назва, автор, серія..."
-                           prefWidth="350"/>
-                <ProgressIndicator fx:id="searchIndicator"
-                                   visible="false"
-                                   prefWidth="20"
-                                   prefHeight="20"/>
-                <Region HBox.hgrow="ALWAYS"/>
-                <Button text="Імпорт FB2" onAction="#handleImportFb2"/>
-                <Button text="Оновити" onAction="#handleRefresh"/>
-            </ToolBar>
+            <!-- Пошук -->
+            <fx:include source="search.fxml"/>
         </VBox>
     </top>
 
+    <left>
+        <VBox style="-fx-padding: 5;">
+            <fx:include source="navigation.fxml"/>
+        </VBox>
+    </left>
+
     <center>
-        <SplitPane dividerPositions="0.25">
+        <SplitPane orientation="VERTICAL" dividerPositions="0.6">
             <items>
-                <!-- Ліва панель: вкладки -->
-                <TabPane tabClosingPolicy="UNAVAILABLE" style="-fx-padding: 5;">
-                    <Tab text="Автори">
-                        <TreeView fx:id="authorsTree" VBox.vgrow="ALWAYS"/>
-                    </Tab>
-                    <Tab text="Серії">
-                        <ListView fx:id="seriesListView" VBox.vgrow="ALWAYS"/>
-                    </Tab>
-                    <Tab text="Жанри">
-                        <TreeView fx:id="genresTree" VBox.vgrow="ALWAYS"/>
-                    </Tab>
-                    <Tab text="Групи">
-                        <ListView fx:id="groupsListView" VBox.vgrow="ALWAYS"/>
-                    </Tab>
-                    <Tab text="Колекції">
-                        <ListView fx:id="collectionsListView" VBox.vgrow="ALWAYS"/>
-                    </Tab>
-                </TabPane>
-
-                <!-- Права частина: вертикальне розділення -->
-                <SplitPane orientation="VERTICAL" dividerPositions="0.65">
-                    <items>
-                        <!-- Верхня права: таблиця книг -->
-                        <VBox spacing="5" style="-fx-padding: 10;">
-                            <HBox spacing="10" alignment="CENTER_LEFT">
-                                <Label text="Книги:" style="-fx-font-weight: bold;"/>
-                                <Label fx:id="bookCountLabel" text="0"/>
-                            </HBox>
-                            <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
-                                <fixedCellSize>28</fixedCellSize>
-                            </TableView>
-                        </VBox>
-
-                        <!-- Нижня права: BookInfoPanel -->
-                        <VBox fx:id="detailsPane"
-                              spacing="5"
-                              style="-fx-padding: 10;
-                                     -fx-background-color: #fafafa;
-                                     -fx-border-color: #cccccc;
-                                     -fx-border-width: 1 0 0 0;"
-                              VBox.vgrow="ALWAYS">
-                            <!-- BookInfoPanel буде вставлено програмно в MainController -->
-                        </VBox>
-                    </items>
-                </SplitPane>
+                <!-- Таблиця книг -->
+                <fx:include source="book-table.fxml"/>
+                <!-- Деталі -->
+                <fx:include source="details.fxml"/>
             </items>
         </SplitPane>
     </center>
 
     <bottom>
-        <HBox style="-fx-background-color: #e0e0e0;
-                     -fx-border-color: #cccccc;
-                     -fx-border-width: 1 0 0 0;"
-              spacing="10"
-              alignment="CENTER_LEFT"
-              prefHeight="30">
-            <padding>
-                <Insets bottom="4" left="10" right="10" top="4"/>
-            </padding>
-            <Label fx:id="statusLabel" text="Готово до роботи" HBox.hgrow="ALWAYS"/>
-            <Region HBox.hgrow="ALWAYS"/>
-            <ProgressBar fx:id="progressBar" visible="false" prefWidth="150"/>
-        </HBox>
+        <fx:include source="statusbar.fxml"/>
     </bottom>
 </BorderPane>

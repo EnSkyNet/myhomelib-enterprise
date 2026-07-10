@@ -54,4 +54,9 @@ public class CachedAuthorRepository implements AuthorRepository {
     public Optional<Author> findByFullName(String firstName, String lastName) {
         return delegate.findByFullName(firstName, lastName);
     }
+
+    @Override
+    public List<Author> findFavorites(int limit) {
+        return delegate.findFavorites(limit);
+    }
 }

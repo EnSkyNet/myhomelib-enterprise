@@ -1,8 +1,9 @@
 package com.myhomelibcorp.ui.model.navigation;
 
 /**
- * Запечатаний інтерфейс для всіх вузлів дерева навігації.
+ * Інтерфейс для всіх вузлів дерева навігації.
+ * Раніше був sealed, але через проблеми з розширенням зроблено звичайним інтерфейсом.
  */
-public sealed interface LibraryNode
-        permits CollectionNode, AuthorNode, SeriesNode, GenreNode, BookNode, GroupNode {
+public interface LibraryNode {
+    // Маркерний інтерфейс
 }

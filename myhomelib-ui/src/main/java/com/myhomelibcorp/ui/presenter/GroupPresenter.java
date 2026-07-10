@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.usecase.group.DeleteGroupUseCase;
 import com.myhomelibcorp.application.usecase.group.RenameGroupUseCase;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.collections.ObservableList;
 import javafx.scene.control.ListView;
 import lombok.RequiredArgsConstructor;
@@ -22,11 +23,8 @@ public class GroupPresenter {
     private final RenameGroupUseCase renameGroupUseCase;
     private final DeleteGroupUseCase deleteGroupUseCase;
     private final DialogService dialogService;
-    private final StatusBarPresenter statusBarPresenter;
+    private final ApplicationState appState;
 
-    /**
-     * Показує діалог створення групи.
-     */
     public void showAddGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
         Optional<String> result = dialogService.showTextInput(
                 "Додати групу",
@@ -39,7 +37,7 @@ public class GroupPresenter {
                 try {
                     createGroupUseCase.execute(name);
                     refreshGroupList(groupsListView);
-                    statusBarPresenter.setStatus("Групу '" + name + "' створено");
+                    appState.getStatusBar().setStatusText("Групу '" + name + "' створено");
                     if (onComplete != null) onComplete.run();
                 } catch (Exception e) {
                     dialogService.showError("Помилка", e.getMessage());
@@ -48,9 +46,6 @@ public class GroupPresenter {
         });
     }
 
-    /**
-     * Показує діалог редагування групи.
-     */
     public void showEditGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
         Group selected = groupsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
@@ -72,7 +67,7 @@ public class GroupPresenter {
                 try {
                     renameGroupUseCase.execute(selected.getId().asLong(), newName);
                     refreshGroupList(groupsListView);
-                    statusBarPresenter.setStatus("Групу перейменовано на '" + newName + "'");
+                    appState.getStatusBar().setStatusText("Групу перейменовано на '" + newName + "'");
                     if (onComplete != null) onComplete.run();
                 } catch (Exception e) {
                     dialogService.showError("Помилка", e.getMessage());
@@ -81,9 +76,6 @@ public class GroupPresenter {
         });
     }
 
-    /**
-     * Показує діалог підтвердження видалення групи.
-     */
     public void showDeleteGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
         Group selected = groupsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
@@ -102,7 +94,7 @@ public class GroupPresenter {
             try {
                 deleteGroupUseCase.execute(selected.getId().asLong());
                 refreshGroupList(groupsListView);
-                statusBarPresenter.setStatus("Групу видалено");
+                appState.getStatusBar().setStatusText("Групу видалено");
                 if (onComplete != null) onComplete.run();
             } catch (Exception e) {
                 dialogService.showError("Помилка", e.getMessage());
@@ -110,13 +102,8 @@ public class GroupPresenter {
         }
     }
 
-    /**
-     * Оновлює список груп у ListView.
-     */
     private void refreshGroupList(ListView<Group> groupsListView) {
-        // Список оновлюється через LibraryNavigationPresenter,
-        // який вже викликається з MainController.
-        // Тут просто повідомляємо про зміну.
-        // Але можна зробити безпосереднє оновлення, якщо передати ObservableList.
+        // Оновлення списку груп відбувається через NavigationViewModel, який оновлюється в NavigationController
+        // Можна викликати перезавантаження через сервіс
     }
 }

@@ -1,117 +1,76 @@
 package com.myhomelibcorp.ui.viewmodel;
 
-import com.myhomelibcorp.application.usecase.author.LoadAuthorsUseCase;
-import com.myhomelibcorp.application.usecase.genre.LoadGenresUseCase;
-import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
-import com.myhomelibcorp.application.usecase.series.LoadSeriesUseCase;
-import com.myhomelibcorp.domain.model.author.Author;
-import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.group.Group;
-import com.myhomelibcorp.ui.model.navigation.AuthorNode;
-import com.myhomelibcorp.ui.model.navigation.GenreNode;
-import com.myhomelibcorp.ui.model.navigation.LibraryNode;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import com.myhomelibcorp.ui.service.BackgroundExecutor;
-import javafx.application.Platform;
+import com.myhomelibcorp.application.dto.AuthorDto;
+import com.myhomelibcorp.application.dto.GenreDto;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
-import javafx.scene.control.TreeItem;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
 
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.Map;
-
-@Component
-@RequiredArgsConstructor
-@Slf4j
 public class NavigationViewModel {
 
-    private final LoadAuthorsUseCase loadAuthorsUseCase;
-    private final LoadSeriesUseCase loadSeriesUseCase;
-    private final LoadGenresUseCase loadGenresUseCase;
-    private final LoadGroupsUseCase loadGroupsUseCase;
-    private final BackgroundExecutor backgroundExecutor;
-
-    private final ObjectProperty<TreeItem<LibraryNode>> authorsRoot = new SimpleObjectProperty<>();
-    private final ObjectProperty<AuthorId> selectedAuthorId = new SimpleObjectProperty<>();
+    private final ObservableList<AuthorDto> authors = FXCollections.observableArrayList();
     private final ObservableList<String> seriesNames = FXCollections.observableArrayList();
-    private final ObjectProperty<TreeItem<LibraryNode>> genresRoot = new SimpleObjectProperty<>();
-    private final ObservableList<Group> groups = FXCollections.observableArrayList();
+    private final ObservableList<GenreDto> genres = FXCollections.observableArrayList();
 
-    // ... гетери ...
+    private final ObjectProperty<AuthorDto> selectedAuthor = new SimpleObjectProperty<>();
+    private final ObjectProperty<String> selectedSeries = new SimpleObjectProperty<>();
+    private final ObjectProperty<GenreDto> selectedGenre = new SimpleObjectProperty<>();
 
-    public void loadAuthors() {
-        backgroundExecutor.submit(() -> loadAuthorsUseCase.execute())
-                .thenAccept(authors -> Platform.runLater(() -> {
-                    TreeItem<LibraryNode> root = new TreeItem<>(null);
-                    root.setExpanded(true);
-                    authors.stream()
-                            .sorted(Comparator.comparing(Author::getLastName))
-                            .forEach(author -> root.getChildren().add(new TreeItem<>(new AuthorNode(author))));
-                    authorsRoot.set(root);
-                }))
-                .exceptionally(ex -> {
-                    log.error("Помилка завантаження авторів", ex);
-                    return null;
-                });
+    public ObservableList<AuthorDto> getAuthors() {
+        return authors;
     }
 
-    public void loadSeries() {
-        backgroundExecutor.submit(() -> loadSeriesUseCase.execute())
-                .thenAccept(names -> Platform.runLater(() -> seriesNames.setAll(names)))
-                .exceptionally(ex -> {
-                    log.error("Помилка завантаження серій", ex);
-                    return null;
-                });
+    public ObservableList<String> getSeriesNames() {
+        return seriesNames;
     }
 
-    public void loadGenres() {
-        backgroundExecutor.submit(() -> loadGenresUseCase.getAllGenresHierarchy())
-                .thenAccept(genres -> Platform.runLater(() -> {
-                    TreeItem<LibraryNode> root = new TreeItem<>(null);
-                    root.setExpanded(true);
-                    if (!genres.isEmpty()) {
-                        Map<String, TreeItem<LibraryNode>> nodeMap = new HashMap<>();
-                        for (Genre genre : genres) {
-                            nodeMap.put(genre.getId().asString(), new TreeItem<>(new GenreNode(genre)));
-                        }
-                        for (Genre genre : genres) {
-                            TreeItem<LibraryNode> node = nodeMap.get(genre.getId().asString());
-                            if (genre.getParentId() != null) {
-                                TreeItem<LibraryNode> parent = nodeMap.get(genre.getParentId().asString());
-                                if (parent != null) parent.getChildren().add(node);
-                                else root.getChildren().add(node);
-                            } else {
-                                root.getChildren().add(node);
-                            }
-                        }
-                    }
-                    genresRoot.set(root);
-                }))
-                .exceptionally(ex -> {
-                    log.error("Помилка завантаження жанрів", ex);
-                    return null;
-                });
+    public ObservableList<GenreDto> getGenres() {
+        return genres;
     }
 
-    public void loadGroups() {
-        backgroundExecutor.submit(() -> loadGroupsUseCase.execute())
-                .thenAccept(groupsList -> Platform.runLater(() -> groups.setAll(groupsList)))
-                .exceptionally(ex -> {
-                    log.error("Помилка завантаження груп", ex);
-                    return null;
-                });
+    public ObjectProperty<AuthorDto> selectedAuthorProperty() {
+        return selectedAuthor;
     }
 
-    public void refreshAll() {
-        loadAuthors();
-        loadSeries();
-        loadGenres();
-        loadGroups();
+    public ObjectProperty<String> selectedSeriesProperty() {
+        return selectedSeries;
+    }
+
+    public ObjectProperty<GenreDto> selectedGenreProperty() {
+        return selectedGenre;
+    }
+
+    public void setAuthors(java.util.List<AuthorDto> list) {
+        authors.setAll(list);
+    }
+
+    public void setSeriesNames(java.util.List<String> list) {
+        seriesNames.setAll(list);
+    }
+
+    public void setGenres(java.util.List<GenreDto> list) {
+        genres.setAll(list);
+    }
+
+    public void selectAuthor(AuthorDto author) {
+        selectedAuthor.set(author);
+    }
+
+    public void selectSeries(String series) {
+        selectedSeries.set(series);
+    }
+
+    public void selectGenre(GenreDto genre) {
+        selectedGenre.set(genre);
+    }
+
+    public void clear() {
+        authors.clear();
+        seriesNames.clear();
+        genres.clear();
+        selectedAuthor.set(null);
+        selectedSeries.set(null);
+        selectedGenre.set(null);
     }
 }

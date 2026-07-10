@@ -13,5 +13,10 @@ public interface BookQueryRepository {
     List<Book> find(BookQuery query);
     long count(BookQuery query);
     Optional<Book> findByTitleAndAuthor(String title, String authorLastName);
-    List<Book> findAll(); // новий метод
+    List<Book> findAll();
+
+    // Нові методи для Dashboard
+    List<Book> findRecent(int limit);
+    List<Book> findRecentlyAdded(int limit);
+    List<Book> findFavoriteAuthors(int limit);
 }

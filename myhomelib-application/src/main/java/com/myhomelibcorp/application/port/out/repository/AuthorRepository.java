@@ -12,4 +12,7 @@ public interface AuthorRepository {
     Author save(Author author);
     void deleteById(AuthorId id);
     Optional<Author> findByFullName(String firstName, String lastName);
+
+    // Новий метод
+    List<Author> findFavorites(int limit);
 }

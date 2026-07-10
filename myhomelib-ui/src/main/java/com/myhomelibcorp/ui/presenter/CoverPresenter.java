@@ -31,7 +31,6 @@ public class CoverPresenter {
         if (coverImageView == null || book == null) return;
         clearCover();
 
-        // Конвертуємо ViewModel у DTO для витягування обкладинки
         BookDto dto = new BookDto();
         dto.setId(book.getId());
         dto.setTitle(book.getTitle());

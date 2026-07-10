@@ -57,4 +57,10 @@ public class PostgresAuthorRepository implements AuthorRepository {
         log.warn("PostgresAuthorRepository.findByFullName() ще не реалізовано");
         return Optional.empty();
     }
+
+    @Override
+    public List<Author> findFavorites(int limit) {
+        log.warn("PostgresAuthorRepository.findFavorites() ще не реалізовано");
+        return List.of();
+    }
 }

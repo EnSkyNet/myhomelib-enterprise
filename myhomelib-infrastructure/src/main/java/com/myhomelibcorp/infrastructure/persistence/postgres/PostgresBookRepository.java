@@ -56,4 +56,22 @@ public class PostgresBookRepository implements BookQueryRepository {
         log.warn("PostgresBookRepository.findAll() not implemented yet");
         return List.of();
     }
+
+    @Override
+    public List<Book> findRecent(int limit) {
+        log.warn("PostgresBookRepository.findRecent() not implemented yet");
+        return List.of();
+    }
+
+    @Override
+    public List<Book> findRecentlyAdded(int limit) {
+        log.warn("PostgresBookRepository.findRecentlyAdded() not implemented yet");
+        return List.of();
+    }
+
+    @Override
+    public List<Book> findFavoriteAuthors(int limit) {
+        log.warn("PostgresBookRepository.findFavoriteAuthors() not implemented yet");
+        return List.of();
+    }
 }

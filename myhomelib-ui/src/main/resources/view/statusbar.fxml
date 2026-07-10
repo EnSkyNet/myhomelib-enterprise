@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.HBox?>
+
+<?import javafx.scene.layout.Region?>
+<HBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.statusbar.StatusBarController"
+      style="-fx-background-color: #e0e0e0; -fx-border-color: #cccccc; -fx-border-width: 1 0 0 0;"
+      spacing="10" alignment="CENTER_LEFT" prefHeight="30">
+
+    <padding><Insets bottom="4" left="10" right="10" top="4"/></padding>
+
+    <Label fx:id="statusLabel" text="Готово до роботи" HBox.hgrow="ALWAYS"/>
+    <Region HBox.hgrow="ALWAYS"/>
+    <Label fx:id="statsLabel" text="Книг: 0 | Авторів: 0 | Серій: 0"/>
+    <ProgressBar fx:id="progressBar" visible="false" prefWidth="150"/>
+</HBox>

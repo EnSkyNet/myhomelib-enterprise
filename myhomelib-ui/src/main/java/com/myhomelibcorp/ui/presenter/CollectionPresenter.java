@@ -9,6 +9,7 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.collections.ObservableList;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
@@ -29,9 +30,9 @@ public class CollectionPresenter {
     private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
-    private final StatusBarPresenter statusBarPresenter;
     private final CollectionManager collectionManager;
     private final DatabaseInitializer databaseInitializer;
+    private final ApplicationState appState;
 
     public void showCreateCollectionDialog(ObservableList<Collection> collectionList, Stage owner) {
         Optional<String> nameResult = dialogService.showTextInput("Створити колекцію",
@@ -69,22 +70,11 @@ public class CollectionPresenter {
                     collection.getRootFolder() != null ? collection.getRootFolder().toString() : null
             );
             collectionList.add(saved);
-            statusBarPresenter.setStatus("Колекцію '" + name + "' створено");
+            appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
-            // Перемикаємось на нову колекцію
             collectionManager.switchToCollection(saved);
-
-            // Ініціалізуємо БД нової колекції (Flyway міграції)
-            try {
-                databaseInitializer.initializeCurrentCollection();
-                statusBarPresenter.setStatus("Базу даних колекції ініціалізовано");
-            } catch (Exception e) {
-                log.error("Помилка ініціалізації БД колекції", e);
-                dialogService.showError("Помилка", "Не вдалося ініціалізувати БД колекції:\n" + e.getMessage());
-                // Можна видалити щойно створену колекцію, але залишаємо для діагностики
-            }
-
-            statusBarPresenter.setStatus("Переключено на колекцію: " + saved.getName());
+            databaseInitializer.initializeCurrentCollection();
+            appState.getStatusBar().setStatusText("Переключено на колекцію: " + saved.getName());
 
         } catch (Exception e) {
             dialogService.showError("Помилка", e.getMessage());
@@ -107,7 +97,7 @@ public class CollectionPresenter {
                     if (index >= 0) {
                         collectionList.set(index, renamed);
                     }
-                    statusBarPresenter.setStatus("Колекцію перейменовано на '" + newName + "'");
+                    appState.getStatusBar().setStatusText("Колекцію перейменовано на '" + newName + "'");
                 } catch (Exception e) {
                     dialogService.showError("Помилка", e.getMessage());
                 }
@@ -134,7 +124,7 @@ public class CollectionPresenter {
             try {
                 deleteCollectionUseCase.execute(collection.getId());
                 collectionList.remove(collection);
-                statusBarPresenter.setStatus("Колекцію видалено");
+                appState.getStatusBar().setStatusText("Колекцію видалено");
             } catch (Exception e) {
                 dialogService.showError("Помилка", e.getMessage());
             }

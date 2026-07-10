@@ -57,7 +57,6 @@ public class CachedBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> find(BookQuery query) {
-        // НЕ кешуємо результати пошуку/списків – завжди звертаємося до БД
         return delegate.find(query);
     }
 
@@ -75,4 +74,20 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     public List<Book> findAll() {
         return delegate.findAll();
     }
+
+    @Override
+    public List<Book> findRecent(int limit) {
+        return delegate.findRecent(limit);
+    }
+
+    @Override
+    public List<Book> findRecentlyAdded(int limit) {
+        return delegate.findRecentlyAdded(limit);
+    }
+
+    @Override
+    public List<Book> findFavoriteAuthors(int limit) {
+        return delegate.findFavoriteAuthors(limit);
+    }
+
 }

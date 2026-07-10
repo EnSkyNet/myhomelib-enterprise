@@ -139,4 +139,16 @@ public class SqliteAuthorRepository implements AuthorRepository {
             return Optional.empty();
         }
     }
+    @Override
+    public List<Author> findFavorites(int limit) {
+        // Проста реалізація: повертає авторів з найбільшою кількістю книг
+        String sql = """
+        SELECT a.* FROM authors a
+        JOIN book_authors ba ON a.id = ba.author_id
+        GROUP BY a.id
+        ORDER BY COUNT(ba.book_id) DESC
+        LIMIT ?
+        """;
+        return getJdbcTemplate().query(sql, authorRowMapper, limit);
+    }
 }

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.table.BookTableController"
+      spacing="5" style="-fx-padding: 10;">
+
+    <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
+        <columns>
+            <TableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
+            <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
+            <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
+            <TableColumn fx:id="genresColumn" text="Жанри" prefWidth="100"/>
+            <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="80"/>
+            <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+            <TableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>
+        </columns>
+    </TableView>
+</VBox>
