@@ -70,7 +70,7 @@ public class BookImportPresenter {
         backgroundExecutor.submit(() -> importDirectoryUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     progressPresenter.hideProgress();
-                    statusBarPresenter.setStatus("Імпорт завершено. Додано " + result.imported() + " книг");
+                    statusBarPresenter.setStatus("Імпорт каталогу завершено. Додано " + result.imported() + " книг");
                     if (onComplete != null) {
                         onComplete.run();
                     }
@@ -78,7 +78,7 @@ public class BookImportPresenter {
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
                         progressPresenter.hideProgress();
-                        statusBarPresenter.setStatus("Помилка імпорту: " + ex.getMessage());
+                        statusBarPresenter.setStatus("Помилка імпорту каталогу: " + ex.getMessage());
                     });
                     log.error("Directory import failed", ex);
                     return null;

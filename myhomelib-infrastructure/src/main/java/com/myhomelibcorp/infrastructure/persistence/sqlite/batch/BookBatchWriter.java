@@ -33,15 +33,15 @@ public class BookBatchWriter {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[19];
+            Object[] args = new Object[20];
             int idx = 0;
             args[idx++] = book.getId().asString();
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
             args[idx++] = book.getSeries();
             args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
             args[idx++] = book.getFileName() != null ? book.getFileName() : "";
-            args[idx++] = book.getFolder();
-            args[idx++] = book.getArchiveEntry();
+            args[idx++] = book.getFolder() != null ? book.getFolder() : "";
+            args[idx++] = book.getArchiveEntry() != null ? book.getArchiveEntry() : "";
             args[idx++] = book.getLanguage() != null ? book.getLanguage().toString() : null;
             args[idx++] = book.getFileSize();
             args[idx++] = book.getKeywords() != null ? book.getKeywords() : "";
@@ -60,6 +60,7 @@ public class BookBatchWriter {
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);
             args[idx++] = formattedCreated;
+            args[idx++] = book.getCollectionRoot() != null ? book.getCollectionRoot() : "";
             batchArgs.add(args);
         }
 
@@ -73,14 +74,14 @@ public class BookBatchWriter {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[19];
+            Object[] args = new Object[20];
             int idx = 0;
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
             args[idx++] = book.getSeries();
             args[idx++] = book.getSequenceNumber() != null ? book.getSequenceNumber() : 0;
             args[idx++] = book.getFileName() != null ? book.getFileName() : "";
-            args[idx++] = book.getFolder();
-            args[idx++] = book.getArchiveEntry();
+            args[idx++] = book.getFolder() != null ? book.getFolder() : "";
+            args[idx++] = book.getArchiveEntry() != null ? book.getArchiveEntry() : "";
             args[idx++] = book.getLanguage() != null ? book.getLanguage().toString() : null;
             args[idx++] = book.getFileSize();
             args[idx++] = book.getKeywords() != null ? book.getKeywords() : "";
@@ -99,6 +100,7 @@ public class BookBatchWriter {
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);
             args[idx++] = formattedCreated;
+            args[idx++] = book.getCollectionRoot() != null ? book.getCollectionRoot() : "";
             args[idx++] = book.getId().asString(); // WHERE id = ?
             batchArgs.add(args);
         }

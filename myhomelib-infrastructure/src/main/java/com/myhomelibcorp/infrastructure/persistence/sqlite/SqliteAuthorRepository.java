@@ -115,13 +115,27 @@ public class SqliteAuthorRepository implements AuthorRepository {
         log.debug("Автора видалено: id={}", id.asString());
     }
 
+    /**
+     * Пошук автора за ім'ям та прізвищем.
+     * Якщо знайдено кілька записів з однаковими first_name та last_name,
+     * повертає першого та логує попередження.
+     */
     @Override
     public Optional<Author> findByFullName(String firstName, String lastName) {
         String sql = "SELECT * FROM authors WHERE first_name = ? AND last_name = ?";
         try {
-            Author author = getJdbcTemplate().queryForObject(sql, authorRowMapper, firstName, lastName);
-            return Optional.of(author);
-        } catch (EmptyResultDataAccessException e) {
+            List<Author> authors = getJdbcTemplate().query(sql, authorRowMapper, firstName, lastName);
+            if (authors.isEmpty()) {
+                return Optional.empty();
+            } else if (authors.size() == 1) {
+                return Optional.of(authors.get(0));
+            } else {
+                log.warn("Знайдено {} авторів з ім'ям '{}' та прізвищем '{}', повертаємо першого",
+                        authors.size(), firstName, lastName);
+                return Optional.of(authors.get(0));
+            }
+        } catch (Exception e) {
+            log.error("Помилка пошуку автора за іменем: {} {}", firstName, lastName, e);
             return Optional.empty();
         }
     }

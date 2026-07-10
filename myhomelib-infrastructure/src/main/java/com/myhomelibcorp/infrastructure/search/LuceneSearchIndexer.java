@@ -79,7 +79,7 @@ public class LuceneSearchIndexer implements SearchIndexer {
     @Override
     public void indexAll(List<Book> books) {
         if (books == null || books.isEmpty()) return;
-        int batchSize = 500;
+        int batchSize = 5000;
         int count = 0;
         for (Book book : books) {
             indexBook(book);

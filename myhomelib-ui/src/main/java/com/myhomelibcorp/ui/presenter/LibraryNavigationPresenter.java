@@ -1,9 +1,9 @@
 package com.myhomelibcorp.ui.presenter;
 
-import com.myhomelibcorp.application.usecase.author.LoadAuthorsUseCase;
-import com.myhomelibcorp.application.usecase.genre.LoadGenresUseCase;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
+import com.myhomelibcorp.application.port.out.repository.GenreRepository;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
-import com.myhomelibcorp.application.usecase.series.LoadSeriesUseCase;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.group.Group;
@@ -31,22 +31,26 @@ import java.util.function.Consumer;
 @Slf4j
 public class LibraryNavigationPresenter {
 
-    private final LoadAuthorsUseCase loadAuthorsUseCase;
-    private final LoadSeriesUseCase loadSeriesUseCase;
-    private final LoadGenresUseCase loadGenresUseCase;
+    private final AuthorRepository authorRepository;
+    private final GenreRepository genreRepository;
+    private final SeriesRepository seriesRepository;
     private final LoadGroupsUseCase loadGroupsUseCase;
     private final BackgroundExecutor backgroundExecutor;
 
     public CompletableFuture<Void> loadAuthors(TreeView<LibraryNode> authorsTree, Consumer<AuthorId> onAuthorSelected) {
-        return backgroundExecutor.submit(() -> loadAuthorsUseCase.execute())
+        return backgroundExecutor.submit(() -> authorRepository.findAll())
                 .thenAccept(authors -> UiExecutor.runOnUiThread(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
                     authors.stream()
                             .sorted(Comparator.comparing(Author::getLastName))
-                            .forEach(author -> root.getChildren().add(new TreeItem<>(new AuthorNode(author))));
+                            .forEach(author -> {
+                                TreeItem<LibraryNode> item = new TreeItem<>(new AuthorNode(author));
+                                root.getChildren().add(item);
+                            });
                     authorsTree.setRoot(root);
                     authorsTree.setShowRoot(false);
+
                     authorsTree.getSelectionModel().selectedItemProperty().addListener(
                             (obs, old, newVal) -> {
                                 if (newVal != null && newVal.getValue() instanceof AuthorNode) {
@@ -58,17 +62,20 @@ public class LibraryNavigationPresenter {
                 }));
     }
 
-    public void loadSeries(ObservableList<String> seriesList) {
-        backgroundExecutor.submit(() -> loadSeriesUseCase.execute())
-                .thenAccept(names -> UiExecutor.runOnUiThread(() -> seriesList.setAll(names)))
-                .exceptionally(ex -> {
-                    log.error("Failed to load series", ex);
-                    return null;
-                });
+    public CompletableFuture<Void> refreshAuthors(TreeView<LibraryNode> authorsTree, Consumer<AuthorId> onAuthorSelected) {
+        authorsTree.setRoot(null);
+        return loadAuthors(authorsTree, onAuthorSelected).thenRun(() -> {
+            UiExecutor.runOnUiThread(authorsTree::refresh);
+        });
     }
 
-    public void loadGenres(TreeView<LibraryNode> genresTree, Consumer<String> onGenreSelected) {
-        backgroundExecutor.submit(() -> loadGenresUseCase.getAllGenresHierarchy())
+    public CompletableFuture<Void> loadSeries(ObservableList<String> seriesList) {
+        return backgroundExecutor.submit(() -> seriesRepository.getAllSeriesNames())
+                .thenAccept(names -> UiExecutor.runOnUiThread(() -> seriesList.setAll(names)));
+    }
+
+    public CompletableFuture<Void> loadGenres(TreeView<LibraryNode> genresTree, Consumer<String> onGenreSelected) {
+        return backgroundExecutor.submit(() -> genreRepository.getAllGenresHierarchy())
                 .thenAccept(genres -> UiExecutor.runOnUiThread(() -> {
                     TreeItem<LibraryNode> root = new TreeItem<>(null);
                     root.setExpanded(true);
@@ -81,11 +88,8 @@ public class LibraryNavigationPresenter {
                             TreeItem<LibraryNode> node = nodeMap.get(genre.getId().asString());
                             if (genre.getParentId() != null) {
                                 TreeItem<LibraryNode> parent = nodeMap.get(genre.getParentId().asString());
-                                if (parent != null) {
-                                    parent.getChildren().add(node);
-                                } else {
-                                    root.getChildren().add(node);
-                                }
+                                if (parent != null) parent.getChildren().add(node);
+                                else root.getChildren().add(node);
                             } else {
                                 root.getChildren().add(node);
                             }
@@ -101,19 +105,29 @@ public class LibraryNavigationPresenter {
                                 }
                             }
                     );
-                }))
-                .exceptionally(ex -> {
-                    log.error("Failed to load genres", ex);
-                    return null;
-                });
+                }));
     }
 
-    public void loadGroups(ObservableList<Group> groupsList) {
-        backgroundExecutor.submit(() -> loadGroupsUseCase.execute())
-                .thenAccept(groups -> UiExecutor.runOnUiThread(() -> groupsList.setAll(groups)))
-                .exceptionally(ex -> {
-                    log.error("Failed to load groups", ex);
-                    return null;
-                });
+    public CompletableFuture<Void> loadGroups(ObservableList<Group> groupsList) {
+        return backgroundExecutor.submit(() -> loadGroupsUseCase.execute())
+                .thenAccept(groups -> UiExecutor.runOnUiThread(() -> groupsList.setAll(groups)));
+    }
+
+    public CompletableFuture<Void> refreshAll(
+            TreeView<LibraryNode> authorsTree,
+            ObservableList<String> seriesList,
+            TreeView<LibraryNode> genresTree,
+            ObservableList<Group> groupsList
+    ) {
+        authorsTree.setRoot(null);
+        genresTree.setRoot(null);
+
+        CompletableFuture<Void> authorsFuture = loadAuthors(authorsTree, id -> {});
+        CompletableFuture<Void> seriesFuture = loadSeries(seriesList);
+        CompletableFuture<Void> genresFuture = loadGenres(genresTree, code -> {});
+        CompletableFuture<Void> groupsFuture = loadGroups(groupsList);
+
+        return CompletableFuture.allOf(authorsFuture, seriesFuture, genresFuture, groupsFuture)
+                .thenRun(() -> log.info("✅ Навігацію повністю перезавантажено"));
     }
 }

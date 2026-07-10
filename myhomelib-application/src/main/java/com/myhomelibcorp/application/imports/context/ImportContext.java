@@ -19,7 +19,7 @@ public class ImportContext {
     DoubleConsumer progressListener;
     Consumer<String> statusConsumer; // додано
     AtomicBoolean cancelFlag;
-    @Builder.Default int batchSize = 500;
+    @Builder.Default int batchSize = 5000;
 
     public static ImportContext defaultContext() {
         return ImportContext.builder()

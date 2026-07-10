@@ -1,9 +1,18 @@
 package com.myhomelibcorp;
 
+import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
+import com.myhomelibcorp.application.port.out.repository.GenreRepository;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
+import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
+import com.myhomelibcorp.infrastructure.cache.GlobalCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
 import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
+import com.myhomelibcorp.infrastructure.warmup.BackgroundWarmup;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -73,6 +82,32 @@ public class MyHomeLibApp extends Application {
                 initializer.initializeCurrentCollection();
             }
 
+            // ------ Ініціалізація кешів та залежних компонентів ------
+            GlobalCache globalCache = context.getBean(GlobalCache.class);
+            globalCache.initialize();
+
+            DictionaryCache dictCache = context.getBean(DictionaryCache.class);
+            AuthorRepository authorRepo = context.getBean(AuthorRepository.class);
+            GenreRepository genreRepo = context.getBean(GenreRepository.class);
+            SeriesRepository seriesRepo = context.getBean(SeriesRepository.class);
+            GroupRepository groupRepo = context.getBean(GroupRepository.class);
+            dictCache.loadAuthors(authorRepo.findAll());
+            dictCache.loadGenres(genreRepo.findAll());
+            dictCache.loadSeries(seriesRepo.findAll());
+            dictCache.loadGroups(groupRepo.findAll());
+
+            DuplicateDetector duplicateDetector = context.getBean(DuplicateDetector.class);
+            duplicateDetector.loadExistingKeys();
+
+            InpxImporter inpxImporter = context.getBean(InpxImporter.class);
+            inpxImporter.initialize();
+
+            // ------ Запуск BackgroundWarmup ------
+            BackgroundWarmup backgroundWarmup = context.getBean(BackgroundWarmup.class);
+            backgroundWarmup.warmup();
+
+            log.info("Всі кеші та компоненти ініціалізовано");
+
             // ------ Завантаження FXML ------
             log.info("Спроба завантажити /view/MainView.fxml");
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
@@ -100,7 +135,6 @@ public class MyHomeLibApp extends Application {
 
         } catch (Exception e) {
             log.error("КРИТИЧНА ПОМИЛКА ПРИ ЗАПУСКУ JavaFX", e);
-            // Показуємо діалог з помилкою
             Platform.runLater(() -> {
                 javafx.scene.control.Alert alert = new javafx.scene.control.Alert(
                         javafx.scene.control.Alert.AlertType.ERROR);
@@ -109,7 +143,6 @@ public class MyHomeLibApp extends Application {
                 alert.setContentText("Деталі: " + e.getMessage() + "\n\nДивіться логи для повної інформації.");
                 alert.showAndWait();
             });
-            // Завершуємо програму після показу помилки
             Platform.exit();
         }
     }

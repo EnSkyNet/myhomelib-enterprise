@@ -28,16 +28,12 @@ public class CollectionManager {
         this.metadataJdbcTemplate = metadataJdbcTemplate;
     }
 
-    /**
-     * Перемикає на вказану колекцію.
-     */
     public synchronized void switchToCollection(Collection collection) {
         if (collection == null) {
             log.warn("Спроба переключитися на null колекцію");
             return;
         }
 
-        // Закриваємо старий DataSource
         DataSource oldDs = currentDataSource.getAndSet(null);
         if (oldDs instanceof HikariDataSource) {
             try {
@@ -50,7 +46,6 @@ public class CollectionManager {
 
         currentCollection.set(collection);
 
-        // Визначаємо шлях до БД
         String dbPath = collection.getDbFile();
         if (dbPath == null || dbPath.isBlank()) {
             String defaultPath = System.getProperty("user.home") + "/.myhomelibcorp/libraries/" + collection.getId() + ".db";
@@ -60,7 +55,6 @@ public class CollectionManager {
         Path path = Paths.get(dbPath);
         path.getParent().toFile().mkdirs();
 
-        // Створюємо новий DataSource
         HikariDataSource ds = new HikariDataSource();
         ds.setJdbcUrl("jdbc:sqlite:" + path.toAbsolutePath());
         ds.setDriverClassName("org.sqlite.JDBC");
@@ -94,9 +88,6 @@ public class CollectionManager {
         return currentCollection.get() != null && currentJdbcTemplate.get() != null;
     }
 
-    /**
-     * Закриває поточне підключення.
-     */
     public synchronized void closeCurrentCollection() {
         DataSource ds = currentDataSource.getAndSet(null);
         if (ds instanceof HikariDataSource) {

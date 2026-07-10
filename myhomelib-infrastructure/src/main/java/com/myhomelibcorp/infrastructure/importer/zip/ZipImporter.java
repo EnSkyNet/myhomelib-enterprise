@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.importer.zip;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -10,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.nio.charset.Charset;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedList;
@@ -31,12 +33,13 @@ public class ZipImporter implements BookImporterPort {
 
     private static final int MAX_UNPACK_DEPTH = 5;
 
-    // Порядок кодувань узгоджено з ZipArchiveReader
+    // Пріоритет кодувань: спочатку CP866, потім Windows-1251, потім UTF-8, потім інші
     private static final Charset[] ZIP_CHARSETS = {
-            Charset.forName("Windows-1251"),
             Charset.forName("CP866"),
+            Charset.forName("Windows-1251"),
             Charset.forName("UTF-8"),
-            Charset.forName("IBM-866")
+            Charset.forName("IBM-866"),
+            Charset.forName("KOI8-R")
     };
 
     @Override
@@ -47,16 +50,20 @@ public class ZipImporter implements BookImporterPort {
 
     @Override
     public Stream<Book> importBooks(Path file) {
-        return importBooksInternal(file, 0);
+        return importBooksInternal(file, 0, null);
     }
 
-    private Stream<Book> importBooksInternal(Path file, int depth) {
+    private Stream<Book> importBooksInternal(Path file, int depth, String collectionRoot) {
         if (depth > MAX_UNPACK_DEPTH) {
             log.warn("Перевищено максимальну глибину розпакування ZIP ({}): {}", MAX_UNPACK_DEPTH, file);
             return Stream.empty();
         }
 
-        log.info("Імпорт ZIP-архіву (глибина {}): {}", depth, file);
+        if (collectionRoot == null) {
+            collectionRoot = file.getParent() != null ? file.getParent().toString() : "";
+        }
+
+        log.info("Імпорт ZIP-архіву (глибина {}, root: {}): {}", depth, collectionRoot, file);
         String zipFileName = file.getFileName().toString();
         String zipFolder = file.getParent() != null ? file.getParent().toString() : "";
 
@@ -67,7 +74,7 @@ public class ZipImporter implements BookImporterPort {
                 ZipInputStream zis = new ZipInputStream(fis, charset);
                 log.debug("Спроба розпакувати з кодуванням: {}", charset);
 
-                ZipIterator iterator = new ZipIterator(zis, depth + 1, zipFileName, zipFolder, charset);
+                ZipIterator iterator = new ZipIterator(zis, depth + 1, zipFileName, zipFolder, charset, collectionRoot);
                 Spliterator<Book> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED);
                 return StreamSupport.stream(spliterator, false);
             } catch (Exception e) {
@@ -91,16 +98,18 @@ public class ZipImporter implements BookImporterPort {
         private final String zipFileName;
         private final String zipFolder;
         private final Charset charset;
+        private final String collectionRoot;
         private final Queue<Book> bookQueue = new LinkedList<>();
         private boolean finished;
         private int entryCount = 0;
 
-        public ZipIterator(ZipInputStream zis, int nextDepth, String zipFileName, String zipFolder, Charset charset) {
+        public ZipIterator(ZipInputStream zis, int nextDepth, String zipFileName, String zipFolder, Charset charset, String collectionRoot) {
             this.zis = zis;
             this.nextDepth = nextDepth;
             this.zipFileName = zipFileName;
             this.zipFolder = zipFolder;
             this.charset = charset;
+            this.collectionRoot = collectionRoot;
             processNextEntry();
         }
 
@@ -126,70 +135,85 @@ public class ZipImporter implements BookImporterPort {
                     return false;
                 }
                 entryCount++;
-                String entryName = entry.getName();
-                // Для відображення та пошуку імпортера використовуємо decodedName,
-                // але для archiveEntry зберігаємо оригінальне ім'я.
-                String decodedName = decodeEntryName(entryName);
-                String fileName = Path.of(decodedName).getFileName().toString();
+                String rawEntryName = entry.getName();
+
+                // ---- Спроба декодування з різними кодуваннями ----
+                String bestDecoded = decodeEntryName(rawEntryName);
+                // Отримуємо ім'я файлу без шляху (де кодоване)
+                String displayFileName = Path.of(bestDecoded).getFileName().toString();
+
+                // Якщо декодоване ім'я все ще містить кракозябри, використовуємо оригінальне як резерв
+                if (containsGibberish(displayFileName)) {
+                    displayFileName = Path.of(rawEntryName).getFileName().toString();
+                    log.debug("Використовуємо оригінальне ім'я (резерв): {}", displayFileName);
+                }
+
+                log.debug("RAW entry name: {}, display file name: {}", rawEntryName, displayFileName);
 
                 if (entry.isDirectory()) {
-                    log.trace("Пропускаємо директорію: {}", decodedName);
                     zis.closeEntry();
                     return processNextEntry();
                 }
 
-                log.debug("Обробка запису #{}: {}", entryCount, decodedName);
-
-                Path tempPath = Path.of(decodedName);
+                // ---- ДЛЯ ПОШУКУ ІМПОРТЕРА ВИКОРИСТОВУЄМО ОРИГІНАЛЬНЕ ІМ'Я (rawEntryName) ----
+                Path tempPath = Path.of(rawEntryName);
                 BookImporterPort importer;
                 try {
                     importer = importerRegistry.findImporter(tempPath);
                 } catch (IllegalArgumentException e) {
-                    log.debug("Немає імпортера для запису: {}", decodedName);
-                    zis.closeEntry();
-                    return processNextEntry();
+                    // Якщо не знайдено, спробуємо з декодованим (на випадок)
+                    try {
+                        Path altPath = Path.of(bestDecoded);
+                        importer = importerRegistry.findImporter(altPath);
+                        if (importer != null) {
+                            log.debug("Імпортер знайдено за декодованим ім'ям: {}", bestDecoded);
+                        }
+                    } catch (IllegalArgumentException e2) {
+                        log.warn("Немає імпортера для запису: {} (raw: {})", bestDecoded, rawEntryName);
+                        zis.closeEntry();
+                        return processNextEntry();
+                    }
                 }
 
                 if (importer == null) {
+                    log.warn("Імпортер не знайдено для запису: {}", rawEntryName);
                     zis.closeEntry();
                     return processNextEntry();
                 }
 
+                // ---- Робота з імпортером ----
                 if (importer instanceof ZipImporter) {
-                    Path tempFile = Files.createTempFile("zip_nested_", "_" + fileName);
+                    Path tempFile = Files.createTempFile("zip_nested_", "_" + displayFileName);
                     try {
                         Files.copy(zis, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                         zis.closeEntry();
-                        try (Stream<Book> nestedStream = ((ZipImporter) importer).importBooksInternal(tempFile, nextDepth)) {
+                        try (Stream<Book> nestedStream = ((ZipImporter) importer).importBooksInternal(tempFile, nextDepth, collectionRoot)) {
                             nestedStream.forEach(bookQueue::add);
                         }
                     } finally {
                         Files.deleteIfExists(tempFile);
                     }
                 } else {
-                    Path tempFile = Files.createTempFile("zip_import_", "_" + fileName);
+                    Path tempFile = Files.createTempFile("zip_import_", "_" + displayFileName);
                     try {
                         Files.copy(zis, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                         zis.closeEntry();
-                        String originalName = fileName;
-                        String folder = zipFolder + java.io.File.separator + zipFileName;
 
-                        // Зберігаємо ОРИГІНАЛЬНЕ ім'я запису (entry.getName()) як archiveEntry
-                        final String archiveEntryOriginal = entryName;
+                        // Фінальні змінні для лямбди
+                        final String finalDisplayFileName = displayFileName;
+                        final String finalFolder = zipFolder + java.io.File.separator + zipFileName;
+                        final String finalArchiveEntry = rawEntryName;
+                        final String finalCollectionRoot = collectionRoot;
 
                         try (Stream<Book> bookStream = importer.importBooks(tempFile)) {
                             bookStream.forEach(book -> {
-                                String currentFileName = book.getFileName();
-                                if (currentFileName == null || currentFileName.startsWith("zip_import_") || currentFileName.isEmpty()) {
-                                    currentFileName = originalName;
-                                }
-
-                                var newFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
-                                        currentFileName,
-                                        folder,
-                                        archiveEntryOriginal, // оригінал без перекодування
+                                // Зберігаємо displayFileName (де кодоване) для метаданих, archiveEntry – оригінальне
+                                BookFile newFile = new BookFile(
+                                        finalDisplayFileName,
+                                        finalFolder,
+                                        finalArchiveEntry,
                                         book.getFileSize(),
-                                        null
+                                        finalCollectionRoot
                                 );
 
                                 Book enrichedBook = Book.builder()
@@ -225,34 +249,76 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
-        private String decodeEntryName(String name) {
-            try {
-                if (isValidUtf8(name)) {
-                    return name;
+        /**
+         * Декодує ім'я запису, перебираючи всі доступні кодування.
+         * Повертає рядок з найбільшою кількістю кириличних символів.
+         */
+        private String decodeEntryName(String rawName) {
+            String best = rawName;
+            int bestScore = -1;
+            String bestCharset = "original";
+
+            // Кодування для спроби: CP866, Windows-1251, UTF-8, KOI8-R
+            Charset[] charsetsToTry = {
+                    Charset.forName("CP866"),
+                    Charset.forName("Windows-1251"),
+                    StandardCharsets.UTF_8,
+                    Charset.forName("KOI8-R"),
+                    Charset.forName("IBM-866")
+            };
+
+            for (Charset cs : charsetsToTry) {
+                try {
+                    // Перетворюємо з поточного кодування в UTF-8
+                    String decoded = new String(rawName.getBytes(cs), StandardCharsets.UTF_8);
+                    int score = countCyrillic(decoded);
+                    log.trace("Charset {} -> '{}' (score={})", cs, decoded, score);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        best = decoded;
+                        bestCharset = cs.name();
+                    }
+                } catch (Exception e) {
+                    log.trace("Помилка декодування з {}", cs, e);
                 }
-                byte[] bytes = name.getBytes(charset);
-                return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
-            } catch (Exception e) {
-                log.warn("Не вдалося декодувати ім'я запису: {}", name, e);
-                return name;
             }
+
+            // Якщо жодне кодування не дало кирилиці, пробуємо windows-1252 як резерв
+            if (bestScore <= 0) {
+                try {
+                    String decoded = new String(rawName.getBytes(Charset.forName("windows-1252")), StandardCharsets.UTF_8);
+                    int score = countCyrillic(decoded);
+                    if (score > bestScore) {
+                        best = decoded;
+                        bestCharset = "windows-1252";
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            log.debug("Обрано декодування '{}' (кодування: {}, score={})", best, bestCharset, bestScore);
+            return best;
         }
 
-        private boolean isValidUtf8(String s) {
+        private int countCyrillic(String s) {
+            int count = 0;
             for (char c : s.toCharArray()) {
-                if (c > 0x7F) {
-                    try {
-                        String test = new String(s.getBytes(java.nio.charset.StandardCharsets.UTF_8),
-                                java.nio.charset.StandardCharsets.UTF_8);
-                        if (!test.equals(s)) {
-                            return false;
-                        }
-                    } catch (Exception e) {
-                        return false;
-                    }
+                if (c >= 0x0400 && c <= 0x04FF) {
+                    count++;
                 }
             }
-            return true;
+            return count;
+        }
+
+        private boolean containsGibberish(String s) {
+            int nonAscii = 0;
+            int total = 0;
+            for (char c : s.toCharArray()) {
+                total++;
+                if (c > 0x7F) {
+                    nonAscii++;
+                }
+            }
+            return total > 0 && nonAscii > total * 0.3 && countCyrillic(s) < 2;
         }
     }
 }

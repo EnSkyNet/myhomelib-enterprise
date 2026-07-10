@@ -1,3 +1,5 @@
+// Файл: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/CoverReaderImpl.java
+// (додано логування – повний код)
 package com.myhomelibcorp.infrastructure.cover;
 
 import com.myhomelibcorp.application.dto.BookDto;
@@ -84,7 +86,6 @@ public class CoverReaderImpl implements CoverReader {
 
         log.debug("Знайдено {} записів у архіві", entries.size());
 
-        // 1. Пошук за archiveEntry (точний збіг)
         String archiveEntry = book.getArchiveEntry();
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             log.debug("Шукаємо за archiveEntry: {}", archiveEntry);
@@ -92,7 +93,6 @@ public class CoverReaderImpl implements CoverReader {
                 log.info("Знайдено запис за archiveEntry: {}", archiveEntry);
                 return readAndParseEntry(archivePath, archiveEntry);
             }
-            // Якщо archiveEntry містить шлях, пробуємо тільки ім'я файлу
             String simpleName = Paths.get(archiveEntry).getFileName().toString();
             if (!simpleName.equals(archiveEntry)) {
                 Optional<String> found = entries.stream()
@@ -105,7 +105,6 @@ public class CoverReaderImpl implements CoverReader {
             }
         }
 
-        // 2. Пошук за fileName
         String fileName = book.getFileName();
         if (fileName != null && !fileName.isBlank()) {
             log.debug("Шукаємо за fileName: {}", fileName);
@@ -118,7 +117,6 @@ public class CoverReaderImpl implements CoverReader {
             }
         }
 
-        // 3. Пошук за назвою книги (нормалізованою)
         String title = book.getTitle();
         if (title != null && !title.isBlank()) {
             log.debug("Шукаємо за назвою книги: {}", title);
@@ -140,7 +138,6 @@ public class CoverReaderImpl implements CoverReader {
             }
         }
 
-        // 4. Перший FB2 (fallback)
         log.info("Не знайдено конкретного FB2, використовуємо перший FB2");
         Optional<String> firstFb2 = entries.stream()
                 .filter(e -> e.toLowerCase().endsWith(".fb2"))
@@ -150,7 +147,6 @@ public class CoverReaderImpl implements CoverReader {
             return readAndParseEntry(archivePath, firstFb2.get());
         }
 
-        // 5. Будь-яке зображення
         log.info("Шукаємо будь-яке зображення в архіві");
         Optional<InputStream> imageStream = archiveReader.findFirstEntry(archivePath,
                 e -> e.toLowerCase().matches(".*\\.(jpg|jpeg|png|gif)$"));

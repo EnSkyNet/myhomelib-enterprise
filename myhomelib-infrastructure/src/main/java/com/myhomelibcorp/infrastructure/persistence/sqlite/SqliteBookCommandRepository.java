@@ -35,8 +35,34 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         return collectionManager.getCurrentJdbcTemplate();
     }
 
-    @Override
+    // ==================== PRAGMA ДЛЯ ШВИДКОГО ІМПОРТУ ====================
 
+    /**
+     * Встановлює PRAGMA для максимальної швидкості вставки.
+     * Викликати ПЕРЕД великим батчевим імпортом.
+     */
+    public void setPragmaForBulkInsert() {
+        JdbcTemplate jt = getJdbcTemplate();
+        jt.execute("PRAGMA synchronous = OFF");
+        jt.execute("PRAGMA journal_mode = MEMORY");
+        jt.execute("PRAGMA temp_store = MEMORY");
+        jt.execute("PRAGMA cache_size = -500000"); // 500 MB
+        log.debug("PRAGMA встановлено для швидкого імпорту");
+    }
+
+    /**
+     * Відновлює стандартні PRAGMA після імпорту.
+     */
+    public void resetPragma() {
+        JdbcTemplate jt = getJdbcTemplate();
+        jt.execute("PRAGMA synchronous = NORMAL");
+        jt.execute("PRAGMA journal_mode = DELETE");
+        log.debug("PRAGMA відновлено до стандартних");
+    }
+
+    // ==================== ОСНОВНІ МЕТОДИ ====================
+
+    @Override
     public Book save(Book book) {
         getJdbcTemplate().update(connection -> {
             PreparedStatement ps = connection.prepareStatement(BookQueries.INSERT_OR_UPDATE_BOOK);
@@ -66,6 +92,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);
             ps.setString(idx++, formattedCreated);
+            ps.setString(idx++, book.getCollectionRoot() != null ? book.getCollectionRoot() : ""); // нове поле
             return ps;
         });
 
@@ -102,13 +129,11 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     }
 
     @Override
-
     public void updateRate(BookId bookId, int rate) {
         getJdbcTemplate().update(BookQueries.UPDATE_RATE, rate, bookId.asString());
     }
 
     @Override
-
     public void updateProgress(BookId bookId, int progress) {
         getJdbcTemplate().update(BookQueries.UPDATE_PROGRESS, progress, bookId.asString());
     }

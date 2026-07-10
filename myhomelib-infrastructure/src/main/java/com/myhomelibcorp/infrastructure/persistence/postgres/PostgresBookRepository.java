@@ -50,4 +50,10 @@ public class PostgresBookRepository implements BookQueryRepository {
         log.warn("PostgresBookRepository.findByTitleAndAuthor() not implemented yet");
         return Optional.empty();
     }
+
+    @Override
+    public List<Book> findAll() {
+        log.warn("PostgresBookRepository.findAll() not implemented yet");
+        return List.of();
+    }
 }

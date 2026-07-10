@@ -50,8 +50,7 @@ public class Book {
     public String getFolder() { return file != null ? file.getFolder() : ""; }
     public String getArchiveEntry() { return file != null ? file.getArchiveEntry() : ""; }
     public long getFileSize() { return file != null ? file.getFileSize() : 0; }
-    public String getCollectionRoot() { return file != null ? file.getCollectionRoot() : ""; }
-
+    public String getCollectionRoot() {return file != null ? file.getCollectionRoot() : "";    }
     public String getAnnotation() { return metadata != null ? metadata.getAnnotation() : ""; }
     public String getKeywords() { return metadata != null ? metadata.getKeywords() : ""; }
     public LanguageCode getLanguage() { return metadata != null ? metadata.getLanguage() : LanguageCode.of("uk"); }
@@ -201,4 +200,5 @@ public class Book {
             return new Book(this);
         }
     }
+
 }

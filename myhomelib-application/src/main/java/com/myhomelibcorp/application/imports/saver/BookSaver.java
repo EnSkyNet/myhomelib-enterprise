@@ -1,12 +1,11 @@
 package com.myhomelibcorp.application.imports.saver;
 
-import com.myhomelibcorp.application.event.BookImportedEvent;
+import com.myhomelibcorp.application.event.BooksImportedBatchEvent;
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -14,6 +13,7 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -29,11 +29,13 @@ public class BookSaver {
     @Qualifier("collectionTransactionTemplate")
     private final TransactionTemplate transactionTemplate;
 
+    /**
+     * Одиночне збереження – використовується рідко.
+     */
     public boolean saveBook(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
-        if (book == null) {
-            return false;
-        }
+        if (book == null) return false;
 
+        // Перевірка дубліката з кешем
         if (policy == DuplicatePolicy.SKIP && duplicateDetector.isDuplicate(book)) {
             log.debug("Дублікат пропущено: {}", book.getTitle());
             return false;
@@ -42,15 +44,17 @@ public class BookSaver {
         if (policy == DuplicatePolicy.REPLACE) {
             var existing = duplicateDetector.findDuplicate(book);
             if (existing.isPresent()) {
-                log.debug("Дублікат замінено: {}", book.getTitle());
                 transactionTemplate.execute(status -> {
                     bookCommandRepository.deleteById(existing.get().getId());
                     bookCommandRepository.save(book);
                     return null;
                 });
+                duplicateDetector.addKey(book);
                 if (indexAfterSave) {
-                    eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
+                    searchIndexer.indexBook(book);
+                    searchIndexer.commit();
                 }
+                eventPublisher.publishEvent(new BooksImportedBatchEvent(List.of(book)));
                 return true;
             }
         }
@@ -58,15 +62,17 @@ public class BookSaver {
         if (policy == DuplicatePolicy.MERGE) {
             var existing = duplicateDetector.findDuplicate(book);
             if (existing.isPresent()) {
-                log.debug("Дублікат об'єднано: {}", book.getTitle());
                 Book merged = mergeBooks(existing.get(), book);
                 transactionTemplate.execute(status -> {
                     bookCommandRepository.save(merged);
                     return null;
                 });
+                duplicateDetector.addKey(merged);
                 if (indexAfterSave) {
-                    eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(merged)));
+                    searchIndexer.indexBook(merged);
+                    searchIndexer.commit();
                 }
+                eventPublisher.publishEvent(new BooksImportedBatchEvent(List.of(merged)));
                 return true;
             }
         }
@@ -76,57 +82,62 @@ public class BookSaver {
             bookCommandRepository.save(book);
             return null;
         });
+        duplicateDetector.addKey(book);
         if (indexAfterSave) {
-            eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
+            searchIndexer.indexBook(book);
+            searchIndexer.commit();
         }
+        eventPublisher.publishEvent(new BooksImportedBatchEvent(List.of(book)));
         log.debug("Книгу збережено: {}", book.getTitle());
         return true;
     }
 
+    /**
+     * Батчеве збереження – основний метод для великих імпортів.
+     */
     public int saveBatch(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
-        if (books == null || books.isEmpty()) {
-            return 0;
-        }
+        if (books == null || books.isEmpty()) return 0;
 
-        List<Book> booksToSave = books.stream()
-                .filter(book -> {
-                    // Якщо політика SAVE_AS_NEW – пропускаємо перевірку дублікатів
-                    if (policy == DuplicatePolicy.SAVE_AS_NEW) {
-                        return true;
-                    }
-                    if (policy == DuplicatePolicy.SKIP && duplicateDetector.isDuplicate(book)) {
-                        log.debug("Дублікат пропущено (батч): {}", book.getTitle());
-                        return false;
-                    }
-                    return true;
-                })
-                .toList();
+        List<Book> booksToSave;
+
+        // Якщо політика SKIP – фільтруємо за допомогою кешу (O(1))
+        if (policy == DuplicatePolicy.SKIP) {
+            booksToSave = new ArrayList<>();
+            for (Book book : books) {
+                if (!duplicateDetector.isDuplicate(book)) {
+                    booksToSave.add(book);
+                } else {
+                    log.debug("Дублікат пропущено (батч): {}", book.getTitle());
+                }
+            }
+        } else {
+            booksToSave = books; // для інших політик зберігаємо всі, але дублікати будуть замінені/об'єднані
+        }
 
         if (booksToSave.isEmpty()) {
+            log.debug("Батч не містить нових книг");
             return 0;
         }
 
-        // ---- Збереження в БД у транзакції ----
+        // ---- Збереження в БД у транзакції (один COMMIT) ----
         transactionTemplate.execute(status -> {
             bookCommandRepository.saveBatch(booksToSave);
             return null;
         });
 
-        // ---- Індексація батчем (якщо потрібно) ----
+        // ---- Оновлюємо кеш дублікатів (додаємо всі збережені) ----
+        duplicateDetector.addAllKeys(booksToSave);
+
+        // ---- Індексація батчем (якщо потрібна) ----
         if (indexAfterSave) {
             searchIndexer.indexAll(booksToSave);
             searchIndexer.commit();
-            for (Book book : booksToSave) {
-                eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
-            }
-        } else {
-            for (Book book : booksToSave) {
-                eventPublisher.publishEvent(new BookImportedEvent(BookSnapshot.fromBook(book)));
-            }
-            log.debug("Індексацію вимкнено для батча, книги збережено без індексації");
         }
 
-        log.info("Збережено {} книг", booksToSave.size());
+        // ---- Публікація однієї події на весь батч ----
+        eventPublisher.publishEvent(new BooksImportedBatchEvent(booksToSave));
+
+        log.info("Збережено {} книг (батч)", booksToSave.size());
         return booksToSave.size();
     }
 

@@ -20,16 +20,17 @@ public class BookRowMapper implements RowMapper<Book> {
     public Book mapRow(ResultSet rs, int rowNum) throws SQLException {
         BookId id = BookId.fromString(rs.getString("id"));
 
-        // Створюємо BookFile
+        String collectionRoot = rs.getString("collection_root");
+        if (collectionRoot == null) collectionRoot = "";
+
         BookFile file = new BookFile(
-                rs.getString("file_name"),
-                rs.getString("folder"),
-                rs.getString("archive_entry"),
+                rs.getString("file_name") != null ? rs.getString("file_name") : "",
+                rs.getString("folder") != null ? rs.getString("folder") : "",
+                rs.getString("archive_entry") != null ? rs.getString("archive_entry") : "",
                 rs.getLong("file_size"),
-                null // collectionRoot – буде встановлено пізніше в ViewModel
+                collectionRoot
         );
 
-        // Створюємо BookMetadata
         BookMetadata metadata = BookMetadata.builder()
                 .annotation(rs.getString("annotation"))
                 .keywords(rs.getString("keywords"))
@@ -45,8 +46,8 @@ public class BookRowMapper implements RowMapper<Book> {
 
         return Book.builder()
                 .id(id)
-                .title(rs.getString("title"))
-                .series(rs.getString("series"))
+                .title(rs.getString("title") != null ? rs.getString("title") : "")
+                .series(rs.getString("series") != null ? rs.getString("series") : "")
                 .sequenceNumber(rs.getInt("sequence_number"))
                 .metadata(metadata)
                 .file(file)

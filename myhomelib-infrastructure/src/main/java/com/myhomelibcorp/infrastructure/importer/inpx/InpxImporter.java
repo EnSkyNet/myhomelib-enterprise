@@ -6,8 +6,7 @@ import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
+import com.myhomelibcorp.domain.model.valueobject.*;
 import com.myhomelibcorp.shared.exception.BusinessException;
 import com.myhomelibcorp.shared.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
@@ -17,14 +16,13 @@ import org.springframework.stereotype.Component;
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import java.util.zip.ZipFile;
 
 @Component
 @Slf4j
@@ -39,8 +37,54 @@ public class InpxImporter implements BookImporterPort {
     @Autowired
     private GenreRepository genreRepository;
 
-    private final Map<String, Author> authorCache = new HashMap<>();
-    private final Map<String, Genre> genreCache = new HashMap<>();
+    // Кеші для швидкого доступу
+    private final Map<String, AuthorId> authorIdCache = new HashMap<>();
+    private final Map<String, Author> authorObjectCache = new HashMap<>();
+    private final Map<String, GenreId> genreIdCache = new HashMap<>();
+
+    private boolean initialized = false;
+
+    /**
+     * Явна ініціалізація – викликається після вибору колекції.
+     */
+    public void initialize() {
+        if (initialized) return;
+        loadAuthorCache();
+        loadGenreCache();
+        initialized = true;
+    }
+
+    private void loadAuthorCache() {
+        try {
+            List<Author> authors = authorRepository.findAll();
+            for (Author author : authors) {
+                String key = buildAuthorKey(author);
+                authorIdCache.put(key, author.getId());
+                authorObjectCache.put(key, author);
+            }
+            log.info("Завантажено {} авторів у кеш InpxImporter", authorIdCache.size());
+        } catch (Exception e) {
+            log.warn("Не вдалося завантажити авторів у кеш InpxImporter", e);
+        }
+    }
+
+    private void loadGenreCache() {
+        try {
+            List<Genre> genres = genreRepository.findAll();
+            for (Genre genre : genres) {
+                genreIdCache.put(genre.getId().asString(), genre.getId());
+            }
+            log.info("Завантажено {} жанрів у кеш InpxImporter", genreIdCache.size());
+        } catch (Exception e) {
+            log.warn("Не вдалося завантажити жанри у кеш InpxImporter", e);
+        }
+    }
+
+    private String buildAuthorKey(Author author) {
+        return (author.getFirstName() != null ? author.getFirstName() : "") + "|" +
+                (author.getMiddleName() != null ? author.getMiddleName() : "") + "|" +
+                (author.getLastName() != null ? author.getLastName() : "");
+    }
 
     @Override
     public boolean supports(Path file) {
@@ -52,11 +96,40 @@ public class InpxImporter implements BookImporterPort {
     public Stream<Book> importBooks(Path file) {
         log.info("Початок імпорту INPX: {}", file);
         try {
-            authorCache.clear();
-            genreCache.clear();
-            Iterator<Book> iterator = new InpxIterator(file);
+            // Використовуємо ZipFile замість ZipInputStream для швидшого доступу
+            ZipFile zipFile = new ZipFile(file.toFile());
+            ZipEntry inpEntry = null;
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.getName().endsWith(".inp")) {
+                    inpEntry = entry;
+                    break;
+                }
+            }
+            if (inpEntry == null) {
+                throw new BusinessException(ErrorCode.IMPORT_FAILED, "INP файл не знайдено в архіві");
+            }
+
+            BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(zipFile.getInputStream(inpEntry), StandardCharsets.UTF_8)
+            );
+
+            // Якщо кеші ще не завантажені – завантажуємо
+            if (!initialized) {
+                initialize();
+            }
+
+            Iterator<Book> iterator = new InpxIterator(reader, zipFile);
             Spliterator<Book> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED);
-            return StreamSupport.stream(spliterator, false);
+            return StreamSupport.stream(spliterator, false).onClose(() -> {
+                try {
+                    reader.close();
+                    zipFile.close();
+                } catch (Exception e) {
+                    log.warn("Помилка закриття ZIP", e);
+                }
+            });
         } catch (Exception e) {
             log.error("Помилка імпорту INPX", e);
             throw new BusinessException(ErrorCode.IMPORT_FAILED, "Помилка імпорту INPX: " + e.getMessage(), e);
@@ -70,17 +143,18 @@ public class InpxImporter implements BookImporterPort {
 
     @Override
     public long countBooks(Path file) {
-        try (ZipInputStream zis = new ZipInputStream(Files.newInputStream(file))) {
-            ZipEntry entry;
-            while ((entry = zis.getNextEntry()) != null) {
+        try (ZipFile zipFile = new ZipFile(file.toFile())) {
+            Enumeration<? extends ZipEntry> entries = zipFile.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
                 if (entry.getName().endsWith(".inp")) {
                     long count = 0;
-                    try (BufferedReader reader = new BufferedReader(new InputStreamReader(zis, StandardCharsets.UTF_8))) {
+                    try (BufferedReader reader = new BufferedReader(
+                            new InputStreamReader(zipFile.getInputStream(entry), StandardCharsets.UTF_8))) {
                         while (reader.readLine() != null) count++;
                     }
                     return count;
                 }
-                zis.closeEntry();
             }
         } catch (Exception e) {
             log.warn("Не вдалося підрахувати кількість книг у INPX", e);
@@ -88,37 +162,28 @@ public class InpxImporter implements BookImporterPort {
         return -1;
     }
 
+    // ==================== ВНУТРІШНІЙ КЛАС ІТЕРАТОРА ====================
+
     private class InpxIterator implements Iterator<Book> {
-        private final ZipInputStream zis;
         private final BufferedReader reader;
+        private final ZipFile zipFile;
         private String nextLine;
         private boolean finished;
         private int lineCount = 0;
         private int bookCount = 0;
 
-        public InpxIterator(Path file) throws Exception {
-            this.zis = new ZipInputStream(Files.newInputStream(file));
-            ZipEntry entry;
-            BufferedReader tmpReader = null;
-            while ((entry = zis.getNextEntry()) != null) {
-                if (entry.getName().endsWith(".inp")) {
-                    log.info("Знайдено INP файл: {}", entry.getName());
-                    tmpReader = new BufferedReader(new InputStreamReader(zis, StandardCharsets.UTF_8));
-                    break;
+        public InpxIterator(BufferedReader reader, ZipFile zipFile) {
+            this.reader = reader;
+            this.zipFile = zipFile;
+            try {
+                this.nextLine = reader.readLine();
+                if (this.nextLine == null) {
+                    this.finished = true;
+                    reader.close();
                 }
-                zis.closeEntry();
-            }
-            if (tmpReader == null) {
-                log.warn("INP файл не знайдено в архіві");
-                this.reader = null;
+            } catch (Exception e) {
                 this.finished = true;
-                return;
-            }
-            this.reader = tmpReader;
-            this.nextLine = reader.readLine();
-            if (this.nextLine == null) {
-                log.warn("INP файл порожній");
-                this.finished = true;
+                log.error("Помилка ініціалізації читання INPX", e);
             }
         }
 
@@ -137,7 +202,7 @@ public class InpxImporter implements BookImporterPort {
                 if (nextLine == null) {
                     finished = true;
                     reader.close();
-                    zis.close();
+                    zipFile.close();
                     log.info("Прочитано {} рядків, розпарсено {} книг", lineCount, bookCount);
                 }
             } catch (Exception e) {
@@ -151,66 +216,73 @@ public class InpxImporter implements BookImporterPort {
 
         private Book parseInpxLine(String line) {
             try {
-                String[] parts;
-                if (line.indexOf(FIELD_DELIMITER) > 0) {
-                    parts = line.split(String.valueOf(FIELD_DELIMITER), -1);
-                } else {
-                    parts = line.split("\\" + FALLBACK_DELIMITER, -1);
-                }
-
+                // Власний парсер полів (без regex)
+                String[] parts = splitFields(line, FIELD_DELIMITER);
                 if (parts.length < 8) {
-                    log.debug("Замало полів: {} (очікується >= 8)", parts.length);
-                    return null;
+                    // спроба з резервним роздільником
+                    parts = splitFields(line, FALLBACK_DELIMITER.charAt(0));
+                    if (parts.length < 8) {
+                        log.debug("Замало полів: {} (очікується >= 8)", parts.length);
+                        return null;
+                    }
                 }
 
                 // ---- Автори ----
-                List<Author> authors = new ArrayList<>();
+                List<Author> authors = new ArrayList<>(2);
                 String authorsStr = parts[0].trim();
                 if (!authorsStr.isEmpty() && !authorsStr.equals(":")) {
-                    // Розділяємо авторів за двокрапкою
                     String[] authorEntries = authorsStr.split(":");
                     for (String authorEntry : authorEntries) {
                         authorEntry = authorEntry.trim();
                         if (authorEntry.isEmpty()) continue;
-                        // Розділяємо частини автора за комами: прізвище,ім'я,по-батькові
                         String[] nameParts = authorEntry.split(",");
                         String lastName = nameParts.length > 0 ? nameParts[0].trim() : "";
                         String firstName = nameParts.length > 1 ? nameParts[1].trim() : "";
                         String middleName = nameParts.length > 2 ? nameParts[2].trim() : "";
-                        // Якщо всі поля порожні – пропускаємо
                         if (lastName.isEmpty() && firstName.isEmpty() && middleName.isEmpty()) continue;
-                        // Шукаємо автора в кеші
+
                         String key = firstName + "|" + middleName + "|" + lastName;
-                        Author author = authorCache.get(key);
+                        Author author = authorObjectCache.get(key);
                         if (author == null) {
-                            author = new Author(firstName, middleName, lastName);
-                            authorCache.put(key, author);
+                            // Автора немає – створюємо нового і зберігаємо
+                            Author newAuthor = new Author(firstName, middleName, lastName);
+                            Author saved = authorRepository.save(newAuthor);
+                            authorObjectCache.put(key, saved);
+                            authorIdCache.put(key, saved.getId());
+                            author = saved;
                         }
                         authors.add(author);
                     }
                 }
                 if (authors.isEmpty()) {
-                    String defaultAuthor = "Невідомий Автор";
-                    Author author = authorCache.get(defaultAuthor);
+                    String key = "||Неведомий Автор";
+                    Author author = authorObjectCache.get(key);
                     if (author == null) {
-                        author = new Author("", "", defaultAuthor);
-                        authorCache.put(defaultAuthor, author);
+                        Author newAuthor = new Author("", "", "Неведомий Автор");
+                        Author saved = authorRepository.save(newAuthor);
+                        authorObjectCache.put(key, saved);
+                        authorIdCache.put(key, saved.getId());
+                        author = saved;
                     }
                     authors.add(author);
                 }
 
                 // ---- Жанри ----
-                List<Genre> genres = new ArrayList<>();
+                List<Genre> genres = new ArrayList<>(2);
                 String genresStr = parts[1].trim();
                 if (!genresStr.isEmpty()) {
                     for (String code : genresStr.split(":")) {
                         String clean = code.trim();
                         if (!clean.isEmpty()) {
-                            Genre genre = genreCache.get(clean);
-                            if (genre == null) {
-                                genre = new Genre(clean, clean);
-                                genreCache.put(clean, genre);
+                            GenreId genreId = genreIdCache.get(clean);
+                            if (genreId == null) {
+                                // Жанру немає – створюємо
+                                Genre newGenre = new Genre(clean, clean);
+                                genreRepository.save(newGenre);
+                                genreId = newGenre.getId();
+                                genreIdCache.put(clean, genreId);
                             }
+                            Genre genre = new Genre(genreId, clean, null, clean);
                             genres.add(genre);
                         }
                     }
@@ -254,7 +326,7 @@ public class InpxImporter implements BookImporterPort {
                 String annotation = parts.length > 13 ? parts[13].trim() : "";
 
                 // ---- Створення метаданих та файлу ----
-                var metadata = com.myhomelibcorp.domain.model.valueobject.BookMetadata.builder()
+                BookMetadata metadata = BookMetadata.builder()
                         .annotation(annotation)
                         .keywords(keywords)
                         .language(LanguageCode.of(languageCode))
@@ -262,12 +334,12 @@ public class InpxImporter implements BookImporterPort {
                         .progress(0)
                         .build();
 
-                var bookFile = new com.myhomelibcorp.domain.model.valueobject.BookFile(
+                BookFile bookFile = new BookFile(
                         fileName,
-                        "",
-                        "",
+                        "",  // folder – буде заповнено при збереженні, якщо потрібно
+                        "",  // archive_entry – для zip-архівів
                         fileSize,
-                        null
+                        null // collectionRoot
                 );
 
                 return Book.builder()
@@ -286,6 +358,22 @@ public class InpxImporter implements BookImporterPort {
                 log.warn("Помилка парсингу рядка: {}", line, e);
                 return null;
             }
+        }
+
+        /**
+         * Швидкий парсер полів без використання регулярних виразів.
+         */
+        private String[] splitFields(String line, char delimiter) {
+            List<String> fields = new ArrayList<>();
+            int start = 0;
+            for (int i = 0; i < line.length(); i++) {
+                if (line.charAt(i) == delimiter) {
+                    fields.add(line.substring(start, i));
+                    start = i + 1;
+                }
+            }
+            fields.add(line.substring(start));
+            return fields.toArray(new String[0]);
         }
     }
 }

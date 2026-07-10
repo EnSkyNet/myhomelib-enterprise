@@ -13,8 +13,6 @@ spring:
     baseline-on-migrate: true
 
   datasource:
-    # Цей DataSource більше не використовується безпосередньо
-    # Тепер використовується CollectionManager для отримання JdbcTemplate
     url: jdbc:sqlite:placeholder
     driver-class-name: org.sqlite.JDBC
 
@@ -31,6 +29,13 @@ app:
     index-disable-threshold: 500000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
+  features:
+    new-importer: true
+    new-navigation: true
+    virtual-table: true
+    lazy-search: true
+    async-cover-loading: true
+    use-fts5: false
 
 logging:
   level:

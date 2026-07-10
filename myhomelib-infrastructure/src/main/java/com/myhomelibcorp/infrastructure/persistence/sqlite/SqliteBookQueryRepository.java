@@ -96,4 +96,11 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             return Optional.empty();
         }
     }
+    @Override
+    public List<Book> findAll() {
+        String sql = "SELECT * FROM books";
+        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper);
+        enrichBooks(books);
+        return books;
+    }
 }

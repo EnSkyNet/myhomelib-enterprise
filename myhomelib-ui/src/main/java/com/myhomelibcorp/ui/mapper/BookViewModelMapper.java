@@ -1,11 +1,17 @@
 package com.myhomelibcorp.ui.mapper;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+
 @Component
 public class BookViewModelMapper {
+
+    private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
 
     public BookViewModel toViewModel(BookDto dto) {
         if (dto == null) return null;
@@ -32,6 +38,47 @@ public class BookViewModelMapper {
         vm.setCollectionRoot(dto.getCollectionRoot());
         vm.setReview(dto.getReview());
         vm.setCreatedAt(dto.getCreatedAt());
+        vm.setCover(null);
+        return vm;
+    }
+
+    public BookViewModel toViewModel(BookListItem item) {
+        if (item == null) return null;
+
+        BookViewModel vm = new BookViewModel();
+        vm.setId(item.getId());
+        vm.setTitle(item.getTitle());
+        vm.setAuthorsText(item.getAuthorsText());
+        vm.setSeries(item.getSeries());
+        vm.setGenresText(item.getGenresText());
+        vm.setRate(item.getRate());
+        vm.setProgress(item.getProgress());
+        vm.setFileSize(item.getFileSize());
+        vm.setLocal(item.isLocal());
+        vm.setFileName(item.getFileName());
+        vm.setFolder(item.getFolder());
+        vm.setArchiveEntry(item.getArchiveEntry());
+        vm.setCollectionRoot(item.getCollectionRoot());
+        vm.setAnnotation(item.getAnnotation());
+        vm.setLanguage(item.getLanguage());
+
+        // Розпарсити дати, якщо вони не порожні
+        if (item.getCreatedAt() != null && !item.getCreatedAt().isEmpty()) {
+            try {
+                vm.setCreatedAt(LocalDateTime.parse(item.getCreatedAt(), DATE_FORMATTER));
+            } catch (Exception ignored) {}
+        }
+        if (item.getUpdateDate() != null && !item.getUpdateDate().isEmpty()) {
+            try {
+                vm.setUpdateDate(LocalDateTime.parse(item.getUpdateDate(), DATE_FORMATTER));
+            } catch (Exception ignored) {}
+        }
+
+        // Інші поля за замовчуванням
+        vm.setSequenceNumber(0);
+        vm.setKeywords("");
+        vm.setReview("");
+        vm.setDeleted(false);
         vm.setCover(null);
         return vm;
     }

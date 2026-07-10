@@ -17,19 +17,18 @@
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
 
         <spring-boot.version>3.5.0</spring-boot.version>
         <spring-modulith.version>1.4.0</spring-modulith.version>
-
         <javafx.version>21.0.2</javafx.version>
-
         <sqlite.version>3.47.0.0</sqlite.version>
         <flyway.version>10.16.0</flyway.version>
-
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <lombok.version>1.18.30</lombok.version>
-
         <caffeine.version>3.1.8</caffeine.version>
+        <lucene.version>9.9.1</lucene.version>
 
         <junit.version>5.10.2</junit.version>
         <mockito.version>5.10.0</mockito.version>
@@ -38,13 +37,6 @@
         <testcontainers.version>1.19.7</testcontainers.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
-
-        <!-- НОВІ ВЛАСТИВОСТІ ДЛЯ LUCENE -->
-        <lucene.version>9.9.1</lucene.version>
-
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
     </properties>
 
     <modules>
@@ -56,6 +48,7 @@
         <module>myhomelib-bootstrap</module>
         <module>myhomelib-architecture-tests</module>
         <module>myhomelib-e2e-tests</module>
+        <module>myhomelib-benchmark</module>
     </modules>
 
     <dependencyManagement>
@@ -67,7 +60,6 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-
             <dependency>
                 <groupId>org.springframework.modulith</groupId>
                 <artifactId>spring-modulith-bom</artifactId>
@@ -75,7 +67,6 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
-
             <dependency>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx</artifactId>
@@ -89,13 +80,11 @@
                 <artifactId>sqlite-jdbc</artifactId>
                 <version>${sqlite.version}</version>
             </dependency>
-
             <dependency>
                 <groupId>org.flywaydb</groupId>
                 <artifactId>flyway-core</artifactId>
                 <version>${flyway.version}</version>
             </dependency>
-
             <dependency>
                 <groupId>org.mapstruct</groupId>
                 <artifactId>mapstruct</artifactId>
@@ -106,20 +95,16 @@
                 <artifactId>mapstruct-processor</artifactId>
                 <version>${mapstruct.version}</version>
             </dependency>
-
             <dependency>
                 <groupId>org.projectlombok</groupId>
                 <artifactId>lombok</artifactId>
                 <version>${lombok.version}</version>
             </dependency>
-
             <dependency>
                 <groupId>com.github.ben-manes.caffeine</groupId>
                 <artifactId>caffeine</artifactId>
                 <version>${caffeine.version}</version>
             </dependency>
-
-            <!-- ДОДАНО УПРАВЛІННЯ ВЕРСІЯМИ LUCENE -->
             <dependency>
                 <groupId>org.apache.lucene</groupId>
                 <artifactId>lucene-core</artifactId>
@@ -130,7 +115,13 @@
                 <artifactId>lucene-queryparser</artifactId>
                 <version>${lucene.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.apache.lucene</groupId>
+                <artifactId>lucene-analysis-common</artifactId>
+                <version>${lucene.version}</version>
+            </dependency>
 
+            <!-- Тестові залежності -->
             <dependency>
                 <groupId>org.junit.jupiter</groupId>
                 <artifactId>junit-jupiter</artifactId>
@@ -204,7 +195,6 @@
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
                     <configuration>
-                        <!-- Це змусить Maven запускати програму з підтримкою UTF-8 -->
                         <jvmArguments>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8</jvmArguments>
                     </configuration>
                 </plugin>
@@ -224,4 +214,29 @@
             </plugins>
         </pluginManagement>
     </build>
+
+    <!-- Профілі -->
+    <profiles>
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <spring.profiles.active>dev</spring.profiles.active>
+            </properties>
+        </profile>
+        <profile>
+            <id>benchmark</id>
+            <properties>
+                <spring.profiles.active>benchmark</spring.profiles.active>
+            </properties>
+        </profile>
+        <profile>
+            <id>production</id>
+            <properties>
+                <spring.profiles.active>prod</spring.profiles.active>
+            </properties>
+        </profile>
+    </profiles>
 </project>

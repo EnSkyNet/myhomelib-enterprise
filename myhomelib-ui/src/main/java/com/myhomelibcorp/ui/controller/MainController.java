@@ -50,6 +50,7 @@ public class MainController {
     private final FileChooserService fileChooserService;
     private final CollectionManager collectionManager;
     private final DatabaseInitializer databaseInitializer;
+    private final LibraryReloadService libraryReloadService; // додано
 
     @FXML private TreeView<LibraryNode> authorsTree;
     @FXML private ListView<String> seriesListView;
@@ -73,7 +74,6 @@ public class MainController {
         statusBarPresenter.bind(statusLabel);
         progressPresenter.bind(progressBar);
 
-        // ---- Налаштування панелі деталей ----
         bookInfoPanel = new BookInfoPanel();
         ScrollPane scrollPane = new ScrollPane(bookInfoPanel);
         scrollPane.setFitToWidth(true);
@@ -89,7 +89,6 @@ public class MainController {
 
         coverPresenter.bind(bookInfoPanel.getCoverImageView());
 
-        // ---- Таблиця книг ----
         bookTableService.setupBookTable(bookTableView);
         bookTableView.setItems(mainViewModel.booksProperty());
 
@@ -110,7 +109,6 @@ public class MainController {
             }
         });
 
-        // ---- Пошук ----
         bookSearchPresenter.bind(mainViewModel.booksProperty(), () -> {
             if (!mainViewModel.booksProperty().isEmpty()) {
                 bookTableView.getSelectionModel().selectFirst();
@@ -118,7 +116,6 @@ public class MainController {
         });
         searchField.textProperty().bindBidirectional(bookSearchPresenter.queryProperty());
 
-        // ---- cellFactory для списку колекцій ----
         collectionsListView.setCellFactory(lv -> new ListCell<>() {
             @Override
             protected void updateItem(Collection item, boolean empty) {
@@ -131,10 +128,9 @@ public class MainController {
             }
         });
 
-        // ---- Ініціалізація ViewModel ----
         mainViewModel.initWithoutBooks();
 
-        // ---- Завантаження навігаційних даних ----
+        // При старті завантажуємо навігацію та вибираємо першого автора
         navigationPresenter.loadAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
                 .thenRun(() -> {
                     Platform.runLater(() -> {
@@ -162,7 +158,6 @@ public class MainController {
         navigationPresenter.loadGroups(groupsListView.getItems());
         collectionPresenter.loadCollections(collectionsListView.getItems());
 
-        // ---- Вибір групи ----
         groupsListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, group) -> {
                     if (group != null) {
@@ -170,7 +165,6 @@ public class MainController {
                     }
                 });
 
-        // ---- Вибір колекції ----
         collectionsListView.getSelectionModel().selectedItemProperty().addListener(
                 (obs, old, collection) -> {
                     if (collection != null) {
@@ -179,10 +173,8 @@ public class MainController {
                     }
                 });
 
-        // ---- Статистика колекції ----
         mainViewModel.updateCollectionStats();
 
-        // ---- Лічильник книг ----
         bookCountLabel.textProperty().bind(
                 javafx.beans.binding.Bindings.size(mainViewModel.booksProperty()).asString()
         );
@@ -194,31 +186,26 @@ public class MainController {
         log.info("=== MainController.initialize() END ===");
     }
 
-    // ==================== ОНОВЛЕННЯ НАВІГАЦІЇ ====================
     private void refreshNavigationAndLoadFirstAuthor() {
         log.info("Оновлення навігації після зміни колекції...");
         bookSelectionService.clearSelection();
         mainViewModel.setSelectedBook(null);
 
-        navigationPresenter.loadAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
+        navigationPresenter.refreshAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
                 .thenRun(() -> {
                     Platform.runLater(() -> {
                         TreeItem<LibraryNode> root = authorsTree.getRoot();
-                        log.info("Корінь авторів: {}", root);
                         if (root != null && !root.getChildren().isEmpty()) {
                             TreeItem<LibraryNode> firstItem = root.getChildren().get(0);
-                            LibraryNode firstNode = firstItem.getValue();
-                            if (firstNode instanceof AuthorNode) {
-                                AuthorId firstAuthorId = ((AuthorNode) firstNode).author().getId();
-                                log.info("Перший автор нової колекції: {}, завантажуємо його книги", firstAuthorId.asString());
-                                mainViewModel.loadBooksByAuthor(firstAuthorId);
+                            if (firstItem.getValue() instanceof AuthorNode) {
+                                AuthorId id = ((AuthorNode) firstItem.getValue()).author().getId();
+                                log.info("Завантажуємо книги для першого автора: {}", id.asString());
+                                mainViewModel.loadBooksByAuthor(id);
                                 authorsTree.getSelectionModel().select(firstItem);
                             } else {
-                                log.warn("Перший елемент не є AuthorNode: {}", firstNode);
                                 mainViewModel.loadAllBooks();
                             }
                         } else {
-                            log.warn("Авторів у новій колекції не знайдено, завантажуємо всі книги");
                             mainViewModel.loadAllBooks();
                         }
                     });
@@ -235,22 +222,73 @@ public class MainController {
         mainViewModel.updateCollectionStats();
     }
 
-    // ==================== ОБРОБНИКИ ====================
+    // ========== КОЛБЕК ПІСЛЯ ІМПОРТУ ==========
+    private void onImportComplete() {
+        log.info("Імпорт завершено, запускаємо повне перезавантаження...");
+        new Thread(() -> {
+            try {
+                Thread.sleep(1500); // збільшено затримку для повного коміту
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+            }
+            Platform.runLater(() -> {
+                // 1. Оновлюємо словники
+                mainViewModel.refreshDictionaries();
 
+                // 2. Примусово оновлюємо дерево авторів (перезавантажуємо)
+                navigationPresenter.refreshAuthors(authorsTree, mainViewModel::loadBooksByAuthor)
+                        .thenRun(() -> {
+                            // 3. Вибираємо першого автора
+                            Platform.runLater(() -> {
+                                TreeItem<LibraryNode> root = authorsTree.getRoot();
+                                if (root != null && !root.getChildren().isEmpty()) {
+                                    TreeItem<LibraryNode> firstItem = root.getChildren().get(0);
+                                    if (firstItem.getValue() instanceof AuthorNode) {
+                                        AuthorId id = ((AuthorNode) firstItem.getValue()).author().getId();
+                                        log.info("✅ Вибрано першого автора після імпорту: {}", id.asString());
+                                        authorsTree.getSelectionModel().select(firstItem);
+                                        mainViewModel.loadBooksByAuthor(id);
+                                    } else {
+                                        mainViewModel.loadAllBooks();
+                                    }
+                                } else {
+                                    log.warn("Дерево авторів порожнє після імпорту, завантажуємо всі книги");
+                                    mainViewModel.loadAllBooks();
+                                }
+                            });
+                        })
+                        .thenRun(() -> {
+                            // 4. Оновлюємо статистику та статус
+                            Platform.runLater(() -> {
+                                mainViewModel.updateCollectionStats();
+                                statusBarPresenter.setStatus("Імпорт завершено. Бібліотеку повністю оновлено.");
+                            });
+                        })
+                        .exceptionally(ex -> {
+                            Platform.runLater(() -> {
+                                log.error("Помилка оновлення після імпорту", ex);
+                                statusBarPresenter.setStatus("Помилка: " + ex.getMessage());
+                            });
+                            return null;
+                        });
+            });
+        }).start();
+    }
+
+    // ========== ОБРОБНИКИ ПОДІЙ ==========
     @FXML public void handleRefresh() {
         refreshPresenter.refreshAll(
                 authorsTree,
                 seriesListView.getItems(),
                 genresTree,
-                groupsListView.getItems(),
-                () -> {
-                    Platform.runLater(() -> {
-                        if (authorsTree.getRoot() != null && !authorsTree.getRoot().getChildren().isEmpty()) {
-                            authorsTree.getSelectionModel().selectFirst();
-                        }
-                    });
+                groupsListView.getItems()
+        ).thenRun(() -> {
+            Platform.runLater(() -> {
+                if (authorsTree.getRoot() != null && !authorsTree.getRoot().getChildren().isEmpty()) {
+                    authorsTree.getSelectionModel().selectFirst();
                 }
-        );
+            });
+        });
         mainViewModel.updateCollectionStats();
     }
 
@@ -280,7 +318,6 @@ public class MainController {
         }
     }
 
-    // ========== ГРУПИ ==========
     @FXML public void handleAddGroup() {
         groupPresenter.showAddGroupDialog(groupsListView, () -> {
             navigationPresenter.loadGroups(groupsListView.getItems());
@@ -299,7 +336,6 @@ public class MainController {
         });
     }
 
-    // ========== КОЛЕКЦІЇ ==========
     @FXML public void handleNewCollection() {
         collectionPresenter.showCreateCollectionDialog(
                 collectionsListView.getItems(),
@@ -319,17 +355,14 @@ public class MainController {
         collectionPresenter.showDeleteCollectionDialog(selected, collectionsListView.getItems());
     }
 
-    @FXML
-    public void handleSelectCollection() {
+    @FXML public void handleSelectCollection() {
         Collection selected = collectionsListView.getSelectionModel().getSelectedItem();
         if (selected != null) {
             try {
                 collectionManager.switchToCollection(selected);
                 databaseInitializer.initializeCurrentCollection();
-
                 refreshNavigationAndLoadFirstAuthor();
                 mainViewModel.updateCollectionStats();
-
                 statusBarPresenter.setStatus("Вибрано колекцію: " + selected.getName());
                 Stage stage = (Stage) bookTableView.getScene().getWindow();
                 if (stage != null) {
@@ -342,7 +375,6 @@ public class MainController {
         }
     }
 
-    // ========== ІНШІ ==========
     @FXML public void handleOpenCollection() {
         libraryPresenter.openCollection((Stage) bookTableView.getScene().getWindow());
     }
@@ -370,24 +402,5 @@ public class MainController {
 
     @FXML public void handleExit() {
         Platform.exit();
-    }
-
-    // ========== КОЛБЕК ПІСЛЯ ІМПОРТУ ==========
-    private void onImportComplete() {
-        log.info("Імпорт завершено, оновлення...");
-        new Thread(() -> {
-            try {
-                Thread.sleep(1500); // збільшено затримку для завершення транзакцій БД
-            } catch (InterruptedException ignored) {
-                Thread.currentThread().interrupt();
-            }
-            Platform.runLater(() -> {
-                log.info("Початок оновлення навігації після імпорту");
-                refreshNavigationAndLoadFirstAuthor();
-                collectionPresenter.loadCollections(collectionsListView.getItems());
-                statusBarPresenter.setStatus("Імпорт завершено. Таблицю оновлено.");
-                log.info("Таблицю оновлено після імпорту");
-            });
-        }).start();
     }
 }

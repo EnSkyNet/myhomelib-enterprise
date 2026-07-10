@@ -20,9 +20,10 @@ import java.util.zip.ZipFile;
 @Slf4j
 public class ZipArchiveReader implements ArchiveReader {
 
+    // Порядок кодувань узгоджено з ZipImporter: спочатку CP866 (найпоширеніше для кирилиці), потім Windows-1251, UTF-8, IBM-866, KOI8-R
     private static final Charset[] CHARSETS = {
-            Charset.forName("Windows-1251"),
             Charset.forName("CP866"),
+            Charset.forName("Windows-1251"),
             Charset.forName("UTF-8"),
             Charset.forName("IBM-866"),
             Charset.forName("KOI8-R")

@@ -1,6 +1,6 @@
 package com.myhomelibcorp.infrastructure.event;
 
-import com.myhomelibcorp.application.event.BookImportedEvent;
+import com.myhomelibcorp.application.event.BooksImportedBatchEvent;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
 import com.myhomelibcorp.domain.event.book.BookUpdatedEvent;
@@ -19,18 +19,17 @@ public class BookEventHandler {
 
     @PostConstruct
     public void init() {
-        eventBus.register(BookImportedEvent.class, this::handleBookImported);
+        // Реєструємо обробник для батчевої події
+        eventBus.register(BooksImportedBatchEvent.class, this::handleBooksImportedBatch);
         eventBus.register(BookDeletedEvent.class, this::handleBookDeleted);
-        eventBus.register(BookUpdatedEvent.class, this::handleBookUpdated); // <-- додано
+        eventBus.register(BookUpdatedEvent.class, this::handleBookUpdated);
         log.info("BookEventHandler зареєстровано");
     }
 
-    private void handleBookImported(BookImportedEvent event) {
-        log.info("Отримано подію імпорту книги: {}", event.bookId());
-        if (event.snapshot() != null) {
-            searchIndexer.indexSnapshot(event.snapshot());
-            log.info("Книгу проіндексовано: {}", event.bookId());
-        }
+    private void handleBooksImportedBatch(BooksImportedBatchEvent event) {
+        int size = event.books().size();
+        log.info("Отримано батч імпорту з {} книг. Індексація вже виконана в BookSaver.", size);
+        // Можна додати додаткову логіку (наприклад, оновлення статистики)
     }
 
     private void handleBookDeleted(BookDeletedEvent event) {

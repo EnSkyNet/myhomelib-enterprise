@@ -15,7 +15,7 @@ public class BookCacheEvictor {
 
     private final BookCache bookCache;
 
-    @Async  // <-- використовує пул "taskExecutor" за замовчуванням
+    @Async
     @EventListener
     public void onBookUpdated(BookUpdatedEvent event) {
         log.debug("Очищення кешу для оновленої книги: {}", event.getBookId());

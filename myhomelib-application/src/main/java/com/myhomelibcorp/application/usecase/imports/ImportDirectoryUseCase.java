@@ -1,3 +1,5 @@
+// Файл: myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/imports/ImportDirectoryUseCase.java
+// (змінено тільки передачу rootDirectory в ImportFileUseCase)
 package com.myhomelibcorp.application.usecase.imports;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
@@ -5,6 +7,8 @@ import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
 import com.myhomelibcorp.application.port.out.event.EventPublisher;
+import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
+import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,8 +32,8 @@ public class ImportDirectoryUseCase {
     private final ImportFileUseCase importFileUseCase;
     private final LibraryScanner libraryScanner;
     private final EventPublisher eventPublisher;
-
-    // ========== СТАРИЙ МЕТОД (зворотна сумісність) ==========
+    private final IndexRebuilder indexRebuilder;
+    private final BulkImportOptimizer bulkImportOptimizer;
 
     @Deprecated
     public int execute(Path directory, DoubleConsumer progressConsumer, AtomicBoolean cancelFlag) {
@@ -44,15 +48,12 @@ public class ImportDirectoryUseCase {
         return (int) result.imported();
     }
 
-    // ========== НОВИЙ МЕТОД ==========
-
     public ImportResult execute(ImportContext context) {
         Path directory = context.getRootDirectory();
         if (directory == null) {
             throw new IllegalArgumentException("Root directory cannot be null");
         }
 
-        // Якщо в контексті не задано batchSize, беремо з конфігурації
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         if (context.getBatchSize() <= 0) {
             context = ImportContext.builder()
@@ -67,6 +68,8 @@ public class ImportDirectoryUseCase {
 
         log.info("Початок імпорту каталогу: {}", directory);
         ImportStatistics totalStats = new ImportStatistics();
+
+        bulkImportOptimizer.enableBulkInsertMode();
 
         try {
             List<Path> files = libraryScanner.scan(directory);
@@ -84,9 +87,9 @@ public class ImportDirectoryUseCase {
                 try {
                     ImportContext fileContext = ImportContext.builder()
                             .file(file)
-                            .rootDirectory(directory)
+                            .rootDirectory(directory)   // передаємо кореневу папку для collectionRoot
                             .updateExisting(context.isUpdateExisting())
-                            .indexAfterSave(context.isIndexAfterSave())
+                            .indexAfterSave(false)
                             .batchSize(batchSize)
                             .cancelFlag(context.getCancelFlag())
                             .progressListener(context.getProgressListener())
@@ -113,10 +116,17 @@ public class ImportDirectoryUseCase {
         } catch (IOException e) {
             log.error("Помилка сканування каталогу: {}", directory, e);
             throw new RuntimeException("Помилка сканування каталогу", e);
+        } finally {
+            bulkImportOptimizer.disableBulkInsertMode();
         }
 
         ImportResult finalResult = ImportResult.fromStatistics(totalStats);
         log.info("Імпорт каталогу завершено. {}", finalResult);
+
+        if (totalStats.getImported().get() > 0) {
+            log.info("Перебудова індексу після імпорту каталогу");
+            indexRebuilder.rebuildIndex();
+        }
 
         eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(directory, finalResult));
         return finalResult;

@@ -23,14 +23,14 @@ public final class BookQueries {
             WHERE ba.author_id = ?
             """;
 
-    // ==================== INSERT / UPDATE ====================
+    // ==================== INSERT / UPDATE (з collection_root) ====================
     public static final String INSERT_OR_UPDATE_BOOK = """
             INSERT INTO books (
                 id, title, series, sequence_number, file_name, folder,
                 archive_entry, language, file_size, keywords, annotation,
                 rate, progress, update_date, isbn, deleted, local,
-                review, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                review, created_at, collection_root
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 series = excluded.series,
@@ -49,7 +49,8 @@ public final class BookQueries {
                 deleted = excluded.deleted,
                 local = excluded.local,
                 review = excluded.review,
-                created_at = excluded.created_at
+                created_at = excluded.created_at,
+                collection_root = excluded.collection_root
             """;
 
     public static final String DELETE_BY_ID = "DELETE FROM books WHERE id = ?";
@@ -74,7 +75,8 @@ public final class BookQueries {
                 deleted = ?,
                 local = ?,
                 review = ?,
-                created_at = ?
+                created_at = ?,
+                collection_root = ?
             WHERE id = ?
             """;
 }
