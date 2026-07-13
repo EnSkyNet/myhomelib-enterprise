@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.collection.CollectionWorkspaceController"
+      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;">
+
+    <Label text="⭐ Колекції" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+
+    <SplitPane dividerPositions="0.3" VBox.vgrow="ALWAYS">
+        <items>
+            <!-- Ліва панель: список колекцій -->
+            <VBox spacing="5" style="-fx-padding: 5;">
+                <HBox spacing="5">
+                    <Button text="+" onAction="#onCreateCollection" prefWidth="30"/>
+                    <Button text="✏️" onAction="#onRenameCollection" prefWidth="30"/>
+                    <Button text="🗑" onAction="#onDeleteCollection" prefWidth="30"/>
+                    <Button text="🔄" onAction="#onRefresh" prefWidth="30"/>
+                    <Region HBox.hgrow="ALWAYS"/>
+                </HBox>
+                <ListView fx:id="collectionsListView" VBox.vgrow="ALWAYS"/>
+            </VBox>
+
+            <!-- Права панель: деталі колекції -->
+            <VBox fx:id="collectionDetailsBox" spacing="10" style="-fx-padding: 10;">
+                <Label fx:id="collectionNameLabel" text="Колекція" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <Label fx:id="booksCountLabel" text="0 книг"/>
+
+                <HBox spacing="5">
+                    <Button fx:id="addBookButton" text="Додати книгу" onAction="#onAddBookToCollection"/>
+                    <Button fx:id="removeBookButton" text="Видалити з колекції" onAction="#onRemoveBookFromCollection"/>
+                </HBox>
+
+                <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
+                    <columns>
+                        <TableColumn fx:id="titleColumn" text="Назва" prefWidth="200"/>
+                        <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
+                        <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
+                    </columns>
+                </TableView>
+            </VBox>
+        </items>
+    </SplitPane>
+</VBox>

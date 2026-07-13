@@ -4,9 +4,13 @@ import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.port.out.repository.PageableBookQueryRepository;
 import com.myhomelibcorp.application.query.book.PageableBookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
+import com.myhomelibcorp.application.query.common.PageRequest;
+import com.myhomelibcorp.application.query.common.SortBy;
+import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
+import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -28,10 +32,13 @@ public class BookLoaderService {
     private final PageableBookQueryRepository pageableRepository;
     private final BookViewModelMapper viewModelMapper;
     private final ApplicationState appState;
-    private final UiBackgroundExecutor executor; // Виправлено
+    private final UiBackgroundExecutor executor;
 
-    private static final int DEFAULT_PAGE_SIZE = 200;
+    private static final int DEFAULT_PAGE_SIZE = 50;
 
+    /**
+     * Завантажує сторінку книг за запитом
+     */
     public void loadBooks(PageableBookQuery query) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
@@ -65,107 +72,151 @@ public class BookLoaderService {
                 });
     }
 
+    /**
+     * Завантажує книги автора
+     */
     public void loadBooksByAuthor(AuthorId authorId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .authorId(authorId)
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.TITLE,
-                        com.myhomelibcorp.application.query.common.SortDirection.ASC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
 
+    /**
+     * Завантажує книги серії
+     */
     public void loadBooksBySeries(SeriesId seriesId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .seriesId(seriesId)
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.TITLE,
-                        com.myhomelibcorp.application.query.common.SortDirection.ASC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
 
+    /**
+     * Завантажує книги жанру
+     */
     public void loadBooksByGenre(GenreId genreId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .genreId(genreId)
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.TITLE,
-                        com.myhomelibcorp.application.query.common.SortDirection.ASC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
 
+    /**
+     * Завантажує книги групи (колекції)
+     */
     public void loadBooksByGroup(GroupId groupId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .groupId(groupId)
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.TITLE,
-                        com.myhomelibcorp.application.query.common.SortDirection.ASC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
 
+    /**
+     * Завантажує всі книги
+     */
     public void loadAllBooks() {
         PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.TITLE,
-                        com.myhomelibcorp.application.query.common.SortDirection.ASC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
+
+    /**
+     * Завантажує останні відкриті книги
+     */
     public void loadRecentBooks() {
         PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.DATE,
-                        com.myhomelibcorp.application.query.common.SortDirection.DESC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.DATE, SortDirection.DESC))
                 .build();
         loadBooks(query);
     }
 
+    /**
+     * Завантажує обрані книги (група Favorites)
+     */
     public void loadFavoriteBooks() {
-        // Для групи "Обране" (група з id = 1)
-        GroupId groupId = GroupId.fromLong(1L);
-        loadBooksByGroup(groupId);
+        loadBooksByGroup(GroupId.fromLong(1L));
     }
 
+    /**
+     * Завантажує книги для продовження читання (прогрес > 0 і < 100)
+     */
     public void loadContinueReading() {
-        // Завантажити книгу з останнім прогресом
         PageableBookQuery query = PageableBookQuery.builder()
                 .onlyRead(false)
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, 1,
-                        com.myhomelibcorp.application.query.common.SortBy.DATE,
-                        com.myhomelibcorp.application.query.common.SortDirection.DESC))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.DATE, SortDirection.DESC))
                 .build();
         loadBooks(query);
     }
 
-    public void loadBooksByLanguage(String language) {
+    /**
+     * Завантажує книги за мовою
+     */
+    public void loadBooksByLanguage(String languageCode) {
         PageableBookQuery query = PageableBookQuery.builder()
-                .language(com.myhomelibcorp.domain.model.valueobject.LanguageCode.of(language))
-                .pageRequest(new com.myhomelibcorp.application.query.common.PageRequest(
-                        0, DEFAULT_PAGE_SIZE,
-                        com.myhomelibcorp.application.query.common.SortBy.TITLE,
-                        com.myhomelibcorp.application.query.common.SortDirection.ASC))
+                .language(LanguageCode.of(languageCode))
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
 
+    /**
+     * Завантажує книги за роком (спрощено)
+     */
     public void loadBooksByYear(int year) {
-        // Потрібно додати фільтр за роком у PageableBookQuery
-        // Для простоти поки що завантажуємо всі книги
+        // Поки що просто завантажуємо всі книги, бо фільтр за роком ще не реалізовано
         loadAllBooks();
     }
 
+    /**
+     * Завантажує книги за видавництвом (спрощено)
+     */
     public void loadBooksByPublisher(String publisher) {
-        // Потрібно додати фільтр за видавництвом
-        // Для простоти поки що завантажуємо всі книги
         loadAllBooks();
+    }
+
+    /**
+     * Наступна сторінка
+     */
+    public void nextPage() {
+        BookTableViewModel vm = appState.getBookTable();
+        if (vm.hasNextPage()) {
+            int next = vm.getCurrentPage() + 1;
+            PageableBookQuery query = PageableBookQuery.builder()
+                    .pageRequest(new PageRequest(next, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection()))
+                    .build();
+            loadBooks(query);
+        }
+    }
+
+    /**
+     * Попередня сторінка
+     */
+    public void previousPage() {
+        BookTableViewModel vm = appState.getBookTable();
+        if (vm.hasPreviousPage()) {
+            int prev = vm.getCurrentPage() - 1;
+            PageableBookQuery query = PageableBookQuery.builder()
+                    .pageRequest(new PageRequest(prev, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection()))
+                    .build();
+            loadBooks(query);
+        }
+    }
+
+    /**
+     * Зміна розміру сторінки
+     */
+    public void setPageSize(int size) {
+        BookTableViewModel vm = appState.getBookTable();
+        vm.setPageSize(size);
+        PageableBookQuery query = PageableBookQuery.builder()
+                .pageRequest(new PageRequest(0, size, vm.getSortBy(), vm.getSortDirection()))
+                .build();
+        loadBooks(query);
     }
 }

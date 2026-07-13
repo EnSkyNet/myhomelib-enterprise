@@ -8,27 +8,26 @@
       fx:controller="com.myhomelibcorp.ui.navigation.NavigationController"
       spacing="2" style="-fx-padding: 5; -fx-background-color: #f5f5f5;">
 
-    <Label text="📚 Бібліотека" style="-fx-font-weight: bold; -fx-font-size: 14px; -fx-padding: 5 0 5 0;"/>
-
-    <TreeView fx:id="navigationTree" VBox.vgrow="ALWAYS" style="-fx-background-color: transparent;"/>
-
-    <Separator/>
-
-    <VBox spacing="2">
-        <Button text="⭐ Останні відкриті" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onRecentOpened"/>
-        <Button text="❤️ Обране" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onFavorites"/>
-        <Button text="📖 Продовжити читання" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onContinueReading"/>
-    </VBox>
+    <!-- Головне меню -->
+    <Button text="🏠 Головна" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onHome"/>
+    <Button text="📚 Автори" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onAuthors"/>
+    <Button text="📖 Серії" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onSeries"/>
+    <Button text="🏷 Жанри" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onGenres"/>
+    <Button text="⭐ Колекції" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onCollections"/>
 
     <Separator/>
 
-    <VBox spacing="2">
-        <Button text="👤 Автори" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onAuthors"/>
-        <Button text="📚 Серії" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onSeries"/>
-        <Button text="🏷 Жанри" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onGenres"/>
-        <Button text="🌍 Мови" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onLanguages"/>
-        <Button text="📅 Роки" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onYears"/>
-        <Button text="🏢 Видавництва" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onPublishers"/>
-        <Button text="📂 Колекції" style="-fx-background-color: transparent; -fx-alignment: center-left;" onAction="#onCollections"/>
-    </VBox>
+    <Button text="📥 Нові книги" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onNewBooks"/>
+    <Button text="🕓 Історія" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onHistory"/>
+
+    <Separator/>
+
+    <Button text="🔍 Пошук" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onSearch"/>
+    <Button text="📂 Імпорт" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onImport"/>
+    <Button text="⚙ Налаштування" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onSettings"/>
+
+    <Separator/>
+
+    <!-- Дерево для категорій (Автори, Серії, Жанри) можна залишити як додатковий елемент -->
+    <TreeView fx:id="navigationTree" VBox.vgrow="ALWAYS" style="-fx-background-color: transparent; -fx-padding: 0;"/>
 </VBox>

@@ -1,10 +1,14 @@
 package com.myhomelibcorp.ui.navigation;
 
 import com.myhomelibcorp.application.navigation.NavigationService;
+import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.model.navigation.AuthorNode;
+import com.myhomelibcorp.ui.model.navigation.CollectionNode;
 import com.myhomelibcorp.ui.model.navigation.GenreNode;
 import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.ui.model.navigation.SeriesNode;
@@ -27,10 +31,13 @@ public class NavigationController {
 
     private final NavigationService navigationService;
     private final BookLoaderService bookLoaderService;
+    private final CollectionRepository collectionRepository;
     private final ApplicationState appState;
+    private final MainController mainController;
 
     @FXML private TreeView<LibraryNode> navigationTree;
 
+    // Внутрішні класи-маркери
     private static class PlaceholderNode implements LibraryNode {
         @Override
         public String toString() { return "..."; }
@@ -48,11 +55,13 @@ public class NavigationController {
         TreeItem<LibraryNode> root = new TreeItem<>(null);
         root.setExpanded(true);
 
-        TreeItem<LibraryNode> authorsItem = new TreeItem<>(new CategoryNode("👤 Автори", "authors"));
-        TreeItem<LibraryNode> seriesItem = new TreeItem<>(new CategoryNode("📚 Серії", "series"));
+        // Категорії в дереві (для швидкого доступу)
+        TreeItem<LibraryNode> authorsItem = new TreeItem<>(new CategoryNode("📚 Автори", "authors"));
+        TreeItem<LibraryNode> seriesItem = new TreeItem<>(new CategoryNode("📖 Серії", "series"));
         TreeItem<LibraryNode> genresItem = new TreeItem<>(new CategoryNode("🏷 Жанри", "genres"));
+        TreeItem<LibraryNode> collectionsItem = new TreeItem<>(new CategoryNode("⭐ Колекції", "collections"));
 
-        root.getChildren().addAll(authorsItem, seriesItem, genresItem);
+        root.getChildren().addAll(authorsItem, seriesItem, genresItem, collectionsItem);
         navigationTree.setRoot(root);
         navigationTree.setShowRoot(false);
 
@@ -87,19 +96,31 @@ public class NavigationController {
             }
         });
 
+        // Lazy loading для колекцій
+        collectionsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
+        collectionsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
+            TreeItem<LibraryNode> item = event.getTreeItem();
+            if (item == collectionsItem && item.getChildren().size() == 1
+                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
+                loadCollections(collectionsItem);
+            }
+        });
+
         // Обробка вибору в дереві
         navigationTree.getSelectionModel().selectedItemProperty().addListener((obs, old, newVal) -> {
             if (newVal != null && newVal.getValue() != null) {
                 LibraryNode node = newVal.getValue();
                 if (node instanceof AuthorNode) {
                     AuthorId id = ((AuthorNode) node).author().getId();
-                    bookLoaderService.loadBooksByAuthor(id);
+                    mainController.showAuthorWorkspace(id);
                 } else if (node instanceof SeriesNode) {
                     SeriesId id = ((SeriesNode) node).series().getId();
-                    bookLoaderService.loadBooksBySeries(id);
+                    mainController.showSeriesWorkspace(id);
                 } else if (node instanceof GenreNode) {
                     GenreId id = ((GenreNode) node).genre().getId();
-                    bookLoaderService.loadBooksByGenre(id);
+                    mainController.showGenreWorkspace(id);
+                } else if (node instanceof CollectionNode) {
+                    // Показати колекцію
                 }
             }
         });
@@ -166,35 +187,32 @@ public class NavigationController {
         });
     }
 
-    // ========== ОБРОБНИКИ КНОПОК НАВІГАЦІЇ ==========
-
-    @FXML
-    private void onRecentOpened() {
-        log.info("Завантаження останніх відкритих книг");
-        bookLoaderService.loadRecentBooks();
+    private void loadCollections(TreeItem<LibraryNode> parent) {
+        parent.getChildren().clear();
+        try {
+            collectionRepository.findAll().forEach(collection -> {
+                parent.getChildren().add(new TreeItem<LibraryNode>(new CollectionNode(collection)));
+            });
+            parent.setExpanded(true);
+        } catch (Exception e) {
+            log.error("Failed to load collections", e);
+        }
     }
 
-    @FXML
-    private void onFavorites() {
-        log.info("Завантаження обраних книг");
-        bookLoaderService.loadFavoriteBooks();
-    }
+    // ========== ОБРОБНИКИ КНОПОК ЛІВОЇ ПАНЕЛІ ==========
 
     @FXML
-    private void onContinueReading() {
-        log.info("Завантаження книг для продовження читання");
-        bookLoaderService.loadContinueReading();
+    private void onHome() {
+        mainController.showDashboard();
     }
 
     @FXML
     private void onAuthors() {
-        log.info("Перехід до авторів");
         TreeItem<LibraryNode> root = navigationTree.getRoot();
         if (root != null && !root.getChildren().isEmpty()) {
             TreeItem<LibraryNode> authorsItem = root.getChildren().get(0);
             authorsItem.setExpanded(true);
             navigationTree.getSelectionModel().select(authorsItem);
-            // Якщо ще не завантажені, то завантажимо
             if (authorsItem.getChildren().size() == 1
                     && authorsItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
                 loadAuthors(authorsItem);
@@ -204,7 +222,6 @@ public class NavigationController {
 
     @FXML
     private void onSeries() {
-        log.info("Перехід до серій");
         TreeItem<LibraryNode> root = navigationTree.getRoot();
         if (root != null && root.getChildren().size() > 1) {
             TreeItem<LibraryNode> seriesItem = root.getChildren().get(1);
@@ -219,7 +236,6 @@ public class NavigationController {
 
     @FXML
     private void onGenres() {
-        log.info("Перехід до жанрів");
         TreeItem<LibraryNode> root = navigationTree.getRoot();
         if (root != null && root.getChildren().size() > 2) {
             TreeItem<LibraryNode> genresItem = root.getChildren().get(2);
@@ -233,45 +249,60 @@ public class NavigationController {
     }
 
     @FXML
-    private void onLanguages() {
-        log.info("Завантаження книг за мовою (українська)");
-        // Можна зробити діалог вибору мови, або завантажити за замовчуванням
-        bookLoaderService.loadBooksByLanguage("uk");
-    }
-
-    @FXML
-    private void onYears() {
-        log.info("Завантаження книг за роком (2024)");
-        // Аналогічно, можна зробити вибір року
-        bookLoaderService.loadBooksByYear(2024);
-    }
-
-    @FXML
-    private void onPublishers() {
-        log.info("Завантаження книг за видавництвом");
-        // За замовчуванням завантажуємо всі книги, або можна додати діалог
-        bookLoaderService.loadAllBooks();
-    }
-
-    @FXML
     private void onCollections() {
-        log.info("Завантаження всіх книг (колекції)");
-        bookLoaderService.loadAllBooks();
+        TreeItem<LibraryNode> root = navigationTree.getRoot();
+        if (root != null && root.getChildren().size() > 3) {
+            TreeItem<LibraryNode> collectionsItem = root.getChildren().get(3);
+            collectionsItem.setExpanded(true);
+            navigationTree.getSelectionModel().select(collectionsItem);
+            if (collectionsItem.getChildren().size() == 1
+                    && collectionsItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
+                loadCollections(collectionsItem);
+            }
+        }
+    }
+
+    @FXML
+    private void onNewBooks() {
+        bookLoaderService.loadRecentBooks();
+    }
+
+    @FXML
+    private void onHistory() {
+        mainController.handleHistory();
+    }
+
+    @FXML
+    private void onSearch() {
+        // Активувати поле пошуку
+    }
+
+    @FXML
+    private void onImport() {
+        mainController.showImportWorkspace();
+    }
+
+
+    @FXML
+    private void onSettings() {
+        mainController.handleSettings();
     }
 
     /**
-     * Додатковий метод для примусового оновлення дерева навігації
+     * Оновлює дерево навігації
      */
     public void refreshNavigation() {
         TreeItem<LibraryNode> root = navigationTree.getRoot();
-        if (root != null && !root.getChildren().isEmpty()) {
-            TreeItem<LibraryNode> authorsItem = root.getChildren().get(0);
-            if (authorsItem.getChildren().size() == 1
-                    && authorsItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadAuthors(authorsItem);
-            }
-            // Аналогічно для серій та жанрів можна додати
+        if (root != null) {
+            // Оновлюємо всі категорії з маркерами
+            root.getChildren().forEach(item -> {
+                if (item.getChildren().size() == 1
+                        && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
+                    // Залишаємо маркер, щоб завантажити при розгортанні
+                }
+            });
         }
         navigationTree.refresh();
     }
+
 }

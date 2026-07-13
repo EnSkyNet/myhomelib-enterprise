@@ -1,10 +1,8 @@
 package com.myhomelibcorp.ui.viewmodel;
 
-import lombok.Getter;
 import org.springframework.stereotype.Component;
 
 @Component
-@Getter
 public class ApplicationState {
 
     private final DashboardViewModel dashboard = new DashboardViewModel();
@@ -13,4 +11,28 @@ public class ApplicationState {
     private final BookTableViewModel bookTable = new BookTableViewModel();
     private final BookDetailsViewModel bookDetails = new BookDetailsViewModel();
     private final StatusBarViewModel statusBar = new StatusBarViewModel();
+
+    public DashboardViewModel getDashboard() {
+        return dashboard;
+    }
+
+    public SearchViewModel getSearch() {
+        return search;
+    }
+
+    public NavigationViewModel getNavigation() {
+        return navigation;
+    }
+
+    public BookTableViewModel getBookTable() {
+        return bookTable;
+    }
+
+    public BookDetailsViewModel getBookDetails() {
+        return bookDetails;
+    }
+
+    public StatusBarViewModel getStatusBar() {
+        return statusBar;
+    }
 }

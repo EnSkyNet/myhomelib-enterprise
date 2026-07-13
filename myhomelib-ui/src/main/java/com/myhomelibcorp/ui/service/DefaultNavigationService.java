@@ -3,9 +3,12 @@ package com.myhomelibcorp.ui.service;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import com.myhomelibcorp.ui.mapper.BookViewModelMapper;  // <-- ВИПРАВЛЕНО
-import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import com.myhomelibcorp.ui.viewmodel.BookViewModel;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
+import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.ui.controller.MainController;
+import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,51 +19,62 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class DefaultNavigationService implements NavigationService {
 
-    private final ApplicationState appState;
     private final SessionService sessionService;
-    private final BookViewModelMapper viewModelMapper;
+    private final MainController mainController;
+    private final WorkspaceManager workspaceManager;
 
     @Override
     public void navigateToAuthor(AuthorId authorId) {
         sessionService.saveSelectedAuthorId(authorId.asString());
-        log.info("Navigating to author: {}", authorId.asString());
+        mainController.showAuthorWorkspace(authorId);
+        mainController.updateNavigationButtons();
     }
 
     @Override
-    public void navigateToSeries(String seriesName) {
-        log.info("Navigating to series: {}", seriesName);
+    public void navigateToSeries(SeriesId seriesId) {
+        mainController.showSeriesWorkspace(seriesId);
+        mainController.updateNavigationButtons();
     }
 
     @Override
-    public void navigateToGenre(String genreCode) {
-        log.info("Navigating to genre: {}", genreCode);
+    public void navigateToSeriesByName(String seriesName) {
+        log.info("Navigating to series by name: {}", seriesName);
+        // TODO: знайти SeriesId за назвою
     }
 
     @Override
-    public void navigateToBook(String bookId) {
-        log.info("Navigating to book: {}", bookId);
+    public void navigateToGenre(GenreId genreId) {
+        mainController.showGenreWorkspace(genreId);
+        mainController.updateNavigationButtons();
     }
 
     @Override
-    public void showSearchResults(List<BookDto> books) {
-        List<BookViewModel> vms = books.stream()
-                .map(viewModelMapper::toViewModel)
-                .collect(Collectors.toList());
-        appState.getSearch().setResults(vms);
-        appState.getBookTable().setBooks(vms);
+    public void navigateToBook(BookId bookId) {
+        mainController.showBookWorkspace(bookId);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToCollection(GroupId groupId) {
+        mainController.showCollectionWorkspace();
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void showSearchResults(List<BookDto> results) {
+        mainController.showSearchResults(results);
+        mainController.updateNavigationButtons();
     }
 
     @Override
     public void clearSearch() {
-        appState.getSearch().clearResults();
-        appState.getSearch().setQuery("");
+        // Скидаємо стан пошуку
     }
 
     @Override
@@ -89,11 +103,6 @@ public class DefaultNavigationService implements NavigationService {
     }
 
     @Override
-    public void readBook(BookDto book) {
-        log.info("Read book: {}", book.getTitle());
-    }
-
-    @Override
     public void openBookFolder(BookDto book) {
         String folder = book.getFolder();
         if (folder == null || folder.isBlank()) return;
@@ -104,6 +113,14 @@ public class DefaultNavigationService implements NavigationService {
             } catch (IOException e) {
                 log.error("Failed to open folder: {}", folder, e);
             }
+        }
+    }
+
+    @Override
+    public void readBook(BookDto book) {
+        if (book != null) {
+            mainController.showReaderWorkspace(BookId.fromString(book.getId()));
+            mainController.updateNavigationButtons();
         }
     }
 }

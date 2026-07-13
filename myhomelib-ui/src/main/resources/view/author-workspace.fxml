@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.image.ImageView?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.author.AuthorWorkspaceController"
+      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;">
+
+    <!-- Заголовок з іменем автора -->
+    <HBox spacing="15" alignment="CENTER_LEFT">
+        <ImageView fx:id="authorPhotoImageView" fitWidth="80" fitHeight="80" preserveRatio="true"/>
+        <VBox>
+            <Label fx:id="authorNameLabel" text="Автор" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+            <Label fx:id="authorFullNameLabel" text="Повне ім'я" style="-fx-font-size: 14px; -fx-text-fill: #666;"/>
+        </VBox>
+        <Region HBox.hgrow="ALWAYS"/>
+        <TextField fx:id="searchField" promptText="🔍 Пошук по книгах..." prefWidth="250"/>
+    </HBox>
+
+    <!-- Статистика -->
+    <HBox spacing="20">
+        <Label fx:id="booksCountLabel" text="Книг: 0" style="-fx-font-weight: bold;"/>
+        <Label fx:id="seriesCountLabel" text="Серій: 0" style="-fx-font-weight: bold;"/>
+        <Label fx:id="genresCountLabel" text="Жанрів: 0" style="-fx-font-weight: bold;"/>
+    </HBox>
+
+    <!-- Біографія -->
+    <Label text="Біографія:" style="-fx-font-weight: bold;"/>
+    <TextArea fx:id="bioLabel" prefHeight="60" editable="false" wrapText="true"
+              style="-fx-background-color: #f0f0f0; -fx-border-color: #ddd;"/>
+
+    <!-- Фільтр та сортування -->
+    <HBox spacing="10" alignment="CENTER_LEFT">
+        <Label text="Фільтр:"/>
+        <TextField fx:id="filterTextField" promptText="Назва або серія..." prefWidth="200"/>
+        <Separator orientation="VERTICAL"/>
+        <Button text="За назвою" onAction="#onSortByTitle"/>
+        <Button text="За роком" onAction="#onSortByYear"/>
+        <Button text="За рейтингом" onAction="#onSortByRating"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button text="Відкрити книгу" onAction="#onOpenBook"/>
+        <Button text="Читати" onAction="#onReadBook"/>
+    </HBox>
+
+    <!-- Таблиця книг -->
+    <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
+        <columns>
+            <TableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
+            <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="120"/>
+            <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="40"/>
+            <TableColumn fx:id="yearColumn" text="Рік" prefWidth="80"/>
+            <TableColumn fx:id="formatColumn" text="Формат" prefWidth="80"/>
+            <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="100"/>
+            <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+        </columns>
+    </TableView>
+</VBox>

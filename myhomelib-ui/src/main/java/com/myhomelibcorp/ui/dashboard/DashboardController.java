@@ -1,9 +1,9 @@
 package com.myhomelibcorp.ui.dashboard;
 
-import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.DashboardData;
 import com.myhomelibcorp.application.dashboard.DashboardService;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -30,8 +30,10 @@ public class DashboardController {
     @FXML private ProgressBar continueProgress;
     @FXML private VBox recentBooksBox;
     @FXML private VBox newBooksBox;
-    @FXML private VBox favoriteAuthorsBox;
-    @FXML private Label statsLabel;
+    @FXML private Label booksCount;
+    @FXML private Label authorsCount;
+    @FXML private Label seriesCount;
+    @FXML private Label genresCount;
 
     @FXML
     public void initialize() {
@@ -52,7 +54,6 @@ public class DashboardController {
         vm.setContinueReading(data.getContinueReading());
         vm.setRecentBooks(data.getRecentBooks());
         vm.setNewBooks(data.getRecentAdded());
-        vm.setFavoriteAuthors(data.getFavoriteAuthors());
         vm.setStatistics(data.getStatistics());
 
         // Продовжити читання
@@ -73,26 +74,20 @@ public class DashboardController {
         newBooksBox.getChildren().clear();
         data.getRecentAdded().forEach(book -> newBooksBox.getChildren().add(createBookLabel(book)));
 
-        // Улюблені автори
-        favoriteAuthorsBox.getChildren().clear();
-        data.getFavoriteAuthors().forEach(author -> {
-            Label label = new Label("✔ " + author.getFullName());
-            label.setStyle("-fx-padding: 2 0 2 10;");
-            favoriteAuthorsBox.getChildren().add(label);
-        });
-
         // Статистика
         var stats = data.getStatistics();
         if (stats != null) {
-            statsLabel.setText(String.format("Книг: %d | Авторів: %d | Серій: %d",
-                    stats.getBooksCount(), stats.getAuthorsCount(), stats.getSeriesCount()));
+            booksCount.setText(String.valueOf(stats.getBooksCount()));
+            authorsCount.setText(String.valueOf(stats.getAuthorsCount()));
+            seriesCount.setText(String.valueOf(stats.getSeriesCount()));
+            genresCount.setText(String.valueOf(stats.getGenresCount()));
         }
     }
 
     private Label createBookLabel(BookDto book) {
         Label label = new Label("📕 " + book.getTitle());
-        label.setStyle("-fx-padding: 2 0 2 10;");
-        label.setOnMouseClicked(e -> navigationService.navigateToBook(book.getId()));
+        label.setStyle("-fx-padding: 3 0 3 10; -fx-cursor: hand;");
+        label.setOnMouseClicked(e -> navigationService.navigateToBook(BookId.fromString(book.getId())));
         return label;
     }
 
@@ -100,7 +95,7 @@ public class DashboardController {
     private void onContinueReading() {
         BookDto book = appState.getDashboard().getContinueReading();
         if (book != null) {
-            navigationService.navigateToBook(book.getId());
+            navigationService.navigateToBook(BookId.fromString(book.getId()));
         }
     }
 }

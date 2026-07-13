@@ -15,7 +15,6 @@ public class BookViewModelMapper {
 
     public BookViewModel toViewModel(BookDto dto) {
         if (dto == null) return null;
-
         BookViewModel vm = new BookViewModel();
         vm.setId(dto.getId());
         vm.setTitle(dto.getTitle());
@@ -44,7 +43,6 @@ public class BookViewModelMapper {
 
     public BookViewModel toViewModel(BookListItem item) {
         if (item == null) return null;
-
         BookViewModel vm = new BookViewModel();
         vm.setId(item.getId());
         vm.setTitle(item.getTitle());

@@ -6,41 +6,45 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.dashboard.DashboardController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: #fafafa;">
+      spacing="12" style="-fx-padding: 20; -fx-background-color: #f8f9fa;">
 
-    <Label text="📊 Панель керування" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+    <!-- Заголовок -->
+    <Label text="📚 Ласкаво просимо" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
 
-    <!-- Продовжити читання -->
-    <VBox fx:id="continueReadingBox" spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <Label text="📖 Продовжити читання" style="-fx-font-weight: bold;"/>
-        <HBox spacing="10">
-            <Label fx:id="continueTitle" text="Немає книг" wrapText="true" HBox.hgrow="ALWAYS"/>
-            <Button text="Читати" onAction="#onContinueReading"/>
+    <!-- Блок "Продовжити читання" -->
+    <VBox fx:id="continueReadingBox" spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+        <Label text="📖 Продовжити читання" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <HBox spacing="10" alignment="CENTER_LEFT">
+            <Label fx:id="continueTitle" text="Немає книг" wrapText="true" HBox.hgrow="ALWAYS" style="-fx-font-size: 14px;"/>
+            <Button text="Читати" onAction="#onContinueReading" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
         </HBox>
-        <ProgressBar fx:id="continueProgress" prefWidth="200"/>
+        <ProgressBar fx:id="continueProgress" prefWidth="200" style="-fx-accent: #4CAF50;"/>
     </VBox>
 
-    <!-- Останні відкриті -->
-    <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <Label text="⏳ Останні відкриті" style="-fx-font-weight: bold;"/>
-        <VBox fx:id="recentBooksBox" spacing="3"/>
+    <!-- Блок "Останні відкриті" -->
+    <VBox spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+        <Label text="⏳ Останні відкриті" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <VBox fx:id="recentBooksBox" spacing="4"/>
     </VBox>
 
-    <!-- Нові книги -->
-    <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <Label text="🆕 Нові книги" style="-fx-font-weight: bold;"/>
-        <VBox fx:id="newBooksBox" spacing="3"/>
+    <!-- Блок "Нові книги" -->
+    <VBox spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+        <Label text="🆕 Нові книги" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <VBox fx:id="newBooksBox" spacing="4"/>
     </VBox>
 
-    <!-- Улюблені автори -->
-    <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <Label text="⭐ Улюблені автори" style="-fx-font-weight: bold;"/>
-        <VBox fx:id="favoriteAuthorsBox" spacing="3"/>
-    </VBox>
-
-    <!-- Статистика -->
-    <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <Label text="📊 Статистика бібліотеки" style="-fx-font-weight: bold;"/>
-        <Label fx:id="statsLabel"/>
+    <!-- Блок "Статистика" -->
+    <VBox spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+        <Label text="📊 Статистика" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <GridPane hgap="20" vgap="5">
+            <Label text="Книг:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+            <Label fx:id="booksCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+            <Label text="Авторів:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+            <Label fx:id="authorsCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+            <Label text="Серій:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+            <Label fx:id="seriesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+            <Label text="Жанрів:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+            <Label fx:id="genresCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+        </GridPane>
     </VBox>
 </VBox>

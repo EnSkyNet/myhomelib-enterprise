@@ -46,24 +46,36 @@
                 </Menu>
             </MenuBar>
 
-            <!-- Пошук -->
-            <fx:include source="search.fxml"/>
+            <!-- Панель інструментів -->
+            <ToolBar>
+                <Button fx:id="backButton" text="←" onAction="#handleBack" disable="true"/>
+                <Button fx:id="forwardButton" text="→" onAction="#handleForward" disable="true"/>
+                <Separator/>
+                <Button text="🏠" onAction="#handleHome"/>
+                <Separator/>
+                <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="300"/>
+                <Button text="🔍" onAction="#handleSearch"/>
+                <Separator/>
+                <Button text="+Імпорт" onAction="#handleImportDirectory"/>
+                <Button text="+Книга" onAction="#handleAddBook"/>
+                <Button text="💾 Backup" onAction="#handleBackup"/>
+                <Separator/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button text="⚙" onAction="#handleSettings"/>
+            </ToolBar>
         </VBox>
     </top>
 
     <left>
-        <VBox style="-fx-padding: 5; -fx-background-color: #f5f5f5; -fx-pref-width: 220;">
+        <VBox style="-fx-padding: 5; -fx-background-color: #f5f5f5; -fx-pref-width: 200;">
             <fx:include source="navigation.fxml"/>
         </VBox>
     </left>
 
     <center>
-        <SplitPane orientation="VERTICAL" dividerPositions="0.6">
-            <items>
-                <fx:include source="dashboard.fxml"/>
-                <fx:include source="book-table.fxml"/>
-            </items>
-        </SplitPane>
+        <!-- Тут буде робоча область (Workspace), яка встановлюється програмою -->
+        <!-- За замовчуванням завантажуємо Dashboard -->
+        <fx:include source="dashboard.fxml"/>
     </center>
 
     <right>
