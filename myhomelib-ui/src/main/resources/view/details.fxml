@@ -1,25 +1,33 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
+<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
+<?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.*?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.details.BookDetailsController"
       spacing="5" style="-fx-padding: 10; -fx-background-color: #fafafa;">
 
-    <Label text="Деталі книги" style="-fx-font-weight: bold; -fx-font-size: 16px;"/>
-    <Label fx:id="titleLabel" text="Назва" wrapText="true" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+    <VBox alignment="CENTER">
+        <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"/>
+    </VBox>
+
+    <Label fx:id="titleLabel" text="Назва" wrapText="true" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
     <Label fx:id="authorsLabel" text="Автори"/>
     <Label fx:id="seriesLabel" text="Серія"/>
-    <Label fx:id="genresLabel" text="Жанри"/>
+    <Label fx:id="genresLabel" text="Жанр"/>
     <Label fx:id="languageLabel" text="Мова"/>
     <Label fx:id="yearLabel" text="Рік"/>
     <Label fx:id="publisherLabel" text="Видавництво"/>
     <Label fx:id="isbnLabel" text="ISBN"/>
+
+    <Label text="Анотація:" style="-fx-font-weight: bold;"/>
     <TextArea fx:id="annotationArea" wrapText="true" prefHeight="100" editable="false"/>
+
     <HBox spacing="10">
-        <Button text="Відкрити" onAction="#onOpen"/>
-        <Button text="Читати" onAction="#onRead"/>
-        <Button text="Редагувати" onAction="#onEdit"/>
+        <Button text="Читати" onAction="#onRead" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+        <Button text="Редагувати" onAction="#onEdit" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+        <Button text="Відкрити папку" onAction="#onOpenFolder"/>
     </HBox>
 </VBox>

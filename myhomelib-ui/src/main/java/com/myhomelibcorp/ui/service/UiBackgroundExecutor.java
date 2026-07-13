@@ -1,12 +1,17 @@
 package com.myhomelibcorp.ui.service;
 
 import jakarta.annotation.PreDestroy;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.Callable;
 
-@Service
-public class BackgroundExecutor {
+@Component
+public class UiBackgroundExecutor {
 
     private final ExecutorService executor = Executors.newFixedThreadPool(
             Math.max(4, Runtime.getRuntime().availableProcessors())

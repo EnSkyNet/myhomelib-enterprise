@@ -92,4 +92,18 @@ public class DefaultNavigationService implements NavigationService {
     public void readBook(BookDto book) {
         log.info("Read book: {}", book.getTitle());
     }
+
+    @Override
+    public void openBookFolder(BookDto book) {
+        String folder = book.getFolder();
+        if (folder == null || folder.isBlank()) return;
+        File dir = new File(folder);
+        if (dir.exists() && dir.isDirectory()) {
+            try {
+                Desktop.getDesktop().open(dir);
+            } catch (IOException e) {
+                log.error("Failed to open folder: {}", folder, e);
+            }
+        }
+    }
 }

@@ -6,39 +6,41 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.dashboard.DashboardController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f8f8;">
+      spacing="10" style="-fx-padding: 15; -fx-background-color: #fafafa;">
 
-    <Label text="📊 Панель керування" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <Label text="📊 Панель керування" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
 
-    <!-- Блок "Продовжити читання" -->
+    <!-- Продовжити читання -->
     <VBox fx:id="continueReadingBox" spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
         <Label text="📖 Продовжити читання" style="-fx-font-weight: bold;"/>
-        <Label fx:id="continueTitle" text=""/>
+        <HBox spacing="10">
+            <Label fx:id="continueTitle" text="Немає книг" wrapText="true" HBox.hgrow="ALWAYS"/>
+            <Button text="Читати" onAction="#onContinueReading"/>
+        </HBox>
         <ProgressBar fx:id="continueProgress" prefWidth="200"/>
-        <Button text="Продовжити" onAction="#onContinueReading"/>
     </VBox>
 
-    <!-- Блок "Останні відкриті" -->
+    <!-- Останні відкриті -->
     <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
         <Label text="⏳ Останні відкриті" style="-fx-font-weight: bold;"/>
         <VBox fx:id="recentBooksBox" spacing="3"/>
     </VBox>
 
-    <!-- Блок "Нові книги" -->
+    <!-- Нові книги -->
     <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
         <Label text="🆕 Нові книги" style="-fx-font-weight: bold;"/>
         <VBox fx:id="newBooksBox" spacing="3"/>
     </VBox>
 
-    <!-- Блок "Улюблені автори" -->
+    <!-- Улюблені автори -->
     <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
         <Label text="⭐ Улюблені автори" style="-fx-font-weight: bold;"/>
         <VBox fx:id="favoriteAuthorsBox" spacing="3"/>
     </VBox>
 
-    <!-- Блок "Статистика" -->
+    <!-- Статистика -->
     <VBox spacing="5" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <Label text="📊 Статистика" style="-fx-font-weight: bold;"/>
+        <Label text="📊 Статистика бібліотеки" style="-fx-font-weight: bold;"/>
         <Label fx:id="statsLabel"/>
     </VBox>
 </VBox>

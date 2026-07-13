@@ -54,7 +54,7 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
         long series = queryExecutor.queryForLong("SELECT COUNT(*) FROM series");
         long genres = queryExecutor.queryForLong("SELECT COUNT(*) FROM genres");
         long languages = queryExecutor.queryForLong("SELECT COUNT(DISTINCT language) FROM books WHERE language IS NOT NULL");
-        long publishers = 0; // можна додати поле publisher
+        long publishers = 0;
         long totalSize = queryExecutor.queryForLong("SELECT COALESCE(SUM(file_size), 0) FROM books");
         long duplicates = 0;
         long missingCovers = 0;

@@ -52,9 +52,10 @@ public class DashboardController {
         vm.setContinueReading(data.getContinueReading());
         vm.setRecentBooks(data.getRecentBooks());
         vm.setNewBooks(data.getRecentAdded());
-        vm.setFavoriteAuthors(data.getFavoriteAuthors()); // ВИПРАВЛЕНО
+        vm.setFavoriteAuthors(data.getFavoriteAuthors());
         vm.setStatistics(data.getStatistics());
 
+        // Продовжити читання
         BookDto continueBook = data.getContinueReading();
         if (continueBook != null) {
             continueReadingBox.setVisible(true);
@@ -64,20 +65,23 @@ public class DashboardController {
             continueReadingBox.setVisible(false);
         }
 
+        // Останні книги
         recentBooksBox.getChildren().clear();
         data.getRecentBooks().forEach(book -> recentBooksBox.getChildren().add(createBookLabel(book)));
 
+        // Нові книги
         newBooksBox.getChildren().clear();
         data.getRecentAdded().forEach(book -> newBooksBox.getChildren().add(createBookLabel(book)));
 
-        // Улюблені автори – використовуємо AuthorDto
+        // Улюблені автори
         favoriteAuthorsBox.getChildren().clear();
         data.getFavoriteAuthors().forEach(author -> {
-            Label label = new Label("✔ " + author.getFullName()); // ВИПРАВЛЕНО
+            Label label = new Label("✔ " + author.getFullName());
             label.setStyle("-fx-padding: 2 0 2 10;");
             favoriteAuthorsBox.getChildren().add(label);
         });
 
+        // Статистика
         var stats = data.getStatistics();
         if (stats != null) {
             statsLabel.setText(String.format("Книг: %d | Авторів: %d | Серій: %d",

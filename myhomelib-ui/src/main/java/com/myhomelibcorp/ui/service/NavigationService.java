@@ -16,4 +16,5 @@ public interface NavigationService {
     void clearSearch();
     void openBookFile(BookDto book);
     void readBook(BookDto book);
+    void openBookFolder(BookDto book);
 }

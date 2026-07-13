@@ -52,7 +52,7 @@
     </top>
 
     <left>
-        <VBox style="-fx-padding: 5;">
+        <VBox style="-fx-padding: 5; -fx-background-color: #f5f5f5; -fx-pref-width: 220;">
             <fx:include source="navigation.fxml"/>
         </VBox>
     </left>
@@ -60,13 +60,17 @@
     <center>
         <SplitPane orientation="VERTICAL" dividerPositions="0.6">
             <items>
-                <!-- Таблиця книг -->
+                <fx:include source="dashboard.fxml"/>
                 <fx:include source="book-table.fxml"/>
-                <!-- Деталі -->
-                <fx:include source="details.fxml"/>
             </items>
         </SplitPane>
     </center>
+
+    <right>
+        <VBox style="-fx-padding: 5; -fx-pref-width: 300; -fx-background-color: #fafafa;">
+            <fx:include source="details.fxml"/>
+        </VBox>
+    </right>
 
     <bottom>
         <fx:include source="statusbar.fxml"/>

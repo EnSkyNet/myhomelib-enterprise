@@ -2,7 +2,7 @@ package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
-import com.myhomelibcorp.ui.service.BackgroundExecutor;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.scene.image.ImageView;
@@ -18,7 +18,7 @@ import java.util.concurrent.atomic.AtomicReference;
 public class CoverPresenter {
 
     private final CoverExtractor coverExtractor;
-    private final BackgroundExecutor backgroundExecutor;
+    private final UiBackgroundExecutor backgroundExecutor;
 
     private ImageView coverImageView;
     private final AtomicReference<String> currentLoadingBookId = new AtomicReference<>();

@@ -2,8 +2,8 @@ package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.search.SearchService;
-import com.myhomelibcorp.ui.mapper.BookViewModelMapper;  // <-- ВИПРАВЛЕНО
-import com.myhomelibcorp.ui.service.BackgroundExecutor;
+import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.SearchViewModel;
@@ -23,7 +23,7 @@ import java.util.stream.Collectors;
 public class BookSearchPresenter {
 
     private final SearchService searchService;
-    private final BackgroundExecutor backgroundExecutor;
+    private final UiBackgroundExecutor executor;
     private final BookViewModelMapper viewModelMapper;
     private final ApplicationState appState;
 
@@ -47,7 +47,7 @@ public class BookSearchPresenter {
         vm.setSearching(true);
         vm.setStatusMessage("Пошук...");
 
-        backgroundExecutor.submit(() -> {
+        executor.submit(() -> {
             if (query == null || query.isBlank()) {
                 return List.<BookDto>of();
             }

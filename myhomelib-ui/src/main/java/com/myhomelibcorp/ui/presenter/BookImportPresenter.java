@@ -3,11 +3,10 @@ package com.myhomelibcorp.ui.presenter;
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
-import com.myhomelibcorp.ui.service.BackgroundExecutor;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import com.myhomelibcorp.ui.viewmodel.StatusBarViewModel;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -27,7 +26,7 @@ public class BookImportPresenter {
 
     private final ImportFileUseCase importFileUseCase;
     private final ImportDirectoryUseCase importDirectoryUseCase;
-    private final BackgroundExecutor backgroundExecutor;
+    private final UiBackgroundExecutor executor;
     private final FileChooserService fileChooserService;
     private final ApplicationState appState;
 
@@ -53,7 +52,7 @@ public class BookImportPresenter {
     }
 
     public void importDirectory(Path directory, Runnable onComplete) {
-        StatusBarViewModel statusBar = appState.getStatusBar();
+        var statusBar = appState.getStatusBar();
         statusBar.setStatusText("Імпорт каталогу: " + directory.getFileName());
         statusBar.setProgressVisible(true);
         AtomicBoolean cancelFlag = new AtomicBoolean(false);
@@ -69,7 +68,7 @@ public class BookImportPresenter {
                 .cancelFlag(cancelFlag)
                 .build();
 
-        backgroundExecutor.submit(() -> importDirectoryUseCase.execute(context))
+        executor.submit(() -> importDirectoryUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     statusBar.setProgressVisible(false);
                     statusBar.setStatusText("Імпорт каталогу завершено. Додано " + result.imported() + " книг");
@@ -90,7 +89,7 @@ public class BookImportPresenter {
     }
 
     public void importFile(Path file, Runnable onComplete) {
-        StatusBarViewModel statusBar = appState.getStatusBar();
+        var statusBar = appState.getStatusBar();
         statusBar.setStatusText("Імпорт файлу: " + file.getFileName());
         statusBar.setProgressVisible(true);
 
@@ -102,7 +101,7 @@ public class BookImportPresenter {
                 .progressListener(progress -> UiExecutor.runOnUiThread(() -> statusBar.setProgress(progress)))
                 .build();
 
-        backgroundExecutor.submit(() -> importFileUseCase.execute(context))
+        executor.submit(() -> importFileUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     statusBar.setProgressVisible(false);
                     statusBar.setStatusText("Імпорт завершено. Додано " + result.imported() + " книг");
