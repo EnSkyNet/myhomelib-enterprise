@@ -279,7 +279,7 @@ public class NavigationController {
 
     @FXML
     private void onImport() {
-        mainController.showImportWorkspace();
+        mainController.handleImport();
     }
 
 

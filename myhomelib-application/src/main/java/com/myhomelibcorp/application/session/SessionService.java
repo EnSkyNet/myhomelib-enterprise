@@ -15,16 +15,15 @@ public class SessionService {
     private final SessionRepository sessionRepository;
     private final Preferences prefs = Preferences.userNodeForPackage(SessionService.class);
 
-    public void saveLastOpenedBookId(Long bookId) {
+    public void saveLastOpenedBookId(String bookId) {
         sessionRepository.saveLastOpenedBookId(bookId);
-        prefs.putLong("lastOpenedBookId", bookId);
+        prefs.put("lastOpenedBookId", bookId);
     }
 
-    public Long getLastOpenedBookId() {
-        Long id = sessionRepository.getLastOpenedBookId();
+    public String getLastOpenedBookId() {
+        String id = sessionRepository.getLastOpenedBookId();
         if (id == null) {
-            id = prefs.getLong("lastOpenedBookId", -1);
-            if (id == -1) return null;
+            id = prefs.get("lastOpenedBookId", null);
         }
         return id;
     }

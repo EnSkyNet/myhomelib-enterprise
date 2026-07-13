@@ -62,8 +62,8 @@ public class BookWorkspaceController {
     }
 
     public void setBookId(BookId bookId) {
-        // Запам'ятовуємо відкриту книгу в сесії
-        sessionService.saveLastOpenedBookId(Long.parseLong(bookId.asString()));
+        // Зберігаємо ID як рядок, а не перетворюємо на Long
+        sessionService.saveLastOpenedBookId(bookId.asString());
 
         bookQueryRepository.findById(bookId).ifPresentOrElse(book -> {
             currentBook = bookMapper.toDto(book);

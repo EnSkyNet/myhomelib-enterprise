@@ -17,28 +17,24 @@ public class SqliteSessionRepository implements SessionRepository {
     private final Preferences prefs = Preferences.userNodeForPackage(SqliteSessionRepository.class);
 
     @Override
-    public void saveLastOpenedBookId(Long bookId) {
-        prefs.putLong("lastOpenedBookId", bookId);
+    public void saveLastOpenedBookId(String bookId) {
+        prefs.put("lastOpenedBookId", bookId);
         try {
             String sql = "INSERT OR REPLACE INTO session (key, value) VALUES ('lastOpenedBookId', ?)";
-            queryExecutor.update(sql, String.valueOf(bookId));
+            queryExecutor.update(sql, bookId);
         } catch (Exception e) {
             log.warn("Failed to save lastOpenedBookId to DB", e);
         }
     }
 
     @Override
-    public Long getLastOpenedBookId() {
+    public String getLastOpenedBookId() {
         try {
             String sql = "SELECT value FROM session WHERE key = 'lastOpenedBookId'";
-            String value = queryExecutor.queryForObject(sql, String.class);
-            if (value != null) {
-                return Long.parseLong(value);
-            }
+            return queryExecutor.queryForObject(sql, String.class);
         } catch (Exception e) {
             // ignore
         }
-        long id = prefs.getLong("lastOpenedBookId", -1);
-        return id == -1 ? null : id;
+        return prefs.get("lastOpenedBookId", null);
     }
 }

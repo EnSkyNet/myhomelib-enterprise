@@ -52,9 +52,9 @@ public class DashboardService {
                         .collect(Collectors.toList()));
 
         CompletableFuture<BookDto> continueFuture = CompletableFuture.supplyAsync(() -> {
-            Long lastBookId = sessionRepository.getLastOpenedBookId();
+            String lastBookId = sessionRepository.getLastOpenedBookId();
             if (lastBookId == null) return null;
-            Book book = bookQueryRepository.findById(BookId.fromLong(lastBookId)).orElse(null);
+            Book book = bookQueryRepository.findById(BookId.fromString(lastBookId)).orElse(null);
             return book != null ? bookMapper.toDto(book) : null;
         });
 

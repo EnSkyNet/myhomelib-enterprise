@@ -123,4 +123,26 @@ public class DefaultNavigationService implements NavigationService {
             mainController.updateNavigationButtons();
         }
     }
+
+    @Override
+    public boolean canGoBack() {
+        return workspaceManager.canGoBack();
+    }
+
+    @Override
+    public boolean canGoForward() {
+        return workspaceManager.canGoForward();
+    }
+
+    @Override
+    public void goBack() {
+        workspaceManager.goBack();
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void goForward() {
+        workspaceManager.goForward();
+        mainController.updateNavigationButtons();
+    }
 }

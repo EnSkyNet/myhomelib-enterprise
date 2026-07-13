@@ -63,17 +63,14 @@ public class ReaderWorkspaceController {
         webEngine = webView.getEngine();
         webEngine.setJavaScriptEnabled(true);
 
-        // Відстеження завантаження сторінки
         webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
                 updatePageInfo();
                 applyTheme();
-                // Відновити позицію прокрутки
                 restoreScrollPosition();
             }
         });
 
-        // Оновлення прогресу при прокрутці (через JavaScript)
         webEngine.executeScript(
                 "window.addEventListener('scroll', function() {" +
                         "  var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;" +
@@ -85,14 +82,14 @@ public class ReaderWorkspaceController {
     }
 
     public void setBookId(BookId bookId) {
+        // Зберігаємо ID як рядок
+        sessionService.saveLastOpenedBookId(bookId.asString());
+
         bookQueryRepository.findById(bookId).ifPresentOrElse(book -> {
             currentBook = bookMapper.toDto(book);
-            // Зберігаємо в сесії
-            sessionService.saveLastOpenedBookId(Long.parseLong(bookId.asString()));
             UiExecutor.runOnUiThread(() -> {
                 bookTitleLabel.setText(currentBook.getTitle());
                 loadBookContent(currentBook);
-                // Відновити прогрес
                 progressBar.setProgress(currentBook.getProgress() / 100.0);
                 progressLabel.setText(currentBook.getProgress() + "%");
             });
@@ -117,12 +114,24 @@ public class ReaderWorkspaceController {
         String root = book.getCollectionRoot();
 
         Path filePath;
+        // Нормалізація шляху: використовуємо тільки root, якщо він заданий, інакше folder
         if (root != null && !root.isBlank()) {
-            filePath = Paths.get(root, folder != null ? folder : "", fileName);
+            // Якщо folder вже абсолютний, не додаємо root
+            Path folderPath = Paths.get(folder != null ? folder : "");
+            if (folderPath.isAbsolute()) {
+                filePath = folderPath.resolve(fileName != null ? fileName : "");
+            } else {
+                filePath = Paths.get(root, folder != null ? folder : "", fileName != null ? fileName : "");
+            }
         } else if (folder != null && !folder.isBlank()) {
-            filePath = Paths.get(folder, fileName);
+            filePath = Paths.get(folder, fileName != null ? fileName : "");
         } else {
-            filePath = Paths.get(fileName);
+            filePath = Paths.get(fileName != null ? fileName : "");
+        }
+
+        // Якщо шлях відносний, спробуємо зробити його абсолютним відносно поточної директорії
+        if (!filePath.isAbsolute()) {
+            filePath = filePath.toAbsolutePath();
         }
 
         if (!Files.exists(filePath)) {
@@ -131,12 +140,11 @@ public class ReaderWorkspaceController {
         }
 
         try {
-            if (fileName.endsWith(".fb2") || fileName.endsWith(".fbd")) {
+            if (fileName != null && (fileName.endsWith(".fb2") || fileName.endsWith(".fbd"))) {
                 return convertFb2ToHtml(filePath);
-            } else if (fileName.endsWith(".txt")) {
+            } else if (fileName != null && fileName.endsWith(".txt")) {
                 return Files.readString(filePath);
-            } else if (fileName.endsWith(".epub")) {
-                // Спрощена обробка EPUB
+            } else if (fileName != null && fileName.endsWith(".epub")) {
                 return "<p>EPUB підтримка в розробці</p>";
             } else {
                 return Files.readString(filePath);
