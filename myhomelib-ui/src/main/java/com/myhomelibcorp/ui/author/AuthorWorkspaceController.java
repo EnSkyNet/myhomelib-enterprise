@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.author;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
+import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
@@ -45,6 +46,7 @@ public class AuthorWorkspaceController {
     private final CoverPresenter coverPresenter;
     private final ApplicationState appState;
     private final AuthorMapper authorMapper;
+    private final BookMapper bookMapper;
     private final BookViewModelMapper bookViewModelMapper;
 
     @FXML private Label authorNameLabel;
@@ -65,7 +67,6 @@ public class AuthorWorkspaceController {
     @FXML private TextField filterTextField;
     @FXML private TextField searchField;
 
-
     private AuthorId currentAuthorId;
     private Author currentAuthor;
     private List<BookDto> allBooks;
@@ -84,7 +85,7 @@ public class AuthorWorkspaceController {
             if (selected != null) {
                 BookId bookId = BookId.fromString(selected.getId());
                 BookDto bookDto = bookQueryRepository.findById(bookId)
-                        .map(book -> new com.myhomelibcorp.application.mapper.BookMapper(null).toDto(book))
+                        .map(bookMapper::toDto)
                         .orElse(null);
                 appState.getBookDetails().setCurrentBook(bookDto);
             }
@@ -124,7 +125,7 @@ public class AuthorWorkspaceController {
                 .direction(SortDirection.ASC)
                 .build();
         List<BookDto> books = bookQueryRepository.find(query).stream()
-                .map(book -> new com.myhomelibcorp.application.mapper.BookMapper(null).toDto(book))
+                .map(bookMapper::toDto)
                 .collect(Collectors.toList());
         this.allBooks = books;
         UiExecutor.runOnUiThread(() -> updateBooksUI(books));
@@ -204,9 +205,10 @@ public class AuthorWorkspaceController {
     private void onReadBook() {
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
         if (selected != null) {
-            navigationService.readBook(bookQueryRepository.findById(BookId.fromString(selected.getId()))
-                    .map(book -> new com.myhomelibcorp.application.mapper.BookMapper(null).toDto(book))
-                    .orElse(null));
+            BookDto book = bookQueryRepository.findById(BookId.fromString(selected.getId()))
+                    .map(bookMapper::toDto)
+                    .orElse(null);
+            navigationService.readBook(book);
         }
     }
 }

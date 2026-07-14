@@ -26,14 +26,55 @@ public class CoverLocatorImpl implements CoverLocator {
         return lower.endsWith(".zip") || lower.endsWith(".fb2zip") || lower.endsWith(".fbd");
     }
 
-    // Нормалізація: приводимо до нижнього регістру, видаляємо пробіли, дефіси, підкреслення,
-    // залишаємо тільки букви, цифри та крапку
     private final Function<String, String> normalize = s -> {
         if (s == null) return "";
         return s.toLowerCase()
                 .replaceAll("[\\s_\\-]+", "")
                 .replaceAll("[^a-zа-я0-9.]", "");
     };
+
+    /**
+     * Правильно будує шлях до файлу.
+     */
+    private Path buildFilePath(String root, String folder, String fileName) {
+        if (fileName != null && !fileName.isBlank()) {
+            Path fileNamePath = Paths.get(fileName);
+            if (fileNamePath.isAbsolute()) {
+                return fileNamePath;
+            }
+        }
+
+        if (folder != null && !folder.isBlank()) {
+            Path folderPath = Paths.get(folder);
+            if (folderPath.isAbsolute()) {
+                if (fileName != null && !fileName.isBlank()) {
+                    return folderPath.resolve(fileName);
+                }
+                return folderPath;
+            }
+        }
+
+        if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
+            Path rootPath = Paths.get(root);
+            Path folderPath = Paths.get(folder);
+            if (fileName != null && !fileName.isBlank()) {
+                return rootPath.resolve(folderPath).resolve(fileName);
+            }
+            return rootPath.resolve(folderPath);
+        }
+
+        if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
+            return Paths.get(root).resolve(fileName);
+        }
+
+        if (fileName != null && !fileName.isBlank()) {
+            return Paths.get(fileName);
+        }
+        if (folder != null && !folder.isBlank()) {
+            return Paths.get(folder);
+        }
+        return Paths.get(".");
+    }
 
     @Override
     public Optional<Path> locateCoverFile(BookDto book) {
@@ -43,8 +84,7 @@ public class CoverLocatorImpl implements CoverLocator {
         String fileName = book.getFileName();
         String root = book.getCollectionRoot();
 
-        log.debug("locateCoverFile: folder='{}', fileName='{}', collectionRoot='{}'",
-                folder, fileName, root);
+        log.debug("locateCoverFile: folder='{}', fileName='{}', collectionRoot='{}'", folder, fileName, root);
 
         if (folder == null || folder.isBlank()) {
             if (fileName == null || fileName.isBlank()) {
@@ -66,35 +106,10 @@ public class CoverLocatorImpl implements CoverLocator {
             return Optional.of(archivePath);
         }
 
-        Path folderPath = Paths.get(folder);
-        if (folderPath.isAbsolute()) {
-            if (fileName != null && !fileName.isBlank()) {
-                Path fullPath = folderPath.resolve(fileName);
-                log.debug("Абсолютний шлях (папка + файл): {}", fullPath);
-                return Optional.of(fullPath);
-            } else {
-                log.debug("Абсолютний шлях (тільки папка): {}", folderPath);
-                return Optional.of(folderPath);
-            }
-        }
-
-        if (root != null && !root.isBlank()) {
-            Path resolved = Paths.get(root, folder);
-            if (fileName != null && !fileName.isBlank()) {
-                resolved = resolved.resolve(fileName);
-            }
-            log.debug("Шлях з collectionRoot: {} -> {}", root, resolved);
-            return Optional.of(resolved);
-        }
-
-        if (fileName != null && !fileName.isBlank()) {
-            Path fullPath = folderPath.resolve(fileName);
-            log.debug("Відносний шлях (папка + файл): {}", fullPath);
-            return Optional.of(fullPath);
-        } else {
-            log.debug("Відносний шлях (тільки папка): {}", folderPath);
-            return Optional.of(folderPath);
-        }
+        // Використовуємо універсальний метод побудови шляху
+        Path resolvedPath = buildFilePath(root, folder, fileName);
+        log.debug("locateCoverFile: resolved path: {}", resolvedPath);
+        return Optional.of(resolvedPath);
     }
 
     @Override
@@ -116,7 +131,7 @@ public class CoverLocatorImpl implements CoverLocator {
         String fileName = book.getFileName();
         String title = book.getTitle();
 
-        // 1. Пошук за archiveEntry (з нормалізацією)
+        // 1. Пошук за archiveEntry
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             log.debug("Шукаємо за archiveEntry: '{}'", archiveEntry);
             String normalizedArchive = normalize.apply(archiveEntry);
@@ -126,7 +141,6 @@ public class CoverLocatorImpl implements CoverLocator {
                     return Optional.of(entry);
                 }
             }
-            // Якщо не знайшли, пробуємо шукати за ім'ям файлу (без шляху) з archiveEntry
             String fileNameFromEntry = Paths.get(archiveEntry).getFileName().toString();
             String normalizedFileName = normalize.apply(fileNameFromEntry);
             for (String entry : entries) {
@@ -137,7 +151,7 @@ public class CoverLocatorImpl implements CoverLocator {
             }
         }
 
-        // 2. Пошук за fileName (з нормалізацією)
+        // 2. Пошук за fileName
         if (fileName != null && !fileName.isBlank()) {
             log.debug("Шукаємо за fileName: '{}'", fileName);
             String normalizedFileName = normalize.apply(fileName);
@@ -147,7 +161,6 @@ public class CoverLocatorImpl implements CoverLocator {
                     return Optional.of(entry);
                 }
             }
-            // Без розширення
             String baseName = fileName.replaceFirst("\\.[^.]+$", "");
             if (!baseName.equals(fileName)) {
                 String normalizedBase = normalize.apply(baseName);
@@ -160,7 +173,7 @@ public class CoverLocatorImpl implements CoverLocator {
             }
         }
 
-        // 3. Пошук за назвою книги (з нормалізацією)
+        // 3. Пошук за назвою книги
         if (title != null && !title.isBlank()) {
             String normalizedTitle = normalize.apply(title);
             log.debug("Шукаємо за назвою книги: '{}'", normalizedTitle);
@@ -172,7 +185,7 @@ public class CoverLocatorImpl implements CoverLocator {
             }
         }
 
-        // 4. Перший FB2 (як крайній випадок)
+        // 4. Перший FB2
         Optional<String> firstFb2 = entries.stream()
                 .filter(e -> e.toLowerCase().endsWith(".fb2"))
                 .findFirst();

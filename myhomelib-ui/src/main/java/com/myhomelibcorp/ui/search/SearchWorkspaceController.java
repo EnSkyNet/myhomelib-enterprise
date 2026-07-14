@@ -4,18 +4,19 @@ import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.application.search.SearchService;
+import com.myhomelibcorp.application.mapper.AuthorMapper;
+import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.mapper.GenreMapper;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
-import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
-import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -30,6 +31,9 @@ public class SearchWorkspaceController {
 
     private final SearchService searchService;
     private final NavigationService navigationService;
+    private final AuthorMapper authorMapper;
+    private final BookMapper bookMapper;
+    private final GenreMapper genreMapper;
 
     @FXML private TextField searchField;
     @FXML private VBox resultsContainer;
@@ -51,7 +55,6 @@ public class SearchWorkspaceController {
     @FXML private ListView<BookDto> booksListView;
     @FXML private Label booksCountLabel;
 
-    private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
     private String lastQuery = "";
 
     @FXML
@@ -91,7 +94,6 @@ public class SearchWorkspaceController {
             if (e.getClickCount() == 2) {
                 String selected = seriesListView.getSelectionModel().getSelectedItem();
                 if (selected != null) {
-                    // Навігація до серії за назвою
                     navigationService.navigateToSeriesByName(selected);
                 }
             }
@@ -134,9 +136,11 @@ public class SearchWorkspaceController {
 
     private void setupSearchListener() {
         searchField.textProperty().addListener((obs, old, query) -> {
-            debounce.stop();
-            debounce.setOnFinished(e -> performSearch(query));
-            debounce.playFromStart();
+            if (query != null && !query.isBlank()) {
+                performSearch(query);
+            } else {
+                clearResults();
+            }
         });
     }
 
@@ -217,22 +221,18 @@ public class SearchWorkspaceController {
         genresListView.getItems().clear();
         booksSection.setVisible(false);
         booksListView.getItems().clear();
+        statusLabel.setText("Введіть запит для пошуку");
     }
 
     public void setInitialQuery(String query) {
         if (query != null && !query.isBlank()) {
             searchField.setText(query);
             performSearch(query);
+        } else {
+            clearResults();
         }
     }
 
-    @FXML
-    private void onClear() {
-        searchField.clear();
-        clearResults();
-        statusLabel.setText("Введіть запит для пошуку");
-        searchField.requestFocus();
-    }
     public void setResults(List<BookDto> results) {
         if (results != null && !results.isEmpty()) {
             booksSection.setVisible(true);
@@ -243,5 +243,20 @@ public class SearchWorkspaceController {
             booksSection.setVisible(false);
             statusLabel.setText("Книг не знайдено");
         }
+    }
+
+    @FXML
+    public void onSearch() {
+        String query = searchField.getText();
+        if (query != null && !query.isBlank()) {
+            performSearch(query);
+        }
+    }
+
+    @FXML
+    public void onClear() {
+        searchField.clear();
+        clearResults();
+        searchField.requestFocus();
     }
 }

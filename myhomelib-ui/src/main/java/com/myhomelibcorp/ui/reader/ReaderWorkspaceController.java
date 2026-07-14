@@ -24,10 +24,14 @@ import org.w3c.dom.NodeList;
 import java.io.BufferedReader;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Enumeration;
 import java.util.stream.Collectors;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 @Component
 @RequiredArgsConstructor
@@ -82,7 +86,6 @@ public class ReaderWorkspaceController {
     }
 
     public void setBookId(BookId bookId) {
-        // Зберігаємо ID як рядок
         sessionService.saveLastOpenedBookId(bookId.asString());
 
         bookQueryRepository.findById(bookId).ifPresentOrElse(book -> {
@@ -108,35 +111,87 @@ public class ReaderWorkspaceController {
         }
     }
 
+    /**
+     * Правильно будує шлях до файлу/архіву на основі полів BookDto.
+     */
+    private Path buildFilePath(String root, String folder, String fileName) {
+        // Якщо fileName абсолютний – використовуємо його
+        if (fileName != null && !fileName.isBlank()) {
+            Path fileNamePath = Paths.get(fileName);
+            if (fileNamePath.isAbsolute()) {
+                return fileNamePath;
+            }
+        }
+
+        // Якщо folder абсолютний – використовуємо folder + fileName
+        if (folder != null && !folder.isBlank()) {
+            Path folderPath = Paths.get(folder);
+            if (folderPath.isAbsolute()) {
+                if (fileName != null && !fileName.isBlank()) {
+                    return folderPath.resolve(fileName);
+                }
+                return folderPath;
+            }
+        }
+
+        // Якщо є root і folder – об'єднуємо root + folder + fileName
+        if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
+            Path rootPath = Paths.get(root);
+            Path folderPath = Paths.get(folder);
+            if (fileName != null && !fileName.isBlank()) {
+                return rootPath.resolve(folderPath).resolve(fileName);
+            }
+            return rootPath.resolve(folderPath);
+        }
+
+        // Якщо є root і fileName – root + fileName
+        if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
+            return Paths.get(root).resolve(fileName);
+        }
+
+        // Якщо нічого – просто fileName або folder
+        if (fileName != null && !fileName.isBlank()) {
+            return Paths.get(fileName);
+        }
+        if (folder != null && !folder.isBlank()) {
+            return Paths.get(folder);
+        }
+        return Paths.get(".");
+    }
+
     private String extractBookContent(BookDto book) {
         String fileName = book.getFileName();
         String folder = book.getFolder();
         String root = book.getCollectionRoot();
+        String archiveEntry = book.getArchiveEntry();
 
-        Path filePath;
-        // Нормалізація шляху: використовуємо тільки root, якщо він заданий, інакше folder
-        if (root != null && !root.isBlank()) {
-            // Якщо folder вже абсолютний, не додаємо root
-            Path folderPath = Paths.get(folder != null ? folder : "");
-            if (folderPath.isAbsolute()) {
-                filePath = folderPath.resolve(fileName != null ? fileName : "");
-            } else {
-                filePath = Paths.get(root, folder != null ? folder : "", fileName != null ? fileName : "");
+        // Якщо є archiveEntry – книга в архіві
+        if (archiveEntry != null && !archiveEntry.isBlank()) {
+            // Шлях до архіву: або folder, або fileName (якщо folder пустий)
+            String archivePathStr = (folder != null && !folder.isBlank()) ? folder : fileName;
+            if (archivePathStr == null || archivePathStr.isBlank()) {
+                log.warn("Archive path is empty");
+                return "<p>Шлях до архіву порожній</p>";
             }
-        } else if (folder != null && !folder.isBlank()) {
-            filePath = Paths.get(folder, fileName != null ? fileName : "");
-        } else {
-            filePath = Paths.get(fileName != null ? fileName : "");
+            // Будуємо шлях до архіву
+            Path archivePath = buildFilePath(root, null, archivePathStr);
+            if (!Files.exists(archivePath)) {
+                log.warn("Archive not found: {}", archivePath);
+                return "<p>Архів не знайдено: " + archivePath.toString() + "</p>";
+            }
+            return extractFromArchive(archivePath, archiveEntry);
         }
 
-        // Якщо шлях відносний, спробуємо зробити його абсолютним відносно поточної директорії
-        if (!filePath.isAbsolute()) {
-            filePath = filePath.toAbsolutePath();
+        // Звичайний файл (не в архіві)
+        String filePathStr = (fileName != null && !fileName.isBlank()) ? fileName : folder;
+        if (filePathStr == null || filePathStr.isBlank()) {
+            log.warn("File path is empty");
+            return "<p>Шлях до файлу порожній</p>";
         }
-
+        Path filePath = buildFilePath(root, folder, fileName);
         if (!Files.exists(filePath)) {
             log.warn("Book file not found: {}", filePath);
-            return null;
+            return "<p>Файл не знайдено: " + filePath.toString() + "</p>";
         }
 
         try {
@@ -151,15 +206,61 @@ public class ReaderWorkspaceController {
             }
         } catch (Exception e) {
             log.error("Failed to load book content", e);
-            return null;
+            return "<p>Помилка завантаження: " + e.getMessage() + "</p>";
         }
+    }
+
+    private String extractFromArchive(Path archivePath, String entryName) {
+        // Спроба різних кодувань
+        String[] charsets = {"IBM866", "Windows-1251", "UTF-8", "KOI8-R"};
+        for (String charsetName : charsets) {
+            try {
+                java.nio.charset.Charset charset = java.nio.charset.Charset.forName(charsetName);
+                try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
+                    ZipEntry entry = zip.getEntry(entryName);
+                    if (entry == null) {
+                        // спробувати за назвою без шляху
+                        String simpleName = Paths.get(entryName).getFileName().toString();
+                        entry = zip.getEntry(simpleName);
+                        if (entry == null) {
+                            // пошук за частиною імені
+                            Enumeration<? extends ZipEntry> entries = zip.entries();
+                            while (entries.hasMoreElements()) {
+                                ZipEntry e = entries.nextElement();
+                                if (e.getName().endsWith(simpleName)) {
+                                    entry = e;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (entry == null) {
+                        continue;
+                    }
+                    try (InputStream is = zip.getInputStream(entry)) {
+                        String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+                        if (entryName.endsWith(".fb2") || entryName.endsWith(".fbd")) {
+                            // Спрощене перетворення
+                            String text = content.replaceAll("<[^>]+>", " ")
+                                    .replaceAll("\\s+", " ")
+                                    .trim();
+                            return "<p>" + text.replace("\n", "</p><p>") + "</p>";
+                        }
+                        return content;
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Failed to read archive with charset {}: {}", charsetName, e.getMessage());
+            }
+        }
+        log.error("Failed to read archive with all charsets");
+        return "<p>Помилка читання архіву: не вдалося розпізнати кодування</p>";
     }
 
     private String convertFb2ToHtml(Path file) throws Exception {
         try (InputStream is = Files.newInputStream(file);
              BufferedReader reader = new BufferedReader(new InputStreamReader(is, "UTF-8"))) {
             String content = reader.lines().collect(Collectors.joining("\n"));
-            // Спрощене перетворення
             String text = content.replaceAll("<[^>]+>", " ")
                     .replaceAll("\\s+", " ")
                     .trim();
@@ -209,7 +310,6 @@ public class ReaderWorkspaceController {
     }
 
     private void restoreScrollPosition() {
-        // Відновити позицію прокрутки з прогресу
         double progress = progressBar.getProgress();
         if (progress > 0) {
             String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + progress + ")";
@@ -219,7 +319,6 @@ public class ReaderWorkspaceController {
 
     @FXML
     private void onBack() {
-        // Зберегти прогрес перед виходом
         saveProgress();
         navigationService.navigateToBook(BookId.fromString(currentBook.getId()));
     }
@@ -274,8 +373,6 @@ public class ReaderWorkspaceController {
             int position = ((Number) scrollY).intValue();
             bookmarksCount++;
             bookmarksLabel.setText("📖 Закладок: " + bookmarksCount);
-            // Зберегти закладку в сесії
-            // sessionService.saveBookmark(currentBook.getId(), position);
         }
     }
 
@@ -297,7 +394,6 @@ public class ReaderWorkspaceController {
         );
     }
 
-    // Збереження прогресу при закритті програми
     public void saveState() {
         saveProgress();
     }

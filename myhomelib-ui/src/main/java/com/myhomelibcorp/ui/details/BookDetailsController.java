@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookDetailsViewModel;
 import javafx.fxml.FXML;
@@ -35,20 +36,42 @@ public class BookDetailsController {
     @FXML private Label isbnLabel;
     @FXML private TextArea annotationArea;
 
+    private String lastBookId = null;
+
     @FXML
     public void initialize() {
+        log.info("BookDetailsController.initialize() – прив'язка coverPresenter до coverImageView");
         coverPresenter.bind(coverImageView);
 
         BookDetailsViewModel vm = appState.getBookDetails();
         vm.currentBookProperty().addListener((obs, old, bookDto) -> {
+            log.info("BookDetailsController: змінено книгу: old={}, new={}",
+                    old != null ? old.getTitle() : "null",
+                    bookDto != null ? bookDto.getTitle() : "null");
+
+            // При зміні книги спочатку очищаємо обкладинку
+            coverPresenter.clearCover();
+
             if (bookDto != null) {
                 updateUI(bookDto);
-                coverPresenter.showCover(viewModelMapper.toViewModel(bookDto));
+                var bookViewModel = viewModelMapper.toViewModel(bookDto);
+                log.info("BookDetailsController: виклик coverPresenter.showCover для книги: {}", bookDto.getTitle());
+                // Невелика затримка, щоб ImageView встиг очиститися
+                javafx.application.Platform.runLater(() -> {
+                    coverPresenter.showCover(bookViewModel);
+                });
             } else {
                 clearUI();
-                coverPresenter.clearCover();
             }
         });
+
+        // Якщо вже є книга при ініціалізації – показати
+        BookDto current = vm.getCurrentBook();
+        if (current != null) {
+            log.info("BookDetailsController: початкова книга: {}", current.getTitle());
+            updateUI(current);
+            coverPresenter.showCover(viewModelMapper.toViewModel(current));
+        }
     }
 
     private void updateUI(BookDto book) {
@@ -87,7 +110,6 @@ public class BookDetailsController {
     private void onEdit() {
         BookDto book = appState.getBookDetails().getCurrentBook();
         if (book != null) {
-            // відкрити діалог редагування
             log.info("Редагування книги: {}", book.getTitle());
         }
     }

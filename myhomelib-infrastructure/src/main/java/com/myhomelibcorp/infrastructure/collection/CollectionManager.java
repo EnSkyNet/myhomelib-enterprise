@@ -55,16 +55,28 @@ public class CollectionManager {
         Path path = Paths.get(dbPath);
         path.getParent().toFile().mkdirs();
 
-        HikariDataSource ds = new HikariDataSource();
-        ds.setJdbcUrl("jdbc:sqlite:" + path.toAbsolutePath());
-        ds.setDriverClassName("org.sqlite.JDBC");
-        ds.setMaximumPoolSize(10);
-        ds.setConnectionTimeout(30000);
-        ds.setIdleTimeout(600000);
-        ds.setMaxLifetime(1800000);
+        HikariDataSource dataSource = new HikariDataSource();
+        dataSource.setJdbcUrl("jdbc:sqlite:" + path.toAbsolutePath());
+        dataSource.setDriverClassName("org.sqlite.JDBC");
+        dataSource.setMaximumPoolSize(10);
+        dataSource.setConnectionTimeout(30000);
+        dataSource.setIdleTimeout(600000);
+        dataSource.setMaxLifetime(1800000);
 
-        currentDataSource.set(ds);
-        currentJdbcTemplate.set(new JdbcTemplate(ds));
+        currentDataSource.set(dataSource);
+        JdbcTemplate jdbcTemplate = new JdbcTemplate(dataSource);
+        currentJdbcTemplate.set(jdbcTemplate);
+
+        try {
+            jdbcTemplate.execute("PRAGMA journal_mode=WAL");
+            jdbcTemplate.execute("PRAGMA synchronous=NORMAL");
+            jdbcTemplate.execute("PRAGMA temp_store=MEMORY");
+            jdbcTemplate.execute("PRAGMA cache_size=-500000");
+            log.info("PRAGMA встановлено для колекції: {}", collection.getName());
+        } catch (Exception e) {
+            log.warn("Не вдалося встановити PRAGMA для колекції: {}", e.getMessage());
+        }
+
         log.info("Переключено на колекцію: {} (БД: {})", collection.getName(), path);
     }
 

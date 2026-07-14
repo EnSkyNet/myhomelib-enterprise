@@ -22,7 +22,6 @@ public interface NavigationService {
     void openBookFolder(BookDto book);
     void readBook(BookDto book);
 
-    // Навігація назад/вперед
     boolean canGoBack();
     boolean canGoForward();
     void goBack();

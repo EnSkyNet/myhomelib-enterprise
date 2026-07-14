@@ -43,8 +43,8 @@ public class BookMapper {
                 .rate(book.getRate())
                 .progress(book.getProgress())
                 .keywords(book.getKeywords())
-                .year(0) // тимчасове значення, поки поле не додано в Book
-                .publisher("") // тимчасове значення, поки поле не додано в Book
+                .year(0)
+                .publisher("")
                 .isbn(book.getIsbn() != null ? book.getIsbn().toString() : null)
                 .build();
     }

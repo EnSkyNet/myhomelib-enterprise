@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
+import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,13 +23,33 @@ public class CoverPresenter {
 
     private ImageView coverImageView;
     private final AtomicReference<String> currentLoadingBookId = new AtomicReference<>();
+    private String lastLoadedBookId = null;
 
     public void bind(ImageView coverImageView) {
         this.coverImageView = coverImageView;
+        log.info("CoverPresenter прив'язано до ImageView: {}", coverImageView != null);
     }
 
     public void showCover(BookViewModel book) {
-        if (coverImageView == null || book == null) return;
+        if (coverImageView == null) {
+            log.warn("showCover: coverImageView == null");
+            return;
+        }
+        if (book == null) {
+            log.warn("showCover: book == null");
+            return;
+        }
+
+        String bookId = book.getId();
+        log.info("showCover: завантаження обкладинки для книги: {}, id={}", book.getTitle(), bookId);
+
+        // Якщо це та сама книга – не перезавантажуємо
+        if (bookId.equals(lastLoadedBookId) && book.getCover() != null) {
+            log.info("showCover: обкладинка вже завантажена для цієї книги, пропускаємо");
+            return;
+        }
+
+        // Примусово очищаємо ImageView перед завантаженням нової обкладинки
         clearCover();
 
         BookDto dto = new BookDto();
@@ -41,29 +62,44 @@ public class CoverPresenter {
         dto.setFileName(book.getFileName());
         dto.setArchiveEntry(book.getArchiveEntry());
         dto.setCollectionRoot(book.getCollectionRoot());
+        dto.setProgress(book.getProgress());
 
-        String bookId = book.getId();
         currentLoadingBookId.set(bookId);
+        lastLoadedBookId = null; // скидаємо, щоб завантажити
 
-        backgroundExecutor.submit(() -> coverExtractor.extractCover(dto))
-                .thenAccept(image -> UiExecutor.runOnUiThread(() -> {
-                    if (coverImageView != null && bookId.equals(currentLoadingBookId.get())) {
-                        coverImageView.setImage(image);
-                        if (image != null) {
-                            book.setCover(image);
-                        }
-                    }
-                }))
-                .exceptionally(ex -> {
-                    log.error("Failed to load cover for {}", book.getTitle(), ex);
-                    return null;
-                });
+        backgroundExecutor.submit(() -> {
+            log.info("CoverPresenter: фоновий запит обкладинки для bookId={}", bookId);
+            return coverExtractor.extractCover(dto);
+        }).thenAccept(image -> UiExecutor.runOnUiThread(() -> {
+            log.info("CoverPresenter: отримано обкладинку для bookId={}, image={}", bookId, image != null ? "так" : "ні");
+            if (coverImageView != null && bookId.equals(currentLoadingBookId.get())) {
+                if (image != null) {
+                    coverImageView.setImage(image);
+                    book.setCover(image);
+                    lastLoadedBookId = bookId;
+                    log.info("CoverPresenter: обкладинку встановлено для {}", book.getTitle());
+                } else {
+                    log.warn("CoverPresenter: обкладинка не знайдена для {}", book.getTitle());
+                    // Встановлюємо заглушку
+                    coverImageView.setImage(null);
+                }
+            } else {
+                log.debug("CoverPresenter: пропускаємо застарілий запит для bookId={}, поточний={}", bookId, currentLoadingBookId.get());
+            }
+        })).exceptionally(ex -> {
+            log.error("CoverPresenter: помилка завантаження обкладинки для {}", book.getTitle(), ex);
+            return null;
+        });
     }
 
     public void clearCover() {
         currentLoadingBookId.set(null);
+        lastLoadedBookId = null;
         UiExecutor.runOnUiThread(() -> {
-            if (coverImageView != null) coverImageView.setImage(null);
+            if (coverImageView != null) {
+                coverImageView.setImage(null);
+                log.debug("CoverPresenter: обкладинку очищено");
+            }
         });
     }
 }

@@ -1,7 +1,9 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.session.SessionService;
+import com.myhomelibcorp.domain.model.series.Series;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -28,29 +30,57 @@ public class DefaultNavigationService implements NavigationService {
     private final SessionService sessionService;
     private final MainController mainController;
     private final WorkspaceManager workspaceManager;
+    private final BookLoaderService bookLoaderService;
+    private final SeriesRepository seriesRepository;
 
     @Override
     public void navigateToAuthor(AuthorId authorId) {
-        sessionService.saveSelectedAuthorId(authorId.asString());
+        if (authorId != null) {
+            sessionService.saveSelectedAuthorId(authorId.asString());
+        }
         mainController.showAuthorWorkspace(authorId);
         mainController.updateNavigationButtons();
     }
 
     @Override
     public void navigateToSeries(SeriesId seriesId) {
-        mainController.showSeriesWorkspace(seriesId);
+        log.info("Завантаження книг для серії: {}", seriesId);
+        bookLoaderService.loadBooksBySeries(seriesId);
         mainController.updateNavigationButtons();
     }
 
     @Override
     public void navigateToSeriesByName(String seriesName) {
-        log.info("Navigating to series by name: {}", seriesName);
-        // TODO: знайти SeriesId за назвою
+        log.info("Завантаження книг для серії за назвою: {}", seriesName);
+        SeriesId seriesId = findSeriesIdByName(seriesName);
+        if (seriesId != null) {
+            bookLoaderService.loadBooksBySeries(seriesId);
+        } else {
+            bookLoaderService.loadBooksBySeriesByName(seriesName);
+        }
+        mainController.updateNavigationButtons();
+    }
+
+    private SeriesId findSeriesIdByName(String seriesName) {
+        if (seriesName == null || seriesName.isBlank()) return null;
+        try {
+            List<Series> allSeries = seriesRepository.findAll();
+            String normalized = seriesName.trim();
+            for (Series s : allSeries) {
+                if (s.getName() != null && s.getName().equalsIgnoreCase(normalized)) {
+                    return s.getId();
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to find series by name: {}", seriesName, e);
+        }
+        return null;
     }
 
     @Override
     public void navigateToGenre(GenreId genreId) {
-        mainController.showGenreWorkspace(genreId);
+        log.info("Завантаження книг для жанру: {}", genreId);
+        bookLoaderService.loadBooksByGenre(genreId);
         mainController.updateNavigationButtons();
     }
 
@@ -82,14 +112,29 @@ public class DefaultNavigationService implements NavigationService {
         String fileName = book.getFileName();
         String folder = book.getFolder();
         String root = book.getCollectionRoot();
-        Path filePath;
-        if (root != null && !root.isBlank()) {
-            filePath = Paths.get(root, folder != null ? folder : "", fileName);
-        } else if (folder != null && !folder.isBlank()) {
-            filePath = Paths.get(folder, fileName);
-        } else {
-            filePath = Paths.get(fileName);
+        String archiveEntry = book.getArchiveEntry();
+
+        if (archiveEntry != null && !archiveEntry.isBlank()) {
+            String archivePathStr = (folder != null && !folder.isBlank()) ? folder : fileName;
+            if (archivePathStr == null || archivePathStr.isBlank()) {
+                log.warn("Archive path is empty");
+                return;
+            }
+            Path archivePath = buildFilePath(root, null, archivePathStr);
+            File archiveFile = archivePath.toFile();
+            if (archiveFile.exists()) {
+                try {
+                    Desktop.getDesktop().open(archiveFile);
+                } catch (IOException e) {
+                    log.error("Failed to open archive: {}", archivePath, e);
+                }
+            } else {
+                log.warn("Archive not found: {}", archivePath);
+            }
+            return;
         }
+
+        Path filePath = buildFilePath(root, folder, fileName);
         File file = filePath.toFile();
         if (file.exists()) {
             try {
@@ -100,6 +145,46 @@ public class DefaultNavigationService implements NavigationService {
         } else {
             log.warn("File not found: {}", filePath);
         }
+    }
+
+    private Path buildFilePath(String root, String folder, String fileName) {
+        if (fileName != null && !fileName.isBlank()) {
+            Path fileNamePath = Paths.get(fileName);
+            if (fileNamePath.isAbsolute()) {
+                return fileNamePath;
+            }
+        }
+
+        if (folder != null && !folder.isBlank()) {
+            Path folderPath = Paths.get(folder);
+            if (folderPath.isAbsolute()) {
+                if (fileName != null && !fileName.isBlank()) {
+                    return folderPath.resolve(fileName);
+                }
+                return folderPath;
+            }
+        }
+
+        if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
+            Path rootPath = Paths.get(root);
+            Path folderPath = Paths.get(folder);
+            if (fileName != null && !fileName.isBlank()) {
+                return rootPath.resolve(folderPath).resolve(fileName);
+            }
+            return rootPath.resolve(folderPath);
+        }
+
+        if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
+            return Paths.get(root).resolve(fileName);
+        }
+
+        if (fileName != null && !fileName.isBlank()) {
+            return Paths.get(fileName);
+        }
+        if (folder != null && !folder.isBlank()) {
+            return Paths.get(folder);
+        }
+        return Paths.get(".");
     }
 
     @Override

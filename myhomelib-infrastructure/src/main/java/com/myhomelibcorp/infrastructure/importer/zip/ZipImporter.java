@@ -33,7 +33,6 @@ public class ZipImporter implements BookImporterPort {
 
     private static final int MAX_UNPACK_DEPTH = 5;
 
-    // Пріоритет кодувань: спочатку CP866, потім Windows-1251, потім UTF-8, потім інші
     private static final Charset[] ZIP_CHARSETS = {
             Charset.forName("CP866"),
             Charset.forName("Windows-1251"),
@@ -45,7 +44,7 @@ public class ZipImporter implements BookImporterPort {
     @Override
     public boolean supports(Path file) {
         String name = file.getFileName().toString().toLowerCase();
-        return name.endsWith(".zip") || name.endsWith(".fb2zip");
+        return name.endsWith(".zip") || name.endsWith(".fb2zip") || name.endsWith(".fb2.zip");
     }
 
     @Override
@@ -137,12 +136,9 @@ public class ZipImporter implements BookImporterPort {
                 entryCount++;
                 String rawEntryName = entry.getName();
 
-                // ---- Спроба декодування з різними кодуваннями ----
                 String bestDecoded = decodeEntryName(rawEntryName);
-                // Отримуємо ім'я файлу без шляху (де кодоване)
                 String displayFileName = Path.of(bestDecoded).getFileName().toString();
 
-                // Якщо декодоване ім'я все ще містить кракозябри, використовуємо оригінальне як резерв
                 if (containsGibberish(displayFileName)) {
                     displayFileName = Path.of(rawEntryName).getFileName().toString();
                     log.debug("Використовуємо оригінальне ім'я (резерв): {}", displayFileName);
@@ -155,13 +151,11 @@ public class ZipImporter implements BookImporterPort {
                     return processNextEntry();
                 }
 
-                // ---- ДЛЯ ПОШУКУ ІМПОРТЕРА ВИКОРИСТОВУЄМО ОРИГІНАЛЬНЕ ІМ'Я (rawEntryName) ----
                 Path tempPath = Path.of(rawEntryName);
                 BookImporterPort importer;
                 try {
                     importer = importerRegistry.findImporter(tempPath);
                 } catch (IllegalArgumentException e) {
-                    // Якщо не знайдено, спробуємо з декодованим (на випадок)
                     try {
                         Path altPath = Path.of(bestDecoded);
                         importer = importerRegistry.findImporter(altPath);
@@ -181,7 +175,6 @@ public class ZipImporter implements BookImporterPort {
                     return processNextEntry();
                 }
 
-                // ---- Робота з імпортером ----
                 if (importer instanceof ZipImporter) {
                     Path tempFile = Files.createTempFile("zip_nested_", "_" + displayFileName);
                     try {
@@ -199,7 +192,6 @@ public class ZipImporter implements BookImporterPort {
                         Files.copy(zis, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                         zis.closeEntry();
 
-                        // Фінальні змінні для лямбди
                         final String finalDisplayFileName = displayFileName;
                         final String finalFolder = zipFolder + java.io.File.separator + zipFileName;
                         final String finalArchiveEntry = rawEntryName;
@@ -207,7 +199,6 @@ public class ZipImporter implements BookImporterPort {
 
                         try (Stream<Book> bookStream = importer.importBooks(tempFile)) {
                             bookStream.forEach(book -> {
-                                // Зберігаємо displayFileName (де кодоване) для метаданих, archiveEntry – оригінальне
                                 BookFile newFile = new BookFile(
                                         finalDisplayFileName,
                                         finalFolder,
@@ -249,53 +240,21 @@ public class ZipImporter implements BookImporterPort {
             }
         }
 
-        /**
-         * Декодує ім'я запису, перебираючи всі доступні кодування.
-         * Повертає рядок з найбільшою кількістю кириличних символів.
-         */
         private String decodeEntryName(String rawName) {
             String best = rawName;
             int bestScore = -1;
-            String bestCharset = "original";
-
-            // Кодування для спроби: CP866, Windows-1251, UTF-8, KOI8-R
-            Charset[] charsetsToTry = {
-                    Charset.forName("CP866"),
-                    Charset.forName("Windows-1251"),
-                    StandardCharsets.UTF_8,
-                    Charset.forName("KOI8-R"),
-                    Charset.forName("IBM-866")
-            };
-
-            for (Charset cs : charsetsToTry) {
+            for (Charset cs : ZIP_CHARSETS) {
                 try {
-                    // Перетворюємо з поточного кодування в UTF-8
                     String decoded = new String(rawName.getBytes(cs), StandardCharsets.UTF_8);
                     int score = countCyrillic(decoded);
-                    log.trace("Charset {} -> '{}' (score={})", cs, decoded, score);
                     if (score > bestScore) {
                         bestScore = score;
                         best = decoded;
-                        bestCharset = cs.name();
                     }
                 } catch (Exception e) {
-                    log.trace("Помилка декодування з {}", cs, e);
+                    // ignore
                 }
             }
-
-            // Якщо жодне кодування не дало кирилиці, пробуємо windows-1252 як резерв
-            if (bestScore <= 0) {
-                try {
-                    String decoded = new String(rawName.getBytes(Charset.forName("windows-1252")), StandardCharsets.UTF_8);
-                    int score = countCyrillic(decoded);
-                    if (score > bestScore) {
-                        best = decoded;
-                        bestCharset = "windows-1252";
-                    }
-                } catch (Exception ignored) {}
-            }
-
-            log.debug("Обрано декодування '{}' (кодування: {}, score={})", best, bestCharset, bestScore);
             return best;
         }
 

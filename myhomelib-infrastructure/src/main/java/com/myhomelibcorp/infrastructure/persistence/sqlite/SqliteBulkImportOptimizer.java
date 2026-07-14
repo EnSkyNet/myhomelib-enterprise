@@ -21,25 +21,29 @@ public class SqliteBulkImportOptimizer implements BulkImportOptimizer {
     @Override
     public void enableBulkInsertMode() {
         JdbcTemplate jt = getJdbcTemplate();
-        jt.execute("PRAGMA synchronous = OFF");
-        jt.execute("PRAGMA journal_mode = MEMORY");
-        jt.execute("PRAGMA temp_store = MEMORY");
-        // Видалено EXCLUSIVE, щоб уникнути блокування
-        jt.execute("PRAGMA cache_size = -500000");
-        jt.execute("PRAGMA mmap_size = 2147483648");
-        log.debug("PRAGMA встановлено для швидкого імпорту (без EXCLUSIVE)");
+        try {
+            jt.execute("PRAGMA synchronous = OFF");
+            jt.execute("PRAGMA temp_store = MEMORY");
+            jt.execute("PRAGMA cache_size = -500000");
+            jt.execute("PRAGMA mmap_size = 2147483648");
+            log.debug("PRAGMA встановлено для швидкого імпорту");
+        } catch (Exception e) {
+            log.warn("Помилка при встановленні PRAGMA для імпорту: {}", e.getMessage());
+        }
     }
 
     @Override
     public void disableBulkInsertMode() {
         JdbcTemplate jt = getJdbcTemplate();
-        jt.execute("PRAGMA synchronous = NORMAL");
-        jt.execute("PRAGMA journal_mode = WAL");
-        // Примусове завершення будь-яких транзакцій для зняття блокувань
         try {
-            jt.execute("COMMIT");
-        } catch (Exception ignored) {}
-        log.debug("PRAGMA відновлено до стандартних");
+            jt.execute("PRAGMA synchronous = NORMAL");
+            try {
+                jt.execute("COMMIT");
+            } catch (Exception ignored) {}
+            log.debug("PRAGMA відновлено до стандартних");
+        } catch (Exception e) {
+            log.warn("Помилка при відновленні PRAGMA: {}", e.getMessage());
+        }
     }
 
     public void dropIndexes() {

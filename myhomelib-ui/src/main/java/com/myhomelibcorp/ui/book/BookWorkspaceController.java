@@ -3,10 +3,8 @@ package com.myhomelibcorp.ui.book;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.application.session.SessionService;
-import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
-import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.application.usecase.book.UpdateBookUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
@@ -20,8 +18,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -34,8 +30,6 @@ public class BookWorkspaceController {
     private final BookMapper bookMapper;
     private final BookViewModelMapper bookViewModelMapper;
     private final SessionService sessionService;
-    private final GroupRepository groupRepository;
-    private final AddBookToGroupUseCase addBookToGroupUseCase;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -62,7 +56,6 @@ public class BookWorkspaceController {
     }
 
     public void setBookId(BookId bookId) {
-        // Зберігаємо ID як рядок, а не перетворюємо на Long
         sessionService.saveLastOpenedBookId(bookId.asString());
 
         bookQueryRepository.findById(bookId).ifPresentOrElse(book -> {
@@ -131,7 +124,6 @@ public class BookWorkspaceController {
     @FXML
     private void onEdit() {
         if (currentBook != null) {
-            // Відкрити діалог редагування
             showEditDialog();
         }
     }
@@ -145,22 +137,9 @@ public class BookWorkspaceController {
 
     @FXML
     private void onAddToCollection() {
-        if (currentBook == null) return;
-        // Отримати список колекцій
-        List<Group> groups = groupRepository.findAll();
-        if (groups.isEmpty()) {
-            showAlert("Немає колекцій", "Створіть колекцію перед додаванням книг.");
-            return;
+        if (currentBook != null) {
+            // Показати діалог вибору колекції
         }
-        // Показати діалог вибору
-        ChoiceDialog<Group> dialog = new ChoiceDialog<>(groups.get(0), groups);
-        dialog.setTitle("Додати до колекції");
-        dialog.setHeaderText("Виберіть колекцію для книги \"" + currentBook.getTitle() + "\"");
-        dialog.setContentText("Колекція:");
-        dialog.showAndWait().ifPresent(group -> {
-            addBookToGroupUseCase.execute(group.getId().asLong(), currentBook.getId());
-            showAlert("Успіх", "Книгу додано до колекції \"" + group.getName() + "\"");
-        });
     }
 
     @FXML
@@ -171,32 +150,28 @@ public class BookWorkspaceController {
     }
 
     private void showEditDialog() {
-        // Простий діалог редагування метаданих
         TextInputDialog dialog = new TextInputDialog(currentBook.getTitle());
         dialog.setTitle("Редагування книги");
         dialog.setHeaderText("Змініть назву книги");
         dialog.setContentText("Нова назва:");
         dialog.showAndWait().ifPresent(newTitle -> {
             if (!newTitle.isBlank() && !newTitle.equals(currentBook.getTitle())) {
-                // Оновити книгу
-                // Викликати UpdateBookUseCase
                 currentBook.setTitle(newTitle);
                 titleLabel.setText(newTitle);
             }
         });
     }
 
-    @FXML
-    private void onBack() {
-        // Повернутися до попереднього воркспейсу
-        // Використати WorkspaceManager
-        navigationService.navigateToAuthor(null); // або інша логіка
-    }
     private void showAlert(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
+    }
+
+    @FXML
+    private void onBack() {
+        navigationService.navigateToAuthor(null);
     }
 }

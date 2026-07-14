@@ -24,17 +24,16 @@ public class DuplicateDetector {
     private Set<String> existingKeys = new HashSet<>();
     private boolean cacheLoaded = false;
 
-    /**
-     * Явне завантаження кешу дублікатів – викликати після вибору колекції.
-     */
     public void loadExistingKeys() {
         if (cacheLoaded) {
-            log.debug("Кеш дублікатів уже завантажено");
+            log.debug("Кеш дублікатів вже завантажено");
             return;
         }
         log.info("Завантаження існуючих ключів для перевірки дублікатів...");
         try {
             List<Book> allBooks = bookQueryRepository.findAll();
+            // ОБЕРЕЖНО: findAll() може бути дуже важким для великих бібліотек (>1 млн книг)!
+            // Для великих бібліотек потрібно використовувати інший підхід (наприклад, індекс у БД)
             existingKeys = allBooks.stream()
                     .map(this::buildNaturalKey)
                     .collect(Collectors.toSet());
@@ -47,32 +46,26 @@ public class DuplicateDetector {
         }
     }
 
-    /**
-     * Будує натуральний ключ для книги.
-     */
     private String buildNaturalKey(Book book) {
         String firstAuthor = book.getAuthors().stream()
                 .findFirst()
                 .map(Author::getLastName)
                 .orElse("");
-        return book.getTitle() + "|" + firstAuthor;
+        return (book.getTitle() + "|" + firstAuthor).toLowerCase().trim();
     }
 
-    /**
-     * Перевіряє, чи є книга дублікатом (O(1) завдяки кешу).
-     */
     public boolean isDuplicate(Book book) {
         if (!cacheLoaded) {
-            // Якщо кеш не завантажено – завантажуємо на льоту (але краще викликати loadExistingKeys заздалегідь)
             loadExistingKeys();
         }
-        return existingKeys.contains(buildNaturalKey(book));
+        String key = buildNaturalKey(book);
+        boolean duplicate = existingKeys.contains(key);
+        if (duplicate) {
+            log.debug("Знайдено дублікат: '{}'", key);
+        }
+        return duplicate;
     }
 
-    /**
-     * Знаходить дублікат у БД (якщо потрібен повний об'єкт).
-     * Використовується рідко, переважно для політики REPLACE/MERGE.
-     */
     public Optional<Book> findDuplicate(Book book) {
         if (!cacheLoaded) {
             loadExistingKeys();
@@ -88,18 +81,12 @@ public class DuplicateDetector {
         return Optional.empty();
     }
 
-    /**
-     * Додає ключ нової книги до кешу (після збереження).
-     */
     public void addKey(Book book) {
         if (book != null) {
             existingKeys.add(buildNaturalKey(book));
         }
     }
 
-    /**
-     * Додає ключі батча книг до кешу.
-     */
     public void addAllKeys(List<Book> books) {
         if (books != null) {
             for (Book book : books) {
@@ -108,19 +95,19 @@ public class DuplicateDetector {
         }
     }
 
-    /**
-     * Очищує кеш (наприклад, при зміні колекції).
-     */
     public void clearCache() {
         existingKeys.clear();
         cacheLoaded = false;
         log.debug("Кеш дублікатів очищено");
     }
 
-    /**
-     * Перевіряє, чи кеш завантажено.
-     */
     public boolean isCacheLoaded() {
         return cacheLoaded;
+    }
+
+    // Додатковий метод для оновлення кешу після імпорту
+    public void refreshCache() {
+        clearCache();
+        loadExistingKeys();
     }
 }

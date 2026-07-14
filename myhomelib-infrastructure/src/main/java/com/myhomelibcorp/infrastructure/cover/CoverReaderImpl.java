@@ -1,5 +1,3 @@
-// Файл: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/CoverReaderImpl.java
-// (додано логування – повний код)
 package com.myhomelibcorp.infrastructure.cover;
 
 import com.myhomelibcorp.application.dto.BookDto;

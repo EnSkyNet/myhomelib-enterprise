@@ -21,19 +21,17 @@ public class DefaultImporterRegistry implements ImporterRegistry {
     @Override
     public BookImporterPort findImporter(Path file) {
         log.debug("Пошук імпортера для файлу: {}", file.getFileName());
-        return importers.stream()
-                .filter(importer -> importer.supports(file))
-                .findFirst()
-                .orElseThrow(() -> {
-                    String formats = importers.stream()
-                            .map(BookImporterPort::getFormatName)
-                            .reduce((a, b) -> a + ", " + b)
-                            .orElse("немає");
-                    throw new IllegalArgumentException(
-                            "Непідтримуваний формат файлу: " + file.getFileName() +
-                                    ". Доступні формати: " + formats
-                    );
-                });
+        for (BookImporterPort importer : importers) {
+            if (importer.supports(file)) {
+                log.debug("Знайдено імпортер: {} для файлу: {}", importer.getFormatName(), file.getFileName());
+                return importer;
+            }
+        }
+        log.warn("Не знайдено імпортера для файлу: {}", file.getFileName());
+        throw new IllegalArgumentException(
+                "Непідтримуваний формат файлу: " + file.getFileName() +
+                        ". Доступні формати: " + getSupportedFormats()
+        );
     }
 
     @Override

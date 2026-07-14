@@ -32,27 +32,14 @@ public class Fb2CoverParser {
         xmlFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
     }
 
-    /**
-     * Парсить FB2 з InputStream і повертає зображення обкладинки.
-     */
     public Image parse(InputStream inputStream) {
         log.debug("▶️ Fb2CoverParser.parse() викликано");
 
-        // Спроба з різними кодуваннями
         Charset[] charsets = {StandardCharsets.UTF_8, Charset.forName("windows-1251"), Charset.forName("cp866")};
 
         for (Charset charset : charsets) {
             try {
                 log.debug("Спроба парсингу з кодуванням: {}", charset);
-                // Створюємо новий InputStream, тому що ми його прочитаємо
-                // (потрібно, щоб він був маркованим, але ми просто перестворюємо)
-                if (!inputStream.markSupported()) {
-                    // Якщо не підтримує mark, ми не можемо прочитати його двічі.
-                    // Тому краще передавати новий InputStream для кожного кодування.
-                    // Але оскільки ми отримуємо його з ZipFile, то можемо відкрити заново.
-                    // Тому в методі parseFromZipEntry ми передаємо новий InputStream.
-                    // Тут просто припускаємо, що він вже правильний.
-                }
                 try (Reader reader = new InputStreamReader(inputStream, charset)) {
                     XMLStreamReader xmlReader = xmlFactory.createXMLStreamReader(reader);
                     Image result = parseCoverFromXml(xmlReader);
@@ -70,9 +57,6 @@ public class Fb2CoverParser {
         return null;
     }
 
-    /**
-     * Парсить FB2 з ZipEntry.
-     */
     public Image parseFromZipEntry(ZipFile zip, ZipEntry entry) {
         log.debug("Парсимо FB2 з entry: {}", entry.getName());
         try (InputStream is = zip.getInputStream(entry)) {
@@ -83,9 +67,6 @@ public class Fb2CoverParser {
         }
     }
 
-    /**
-     * Завантажує зображення безпосередньо з entry (для sidecar).
-     */
     public Image loadImageFromEntry(ZipFile zip, ZipEntry entry) {
         try (InputStream is = zip.getInputStream(entry)) {
             byte[] bytes = is.readAllBytes();
@@ -95,10 +76,19 @@ public class Fb2CoverParser {
             }
             try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes)) {
                 Image img = new Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
-                return !img.isError() ? img : null;
+                return img.isError() ? null : img;
             }
         } catch (Exception e) {
             log.trace("Не вдалося завантажити зображення з entry: {}", entry.getName(), e);
+            return null;
+        }
+    }
+
+    public Image parseImageOnly(InputStream inputStream) {
+        try (ByteArrayInputStream bis = new ByteArrayInputStream(inputStream.readAllBytes())) {
+            return new Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
+        } catch (Exception e) {
+            log.trace("Failed to parse image", e);
             return null;
         }
     }
@@ -107,7 +97,6 @@ public class Fb2CoverParser {
         String coverId = null;
         String binaryContent = null;
         boolean inCoverpage = false;
-        int binaryCount = 0;
         String lastGoodBinary = null;
         String lastGoodContentType = null;
 
@@ -133,7 +122,6 @@ public class Fb2CoverParser {
                 }
 
                 if ("binary".equalsIgnoreCase(localName)) {
-                    binaryCount++;
                     String id = xmlReader.getAttributeValue(null, "id");
                     String contentType = xmlReader.getAttributeValue(null, "content-type");
                     String content = null;
@@ -173,7 +161,6 @@ public class Fb2CoverParser {
             return null;
         }
 
-        // декодування Base64 (залишаємо без змін)
         try {
             String cleanBase64 = binaryContent.replaceAll("\\s+", "");
             byte[] imageBytes = Base64.getDecoder().decode(cleanBase64);
@@ -185,14 +172,6 @@ public class Fb2CoverParser {
                 return img.isError() ? null : img;
             }
         } catch (Exception e) {
-            return null;
-        }
-    }
-    public javafx.scene.image.Image parseImageOnly(InputStream inputStream) {
-        try (java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(inputStream.readAllBytes())) {
-            return new javafx.scene.image.Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
-        } catch (Exception e) {
-            log.trace("Failed to parse image", e);
             return null;
         }
     }

@@ -13,6 +13,7 @@ import com.myhomelibcorp.ui.model.navigation.GenreNode;
 import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.ui.model.navigation.SeriesNode;
 import com.myhomelibcorp.ui.service.BookLoaderService;
+import com.myhomelibcorp.ui.service.NavigationService as UiNavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
@@ -29,7 +30,8 @@ import java.util.Comparator;
 @Slf4j
 public class NavigationController {
 
-    private final NavigationService navigationService;
+    private final NavigationService navigationService;        // application-сервіс
+    private final UiNavigationService uiNavigationService;   // UI-сервіс (com.myhomelibcorp.ui.service.NavigationService)
     private final BookLoaderService bookLoaderService;
     private final CollectionRepository collectionRepository;
     private final ApplicationState appState;
@@ -37,7 +39,6 @@ public class NavigationController {
 
     @FXML private TreeView<LibraryNode> navigationTree;
 
-    // Внутрішні класи-маркери
     private static class PlaceholderNode implements LibraryNode {
         @Override
         public String toString() { return "..."; }
@@ -55,7 +56,6 @@ public class NavigationController {
         TreeItem<LibraryNode> root = new TreeItem<>(null);
         root.setExpanded(true);
 
-        // Категорії в дереві (для швидкого доступу)
         TreeItem<LibraryNode> authorsItem = new TreeItem<>(new CategoryNode("📚 Автори", "authors"));
         TreeItem<LibraryNode> seriesItem = new TreeItem<>(new CategoryNode("📖 Серії", "series"));
         TreeItem<LibraryNode> genresItem = new TreeItem<>(new CategoryNode("🏷 Жанри", "genres"));
@@ -65,7 +65,6 @@ public class NavigationController {
         navigationTree.setRoot(root);
         navigationTree.setShowRoot(false);
 
-        // Lazy loading для авторів
         authorsItem.setExpanded(true);
         authorsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
         authorsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
@@ -76,7 +75,6 @@ public class NavigationController {
             }
         });
 
-        // Lazy loading для серій
         seriesItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
         seriesItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
             TreeItem<LibraryNode> item = event.getTreeItem();
@@ -86,7 +84,6 @@ public class NavigationController {
             }
         });
 
-        // Lazy loading для жанрів
         genresItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
         genresItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
             TreeItem<LibraryNode> item = event.getTreeItem();
@@ -96,7 +93,6 @@ public class NavigationController {
             }
         });
 
-        // Lazy loading для колекцій
         collectionsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
         collectionsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
             TreeItem<LibraryNode> item = event.getTreeItem();
@@ -106,19 +102,19 @@ public class NavigationController {
             }
         });
 
-        // Обробка вибору в дереві
+        // Використовуємо uiNavigationService (UI-сервіс) для навігації
         navigationTree.getSelectionModel().selectedItemProperty().addListener((obs, old, newVal) -> {
             if (newVal != null && newVal.getValue() != null) {
                 LibraryNode node = newVal.getValue();
                 if (node instanceof AuthorNode) {
                     AuthorId id = ((AuthorNode) node).author().getId();
-                    mainController.showAuthorWorkspace(id);
+                    uiNavigationService.navigateToAuthor(id);
                 } else if (node instanceof SeriesNode) {
                     SeriesId id = ((SeriesNode) node).series().getId();
-                    mainController.showSeriesWorkspace(id);
+                    uiNavigationService.navigateToSeries(id);
                 } else if (node instanceof GenreNode) {
                     GenreId id = ((GenreNode) node).genre().getId();
-                    mainController.showGenreWorkspace(id);
+                    uiNavigationService.navigateToGenre(id);
                 } else if (node instanceof CollectionNode) {
                     // Показати колекцію
                 }
@@ -199,8 +195,6 @@ public class NavigationController {
         }
     }
 
-    // ========== ОБРОБНИКИ КНОПОК ЛІВОЇ ПАНЕЛІ ==========
-
     @FXML
     private void onHome() {
         mainController.showDashboard();
@@ -274,35 +268,29 @@ public class NavigationController {
 
     @FXML
     private void onSearch() {
-        // Активувати поле пошуку
+        log.info("Натиснуто кнопку Пошук у лівій панелі, переходимо до воркспейсу пошуку");
+        mainController.showSearchResults("");
     }
 
     @FXML
     private void onImport() {
-        mainController.handleImport();
+        mainController.showImportWorkspace();
     }
-
 
     @FXML
     private void onSettings() {
         mainController.handleSettings();
     }
 
-    /**
-     * Оновлює дерево навігації
-     */
     public void refreshNavigation() {
         TreeItem<LibraryNode> root = navigationTree.getRoot();
         if (root != null) {
-            // Оновлюємо всі категорії з маркерами
             root.getChildren().forEach(item -> {
                 if (item.getChildren().size() == 1
                         && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                    // Залишаємо маркер, щоб завантажити при розгортанні
                 }
             });
         }
         navigationTree.refresh();
     }
-
 }

@@ -36,9 +36,6 @@ public class BookLoaderService {
 
     private static final int DEFAULT_PAGE_SIZE = 50;
 
-    /**
-     * Завантажує сторінку книг за запитом
-     */
     public void loadBooks(PageableBookQuery query) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
@@ -72,9 +69,6 @@ public class BookLoaderService {
                 });
     }
 
-    /**
-     * Завантажує книги автора
-     */
     public void loadBooksByAuthor(AuthorId authorId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .authorId(authorId)
@@ -83,9 +77,6 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує книги серії
-     */
     public void loadBooksBySeries(SeriesId seriesId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .seriesId(seriesId)
@@ -94,9 +85,19 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує книги жанру
-     */
+    public void loadBooksBySeriesByName(String seriesName) {
+        if (seriesName == null || seriesName.isBlank()) {
+            loadAllBooks();
+            return;
+        }
+        // Текстовий пошук (як fallback)
+        PageableBookQuery query = PageableBookQuery.builder()
+                .text(seriesName)
+                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+                .build();
+        loadBooks(query);
+    }
+
     public void loadBooksByGenre(GenreId genreId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .genreId(genreId)
@@ -105,9 +106,6 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує книги групи (колекції)
-     */
     public void loadBooksByGroup(GroupId groupId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .groupId(groupId)
@@ -116,9 +114,6 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує всі книги
-     */
     public void loadAllBooks() {
         PageableBookQuery query = PageableBookQuery.builder()
                 .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
@@ -126,9 +121,6 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує останні відкриті книги
-     */
     public void loadRecentBooks() {
         PageableBookQuery query = PageableBookQuery.builder()
                 .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.DATE, SortDirection.DESC))
@@ -136,16 +128,10 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує обрані книги (група Favorites)
-     */
     public void loadFavoriteBooks() {
         loadBooksByGroup(GroupId.fromLong(1L));
     }
 
-    /**
-     * Завантажує книги для продовження читання (прогрес > 0 і < 100)
-     */
     public void loadContinueReading() {
         PageableBookQuery query = PageableBookQuery.builder()
                 .onlyRead(false)
@@ -154,9 +140,6 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує книги за мовою
-     */
     public void loadBooksByLanguage(String languageCode) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .language(LanguageCode.of(languageCode))
@@ -165,24 +148,14 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    /**
-     * Завантажує книги за роком (спрощено)
-     */
     public void loadBooksByYear(int year) {
-        // Поки що просто завантажуємо всі книги, бо фільтр за роком ще не реалізовано
         loadAllBooks();
     }
 
-    /**
-     * Завантажує книги за видавництвом (спрощено)
-     */
     public void loadBooksByPublisher(String publisher) {
         loadAllBooks();
     }
 
-    /**
-     * Наступна сторінка
-     */
     public void nextPage() {
         BookTableViewModel vm = appState.getBookTable();
         if (vm.hasNextPage()) {
@@ -194,9 +167,6 @@ public class BookLoaderService {
         }
     }
 
-    /**
-     * Попередня сторінка
-     */
     public void previousPage() {
         BookTableViewModel vm = appState.getBookTable();
         if (vm.hasPreviousPage()) {
@@ -208,9 +178,6 @@ public class BookLoaderService {
         }
     }
 
-    /**
-     * Зміна розміру сторінки
-     */
     public void setPageSize(int size) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setPageSize(size);

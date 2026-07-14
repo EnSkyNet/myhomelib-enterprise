@@ -62,9 +62,7 @@ public class MainController {
     public void initialize() {
         log.info("MainController ініціалізовано");
         workspaceManager.setMainPane(mainPane);
-        searchField.textProperty().addListener((obs, old, query) -> {
-            // debounce буде реалізовано через SearchPresenter
-        });
+        searchField.setOnAction(event -> handleSearch());
         showDashboard();
         updateNavigationButtons();
     }
@@ -89,7 +87,7 @@ public class MainController {
             AuthorWorkspaceController controller = loader.getController();
             controller.setAuthorId(authorId);
             setWorkspace(workspace);
-            workspaceManager.push("author", authorId.asString());
+            workspaceManager.push("author", authorId != null ? authorId.asString() : "");
         } catch (IOException e) {
             log.error("Failed to load author workspace", e);
         }
@@ -110,42 +108,26 @@ public class MainController {
     }
 
     public void showSeriesWorkspace(SeriesId seriesId) {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/series-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            setWorkspace(workspace);
-            workspaceManager.push("series", seriesId.asString());
-        } catch (IOException e) {
-            log.error("Failed to load series workspace", e);
-        }
+        log.warn("showSeriesWorkspace викликано, але не реалізовано");
     }
 
     public void showGenreWorkspace(GenreId genreId) {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/genre-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            setWorkspace(workspace);
-            workspaceManager.push("genre", genreId.asString());
-        } catch (IOException e) {
-            log.error("Failed to load genre workspace", e);
-        }
+        log.warn("showGenreWorkspace викликано, але не реалізовано");
     }
 
     public void showSearchResults(String query) {
+        log.info("showSearchResults: query='{}'", query);
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-workspace.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Pane workspace = loader.load();
             SearchWorkspaceController controller = loader.getController();
-            if (query != null && !query.isBlank()) {
-                controller.setInitialQuery(query);
-            }
+            controller.setInitialQuery(query);
             setWorkspace(workspace);
             workspaceManager.push("search", query);
         } catch (IOException e) {
             log.error("Failed to load search workspace", e);
+            dialogService.showError("Помилка", "Не вдалося відкрити пошук: " + e.getMessage());
         }
     }
 
@@ -190,8 +172,16 @@ public class MainController {
     }
 
     public void showImportWorkspace() {
-        // TODO: реалізувати імпорт воркспейс
-        dialogService.showInfo("Інформація", "Імпорт", "Функція поки що не реалізована");
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/import-workspace.fxml"));
+            loader.setControllerFactory(springContext::getBean);
+            Pane workspace = loader.load();
+            setWorkspace(workspace);
+            workspaceManager.push("import", "");
+        } catch (IOException e) {
+            log.error("Failed to load import workspace", e);
+            dialogService.showError("Помилка", "Не вдалося відкрити імпорт: " + e.getMessage());
+        }
     }
 
     public void setWorkspace(Pane workspace) {
@@ -212,7 +202,15 @@ public class MainController {
         }
     }
 
-    // ========== ДІЇ З МЕНЮ ==========
+    @FXML public void handleSearch() {
+        String query = searchField.getText();
+        log.info("Пошук за запитом: '{}'", query);
+        if (query != null && !query.isBlank()) {
+            showSearchResults(query);
+        } else {
+            showSearchResults("");
+        }
+    }
 
     @FXML public void handleImportFb2() {
         bookImportPresenter.importFb2();
@@ -277,8 +275,6 @@ public class MainController {
         dialogService.showInfo("Інформація", "Перебудова індексу", "Функція поки що не реалізована");
     }
 
-    // ========== ДІЇ З ПАНЕЛІ ІНСТРУМЕНТІВ ==========
-
     @FXML public void handleHome() {
         showDashboard();
     }
@@ -291,13 +287,6 @@ public class MainController {
     @FXML public void handleForward() {
         workspaceManager.goForward();
         updateNavigationButtons();
-    }
-
-    @FXML public void handleSearch() {
-        String query = searchField.getText();
-        if (query != null && !query.isBlank()) {
-            showSearchResults(query);
-        }
     }
 
     @FXML public void handleAddBook() {
@@ -313,7 +302,7 @@ public class MainController {
     }
 
     @FXML public void handleImport() {
-        handleImportDirectory();
+        showImportWorkspace();
     }
 
     @FXML public void handleHistory() {

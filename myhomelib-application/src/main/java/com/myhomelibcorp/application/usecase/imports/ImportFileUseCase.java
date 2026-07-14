@@ -181,7 +181,7 @@ public class ImportFileUseCase {
     private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats, boolean indexAfterSave) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         List<Book> batch = new ArrayList<>(batchSize);
-        DuplicatePolicy policy = DuplicatePolicy.SAVE_AS_NEW;
+        DuplicatePolicy policy = DuplicatePolicy.SKIP; // ВИКОРИСТОВУЄМО SKIP
         int totalSaved = 0;
 
         try (Stream<Book> stream = bookStream) {
@@ -226,5 +226,4 @@ public class ImportFileUseCase {
             log.error("Помилка збереження батча", e);
             stats.incrementErrors();
         }
-    }
-}
+    }}

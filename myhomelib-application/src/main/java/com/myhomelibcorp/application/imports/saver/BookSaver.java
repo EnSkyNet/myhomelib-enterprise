@@ -29,9 +29,6 @@ public class BookSaver {
     @Qualifier("collectionTransactionTemplate")
     private final TransactionTemplate transactionTemplate;
 
-    /**
-     * Одиночне збереження – використовується рідко.
-     */
     public boolean saveBook(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
         if (book == null) return false;
 
@@ -92,9 +89,6 @@ public class BookSaver {
         return true;
     }
 
-    /**
-     * Батчеве збереження – основний метод для великих імпортів.
-     */
     public int saveBatch(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
         if (books == null || books.isEmpty()) return 0;
 
@@ -111,7 +105,7 @@ public class BookSaver {
                 }
             }
         } else {
-            booksToSave = books; // для інших політик зберігаємо всі, але дублікати будуть замінені/об'єднані
+            booksToSave = books;
         }
 
         if (booksToSave.isEmpty()) {
@@ -128,7 +122,7 @@ public class BookSaver {
         // ---- Оновлюємо кеш дублікатів (додаємо всі збережені) ----
         duplicateDetector.addAllKeys(booksToSave);
 
-        // ---- Індексація батчем (якщо потрібна) ----
+        // ---- Індексація батчем (якщо потрібно) ----
         if (indexAfterSave) {
             searchIndexer.indexAll(booksToSave);
             searchIndexer.commit();

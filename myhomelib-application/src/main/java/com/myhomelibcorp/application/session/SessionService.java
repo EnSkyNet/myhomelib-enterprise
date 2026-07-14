@@ -28,6 +28,14 @@ public class SessionService {
         return id;
     }
 
+    public void saveSelectedAuthorId(String authorId) {
+        prefs.put("selectedAuthorId", authorId);
+    }
+
+    public String getSelectedAuthorId() {
+        return prefs.get("selectedAuthorId", null);
+    }
+
     public void saveWindowState(double width, double height) {
         prefs.putDouble("windowWidth", width);
         prefs.putDouble("windowHeight", height);
@@ -38,14 +46,6 @@ public class SessionService {
                 prefs.getDouble("windowWidth", 1200),
                 prefs.getDouble("windowHeight", 800)
         };
-    }
-
-    public void saveSelectedAuthorId(String authorId) {
-        prefs.put("selectedAuthorId", authorId);
-    }
-
-    public String getSelectedAuthorId() {
-        return prefs.get("selectedAuthorId", null);
     }
 
     public void saveSearchQuery(String query) {

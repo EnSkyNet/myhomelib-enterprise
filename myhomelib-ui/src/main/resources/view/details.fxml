@@ -9,8 +9,9 @@
       fx:controller="com.myhomelibcorp.ui.details.BookDetailsController"
       spacing="5" style="-fx-padding: 10; -fx-background-color: #fafafa;">
 
-    <VBox alignment="CENTER">
-        <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"/>
+    <VBox alignment="CENTER" style="-fx-padding: 10;">
+        <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
+                   style="-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);"/>
     </VBox>
 
     <Label fx:id="titleLabel" text="Назва" wrapText="true" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
