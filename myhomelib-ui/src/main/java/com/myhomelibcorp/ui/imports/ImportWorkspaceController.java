@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteSeriesRepository;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
@@ -38,6 +39,7 @@ public class ImportWorkspaceController {
     private final FileChooserService fileChooserService;
     private final DialogService dialogService;
     private final ApplicationState appState;
+    private final SqliteSeriesRepository seriesRepository; // додано
 
     @Value("${app.import.batch-size:500}")
     private int defaultBatchSize;
@@ -161,6 +163,14 @@ public class ImportWorkspaceController {
                     setStatus("Імпорт завершено. Додано " + result.imported() + " книг");
                     updateStats(result.imported(), result.errors(), 0);
                     appState.getStatusBar().setStatusText("Імпорт завершено: +" + result.imported() + " книг");
+
+                    // Синхронізація series після імпорту
+                    try {
+                        seriesRepository.syncSeriesFromBooks();
+                        log.info("Серії синхронізовано після імпорту");
+                    } catch (Exception e) {
+                        log.error("Помилка синхронізації серій після імпорту", e);
+                    }
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {

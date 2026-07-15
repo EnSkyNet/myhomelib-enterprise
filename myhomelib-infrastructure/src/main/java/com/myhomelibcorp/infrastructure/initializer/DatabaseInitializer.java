@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.initializer;
 
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteAuthorRepository;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteSeriesRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flywaydb.core.Flyway;
@@ -17,6 +18,7 @@ public class DatabaseInitializer {
 
     private final CollectionManager collectionManager;
     private final SqliteAuthorRepository authorRepository;
+    private final SqliteSeriesRepository seriesRepository;
 
     public void initializeCurrentCollection() {
         log.info("=== DatabaseInitializer.initializeCurrentCollection() START ===");
@@ -28,7 +30,7 @@ public class DatabaseInitializer {
         DataSource dataSource = collectionManager.getCurrentDataSource();
         if (dataSource == null) {
             log.error("DataSource для поточної колекції дорівнює null");
-            throw new IllegalStateException("DataSource не доступний");
+            throw new IllegalStateException("DataSource недоступний");
         }
 
         log.info("Ініціалізація БД для колекції: {}", collectionManager.getCurrentCollection().getName());
@@ -61,6 +63,14 @@ public class DatabaseInitializer {
             log.info("Додаткові міграції виконано успішно");
         } catch (Exception e) {
             log.error("Помилка додаткових міграцій", e);
+        }
+
+        // ---- 3. Синхронізація серій ----
+        try {
+            seriesRepository.syncSeriesFromBooks();
+            log.info("Синхронізацію серій виконано");
+        } catch (Exception e) {
+            log.error("Помилка синхронізації серій", e);
         }
 
         log.info("Ініціалізацію БД для колекції завершено");

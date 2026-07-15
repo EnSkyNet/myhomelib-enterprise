@@ -69,4 +69,38 @@ public class SqliteSeriesRepository implements SeriesRepository {
         String sql = "SELECT DISTINCT TRIM(series) FROM books WHERE series IS NOT NULL AND TRIM(series) != '' ORDER BY TRIM(series)";
         return getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString(1));
     }
+
+    /**
+     * Синхронізує таблицю series з даними з books.
+     * Виправлено генерацію ID у форматі UUID з дефісами.
+     */
+    public void syncSeriesFromBooks() {
+        JdbcTemplate jt = getJdbcTemplate();
+        try {
+            // Генеруємо UUID у форматі xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+            String insertSql = """
+                INSERT OR IGNORE INTO series (id, name)
+                SELECT 
+                    lower(hex(randomblob(4))) || '-' || 
+                    lower(hex(randomblob(2))) || '-' || 
+                    lower(hex(randomblob(2))) || '-' || 
+                    lower(hex(randomblob(2))) || '-' || 
+                    lower(hex(randomblob(6))),
+                    TRIM(series)
+                FROM books
+                WHERE series IS NOT NULL 
+                  AND TRIM(series) != ''
+                  AND TRIM(series) NOT IN (SELECT name FROM series)
+                GROUP BY TRIM(series)
+                """;
+            int inserted = jt.update(insertSql);
+            if (inserted > 0) {
+                log.info("Синхронізовано {} нових серій з книг", inserted);
+            } else {
+                log.debug("Нових серій для синхронізації не знайдено");
+            }
+        } catch (Exception e) {
+            log.error("Помилка синхронізації серій", e);
+        }
+    }
 }

@@ -16,10 +16,14 @@ import org.apache.lucene.index.IndexWriter;
 import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
+import org.apache.lucene.store.LockObtainFailedException;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.List;
 
 @Component
@@ -38,10 +42,25 @@ public class LuceneSearchIndexer implements SearchIndexer {
 
     @PostConstruct
     public void init() throws IOException {
-        IndexWriterConfig config = new IndexWriterConfig(analyzer);
-        config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
-        indexWriter = new IndexWriter(directory, config);
-        log.info("Lucene індексатор ініціалізовано з NGramAnalyzer");
+        try {
+            IndexWriterConfig config = new IndexWriterConfig(analyzer);
+            config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
+            indexWriter = new IndexWriter(directory, config);
+            log.info("Lucene index initialized");
+        } catch (LockObtainFailedException e) {
+            log.warn("Index locked, trying to unlock...");
+            // FIX: Видаляємо lock-файл, якщо він існує
+            Path lockPath = Paths.get(directory.toString(), "write.lock");
+            if (Files.exists(lockPath)) {
+                Files.delete(lockPath);
+                log.info("Lock file deleted");
+            }
+            // Повторна спроба
+            IndexWriterConfig config = new IndexWriterConfig(analyzer);
+            config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
+            indexWriter = new IndexWriter(directory, config);
+            log.info("Lucene index initialized after lock cleanup");
+        }
     }
 
     @Override
@@ -57,7 +76,6 @@ public class LuceneSearchIndexer implements SearchIndexer {
                 book.getAnnotation()
         );
         indexDocument(doc);
-        // Коміт винесено на рівень батча
     }
 
     @Override
@@ -73,7 +91,6 @@ public class LuceneSearchIndexer implements SearchIndexer {
                 snapshot.getAnnotation()
         );
         indexDocument(doc);
-        // Коміт винесено на рівень батча
     }
 
     @Override
@@ -86,11 +103,11 @@ public class LuceneSearchIndexer implements SearchIndexer {
             count++;
             if (count % batchSize == 0) {
                 commit();
-                log.debug("Commit після {} книг", count);
+                log.debug("Commit для {} книг", count);
             }
         }
         commit();
-        log.info("Проіндексовано {} книг", books.size());
+        log.info("Індексовано {} книг", books.size());
     }
 
     @Override

@@ -6,7 +6,6 @@ import com.myhomelibcorp.application.port.out.repository.PageableBookQueryReposi
 import com.myhomelibcorp.application.query.book.PageableBookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.QueryExecutor;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
@@ -31,15 +30,12 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
 
     @Override
     public PageResult<BookListItem> findPage(PageableBookQuery query) {
-        // 1. Будуємо SQL з пагінацією
         SqlQuery sqlQuery = buildPagedQuery(query);
         List<Book> books = queryExecutor.query(sqlQuery.sql, bookRowMapper, sqlQuery.params);
         enrichBooks(books);
 
-        // 2. Загальна кількість
         long total = count(query);
 
-        // 3. Перетворюємо на DTO
         List<BookListItem> items = books.stream()
                 .map(bookListItemMapper::toListItem)
                 .toList();
@@ -63,38 +59,33 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
         bookGenreHelper.loadGenresForBooks(books);
     }
 
-    /**
-     * Будує SQL-запит з пагінацією на основі PageableBookQuery.
-     * Це спрощена версія – у реальному проєкті слід динамічно додавати WHERE-умови.
-     */
     private SqlQuery buildPagedQuery(PageableBookQuery query) {
         StringBuilder sql = new StringBuilder("SELECT b.* FROM books b ");
         List<Object> params = new ArrayList<>();
 
-        // Додаємо JOIN для авторів, якщо потрібно
-        if (query.authorId() != null) {
-            sql.append("JOIN book_authors ba ON b.id = ba.book_id ");
-        }
-
         sql.append("WHERE 1=1 ");
 
-        // Умови
         if (query.authorId() != null) {
-            sql.append("AND ba.author_id = ? ");
+            sql.append("AND EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id AND ba.author_id = ?) ");
             params.add(query.authorId().asString());
         }
+
         if (query.seriesId() != null) {
-            sql.append("AND b.series_id = ? ");
+            // Додаємо TRIM для ігнорування пробілів на початку/кінці
+            sql.append("AND EXISTS (SELECT 1 FROM series s WHERE s.id = ? AND TRIM(b.series) = TRIM(s.name)) ");
             params.add(query.seriesId().asString());
         }
+
         if (query.genreId() != null) {
             sql.append("AND EXISTS (SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id AND bg.genre_code = ?) ");
             params.add(query.genreId().asString());
         }
+
         if (query.language() != null) {
             sql.append("AND b.language = ? ");
             params.add(query.language().toString());
         }
+
         if (query.text() != null && !query.text().isBlank()) {
             String pattern = "%" + query.text().toLowerCase() + "%";
             sql.append("AND (LOWER(b.title) LIKE ? OR LOWER(b.keywords) LIKE ? OR LOWER(b.annotation) LIKE ?) ");
@@ -102,6 +93,7 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
             params.add(pattern);
             params.add(pattern);
         }
+
         if (query.onlyRead()) {
             sql.append("AND b.progress = 100 ");
         }
@@ -112,19 +104,16 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
             sql.append("AND b.cover_hash IS NOT NULL ");
         }
 
-        // Сортування
-        String sortColumn = "b.title";
-        switch (query.pageRequest().getSortBy()) {
-            case TITLE -> sortColumn = "b.title";
-            case AUTHOR -> sortColumn = "b.author_sort"; // або через JOIN
-            case DATE -> sortColumn = "b.update_date";
-            case RATING -> sortColumn = "b.rate";
-            case RANDOM -> sortColumn = "RANDOM()";
-        }
+        String sortColumn = switch (query.pageRequest().getSortBy()) {
+            case TITLE -> "b.title";
+            case AUTHOR -> "b.author_sort";
+            case DATE -> "b.update_date";
+            case RATING -> "b.rate";
+            case RANDOM -> "RANDOM()";
+        };
         sql.append("ORDER BY ").append(sortColumn).append(" ")
                 .append(query.pageRequest().getDirection().name());
 
-        // LIMIT / OFFSET
         sql.append(" LIMIT ? OFFSET ?");
         params.add(query.pageRequest().getSize());
         params.add(query.pageRequest().getOffset());
@@ -136,16 +125,14 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
         StringBuilder sql = new StringBuilder("SELECT COUNT(*) FROM books b ");
         List<Object> params = new ArrayList<>();
 
-        if (query.authorId() != null) {
-            sql.append("JOIN book_authors ba ON b.id = ba.book_id ");
-        }
         sql.append("WHERE 1=1 ");
+
         if (query.authorId() != null) {
-            sql.append("AND ba.author_id = ? ");
+            sql.append("AND EXISTS (SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id AND ba.author_id = ?) ");
             params.add(query.authorId().asString());
         }
         if (query.seriesId() != null) {
-            sql.append("AND b.series_id = ? ");
+            sql.append("AND EXISTS (SELECT 1 FROM series s WHERE s.id = ? AND TRIM(b.series) = TRIM(s.name)) ");
             params.add(query.seriesId().asString());
         }
         if (query.genreId() != null) {

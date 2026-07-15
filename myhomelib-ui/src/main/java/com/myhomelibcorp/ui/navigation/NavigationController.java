@@ -1,8 +1,9 @@
 package com.myhomelibcorp.ui.navigation;
 
-import com.myhomelibcorp.application.navigation.NavigationService;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.domain.model.series.Series;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
@@ -13,7 +14,7 @@ import com.myhomelibcorp.ui.model.navigation.GenreNode;
 import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.ui.model.navigation.SeriesNode;
 import com.myhomelibcorp.ui.service.BookLoaderService;
-import com.myhomelibcorp.ui.service.NavigationService as UiNavigationService;
+import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
@@ -30,10 +31,11 @@ import java.util.Comparator;
 @Slf4j
 public class NavigationController {
 
-    private final NavigationService navigationService;        // application-сервіс
-    private final UiNavigationService uiNavigationService;   // UI-сервіс (com.myhomelibcorp.ui.service.NavigationService)
+    private final com.myhomelibcorp.application.navigation.NavigationService appNavigationService;
+    private final NavigationService uiNavigationService;
     private final BookLoaderService bookLoaderService;
     private final CollectionRepository collectionRepository;
+    private final SeriesRepository seriesRepository;
     private final ApplicationState appState;
     private final MainController mainController;
 
@@ -56,10 +58,10 @@ public class NavigationController {
         TreeItem<LibraryNode> root = new TreeItem<>(null);
         root.setExpanded(true);
 
-        TreeItem<LibraryNode> authorsItem = new TreeItem<>(new CategoryNode("📚 Автори", "authors"));
-        TreeItem<LibraryNode> seriesItem = new TreeItem<>(new CategoryNode("📖 Серії", "series"));
-        TreeItem<LibraryNode> genresItem = new TreeItem<>(new CategoryNode("🏷 Жанри", "genres"));
-        TreeItem<LibraryNode> collectionsItem = new TreeItem<>(new CategoryNode("⭐ Колекції", "collections"));
+        TreeItem<LibraryNode> authorsItem = new TreeItem<>(new CategoryNode("Автори", "authors"));
+        TreeItem<LibraryNode> seriesItem = new TreeItem<>(new CategoryNode("Серії", "series"));
+        TreeItem<LibraryNode> genresItem = new TreeItem<>(new CategoryNode("Жанри", "genres"));
+        TreeItem<LibraryNode> collectionsItem = new TreeItem<>(new CategoryNode("Колекції", "collections"));
 
         root.getChildren().addAll(authorsItem, seriesItem, genresItem, collectionsItem);
         navigationTree.setRoot(root);
@@ -102,7 +104,6 @@ public class NavigationController {
             }
         });
 
-        // Використовуємо uiNavigationService (UI-сервіс) для навігації
         navigationTree.getSelectionModel().selectedItemProperty().addListener((obs, old, newVal) -> {
             if (newVal != null && newVal.getValue() != null) {
                 LibraryNode node = newVal.getValue();
@@ -116,7 +117,7 @@ public class NavigationController {
                     GenreId id = ((GenreNode) node).genre().getId();
                     uiNavigationService.navigateToGenre(id);
                 } else if (node instanceof CollectionNode) {
-                    // Показати колекцію
+                    // Обробка колекції
                 }
             }
         });
@@ -124,7 +125,7 @@ public class NavigationController {
 
     private void loadAuthors(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
-        navigationService.getAllAuthors().thenAccept(authors -> UiExecutor.runOnUiThread(() -> {
+        appNavigationService.getAllAuthors().thenAccept(authors -> UiExecutor.runOnUiThread(() -> {
             authors.stream()
                     .sorted(Comparator.comparing(a -> a.getLastName()))
                     .forEach(author -> {
@@ -146,26 +147,25 @@ public class NavigationController {
 
     private void loadSeries(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
-        navigationService.getAllSeriesNames().thenAccept(names -> UiExecutor.runOnUiThread(() -> {
-            names.forEach(name -> {
-                com.myhomelibcorp.domain.model.series.Series domainSeries =
-                        new com.myhomelibcorp.domain.model.series.Series(
-                                com.myhomelibcorp.domain.model.valueobject.SeriesId.generate(),
-                                name,
-                                null
-                        );
-                parent.getChildren().add(new TreeItem<LibraryNode>(new SeriesNode(domainSeries)));
+        try {
+            java.util.List<Series> seriesList = seriesRepository.findAll();
+            UiExecutor.runOnUiThread(() -> {
+                seriesList.stream()
+                        .sorted(Comparator.comparing(Series::getName))
+                        .forEach(series -> {
+                            parent.getChildren().add(new TreeItem<LibraryNode>(new SeriesNode(series)));
+                        });
+                parent.setExpanded(true);
+                log.info("Завантажено {} серій у навігаційне дерево", seriesList.size());
             });
-            parent.setExpanded(true);
-        })).exceptionally(ex -> {
-            log.error("Failed to load series", ex);
-            return null;
-        });
+        } catch (Exception e) {
+            log.error("Failed to load series from repository", e);
+        }
     }
 
     private void loadGenres(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
-        navigationService.getAllGenres().thenAccept(genres -> UiExecutor.runOnUiThread(() -> {
+        appNavigationService.getAllGenres().thenAccept(genres -> UiExecutor.runOnUiThread(() -> {
             genres.forEach(genre -> {
                 com.myhomelibcorp.domain.model.genre.Genre domainGenre =
                         new com.myhomelibcorp.domain.model.genre.Genre(
@@ -207,10 +207,6 @@ public class NavigationController {
             TreeItem<LibraryNode> authorsItem = root.getChildren().get(0);
             authorsItem.setExpanded(true);
             navigationTree.getSelectionModel().select(authorsItem);
-            if (authorsItem.getChildren().size() == 1
-                    && authorsItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadAuthors(authorsItem);
-            }
         }
     }
 
@@ -221,10 +217,6 @@ public class NavigationController {
             TreeItem<LibraryNode> seriesItem = root.getChildren().get(1);
             seriesItem.setExpanded(true);
             navigationTree.getSelectionModel().select(seriesItem);
-            if (seriesItem.getChildren().size() == 1
-                    && seriesItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadSeries(seriesItem);
-            }
         }
     }
 
@@ -235,10 +227,6 @@ public class NavigationController {
             TreeItem<LibraryNode> genresItem = root.getChildren().get(2);
             genresItem.setExpanded(true);
             navigationTree.getSelectionModel().select(genresItem);
-            if (genresItem.getChildren().size() == 1
-                    && genresItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadGenres(genresItem);
-            }
         }
     }
 
@@ -249,10 +237,6 @@ public class NavigationController {
             TreeItem<LibraryNode> collectionsItem = root.getChildren().get(3);
             collectionsItem.setExpanded(true);
             navigationTree.getSelectionModel().select(collectionsItem);
-            if (collectionsItem.getChildren().size() == 1
-                    && collectionsItem.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadCollections(collectionsItem);
-            }
         }
     }
 
@@ -268,7 +252,6 @@ public class NavigationController {
 
     @FXML
     private void onSearch() {
-        log.info("Натиснуто кнопку Пошук у лівій панелі, переходимо до воркспейсу пошуку");
         mainController.showSearchResults("");
     }
 
@@ -283,14 +266,6 @@ public class NavigationController {
     }
 
     public void refreshNavigation() {
-        TreeItem<LibraryNode> root = navigationTree.getRoot();
-        if (root != null) {
-            root.getChildren().forEach(item -> {
-                if (item.getChildren().size() == 1
-                        && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                }
-            });
-        }
         navigationTree.refresh();
     }
 }

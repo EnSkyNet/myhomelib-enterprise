@@ -5,6 +5,7 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteSeriesRepository;
 import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
 import com.myhomelibcorp.ui.book.BookWorkspaceController;
 import com.myhomelibcorp.ui.collection.CollectionWorkspaceController;
@@ -49,6 +50,7 @@ public class MainController {
     private final RefreshPresenter refreshPresenter;
     private final DialogService dialogService;
     private final WorkspaceManager workspaceManager;
+    private final SqliteSeriesRepository seriesRepository;
 
     @FXML private BorderPane mainPane;
     @FXML private TableView<?> bookTableView;
@@ -61,7 +63,12 @@ public class MainController {
     @FXML
     public void initialize() {
         log.info("MainController ініціалізовано");
-        workspaceManager.setMainPane(mainPane);
+        try {
+            seriesRepository.syncSeriesFromBooks();
+            log.info("Серії синхронізовано при запуску програми");
+        } catch (Exception e) {
+            log.error("Помилка синхронізації серій при запуску", e);
+        }
         searchField.setOnAction(event -> handleSearch());
         showDashboard();
         updateNavigationButtons();
@@ -108,11 +115,13 @@ public class MainController {
     }
 
     public void showSeriesWorkspace(SeriesId seriesId) {
-        log.warn("showSeriesWorkspace викликано, але не реалізовано");
+        log.warn("showSeriesWorkspace викликано, але окремого воркспейсу немає, перенаправляємо на пошук");
+        showSearchResults(seriesId != null ? seriesId.asString() : "");
     }
 
     public void showGenreWorkspace(GenreId genreId) {
-        log.warn("showGenreWorkspace викликано, але не реалізовано");
+        log.warn("showGenreWorkspace викликано, але окремого воркспейсу немає, перенаправляємо на пошук");
+        showSearchResults(genreId != null ? genreId.asString() : "");
     }
 
     public void showSearchResults(String query) {

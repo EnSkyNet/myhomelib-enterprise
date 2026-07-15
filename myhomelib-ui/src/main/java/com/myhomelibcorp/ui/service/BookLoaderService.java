@@ -40,33 +40,35 @@ public class BookLoaderService {
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
 
-        executor.submit(() -> pageableRepository.findPage(query))
-                .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
-                    vm.setLoading(false);
-                    List<BookViewModel> vms = result.content().stream()
-                            .map(viewModelMapper::toViewModel)
-                            .collect(Collectors.toList());
-                    vm.setBooks(vms);
-                    vm.setTotalElements(result.totalElements());
-                    vm.setTotalPages(result.totalPages());
-                    vm.setCurrentPage(result.currentPage());
-                    if (!vms.isEmpty()) {
-                        vm.setSelectedBook(vms.get(0));
-                    } else {
-                        vm.setSelectedBook(null);
-                    }
-                    appState.getStatusBar().setStatusText(
-                            String.format("Показано %d з %d книг", vms.size(), result.totalElements())
-                    );
-                }))
-                .exceptionally(ex -> {
-                    UiExecutor.runOnUiThread(() -> {
-                        vm.setLoading(false);
-                        appState.getStatusBar().setStatusText("Помилка завантаження: " + ex.getMessage());
-                    });
-                    log.error("Failed to load books", ex);
-                    return null;
-                });
+        executor.submit(() -> {
+            PageResult<BookListItem> result = pageableRepository.findPage(query);
+            log.info("Завантажено {} книг з {} загалом", result.content().size(), result.totalElements());
+            return result;
+        }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
+            vm.setLoading(false);
+            List<BookViewModel> vms = result.content().stream()
+                    .map(viewModelMapper::toViewModel)
+                    .collect(Collectors.toList());
+            vm.setBooks(vms);
+            vm.setTotalElements(result.totalElements());
+            vm.setTotalPages(result.totalPages());
+            vm.setCurrentPage(result.currentPage());
+            if (!vms.isEmpty()) {
+                vm.setSelectedBook(vms.get(0));
+            } else {
+                vm.setSelectedBook(null);
+            }
+            appState.getStatusBar().setStatusText(
+                    String.format("Показано %d з %d книг", vms.size(), result.totalElements())
+            );
+        })).exceptionally(ex -> {
+            UiExecutor.runOnUiThread(() -> {
+                vm.setLoading(false);
+                appState.getStatusBar().setStatusText("Помилка завантаження: " + ex.getMessage());
+            });
+            log.error("Failed to load books", ex);
+            return null;
+        });
     }
 
     public void loadBooksByAuthor(AuthorId authorId) {
@@ -90,7 +92,6 @@ public class BookLoaderService {
             loadAllBooks();
             return;
         }
-        // Текстовий пошук (як fallback)
         PageableBookQuery query = PageableBookQuery.builder()
                 .text(seriesName)
                 .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))

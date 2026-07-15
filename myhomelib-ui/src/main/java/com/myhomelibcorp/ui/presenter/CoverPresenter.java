@@ -9,11 +9,13 @@ import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.atomic.AtomicReference;
 
 @Component
+@Scope("prototype")   // FIX: кожен контролер отримує власний екземпляр
 @RequiredArgsConstructor
 @Slf4j
 public class CoverPresenter {
@@ -43,13 +45,13 @@ public class CoverPresenter {
         String bookId = book.getId();
         log.info("showCover: завантаження обкладинки для книги: {}, id={}", book.getTitle(), bookId);
 
-        // Якщо це та сама книга – не перезавантажуємо
+        // Якщо це та ж книга і обкладинка вже завантажена – пропускаємо
         if (bookId.equals(lastLoadedBookId) && book.getCover() != null) {
             log.info("showCover: обкладинка вже завантажена для цієї книги, пропускаємо");
             return;
         }
 
-        // Примусово очищаємо ImageView перед завантаженням нової обкладинки
+        // Очищаємо ImageView перед новим завантаженням
         clearCover();
 
         BookDto dto = new BookDto();
@@ -65,10 +67,10 @@ public class CoverPresenter {
         dto.setProgress(book.getProgress());
 
         currentLoadingBookId.set(bookId);
-        lastLoadedBookId = null; // скидаємо, щоб завантажити
+        lastLoadedBookId = null; // Скидаємо, щоб завантажити
 
         backgroundExecutor.submit(() -> {
-            log.info("CoverPresenter: фоновий запит обкладинки для bookId={}", bookId);
+            log.info("CoverPresenter: запит обкладинки для bookId={}", bookId);
             return coverExtractor.extractCover(dto);
         }).thenAccept(image -> UiExecutor.runOnUiThread(() -> {
             log.info("CoverPresenter: отримано обкладинку для bookId={}, image={}", bookId, image != null ? "так" : "ні");
@@ -80,7 +82,6 @@ public class CoverPresenter {
                     log.info("CoverPresenter: обкладинку встановлено для {}", book.getTitle());
                 } else {
                     log.warn("CoverPresenter: обкладинка не знайдена для {}", book.getTitle());
-                    // Встановлюємо заглушку
                     coverImageView.setImage(null);
                 }
             } else {

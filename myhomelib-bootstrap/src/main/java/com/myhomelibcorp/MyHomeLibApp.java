@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;
+import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
 import com.myhomelibcorp.infrastructure.cache.GlobalCache;
@@ -18,6 +19,7 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
 import javafx.stage.Stage;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.SpringApplication;
@@ -56,7 +58,7 @@ public class MyHomeLibApp extends Application {
             SqliteCollectionRepository collectionRepository = context.getBean(SqliteCollectionRepository.class);
             DatabaseInitializer initializer = context.getBean(DatabaseInitializer.class);
 
-            // ------ Робота з колекцією ------
+            // ------ Робота з колекціями ------
             List<Collection> collections = collectionRepository.findAll();
             if (collections.isEmpty()) {
                 log.info("Колекцій не знайдено, створюємо стандартну...");
@@ -73,7 +75,7 @@ public class MyHomeLibApp extends Application {
                 );
                 Collection saved = collectionRepository.save(defaultCollection);
                 collectionManager.switchToCollection(saved);
-                log.info("Створено та вибрано колекцію: {}", saved.getName());
+                log.info("Створено та активовано колекцію: {}", saved.getName());
                 initializer.initializeCurrentCollection();
             } else {
                 Collection first = collections.get(0);
@@ -82,7 +84,17 @@ public class MyHomeLibApp extends Application {
                 initializer.initializeCurrentCollection();
             }
 
-            // ------ Ініціалізація кешів та залежних компонентів ------
+            // FIX: Оновлюємо статистику після ініціалізації БД
+            try {
+                StatisticsService statisticsService = context.getBean(StatisticsService.class);
+                statisticsService.refreshStatistics();
+                log.info("Статистику оновлено");
+            } catch (Exception e) {
+                log.warn("Не вдалося оновити статистику (можливо, відсутні колонки). Виконується міграція...");
+                // Якщо міграція ще не виконана, Flyway додасть колонки при наступному запуску
+            }
+
+            // ------ Ініціалізація кешів та інших компонентів ------
             GlobalCache globalCache = context.getBean(GlobalCache.class);
             globalCache.initialize();
 
@@ -121,7 +133,7 @@ public class MyHomeLibApp extends Application {
             Parent root = loader.load();
             log.info("FXML завантажено успішно");
 
-            // ------ Відображення вікна ------
+            // ------ Налаштування вікна ------
             String collectionName = collectionManager.getCurrentCollection() != null
                     ? collectionManager.getCurrentCollection().getName()
                     : "Без колекції";
@@ -134,16 +146,15 @@ public class MyHomeLibApp extends Application {
             log.info("JavaFX вікно відкрито");
 
         } catch (Exception e) {
-            log.error("КРИТИЧНА ПОМИЛКА ПРИ ЗАПУСКУ JavaFX", e);
+            log.error("Помилка під час запуску JavaFX", e);
             Platform.runLater(() -> {
-                javafx.scene.control.Alert alert = new javafx.scene.control.Alert(
-                        javafx.scene.control.Alert.AlertType.ERROR);
+                Alert alert = new Alert(Alert.AlertType.ERROR);
                 alert.setTitle("Помилка запуску");
                 alert.setHeaderText("Не вдалося запустити програму");
-                alert.setContentText("Деталі: " + e.getMessage() + "\n\nДивіться логи для повної інформації.");
+                alert.setContentText("Деталі: " + e.getMessage() + "\n\nПеревірте логи.");
                 alert.showAndWait();
+                Platform.exit();
             });
-            Platform.exit();
         }
     }
 

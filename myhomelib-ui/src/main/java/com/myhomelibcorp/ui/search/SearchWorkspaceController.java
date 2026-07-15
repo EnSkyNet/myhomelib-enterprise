@@ -3,15 +3,16 @@ package com.myhomelibcorp.ui.search;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
+import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
-import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
@@ -34,6 +35,7 @@ public class SearchWorkspaceController {
     private final AuthorMapper authorMapper;
     private final BookMapper bookMapper;
     private final GenreMapper genreMapper;
+    private final ApplicationState appState;
 
     @FXML private TextField searchField;
     @FXML private VBox resultsContainer;
@@ -62,10 +64,14 @@ public class SearchWorkspaceController {
         setupListViews();
         setupSearchListener();
         searchField.requestFocus();
+        // Приховуємо всі секції при старті
+        setSectionVisible(authorsSection, false);
+        setSectionVisible(seriesSection, false);
+        setSectionVisible(genresSection, false);
+        setSectionVisible(booksSection, false);
     }
 
     private void setupListViews() {
-        // Автори
         authorsListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
             @Override
             protected void updateItem(AuthorDto item, boolean empty) {
@@ -82,7 +88,6 @@ public class SearchWorkspaceController {
             }
         });
 
-        // Серії
         seriesListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
             @Override
             protected void updateItem(String item, boolean empty) {
@@ -99,7 +104,6 @@ public class SearchWorkspaceController {
             }
         });
 
-        // Жанри
         genresListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
             @Override
             protected void updateItem(GenreDto item, boolean empty) {
@@ -116,12 +120,17 @@ public class SearchWorkspaceController {
             }
         });
 
-        // Книги
         booksListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
             @Override
             protected void updateItem(BookDto item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? null : item.getTitle() + " — " + item.getAuthorsText());
+            }
+        });
+        booksListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
+            if (selected != null) {
+                appState.getBookDetails().setCurrentBook(selected);
+                log.info("Вибрано книгу: {}", selected.getTitle());
             }
         });
         booksListView.setOnMouseClicked(e -> {
@@ -171,56 +180,51 @@ public class SearchWorkspaceController {
         List<GenreDto> genres = (List<GenreDto>) results.get("genres");
         List<BookDto> books = (List<BookDto>) results.get("books");
 
-        boolean hasResults = false;
-
+        setSectionVisible(authorsSection, authors != null && !authors.isEmpty());
         if (authors != null && !authors.isEmpty()) {
-            authorsSection.setVisible(true);
             authorsListView.getItems().setAll(authors);
             authorsCountLabel.setText("(" + authors.size() + ")");
-            hasResults = true;
-        } else {
-            authorsSection.setVisible(false);
         }
 
+        setSectionVisible(seriesSection, series != null && !series.isEmpty());
         if (series != null && !series.isEmpty()) {
-            seriesSection.setVisible(true);
             seriesListView.getItems().setAll(series);
             seriesCountLabel.setText("(" + series.size() + ")");
-            hasResults = true;
-        } else {
-            seriesSection.setVisible(false);
         }
 
+        setSectionVisible(genresSection, genres != null && !genres.isEmpty());
         if (genres != null && !genres.isEmpty()) {
-            genresSection.setVisible(true);
             genresListView.getItems().setAll(genres);
             genresCountLabel.setText("(" + genres.size() + ")");
-            hasResults = true;
-        } else {
-            genresSection.setVisible(false);
         }
 
+        setSectionVisible(booksSection, books != null && !books.isEmpty());
         if (books != null && !books.isEmpty()) {
-            booksSection.setVisible(true);
             booksListView.getItems().setAll(books);
             booksCountLabel.setText("(" + books.size() + ")");
-            hasResults = true;
+            booksListView.getSelectionModel().selectFirst();
+            statusLabel.setText("Результати пошуку для: \"" + lastQuery + "\"");
         } else {
-            booksSection.setVisible(false);
+            statusLabel.setText("Нічого не знайдено");
+            appState.getBookDetails().setCurrentBook(null);
         }
+    }
 
-        statusLabel.setText(hasResults ? "Результати пошуку для: \"" + lastQuery + "\"" : "Нічого не знайдено");
+    private void setSectionVisible(VBox section, boolean visible) {
+        section.setVisible(visible);
+        section.setManaged(visible);
     }
 
     public void clearResults() {
-        authorsSection.setVisible(false);
+        setSectionVisible(authorsSection, false);
         authorsListView.getItems().clear();
-        seriesSection.setVisible(false);
+        setSectionVisible(seriesSection, false);
         seriesListView.getItems().clear();
-        genresSection.setVisible(false);
+        setSectionVisible(genresSection, false);
         genresListView.getItems().clear();
-        booksSection.setVisible(false);
+        setSectionVisible(booksSection, false);
         booksListView.getItems().clear();
+        appState.getBookDetails().setCurrentBook(null);
         statusLabel.setText("Введіть запит для пошуку");
     }
 
@@ -235,13 +239,19 @@ public class SearchWorkspaceController {
 
     public void setResults(List<BookDto> results) {
         if (results != null && !results.isEmpty()) {
-            booksSection.setVisible(true);
+            setSectionVisible(booksSection, true);
             booksListView.getItems().setAll(results);
             booksCountLabel.setText("(" + results.size() + ")");
+            setSectionVisible(authorsSection, false);
+            setSectionVisible(seriesSection, false);
+            setSectionVisible(genresSection, false);
             statusLabel.setText("Знайдено книг: " + results.size());
+            booksListView.getSelectionModel().selectFirst();
         } else {
-            booksSection.setVisible(false);
-            statusLabel.setText("Книг не знайдено");
+            setSectionVisible(booksSection, false);
+            booksListView.getItems().clear();
+            appState.getBookDetails().setCurrentBook(null);
+            statusLabel.setText("Книги не знайдено");
         }
     }
 
