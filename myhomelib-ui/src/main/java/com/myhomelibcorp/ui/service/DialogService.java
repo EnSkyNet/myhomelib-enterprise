@@ -13,9 +13,11 @@ import java.util.Optional;
 @Service
 public class DialogService {
 
-    /**
-     * Показує інформаційне повідомлення.
-     */
+    // ---- Інформаційні діалоги (з заголовком і текстом) ----
+    public void showInfo(String title, String content) {
+        showInfo(title, null, content);
+    }
+
     public void showInfo(String title, String header, String content) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
@@ -24,9 +26,11 @@ public class DialogService {
         alert.showAndWait();
     }
 
-    /**
-     * Показує попередження.
-     */
+    // ---- Попередження ----
+    public void showWarning(String title, String content) {
+        showWarning(title, null, content);
+    }
+
     public void showWarning(String title, String header, String content) {
         Alert alert = new Alert(Alert.AlertType.WARNING);
         alert.setTitle(title);
@@ -35,21 +39,20 @@ public class DialogService {
         alert.showAndWait();
     }
 
-    /**
-     * Показує помилку.
-     */
+    // ---- Помилки ----
     public void showError(String title, String content) {
+        showError(title, null, content);
+    }
+
+    public void showError(String title, String header, String content) {
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle(title);
-        alert.setHeaderText(null);
+        alert.setHeaderText(header);
         alert.setContentText(content);
         alert.showAndWait();
     }
 
-    /**
-     * Показує діалог підтвердження.
-     * @return true якщо користувач натиснув OK, false якщо Cancel.
-     */
+    // ---- Підтвердження ----
     public boolean showConfirmation(String title, String header, String content) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
         alert.setTitle(title);
@@ -59,10 +62,7 @@ public class DialogService {
         return result.isPresent() && result.get() == ButtonType.OK;
     }
 
-    /**
-     * Показує діалог введення тексту.
-     * @return Optional з введеним текстом, або empty якщо скасовано.
-     */
+    // ---- Текстове введення (4 аргументи) ----
     public Optional<String> showTextInput(String title, String header, String content, String defaultValue) {
         TextInputDialog dialog = new TextInputDialog(defaultValue);
         dialog.setTitle(title);
@@ -71,14 +71,7 @@ public class DialogService {
         return dialog.showAndWait();
     }
 
-    /**
-     * Показує діалог вибору зі списку.
-     * @param items список елементів для вибору
-     * @param title заголовок діалогу
-     * @param header текст заголовка
-     * @param contentText текст підказки
-     * @return Optional з вибраним елементом, або empty якщо скасовано.
-     */
+    // ---- Вибір зі списку (5 аргументів) ----
     public <T> Optional<T> showChoiceDialog(List<T> items, T defaultItem, String title, String header, String contentText) {
         if (items == null || items.isEmpty()) {
             return Optional.empty();
@@ -90,20 +83,18 @@ public class DialogService {
         return dialog.showAndWait();
     }
 
-    /**
-     * Показує діалог вибору групи для книги.
-     */
+    // ---- Спеціалізований вибір групи ----
     public Optional<Group> showGroupChoiceDialog(List<Group> groups, String bookTitle) {
         if (groups == null || groups.isEmpty()) {
-            showWarning("Увага", "Немає груп", "Створіть групу перед додаванням книг.");
+            showWarning("Немає колекцій", "Створіть колекцію перед додаванням книги.");
             return Optional.empty();
         }
         return showChoiceDialog(
                 groups,
                 groups.get(0),
-                "Додати до групи",
-                "Виберіть групу для книги '" + bookTitle + "'",
-                "Група:"
+                "Додати до колекції",
+                "Виберіть колекцію для книги '" + bookTitle + "'",
+                "Колекція:"
         );
     }
 }

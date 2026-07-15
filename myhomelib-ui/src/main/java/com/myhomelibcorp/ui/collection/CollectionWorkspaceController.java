@@ -12,10 +12,11 @@ import com.myhomelibcorp.application.usecase.group.RenameGroupUseCase;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
+import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -45,6 +46,8 @@ public class CollectionWorkspaceController {
     private final AddBookToGroupUseCase addBookToGroupUseCase;
     private final RemoveBookFromGroupUseCase removeBookFromGroupUseCase;
     private final NavigationService navigationService;
+    private final ApplicationState appState;
+    private final DialogService dialogService;
 
     @FXML private ListView<Group> collectionsListView;
     @FXML private Label collectionNameLabel;
@@ -61,7 +64,8 @@ public class CollectionWorkspaceController {
     @FXML private VBox collectionDetailsBox;
 
     private Group currentCollection;
-    private ObservableList<BookViewModel> books = FXCollections.observableArrayList();
+    private final ObservableList<Group> groupList = FXCollections.observableArrayList();
+    private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
 
     @FXML
     public void initialize() {
@@ -71,19 +75,21 @@ public class CollectionWorkspaceController {
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
 
         booksTableView.setItems(books);
+        collectionsListView.setItems(groupList);   // <-- Явна прив'язка
 
-        // Обробка вибору колекції
+        // Слухач вибору колекції
         collectionsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
                 currentCollection = selected;
                 loadCollectionBooks(selected);
                 collectionDetailsBox.setVisible(true);
+                log.info("Вибрано колекцію: {}", selected.getName());
             } else {
                 collectionDetailsBox.setVisible(false);
             }
         });
 
-        // Подвійний клік по книзі
+        // Подвійний клік по книзі – навігація
         booksTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
@@ -96,22 +102,24 @@ public class CollectionWorkspaceController {
         loadCollections();
     }
 
+    // Завантаження всіх колекцій
     public void loadCollections() {
         try {
             List<Group> groups = groupRepository.findAll();
-            collectionsListView.getItems().setAll(groups);
+            groupList.setAll(groups);
+            log.info("Завантажено {} колекцій", groups.size());
             if (!groups.isEmpty()) {
                 collectionsListView.getSelectionModel().selectFirst();
             } else {
                 collectionDetailsBox.setVisible(false);
-                // Показати підказку створити колекцію
             }
         } catch (Exception e) {
-            log.error("Failed to load collections", e);
-            showAlert("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
+            log.error("Помилка завантаження колекцій", e);
+            dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
         }
     }
 
+    // Завантаження книг для вибраної колекції
     private void loadCollectionBooks(Group collection) {
         List<String> bookIds = groupRepository.findBookIdsByGroup(collection.getId().asLong());
         if (bookIds.isEmpty()) {
@@ -133,100 +141,53 @@ public class CollectionWorkspaceController {
         books.setAll(vms);
         collectionNameLabel.setText(collection.getName());
         booksCountLabel.setText(vms.size() + " книг");
+        log.info("Завантажено {} книг для колекції {}", vms.size(), collection.getName());
     }
 
-    @FXML
-    private void onCreateCollection() {
-        Optional<String> result = showTextInput("Створити колекцію", "Введіть назву нової колекції", "Назва:");
-        result.ifPresent(name -> {
-            if (!name.isBlank()) {
-                try {
-                    Group group = createGroupUseCase.execute(name);
-                    collectionsListView.getItems().add(group);
-                    collectionsListView.getSelectionModel().select(group);
-                    showAlert("Успіх", "Колекцію \"" + name + "\" створено");
-                } catch (Exception e) {
-                    showAlert("Помилка", "Не вдалося створити колекцію: " + e.getMessage());
-                }
-            }
-        });
-    }
-
-    @FXML
-    private void onRenameCollection() {
-        Group selected = collectionsListView.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showAlert("Помилка", "Виберіть колекцію");
-            return;
-        }
-        if (!selected.isAllowDelete()) {
-            showAlert("Помилка", "Системну колекцію не можна перейменовувати");
-            return;
-        }
-        Optional<String> result = showTextInput("Перейменувати колекцію",
-                "Введіть нову назву для \"" + selected.getName() + "\"", selected.getName());
-        result.ifPresent(newName -> {
-            if (!newName.isBlank() && !newName.equals(selected.getName())) {
-                try {
-                    Group renamed = renameGroupUseCase.execute(selected.getId().asLong(), newName);
-                    int index = collectionsListView.getItems().indexOf(selected);
-                    if (index >= 0) {
-                        collectionsListView.getItems().set(index, renamed);
-                    }
-                    collectionsListView.getSelectionModel().select(renamed);
-                    showAlert("Успіх", "Колекцію перейменовано на \"" + newName + "\"");
-                } catch (Exception e) {
-                    showAlert("Помилка", "Не вдалося перейменувати: " + e.getMessage());
-                }
-            }
-        });
-    }
-
-    @FXML
-    private void onDeleteCollection() {
-        Group selected = collectionsListView.getSelectionModel().getSelectedItem();
-        if (selected == null) {
-            showAlert("Помилка", "Виберіть колекцію");
-            return;
-        }
-        if (!selected.isAllowDelete()) {
-            showAlert("Помилка", "Системну колекцію не можна видалити");
-            return;
-        }
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Підтвердження");
-        confirm.setHeaderText("Видалити колекцію \"" + selected.getName() + "\"?");
-        confirm.setContentText("Книги не будуть видалені, тільки зв'язок.");
-        if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-            try {
-                deleteGroupUseCase.execute(selected.getId().asLong());
-                collectionsListView.getItems().remove(selected);
-                collectionDetailsBox.setVisible(false);
-                showAlert("Успіх", "Колекцію видалено");
-            } catch (Exception e) {
-                showAlert("Помилка", "Не вдалося видалити: " + e.getMessage());
-            }
-        }
-    }
+    // ---- Дії з колекціями ----
 
     @FXML
     private void onAddBookToCollection() {
-        // Цей метод викликається з BookWorkspaceController
+        BookViewModel selectedBook = appState.getBookTable().getSelectedBook();
+        if (selectedBook == null) {
+            dialogService.showWarning("Немає книги", "Будь ласка, виберіть книгу в головній таблиці.");
+            return;
+        }
+
+        if (currentCollection == null) {
+            dialogService.showWarning("Немає колекції", "Будь ласка, виберіть колекцію зліва.");
+            return;
+        }
+
+        List<String> bookIds = groupRepository.findBookIdsByGroup(currentCollection.getId().asLong());
+        if (bookIds.contains(selectedBook.getId())) {
+            dialogService.showWarning("Вже є", "Ця книга вже в колекції \"" + currentCollection.getName() + "\".");
+            return;
+        }
+
+        try {
+            addBookToGroupUseCase.execute(currentCollection.getId().asLong(), selectedBook.getId());
+            loadCollectionBooks(currentCollection);
+            dialogService.showInfo("Успішно", "Книгу додано до колекції \"" + currentCollection.getName() + "\".");
+        } catch (Exception e) {
+            log.error("Помилка додавання книги до колекції", e);
+            dialogService.showError("Помилка", "Не вдалося додати книгу: " + e.getMessage());
+        }
     }
 
     @FXML
     private void onRemoveBookFromCollection() {
         if (currentCollection == null) {
-            showAlert("Помилка", "Виберіть колекцію");
+            dialogService.showError("Помилка", "Виберіть колекцію");
             return;
         }
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            showAlert("Помилка", "Виберіть книгу");
+            dialogService.showError("Помилка", "Виберіть книгу в таблиці");
             return;
         }
         if (!currentCollection.isAllowDelete()) {
-            showAlert("Помилка", "З системної колекції не можна видаляти книги вручну");
+            dialogService.showError("Помилка", "Системну колекцію не можна змінювати");
             return;
         }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
@@ -238,9 +199,95 @@ public class CollectionWorkspaceController {
                 removeBookFromGroupUseCase.execute(currentCollection.getId().asLong(), selected.getId());
                 books.remove(selected);
                 booksCountLabel.setText(books.size() + " книг");
-                showAlert("Успіх", "Книгу видалено з колекції");
+                dialogService.showInfo("Успішно", "Книгу видалено з колекції");
             } catch (Exception e) {
-                showAlert("Помилка", "Не вдалося видалити: " + e.getMessage());
+                log.error("Помилка видалення книги з колекції", e);
+                dialogService.showError("Помилка", "Не вдалося видалити: " + e.getMessage());
+            }
+        }
+    }
+
+    @FXML
+    private void onCreateCollection() {
+        Optional<String> result = dialogService.showTextInput(
+                "Створити колекцію",
+                "Введіть назву нової колекції",
+                "Назва:",
+                "");
+        result.ifPresent(name -> {
+            if (!name.isBlank()) {
+                try {
+                    Group group = createGroupUseCase.execute(name);
+                    groupList.add(group);
+                    collectionsListView.getSelectionModel().select(group);
+                    dialogService.showInfo("Успішно", "Колекцію \"" + name + "\" створено");
+                    log.info("Колекцію створено: id={}, name={}", group.getId(), group.getName());
+                } catch (Exception e) {
+                    log.error("Помилка створення колекції", e);
+                    dialogService.showError("Помилка", "Не вдалося створити колекцію: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    @FXML
+    private void onRenameCollection() {
+        Group selected = collectionsListView.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            dialogService.showError("Помилка", "Виберіть колекцію");
+            return;
+        }
+        if (!selected.isAllowDelete()) {
+            dialogService.showError("Помилка", "Системну колекцію не можна перейменовувати");
+            return;
+        }
+        Optional<String> result = dialogService.showTextInput(
+                "Перейменувати колекцію",
+                "Введіть нову назву для \"" + selected.getName() + "\"",
+                "Нова назва:",
+                selected.getName());
+        result.ifPresent(newName -> {
+            if (!newName.isBlank() && !newName.equals(selected.getName())) {
+                try {
+                    Group renamed = renameGroupUseCase.execute(selected.getId().asLong(), newName);
+                    int index = groupList.indexOf(selected);
+                    if (index >= 0) {
+                        groupList.set(index, renamed);
+                    }
+                    collectionsListView.getSelectionModel().select(renamed);
+                    dialogService.showInfo("Успішно", "Колекцію перейменовано на \"" + newName + "\"");
+                } catch (Exception e) {
+                    log.error("Помилка перейменування колекції", e);
+                    dialogService.showError("Помилка", "Не вдалося перейменувати: " + e.getMessage());
+                }
+            }
+        });
+    }
+
+    @FXML
+    private void onDeleteCollection() {
+        Group selected = collectionsListView.getSelectionModel().getSelectedItem();
+        if (selected == null) {
+            dialogService.showError("Помилка", "Виберіть колекцію");
+            return;
+        }
+        if (!selected.isAllowDelete()) {
+            dialogService.showError("Помилка", "Системну колекцію не можна видалити");
+            return;
+        }
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Підтвердження");
+        confirm.setHeaderText("Видалити колекцію \"" + selected.getName() + "\"?");
+        confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
+            try {
+                deleteGroupUseCase.execute(selected.getId().asLong());
+                groupList.remove(selected);
+                collectionDetailsBox.setVisible(false);
+                dialogService.showInfo("Успішно", "Колекцію видалено");
+            } catch (Exception e) {
+                log.error("Помилка видалення колекції", e);
+                dialogService.showError("Помилка", "Не вдалося видалити: " + e.getMessage());
             }
         }
     }
@@ -248,21 +295,11 @@ public class CollectionWorkspaceController {
     @FXML
     private void onRefresh() {
         loadCollections();
+        dialogService.showInfo("Оновлення", "Колекції перезавантажено.");
     }
 
-    private Optional<String> showTextInput(String title, String header, String content) {
-        TextInputDialog dialog = new TextInputDialog();
-        dialog.setTitle(title);
-        dialog.setHeaderText(header);
-        dialog.setContentText(content);
-        return dialog.showAndWait();
-    }
-
-    private void showAlert(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        alert.setContentText(message);
-        alert.showAndWait();
+    // Публічний метод для оновлення ззовні (наприклад, після імпорту)
+    public void refresh() {
+        loadCollections();
     }
 }

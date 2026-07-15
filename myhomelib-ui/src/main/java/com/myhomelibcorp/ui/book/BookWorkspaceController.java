@@ -3,11 +3,14 @@ package com.myhomelibcorp.ui.book;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.application.session.SessionService;
-import com.myhomelibcorp.application.usecase.book.UpdateBookUseCase;
+import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
+import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -17,6 +20,9 @@ import javafx.scene.image.ImageView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
+import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -30,6 +36,9 @@ public class BookWorkspaceController {
     private final BookMapper bookMapper;
     private final BookViewModelMapper bookViewModelMapper;
     private final SessionService sessionService;
+    private final GroupRepository groupRepository;
+    private final AddBookToGroupUseCase addBookToGroupUseCase;
+    private final DialogService dialogService;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -137,15 +146,38 @@ public class BookWorkspaceController {
 
     @FXML
     private void onAddToCollection() {
-        if (currentBook != null) {
-            // Показати діалог вибору колекції
+        if (currentBook == null) {
+            dialogService.showWarning("Немає книги", "Спочатку відкрийте книгу.");
+            return;
         }
+        List<Group> groups = groupRepository.findAll();
+        if (groups.isEmpty()) {
+            dialogService.showWarning("Немає колекцій", "Створіть колекцію перед додаванням.");
+            return;
+        }
+        Optional<Group> selected = dialogService.showChoiceDialog(
+                groups,
+                groups.get(0),
+                "Додати до колекції",
+                "Виберіть колекцію для книги \"" + currentBook.getTitle() + "\"",
+                "Колекція:"
+        );
+        selected.ifPresent(group -> {
+            try {
+                addBookToGroupUseCase.execute(group.getId().asLong(), currentBook.getId());
+                dialogService.showInfo("Успішно", "Книгу додано до колекції \"" + group.getName() + "\".");
+                log.info("Книгу {} додано до колекції {}", currentBook.getId(), group.getId());
+            } catch (Exception e) {
+                log.error("Помилка додавання книги до колекції", e);
+                dialogService.showError("Помилка", "Не вдалося додати книгу: " + e.getMessage());
+            }
+        });
     }
 
     @FXML
     private void onDeleteBook() {
         if (currentBook != null) {
-            // Підтвердження та видалення
+            dialogService.showInfo("Інформація", "Функція видалення книги в розробці.");
         }
     }
 
@@ -160,14 +192,6 @@ public class BookWorkspaceController {
                 titleLabel.setText(newTitle);
             }
         });
-    }
-
-    private void showAlert(String title, String message) {
-        Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle(title);
-        alert.setHeaderText(null);
-        alert.setContentText(message);
-        alert.showAndWait();
     }
 
     @FXML
