@@ -1,10 +1,8 @@
 package com.myhomelibcorp.domain.model.valueobject;
 
-import java.util.Objects;
-
 public record GroupId(Long value) {
     public GroupId {
-        Objects.requireNonNull(value, "GroupId cannot be null");
+        // Дозволяємо null (для нових записів)
     }
 
     public static GroupId fromLong(Long value) {
@@ -13,5 +11,10 @@ public record GroupId(Long value) {
 
     public Long asLong() {
         return value;
+    }
+
+    @Override
+    public String toString() {
+        return value != null ? value.toString() : "null";
     }
 }

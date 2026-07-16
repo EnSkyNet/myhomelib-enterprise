@@ -1,16 +1,21 @@
 package com.myhomelibcorp.ui.navigation;
 
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
+import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.series.Series;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.controller.MainController;
+import com.myhomelibcorp.ui.event.CollectionChangedEvent;
+import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.model.navigation.AuthorNode;
 import com.myhomelibcorp.ui.model.navigation.CollectionNode;
 import com.myhomelibcorp.ui.model.navigation.GenreNode;
+import com.myhomelibcorp.ui.model.navigation.GroupNode;
 import com.myhomelibcorp.ui.model.navigation.LibraryNode;
 import com.myhomelibcorp.ui.model.navigation.SeriesNode;
 import com.myhomelibcorp.ui.service.BookLoaderService;
@@ -22,9 +27,13 @@ import javafx.scene.control.TreeItem;
 import javafx.scene.control.TreeView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.Comparator;
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
 @RequiredArgsConstructor
@@ -36,10 +45,19 @@ public class NavigationController {
     private final BookLoaderService bookLoaderService;
     private final CollectionRepository collectionRepository;
     private final SeriesRepository seriesRepository;
+    private final GroupRepository groupRepository;
     private final ApplicationState appState;
     private final MainController mainController;
 
     @FXML private TreeView<LibraryNode> navigationTree;
+
+    private TreeItem<LibraryNode> authorsItem;
+    private TreeItem<LibraryNode> seriesItem;
+    private TreeItem<LibraryNode> genresItem;
+    private TreeItem<LibraryNode> collectionsItem;
+    private TreeItem<LibraryNode> groupsItem;
+
+    private final AtomicBoolean isLoading = new AtomicBoolean(false);
 
     private static class PlaceholderNode implements LibraryNode {
         @Override
@@ -58,15 +76,17 @@ public class NavigationController {
         TreeItem<LibraryNode> root = new TreeItem<>(null);
         root.setExpanded(true);
 
-        TreeItem<LibraryNode> authorsItem = new TreeItem<>(new CategoryNode("Автори", "authors"));
-        TreeItem<LibraryNode> seriesItem = new TreeItem<>(new CategoryNode("Серії", "series"));
-        TreeItem<LibraryNode> genresItem = new TreeItem<>(new CategoryNode("Жанри", "genres"));
-        TreeItem<LibraryNode> collectionsItem = new TreeItem<>(new CategoryNode("Колекції", "collections"));
+        authorsItem = new TreeItem<>(new CategoryNode("Автори", "authors"));
+        seriesItem = new TreeItem<>(new CategoryNode("Серії", "series"));
+        genresItem = new TreeItem<>(new CategoryNode("Жанри", "genres"));
+        collectionsItem = new TreeItem<>(new CategoryNode("Колекції (бази даних)", "collections"));
+        groupsItem = new TreeItem<>(new CategoryNode("Групи (списки книг)", "groups"));
 
-        root.getChildren().addAll(authorsItem, seriesItem, genresItem, collectionsItem);
+        root.getChildren().addAll(authorsItem, seriesItem, genresItem, collectionsItem, groupsItem);
         navigationTree.setRoot(root);
         navigationTree.setShowRoot(false);
 
+        // Ліниве завантаження
         authorsItem.setExpanded(true);
         authorsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
         authorsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
@@ -100,10 +120,20 @@ public class NavigationController {
             TreeItem<LibraryNode> item = event.getTreeItem();
             if (item == collectionsItem && item.getChildren().size() == 1
                     && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadCollections(collectionsItem);
+                loadLibraryCollections(collectionsItem);
             }
         });
 
+        groupsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
+        groupsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
+            TreeItem<LibraryNode> item = event.getTreeItem();
+            if (item == groupsItem && item.getChildren().size() == 1
+                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
+                loadGroups(groupsItem);
+            }
+        });
+
+        // Обробка вибору
         navigationTree.getSelectionModel().selectedItemProperty().addListener((obs, old, newVal) -> {
             if (newVal != null && newVal.getValue() != null) {
                 LibraryNode node = newVal.getValue();
@@ -117,11 +147,18 @@ public class NavigationController {
                     GenreId id = ((GenreNode) node).genre().getId();
                     uiNavigationService.navigateToGenre(id);
                 } else if (node instanceof CollectionNode) {
-                    // Обробка колекції
+                    Collection collection = ((CollectionNode) node).collection();
+                    mainController.switchToCollection(collection);
+                } else if (node instanceof GroupNode) {
+                    Group group = ((GroupNode) node).group();
+                    appState.setCurrentGroup(group);
+                    mainController.showGroupWorkspace(group);
                 }
             }
         });
     }
+
+    // ==================== ЗАВАНТАЖЕННЯ ДАНИХ ====================
 
     private void loadAuthors(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
@@ -148,7 +185,7 @@ public class NavigationController {
     private void loadSeries(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
         try {
-            java.util.List<Series> seriesList = seriesRepository.findAll();
+            List<Series> seriesList = seriesRepository.findAll();
             UiExecutor.runOnUiThread(() -> {
                 seriesList.stream()
                         .sorted(Comparator.comparing(Series::getName))
@@ -156,10 +193,10 @@ public class NavigationController {
                             parent.getChildren().add(new TreeItem<LibraryNode>(new SeriesNode(series)));
                         });
                 parent.setExpanded(true);
-                log.info("Завантажено {} серій у навігаційне дерево", seriesList.size());
+                log.info("Завантажено {} серій", seriesList.size());
             });
         } catch (Exception e) {
-            log.error("Failed to load series from repository", e);
+            log.error("Failed to load series", e);
         }
     }
 
@@ -183,17 +220,39 @@ public class NavigationController {
         });
     }
 
-    private void loadCollections(TreeItem<LibraryNode> parent) {
+    private void loadLibraryCollections(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
         try {
-            collectionRepository.findAll().forEach(collection -> {
-                parent.getChildren().add(new TreeItem<LibraryNode>(new CollectionNode(collection)));
+            List<Collection> collections = collectionRepository.findAll();
+            UiExecutor.runOnUiThread(() -> {
+                collections.forEach(collection -> {
+                    parent.getChildren().add(new TreeItem<LibraryNode>(new CollectionNode(collection)));
+                });
+                parent.setExpanded(true);
+                log.info("Завантажено {} колекцій", collections.size());
             });
-            parent.setExpanded(true);
         } catch (Exception e) {
-            log.error("Failed to load collections", e);
+            log.error("Failed to load library collections", e);
         }
     }
+
+    private void loadGroups(TreeItem<LibraryNode> parent) {
+        parent.getChildren().clear();
+        try {
+            List<Group> groups = groupRepository.findAll();
+            UiExecutor.runOnUiThread(() -> {
+                groups.forEach(group -> {
+                    parent.getChildren().add(new TreeItem<LibraryNode>(new GroupNode(group)));
+                });
+                parent.setExpanded(true);
+                log.info("Завантажено {} груп для поточної колекції", groups.size());
+            });
+        } catch (Exception e) {
+            log.error("Failed to load groups", e);
+        }
+    }
+
+    // ==================== ДІЇ З КНОПКАМИ ====================
 
     @FXML
     private void onHome() {
@@ -202,9 +261,7 @@ public class NavigationController {
 
     @FXML
     private void onAuthors() {
-        TreeItem<LibraryNode> root = navigationTree.getRoot();
-        if (root != null && !root.getChildren().isEmpty()) {
-            TreeItem<LibraryNode> authorsItem = root.getChildren().get(0);
+        if (authorsItem != null) {
             authorsItem.setExpanded(true);
             navigationTree.getSelectionModel().select(authorsItem);
         }
@@ -212,9 +269,7 @@ public class NavigationController {
 
     @FXML
     private void onSeries() {
-        TreeItem<LibraryNode> root = navigationTree.getRoot();
-        if (root != null && root.getChildren().size() > 1) {
-            TreeItem<LibraryNode> seriesItem = root.getChildren().get(1);
+        if (seriesItem != null) {
             seriesItem.setExpanded(true);
             navigationTree.getSelectionModel().select(seriesItem);
         }
@@ -222,9 +277,7 @@ public class NavigationController {
 
     @FXML
     private void onGenres() {
-        TreeItem<LibraryNode> root = navigationTree.getRoot();
-        if (root != null && root.getChildren().size() > 2) {
-            TreeItem<LibraryNode> genresItem = root.getChildren().get(2);
+        if (genresItem != null) {
             genresItem.setExpanded(true);
             navigationTree.getSelectionModel().select(genresItem);
         }
@@ -232,11 +285,17 @@ public class NavigationController {
 
     @FXML
     private void onCollections() {
-        TreeItem<LibraryNode> root = navigationTree.getRoot();
-        if (root != null && root.getChildren().size() > 3) {
-            TreeItem<LibraryNode> collectionsItem = root.getChildren().get(3);
+        if (collectionsItem != null) {
             collectionsItem.setExpanded(true);
             navigationTree.getSelectionModel().select(collectionsItem);
+        }
+    }
+
+    @FXML
+    private void onGroups() {
+        if (groupsItem != null) {
+            groupsItem.setExpanded(true);
+            navigationTree.getSelectionModel().select(groupsItem);
         }
     }
 
@@ -265,7 +324,164 @@ public class NavigationController {
         mainController.handleSettings();
     }
 
+    // ==================== ОНОВЛЕННЯ ДЕРЕВА (ПОДІЇ) ====================
+
+    @EventListener
+    public void onCollectionChanged(CollectionChangedEvent event) {
+        log.info("Отримано подію зміни колекції: {}", event.collection() != null ? event.collection().getName() : "null");
+        refreshNavigation();
+    }
+
+    @EventListener
+    public void onNavigationRefresh(NavigationRefreshEvent event) {
+        log.info("Отримано подію оновлення навігації");
+        refreshNavigation();
+    }
+
     public void refreshNavigation() {
-        navigationTree.refresh();
+        if (isLoading.get()) {
+            log.info("Оновлення вже виконується, пропускаємо");
+            return;
+        }
+        isLoading.set(true);
+        try {
+            log.info("Оновлення навігаційного дерева...");
+            clearCategory(authorsItem);
+            clearCategory(seriesItem);
+            clearCategory(genresItem);
+            clearCategory(groupsItem);
+            clearCategory(collectionsItem);
+
+            CompletableFuture<Void> all = CompletableFuture.allOf(
+                    loadAuthorsAsync(authorsItem),
+                    loadSeriesAsync(seriesItem),
+                    loadGenresAsync(genresItem),
+                    loadGroupsAsync(groupsItem),
+                    loadCollectionsAsync(collectionsItem)
+            );
+
+            all.thenRun(() -> {
+                UiExecutor.runOnUiThread(() -> {
+                    navigationTree.refresh();
+                    log.info("Навігаційне дерево оновлено");
+                    isLoading.set(false);
+                });
+            }).exceptionally(ex -> {
+                log.error("Помилка оновлення навігації", ex);
+                isLoading.set(false);
+                return null;
+            });
+        } catch (Exception e) {
+            log.error("Помилка оновлення навігації", e);
+            isLoading.set(false);
+        }
+    }
+
+    private void clearCategory(TreeItem<LibraryNode> item) {
+        if (item != null) {
+            item.getChildren().clear();
+            item.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
+        }
+    }
+
+    private CompletableFuture<Void> loadAuthorsAsync(TreeItem<LibraryNode> parent) {
+        return appNavigationService.getAllAuthors()
+                .thenAccept(authors -> UiExecutor.runOnUiThread(() -> {
+                    parent.getChildren().clear();
+                    authors.stream()
+                            .sorted(Comparator.comparing(a -> a.getLastName()))
+                            .forEach(author -> {
+                                com.myhomelibcorp.domain.model.author.Author domainAuthor =
+                                        new com.myhomelibcorp.domain.model.author.Author(
+                                                com.myhomelibcorp.domain.model.valueobject.AuthorId.fromString(author.getId()),
+                                                author.getFirstName(),
+                                                author.getMiddleName(),
+                                                author.getLastName()
+                                        );
+                                parent.getChildren().add(new TreeItem<LibraryNode>(new AuthorNode(domainAuthor)));
+                            });
+                    parent.setExpanded(true);
+                }))
+                .exceptionally(ex -> {
+                    log.error("Failed to load authors", ex);
+                    return null;
+                })
+                .thenApply(v -> null);
+    }
+
+    private CompletableFuture<Void> loadSeriesAsync(TreeItem<LibraryNode> parent) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                List<Series> seriesList = seriesRepository.findAll();
+                UiExecutor.runOnUiThread(() -> {
+                    parent.getChildren().clear();
+                    seriesList.stream()
+                            .sorted(Comparator.comparing(Series::getName))
+                            .forEach(series -> {
+                                parent.getChildren().add(new TreeItem<LibraryNode>(new SeriesNode(series)));
+                            });
+                    parent.setExpanded(true);
+                });
+            } catch (Exception e) {
+                log.error("Failed to load series", e);
+            }
+        });
+    }
+
+    private CompletableFuture<Void> loadGenresAsync(TreeItem<LibraryNode> parent) {
+        return appNavigationService.getAllGenres()
+                .thenAccept(genres -> UiExecutor.runOnUiThread(() -> {
+                    parent.getChildren().clear();
+                    genres.forEach(genre -> {
+                        com.myhomelibcorp.domain.model.genre.Genre domainGenre =
+                                new com.myhomelibcorp.domain.model.genre.Genre(
+                                        com.myhomelibcorp.domain.model.valueobject.GenreId.fromCode(genre.getCode()),
+                                        genre.getName(),
+                                        genre.getParentId() != null ? com.myhomelibcorp.domain.model.valueobject.GenreId.fromCode(genre.getParentId()) : null,
+                                        genre.getFb2Code()
+                                );
+                        parent.getChildren().add(new TreeItem<LibraryNode>(new GenreNode(domainGenre)));
+                    });
+                    parent.setExpanded(true);
+                }))
+                .exceptionally(ex -> {
+                    log.error("Failed to load genres", ex);
+                    return null;
+                })
+                .thenApply(v -> null);
+    }
+
+    private CompletableFuture<Void> loadGroupsAsync(TreeItem<LibraryNode> parent) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                List<Group> groups = groupRepository.findAll();
+                UiExecutor.runOnUiThread(() -> {
+                    parent.getChildren().clear();
+                    groups.forEach(group -> {
+                        parent.getChildren().add(new TreeItem<LibraryNode>(new GroupNode(group)));
+                    });
+                    parent.setExpanded(true);
+                });
+            } catch (Exception e) {
+                log.error("Failed to load groups", e);
+            }
+        });
+    }
+
+    private CompletableFuture<Void> loadCollectionsAsync(TreeItem<LibraryNode> parent) {
+        return CompletableFuture.runAsync(() -> {
+            try {
+                List<Collection> collections = collectionRepository.findAll();
+                UiExecutor.runOnUiThread(() -> {
+                    parent.getChildren().clear();
+                    collections.forEach(collection -> {
+                        parent.getChildren().add(new TreeItem<LibraryNode>(new CollectionNode(collection)));
+                    });
+                    parent.setExpanded(true);
+                });
+            } catch (Exception e) {
+                log.error("Failed to load library collections", e);
+            }
+        });
     }
 }

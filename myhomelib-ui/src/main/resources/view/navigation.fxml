@@ -14,7 +14,7 @@
     <Button text="📖 Серії" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onSeries"/>
     <Button text="🏷 Жанри" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onGenres"/>
     <Button text="⭐ Колекції" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onCollections"/>
-
+    <Button text="Групи" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onGroups"/>
     <Separator/>
 
     <Button text="📥 Нові книги" style="-fx-background-color: transparent; -fx-alignment: center-left; -fx-padding: 8 10;" onAction="#onNewBooks"/>

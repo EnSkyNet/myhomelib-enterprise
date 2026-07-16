@@ -59,11 +59,13 @@ public class SqliteGroupRepository implements GroupRepository {
     @Override
     public Group save(Group group) {
         if (group.getId() == null || group.getId().asLong() == null) {
+            // Нова група – вставляємо без ID
             String sql = "INSERT INTO groups (name, allow_delete) VALUES (?, ?)";
             getJdbcTemplate().update(sql, group.getName(), group.isAllowDelete() ? 1 : 0);
             Long id = getJdbcTemplate().queryForObject("SELECT last_insert_rowid()", Long.class);
             return new Group(GroupId.fromLong(id), group.getName(), group.isAllowDelete());
         } else {
+            // Оновлення існуючої групи
             String sql = "UPDATE groups SET name = ?, allow_delete = ? WHERE id = ?";
             getJdbcTemplate().update(sql, group.getName(), group.isAllowDelete() ? 1 : 0, group.getId().asLong());
             return group;

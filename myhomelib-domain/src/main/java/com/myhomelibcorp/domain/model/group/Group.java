@@ -15,8 +15,9 @@ public class Group {
         this.allowDelete = allowDelete;
     }
 
+    // Конструктор для нової групи – ID буде null (SQLite згенерує AUTOINCREMENT)
     public Group(String name, boolean allowDelete) {
-        this.id = GroupId.fromLong(null);
+        this.id = GroupId.fromLong(null); // <-- дозволяємо null
         this.name = name;
         this.allowDelete = allowDelete;
     }
@@ -26,7 +27,7 @@ public class Group {
     }
 
     public Long getIdAsLong() {
-        return id.asLong();
+        return id != null ? id.asLong() : null;
     }
 
     @Override

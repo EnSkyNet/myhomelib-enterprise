@@ -33,6 +33,7 @@ public class ImportEventHandler {
 
         UiExecutor.runOnUiThread(() -> {
             // Оновлюємо статус
+            statisticsService.refreshStatistics();
             String status;
             if (event.isSuccess()) {
                 status = String.format("Імпорт завершено: +%d книг, помилок: %d",
@@ -47,6 +48,7 @@ public class ImportEventHandler {
             var stats = statisticsService.getStatistics();
             appState.getStatusBar().setStatistics(stats);
             appState.getDashboard().setStatistics(stats);
+            appState.getStatusBar().setStatusText("Імпорт завершено: +" + event.getImported() + " книг");
 
             // Приховуємо прогрес-бар
             appState.getStatusBar().setProgressVisible(false);
@@ -61,6 +63,7 @@ public class ImportEventHandler {
 
             // Оновлюємо список книг
             bookLoaderService.loadAllBooks();
+
         });
     }
 
