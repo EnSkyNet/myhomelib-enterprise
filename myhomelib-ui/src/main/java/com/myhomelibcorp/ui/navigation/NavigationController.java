@@ -86,7 +86,7 @@ public class NavigationController {
         navigationTree.setRoot(root);
         navigationTree.setShowRoot(false);
 
-        // Ліниве завантаження
+        // Ліниве завантаження (без змін)
         authorsItem.setExpanded(true);
         authorsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
         authorsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
@@ -133,7 +133,7 @@ public class NavigationController {
             }
         });
 
-        // Обробка вибору
+        // ===== ОНОВЛЕНА ОБРОБКА ВИБОРУ =====
         navigationTree.getSelectionModel().selectedItemProperty().addListener((obs, old, newVal) -> {
             if (newVal != null && newVal.getValue() != null) {
                 LibraryNode node = newVal.getValue();
@@ -153,6 +153,15 @@ public class NavigationController {
                     Group group = ((GroupNode) node).group();
                     appState.setCurrentGroup(group);
                     mainController.showGroupWorkspace(group);
+                } else if (node instanceof CategoryNode) {
+                    CategoryNode cat = (CategoryNode) node;
+                    // Додаємо обробку категорії "Групи"
+                    if ("groups".equals(cat.type)) {
+                        log.info("Вибрано категорію 'Групи' – відкриваємо воркспейс груп");
+                        // Відкриваємо воркспейс груп з поточною групою (якщо є)
+                        mainController.showGroupWorkspace(appState.getCurrentGroup());
+                    }
+                    // Можна додати інші категорії, якщо потрібно
                 }
             }
         });
