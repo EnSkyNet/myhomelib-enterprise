@@ -10,12 +10,12 @@ import java.util.UUID;
 @Builder
 public class Bookmark {
     private String id;
-    private String bookId;          // ID книги (з Library)
-    private String title;           // Коротка назва (перші 30-50 символів)
-    private String context;         // Текст навколо закладки (для відображення)
-    private double position;        // scrollY позиція (0..1)
-    private int chapterIndex;       // індекс розділу (якщо є)
-    private String chapterTitle;    // назва розділу
+    private String bookId;
+    private String title;
+    private String context;
+    private double position;
+    private int chapterIndex;
+    private String chapterTitle;
     private LocalDateTime createdAt;
 
     public static Bookmark create(String bookId, double position, String context, String chapterTitle) {

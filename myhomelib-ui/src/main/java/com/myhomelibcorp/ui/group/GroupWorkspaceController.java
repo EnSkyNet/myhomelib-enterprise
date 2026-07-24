@@ -1,6 +1,5 @@
 package com.myhomelibcorp.ui.group;
 
-import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;

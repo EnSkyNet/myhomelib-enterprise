@@ -2,32 +2,13 @@ package com.myhomelibcorp.application.mapper;
 
 import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.domain.model.genre.Genre;
-import org.springframework.stereotype.Component;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
 
-@Component
-public class GenreMapper {
+@Mapper(componentModel = "spring")
+public interface GenreMapper {
 
-    public GenreDto toDto(Genre genre) {
-        if (genre == null) {
-            return null;
-        }
-        return GenreDto.builder()
-                .code(genre.getId().asString())
-                .name(genre.getName())
-                .parentId(genre.getParentId() != null ? genre.getParentId().asString() : null)
-                .fb2Code(genre.getFb2Code())
-                .build();
-    }
-
-    public Genre toEntity(GenreDto dto) {
-        if (dto == null) {
-            return null;
-        }
-        return new Genre(
-                com.myhomelibcorp.domain.model.valueobject.GenreId.fromCode(dto.getCode()),
-                dto.getName(),
-                dto.getParentId() != null ? com.myhomelibcorp.domain.model.valueobject.GenreId.fromCode(dto.getParentId()) : null,
-                dto.getFb2Code()
-        );
-    }
+    @Mapping(target = "code", expression = "java(genre.getId().asString())")
+    @Mapping(target = "parentId", expression = "java(genre.getParentId() != null ? genre.getParentId().asString() : null)")
+    GenreDto toDto(Genre genre);
 }

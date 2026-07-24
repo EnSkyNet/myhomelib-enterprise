@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
@@ -30,6 +31,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
     private final BookBatchWriter batchWriter;
+    private final BookCache bookCache; // <-- ДОДАНО
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -37,22 +39,15 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
 
     // ==================== PRAGMA ДЛЯ ШВИДКОГО ІМПОРТУ ====================
 
-    /**
-     * Встановлює PRAGMA для максимальної швидкості вставки.
-     * Викликати ПЕРЕД великим батчевим імпортом.
-     */
     public void setPragmaForBulkInsert() {
         JdbcTemplate jt = getJdbcTemplate();
         jt.execute("PRAGMA synchronous = OFF");
         jt.execute("PRAGMA journal_mode = MEMORY");
         jt.execute("PRAGMA temp_store = MEMORY");
-        jt.execute("PRAGMA cache_size = -500000"); // 500 MB
+        jt.execute("PRAGMA cache_size = -500000");
         log.debug("PRAGMA встановлено для швидкого імпорту");
     }
 
-    /**
-     * Відновлює стандартні PRAGMA після імпорту.
-     */
     public void resetPragma() {
         JdbcTemplate jt = getJdbcTemplate();
         jt.execute("PRAGMA synchronous = NORMAL");
@@ -92,7 +87,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                     ? book.getCreatedAt().format(DATE_FORMATTER)
                     : LocalDateTime.now().format(DATE_FORMATTER);
             ps.setString(idx++, formattedCreated);
-            ps.setString(idx++, book.getCollectionRoot() != null ? book.getCollectionRoot() : ""); // нове поле
+            ps.setString(idx++, book.getCollectionRoot() != null ? book.getCollectionRoot() : "");
             return ps;
         });
 
@@ -102,6 +97,9 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         if (book.getGenres() != null && !book.getGenres().isEmpty()) {
             bookGenreHelper.saveGenres(book.getId(), book.getGenres());
         }
+
+        // Інвалідація кешу після збереження (на випадок, якщо змінились автори/жанри)
+        bookCache.evict(book.getId());
 
         log.debug("Книгу збережено: id={}, title={}", book.getId().asString(), book.getTitle());
         return book;
@@ -118,6 +116,8 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             if (book.getGenres() != null && !book.getGenres().isEmpty()) {
                 bookGenreHelper.saveGenres(book.getId(), book.getGenres());
             }
+            // Інвалідація кешу для кожної книги в батчі
+            bookCache.evict(book.getId());
         }
         log.debug("Batch збережено {} книг", books.size());
     }
@@ -125,16 +125,46 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     @Override
     public void deleteById(BookId id) {
         getJdbcTemplate().update(BookQueries.DELETE_BY_ID, id.asString());
+        bookCache.evict(id); // <-- інвалідація при видаленні
         log.debug("Книгу видалено: id={}", id.asString());
     }
 
     @Override
     public void updateRate(BookId bookId, int rate) {
-        getJdbcTemplate().update(BookQueries.UPDATE_RATE, rate, bookId.asString());
+        if (bookId == null) {
+            log.error("Спроба оновити рейтинг з null BookId");
+            return;
+        }
+        String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+        int updated = getJdbcTemplate().update(sql, rate, bookId.asString());
+        if (updated > 0) {
+            log.debug("Оновлено рейтинг для книги {}: {}", bookId, rate);
+            bookCache.evict(bookId); // <-- інвалідація кешу
+        } else {
+            log.warn("Не вдалося оновити рейтинг для книги {} (книгу не знайдено)", bookId);
+        }
     }
 
     @Override
     public void updateProgress(BookId bookId, int progress) {
-        getJdbcTemplate().update(BookQueries.UPDATE_PROGRESS, progress, bookId.asString());
+        if (bookId == null) {
+            log.error("Спроба оновити прогрес з null BookId");
+            return;
+        }
+        if (progress < 0 || progress > 100) {
+            log.warn("Неправильне значення прогресу: {} для книги {}", progress, bookId);
+            return;
+        }
+
+        String sql = "UPDATE books SET progress = ?, update_date = ? WHERE id = ?";
+        String now = LocalDateTime.now().format(DATE_FORMATTER);
+        int updated = getJdbcTemplate().update(sql, progress, now, bookId.asString());
+
+        if (updated > 0) {
+            log.info("✅ SQL оновлено прогрес для книги {}: {}%", bookId, progress);
+            bookCache.evict(bookId); // <-- інвалідація кешу
+        } else {
+            log.warn("❌ Не вдалося оновити прогрес для книги {} (книгу не знайдено)", bookId);
+        }
     }
 }

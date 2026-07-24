@@ -36,6 +36,7 @@ public class ReaderContentLoader {
     public String loadBookContent(BookDto book) throws Exception {
         BookDocument document;
         String archiveEntry = book.getArchiveEntry();
+
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             Path archivePath = getArchivePath(book);
             if (archivePath == null || !Files.exists(archivePath)) {
@@ -56,6 +57,7 @@ public class ReaderContentLoader {
                 document = fb2Parser.parse(is);
             }
         }
+
         return htmlConverter.convert(document);
     }
 

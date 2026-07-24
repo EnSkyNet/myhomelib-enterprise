@@ -1,5 +1,7 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.domain.model.author.Author;
+import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,7 +37,6 @@ public class JdbcBatchWriter {
 
         JdbcTemplate jt = getJdbcTemplate();
 
-        // SQL з collection_root
         String insertBookSql = """
             INSERT INTO books (
                 id, title, series, sequence_number, file_name, folder,
@@ -70,7 +71,6 @@ public class JdbcBatchWriter {
         List<Object[]> genreLinkBatch = new ArrayList<>();
 
         for (Object[] row : booksData) {
-            // row: [0..18] book fields, [19] authorIds, [20] genreCodes, [21] collectionRoot
             Object[] bookRow = new Object[20];
             System.arraycopy(row, 0, bookRow, 0, 19);
             bookRow[19] = row[21]; // collection_root
@@ -112,15 +112,30 @@ public class JdbcBatchWriter {
             ps.setInt(idx++, (Integer) row[16]);
             ps.setString(idx++, (String) row[17]);
             ps.setString(idx++, (String) row[18]);
-            ps.setString(idx++, (String) row[19]); // collection_root
+            ps.setString(idx++, (String) row[19]);
         });
 
         if (!authorLinkBatch.isEmpty()) {
-            jt.batchUpdate("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
-                    authorLinkBatch, 1000, (ps, row) -> {
-                        ps.setString(1, (String) row[0]);
-                        ps.setString(2, (String) row[1]);
-                    });
+            // authorLinkBatch зараз містить книгу + ключ автора
+            // Перетворимо ключі на реальні ID
+            List<Object[]> realAuthorLinks = new ArrayList<>();
+            for (Object[] link : authorLinkBatch) {
+                String bookId = (String) link[0];
+                String authorKey = (String) link[1];
+                String realId = authorCache.get(authorKey);
+                if (realId != null) {
+                    realAuthorLinks.add(new Object[]{bookId, realId});
+                } else {
+                    log.warn("Author key not found in cache: {}", authorKey);
+                }
+            }
+            if (!realAuthorLinks.isEmpty()) {
+                jt.batchUpdate("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
+                        realAuthorLinks, 1000, (ps, row) -> {
+                            ps.setString(1, (String) row[0]);
+                            ps.setString(2, (String) row[1]);
+                        });
+            }
         }
         if (!genreLinkBatch.isEmpty()) {
             jt.batchUpdate("INSERT OR IGNORE INTO book_genres (book_id, genre_code) VALUES (?, ?)",
@@ -131,5 +146,59 @@ public class JdbcBatchWriter {
         }
 
         log.debug("Batch inserted {} books", bookBatch.size());
+    }
+
+    /**
+     * Батчева вставка авторів.
+     */
+    public void batchInsertAuthors(List<Author> authors) {
+        if (authors == null || authors.isEmpty()) return;
+        JdbcTemplate jt = getJdbcTemplate();
+        String sql = """
+                INSERT OR IGNORE INTO authors (id, first_name, middle_name, last_name, search_name)
+                VALUES (?, ?, ?, ?, ?)
+                """;
+        List<Object[]> batch = new ArrayList<>();
+        for (Author a : authors) {
+            String searchName = buildSearchName(a);
+            batch.add(new Object[]{
+                    a.getId().asString(),
+                    a.getFirstName(),
+                    a.getMiddleName(),
+                    a.getLastName(),
+                    searchName
+            });
+        }
+        jt.batchUpdate(sql, batch);
+        log.debug("Batch inserted {} authors", authors.size());
+    }
+
+    /**
+     * Батчева вставка жанрів.
+     */
+    public void batchInsertGenres(List<Genre> genres) {
+        if (genres == null || genres.isEmpty()) return;
+        JdbcTemplate jt = getJdbcTemplate();
+        String sql = """
+                INSERT OR IGNORE INTO genres (code, name, parent_code, fb2_code)
+                VALUES (?, ?, ?, ?)
+                """;
+        List<Object[]> batch = new ArrayList<>();
+        for (Genre g : genres) {
+            batch.add(new Object[]{
+                    g.getId().asString(),
+                    g.getName(),
+                    g.getParentId() != null ? g.getParentId().asString() : null,
+                    g.getFb2Code()
+            });
+        }
+        jt.batchUpdate(sql, batch);
+        log.debug("Batch inserted {} genres", genres.size());
+    }
+
+    private String buildSearchName(Author author) {
+        return (author.getLastName() != null ? author.getLastName() : "") + " " +
+                (author.getFirstName() != null ? author.getFirstName() : "") + " " +
+                (author.getMiddleName() != null ? author.getMiddleName() : "");
     }
 }

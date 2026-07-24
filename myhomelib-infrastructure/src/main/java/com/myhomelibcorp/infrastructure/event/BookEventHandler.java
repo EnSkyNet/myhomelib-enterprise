@@ -19,22 +19,22 @@ public class BookEventHandler {
 
     @PostConstruct
     public void init() {
-        // Реєструємо обробник для батчевої події
         eventBus.register(BooksImportedBatchEvent.class, this::handleBooksImportedBatch);
         eventBus.register(BookDeletedEvent.class, this::handleBookDeleted);
         eventBus.register(BookUpdatedEvent.class, this::handleBookUpdated);
-        log.info("BookEventHandler зареєстровано");
+        log.info("BookEventHandler зареєстровано для батчевих подій, видалення та оновлення");
     }
 
     private void handleBooksImportedBatch(BooksImportedBatchEvent event) {
         int size = event.books().size();
         log.info("Отримано батч імпорту з {} книг. Індексація вже виконана в BookSaver.", size);
-        // Можна додати додаткову логіку (наприклад, оновлення статистики)
+        // Індексація вже відбувається в BookSaver, тому тут нічого не робимо
     }
 
     private void handleBookDeleted(BookDeletedEvent event) {
         log.info("Отримано подію видалення книги: {}", event.getBookId());
         searchIndexer.deleteBook(event.getBookId());
+        log.info("Книгу видалено з індексу: {}", event.getBookId());
     }
 
     private void handleBookUpdated(BookUpdatedEvent event) {

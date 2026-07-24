@@ -1,10 +1,12 @@
 package com.myhomelibcorp.application.port.out.cover;
 
-import javafx.scene.image.Image;
-
+/**
+ * Кеш для зберігання обкладинок у вигляді масивів байтів.
+ * Не залежить від JavaFX.
+ */
 public interface CoverCache {
-    Image get(String key);
-    void put(String key, Image image);
+    byte[] get(String key);
+    void put(String key, byte[] imageData);
     void invalidate(String key);
     void clear();
 }

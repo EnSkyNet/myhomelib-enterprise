@@ -18,12 +18,17 @@ public class SqliteSessionRepository implements SessionRepository {
 
     @Override
     public void saveLastOpenedBookId(String bookId) {
+        if (bookId == null || bookId.isEmpty()) {
+            log.warn("Спроба зберегти порожній bookId");
+            return;
+        }
         prefs.put("lastOpenedBookId", bookId);
         try {
             String sql = "INSERT OR REPLACE INTO session (key, value) VALUES ('lastOpenedBookId', ?)";
             queryExecutor.update(sql, bookId);
+            log.debug("Збережено останню книгу в БД: {}", bookId);
         } catch (Exception e) {
-            log.warn("Failed to save lastOpenedBookId to DB", e);
+            log.warn("Не вдалося зберегти lastOpenedBookId в БД", e);
         }
     }
 
@@ -31,10 +36,18 @@ public class SqliteSessionRepository implements SessionRepository {
     public String getLastOpenedBookId() {
         try {
             String sql = "SELECT value FROM session WHERE key = 'lastOpenedBookId'";
-            return queryExecutor.queryForObject(sql, String.class);
+            String value = queryExecutor.queryForObject(sql, String.class);
+            if (value != null && !value.isEmpty()) {
+                log.debug("Отримано останню книгу з БД: {}", value);
+                return value;
+            }
         } catch (Exception e) {
-            // ignore
+            log.trace("Не вдалося отримати lastOpenedBookId з БД", e);
         }
-        return prefs.get("lastOpenedBookId", null);
+        String prefsValue = prefs.get("lastOpenedBookId", null);
+        if (prefsValue != null) {
+            log.debug("Отримано останню книгу з Preferences: {}", prefsValue);
+        }
+        return prefsValue;
     }
 }

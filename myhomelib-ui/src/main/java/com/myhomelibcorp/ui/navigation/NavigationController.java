@@ -86,54 +86,14 @@ public class NavigationController {
         navigationTree.setRoot(root);
         navigationTree.setShowRoot(false);
 
-        // Ліниве завантаження (без змін)
-        authorsItem.setExpanded(true);
-        authorsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
-        authorsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
-            TreeItem<LibraryNode> item = event.getTreeItem();
-            if (item == authorsItem && item.getChildren().size() == 1
-                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadAuthors(authorsItem);
-            }
-        });
+        // Ліниве завантаження
+        setupLazyLoading(authorsItem, () -> loadAuthors(authorsItem));
+        setupLazyLoading(seriesItem, () -> loadSeries(seriesItem));
+        setupLazyLoading(genresItem, () -> loadGenres(genresItem));
+        setupLazyLoading(collectionsItem, () -> loadLibraryCollections(collectionsItem));
+        setupLazyLoading(groupsItem, () -> loadGroups(groupsItem));
 
-        seriesItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
-        seriesItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
-            TreeItem<LibraryNode> item = event.getTreeItem();
-            if (item == seriesItem && item.getChildren().size() == 1
-                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadSeries(seriesItem);
-            }
-        });
-
-        genresItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
-        genresItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
-            TreeItem<LibraryNode> item = event.getTreeItem();
-            if (item == genresItem && item.getChildren().size() == 1
-                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadGenres(genresItem);
-            }
-        });
-
-        collectionsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
-        collectionsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
-            TreeItem<LibraryNode> item = event.getTreeItem();
-            if (item == collectionsItem && item.getChildren().size() == 1
-                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadLibraryCollections(collectionsItem);
-            }
-        });
-
-        groupsItem.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
-        groupsItem.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
-            TreeItem<LibraryNode> item = event.getTreeItem();
-            if (item == groupsItem && item.getChildren().size() == 1
-                    && item.getChildren().get(0).getValue() instanceof PlaceholderNode) {
-                loadGroups(groupsItem);
-            }
-        });
-
-        // ===== ОНОВЛЕНА ОБРОБКА ВИБОРУ =====
+        // Вибір вузла
         navigationTree.getSelectionModel().selectedItemProperty().addListener((obs, old, newVal) -> {
             if (newVal != null && newVal.getValue() != null) {
                 LibraryNode node = newVal.getValue();
@@ -155,19 +115,27 @@ public class NavigationController {
                     mainController.showGroupWorkspace(group);
                 } else if (node instanceof CategoryNode) {
                     CategoryNode cat = (CategoryNode) node;
-                    // Додаємо обробку категорії "Групи"
                     if ("groups".equals(cat.type)) {
-                        log.info("Вибрано категорію 'Групи' – відкриваємо воркспейс груп");
-                        // Відкриваємо воркспейс груп з поточною групою (якщо є)
                         mainController.showGroupWorkspace(appState.getCurrentGroup());
                     }
-                    // Можна додати інші категорії, якщо потрібно
                 }
             }
         });
     }
 
-    // ==================== ЗАВАНТАЖЕННЯ ДАНИХ ====================
+    private void setupLazyLoading(TreeItem<LibraryNode> item, Runnable loader) {
+        TreeItem<LibraryNode> placeholder = new TreeItem<>(new PlaceholderNode());
+        item.getChildren().add(placeholder);
+        item.addEventHandler(TreeItem.<LibraryNode>branchExpandedEvent(), event -> {
+            TreeItem<LibraryNode> source = event.getTreeItem();
+            if (source == item && source.getChildren().size() == 1
+                    && source.getChildren().get(0).getValue() instanceof PlaceholderNode) {
+                loader.run();
+            }
+        });
+    }
+
+    // ==================== ЗАВАНТАЖЕННЯ ====================
 
     private void loadAuthors(TreeItem<LibraryNode> parent) {
         parent.getChildren().clear();
@@ -182,7 +150,7 @@ public class NavigationController {
                                         author.getMiddleName(),
                                         author.getLastName()
                                 );
-                        parent.getChildren().add(new TreeItem<LibraryNode>(new AuthorNode(domainAuthor)));
+                        parent.getChildren().add(new TreeItem<>(new AuthorNode(domainAuthor)));
                     });
             parent.setExpanded(true);
         })).exceptionally(ex -> {
@@ -199,7 +167,7 @@ public class NavigationController {
                 seriesList.stream()
                         .sorted(Comparator.comparing(Series::getName))
                         .forEach(series -> {
-                            parent.getChildren().add(new TreeItem<LibraryNode>(new SeriesNode(series)));
+                            parent.getChildren().add(new TreeItem<>(new SeriesNode(series)));
                         });
                 parent.setExpanded(true);
                 log.info("Завантажено {} серій", seriesList.size());
@@ -220,7 +188,7 @@ public class NavigationController {
                                 genre.getParentId() != null ? com.myhomelibcorp.domain.model.valueobject.GenreId.fromCode(genre.getParentId()) : null,
                                 genre.getFb2Code()
                         );
-                parent.getChildren().add(new TreeItem<LibraryNode>(new GenreNode(domainGenre)));
+                parent.getChildren().add(new TreeItem<>(new GenreNode(domainGenre)));
             });
             parent.setExpanded(true);
         })).exceptionally(ex -> {
@@ -235,7 +203,7 @@ public class NavigationController {
             List<Collection> collections = collectionRepository.findAll();
             UiExecutor.runOnUiThread(() -> {
                 collections.forEach(collection -> {
-                    parent.getChildren().add(new TreeItem<LibraryNode>(new CollectionNode(collection)));
+                    parent.getChildren().add(new TreeItem<>(new CollectionNode(collection)));
                 });
                 parent.setExpanded(true);
                 log.info("Завантажено {} колекцій", collections.size());
@@ -251,89 +219,31 @@ public class NavigationController {
             List<Group> groups = groupRepository.findAll();
             UiExecutor.runOnUiThread(() -> {
                 groups.forEach(group -> {
-                    parent.getChildren().add(new TreeItem<LibraryNode>(new GroupNode(group)));
+                    parent.getChildren().add(new TreeItem<>(new GroupNode(group)));
                 });
                 parent.setExpanded(true);
-                log.info("Завантажено {} груп для поточної колекції", groups.size());
+                log.info("Завантажено {} груп", groups.size());
             });
         } catch (Exception e) {
             log.error("Failed to load groups", e);
         }
     }
 
-    // ==================== ДІЇ З КНОПКАМИ ====================
+    // ==================== КНОПКИ ====================
 
-    @FXML
-    private void onHome() {
-        mainController.showDashboard();
-    }
+    @FXML private void onHome() { mainController.showDashboard(); }
+    @FXML private void onAuthors() { if (authorsItem != null) { authorsItem.setExpanded(true); navigationTree.getSelectionModel().select(authorsItem); } }
+    @FXML private void onSeries() { if (seriesItem != null) { seriesItem.setExpanded(true); navigationTree.getSelectionModel().select(seriesItem); } }
+    @FXML private void onGenres() { if (genresItem != null) { genresItem.setExpanded(true); navigationTree.getSelectionModel().select(genresItem); } }
+    @FXML private void onCollections() { if (collectionsItem != null) { collectionsItem.setExpanded(true); navigationTree.getSelectionModel().select(collectionsItem); } }
+    @FXML private void onGroups() { if (groupsItem != null) { groupsItem.setExpanded(true); navigationTree.getSelectionModel().select(groupsItem); } }
+    @FXML private void onNewBooks() { bookLoaderService.loadRecentBooks(); }
+    @FXML private void onHistory() { mainController.handleHistory(); }
+    @FXML private void onSearch() { mainController.showSearchResults(""); }
+    @FXML private void onImport() { mainController.showImportWorkspace(); }
+    @FXML private void onSettings() { mainController.handleSettings(); }
 
-    @FXML
-    private void onAuthors() {
-        if (authorsItem != null) {
-            authorsItem.setExpanded(true);
-            navigationTree.getSelectionModel().select(authorsItem);
-        }
-    }
-
-    @FXML
-    private void onSeries() {
-        if (seriesItem != null) {
-            seriesItem.setExpanded(true);
-            navigationTree.getSelectionModel().select(seriesItem);
-        }
-    }
-
-    @FXML
-    private void onGenres() {
-        if (genresItem != null) {
-            genresItem.setExpanded(true);
-            navigationTree.getSelectionModel().select(genresItem);
-        }
-    }
-
-    @FXML
-    private void onCollections() {
-        if (collectionsItem != null) {
-            collectionsItem.setExpanded(true);
-            navigationTree.getSelectionModel().select(collectionsItem);
-        }
-    }
-
-    @FXML
-    private void onGroups() {
-        if (groupsItem != null) {
-            groupsItem.setExpanded(true);
-            navigationTree.getSelectionModel().select(groupsItem);
-        }
-    }
-
-    @FXML
-    private void onNewBooks() {
-        bookLoaderService.loadRecentBooks();
-    }
-
-    @FXML
-    private void onHistory() {
-        mainController.handleHistory();
-    }
-
-    @FXML
-    private void onSearch() {
-        mainController.showSearchResults("");
-    }
-
-    @FXML
-    private void onImport() {
-        mainController.showImportWorkspace();
-    }
-
-    @FXML
-    private void onSettings() {
-        mainController.handleSettings();
-    }
-
-    // ==================== ОНОВЛЕННЯ ДЕРЕВА (ПОДІЇ) ====================
+    // ==================== ОНОВЛЕННЯ ====================
 
     @EventListener
     public void onCollectionChanged(CollectionChangedEvent event) {
@@ -389,7 +299,7 @@ public class NavigationController {
     private void clearCategory(TreeItem<LibraryNode> item) {
         if (item != null) {
             item.getChildren().clear();
-            item.getChildren().add(new TreeItem<LibraryNode>(new PlaceholderNode()));
+            item.getChildren().add(new TreeItem<>(new PlaceholderNode()));
         }
     }
 
@@ -407,7 +317,7 @@ public class NavigationController {
                                                 author.getMiddleName(),
                                                 author.getLastName()
                                         );
-                                parent.getChildren().add(new TreeItem<LibraryNode>(new AuthorNode(domainAuthor)));
+                                parent.getChildren().add(new TreeItem<>(new AuthorNode(domainAuthor)));
                             });
                     parent.setExpanded(true);
                 }))
@@ -427,7 +337,7 @@ public class NavigationController {
                     seriesList.stream()
                             .sorted(Comparator.comparing(Series::getName))
                             .forEach(series -> {
-                                parent.getChildren().add(new TreeItem<LibraryNode>(new SeriesNode(series)));
+                                parent.getChildren().add(new TreeItem<>(new SeriesNode(series)));
                             });
                     parent.setExpanded(true);
                 });
@@ -449,7 +359,7 @@ public class NavigationController {
                                         genre.getParentId() != null ? com.myhomelibcorp.domain.model.valueobject.GenreId.fromCode(genre.getParentId()) : null,
                                         genre.getFb2Code()
                                 );
-                        parent.getChildren().add(new TreeItem<LibraryNode>(new GenreNode(domainGenre)));
+                        parent.getChildren().add(new TreeItem<>(new GenreNode(domainGenre)));
                     });
                     parent.setExpanded(true);
                 }))
@@ -467,7 +377,7 @@ public class NavigationController {
                 UiExecutor.runOnUiThread(() -> {
                     parent.getChildren().clear();
                     groups.forEach(group -> {
-                        parent.getChildren().add(new TreeItem<LibraryNode>(new GroupNode(group)));
+                        parent.getChildren().add(new TreeItem<>(new GroupNode(group)));
                     });
                     parent.setExpanded(true);
                 });
@@ -484,7 +394,7 @@ public class NavigationController {
                 UiExecutor.runOnUiThread(() -> {
                     parent.getChildren().clear();
                     collections.forEach(collection -> {
-                        parent.getChildren().add(new TreeItem<LibraryNode>(new CollectionNode(collection)));
+                        parent.getChildren().add(new TreeItem<>(new CollectionNode(collection)));
                     });
                     parent.setExpanded(true);
                 });

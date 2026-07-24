@@ -15,17 +15,13 @@ import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteSeriesRepository;
-import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
-import com.myhomelibcorp.ui.book.BookWorkspaceController;
 import com.myhomelibcorp.ui.event.CollectionChangedEvent;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
-import com.myhomelibcorp.ui.group.GroupWorkspaceController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.presenter.BookImportPresenter;
 import com.myhomelibcorp.ui.presenter.CollectionPresenter;
 import com.myhomelibcorp.ui.presenter.GroupPresenter;
 import com.myhomelibcorp.ui.presenter.RefreshPresenter;
-import com.myhomelibcorp.ui.reader.ReaderWorkspaceController;
 import com.myhomelibcorp.ui.search.SearchWorkspaceController;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -35,7 +31,6 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
-import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Pane;
@@ -48,7 +43,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
-import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 
@@ -57,7 +51,7 @@ import java.util.Optional;
 @Slf4j
 public class MainController {
 
-    private final ApplicationContext springContext;
+    private final ApplicationContext springContext; // <-- ДОДАНО
     private final ApplicationState appState;
     private final BookImportPresenter bookImportPresenter;
     private final CollectionPresenter collectionPresenter;
@@ -65,7 +59,6 @@ public class MainController {
     private final RefreshPresenter refreshPresenter;
     private final DialogService dialogService;
     private final WorkspaceManager workspaceManager;
-    private final SqliteSeriesRepository seriesRepository;
     private final CollectionManager collectionManager;
     private final DatabaseInitializer databaseInitializer;
     private final RenameCollectionUseCase renameCollectionUseCase;
@@ -74,9 +67,9 @@ public class MainController {
     private final DeleteGroupUseCase deleteGroupUseCase;
     private final StatisticsService statisticsService;
     private final ApplicationEventPublisher eventPublisher;
+    private final SqliteSeriesRepository seriesRepository;
 
     @FXML private BorderPane mainPane;
-    @FXML private TableView<?> bookTableView;
     @FXML private TextField searchField;
     @FXML private Button backButton;
     @FXML private Button forwardButton;
@@ -93,82 +86,42 @@ public class MainController {
             log.error("Помилка синхронізації серій", e);
         }
         searchField.setOnAction(event -> handleSearch());
+        workspaceManager.setMainController(this);
         showDashboard();
         updateNavigationButtons();
-        // Оновлюємо статус-бар статистикою
         statisticsService.refreshStatistics();
         appState.getStatusBar().setStatistics(statisticsService.getStatistics());
-        // Переконуємося, що статус-бар видимий
         appState.getStatusBar().setProgressVisible(false);
     }
 
-    // ==================== НАВІГАЦІЯ ПО ВОРКСПЕЙСАМ ====================
+    public BorderPane getMainPane() {
+        return mainPane;
+    }
+
+    // ==================== НАВІГАЦІЯ ====================
 
     public void showDashboard() {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/dashboard.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane dashboard = loader.load();
-            setWorkspace(dashboard);
-            workspaceManager.push("dashboard", "");
-        } catch (IOException e) {
-            log.error("Failed to load dashboard", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити дашборд: " + e.getMessage());
-        }
+        workspaceManager.showDashboard();
     }
 
     public void showAuthorWorkspace(AuthorId authorId) {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/author-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            AuthorWorkspaceController controller = loader.getController();
-            controller.setAuthorId(authorId);
-            setWorkspace(workspace);
-            workspaceManager.push("author", authorId != null ? authorId.asString() : "");
-        } catch (IOException e) {
-            log.error("Failed to load author workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити автора: " + e.getMessage());
-        }
+        workspaceManager.showAuthorWorkspace(authorId);
     }
 
     public void showBookWorkspace(BookId bookId) {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/book-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            BookWorkspaceController controller = loader.getController();
-            controller.setBookId(bookId);
-            setWorkspace(workspace);
-            workspaceManager.push("book", bookId.asString());
-        } catch (IOException e) {
-            log.error("Failed to load book workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити книгу: " + e.getMessage());
-        }
+        workspaceManager.showBookWorkspace(bookId);
     }
 
     public void showSeriesWorkspace(SeriesId seriesId) {
-        showSearchResults(seriesId != null ? seriesId.asString() : "");
+        workspaceManager.showSeriesWorkspace(seriesId);
     }
 
     public void showGenreWorkspace(GenreId genreId) {
-        showSearchResults(genreId != null ? genreId.asString() : "");
+        workspaceManager.showGenreWorkspace(genreId);
     }
 
     public void showSearchResults(String query) {
-        log.info("showSearchResults: query='{}'", query);
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            SearchWorkspaceController controller = loader.getController();
-            controller.setInitialQuery(query);
-            setWorkspace(workspace);
-            workspaceManager.push("search", query);
-        } catch (IOException e) {
-            log.error("Failed to load search workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити пошук: " + e.getMessage());
-        }
+        workspaceManager.showSearchResults(query);
     }
 
     public void showSearchResults(List<BookDto> results) {
@@ -179,104 +132,38 @@ public class MainController {
             SearchWorkspaceController controller = loader.getController();
             controller.setResults(results);
             setWorkspace(workspace);
+            // Додаємо в історію через workspaceManager
             workspaceManager.push("search", "");
-        } catch (IOException e) {
+        } catch (Exception e) {
             log.error("Failed to load search workspace", e);
             dialogService.showError("Помилка", "Не вдалося завантажити пошук: " + e.getMessage());
         }
     }
 
     public void showCollectionWorkspace() {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/collection-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            setWorkspace(workspace);
-            workspaceManager.push("collection", "");
-        } catch (IOException e) {
-            log.error("Failed to load collection workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
-        }
+        workspaceManager.showCollectionWorkspace();
     }
 
     public void showGroupWorkspace(Group group) {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/groups-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            GroupWorkspaceController controller = loader.getController();
-            if (group != null) {
-                controller.setGroup(group);
-            }
-            setWorkspace(workspace);
-            workspaceManager.push("groups", group != null ? group.getId().toString() : "");
-        } catch (IOException e) {
-            log.error("Failed to load groups workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити групи: " + e.getMessage());
-        }
+        workspaceManager.showGroupWorkspace(group);
     }
 
     public void showReaderWorkspace(BookId bookId) {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/reader-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            ReaderWorkspaceController controller = loader.getController();
-            controller.setBookId(bookId);
-            setWorkspace(workspace);
-            workspaceManager.push("reader", bookId.asString());
-        } catch (IOException e) {
-            log.error("Failed to load reader workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити читалку: " + e.getMessage());
-        }
+        workspaceManager.showReaderWorkspace(bookId);
     }
 
     public void showImportWorkspace() {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/import-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Pane workspace = loader.load();
-            setWorkspace(workspace);
-            workspaceManager.push("import", "");
-        } catch (IOException e) {
-            log.error("Failed to load import workspace", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити імпорт: " + e.getMessage());
-        }
+        workspaceManager.showImportWorkspace();
     }
 
     public void setWorkspace(Pane workspace) {
-        if (currentWorkspace != null) {
-            mainPane.getChildren().remove(currentWorkspace);
-        }
-        currentWorkspace = workspace;
-        workspace.setMaxHeight(Double.MAX_VALUE);
-        workspace.setMaxWidth(Double.MAX_VALUE);
-        mainPane.setCenter(workspace);
-
-        // Примусове оновлення макета через Platform.runLater
-        Platform.runLater(() -> {
-            mainPane.layout();
-            mainPane.requestLayout();
-            // Переконуємося, що статус-бар видимий
-            appState.getStatusBar().setProgressVisible(false);
-            appState.getStatusBar().setStatusText("Поточна колекція: " +
-                    (appState.getCurrentLibraryCollection() != null ?
-                            appState.getCurrentLibraryCollection().getName() : "не вибрано"));
-        });
-
-        updateNavigationButtons();
+        workspaceManager.setWorkspace(workspace);
     }
 
     public void updateNavigationButtons() {
-        if (backButton != null) {
-            backButton.setDisable(!workspaceManager.canGoBack());
-        }
-        if (forwardButton != null) {
-            forwardButton.setDisable(!workspaceManager.canGoForward());
-        }
+        backButton.setDisable(!workspaceManager.canGoBack());
+        forwardButton.setDisable(!workspaceManager.canGoForward());
     }
-
-    // ==================== КОЛЕКЦІЇ (БАЗИ ДАНИХ) ====================
 
     public void switchToCollection(Collection collection) {
         if (collection == null) return;
@@ -286,18 +173,16 @@ public class MainController {
         collectionManager.switchToCollection(collection);
         databaseInitializer.initializeCurrentCollection();
 
-        // Оновлюємо статистику та статус-бар
         statisticsService.refreshStatistics();
         appState.getStatusBar().setStatistics(statisticsService.getStatistics());
         appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());
         appState.getStatusBar().setProgressVisible(false);
 
-        // Публікуємо подію зміни колекції (тільки одну)
         eventPublisher.publishEvent(new CollectionChangedEvent(collection));
-
-        // Оновлюємо дашборд
         showDashboard();
     }
+
+    // ==================== ДІЇ З КОЛЕКЦІЯМИ ====================
 
     @FXML
     public void handleNewCollection() {
@@ -318,7 +203,8 @@ public class MainController {
                 "Перейменувати колекцію",
                 "Введіть нову назву для \"" + current.getName() + "\"",
                 "Нова назва:",
-                current.getName());
+                current.getName()
+        );
         result.ifPresent(newName -> {
             if (!newName.isBlank() && !newName.equals(current.getName())) {
                 try {
@@ -364,14 +250,12 @@ public class MainController {
     @FXML
     public void handleSelectCollection() {
         Collection current = appState.getCurrentLibraryCollection();
-        if (current == null) {
-            dialogService.showWarning("Немає колекції", "Спочатку виберіть колекцію.");
-            return;
+        if (current != null) {
+            switchToCollection(current);
         }
-        switchToCollection(current);
     }
 
-    // ==================== ГРУПИ (СПИСКИ КНИГ) ====================
+    // ==================== ДІЇ З ГРУПАМИ ====================
 
     @FXML
     public void handleAddGroup() {
@@ -412,7 +296,6 @@ public class MainController {
     @FXML
     public void handleSearch() {
         String query = searchField.getText();
-        log.info("Пошук за запитом: '{}'", query);
         if (query != null && !query.isBlank()) {
             showSearchResults(query);
         } else {
@@ -461,36 +344,6 @@ public class MainController {
     }
 
     @FXML
-    public void handleEditMetadata() {
-        dialogService.showInfo("Редагування метаданих", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleDeleteBook() {
-        dialogService.showInfo("Видалення книги", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleShowColumns() {
-        dialogService.showInfo("Налаштування колонок", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleExport() {
-        dialogService.showInfo("Експорт", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleRebuildIndex() {
-        dialogService.showInfo("Перебудова індексу", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleHome() {
-        showDashboard();
-    }
-
-    @FXML
     public void handleBack() {
         workspaceManager.goBack();
         updateNavigationButtons();
@@ -503,27 +356,19 @@ public class MainController {
     }
 
     @FXML
-    public void handleAddBook() {
-        dialogService.showInfo("Додати книгу", "Функція в розробці");
+    public void handleHome() {
+        showDashboard();
     }
 
-    @FXML
-    public void handleBackup() {
-        dialogService.showInfo("Резервне копіювання", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleSettings() {
-        dialogService.showInfo("Налаштування", "Функція в розробці");
-    }
-
-    @FXML
-    public void handleImport() {
-        showImportWorkspace();
-    }
-
-    @FXML
-    public void handleHistory() {
-        dialogService.showInfo("Історія", "Функція в розробці");
-    }
+    // Заглушки для інших пунктів меню
+    @FXML public void handleEditMetadata() { dialogService.showInfo("Редагування метаданих", "Функція в розробці"); }
+    @FXML public void handleDeleteBook() { dialogService.showInfo("Видалення книги", "Функція в розробці"); }
+    @FXML public void handleShowColumns() { dialogService.showInfo("Налаштування колонок", "Функція в розробці"); }
+    @FXML public void handleExport() { dialogService.showInfo("Експорт", "Функція в розробці"); }
+    @FXML public void handleRebuildIndex() { dialogService.showInfo("Перебудова індексу", "Функція в розробці"); }
+    @FXML public void handleAddBook() { dialogService.showInfo("Додати книгу", "Функція в розробці"); }
+    @FXML public void handleBackup() { dialogService.showInfo("Резервне копіювання", "Функція в розробці"); }
+    @FXML public void handleSettings() { dialogService.showInfo("Налаштування", "Функція в розробці"); }
+    @FXML public void handleImport() { showImportWorkspace(); }
+    @FXML public void handleHistory() { dialogService.showInfo("Історія", "Функція в розробці"); }
 }

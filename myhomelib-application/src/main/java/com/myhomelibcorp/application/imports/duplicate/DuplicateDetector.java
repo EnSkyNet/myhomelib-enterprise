@@ -1,49 +1,145 @@
 package com.myhomelibcorp.application.imports.duplicate;
 
+import com.myhomelibcorp.application.port.out.infrastructure.JdbcTemplateProvider;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.EmptyResultDataAccessException;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.sql.SQLException;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class DuplicateDetector {
 
+    private final JdbcTemplateProvider jdbcTemplateProvider;
     private final BookQueryRepository bookQueryRepository;
 
-    // Кеш натуральних ключів (title + first author last name)
-    private Set<String> existingKeys = new HashSet<>();
-    private boolean cacheLoaded = false;
+    private final Set<String> batchKeyCache = new HashSet<>();
+    private static final int MAX_CACHE_SIZE = 10_000;
 
-    public void loadExistingKeys() {
-        if (cacheLoaded) {
-            log.debug("Кеш дублікатів вже завантажено");
-            return;
+    private JdbcTemplate getJdbcTemplate() {
+        return jdbcTemplateProvider.getCurrentJdbcTemplate();
+    }
+
+    public boolean isDuplicate(Book book) {
+        if (book == null || book.getAuthors().isEmpty()) {
+            return false;
         }
-        log.info("Завантаження існуючих ключів для перевірки дублікатів...");
+
+        String key = buildNaturalKey(book);
+        if (batchKeyCache.contains(key)) {
+            return true;
+        }
+
+        String sql = """
+                SELECT EXISTS (
+                    SELECT 1 FROM books b
+                    WHERE b.title = ?
+                      AND EXISTS (
+                          SELECT 1 FROM book_authors ba
+                          JOIN authors a ON ba.author_id = a.id
+                          WHERE ba.book_id = b.id
+                            AND a.last_name = ?
+                      )
+                )
+                """;
+
+        String title = book.getTitle();
+        String firstAuthorLastName = book.getAuthors().get(0).getLastName();
+
         try {
-            List<Book> allBooks = bookQueryRepository.findAll();
-            // ОБЕРЕЖНО: findAll() може бути дуже важким для великих бібліотек (>1 млн книг)!
-            // Для великих бібліотек потрібно використовувати інший підхід (наприклад, індекс у БД)
-            existingKeys = allBooks.stream()
-                    .map(this::buildNaturalKey)
-                    .collect(Collectors.toSet());
-            cacheLoaded = true;
-            log.info("Завантажено {} ключів", existingKeys.size());
+            Boolean exists = getJdbcTemplate().queryForObject(sql, Boolean.class, title, firstAuthorLastName);
+            return Boolean.TRUE.equals(exists);
         } catch (Exception e) {
-            log.error("Не вдалося завантажити ключі дублікатів", e);
-            existingKeys = new HashSet<>();
-            cacheLoaded = false;
+            if (isTableMissingError(e)) {
+                log.debug("Таблиця 'books' відсутня, вважаємо, що дублікат відсутній");
+            } else {
+                log.error("Помилка перевірки дубліката", e);
+            }
+            return false;
         }
+    }
+
+    private boolean isTableMissingError(Exception e) {
+        Throwable cause = e;
+        while (cause != null) {
+            if (cause instanceof SQLException sqlEx) {
+                String msg = sqlEx.getMessage();
+                if (msg != null && msg.contains("no such table")) {
+                    return true;
+                }
+            }
+            cause = cause.getCause();
+        }
+        return false;
+    }
+
+    public Optional<Book> findDuplicate(Book book) {
+        if (book == null || book.getAuthors().isEmpty()) {
+            return Optional.empty();
+        }
+
+        String sql = """
+                SELECT b.id FROM books b
+                WHERE b.title = ?
+                  AND EXISTS (
+                      SELECT 1 FROM book_authors ba
+                      JOIN authors a ON ba.author_id = a.id
+                      WHERE ba.book_id = b.id
+                        AND a.last_name = ?
+                  )
+                LIMIT 1
+                """;
+
+        String title = book.getTitle();
+        String firstAuthorLastName = book.getAuthors().get(0).getLastName();
+
+        try {
+            String bookId = getJdbcTemplate().queryForObject(sql, String.class, title, firstAuthorLastName);
+            if (bookId != null) {
+                return bookQueryRepository.findById(BookId.fromString(bookId));
+            }
+        } catch (Exception e) {
+            log.debug("Дублікат не знайдено для книги: {}", title);
+        }
+        return Optional.empty();
+    }
+
+    public void addKey(Book book) {
+        if (book == null) return;
+        String key = buildNaturalKey(book);
+        batchKeyCache.add(key);
+
+        if (batchKeyCache.size() > MAX_CACHE_SIZE) {
+            log.debug("Кеш дублікатів перевищив {} записів, очищення", MAX_CACHE_SIZE);
+            batchKeyCache.clear();
+        }
+    }
+
+    public void addAllKeys(List<Book> books) {
+        if (books == null || books.isEmpty()) return;
+        for (Book book : books) {
+            batchKeyCache.add(buildNaturalKey(book));
+        }
+        if (batchKeyCache.size() > MAX_CACHE_SIZE) {
+            batchKeyCache.clear();
+        }
+    }
+
+    public void clearCache() {
+        batchKeyCache.clear();
+        log.debug("Кеш дублікатів очищено");
     }
 
     private String buildNaturalKey(Book book) {
@@ -52,62 +148,5 @@ public class DuplicateDetector {
                 .map(Author::getLastName)
                 .orElse("");
         return (book.getTitle() + "|" + firstAuthor).toLowerCase().trim();
-    }
-
-    public boolean isDuplicate(Book book) {
-        if (!cacheLoaded) {
-            loadExistingKeys();
-        }
-        String key = buildNaturalKey(book);
-        boolean duplicate = existingKeys.contains(key);
-        if (duplicate) {
-            log.debug("Знайдено дублікат: '{}'", key);
-        }
-        return duplicate;
-    }
-
-    public Optional<Book> findDuplicate(Book book) {
-        if (!cacheLoaded) {
-            loadExistingKeys();
-        }
-        String key = buildNaturalKey(book);
-        if (existingKeys.contains(key)) {
-            String firstAuthor = book.getAuthors().stream()
-                    .findFirst()
-                    .map(Author::getLastName)
-                    .orElse("");
-            return bookQueryRepository.findByTitleAndAuthor(book.getTitle(), firstAuthor);
-        }
-        return Optional.empty();
-    }
-
-    public void addKey(Book book) {
-        if (book != null) {
-            existingKeys.add(buildNaturalKey(book));
-        }
-    }
-
-    public void addAllKeys(List<Book> books) {
-        if (books != null) {
-            for (Book book : books) {
-                existingKeys.add(buildNaturalKey(book));
-            }
-        }
-    }
-
-    public void clearCache() {
-        existingKeys.clear();
-        cacheLoaded = false;
-        log.debug("Кеш дублікатів очищено");
-    }
-
-    public boolean isCacheLoaded() {
-        return cacheLoaded;
-    }
-
-    // Додатковий метод для оновлення кешу після імпорту
-    public void refreshCache() {
-        clearCache();
-        loadExistingKeys();
     }
 }

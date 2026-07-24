@@ -4,17 +4,15 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.session.SessionService;
-import com.myhomelibcorp.application.usecase.book.UpdateBookUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.reader.model.BookDocument;
 import com.myhomelibcorp.reader.model.Bookmark;
 import com.myhomelibcorp.reader.service.BookmarkManager;
-import com.myhomelibcorp.reader.service.ReaderContentLoader;
-import com.myhomelibcorp.reader.service.ReaderProgressManager;
+import com.myhomelibcorp.reader.service.ReaderLifecycleManager;
 import com.myhomelibcorp.reader.service.ReaderSearchManager;
-import com.myhomelibcorp.reader.service.ReaderThemeManager;
+import com.myhomelibcorp.reader.core.ReaderSettings;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import jakarta.annotation.PreDestroy;
 import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.fxml.FXML;
@@ -33,8 +31,6 @@ import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.w3c.dom.Document;
-import org.w3c.dom.NodeList;
 
 @Component
 @RequiredArgsConstructor
@@ -45,12 +41,9 @@ public class ReaderWorkspaceController {
     private final BookMapper bookMapper;
     private final NavigationService navigationService;
     private final SessionService sessionService;
-    private final UpdateBookUseCase updateBookUseCase;
     private final BookmarkManager bookmarkManager;
-    private final ReaderContentLoader contentLoader;
     private final ReaderSearchManager searchManager;
-    private final ReaderProgressManager progressManager;
-    private final ReaderThemeManager themeManager;
+    private final ReaderLifecycleManager lifecycleManager;
 
     @FXML private WebView webView;
     @FXML private Label bookTitleLabel;
@@ -63,12 +56,7 @@ public class ReaderWorkspaceController {
     @FXML private Label searchStatus;
 
     private WebEngine webEngine;
-    private BookDto currentBook;
-    private BookDocument currentDocument;
-    private int totalPages = 0;
-    private int bookmarksCount = 0;
-
-    // ==================== Ініціалізація ====================
+    private String currentBookId;
 
     @FXML
     public void initialize() {
@@ -76,30 +64,34 @@ public class ReaderWorkspaceController {
         webEngine.setJavaScriptEnabled(true);
         webView.setCache(true);
 
-        // Завантажуємо налаштування теми та масштабу
-        themeManager.loadSettings();
-        webView.setZoom(themeManager.getZoomLevel());
-        themeManager.applyTheme(webEngine);
+        // Прив'язка ширини WebView до батьківського контейнера
+        webView.setMaxWidth(Double.MAX_VALUE);
+        webView.setMaxHeight(Double.MAX_VALUE);
+        webView.setPrefWidth(Double.MAX_VALUE);
 
-        webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
-            if (newState == Worker.State.SUCCEEDED) {
-                updatePageInfo();
-                double progress = progressBar.getProgress();
-                progressManager.restoreScrollPosition(webEngine, progress);
-                progressManager.startProgressTimer(webEngine,
-                        currentBook != null ? currentBook.getId() : null,
-                        progressBar, progressLabel, null);
+        // Прив'язка до ширини сцени
+        webView.sceneProperty().addListener((obs, oldScene, newScene) -> {
+            if (newScene != null) {
+                webView.prefWidthProperty().bind(newScene.widthProperty().multiply(0.98));
             }
         });
 
-        webEngine.executeScript(
-                "window.addEventListener('scroll', function() {" +
-                        "  var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;" +
-                        "  var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;" +
-                        "  var progress = scrollHeight > 0 ? scrollTop / scrollHeight : 0;" +
-                        "  window.progress = progress;" +
-                        "});"
-        );
+        ReaderSettings settings = ReaderSettings.getInstance();
+        webView.setZoom(1.0);
+        settings.save();
+
+        webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
+            if (newState == Worker.State.SUCCEEDED) {
+                log.info("Сторінка завантажена, налаштовуємо слухач прогресу");
+                lifecycleManager.setupProgressListener(webEngine);
+                lifecycleManager.startProgressSaving(webEngine, progressBar, progressLabel);
+                if (currentBookId != null) {
+                    lifecycleManager.restorePosition(currentBookId);
+                }
+            } else if (newState == Worker.State.FAILED) {
+                log.error("Помилка завантаження сторінки");
+            }
+        });
 
         webView.setOnKeyPressed(event -> {
             if (event.isControlDown() && event.getCode() == KeyCode.F) {
@@ -138,154 +130,94 @@ public class ReaderWorkspaceController {
     }
 
     public void setBookId(BookId bookId) {
+        this.currentBookId = bookId.asString();
+        log.info("Відкриття книги: {}", bookId);
         sessionService.saveLastOpenedBookId(bookId.asString());
 
         bookQueryRepository.findById(bookId).ifPresentOrElse(book -> {
-            currentBook = bookMapper.toDto(book);
+            BookDto bookDto = bookMapper.toDto(book);
             UiExecutor.runOnUiThread(() -> {
-                String title = currentBook.getTitle();
-                bookTitleLabel.setText(title != null && !title.isEmpty() ? title : "Без назви");
-                loadBookContent(currentBook);
-                progressBar.setProgress(currentBook.getProgress() / 100.0);
-                progressLabel.setText(currentBook.getProgress() + "%");
-                bookmarksCount = bookmarkManager.getBookmarkCount(currentBook.getId());
-                bookmarksLabel.setText("⭐ " + bookmarksCount);
+                bookTitleLabel.setText(bookDto.getTitle());
+                lifecycleManager.openBook(bookDto, webEngine, progressBar, progressLabel);
+                bookmarksLabel.setText("⭐ " + bookmarkManager.getBookmarkCount(bookDto.getId()));
             });
         }, () -> {
             log.warn("Book not found: {}", bookId);
         });
     }
 
-    private void loadBookContent(BookDto book) {
-        try {
-            String html = contentLoader.loadBookContent(book);
-            webEngine.loadContent(html);
-            log.info("Книгу завантажено: {}", book.getTitle());
-        } catch (Exception e) {
-            log.error("Failed to load book", e);
-            webEngine.loadContent("<html><body><h1>Помилка завантаження</h1><pre>" + e.getMessage() + "</pre></body></html>");
+    @FXML private void onBack() {
+        lifecycleManager.saveState();
+        BookDto currentBook = lifecycleManager.getCurrentBook();
+        if (currentBook != null) {
+            navigationService.navigateToBook(BookId.fromString(currentBook.getId()));
+        } else {
+            navigationService.navigateToAuthor(null);
         }
     }
 
     // ==================== Пошук ====================
 
-    @FXML
-    private void onToggleSearch() {
-        showSearchBar(!searchBar.isVisible());
-    }
+    @FXML private void onToggleSearch() { showSearchBar(!searchBar.isVisible()); }
+    @FXML private void onSearchClose() { showSearchBar(false); searchField.clear(); }
+    @FXML private void onSearchNext() { String q = searchField.getText(); if (q != null && !q.trim().isEmpty()) searchManager.searchNext(webEngine, q.trim(), this::updateSearchStatus); }
+    @FXML private void onSearchPrev() { String q = searchField.getText(); if (q != null && !q.trim().isEmpty()) searchManager.searchPrev(webEngine, q.trim(), this::updateSearchStatus); }
+    private void showSearchBar(boolean show) { searchBar.setVisible(show); searchBar.setManaged(show); if (show) { searchField.requestFocus(); searchField.selectAll(); } else { searchManager.clearSearch(webEngine, this::updateSearchStatus); webView.requestFocus(); } }
+    private void updateSearchStatus(int matchCount, int currentMatch) { searchStatus.setText(matchCount > 0 ? currentMatch + "/" + matchCount : "0/0"); }
 
-    @FXML
-    private void onSearchClose() {
-        showSearchBar(false);
-        searchField.clear();
-    }
+    // ==================== Масштаб ====================
 
-    @FXML
-    private void onSearchNext() {
-        String query = searchField.getText();
-        if (query != null && !query.trim().isEmpty()) {
-            searchManager.searchNext(webEngine, query.trim(), this::updateSearchStatus);
+    @FXML private void onZoomIn() {
+        double z = webView.getZoom() + 0.1;
+        webView.setZoom(Math.min(2.0, z));
+    }
+    @FXML private void onZoomOut() {
+        double z = webView.getZoom() - 0.1;
+        webView.setZoom(Math.max(0.5, z));
+    }
+    @FXML private void onZoomReset() { webView.setZoom(1.0); }
+    @FXML private void onToggleTheme() {
+        ReaderSettings settings = ReaderSettings.getInstance();
+        switch (settings.getTheme()) {
+            case "light": settings.setTheme("sepia"); break;
+            case "sepia": settings.setTheme("dark"); break;
+            case "dark": settings.setTheme("amoled"); break;
+            default: settings.setTheme("light"); break;
         }
-    }
-
-    @FXML
-    private void onSearchPrev() {
-        String query = searchField.getText();
-        if (query != null && !query.trim().isEmpty()) {
-            searchManager.searchPrev(webEngine, query.trim(), this::updateSearchStatus);
-        }
-    }
-
-    private void showSearchBar(boolean show) {
-        searchBar.setVisible(show);
-        searchBar.setManaged(show);
-        if (show) {
-            searchField.requestFocus();
-            searchField.selectAll();
-        } else {
-            searchManager.clearSearch(webEngine, this::updateSearchStatus);
-            webView.requestFocus();
-        }
-    }
-
-    private void updateSearchStatus(int matchCount, int currentMatch) {
-        if (matchCount > 0) {
-            searchStatus.setText(currentMatch + "/" + matchCount);
-        } else {
-            searchStatus.setText("0/0");
-        }
-    }
-
-    // ==================== Прогрес ====================
-
-    private void saveProgress() {
+        settings.save();
+        BookDto currentBook = lifecycleManager.getCurrentBook();
         if (currentBook != null) {
-            progressManager.saveProgress(webEngine, currentBook.getId());
+            lifecycleManager.openBook(currentBook, webEngine, progressBar, progressLabel);
+            if (currentBookId != null) {
+                lifecycleManager.restorePosition(currentBookId);
+            }
         }
     }
 
-    // ==================== Дії користувача ====================
-
-    @FXML
-    private void onBack() {
-        saveProgress();
-        navigationService.navigateToBook(BookId.fromString(currentBook.getId()));
-    }
-
-    @FXML
-    private void onZoomIn() {
-        double newZoom = Math.min(2.0, themeManager.getZoomLevel() + 0.1);
-        themeManager.setZoomLevel(webEngine, newZoom, webView);
-    }
-
-    @FXML
-    private void onZoomOut() {
-        double newZoom = Math.max(0.5, themeManager.getZoomLevel() - 0.1);
-        themeManager.setZoomLevel(webEngine, newZoom, webView);
-    }
-
-    @FXML
-    private void onZoomReset() {
-        themeManager.setZoomLevel(webEngine, 1.0, webView);
-    }
-
-    @FXML
-    private void onToggleTheme() {
-        themeManager.toggleTheme(webEngine);
-    }
+    // ==================== Зміст (TOC) ====================
 
     @FXML
     private void onToggleToc() {
         log.info("Перемикання змісту (ще не реалізовано)");
-        if (currentDocument != null && currentDocument.getChapters() != null) {
-            log.info("Кількість розділів: {}", currentDocument.getChapters().size());
-        }
     }
 
     // ==================== Закладки ====================
 
-    @FXML
-    private void onAddBookmark() {
+    @FXML private void onAddBookmark() {
+        BookDto currentBook = lifecycleManager.getCurrentBook();
         if (currentBook == null) return;
-        Object progressObj = webEngine.executeScript("window.progress");
-        if (progressObj instanceof Number) {
-            double position = ((Number) progressObj).doubleValue();
-            if (position < 0) position = 0;
-            if (position > 1) position = 1;
-            String context = getTextAtPosition(position);
-            String chapterTitle = getCurrentChapterTitle();
-            Bookmark bookmark = Bookmark.create(currentBook.getId(), position, context, chapterTitle);
-            bookmarkManager.addBookmark(currentBook.getId(), bookmark);
-            bookmarksCount = bookmarkManager.getBookmarkCount(currentBook.getId());
-            bookmarksLabel.setText("⭐ " + bookmarksCount);
-            log.info("Додано закладку: {}", bookmark.getTitle());
-        }
+        double progress = progressBar.getProgress();
+        String context = lifecycleManager.getTextAtPosition(webEngine, progress);
+        String chapterTitle = lifecycleManager.getCurrentChapterTitle(webEngine);
+        Bookmark bookmark = Bookmark.create(currentBook.getId(), progress, context, chapterTitle);
+        bookmarkManager.addBookmark(currentBook.getId(), bookmark);
+        bookmarksLabel.setText("⭐ " + bookmarkManager.getBookmarkCount(currentBook.getId()));
+        log.info("Додано закладку: {}", bookmark.getTitle());
     }
 
-    @FXML
-    private void onOpenBookmarks() {
+    @FXML private void onOpenBookmarks() {
+        BookDto currentBook = lifecycleManager.getCurrentBook();
         if (currentBook == null) return;
-        final String bookIdForDialog = currentBook.getId();
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/bookmark-dialog.fxml"));
             loader.setControllerFactory(controllerClass -> {
@@ -300,10 +232,10 @@ public class ReaderWorkspaceController {
             });
             Parent root = loader.load();
             BookmarkDialogController controller = loader.getController();
-            controller.setBookId(bookIdForDialog, this::goToBookmark);
+            controller.setBookId(currentBook.getId(), this::goToBookmark);
             Stage stage = new Stage();
-            stage.setTitle("Закладки – " + currentBook.getTitle());
-            stage.setScene(new Scene(root, 500.0, 400.0));
+            stage.setTitle("Закладки — " + currentBook.getTitle());
+            stage.setScene(new Scene(root, 500, 400));
             stage.initModality(Modality.NONE);
             stage.initOwner(webView.getScene().getWindow());
             stage.show();
@@ -313,64 +245,43 @@ public class ReaderWorkspaceController {
     }
 
     private void goToBookmark(Bookmark bookmark) {
-        if (bookmark == null || currentBook == null) return;
+        if (bookmark == null) return;
         double position = bookmark.getPosition();
-        String script = """
-                var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                var target = scrollHeight * %f;
-                window.scrollTo(0, target);
-                """;
-        webEngine.executeScript(String.format(script, position));
+        String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + position + ")";
+        webEngine.executeScript(script);
         progressBar.setProgress(position);
-        progressLabel.setText((int) (position * 100) + "%");
-        updateBookUseCase.updateProgress(BookId.fromString(currentBook.getId()), (int) (position * 100));
-        currentBook.setProgress((int) (position * 100));
-    }
-
-    private String getTextAtPosition(double position) {
-        try {
-            String js = """
-                    var body = document.body.innerText;
-                    var len = body.length;
-                    var pos = Math.floor(arguments[0] * len);
-                    var start = Math.max(0, pos - 100);
-                    var end = Math.min(len, pos + 100);
-                    body.substring(start, end);
-                    """;
-            Object result = webEngine.executeScript("(" + js + ")(" + position + ")");
-            return result != null ? result.toString().trim() : "";
-        } catch (Exception e) {
-            return "";
+        progressLabel.setText((int)(position * 100) + "%");
+        BookDto currentBook = lifecycleManager.getCurrentBook();
+        if (currentBook != null) {
+            lifecycleManager.updateProgress(BookId.fromString(currentBook.getId()), (int)(position * 100));
         }
     }
 
-    private String getCurrentChapterTitle() {
-        try {
-            Object title = webEngine.executeScript("document.querySelector('.chapter-title')?.innerText || ''");
-            return title != null ? title.toString() : "Розділ";
-        } catch (Exception e) {
-            return "Розділ";
-        }
+    // ==================== Додаткові публічні методи ====================
+
+    public String getTextAtPosition(double position) {
+        return lifecycleManager.getTextAtPosition(webEngine, position);
     }
 
-    private void updatePageInfo() {
-        Platform.runLater(() -> {
-            try {
-                Document doc = webEngine.getDocument();
-                if (doc != null) {
-                    NodeList paragraphs = doc.getElementsByTagName("p");
-                    totalPages = (int) Math.ceil(paragraphs.getLength() / 10.0);
-                    pageLabel.setText("1 / " + Math.max(1, totalPages));
-                }
-            } catch (Exception e) {
-                log.debug("Could not update page info", e);
-            }
-        });
+    public String getCurrentChapterTitle() {
+        return lifecycleManager.getCurrentChapterTitle(webEngine);
+    }
+
+    // ==================== Очищення ресурсів ====================
+
+    @PreDestroy
+    public void cleanup() {
+        lifecycleManager.saveState();
+        if (webEngine != null) {
+            Platform.runLater(() -> {
+                webEngine.loadContent("");
+                webEngine.getLoadWorker().cancel();
+            });
+        }
+        log.info("ReaderWorkspaceController очищено");
     }
 
     public void saveState() {
-        saveProgress();
-        themeManager.saveTheme();
-        themeManager.saveZoom();
+        lifecycleManager.saveState();
     }
 }

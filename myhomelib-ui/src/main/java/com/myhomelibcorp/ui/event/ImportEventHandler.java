@@ -3,12 +3,15 @@ package com.myhomelibcorp.ui.event;
 import com.myhomelibcorp.application.event.ImportFinishedEvent;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteSeriesRepository;
+import com.myhomelibcorp.ui.controller.MainController;
+import com.myhomelibcorp.ui.navigation.NavigationController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -20,20 +23,26 @@ public class ImportEventHandler {
     private final StatisticsService statisticsService;
     private final SqliteSeriesRepository seriesRepository;
     private final BookLoaderService bookLoaderService;
+    private final NavigationController navigationController; // <-- додано
+    private final MainController mainController; // <-- додано
 
     @PostConstruct
     public void init() {
-        // Якщо використовуєте Spring Events, розкоментуйте @EventListener
         log.info("ImportEventHandler ініціалізовано");
     }
 
-    // @EventListener – розкоментуйте, якщо використовуєте Spring Events
+    @EventListener
     public void onImportFinished(ImportFinishedEvent event) {
         log.info("Отримано подію ImportFinishedEvent: +{} книг", event.getImported());
 
         UiExecutor.runOnUiThread(() -> {
-            // Оновлюємо статус
+            // 1. Оновлюємо статистику
             statisticsService.refreshStatistics();
+            var stats = statisticsService.getStatistics();
+            appState.getStatusBar().setStatistics(stats);
+            appState.getDashboard().setStatistics(stats);
+
+            // 2. Оновлюємо статус-бар
             String status;
             if (event.isSuccess()) {
                 status = String.format("Імпорт завершено: +%d книг, помилок: %d",
@@ -43,17 +52,9 @@ public class ImportEventHandler {
                         event.getImported(), event.getErrors());
             }
             appState.getStatusBar().setStatusText(status);
-
-            // Оновлюємо статистику
-            var stats = statisticsService.getStatistics();
-            appState.getStatusBar().setStatistics(stats);
-            appState.getDashboard().setStatistics(stats);
-            appState.getStatusBar().setStatusText("Імпорт завершено: +" + event.getImported() + " книг");
-
-            // Приховуємо прогрес-бар
             appState.getStatusBar().setProgressVisible(false);
 
-            // Синхронізуємо серії після імпорту
+            // 3. Синхронізуємо серії
             try {
                 seriesRepository.syncSeriesFromBooks();
                 log.info("Серії синхронізовано після імпорту");
@@ -61,13 +62,16 @@ public class ImportEventHandler {
                 log.error("Помилка синхронізації серій після імпорту", e);
             }
 
-            // Оновлюємо список книг
+            // 4. Оновлюємо список книг
             bookLoaderService.loadAllBooks();
 
-        });
-    }
+            // 5. Оновлюємо навігаційне дерево
+            navigationController.refreshNavigation();
 
-    public void handleImportFinished(ImportFinishedEvent event) {
-        onImportFinished(event);
+            // 6. Показуємо дашборд, щоб оновити головну сторінку
+            mainController.showDashboard();
+
+            log.info("Оновлення UI після імпорту завершено");
+        });
     }
 }

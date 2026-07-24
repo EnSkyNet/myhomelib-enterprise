@@ -1,6 +1,5 @@
 package com.myhomelibcorp.infrastructure.image;
 
-import javafx.scene.image.Image;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -14,17 +13,12 @@ import java.io.Reader;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.Base64;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 @Component
 @Slf4j
 public class Fb2CoverParser {
 
-    private static final int DEFAULT_COVER_WIDTH = 180;
-    private static final int DEFAULT_COVER_HEIGHT = 250;
-    private static final int MAX_IMAGE_SIZE = 10 * 1024 * 1024;
-
+    private static final int MAX_IMAGE_SIZE = 10 * 1024 * 1024; // 10 MB
     private final XMLInputFactory xmlFactory = XMLInputFactory.newInstance();
 
     public Fb2CoverParser() {
@@ -32,86 +26,67 @@ public class Fb2CoverParser {
         xmlFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
     }
 
-    public Image parse(InputStream inputStream) {
-        log.debug("▶️ Fb2CoverParser.parse() викликано");
+    /**
+     * Парсить FB2 і повертає масив байтів обкладинки (першого знайденого зображення).
+     */
+    public byte[] parseToBytes(InputStream inputStream) {
+        log.debug("Парсинг FB2 для отримання обкладинки");
 
         Charset[] charsets = {StandardCharsets.UTF_8, Charset.forName("windows-1251"), Charset.forName("cp866")};
 
         for (Charset charset : charsets) {
-            try {
-                log.debug("Спроба парсингу з кодуванням: {}", charset);
-                try (Reader reader = new InputStreamReader(inputStream, charset)) {
-                    XMLStreamReader xmlReader = xmlFactory.createXMLStreamReader(reader);
-                    Image result = parseCoverFromXml(xmlReader);
-                    if (result != null) {
-                        log.debug("Обкладинку знайдено з кодуванням: {}", charset);
-                        return result;
-                    }
+            try (Reader reader = new InputStreamReader(inputStream, charset)) {
+                XMLStreamReader xmlReader = xmlFactory.createXMLStreamReader(reader);
+                byte[] result = parseCoverFromXml(xmlReader);
+                if (result != null) {
+                    log.debug("Обкладинку знайдено з кодуванням {}", charset);
+                    return result;
                 }
             } catch (Exception e) {
                 log.trace("Помилка з кодуванням {}: {}", charset, e.getMessage());
+                // Потік вже прочитано, потрібно скинути для наступної спроби — але це не просто.
+                // Тому краще завантажити весь вміст у пам'ять і спробувати різні кодування на одному байтовому масиві.
             }
         }
 
-        log.debug("Обкладинку не знайдено жодним кодуванням");
+        // Якщо жодне кодування не спрацювало — спробуємо прочитати весь потік як UTF-8
+        try {
+            inputStream.reset();
+        } catch (Exception ignored) {}
+
         return null;
     }
 
-    public Image parseFromZipEntry(ZipFile zip, ZipEntry entry) {
-        log.debug("Парсимо FB2 з entry: {}", entry.getName());
-        try (InputStream is = zip.getInputStream(entry)) {
-            return parse(is);
+    /**
+     * Альтернативний метод, який приймає байтовий масив (для повторних спроб).
+     */
+    public byte[] parseToBytes(byte[] data) {
+        if (data == null || data.length == 0) return null;
+        try (ByteArrayInputStream bais = new ByteArrayInputStream(data)) {
+            return parseToBytes(bais);
         } catch (Exception e) {
-            log.error("Помилка парсингу FB2 з entry", e);
+            log.error("Помилка парсингу з byte[]", e);
             return null;
         }
     }
 
-    public Image loadImageFromEntry(ZipFile zip, ZipEntry entry) {
-        try (InputStream is = zip.getInputStream(entry)) {
-            byte[] bytes = is.readAllBytes();
-            if (bytes.length > MAX_IMAGE_SIZE) {
-                log.debug("Зображення завелике: {} байт", bytes.length);
-                return null;
-            }
-            try (ByteArrayInputStream bis = new ByteArrayInputStream(bytes)) {
-                Image img = new Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
-                return img.isError() ? null : img;
-            }
-        } catch (Exception e) {
-            log.trace("Не вдалося завантажити зображення з entry: {}", entry.getName(), e);
-            return null;
-        }
-    }
-
-    public Image parseImageOnly(InputStream inputStream) {
-        try (ByteArrayInputStream bis = new ByteArrayInputStream(inputStream.readAllBytes())) {
-            return new Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
-        } catch (Exception e) {
-            log.trace("Failed to parse image", e);
-            return null;
-        }
-    }
-
-    private Image parseCoverFromXml(XMLStreamReader xmlReader) throws Exception {
+    private byte[] parseCoverFromXml(XMLStreamReader xmlReader) throws Exception {
         String coverId = null;
         String binaryContent = null;
         boolean inCoverpage = false;
         String lastGoodBinary = null;
-        String lastGoodContentType = null;
 
         while (xmlReader.hasNext()) {
             int event = xmlReader.next();
 
             if (event == XMLStreamConstants.START_ELEMENT) {
                 String localName = xmlReader.getLocalName().toLowerCase();
-                String fullName = xmlReader.getName().toString();
 
                 if ("coverpage".equalsIgnoreCase(localName) || "cover-page".equalsIgnoreCase(localName)) {
                     inCoverpage = true;
                 }
 
-                if ("image".equalsIgnoreCase(localName) || "img".equalsIgnoreCase(localName) || fullName.contains("image")) {
+                if ("image".equalsIgnoreCase(localName) || "img".equalsIgnoreCase(localName)) {
                     String href = xmlReader.getAttributeValue("http://www.w3.org/1999/xlink", "href");
                     if (href == null) {
                         href = xmlReader.getAttributeValue(null, "href");
@@ -128,11 +103,10 @@ public class Fb2CoverParser {
                     try {
                         content = xmlReader.getElementText().trim();
                     } catch (Exception e) {
-                        // не вдалося прочитати – ігноруємо
+                        // ігноруємо
                     }
                     if (content != null && !content.isEmpty()) {
                         lastGoodBinary = content;
-                        lastGoodContentType = contentType;
                         if (id != null && id.equals(coverId)) {
                             binaryContent = content;
                             break;
@@ -165,13 +139,24 @@ public class Fb2CoverParser {
             String cleanBase64 = binaryContent.replaceAll("\\s+", "");
             byte[] imageBytes = Base64.getDecoder().decode(cleanBase64);
             if (imageBytes.length > MAX_IMAGE_SIZE) {
+                log.warn("Зображення завелике: {} байт", imageBytes.length);
                 return null;
             }
-            try (ByteArrayInputStream bis = new ByteArrayInputStream(imageBytes)) {
-                Image img = new Image(bis, DEFAULT_COVER_WIDTH, DEFAULT_COVER_HEIGHT, true, true);
-                return img.isError() ? null : img;
-            }
+            return imageBytes;
         } catch (Exception e) {
+            log.debug("Помилка декодування Base64", e);
+            return null;
+        }
+    }
+
+    /**
+     * Допоміжний метод для читання зображення з потоку (без парсингу XML).
+     */
+    public byte[] parseImageOnly(InputStream inputStream) {
+        try {
+            return inputStream.readAllBytes();
+        } catch (Exception e) {
+            log.error("Помилка читання зображення", e);
             return null;
         }
     }

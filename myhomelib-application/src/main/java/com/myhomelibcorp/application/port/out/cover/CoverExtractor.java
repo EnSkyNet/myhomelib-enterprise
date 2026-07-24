@@ -1,8 +1,11 @@
 package com.myhomelibcorp.application.port.out.cover;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import javafx.scene.image.Image;
 
+/**
+ * Основний сервіс для вилучення обкладинки.
+ * Використовує кеш та Reader.
+ */
 public interface CoverExtractor {
-    Image extractCover(BookDto book);
+    byte[] extractCover(BookDto book);
 }

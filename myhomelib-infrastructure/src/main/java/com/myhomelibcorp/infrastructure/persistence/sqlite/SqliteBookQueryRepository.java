@@ -44,6 +44,8 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
             Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper, id.asString());
+            log.info("Завантажено книгу з БД: id={}, title={}, progress={}",
+                    id, book.getTitle(), book.getProgress());
             enrichBooks(List.of(book));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
@@ -99,17 +101,28 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findAll() {
-        String sql = "SELECT * FROM books";
+        // Використовуємо проекцію тільки для необхідних полів
+        String sql = """
+                SELECT id, title, series, file_name, folder, collection_root,
+                       language, file_size, rate, progress, update_date, created_at
+                FROM books
+                """;
         List<Book> books = getJdbcTemplate().query(sql, bookRowMapper);
         enrichBooks(books);
         return books;
     }
 
-    // === НОВІ МЕТОДИ ДЛЯ DASHBOARD ===
+    // === Методи для Dashboard (з проекціями) ===
 
     @Override
     public List<Book> findRecent(int limit) {
-        String sql = "SELECT * FROM books ORDER BY update_date DESC LIMIT ?";
+        String sql = """
+                SELECT id, title, series, file_name, folder, collection_root,
+                       language, file_size, rate, progress, update_date, created_at
+                FROM books
+                ORDER BY update_date DESC
+                LIMIT ?
+                """;
         List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
         enrichBooks(books);
         return books;
@@ -117,7 +130,13 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findRecentlyAdded(int limit) {
-        String sql = "SELECT * FROM books ORDER BY created_at DESC LIMIT ?";
+        String sql = """
+                SELECT id, title, series, file_name, folder, collection_root,
+                       language, file_size, rate, progress, update_date, created_at
+                FROM books
+                ORDER BY created_at DESC
+                LIMIT ?
+                """;
         List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
         enrichBooks(books);
         return books;
@@ -125,13 +144,14 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findFavoriteAuthors(int limit) {
-        // Використовуємо групу "Favorites" (id = 1) для визначення улюблених авторів
-        // Або просто книги з найвищим рейтингом
+        // Проекція для рейтингу
         String sql = """
-            SELECT b.* FROM books b
-            ORDER BY b.rate DESC
-            LIMIT ?
-            """;
+                SELECT id, title, series, file_name, folder, collection_root,
+                       language, file_size, rate, progress, update_date, created_at
+                FROM books
+                ORDER BY rate DESC
+                LIMIT ?
+                """;
         List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
         enrichBooks(books);
         return books;

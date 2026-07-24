@@ -63,67 +63,7 @@ public class DefaultNavigationService implements NavigationService {
         }
         String seriesName = seriesOpt.get().getName();
         log.info("Назва серії з таблиці series: '{}'", seriesName);
-        String normalized = normalizeSeriesName(seriesName);
-        log.info("Нормалізована назва: '{}'", normalized);
-
-        // Отримуємо всі книги
-        BookQuery allQuery = BookQuery.builder()
-                .pagination(Pagination.of(10000, 0))
-                .build();
-        List<Book> allBooks = bookQueryRepository.find(allQuery);
-        log.info("Всього книг: {}", allBooks.size());
-
-        // Фільтруємо книги за нормалізованою назвою серії
-        List<Book> filtered = allBooks.stream()
-                .filter(b -> {
-                    String bs = b.getSeries();
-                    if (bs == null || bs.isBlank()) return false;
-                    String normBs = normalizeSeriesName(bs);
-                    return normBs.equals(normalized) || normBs.contains(normalized) || normalized.contains(normBs);
-                })
-                .collect(Collectors.toList());
-        log.info("Знайдено книг після фільтрації: {}", filtered.size());
-
-        // Якщо нічого не знайшли, спробуємо пошук за текстом з фільтром
-        if (filtered.isEmpty()) {
-            log.info("Спробуємо SQL-пошук за текстом...");
-            BookQuery textQuery = BookQuery.builder()
-                    .text(seriesName)
-                    .pagination(Pagination.of(1000, 0))
-                    .build();
-            List<Book> textBooks = bookQueryRepository.find(textQuery);
-            filtered = textBooks.stream()
-                    .filter(b -> {
-                        String bs = b.getSeries();
-                        if (bs == null || bs.isBlank()) return false;
-                        String normBs = normalizeSeriesName(bs);
-                        return normBs.contains(normalized) || normalized.contains(normBs);
-                    })
-                    .collect(Collectors.toList());
-            log.info("SQL-пошук за текстом: знайдено {} книг", filtered.size());
-        }
-
-        // Якщо все ще немає, виведемо приклад назв серій з книг для діагностики
-        if (filtered.isEmpty()) {
-            List<String> sampleSeries = allBooks.stream()
-                    .map(Book::getSeries)
-                    .filter(s -> s != null && !s.isBlank())
-                    .distinct()
-                    .limit(10)
-                    .collect(Collectors.toList());
-            log.info("Приклад назв серій з книг: {}", sampleSeries);
-        }
-
-        List<BookDto> dtos = filtered.stream()
-                .map(bookMapper::toDto)
-                .collect(Collectors.toList());
-        mainController.showSearchResults(dtos);
-        mainController.updateNavigationButtons();
-    }
-
-    private String normalizeSeriesName(String name) {
-        if (name == null) return "";
-        return name.trim().toLowerCase().replaceAll("\\s+", " ");
+        navigateToSeriesByName(seriesName);
     }
 
     @Override
@@ -313,5 +253,10 @@ public class DefaultNavigationService implements NavigationService {
     public void goForward() {
         workspaceManager.goForward();
         mainController.updateNavigationButtons();
+    }
+
+    private String normalizeSeriesName(String name) {
+        if (name == null) return "";
+        return name.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 }

@@ -7,9 +7,10 @@ import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
 import com.myhomelibcorp.application.imports.transaction.ImportTransaction;
+import com.myhomelibcorp.application.port.out.cache.CacheRefresherPort;
 import com.myhomelibcorp.application.port.out.event.EventPublisher;
-import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.importer.FastImportService;
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -37,6 +38,7 @@ public class ImportFileUseCase {
     private final IndexRebuilder indexRebuilder;
     private final BulkImportOptimizer bulkImportOptimizer;
     private final FastImportService fastImportService;
+    private final CacheRefresherPort cacheRefresherPort;
 
     @Value("${app.import.batch-size:500}")
     private int defaultBatchSize;
@@ -73,6 +75,11 @@ public class ImportFileUseCase {
 
         long count = fastImportService.importInpx(context.getFile(), batchSize, rootDirectory);
 
+        if (count > 0) {
+            cacheRefresherPort.refreshCachesAsync();
+            log.info("Запущено асинхронне оновлення кешів словників для {} книг", count);
+        }
+
         ImportStatistics stats = new ImportStatistics();
         stats.incrementImported((int) count);
 
@@ -108,7 +115,6 @@ public class ImportFileUseCase {
         try {
             var importer = importerRegistry.findImporter(context.getFile());
             try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
-                // Збагачуємо книги collectionRoot, якщо вони ще не мають
                 Stream<Book> enrichedStream = enrichWithCollectionRoot(bookStream, context.getRootDirectory());
                 saveBooksBatch(enrichedStream, context, stats, indexAfterSave);
             }
@@ -133,13 +139,15 @@ public class ImportFileUseCase {
             indexRebuilder.rebuildIndex();
         }
 
+        if (stats.getImported().get() > 0) {
+            cacheRefresherPort.refreshCachesAsync();
+            log.info("Запущено асинхронне оновлення кешів словників після legacy-імпорту");
+        }
+
         eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(context.getFile(), result));
         return result;
     }
 
-    /**
-     * Додає collectionRoot до книг, якщо вони ще не мають його.
-     */
     private Stream<Book> enrichWithCollectionRoot(Stream<Book> bookStream, Path rootDirectory) {
         if (rootDirectory == null) {
             return bookStream;
@@ -148,10 +156,8 @@ public class ImportFileUseCase {
         return bookStream.map(book -> {
             if (book == null) return null;
             if (book.getFile() != null && book.getFile().getCollectionRoot() != null && !book.getFile().getCollectionRoot().isEmpty()) {
-                // Вже має collectionRoot – залишаємо як є
                 return book;
             }
-            // Створюємо новий BookFile з collectionRoot
             BookFile oldFile = book.getFile();
             BookFile newFile = new BookFile(
                     oldFile != null ? oldFile.getFileName() : "",
@@ -181,7 +187,7 @@ public class ImportFileUseCase {
     private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats, boolean indexAfterSave) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         List<Book> batch = new ArrayList<>(batchSize);
-        DuplicatePolicy policy = DuplicatePolicy.SKIP; // ВИКОРИСТОВУЄМО SKIP
+        DuplicatePolicy policy = DuplicatePolicy.SKIP;
         int totalSaved = 0;
 
         try (Stream<Book> stream = bookStream) {
@@ -226,4 +232,5 @@ public class ImportFileUseCase {
             log.error("Помилка збереження батча", e);
             stats.incrementErrors();
         }
-    }}
+    }
+}

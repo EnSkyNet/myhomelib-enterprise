@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.application.port.out.cache.CacheRefresherPort;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
@@ -9,9 +10,11 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -35,6 +38,10 @@ public class InpxImportPipeline {
 
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
+    private static final int BATCH_SIZE = 5000;
+
+    private Map<String, String> authorCache;
+    private Map<String, String> genreCache;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -43,40 +50,49 @@ public class InpxImportPipeline {
     public long importFile(Path file, int batchSize, Path rootDirectory) {
         log.info("Starting INPX import: {} (root: {})", file, rootDirectory);
 
-        Map<String, String> authorCache = buildAuthorCache();
-        Map<String, String> genreCache = buildGenreCache();
+        this.authorCache = buildAuthorCache();
+        this.genreCache = buildGenreCache();
+
+        Map<String, Author> pendingAuthors = new HashMap<>();
+        Map<String, Genre> pendingGenres = new HashMap<>();
 
         bulkOptimizer.enableBulkInsertMode();
         dropIndexes();
 
         Iterator<Object[]> iterator = reader.read(file);
-        List<Object[]> batch = new ArrayList<>(batchSize);
+        List<Object[]> bookBatch = new ArrayList<>(batchSize);
         AtomicLong total = new AtomicLong(0);
 
-        String collectionRoot = rootDirectory != null ? rootDirectory.toString() : (file.getParent() != null ? file.getParent().toString() : "");
-        String baseFolder = rootDirectory != null ? rootDirectory.toString() : (file.getParent() != null ? file.getParent().toString() : "");
+        String collectionRoot = rootDirectory != null ? rootDirectory.toString()
+                : (file.getParent() != null ? file.getParent().toString() : "");
+        String baseFolder = rootDirectory != null ? rootDirectory.toString()
+                : (file.getParent() != null ? file.getParent().toString() : "");
 
         while (iterator.hasNext()) {
             Object[] raw = iterator.next();
-            Object[] normalized = normalize(raw, authorCache, genreCache, collectionRoot, baseFolder);
+            Object[] normalized = normalize(raw, pendingAuthors, pendingGenres, collectionRoot, baseFolder);
             if (normalized != null) {
-                batch.add(normalized);
-                if (batch.size() >= batchSize) {
-                    batchWriter.batchInsertFull(batch, authorCache, genreCache);
-                    total.addAndGet(batch.size());
-                    batch.clear();
+                bookBatch.add(normalized);
+                if (bookBatch.size() >= batchSize) {
+                    flushPendingEntities(pendingAuthors, pendingGenres);
+                    batchWriter.batchInsertFull(bookBatch, authorCache, genreCache);
+                    total.addAndGet(bookBatch.size());
+                    bookBatch.clear();
                     log.debug("Imported {} books so far", total.get());
                 }
             }
         }
-        if (!batch.isEmpty()) {
-            batchWriter.batchInsertFull(batch, authorCache, genreCache);
-            total.addAndGet(batch.size());
+
+        if (!bookBatch.isEmpty()) {
+            flushPendingEntities(pendingAuthors, pendingGenres);
+            batchWriter.batchInsertFull(bookBatch, authorCache, genreCache);
+            total.addAndGet(bookBatch.size());
         }
 
         createIndexes();
         bulkOptimizer.disableBulkInsertMode();
 
+        // Синхронне оновлення кешів (асинхронне запускається окремо)
         dictionaryCache.loadAuthors(authorRepository.findAll());
         dictionaryCache.loadGenres(genreRepository.findAll());
 
@@ -88,14 +104,44 @@ public class InpxImportPipeline {
         return importFile(file, batchSize, null);
     }
 
+    @Async("taskExecutor")
+    public void refreshCachesAsync() {
+        log.info("Асинхронне оновлення кешів словників після імпорту");
+        try {
+            dictionaryCache.loadAuthors(authorRepository.findAll());
+            dictionaryCache.loadGenres(genreRepository.findAll());
+            log.info("Кеші словників оновлено асинхронно");
+        } catch (Exception e) {
+            log.error("Помилка асинхронного оновлення кешів", e);
+        }
+    }
+
+    private void flushPendingEntities(Map<String, Author> pendingAuthors,
+                                      Map<String, Genre> pendingGenres) {
+        if (!pendingAuthors.isEmpty()) {
+            List<Author> authorList = new ArrayList<>(pendingAuthors.values());
+            batchWriter.batchInsertAuthors(authorList);
+            for (Author a : authorList) {
+                String key = buildAuthorKey(a);
+                authorCache.put(key, a.getId().asString());
+            }
+            pendingAuthors.clear();
+        }
+        if (!pendingGenres.isEmpty()) {
+            List<Genre> genreList = new ArrayList<>(pendingGenres.values());
+            batchWriter.batchInsertGenres(genreList);
+            for (Genre g : genreList) {
+                genreCache.put(g.getId().asString(), g.getId().asString());
+            }
+            pendingGenres.clear();
+        }
+    }
+
     private Map<String, String> buildAuthorCache() {
         Map<String, String> cache = new HashMap<>();
         List<Author> authors = authorRepository.findAll();
         for (Author a : authors) {
-            String key = (a.getFirstName() != null ? a.getFirstName() : "") + "|" +
-                    (a.getMiddleName() != null ? a.getMiddleName() : "") + "|" +
-                    (a.getLastName() != null ? a.getLastName() : "");
-            cache.put(key, a.getId().asString());
+            cache.put(buildAuthorKey(a), a.getId().asString());
         }
         log.info("Built author cache with {} entries", cache.size());
         return cache;
@@ -111,7 +157,17 @@ public class InpxImportPipeline {
         return cache;
     }
 
-    private Object[] normalize(Object[] raw, Map<String, String> authorCache, Map<String, String> genreCache, String collectionRoot, String baseFolder) {
+    private String buildAuthorKey(Author a) {
+        return (a.getFirstName() != null ? a.getFirstName() : "") + "|" +
+                (a.getMiddleName() != null ? a.getMiddleName() : "") + "|" +
+                (a.getLastName() != null ? a.getLastName() : "");
+    }
+
+    private Object[] normalize(Object[] raw,
+                               Map<String, Author> pendingAuthors,
+                               Map<String, Genre> pendingGenres,
+                               String collectionRoot,
+                               String baseFolder) {
         try {
             String[] parts = (String[]) raw;
             if (parts.length < 8) return null;
@@ -131,9 +187,12 @@ public class InpxImportPipeline {
                     String key = firstName + "|" + middleName + "|" + lastName;
                     String id = authorCache.get(key);
                     if (id == null) {
-                        Author newAuthor = new Author(firstName, middleName, lastName);
-                        Author saved = authorRepository.save(newAuthor);
-                        id = saved.getId().asString();
+                        Author newAuthor = pendingAuthors.get(key);
+                        if (newAuthor == null) {
+                            newAuthor = new Author(firstName, middleName, lastName);
+                            pendingAuthors.put(key, newAuthor);
+                        }
+                        id = "pending_" + key.hashCode();
                         authorCache.put(key, id);
                     }
                     authorIds.add(id);
@@ -143,9 +202,12 @@ public class InpxImportPipeline {
                 String key = "||Неведомий Автор";
                 String id = authorCache.get(key);
                 if (id == null) {
-                    Author newAuthor = new Author("", "", "Неведомий Автор");
-                    Author saved = authorRepository.save(newAuthor);
-                    id = saved.getId().asString();
+                    Author newAuthor = pendingAuthors.get(key);
+                    if (newAuthor == null) {
+                        newAuthor = new Author("", "", "Неведомий Автор");
+                        pendingAuthors.put(key, newAuthor);
+                    }
+                    id = "pending_" + key.hashCode();
                     authorCache.put(key, id);
                 }
                 authorIds.add(id);
@@ -157,16 +219,21 @@ public class InpxImportPipeline {
             if (!genresStr.isEmpty()) {
                 for (String code : genresStr.split(":")) {
                     String clean = code.trim();
-                    if (!clean.isEmpty() && !genreCache.containsKey(clean)) {
-                        Genre newGenre = new Genre(clean, clean);
-                        genreRepository.save(newGenre);
-                        genreCache.put(clean, clean);
+                    if (!clean.isEmpty()) {
+                        if (!genreCache.containsKey(clean)) {
+                            Genre newGenre = pendingGenres.get(clean);
+                            if (newGenre == null) {
+                                newGenre = new Genre(clean, clean);
+                                pendingGenres.put(clean, newGenre);
+                            }
+                            genreCache.put(clean, clean);
+                        }
+                        genreCodes.add(clean);
                     }
-                    genreCodes.add(clean);
                 }
             }
 
-            // ---- Поля книги ----
+            // ---- Інші поля книги ----
             String title = parts[2].trim();
             if (title.isEmpty()) title = "Без назви";
             String series = parts[3].trim();
@@ -184,33 +251,34 @@ public class InpxImportPipeline {
             String keywords = parts.length > 12 ? parts[12].trim() : "";
             String annotation = parts.length > 13 ? parts[13].trim() : "";
 
-            // ---- Формуємо масив ----
+            // ---- Формуємо масив для вставки ----
             String bookId = BookId.generate().asString();
             String now = LocalDateTime.now().format(DATE_FORMATTER);
+
             Object[] row = new Object[22];
             int idx = 0;
             row[idx++] = bookId;
             row[idx++] = title;
             row[idx++] = series;
             row[idx++] = seqNumber;
-            row[idx++] = fileName;                      // file_name
-            row[idx++] = baseFolder;                    // folder (базова папка)
-            row[idx++] = "";                            // archive_entry
+            row[idx++] = fileName;
+            row[idx++] = baseFolder;
+            row[idx++] = "";
             row[idx++] = language;
             row[idx++] = fileSize;
             row[idx++] = keywords;
             row[idx++] = annotation;
-            row[idx++] = 0; // rate
-            row[idx++] = 0; // progress
-            row[idx++] = now; // update_date
-            row[idx++] = null; // isbn
-            row[idx++] = 0; // deleted
-            row[idx++] = 1; // local
-            row[idx++] = ""; // review
-            row[idx++] = now; // created_at
+            row[idx++] = 0;
+            row[idx++] = 0;
+            row[idx++] = now;
+            row[idx++] = null;
+            row[idx++] = 0;
+            row[idx++] = 1;
+            row[idx++] = "";
+            row[idx++] = now;
             row[idx++] = String.join(",", authorIds);
             row[idx++] = String.join(",", genreCodes);
-            row[idx++] = collectionRoot;                // collection_root
+            row[idx++] = collectionRoot;
             return row;
 
         } catch (Exception e) {

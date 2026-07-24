@@ -1,19 +1,32 @@
-# Отримуємо всі файли в поточній папці та підпапках
-$allFiles = Get-ChildItem -Path . -Recurse -File
-
-# Задаємо ім'я вихідного файлу – він з'явиться в поточній папці
+# Задаємо ім'я вихідного файлу
 $outFile = "merged_output.txt"
 
-# Відкриваємо потік для запису (UTF-8)
-$stream = [System.IO.StreamWriter]::new($outFile, $false, [System.Text.Encoding]::UTF8)
+# Створюємо чистий UTF-8 без BOM (false скасовує маркер байтів)
+$utf8NoBom = [System.Text.UTF8Encoding]::new($false)
+
+# Отримуємо всі файли, ігноруючи сам вихідний файл та службові папки IDE
+$allFiles = Get-ChildItem -Path . -Recurse -File | Where-Object { 
+    $_.Name -ne $outFile -and 
+    $_.FullName -notlike "*\.idea\*" -and 
+    $_.FullName -notlike "*\target\*"
+}
+
+# Відкриваємо потік для запису з кодуванням без BOM
+$stream = [System.IO.StreamWriter]::new($outFile, $false, $utf8NoBom)
 
 foreach ($file in $allFiles) {
+    # Швидке розділення файлів візуальною межею
     $stream.WriteLine("`n`n" + ("=" * 80))
     $stream.WriteLine("ФАЙЛ: $($file.FullName)")
     $stream.WriteLine("=" * 80)
-    $lines = Get-Content $file.FullName -ErrorAction SilentlyContinue
-    foreach ($line in $lines) { $stream.WriteLine($line) }
+    
+    # Оптимізоване швидке зчитування всього файлу одним махом (-Raw)
+    $content = Get-Content -Path $file.FullName -Raw -ErrorAction SilentlyContinue
+    if ($content) {
+        $stream.WriteLine($content)
+    }
 }
 
+# Обов'язково закриваємо потік, щоб зберегти дані на диск
 $stream.Close()
-Write-Host "Збережено у $($PWD)\$outFile"
+Write-Host "Збережено у $($PWD)\$outFile (UTF-8 без BOM, оптимізовано)" -ForegroundColor Green

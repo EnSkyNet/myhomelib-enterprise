@@ -192,8 +192,12 @@ public class LuceneSearchEngine implements SearchEngine {
                 indexWriter.close();
                 log.info("Lucene IndexWriter закрито");
             }
+            if (directory != null) {
+                directory.close();
+                log.info("Lucene Directory закрито");
+            }
         } catch (IOException e) {
-            log.error("Failed to close Lucene IndexWriter", e);
+            log.error("Failed to close Lucene resources", e);
         } finally {
             writerLock.unlock();
         }

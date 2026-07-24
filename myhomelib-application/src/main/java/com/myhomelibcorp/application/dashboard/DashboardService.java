@@ -53,9 +53,19 @@ public class DashboardService {
 
         CompletableFuture<BookDto> continueFuture = CompletableFuture.supplyAsync(() -> {
             String lastBookId = sessionRepository.getLastOpenedBookId();
-            if (lastBookId == null) return null;
+            if (lastBookId == null || lastBookId.isEmpty()) {
+                log.debug("Немає збереженої останньої книги");
+                return null;
+            }
+            log.debug("Завантаження останньої книги: {}", lastBookId);
             Book book = bookQueryRepository.findById(BookId.fromString(lastBookId)).orElse(null);
-            return book != null ? bookMapper.toDto(book) : null;
+            if (book == null) {
+                log.warn("Останню книгу {} не знайдено в БД", lastBookId);
+                return null;
+            }
+            BookDto dto = bookMapper.toDto(book);
+            log.debug("Завантажено книгу для продовження: {}, прогрес: {}%", dto.getTitle(), dto.getProgress());
+            return dto;
         });
 
         return CompletableFuture.allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture)

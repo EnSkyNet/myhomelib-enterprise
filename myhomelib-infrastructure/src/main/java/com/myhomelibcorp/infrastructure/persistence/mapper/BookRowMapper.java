@@ -20,42 +20,89 @@ public class BookRowMapper implements RowMapper<Book> {
     public Book mapRow(ResultSet rs, int rowNum) throws SQLException {
         BookId id = BookId.fromString(rs.getString("id"));
 
-        String collectionRoot = rs.getString("collection_root");
+        // Безпечне читання всіх полів з перевіркою на null
+        String title = safeGetString(rs, "title");
+        String series = safeGetString(rs, "series");
+        int sequenceNumber = safeGetInt(rs, "sequence_number");
+
+        // File fields
+        String fileName = safeGetString(rs, "file_name");
+        String folder = safeGetString(rs, "folder");
+        String archiveEntry = safeGetString(rs, "archive_entry");
+        long fileSize = safeGetLong(rs, "file_size");
+        String collectionRoot = safeGetString(rs, "collection_root");
         if (collectionRoot == null) collectionRoot = "";
 
         BookFile file = new BookFile(
-                rs.getString("file_name") != null ? rs.getString("file_name") : "",
-                rs.getString("folder") != null ? rs.getString("folder") : "",
-                rs.getString("archive_entry") != null ? rs.getString("archive_entry") : "",
-                rs.getLong("file_size"),
+                fileName != null ? fileName : "",
+                folder != null ? folder : "",
+                archiveEntry != null ? archiveEntry : "",
+                fileSize,
                 collectionRoot
         );
 
+        // Metadata
+        String annotation = safeGetString(rs, "annotation");
+        String keywords = safeGetString(rs, "keywords");
+        String language = safeGetString(rs, "language");
+        String isbn = safeGetString(rs, "isbn");
+        String review = safeGetString(rs, "review");
+        int rate = safeGetInt(rs, "rate");
+        int progress = safeGetInt(rs, "progress");
+
         BookMetadata metadata = BookMetadata.builder()
-                .annotation(rs.getString("annotation"))
-                .keywords(rs.getString("keywords"))
-                .language(rs.getString("language") != null ? LanguageCode.of(rs.getString("language")) : LanguageCode.of("uk"))
-                .isbn(rs.getString("isbn") != null ? Isbn.of(rs.getString("isbn")) : null)
-                .review(rs.getString("review"))
-                .rate(rs.getInt("rate"))
-                .progress(rs.getInt("progress"))
+                .annotation(annotation != null ? annotation : "")
+                .keywords(keywords != null ? keywords : "")
+                .language(language != null ? LanguageCode.of(language) : LanguageCode.of("uk"))
+                .isbn(isbn != null ? Isbn.of(isbn) : null)
+                .review(review != null ? review : "")
+                .rate(rate)
+                .progress(progress)
                 .build();
 
-        LocalDateTime updateDate = parseDate(rs.getString("update_date"));
-        LocalDateTime createdAt = parseDate(rs.getString("created_at"));
+        LocalDateTime updateDate = parseDate(safeGetString(rs, "update_date"));
+        LocalDateTime createdAt = parseDate(safeGetString(rs, "created_at"));
+
+        boolean deleted = safeGetInt(rs, "deleted") == 1;
+        boolean local = safeGetInt(rs, "local") == 1;
 
         return Book.builder()
                 .id(id)
-                .title(rs.getString("title") != null ? rs.getString("title") : "")
-                .series(rs.getString("series") != null ? rs.getString("series") : "")
-                .sequenceNumber(rs.getInt("sequence_number"))
+                .title(title != null ? title : "")
+                .series(series != null ? series : "")
+                .sequenceNumber(sequenceNumber)
                 .metadata(metadata)
                 .file(file)
-                .updateDate(updateDate)
-                .createdAt(createdAt)
-                .deleted(rs.getInt("deleted") == 1)
-                .local(rs.getInt("local") == 1)
+                .updateDate(updateDate != null ? updateDate : LocalDateTime.now())
+                .createdAt(createdAt != null ? createdAt : LocalDateTime.now())
+                .deleted(deleted)
+                .local(local)
                 .build();
+    }
+
+    // ===== Безпечні геттери =====
+    private String safeGetString(ResultSet rs, String column) {
+        try {
+            return rs.getString(column);
+        } catch (SQLException e) {
+            return null;
+        }
+    }
+
+    private int safeGetInt(ResultSet rs, String column) {
+        try {
+            return rs.getInt(column);
+        } catch (SQLException e) {
+            return 0;
+        }
+    }
+
+    private long safeGetLong(ResultSet rs, String column) {
+        try {
+            return rs.getLong(column);
+        } catch (SQLException e) {
+            return 0L;
+        }
     }
 
     private LocalDateTime parseDate(String dateStr) {

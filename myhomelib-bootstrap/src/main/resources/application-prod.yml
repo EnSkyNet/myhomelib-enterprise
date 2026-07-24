@@ -1,9 +1,38 @@
 # Специфічні налаштування для PROD профілю
 logging:
   level:
-    com.myhomelibcorp: INFO
-    org.springframework: WARN
+    com.myhomelibcorp: WARN
+    org.springframework: ERROR
+    org.flywaydb: WARN
+    org.sqlite: WARN
+    org.apache.lucene: WARN
   charset:
     console: UTF-8
   pattern:
-    console: ""  # JSON формат задається в logback-spring.xml
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+app:
+  import:
+    batch-size: 10000
+    index-disable-threshold: 1000000
+  search:
+    index-path: ${user.home}/.myhomelibcorp/search-index
+  features:
+    new-importer: true
+    new-navigation: true
+    virtual-table: true
+    lazy-search: true
+    async-cover-loading: true
+    use-fts5: false
+
+spring.cache.type: caffeine
+spring.cache.caffeine.spec: maximumSize=10000,expireAfterWrite=60m
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized

@@ -3,49 +3,41 @@ package com.myhomelibcorp.application.mapper;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.book.Book;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+import com.myhomelibcorp.domain.model.genre.Genre;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.springframework.beans.factory.annotation.Autowired;
 
+import java.util.List;
 import java.util.stream.Collectors;
 
-@Component
-@RequiredArgsConstructor
-public class BookMapper {
+@Mapper(componentModel = "spring")
+public abstract class BookMapper {
 
-    private final GenreRepository genreRepository;
+    @Autowired
+    protected GenreRepository genreRepository;
 
-    public BookDto toDto(Book book) {
-        if (book == null) return null;
+    @Mapping(target = "id", expression = "java(book.getId().asString())")
+    @Mapping(target = "authorsText", expression = "java(book.authorsText())")
+    @Mapping(target = "genres", ignore = true)
+    @Mapping(target = "genresText", expression = "java(mapGenresToText(book.getGenres()))")
+    @Mapping(target = "language", expression = "java(book.getLanguage() != null ? book.getLanguage().toString() : \"\")")
+    @Mapping(target = "isbn", expression = "java(book.getIsbn() != null ? book.getIsbn().toString() : null)")
+    @Mapping(target = "year", constant = "0")
+    @Mapping(target = "publisher", constant = "")
+    @Mapping(target = "fileSize", source = "file.fileSize")
+    @Mapping(target = "fileName", source = "file.fileName")
+    @Mapping(target = "folder", source = "file.folder")
+    @Mapping(target = "archiveEntry", source = "file.archiveEntry")
+    @Mapping(target = "collectionRoot", source = "file.collectionRoot")
+    public abstract BookDto toDto(Book book);
 
-        String genresText = book.getGenres().stream()
+    protected String mapGenresToText(List<Genre> genres) {
+        if (genres == null || genres.isEmpty()) {
+            return "";
+        }
+        return genres.stream()
                 .map(genre -> genreRepository.getGenreName(genre.getId().asString()))
                 .collect(Collectors.joining(", "));
-
-        return BookDto.builder()
-                .id(book.getId().asString())
-                .title(book.getTitle())
-                .authorsText(book.authorsText())
-                .series(book.getSeries())
-                .genresText(genresText)
-                .sequenceNumber(book.getSequenceNumber() != null ? book.getSequenceNumber() : 0)
-                .language(book.getLanguage() != null ? book.getLanguage().toString() : "")
-                .fileSize(book.getFileSize())
-                .fileName(book.getFileName())
-                .folder(book.getFolder())
-                .archiveEntry(book.getArchiveEntry())
-                .updateDate(book.getUpdateDate())
-                .annotation(book.getAnnotation())
-                .deleted(book.isDeleted())
-                .local(book.isLocal())
-                .review(book.getReview() != null ? book.getReview() : "")
-                .createdAt(book.getCreatedAt())
-                .collectionRoot(book.getCollectionRoot())
-                .rate(book.getRate())
-                .progress(book.getProgress())
-                .keywords(book.getKeywords())
-                .year(0)
-                .publisher("")
-                .isbn(book.getIsbn() != null ? book.getIsbn().toString() : null)
-                .build();
     }
 }

@@ -13,6 +13,7 @@
     <artifactId>myhomelib-infrastructure</artifactId>
 
     <dependencies>
+        <!-- Існуючі залежності -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-application</artifactId>
@@ -28,7 +29,6 @@
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-queryparser</artifactId>
         </dependency>
-        <!-- ВИПРАВЛЕНО: правильна назва артефакту -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-analysis-common</artifactId>
@@ -73,9 +73,20 @@
             <scope>provided</scope>
         </dependency>
 
+        <!-- === ТЕСТОВІ ЗАЛЕЖНОСТІ === -->
         <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-core</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.mockito</groupId>
+            <artifactId>mockito-junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
         <dependency>
@@ -83,5 +94,11 @@
             <artifactId>assertj-core</artifactId>
             <scope>test</scope>
         </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <scope>test</scope>
+        </dependency>
+
     </dependencies>
 </project>

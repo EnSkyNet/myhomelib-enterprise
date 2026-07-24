@@ -6,11 +6,9 @@ import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
+import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.cache.SearchCache;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.search.SearchQueryService;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchResult;
@@ -24,10 +22,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
-/**
- * Сервіс пошуку, який об'єднує пошук за книгами, авторами, серіями та жанрами.
- * Використовує Lucene для пошуку книг та прямі запити до репозиторіїв для інших сутностей.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -37,25 +31,15 @@ public class SearchService {
     private final BookQueryRepository bookQueryRepository;
     private final BookMapper bookMapper;
     private final SearchCache searchCache;
-    private final AuthorRepository authorRepository;
-    private final SeriesRepository seriesRepository;
-    private final GenreRepository genreRepository;
+    private final DictionaryCachePort dictionaryCache; // <-- використовуємо порт
     private final AuthorMapper authorMapper;
     private final GenreMapper genreMapper;
 
-    /**
-     * Пошук книг за текстовим запитом через Lucene з кешуванням.
-     *
-     * @param query текст пошуку
-     * @param limit максимальна кількість результатів
-     * @return список знайдених книг
-     */
     public List<BookDto> search(String query, int limit) {
         if (query == null || query.isBlank()) {
             return List.of();
         }
 
-        // Перевіряємо кеш
         List<BookId> cachedIds = searchCache.get(query);
         if (cachedIds != null && !cachedIds.isEmpty()) {
             log.debug("Пошук '{}' взято з кешу, знайдено {} книг", query, cachedIds.size());
@@ -78,9 +62,6 @@ public class SearchService {
         return loadBooks(ids);
     }
 
-    /**
-     * Завантажує повні дані книг за їх ID.
-     */
     private List<BookDto> loadBooks(List<BookId> ids) {
         return bookQueryRepository.findByIds(ids).stream()
                 .map(bookMapper::toDto)
@@ -88,16 +69,7 @@ public class SearchService {
     }
 
     /**
-     * Універсальний пошук, який повертає результати у вигляді карти з категоріями:
-     * <ul>
-     *   <li>authors – список {@link AuthorDto}</li>
-     *   <li>series – список назв серій {@link String}</li>
-     *   <li>genres – список {@link GenreDto}</li>
-     *   <li>books – список {@link BookDto}</li>
-     * </ul>
-     *
-     * @param query текст пошуку
-     * @return карта з результатами пошуку за категоріями
+     * Універсальний пошук, який використовує DictionaryCache замість прямих запитів до БД.
      */
     public Map<String, Object> searchAll(String query) {
         if (query == null || query.isBlank()) {
@@ -112,23 +84,23 @@ public class SearchService {
         Map<String, Object> results = new HashMap<>();
         String lowerQuery = query.toLowerCase();
 
-        // Пошук авторів
-        List<AuthorDto> authors = authorRepository.findAll().stream()
+        // Пошук авторів з кешу
+        List<AuthorDto> authors = dictionaryCache.getAllAuthors().stream()
                 .filter(author -> author.getFullName().toLowerCase().contains(lowerQuery))
                 .map(authorMapper::toDto)
                 .limit(20)
                 .collect(Collectors.toList());
         results.put("authors", authors);
 
-        // Пошук серій
-        List<String> series = seriesRepository.getAllSeriesNames().stream()
+        // Пошук серій з кешу
+        List<String> series = dictionaryCache.getAllSeriesNames().stream()
                 .filter(name -> name != null && name.toLowerCase().contains(lowerQuery))
                 .limit(20)
                 .collect(Collectors.toList());
         results.put("series", series);
 
-        // Пошук жанрів
-        List<GenreDto> genres = genreRepository.findAll().stream()
+        // Пошук жанрів з кешу
+        List<GenreDto> genres = dictionaryCache.getAllGenres().stream()
                 .filter(genre -> genre.getName() != null && genre.getName().toLowerCase().contains(lowerQuery))
                 .map(genreMapper::toDto)
                 .limit(20)

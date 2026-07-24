@@ -24,6 +24,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 @Component
@@ -49,13 +50,11 @@ public class LuceneSearchIndexer implements SearchIndexer {
             log.info("Lucene index initialized");
         } catch (LockObtainFailedException e) {
             log.warn("Index locked, trying to unlock...");
-            // FIX: Видаляємо lock-файл, якщо він існує
             Path lockPath = Paths.get(directory.toString(), "write.lock");
             if (Files.exists(lockPath)) {
                 Files.delete(lockPath);
                 log.info("Lock file deleted");
             }
-            // Повторна спроба
             IndexWriterConfig config = new IndexWriterConfig(analyzer);
             config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
             indexWriter = new IndexWriter(directory, config);
@@ -96,18 +95,29 @@ public class LuceneSearchIndexer implements SearchIndexer {
     @Override
     public void indexAll(List<Book> books) {
         if (books == null || books.isEmpty()) return;
-        int batchSize = 5000;
-        int count = 0;
+
+        // Пакетна індексація
+        List<Document> documents = new ArrayList<>();
         for (Book book : books) {
-            indexBook(book);
-            count++;
-            if (count % batchSize == 0) {
-                commit();
-                log.debug("Commit для {} книг", count);
-            }
+            SearchDocument doc = buildSearchDocument(
+                    book.getId().asString(),
+                    book.getTitle(),
+                    book.authorsText(),
+                    book.getSeries(),
+                    book.genresText(),
+                    book.getKeywords(),
+                    book.getAnnotation()
+            );
+            documents.add(createLuceneDocument(doc));
         }
-        commit();
-        log.info("Індексовано {} книг", books.size());
+
+        try {
+            indexWriter.addDocuments(documents);
+            commit();
+            log.info("Пакетно проіндексовано {} книг", documents.size());
+        } catch (IOException e) {
+            log.error("Помилка пакетної індексації", e);
+        }
     }
 
     @Override
@@ -169,17 +179,21 @@ public class LuceneSearchIndexer implements SearchIndexer {
                 .build();
     }
 
+    private Document createLuceneDocument(SearchDocument doc) {
+        Document luceneDoc = new Document();
+        luceneDoc.add(new StringField("id", doc.getId(), Field.Store.YES));
+        luceneDoc.add(new TextField("title", doc.getTitle(), Field.Store.YES));
+        luceneDoc.add(new TextField("authors", doc.getAuthors(), Field.Store.YES));
+        luceneDoc.add(new TextField("series", doc.getSeries(), Field.Store.YES));
+        luceneDoc.add(new TextField("genres", doc.getGenres(), Field.Store.YES));
+        luceneDoc.add(new TextField("keywords", doc.getKeywords(), Field.Store.YES));
+        luceneDoc.add(new TextField("annotation", doc.getAnnotation(), Field.Store.YES));
+        return luceneDoc;
+    }
+
     private void indexDocument(SearchDocument doc) {
         try {
-            Document luceneDoc = new Document();
-            luceneDoc.add(new StringField("id", doc.getId(), Field.Store.YES));
-            luceneDoc.add(new TextField("title", doc.getTitle(), Field.Store.YES));
-            luceneDoc.add(new TextField("authors", doc.getAuthors(), Field.Store.YES));
-            luceneDoc.add(new TextField("series", doc.getSeries(), Field.Store.YES));
-            luceneDoc.add(new TextField("genres", doc.getGenres(), Field.Store.YES));
-            luceneDoc.add(new TextField("keywords", doc.getKeywords(), Field.Store.YES));
-            luceneDoc.add(new TextField("annotation", doc.getAnnotation(), Field.Store.YES));
-
+            Document luceneDoc = createLuceneDocument(doc);
             indexWriter.updateDocument(new Term("id", doc.getId()), luceneDoc);
             log.debug("Індексовано документ: {}", doc.getId());
         } catch (IOException e) {

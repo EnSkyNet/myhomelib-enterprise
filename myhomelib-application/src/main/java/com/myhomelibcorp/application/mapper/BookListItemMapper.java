@@ -3,44 +3,54 @@ package com.myhomelibcorp.application.mapper;
 import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.book.Book;
-import lombok.RequiredArgsConstructor;
-import org.springframework.stereotype.Component;
+import com.myhomelibcorp.domain.model.genre.Genre;
+import org.mapstruct.Mapper;
+import org.mapstruct.Mapping;
+import org.springframework.beans.factory.annotation.Autowired;
 
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 import java.util.stream.Collectors;
 
-@Component
-@RequiredArgsConstructor
-public class BookListItemMapper {
+@Mapper(componentModel = "spring")
+public abstract class BookListItemMapper {
 
-    private final GenreRepository genreRepository;
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
 
-    public BookListItem toListItem(Book book) {
-        if (book == null) return null;
+    @Autowired
+    protected GenreRepository genreRepository;
 
-        String genresText = book.getGenres().stream()
+    @Mapping(target = "id", expression = "java(book.getId().asString())")
+    @Mapping(target = "authorsText", expression = "java(book.authorsText())")
+    @Mapping(target = "genresText", expression = "java(mapGenresToText(book.getGenres()))")
+    @Mapping(target = "updateDate", expression = "java(formatDate(book.getUpdateDate()))")
+    @Mapping(target = "createdAt", expression = "java(formatDate(book.getCreatedAt()))")
+    @Mapping(target = "language", expression = "java(book.getLanguage() != null ? book.getLanguage().toString() : \"\")")
+    @Mapping(target = "fileSize", source = "file.fileSize")
+    @Mapping(target = "fileName", source = "file.fileName")
+    @Mapping(target = "folder", source = "file.folder")
+    @Mapping(target = "archiveEntry", source = "file.archiveEntry")
+    @Mapping(target = "collectionRoot", source = "file.collectionRoot")
+    @Mapping(target = "coverHash", ignore = true)
+    @Mapping(target = "annotation", source = "annotation")
+    @Mapping(target = "rate", source = "rate")
+    @Mapping(target = "progress", source = "progress")
+    @Mapping(target = "local", source = "local")
+    @Mapping(target = "series", source = "series")
+    @Mapping(target = "title", source = "title")
+    public abstract BookListItem toListItem(Book book);
+
+    protected String mapGenresToText(List<Genre> genres) {
+        if (genres == null || genres.isEmpty()) {
+            return "";
+        }
+        return genres.stream()
                 .map(genre -> genreRepository.getGenreName(genre.getId().asString()))
                 .collect(Collectors.joining(", "));
+    }
 
-        return BookListItem.builder()
-                .id(book.getId().asString())
-                .title(book.getTitle())
-                .authorsText(book.authorsText())
-                .series(book.getSeries())
-                .genresText(genresText)
-                .rate(book.getRate())
-                .progress(book.getProgress())
-                .fileSize(book.getFileSize())
-                .local(book.isLocal())
-                .updateDate(book.getUpdateDate() != null ? book.getUpdateDate().format(DATE_FORMATTER) : "")
-                .createdAt(book.getCreatedAt() != null ? book.getCreatedAt().format(DATE_FORMATTER) : "")
-                .fileName(book.getFileName())
-                .folder(book.getFolder())
-                .archiveEntry(book.getArchiveEntry())
-                .collectionRoot(book.getCollectionRoot())
-                .annotation(book.getAnnotation())
-                .language(book.getLanguage() != null ? book.getLanguage().toString() : "")
-                .build();
+    protected String formatDate(LocalDateTime date) {
+        return date != null ? date.format(DATE_FORMATTER) : "";
     }
 }

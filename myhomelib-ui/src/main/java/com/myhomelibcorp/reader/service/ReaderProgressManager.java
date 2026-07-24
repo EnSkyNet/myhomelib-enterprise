@@ -27,16 +27,15 @@ public class ReaderProgressManager {
     private Timeline progressUpdateTimer;
     private double lastProgress = -1;
 
-    /**
-     * Запускає таймер автоматичного оновлення прогресу.
-     * Параметри позначені як final, щоб коректно працювати з лямбда-виразами.
-     */
     public void startProgressTimer(final WebEngine webEngine,
                                    final String bookId,
                                    final ProgressBar progressBar,
                                    final Label progressLabel,
                                    final Consumer<Double> onProgressChanged) {
-        if (bookId == null) return;
+        if (bookId == null) {
+            log.warn("startProgressTimer: bookId is null");
+            return;
+        }
         if (progressUpdateTimer != null) {
             progressUpdateTimer.stop();
         }
@@ -45,12 +44,14 @@ public class ReaderProgressManager {
         }));
         progressUpdateTimer.setCycleCount(Timeline.INDEFINITE);
         progressUpdateTimer.play();
+        log.debug("Таймер збереження прогресу запущено для книги {}", bookId);
     }
 
     public void stopProgressTimer() {
         if (progressUpdateTimer != null) {
             progressUpdateTimer.stop();
             progressUpdateTimer = null;
+            log.debug("Таймер збереження прогресу зупинено");
         }
     }
 
@@ -62,12 +63,11 @@ public class ReaderProgressManager {
         try {
             Object progressObj = webEngine.executeScript("window.progress");
             if (progressObj instanceof Number) {
-                double rawProgress = ((Number) progressObj).doubleValue();
-                if (rawProgress < 0) rawProgress = 0;
-                if (rawProgress > 1) rawProgress = 1;
+                double progress = ((Number) progressObj).doubleValue();
+                if (progress < 0) progress = 0;
+                if (progress > 1) progress = 1;
 
-                // Создаем строго финальную переменную для передачи в лямбду
-                final double finalProgress = rawProgress;
+                final double finalProgress = progress;
 
                 Platform.runLater(() -> {
                     progressBar.setProgress(finalProgress);
@@ -78,13 +78,13 @@ public class ReaderProgressManager {
                     lastProgress = finalProgress;
                     int progressPercent = (int) (finalProgress * 100);
 
-                    // Выносим блокирующее сохранение в БД в фоновый поток,
-                    // чтобы UI (скроллинг) не зависал каждые полсекунды
+                    // Зберігаємо в БД через окремий потік
                     new Thread(() -> {
                         try {
                             updateBookUseCase.updateProgress(BookId.fromString(bookId), progressPercent);
+                            log.trace("Збережено прогрес: {}% для книги {}", progressPercent, bookId);
                         } catch (Exception ex) {
-                            log.error("Помилка збереження прогресу в БД", ex);
+                            log.error("Помилка збереження прогресу в БД для книги {}: {}", bookId, ex.getMessage());
                         }
                     }).start();
 
@@ -94,15 +94,23 @@ public class ReaderProgressManager {
                 }
             }
         } catch (Exception e) {
-            log.debug("Помилка оновлення прогресу", e);
+            log.debug("Помилка оновлення прогресу: {}", e.getMessage());
         }
     }
 
-
     public void restoreScrollPosition(final WebEngine webEngine, final double progress) {
         if (progress > 0) {
-            String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + progress + ")";
-            webEngine.executeScript(script);
+            Platform.runLater(() -> {
+                try {
+                    String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + progress + ")";
+                    webEngine.executeScript(script);
+                    log.debug("Відновлено позицію скролу: {}%", progress * 100);
+                } catch (Exception e) {
+                    log.debug("Не вдалося відновити позицію скролу: {}", e.getMessage());
+                }
+            });
+        } else {
+            log.debug("Прогрес = 0, скрол не відновлюється");
         }
     }
 
@@ -114,10 +122,11 @@ public class ReaderProgressManager {
                 int progress = (int) (((Double) scrollY) * 100);
                 if (progress > 0 && progress <= 100) {
                     updateBookUseCase.updateProgress(BookId.fromString(bookId), progress);
+                    log.debug("Примусово збережено прогрес: {}% для книги {}", progress, bookId);
                 }
             }
         } catch (Exception e) {
-            log.debug("Не вдалося зберегти прогрес", e);
+            log.debug("Не вдалося примусово зберегти прогрес: {}", e.getMessage());
         }
     }
 }

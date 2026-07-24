@@ -3,21 +3,23 @@ package com.myhomelibcorp.ui.search;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
+import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
+import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
+import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -59,12 +61,13 @@ public class SearchWorkspaceController {
 
     private String lastQuery = "";
 
+    private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
+
     @FXML
     public void initialize() {
         setupListViews();
         setupSearchListener();
         searchField.requestFocus();
-        // Приховуємо всі секції при старті
         setSectionVisible(authorsSection, false);
         setSectionVisible(seriesSection, false);
         setSectionVisible(genresSection, false);
@@ -73,8 +76,7 @@ public class SearchWorkspaceController {
 
     private void setupListViews() {
         authorsListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
-            @Override
-            protected void updateItem(AuthorDto item, boolean empty) {
+            @Override protected void updateItem(AuthorDto item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? null : item.getFullName());
             }
@@ -82,15 +84,12 @@ public class SearchWorkspaceController {
         authorsListView.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 AuthorDto selected = authorsListView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
-                    navigationService.navigateToAuthor(AuthorId.fromString(selected.getId()));
-                }
+                if (selected != null) navigationService.navigateToAuthor(AuthorId.fromString(selected.getId()));
             }
         });
 
         seriesListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
+            @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? null : item);
             }
@@ -98,15 +97,12 @@ public class SearchWorkspaceController {
         seriesListView.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 String selected = seriesListView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
-                    navigationService.navigateToSeriesByName(selected);
-                }
+                if (selected != null) navigationService.navigateToSeriesByName(selected);
             }
         });
 
         genresListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
-            @Override
-            protected void updateItem(GenreDto item, boolean empty) {
+            @Override protected void updateItem(GenreDto item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? null : item.getName());
             }
@@ -114,42 +110,32 @@ public class SearchWorkspaceController {
         genresListView.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 GenreDto selected = genresListView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
-                    navigationService.navigateToGenre(GenreId.fromCode(selected.getCode()));
-                }
+                if (selected != null) navigationService.navigateToGenre(GenreId.fromCode(selected.getCode()));
             }
         });
 
         booksListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
-            @Override
-            protected void updateItem(BookDto item, boolean empty) {
+            @Override protected void updateItem(BookDto item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? null : item.getTitle() + " — " + item.getAuthorsText());
             }
         });
         booksListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
-            if (selected != null) {
-                appState.getBookDetails().setCurrentBook(selected);
-                log.info("Вибрано книгу: {}", selected.getTitle());
-            }
+            if (selected != null) appState.getBookDetails().setCurrentBook(selected);
         });
         booksListView.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 BookDto selected = booksListView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
-                    navigationService.navigateToBook(BookId.fromString(selected.getId()));
-                }
+                if (selected != null) navigationService.navigateToBook(BookId.fromString(selected.getId()));
             }
         });
     }
 
     private void setupSearchListener() {
         searchField.textProperty().addListener((obs, old, query) -> {
-            if (query != null && !query.isBlank()) {
-                performSearch(query);
-            } else {
-                clearResults();
-            }
+            debounce.stop();
+            debounce.setOnFinished(e -> performSearch(query));
+            debounce.playFromStart();
         });
     }
 
@@ -255,18 +241,6 @@ public class SearchWorkspaceController {
         }
     }
 
-    @FXML
-    public void onSearch() {
-        String query = searchField.getText();
-        if (query != null && !query.isBlank()) {
-            performSearch(query);
-        }
-    }
-
-    @FXML
-    public void onClear() {
-        searchField.clear();
-        clearResults();
-        searchField.requestFocus();
-    }
+    @FXML public void onSearch() { String q = searchField.getText(); if (q != null && !q.isBlank()) performSearch(q); }
+    @FXML public void onClear() { searchField.clear(); clearResults(); searchField.requestFocus(); }
 }

@@ -1,5 +1,3 @@
-// Файл: myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/imports/ImportDirectoryUseCase.java
-// (змінено тільки передачу rootDirectory в ImportFileUseCase)
 package com.myhomelibcorp.application.usecase.imports;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
@@ -8,6 +6,7 @@ import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
 import com.myhomelibcorp.application.port.out.event.EventPublisher;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
+import com.myhomelibcorp.application.port.out.infrastructure.DatabaseInitializerPort;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,6 +33,7 @@ public class ImportDirectoryUseCase {
     private final EventPublisher eventPublisher;
     private final IndexRebuilder indexRebuilder;
     private final BulkImportOptimizer bulkImportOptimizer;
+    private final DatabaseInitializerPort databaseInitializerPort;
 
     @Deprecated
     public int execute(Path directory, DoubleConsumer progressConsumer, AtomicBoolean cancelFlag) {
@@ -49,6 +49,9 @@ public class ImportDirectoryUseCase {
     }
 
     public ImportResult execute(ImportContext context) {
+        // ЄДИНИЙ виклик ініціалізації на весь імпорт каталогу
+        databaseInitializerPort.initializeCurrentCollection();
+
         Path directory = context.getRootDirectory();
         if (directory == null) {
             throw new IllegalArgumentException("Root directory cannot be null");
@@ -87,7 +90,7 @@ public class ImportDirectoryUseCase {
                 try {
                     ImportContext fileContext = ImportContext.builder()
                             .file(file)
-                            .rootDirectory(directory)   // передаємо кореневу папку для collectionRoot
+                            .rootDirectory(directory)
                             .updateExisting(context.isUpdateExisting())
                             .indexAfterSave(false)
                             .batchSize(batchSize)

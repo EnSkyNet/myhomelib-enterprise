@@ -8,8 +8,6 @@ import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
-import com.myhomelibcorp.domain.model.author.Author;
-import com.myhomelibcorp.domain.model.genre.Genre;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 

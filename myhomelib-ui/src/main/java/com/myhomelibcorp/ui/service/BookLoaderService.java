@@ -19,6 +19,7 @@ import com.myhomelibcorp.ui.viewmodel.BookTableViewModel;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -122,11 +123,55 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    public void loadRecentBooks() {
+    @Cacheable(value = "recentBooks", key = "#limit", unless = "#result == null || #result.isEmpty()")
+    public List<BookViewModel> loadRecentBooks(int limit) {
+        log.debug("Завантаження останніх книг з БД (кеш порожній)");
         PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.DATE, SortDirection.DESC))
+                .pageRequest(new PageRequest(0, limit, SortBy.DATE, SortDirection.DESC))
                 .build();
-        loadBooks(query);
+        PageResult<BookListItem> result = pageableRepository.findPage(query);
+        return result.content().stream()
+                .map(viewModelMapper::toViewModel)
+                .collect(Collectors.toList());
+    }
+
+    @Cacheable(value = "recentlyAdded", key = "#limit", unless = "#result == null || #result.isEmpty()")
+    public List<BookViewModel> loadRecentlyAdded(int limit) {
+        log.debug("Завантаження нещодавно доданих книг з БД (кеш порожній)");
+        PageableBookQuery query = PageableBookQuery.builder()
+                .pageRequest(new PageRequest(0, limit, SortBy.DATE, SortDirection.DESC))
+                .build();
+        PageResult<BookListItem> result = pageableRepository.findPage(query);
+        return result.content().stream()
+                .map(viewModelMapper::toViewModel)
+                .collect(Collectors.toList());
+    }
+
+    // Перевантажені методи для зручності (без параметра limit)
+    public void loadRecentBooks() {
+        List<BookViewModel> books = loadRecentBooks(10);
+        BookTableViewModel vm = appState.getBookTable();
+        vm.setBooks(books);
+        vm.setTotalElements(books.size());
+        vm.setTotalPages(1);
+        vm.setCurrentPage(0);
+        if (!books.isEmpty()) {
+            vm.setSelectedBook(books.get(0));
+        }
+        appState.getStatusBar().setStatusText("Показано останні " + books.size() + " книг");
+    }
+
+    public void loadRecentlyAdded() {
+        List<BookViewModel> books = loadRecentlyAdded(10);
+        BookTableViewModel vm = appState.getBookTable();
+        vm.setBooks(books);
+        vm.setTotalElements(books.size());
+        vm.setTotalPages(1);
+        vm.setCurrentPage(0);
+        if (!books.isEmpty()) {
+            vm.setSelectedBook(books.get(0));
+        }
+        appState.getStatusBar().setStatusText("Показано " + books.size() + " нещодавно доданих книг");
     }
 
     public void loadFavoriteBooks() {

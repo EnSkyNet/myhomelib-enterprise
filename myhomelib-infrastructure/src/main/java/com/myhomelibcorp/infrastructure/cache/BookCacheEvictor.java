@@ -18,14 +18,22 @@ public class BookCacheEvictor {
     @Async
     @EventListener
     public void onBookUpdated(BookUpdatedEvent event) {
-        log.debug("Очищення кешу для оновленої книги: {}", event.getBookId());
-        bookCache.evict(event.getBookId());
+        if (event.getBookId() != null) {
+            log.debug("Очищення кешу для оновленої книги: {}", event.getBookId());
+            bookCache.evict(event.getBookId());
+        } else {
+            log.warn("BookUpdatedEvent отримано без BookId");
+        }
     }
 
     @Async
     @EventListener
     public void onBookDeleted(BookDeletedEvent event) {
-        log.debug("Очищення кешу для видаленої книги: {}", event.getBookId());
-        bookCache.evict(event.getBookId());
+        if (event.getBookId() != null) {
+            log.debug("Очищення кешу для видаленої книги: {}", event.getBookId());
+            bookCache.evict(event.getBookId());
+        } else {
+            log.warn("BookDeletedEvent отримано без BookId");
+        }
     }
 }

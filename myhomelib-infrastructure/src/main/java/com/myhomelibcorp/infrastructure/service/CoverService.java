@@ -1,9 +1,9 @@
 package com.myhomelibcorp.infrastructure.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.port.out.cover.CoverCache;
 import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.application.port.out.cover.CoverReader;
-import com.myhomelibcorp.infrastructure.cache.CoverCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
@@ -19,20 +19,22 @@ public class CoverService implements CoverExtractor {
     private final CoverCache coverCache;
 
     @Override
-    public javafx.scene.image.Image extractCover(BookDto book) {
-        if (book == null) return null;
+    public byte[] extractCover(BookDto book) {
+        if (book == null) {
+            return null;
+        }
 
         String cacheKey = book.getId() != null ? book.getId() : book.getTitle() + "_" + book.getFileName();
-        javafx.scene.image.Image cached = coverCache.get(cacheKey);
+        byte[] cached = coverCache.get(cacheKey);
         if (cached != null) {
-            log.debug("Обкладинка з кешу: {}", cacheKey);
+            log.trace("Обкладинка з кешу: {}", cacheKey);
             return cached;
         }
 
-        javafx.scene.image.Image image = coverReader.readCover(book);
-        if (image != null) {
-            coverCache.put(cacheKey, image);
+        byte[] imageData = coverReader.readCover(book);
+        if (imageData != null && imageData.length > 0) {
+            coverCache.put(cacheKey, imageData);
         }
-        return image;
+        return imageData;
     }
 }

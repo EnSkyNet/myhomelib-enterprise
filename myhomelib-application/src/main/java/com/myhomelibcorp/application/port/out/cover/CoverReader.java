@@ -1,8 +1,11 @@
 package com.myhomelibcorp.application.port.out.cover;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import javafx.scene.image.Image;
 
+/**
+ * Читає обкладинку з файлової системи або архіву.
+ * Повертає масив байтів зображення.
+ */
 public interface CoverReader {
-    Image readCover(BookDto book);
+    byte[] readCover(BookDto book);
 }

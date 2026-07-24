@@ -4,8 +4,11 @@ import com.myhomelibcorp.application.event.BooksImportedBatchEvent;
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
+import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -15,6 +18,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -22,7 +26,8 @@ import java.util.List;
 public class BookSaver {
 
     private final BookCommandRepository bookCommandRepository;
-    private final ApplicationEventPublisher eventPublisher;
+    private final BookQueryRepository bookQueryRepository; // <-- Додано
+    private final ApplicationEventPublisher eventPublisher; // <-- Додано
     private final DuplicateDetector duplicateDetector;
     private final SearchIndexer searchIndexer;
 
@@ -32,7 +37,6 @@ public class BookSaver {
     public boolean saveBook(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
         if (book == null) return false;
 
-        // Перевірка дубліката з кешем
         if (policy == DuplicatePolicy.SKIP && duplicateDetector.isDuplicate(book)) {
             log.debug("Дублікат пропущено: {}", book.getTitle());
             return false;
@@ -74,7 +78,6 @@ public class BookSaver {
             }
         }
 
-        // SAVE_AS_NEW або звичайне збереження
         transactionTemplate.execute(status -> {
             bookCommandRepository.save(book);
             return null;
@@ -94,7 +97,6 @@ public class BookSaver {
 
         List<Book> booksToSave;
 
-        // Якщо політика SKIP – фільтруємо за допомогою кешу (O(1))
         if (policy == DuplicatePolicy.SKIP) {
             booksToSave = new ArrayList<>();
             for (Book book : books) {
@@ -113,26 +115,46 @@ public class BookSaver {
             return 0;
         }
 
-        // ---- Збереження в БД у транзакції (один COMMIT) ----
         transactionTemplate.execute(status -> {
             bookCommandRepository.saveBatch(booksToSave);
             return null;
         });
 
-        // ---- Оновлюємо кеш дублікатів (додаємо всі збережені) ----
         duplicateDetector.addAllKeys(booksToSave);
 
-        // ---- Індексація батчем (якщо потрібно) ----
         if (indexAfterSave) {
             searchIndexer.indexAll(booksToSave);
             searchIndexer.commit();
         }
 
-        // ---- Публікація однієї події на весь батч ----
         eventPublisher.publishEvent(new BooksImportedBatchEvent(booksToSave));
 
         log.info("Збережено {} книг (батч)", booksToSave.size());
         return booksToSave.size();
+    }
+
+    /**
+     * Видаляє книгу за ID та публікує подію BookDeletedEvent.
+     */
+    public void deleteBook(BookId bookId) {
+        if (bookId == null) {
+            throw new IllegalArgumentException("BookId cannot be null");
+        }
+
+        Optional<Book> bookOpt = bookQueryRepository.findById(bookId);
+        if (bookOpt.isEmpty()) {
+            log.warn("Спроба видалити неіснуючу книгу: {}", bookId);
+            return;
+        }
+
+        transactionTemplate.execute(status -> {
+            bookCommandRepository.deleteById(bookId);
+            return null;
+        });
+
+        // Публікуємо подію видалення
+        eventPublisher.publishEvent(new BookDeletedEvent(bookId));
+        log.debug("Книгу видалено: {}", bookId);
     }
 
     private Book mergeBooks(Book existing, Book incoming) {

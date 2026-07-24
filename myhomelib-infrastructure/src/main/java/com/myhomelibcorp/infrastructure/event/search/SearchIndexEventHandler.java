@@ -1,8 +1,7 @@
 package com.myhomelibcorp.infrastructure.event.search;
 
-import com.myhomelibcorp.application.event.BookImportedEvent;
+import com.myhomelibcorp.application.event.BooksImportedBatchEvent;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
-import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import com.myhomelibcorp.infrastructure.event.SimpleEventBus;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
@@ -19,19 +18,29 @@ public class SearchIndexEventHandler {
 
     @PostConstruct
     public void init() {
-        eventBus.register(BookImportedEvent.class, this::handleBookImported);
-        log.info("SearchIndexEventHandler зареєстровано");
+        // Замість окремих подій BookImportedEvent слухаємо батчеві події
+        eventBus.register(BooksImportedBatchEvent.class, this::handleBooksImportedBatch);
+        log.info("SearchIndexEventHandler зареєстровано для батчевих подій імпорту");
     }
 
-    private void handleBookImported(BookImportedEvent event) {
-        // Використовуємо методи record: bookId() та snapshot()
-        log.info("Отримано подію імпорту книги: {}", event.bookId());
-        BookSnapshot snapshot = event.snapshot();
-        if (snapshot != null) {
-            searchIndexer.indexSnapshot(snapshot);
-            log.info("Книгу проіндексовано: {}", event.bookId());
-        } else {
-            log.warn("Snapshot відсутній для книги: {}", event.bookId());
+    private void handleBooksImportedBatch(BooksImportedBatchEvent event) {
+        var books = event.books();
+        if (books == null || books.isEmpty()) {
+            log.debug("Отримано порожній батч імпорту – пропускаємо індексацію");
+            return;
+        }
+
+        log.info("Отримано батч імпорту з {} книг. Індексація...", books.size());
+
+        try {
+            // Індексуємо всі книги батчем
+            searchIndexer.indexAll(books);
+            // Коміт виконується всередині indexAll, але для впевненості викличемо ще раз
+            searchIndexer.commit();
+            log.info("Батч з {} книг успішно проіндексовано", books.size());
+        } catch (Exception e) {
+            log.error("Помилка індексації батча з {} книг", books.size(), e);
+            // Помилка не повинна зупиняти весь імпорт, але ми логуємо
         }
     }
 }
