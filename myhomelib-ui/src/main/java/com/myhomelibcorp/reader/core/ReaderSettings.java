@@ -73,17 +73,14 @@ public class ReaderSettings {
         css.append("font-size: ").append(fontSize).append("px;");
         css.append("line-height: ").append(lineSpacing).append(";");
         css.append("text-align: ").append(alignment).append(";");
-        css.append("margin-top: ").append(marginTop).append("px;");
-        css.append("margin-bottom: ").append(marginBottom).append("px;");
-        css.append("margin-left: 10px;"); // зменшено з 30px до 10px
-        css.append("margin-right: 10px;"); // зменшено з 30px до 10px
-        css.append("width: 100% !important;");
-        css.append("max-width: 100% !important;");
-        css.append("overflow-x: hidden !important;"); // заборона горизонтального скролу
+        css.append("margin: 0 auto;");
+        css.append("padding: 20px 5%;");
+        css.append("max-width: 100%;");
+        css.append("box-sizing: border-box;");
         css.append("word-wrap: break-word;");
         css.append("overflow-wrap: break-word;");
         css.append("white-space: normal;");
-        css.append("box-sizing: border-box;");
+        css.append("overflow-x: hidden;");
         if (hyphenation) {
             css.append("hyphens: auto;");
             css.append("-webkit-hyphens: auto;");

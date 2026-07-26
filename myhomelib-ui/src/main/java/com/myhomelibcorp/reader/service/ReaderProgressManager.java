@@ -1,132 +1,162 @@
 package com.myhomelibcorp.reader.service;
 
-import com.myhomelibcorp.application.usecase.book.UpdateBookUseCase;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
-import javafx.animation.KeyFrame;
-import javafx.animation.Timeline;
-import javafx.application.Platform;
-import javafx.scene.control.Label;
-import javafx.scene.control.ProgressBar;
+import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.dto.ReadingProgressDto;
+import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import javafx.scene.web.WebEngine;
-import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Scope;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
-import java.util.function.Consumer;
+import java.time.LocalDateTime;
+import java.util.Optional;
 
-@Service
-@Scope("prototype")
+@Component
 @RequiredArgsConstructor
 @Slf4j
 public class ReaderProgressManager {
 
-    private final UpdateBookUseCase updateBookUseCase;
+    private final ReadingProgressRepository repository;
+    private final ReaderJsBridge jsBridge;
 
-    private Timeline progressUpdateTimer;
-    private double lastProgress = -1;
+    private BookDto currentBook;
+    private ReadingProgressDto lastSaved = null;
+    private double lastSavedPercent = -1;
 
-    public void startProgressTimer(final WebEngine webEngine,
-                                   final String bookId,
-                                   final ProgressBar progressBar,
-                                   final Label progressLabel,
-                                   final Consumer<Double> onProgressChanged) {
-        if (bookId == null) {
-            log.warn("startProgressTimer: bookId is null");
-            return;
-        }
-        if (progressUpdateTimer != null) {
-            progressUpdateTimer.stop();
-        }
-        progressUpdateTimer = new Timeline(new KeyFrame(Duration.millis(500), e -> {
-            updateProgress(webEngine, bookId, progressBar, progressLabel, onProgressChanged);
-        }));
-        progressUpdateTimer.setCycleCount(Timeline.INDEFINITE);
-        progressUpdateTimer.play();
-        log.debug("Таймер збереження прогресу запущено для книги {}", bookId);
+    public void setCurrentBook(BookDto book) {
+        this.currentBook = book;
     }
 
-    public void stopProgressTimer() {
-        if (progressUpdateTimer != null) {
-            progressUpdateTimer.stop();
-            progressUpdateTimer = null;
-            log.debug("Таймер збереження прогресу зупинено");
-        }
+    public BookDto getCurrentBook() {
+        return currentBook;
     }
 
-    private void updateProgress(final WebEngine webEngine,
-                                final String bookId,
-                                final ProgressBar progressBar,
-                                final Label progressLabel,
-                                final Consumer<Double> onProgressChanged) {
-        try {
-            Object progressObj = webEngine.executeScript("window.progress");
-            if (progressObj instanceof Number) {
-                double progress = ((Number) progressObj).doubleValue();
-                if (progress < 0) progress = 0;
-                if (progress > 1) progress = 1;
+    /**
+     * Отримує поточний прогрес на основі видимого абзацу та зсуву.
+     * Логує індекси для відстеження.
+     */
+    public ReadingProgressDto getCurrentProgress(WebEngine engine) {
+        if (currentBook == null || engine == null) {
+            return null;
+        }
 
-                final double finalProgress = progress;
+        int index = jsBridge.getFirstVisibleParagraphIndex(engine);
+        if (index < 0) {
+            log.warn("Не вдалося визначити перший видимий абзац для книги {}", currentBook.getId());
+            return null;
+        }
 
-                Platform.runLater(() -> {
-                    progressBar.setProgress(finalProgress);
-                    progressLabel.setText((int) (finalProgress * 100) + "%");
-                });
+        int offset = jsBridge.getCharOffsetForParagraph(engine, index);
+        double percent = jsBridge.getScrollPercent(engine);
 
-                if (Math.abs(finalProgress - lastProgress) > 0.01) {
-                    lastProgress = finalProgress;
-                    int progressPercent = (int) (finalProgress * 100);
+        if (percent == 0 && index > 0) {
+            percent = jsBridge.getParagraphPositionPercent(engine, index);
+        }
 
-                    // Зберігаємо в БД через окремий потік
-                    new Thread(() -> {
-                        try {
-                            updateBookUseCase.updateProgress(BookId.fromString(bookId), progressPercent);
-                            log.trace("Збережено прогрес: {}% для книги {}", progressPercent, bookId);
-                        } catch (Exception ex) {
-                            log.error("Помилка збереження прогресу в БД для книги {}: {}", bookId, ex.getMessage());
-                        }
-                    }).start();
+        log.debug("Поточний прогрес: книга={}, абзац={}, зсув={}, %={}",
+                currentBook.getId(), index, offset, percent);
 
-                    if (onProgressChanged != null) {
-                        onProgressChanged.accept(finalProgress);
-                    }
-                }
+        return ReadingProgressDto.builder()
+                .bookId(currentBook.getId())
+                .paragraphId(String.valueOf(index))
+                .charOffset(offset)
+                .percent(percent * 100)
+                .updatedAt(LocalDateTime.now())
+                .build();
+    }
+
+    public void saveProgress(ReadingProgressDto progress) {
+        if (progress == null) return;
+        int fixedOffset = Math.max(0, progress.getCharOffset());
+        ReadingProgressDto toSave = ReadingProgressDto.builder()
+                .bookId(progress.getBookId())
+                .paragraphId(progress.getParagraphId())
+                .charOffset(fixedOffset)
+                .percent(progress.getPercent())
+                .updatedAt(progress.getUpdatedAt())
+                .build();
+        repository.save(toSave);
+        lastSaved = toSave;
+        lastSavedPercent = toSave.getPercent();
+        log.info("Збережено прогрес: книга={}, абзац={}, зсув={}, %={}",
+                toSave.getBookId(), toSave.getParagraphId(), toSave.getCharOffset(), (int) toSave.getPercent());
+    }
+
+    public boolean shouldSave(ReadingProgressDto current) {
+        if (current == null) return false;
+        if (lastSaved == null) return true;
+        if (!lastSaved.getParagraphId().equals(current.getParagraphId())) return true;
+        if (Math.abs(lastSaved.getCharOffset() - current.getCharOffset()) > 10) return true;
+        return Math.abs(lastSavedPercent - current.getPercent()) > 1.0;
+    }
+
+    public Optional<ReadingProgressDto> loadProgress(String bookId) {
+        return repository.findByBookId(bookId);
+    }
+
+    /**
+     * Відновлює позицію за збереженим прогресом.
+     * Якщо індекс некоректний, використовує відсоток для грубої прокрутки,
+     * а потім шукає найближчий абзац.
+     */
+    public boolean restorePosition(WebEngine engine, String bookId) {
+        Optional<ReadingProgressDto> opt = loadProgress(bookId);
+        if (opt.isEmpty()) {
+            log.info("Немає збереженої позиції для книги {}", bookId);
+            return false;
+        }
+
+        ReadingProgressDto progress = opt.get();
+        lastSaved = progress;
+        lastSavedPercent = progress.getPercent();
+
+        int index = extractIndex(progress.getParagraphId());
+        int offset = Math.max(0, progress.getCharOffset());
+
+        int total = jsBridge.getParagraphCount(engine);
+        if (index >= total) {
+            log.warn("Індекс {} виходить за межі (всього {} абзаців). Використовуємо відсоток для прокрутки.",
+                    index, total);
+            // Використовуємо відсоток для приблизної прокрутки
+            double percent = progress.getPercent() / 100.0;
+            String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
+            engine.executeScript(script);
+            // Потім знаходимо перший видимий абзац і запам'ятовуємо його індекс
+            int newIndex = jsBridge.getFirstVisibleParagraphIndex(engine);
+            if (newIndex >= 0) {
+                log.debug("Після прокрутки за відсотком знайдено абзац з індексом {}", newIndex);
+                // Можна оновити збережений індекс для майбутніх відновлень
+                index = newIndex;
+            } else {
+                // Якщо не вдалося, залишаємо останній абзац
+                index = total - 1;
             }
-        } catch (Exception e) {
-            log.debug("Помилка оновлення прогресу: {}", e.getMessage());
         }
-    }
+        if (index < 0) index = 0;
 
-    public void restoreScrollPosition(final WebEngine webEngine, final double progress) {
-        if (progress > 0) {
-            Platform.runLater(() -> {
-                try {
-                    String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + progress + ")";
-                    webEngine.executeScript(script);
-                    log.debug("Відновлено позицію скролу: {}%", progress * 100);
-                } catch (Exception e) {
-                    log.debug("Не вдалося відновити позицію скролу: {}", e.getMessage());
-                }
-            });
+        boolean success = jsBridge.scrollToParagraph(engine, index, offset);
+        if (success) {
+            log.info("Відновлено позицію: книга={}, абзац={}, зсув={}, %={}",
+                    bookId, index, offset, progress.getPercent());
         } else {
-            log.debug("Прогрес = 0, скрол не відновлюється");
+            log.warn("Не вдалося відновити позицію для індексу {}", index);
         }
+        return success;
     }
 
-    public void saveProgress(final WebEngine webEngine, final String bookId) {
-        if (bookId == null) return;
-        try {
-            Object scrollY = webEngine.executeScript("window.progress");
-            if (scrollY instanceof Double) {
-                int progress = (int) (((Double) scrollY) * 100);
-                if (progress > 0 && progress <= 100) {
-                    updateBookUseCase.updateProgress(BookId.fromString(bookId), progress);
-                    log.debug("Примусово збережено прогрес: {}% для книги {}", progress, bookId);
-                }
+    private int extractIndex(String paragraphId) {
+        if (paragraphId == null) return 0;
+        if (paragraphId.startsWith("p")) {
+            try {
+                return Integer.parseInt(paragraphId.substring(1));
+            } catch (NumberFormatException e) {
+                return 0;
             }
-        } catch (Exception e) {
-            log.debug("Не вдалося примусово зберегти прогрес: {}", e.getMessage());
+        }
+        try {
+            return Integer.parseInt(paragraphId);
+        } catch (NumberFormatException e) {
+            return 0;
         }
     }
 }

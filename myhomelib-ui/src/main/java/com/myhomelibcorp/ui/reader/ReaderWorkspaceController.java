@@ -64,12 +64,11 @@ public class ReaderWorkspaceController {
         webEngine.setJavaScriptEnabled(true);
         webView.setCache(true);
 
-        // Прив'язка ширини WebView до батьківського контейнера
+        // Прив'язка ширини WebView
         webView.setMaxWidth(Double.MAX_VALUE);
         webView.setMaxHeight(Double.MAX_VALUE);
         webView.setPrefWidth(Double.MAX_VALUE);
 
-        // Прив'язка до ширини сцени
         webView.sceneProperty().addListener((obs, oldScene, newScene) -> {
             if (newScene != null) {
                 webView.prefWidthProperty().bind(newScene.widthProperty().multiply(0.98));
@@ -83,8 +82,9 @@ public class ReaderWorkspaceController {
         webEngine.getLoadWorker().stateProperty().addListener((obs, oldState, newState) -> {
             if (newState == Worker.State.SUCCEEDED) {
                 log.info("Сторінка завантажена, налаштовуємо слухач прогресу");
+                // Викликаємо тільки setupProgressListener – він сам запускає таймер
                 lifecycleManager.setupProgressListener(webEngine);
-                lifecycleManager.startProgressSaving(webEngine, progressBar, progressLabel);
+                // Відновлюємо позицію (метод публічний)
                 if (currentBookId != null) {
                     lifecycleManager.restorePosition(currentBookId);
                 }
@@ -187,14 +187,16 @@ public class ReaderWorkspaceController {
         settings.save();
         BookDto currentBook = lifecycleManager.getCurrentBook();
         if (currentBook != null) {
+            // Перезавантажуємо книгу з новою темою
             lifecycleManager.openBook(currentBook, webEngine, progressBar, progressLabel);
+            // Відновлюємо позицію після завантаження
             if (currentBookId != null) {
                 lifecycleManager.restorePosition(currentBookId);
             }
         }
     }
 
-    // ==================== Зміст (TOC) ====================
+    // ==================== Зміст ====================
 
     @FXML
     private void onToggleToc() {
@@ -207,8 +209,9 @@ public class ReaderWorkspaceController {
         BookDto currentBook = lifecycleManager.getCurrentBook();
         if (currentBook == null) return;
         double progress = progressBar.getProgress();
-        String context = lifecycleManager.getTextAtPosition(webEngine, progress);
-        String chapterTitle = lifecycleManager.getCurrentChapterTitle(webEngine);
+        // Викликаємо без WebEngine (використовується збережений екземпляр)
+        String context = lifecycleManager.getTextAtPosition(progress);
+        String chapterTitle = lifecycleManager.getCurrentChapterTitle();
         Bookmark bookmark = Bookmark.create(currentBook.getId(), progress, context, chapterTitle);
         bookmarkManager.addBookmark(currentBook.getId(), bookmark);
         bookmarksLabel.setText("⭐ " + bookmarkManager.getBookmarkCount(currentBook.getId()));
@@ -257,14 +260,14 @@ public class ReaderWorkspaceController {
         }
     }
 
-    // ==================== Додаткові публічні методи ====================
+    // ==================== Публічні методи для зовнішнього використання ====================
 
     public String getTextAtPosition(double position) {
-        return lifecycleManager.getTextAtPosition(webEngine, position);
+        return lifecycleManager.getTextAtPosition(position);
     }
 
     public String getCurrentChapterTitle() {
-        return lifecycleManager.getCurrentChapterTitle(webEngine);
+        return lifecycleManager.getCurrentChapterTitle();
     }
 
     // ==================== Очищення ресурсів ====================
