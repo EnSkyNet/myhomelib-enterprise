@@ -71,6 +71,7 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     }
 
     @Override
+    @Deprecated
     public List<Book> findAll() {
         return delegate.findAll();
     }
@@ -90,4 +91,18 @@ public class CachedBookQueryRepository implements BookQueryRepository {
         return delegate.findFavoriteAuthors(limit);
     }
 
+    @Override
+    public long countBooksWithoutAuthor() {
+        return delegate.countBooksWithoutAuthor();
+    }
+
+    @Override
+    public long countBooksWithoutGenre() {
+        return delegate.countBooksWithoutGenre();
+    }
+
+    @Override
+    public List<BookId> findDuplicateBookIds() {
+        return delegate.findDuplicateBookIds();
+    }
 }

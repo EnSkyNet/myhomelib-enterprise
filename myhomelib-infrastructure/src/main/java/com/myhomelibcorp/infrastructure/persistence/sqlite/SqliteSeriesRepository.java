@@ -74,6 +74,7 @@ public class SqliteSeriesRepository implements SeriesRepository {
      * Синхронізує таблицю series з даними з books.
      * Виправлено генерацію ID у форматі UUID з дефісами.
      */
+    @Override
     public void syncSeriesFromBooks() {
         JdbcTemplate jt = getJdbcTemplate();
         try {

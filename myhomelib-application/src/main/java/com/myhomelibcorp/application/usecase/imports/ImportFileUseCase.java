@@ -112,12 +112,30 @@ public class ImportFileUseCase {
             bulkImportOptimizer.enableBulkInsertMode();
         }
 
+        List<Book> allBooks = new ArrayList<>();
+
         try {
             var importer = importerRegistry.findImporter(context.getFile());
             try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
                 Stream<Book> enrichedStream = enrichWithCollectionRoot(bookStream, context.getRootDirectory());
-                saveBooksBatch(enrichedStream, context, stats, indexAfterSave);
+
+                // Збираємо всі книги в список для однієї транзакції
+                enrichedStream.forEach(book -> {
+                    if (book != null) {
+                        allBooks.add(book);
+                    }
+                });
             }
+
+            if (!allBooks.isEmpty()) {
+                // ОДНА транзакція на весь файл
+                DuplicatePolicy policy = DuplicatePolicy.SKIP;
+                int totalSaved = importTransaction.saveAllInTransaction(allBooks, indexAfterSave, policy);
+                stats.incrementImported(totalSaved);
+                stats.getSkipped().addAndGet(allBooks.size() - totalSaved);
+                log.info("Збережено {} книг з {} (одна транзакція)", totalSaved, allBooks.size());
+            }
+
         } catch (Exception e) {
             log.error("Помилка імпорту файлу: {}", context.getFile(), e);
             ImportErrorHandler.ErrorAction action = errorHandler.handleError(context.getFile(), e, 1);
@@ -182,55 +200,5 @@ public class ImportFileUseCase {
                     .local(book.isLocal())
                     .build();
         });
-    }
-
-    private void saveBooksBatch(Stream<Book> bookStream, ImportContext context, ImportStatistics stats, boolean indexAfterSave) {
-        int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
-        List<Book> batch = new ArrayList<>(batchSize);
-        DuplicatePolicy policy = DuplicatePolicy.SKIP;
-        int totalSaved = 0;
-
-        try (Stream<Book> stream = bookStream) {
-            var iterator = stream.iterator();
-            while (iterator.hasNext()) {
-                if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
-                    log.info("Імпорт скасовано");
-                    break;
-                }
-
-                Book book = iterator.next();
-                if (book != null) {
-                    batch.add(book);
-                    if (batch.size() >= batchSize) {
-                        int saved = importTransaction.saveBatchInTransaction(batch, indexAfterSave, policy);
-                        totalSaved += saved;
-                        stats.incrementImported(saved);
-                        stats.getSkipped().addAndGet(batch.size() - saved);
-                        batch.clear();
-
-                        if (context.getStatusConsumer() != null) {
-                            context.getStatusConsumer().accept("Оброблено " + totalSaved + " книг");
-                        }
-                        if (context.getProgressListener() != null) {
-                            context.getProgressListener().accept((double) totalSaved);
-                        }
-                    }
-                }
-            }
-
-            if (!batch.isEmpty()) {
-                int saved = importTransaction.saveBatchInTransaction(batch, indexAfterSave, policy);
-                totalSaved += saved;
-                stats.incrementImported(saved);
-                stats.getSkipped().addAndGet(batch.size() - saved);
-                if (context.getStatusConsumer() != null) {
-                    context.getStatusConsumer().accept("Оброблено " + totalSaved + " книг");
-                }
-            }
-
-        } catch (Exception e) {
-            log.error("Помилка збереження батча", e);
-            stats.incrementErrors();
-        }
     }
 }

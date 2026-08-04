@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.cache;
 import com.myhomelibcorp.application.port.out.cache.Cache;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -10,16 +11,14 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-/**
- * Кеш для книг. Використовує Caffeine для зберігання об'єктів Book за їх ID.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class BookCache {
 
     private final CacheFactory cacheFactory;
-    private Cache<BookId, Book> cache;
+    private final CollectionManager collectionManager;
+    private Cache<String, Book> cache;
 
     @PostConstruct
     public void init() {
@@ -27,39 +26,34 @@ public class BookCache {
         log.info("BookCache ініціалізовано: maxSize=10000, expireMinutes=30");
     }
 
-    /**
-     * Отримує книгу з кешу за ID.
-     */
+    private String buildKey(BookId id) {
+        String collectionId = collectionManager.getCurrentCollection() != null
+                ? collectionManager.getCurrentCollection().getId()
+                : "default";
+        return collectionId + ":" + id.asString();
+    }
+
     public Optional<Book> get(BookId id) {
         if (id == null) {
             return Optional.empty();
         }
-        return cache.get(id);
+        return cache.get(buildKey(id));
     }
 
-    /**
-     * Зберігає книгу в кеші.
-     */
     public void put(BookId id, Book book) {
         if (id != null && book != null) {
-            cache.put(id, book);
+            cache.put(buildKey(id), book);
             log.trace("Книгу додано до кешу: {}", id);
         }
     }
 
-    /**
-     * Видаляє книгу з кешу за ID.
-     */
     public void evict(BookId id) {
         if (id != null) {
-            cache.evict(id);
+            cache.evict(buildKey(id));
             log.trace("Книгу видалено з кешу: {}", id);
         }
     }
 
-    /**
-     * Очищує весь кеш книг.
-     */
     public void clear() {
         cache.clear();
         log.debug("Кеш книг очищено");

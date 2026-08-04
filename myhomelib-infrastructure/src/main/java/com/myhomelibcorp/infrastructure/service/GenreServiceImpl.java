@@ -33,7 +33,6 @@ public class GenreServiceImpl implements GenreRepository {
     @PostConstruct
     public void init() {
         loadGenresFromResource();
-        // Завантаження з БД тепер ліниве – у getGenreName()
     }
 
     private void loadGenresFromResource() {
@@ -80,7 +79,6 @@ public class GenreServiceImpl implements GenreRepository {
         String name = genreMap.get(code);
         if (name != null) return name;
 
-        // Ліниве завантаження з БД
         try {
             String sql = "SELECT name FROM genres WHERE code = ?";
             String dbName = getJdbcTemplate().queryForObject(sql, String.class, code);
@@ -174,5 +172,21 @@ public class GenreServiceImpl implements GenreRepository {
     @Override
     public void deleteById(GenreId id) {
         getJdbcTemplate().update("DELETE FROM genres WHERE code = ?", id.asString());
+    }
+
+    @Override
+    public long countOrphanedGenres() {
+        try {
+            String sql = """
+                    SELECT COUNT(*) FROM genres g
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM book_genres bg WHERE bg.genre_code = g.code
+                    )
+                    """;
+            return getJdbcTemplate().queryForObject(sql, Long.class);
+        } catch (Exception e) {
+            log.warn("Не вдалося підрахувати кількість жанрів без книг", e);
+            return 0;
+        }
     }
 }

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.controller.RestoreController"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      prefWidth="620" prefHeight="450">
+
+    <Label text="📂 Відновлення з резервної копії"
+           style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+
+    <Separator/>
+
+    <!-- Шлях до резервної копії -->
+    <HBox spacing="10" alignment="CENTER_LEFT">
+        <Label text="📁 Папка з копією:" prefWidth="120" style="-fx-font-weight: bold;"/>
+        <TextField fx:id="backupPathField" HBox.hgrow="ALWAYS" promptText="Виберіть папку з резервною копією..."/>
+        <Button fx:id="selectPathButton" text="📂 Вибрати" onAction="#onSelectPath"
+                style="-fx-background-color: #3498db; -fx-text-fill: white;"/>
+    </HBox>
+
+    <Separator/>
+
+    <!-- Опції відновлення -->
+    <Label text="📋 Що відновлювати:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+
+    <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 5;">
+        <CheckBox fx:id="restoreIndexCheckBox" text="🔍 Пошуковий індекс" selected="true"/>
+        <CheckBox fx:id="restoreCoversCheckBox" text="🖼️ Обкладинки книг" selected="true"/>
+        <CheckBox fx:id="restoreMetadataCheckBox" text="📝 Метадані колекції" selected="true"/>
+        <Label text="📊 База даних (відновлюється завжди)" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+    </VBox>
+
+    <Separator/>
+
+    <!-- Прогрес -->
+    <VBox spacing="5">
+        <Label fx:id="statusLabel" text="Виберіть папку з резервною копією" style="-fx-text-fill: #7f8c8d;"/>
+        <ProgressBar fx:id="progressBar" prefWidth="580" visible="false"/>
+        <Label fx:id="progressLabel" text="0%" visible="false" style="-fx-text-fill: #2c3e50;"/>
+    </VBox>
+
+    <!-- Лог -->
+    <TextArea fx:id="logArea" prefHeight="150" editable="false" visible="false"
+              style="-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: #1e1e1e; -fx-text-fill: #d4d4d4;"/>
+
+    <!-- Кнопки -->
+    <HBox spacing="10" alignment="CENTER_RIGHT">
+        <Button fx:id="restoreButton" text="📂 Відновити" onAction="#onRestore" disable="true"
+                style="-fx-background-color: #e67e22; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 8 25;"/>
+        <Button fx:id="cancelButton" text="⏹ Скасувати" onAction="#onCancel" visible="false"
+                style="-fx-background-color: #e74c3c; -fx-text-fill: white;"/>
+        <Button fx:id="closeButton" text="✕ Закрити" onAction="#onClose"
+                style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+    </HBox>
+
+</VBox>

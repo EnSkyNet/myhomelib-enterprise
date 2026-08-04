@@ -2,12 +2,11 @@ package com.myhomelibcorp.ui.dashboard;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.DashboardData;
-import com.myhomelibcorp.application.dashboard.DashboardService;
+import com.myhomelibcorp.application.usecase.dashboard.LoadDashboardDataUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import com.myhomelibcorp.ui.viewmodel.DashboardViewModel;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
@@ -21,7 +20,7 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class DashboardController {
 
-    private final DashboardService dashboardService;
+    private final LoadDashboardDataUseCase loadDashboardDataUseCase;
     private final ApplicationState appState;
     private final NavigationService navigationService;
 
@@ -41,7 +40,7 @@ public class DashboardController {
     }
 
     private void loadDashboard() {
-        dashboardService.loadDashboardData()
+        loadDashboardDataUseCase.execute()
                 .thenAccept(data -> UiExecutor.runOnUiThread(() -> updateUI(data)))
                 .exceptionally(ex -> {
                     log.error("Failed to load dashboard", ex);
@@ -50,13 +49,12 @@ public class DashboardController {
     }
 
     private void updateUI(DashboardData data) {
-        DashboardViewModel vm = appState.getDashboard();
+        var vm = appState.getDashboard();
         vm.setContinueReading(data.getContinueReading());
         vm.setRecentBooks(data.getRecentBooks());
         vm.setNewBooks(data.getRecentAdded());
         vm.setStatistics(data.getStatistics());
 
-        // Продовжити читання
         BookDto continueBook = data.getContinueReading();
         if (continueBook != null) {
             continueReadingBox.setVisible(true);
@@ -66,15 +64,12 @@ public class DashboardController {
             continueReadingBox.setVisible(false);
         }
 
-        // Останні книги
         recentBooksBox.getChildren().clear();
         data.getRecentBooks().forEach(book -> recentBooksBox.getChildren().add(createBookLabel(book)));
 
-        // Нові книги
         newBooksBox.getChildren().clear();
         data.getRecentAdded().forEach(book -> newBooksBox.getChildren().add(createBookLabel(book)));
 
-        // Статистика
         var stats = data.getStatistics();
         if (stats != null) {
             booksCount.setText(String.valueOf(stats.getBooksCount()));

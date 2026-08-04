@@ -1,12 +1,10 @@
 package com.myhomelibcorp.ui.book;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GroupRepository;
-import com.myhomelibcorp.application.session.SessionService;
+import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
-import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
+import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
@@ -29,15 +27,14 @@ import java.util.Optional;
 @Slf4j
 public class BookWorkspaceController {
 
-    private final BookQueryRepository bookQueryRepository;
+    private final LoadBookByIdUseCase loadBookByIdUseCase;
+    private final LoadGroupsUseCase loadGroupsUseCase;
+    private final AddBookToGroupUseCase addBookToGroupUseCase;
     private final CoverPresenter coverPresenter;
     private final NavigationService navigationService;
     private final ApplicationState appState;
-    private final BookMapper bookMapper;
     private final BookViewModelMapper bookViewModelMapper;
     private final SessionService sessionService;
-    private final GroupRepository groupRepository;
-    private final AddBookToGroupUseCase addBookToGroupUseCase;
     private final DialogService dialogService;
 
     @FXML private ImageView coverImageView;
@@ -67,8 +64,8 @@ public class BookWorkspaceController {
     public void setBookId(BookId bookId) {
         sessionService.saveLastOpenedBookId(bookId.asString());
 
-        bookQueryRepository.findById(bookId).ifPresentOrElse(book -> {
-            currentBook = bookMapper.toDto(book);
+        loadBookByIdUseCase.execute(bookId).ifPresentOrElse(book -> {
+            currentBook = book;
             UiExecutor.runOnUiThread(() -> {
                 updateUI(currentBook);
                 coverPresenter.showCover(bookViewModelMapper.toViewModel(currentBook));
@@ -150,12 +147,12 @@ public class BookWorkspaceController {
             dialogService.showWarning("Немає книги", "Спочатку відкрийте книгу.");
             return;
         }
-        List<Group> groups = groupRepository.findAll();
+        var groups = loadGroupsUseCase.execute();
         if (groups.isEmpty()) {
             dialogService.showWarning("Немає колекцій", "Створіть колекцію перед додаванням.");
             return;
         }
-        Optional<Group> selected = dialogService.showChoiceDialog(
+        Optional<com.myhomelibcorp.application.dto.GroupDto> selected = dialogService.showChoiceDialog(
                 groups,
                 groups.get(0),
                 "Додати до колекції",
@@ -164,7 +161,7 @@ public class BookWorkspaceController {
         );
         selected.ifPresent(group -> {
             try {
-                addBookToGroupUseCase.execute(group.getId().asLong(), currentBook.getId());
+                addBookToGroupUseCase.execute(group.getId(), currentBook.getId());
                 dialogService.showInfo("Успішно", "Книгу додано до колекції \"" + group.getName() + "\".");
                 log.info("Книгу {} додано до колекції {}", currentBook.getId(), group.getId());
             } catch (Exception e) {

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.config;
 
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -17,7 +18,7 @@ import java.util.logging.Logger;
 @Configuration
 public class CollectionTransactionConfig {
 
-    @Bean
+    @Bean(name = "collectionDataSource")
     public DataSource collectionDataSource(CollectionManager collectionManager) {
         return new DataSource() {
             @Override
@@ -72,12 +73,14 @@ public class CollectionTransactionConfig {
     }
 
     @Bean(name = "collectionTransactionManager")
-    public PlatformTransactionManager collectionTransactionManager(DataSource collectionDataSource) {
+    public PlatformTransactionManager collectionTransactionManager(
+            @Qualifier("collectionDataSource") DataSource collectionDataSource) {
         return new DataSourceTransactionManager(collectionDataSource);
     }
 
     @Bean(name = "collectionTransactionTemplate")
     public TransactionTemplate collectionTransactionTemplate(
+            @Qualifier("collectionTransactionManager")
             PlatformTransactionManager collectionTransactionManager) {
         return new TransactionTemplate(collectionTransactionManager);
     }

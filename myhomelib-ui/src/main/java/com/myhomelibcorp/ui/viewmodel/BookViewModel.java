@@ -31,6 +31,9 @@ public class BookViewModel {
     private final ObjectProperty<LocalDateTime> createdAt = new SimpleObjectProperty<>();
     private final ObjectProperty<Image> cover = new SimpleObjectProperty<>();
 
+    // Властивість для вибору
+    private final BooleanProperty selected = new SimpleBooleanProperty(false);
+
     // Форматовані властивості
     private final StringProperty fileSizeFormatted = new SimpleStringProperty();
     private final StringProperty rateStars = new SimpleStringProperty();
@@ -62,6 +65,9 @@ public class BookViewModel {
     public StringProperty reviewProperty() { return review; }
     public ObjectProperty<LocalDateTime> createdAtProperty() { return createdAt; }
     public ObjectProperty<Image> coverProperty() { return cover; }
+
+    // Властивість вибору
+    public BooleanProperty selectedProperty() { return selected; }
 
     public StringProperty fileSizeFormattedProperty() { return fileSizeFormatted; }
     public StringProperty rateStarsProperty() { return rateStars; }
@@ -154,6 +160,10 @@ public class BookViewModel {
 
     public Image getCover() { return cover.get(); }
     public void setCover(Image cover) { this.cover.set(cover); }
+
+    // Властивість вибору
+    public boolean isSelected() { return selected.get(); }
+    public void setSelected(boolean selected) { this.selected.set(selected); }
 
     // ===== ФОРМАТОВАНІ ГЕТЕРИ =====
     public String getFileSizeFormatted() { return fileSizeFormatted.get(); }

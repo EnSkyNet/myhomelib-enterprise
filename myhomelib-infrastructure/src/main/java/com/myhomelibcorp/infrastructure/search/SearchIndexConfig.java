@@ -9,6 +9,7 @@ import org.apache.lucene.store.FSDirectory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 
 import java.io.IOException;
 import java.nio.file.Paths;
@@ -24,20 +25,13 @@ public class SearchIndexConfig {
         return FSDirectory.open(Paths.get(indexPath));
     }
 
-    /**
-     * Використовуємо StandardAnalyzer для точного пошуку за словами.
-     * Він нормалізує текст (приводить до нижнього регістру, видаляє зайві символи),
-     * але НЕ розбиває на n-грами.
-     */
     @Bean
     public Analyzer luceneAnalyzer() {
         return new StandardAnalyzer();
     }
 
-    /**
-     * Багатопольовий парсер для пошуку за кількома полями.
-     */
     @Bean
+    @Primary
     public QueryParser queryParser(Analyzer analyzer) {
         return new MultiFieldQueryParser(
                 new String[]{"title", "authors", "series", "genres", "keywords", "annotation"},

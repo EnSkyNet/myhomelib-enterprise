@@ -13,10 +13,21 @@ public interface BookQueryRepository {
     List<Book> find(BookQuery query);
     long count(BookQuery query);
     Optional<Book> findByTitleAndAuthor(String title, String authorLastName);
+
+    /**
+     * @deprecated Використовуйте {@link #find(BookQuery)} з пагінацією.
+     * Цей метод небезпечний для великих бібліотек.
+     */
+    @Deprecated
     List<Book> findAll();
 
-    // Нові методи для Dashboard
+    // Методи для Dashboard
     List<Book> findRecent(int limit);
     List<Book> findRecentlyAdded(int limit);
     List<Book> findFavoriteAuthors(int limit);
+
+    // Методи для DataIntegrity
+    long countBooksWithoutAuthor();
+    long countBooksWithoutGenre();
+    List<BookId> findDuplicateBookIds();
 }

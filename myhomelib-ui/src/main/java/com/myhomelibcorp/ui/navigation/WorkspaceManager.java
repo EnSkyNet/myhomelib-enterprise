@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.reader.service.ReaderLifecycleManager;
 import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import javafx.scene.layout.Pane;
@@ -22,6 +23,7 @@ import java.util.Deque;
 public class WorkspaceManager {
 
     private final FxmlLoaderFactory fxmlLoaderFactory;
+    private final ReaderLifecycleManager readerLifecycleManager;
     private MainController mainController;
 
     private final Deque<WorkspaceEntry> history = new ArrayDeque<>();
@@ -33,7 +35,17 @@ public class WorkspaceManager {
         this.mainController = mainController;
     }
 
+    private void closeReaderIfOpen() {
+        if (readerLifecycleManager != null && readerLifecycleManager.isReaderOpen()) {
+            log.info("Закриття Reader перед зміною воркспейсу");
+            readerLifecycleManager.saveState();
+            readerLifecycleManager.closeBook();
+        }
+    }
+
     public void setWorkspace(Pane workspace) {
+        closeReaderIfOpen();
+
         if (currentWorkspace != null) {
             mainController.getMainPane().getChildren().remove(currentWorkspace);
         }
@@ -44,8 +56,9 @@ public class WorkspaceManager {
         mainController.updateNavigationButtons();
     }
 
-    // Публічний метод для push (використовується з MainController)
     public void push(String type, String id) {
+        closeReaderIfOpen();
+
         WorkspaceEntry entry = new WorkspaceEntry(type, id);
         if (currentEntry != null && !currentEntry.equals(entry)) {
             history.push(currentEntry);
@@ -56,7 +69,7 @@ public class WorkspaceManager {
         mainController.updateNavigationButtons();
     }
 
-    // === Публічні методи навігації ===
+    // ==================== НАВІГАЦІЙНІ МЕТОДИ ====================
 
     public void showDashboard() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/dashboard.fxml");
@@ -73,7 +86,7 @@ public class WorkspaceManager {
     public void showBookWorkspace(BookId bookId) {
         Pane workspace = fxmlLoaderFactory.loadBookWorkspace(bookId);
         setWorkspace(workspace);
-        push("book", bookId.asString());
+        push("book", bookId != null ? bookId.asString() : "");
     }
 
     public void showSeriesWorkspace(SeriesId seriesId) {
@@ -109,7 +122,7 @@ public class WorkspaceManager {
     public void showReaderWorkspace(BookId bookId) {
         Pane workspace = fxmlLoaderFactory.loadReaderWorkspace(bookId);
         setWorkspace(workspace);
-        push("reader", bookId.asString());
+        push("reader", bookId != null ? bookId.asString() : "");
     }
 
     public void showImportWorkspace() {
@@ -118,11 +131,7 @@ public class WorkspaceManager {
         push("import", "");
     }
 
-    public void switchToCollection(Collection collection) {
-        mainController.switchToCollection(collection);
-    }
-
-    // === Історія ===
+    // ==================== ІСТОРІЯ ====================
 
     public void goBack() {
         if (history.isEmpty()) return;
@@ -164,6 +173,8 @@ public class WorkspaceManager {
     public boolean canGoForward() {
         return !forwardStack.isEmpty();
     }
+
+    // ==================== ВНУТРІШНІЙ КЛАС ====================
 
     private record WorkspaceEntry(String type, String id) {
         @Override

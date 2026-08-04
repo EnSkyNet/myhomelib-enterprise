@@ -1,15 +1,8 @@
 package com.myhomelibcorp.ui.group;
 
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GroupRepository;
-import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.CreateGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.DeleteGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.RemoveBookFromGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.RenameGroupUseCase;
-import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.application.dto.BookListItem;
+import com.myhomelibcorp.application.dto.GroupDto;
+import com.myhomelibcorp.application.usecase.group.*;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -35,10 +28,9 @@ import java.util.stream.Collectors;
 @Slf4j
 public class GroupWorkspaceController {
 
-    private final GroupRepository groupRepository;
-    private final BookQueryRepository bookQueryRepository;
-    private final BookMapper bookMapper;
-    private final BookViewModelMapper bookViewModelMapper;
+    private final LoadGroupsUseCase loadGroupsUseCase;
+    private final LoadGroupBooksUseCase loadGroupBooksUseCase;
+    private final IsBookInGroupUseCase isBookInGroupUseCase;
     private final CreateGroupUseCase createGroupUseCase;
     private final RenameGroupUseCase renameGroupUseCase;
     private final DeleteGroupUseCase deleteGroupUseCase;
@@ -47,8 +39,9 @@ public class GroupWorkspaceController {
     private final NavigationService navigationService;
     private final ApplicationState appState;
     private final DialogService dialogService;
+    private final BookViewModelMapper bookViewModelMapper;
 
-    @FXML private ListView<Group> groupsListView;
+    @FXML private ListView<GroupDto> groupsListView;
     @FXML private Label groupNameLabel;
     @FXML private Label booksCountLabel;
     @FXML private TableView<BookViewModel> booksTableView;
@@ -62,8 +55,8 @@ public class GroupWorkspaceController {
     @FXML private Button createButton;
     @FXML private VBox groupDetailsBox;
 
-    private Group currentGroup;
-    private final ObservableList<Group> groupList = FXCollections.observableArrayList();
+    private GroupDto currentGroup;
+    private final ObservableList<GroupDto> groupList = FXCollections.observableArrayList();
     private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
 
     @FXML
@@ -78,18 +71,12 @@ public class GroupWorkspaceController {
         groupsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
                 currentGroup = selected;
-                appState.setCurrentGroup(selected);
+                appState.setCurrentGroup(null); // поки немає GroupDto -> Group, але можна конвертувати
                 loadGroupBooks(selected);
                 groupDetailsBox.setVisible(true);
                 log.info("Вибрано групу: {}", selected.getName());
             } else {
                 groupDetailsBox.setVisible(false);
-            }
-        });
-
-        appState.currentGroupProperty().addListener((obs, old, newGroup) -> {
-            if (newGroup != null && !newGroup.equals(currentGroup)) {
-                groupsListView.getSelectionModel().select(newGroup);
             }
         });
 
@@ -103,7 +90,7 @@ public class GroupWorkspaceController {
         });
 
         groupsListView.addEventHandler(ContextMenuEvent.CONTEXT_MENU_REQUESTED, event -> {
-            Group selected = groupsListView.getSelectionModel().getSelectedItem();
+            GroupDto selected = groupsListView.getSelectionModel().getSelectedItem();
             if (selected != null) {
                 showContextMenu(selected, event.getScreenX(), event.getScreenY());
                 event.consume();
@@ -113,7 +100,7 @@ public class GroupWorkspaceController {
         loadGroups();
     }
 
-    private void showContextMenu(Group group, double x, double y) {
+    private void showContextMenu(GroupDto group, double x, double y) {
         ContextMenu menu = new ContextMenu();
 
         MenuItem selectItem = new MenuItem("Вибрати");
@@ -131,16 +118,11 @@ public class GroupWorkspaceController {
 
     public void loadGroups() {
         try {
-            List<Group> groups = groupRepository.findAll();
+            List<GroupDto> groups = loadGroupsUseCase.execute();
             groupList.setAll(groups);
             log.info("Завантажено {} груп", groups.size());
             if (!groups.isEmpty()) {
-                Group current = appState.getCurrentGroup();
-                if (current != null && groupList.contains(current)) {
-                    groupsListView.getSelectionModel().select(current);
-                } else {
-                    groupsListView.getSelectionModel().selectFirst();
-                }
+                groupsListView.getSelectionModel().selectFirst();
             } else {
                 groupDetailsBox.setVisible(false);
             }
@@ -150,24 +132,11 @@ public class GroupWorkspaceController {
         }
     }
 
-    private void loadGroupBooks(Group group) {
-        List<String> bookIds = groupRepository.findBookIdsByGroup(group.getId().asLong());
-        if (bookIds.isEmpty()) {
-            books.clear();
-            groupNameLabel.setText(group.getName());
-            booksCountLabel.setText("0 книг");
-            return;
-        }
-
-        List<BookId> ids = bookIds.stream()
-                .map(BookId::fromString)
+    private void loadGroupBooks(GroupDto group) {
+        List<BookListItem> items = loadGroupBooksUseCase.execute(group.getId());
+        List<BookViewModel> vms = items.stream()
+                .map(bookViewModelMapper::toViewModel)
                 .collect(Collectors.toList());
-
-        List<Book> foundBooks = bookQueryRepository.findByIds(ids);
-        List<BookViewModel> vms = foundBooks.stream()
-                .map(book -> bookViewModelMapper.toViewModel(bookMapper.toDto(book)))
-                .collect(Collectors.toList());
-
         books.setAll(vms);
         groupNameLabel.setText(group.getName());
         booksCountLabel.setText(vms.size() + " книг");
@@ -189,14 +158,14 @@ public class GroupWorkspaceController {
             return;
         }
 
-        List<String> bookIds = groupRepository.findBookIdsByGroup(currentGroup.getId().asLong());
-        if (bookIds.contains(selectedBook.getId())) {
+        boolean inGroup = isBookInGroupUseCase.execute(currentGroup.getId(), selectedBook.getId());
+        if (inGroup) {
             dialogService.showWarning("Вже є", "Ця книга вже в групі \"" + currentGroup.getName() + "\".");
             return;
         }
 
         try {
-            addBookToGroupUseCase.execute(currentGroup.getId().asLong(), selectedBook.getId());
+            addBookToGroupUseCase.execute(currentGroup.getId(), selectedBook.getId());
             loadGroupBooks(currentGroup);
             dialogService.showInfo("Успішно", "Книгу додано до групи \"" + currentGroup.getName() + "\".");
         } catch (Exception e) {
@@ -217,14 +186,13 @@ public class GroupWorkspaceController {
             return;
         }
 
-        // <-- ПРИБРАНО ПЕРЕВІРКУ allowDelete
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Підтвердження");
         confirm.setHeaderText("Видалити книгу з групи \"" + currentGroup.getName() + "\"?");
         confirm.setContentText(selected.getTitle());
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
-                removeBookFromGroupUseCase.execute(currentGroup.getId().asLong(), selected.getId());
+                removeBookFromGroupUseCase.execute(currentGroup.getId(), selected.getId());
                 books.remove(selected);
                 booksCountLabel.setText(books.size() + " книг");
                 dialogService.showInfo("Успішно", "Книгу видалено з групи");
@@ -245,9 +213,11 @@ public class GroupWorkspaceController {
         result.ifPresent(name -> {
             if (!name.isBlank()) {
                 try {
-                    Group group = createGroupUseCase.execute(name);
-                    groupList.add(group);
-                    groupsListView.getSelectionModel().select(group);
+                    com.myhomelibcorp.domain.model.group.Group group = createGroupUseCase.execute(name);
+                    // Конвертуємо в DTO і додаємо до списку
+                    GroupDto dto = new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete());
+                    groupList.add(dto);
+                    groupsListView.getSelectionModel().select(dto);
                     dialogService.showInfo("Успішно", "Групу \"" + name + "\" створено");
                     log.info("Створено групу: id={}, name={}", group.getId(), group.getName());
                 } catch (Exception e) {
@@ -260,7 +230,7 @@ public class GroupWorkspaceController {
 
     @FXML
     private void onRenameGroup() {
-        Group selected = groupsListView.getSelectionModel().getSelectedItem();
+        GroupDto selected = groupsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
             dialogService.showError("Помилка", "Виберіть групу");
             return;
@@ -268,25 +238,26 @@ public class GroupWorkspaceController {
         renameGroup(selected);
     }
 
-    private void renameGroup(Group selected) {
-        if (!selected.isAllowDelete()) {
+    private void renameGroup(GroupDto group) {
+        if (!group.isAllowDelete()) {
             dialogService.showError("Помилка", "Системну групу не можна перейменовувати");
             return;
         }
         Optional<String> result = dialogService.showTextInput(
                 "Перейменувати групу",
-                "Введіть нову назву для \"" + selected.getName() + "\"",
+                "Введіть нову назву для \"" + group.getName() + "\"",
                 "Нова назва:",
-                selected.getName());
+                group.getName());
         result.ifPresent(newName -> {
-            if (!newName.isBlank() && !newName.equals(selected.getName())) {
+            if (!newName.isBlank() && !newName.equals(group.getName())) {
                 try {
-                    Group renamed = renameGroupUseCase.execute(selected.getId().asLong(), newName);
-                    int index = groupList.indexOf(selected);
+                    com.myhomelibcorp.domain.model.group.Group renamed = renameGroupUseCase.execute(group.getId(), newName);
+                    GroupDto updated = new GroupDto(renamed.getId().asLong(), renamed.getName(), renamed.isAllowDelete());
+                    int index = groupList.indexOf(group);
                     if (index >= 0) {
-                        groupList.set(index, renamed);
+                        groupList.set(index, updated);
                     }
-                    groupsListView.getSelectionModel().select(renamed);
+                    groupsListView.getSelectionModel().select(updated);
                     dialogService.showInfo("Успішно", "Групу перейменовано на \"" + newName + "\"");
                 } catch (Exception e) {
                     log.error("Помилка перейменування групи", e);
@@ -298,7 +269,7 @@ public class GroupWorkspaceController {
 
     @FXML
     private void onDeleteGroup() {
-        Group selected = groupsListView.getSelectionModel().getSelectedItem();
+        GroupDto selected = groupsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
             dialogService.showError("Помилка", "Виберіть групу");
             return;
@@ -306,19 +277,19 @@ public class GroupWorkspaceController {
         deleteGroup(selected);
     }
 
-    private void deleteGroup(Group selected) {
-        if (!selected.isAllowDelete()) {
+    private void deleteGroup(GroupDto group) {
+        if (!group.isAllowDelete()) {
             dialogService.showError("Помилка", "Системну групу не можна видалити");
             return;
         }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Підтвердження");
-        confirm.setHeaderText("Видалити групу \"" + selected.getName() + "\"?");
+        confirm.setHeaderText("Видалити групу \"" + group.getName() + "\"?");
         confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
-                deleteGroupUseCase.execute(selected.getId().asLong());
-                groupList.remove(selected);
+                deleteGroupUseCase.execute(group.getId());
+                groupList.remove(group);
                 groupDetailsBox.setVisible(false);
                 dialogService.showInfo("Успішно", "Групу видалено");
             } catch (Exception e) {
@@ -338,10 +309,17 @@ public class GroupWorkspaceController {
         loadGroups();
     }
 
-    public void setGroup(Group group) {
+    public void setGroup(com.myhomelibcorp.domain.model.group.Group group) {
         if (group != null) {
-            appState.setCurrentGroup(group);
-            loadGroups();
+            // Конвертуємо в DTO та вибираємо
+            GroupDto dto = new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete());
+            // Пошук у списку і вибір
+            for (GroupDto g : groupList) {
+                if (g.getId().equals(dto.getId())) {
+                    groupsListView.getSelectionModel().select(g);
+                    break;
+                }
+            }
         }
     }
 }

@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.controller.StatisticsController"
+      spacing="15" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      prefWidth="500" prefHeight="400">
+
+    <Label text="📊 Статистика колекції" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+
+    <Separator/>
+
+    <GridPane hgap="15" vgap="10">
+        <Label text="📚 Книг:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+        <Label fx:id="booksCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+
+        <Label text="👤 Авторів:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+        <Label fx:id="authorsCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+
+        <Label text="📖 Серій:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+        <Label fx:id="seriesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+
+        <Label text="🏷️ Жанрів:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+        <Label fx:id="genresCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+
+        <Label text="🌐 Мов:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
+        <Label fx:id="languagesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+
+        <Label text="🏢 Видавництв:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
+        <Label fx:id="publishersCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
+
+        <Label text="📦 Розмір:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
+        <Label fx:id="totalSize" text="0 B" GridPane.columnIndex="1" GridPane.rowIndex="6"/>
+
+        <Label text="🔄 Дублікатів:" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
+        <Label fx:id="duplicatesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="7"/>
+
+        <Label text="🖼️ Без обкладинок:" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
+        <Label fx:id="missingCoversCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="8"/>
+    </GridPane>
+
+    <Separator/>
+
+    <HBox spacing="10" alignment="CENTER_RIGHT">
+        <Button text="🔄 Оновити" onAction="#onRefresh" style="-fx-background-color: #3498db; -fx-text-fill: white;"/>
+        <Button text="✕ Закрити" onAction="#onClose" style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+    </HBox>
+
+</VBox>

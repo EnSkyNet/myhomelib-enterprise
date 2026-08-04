@@ -78,4 +78,30 @@ public class BookViewModelMapper {
         vm.setCover(null);
         return vm;
     }
+    public BookDto toDto(BookViewModel vm) {
+        if (vm == null) return null;
+        BookDto dto = new BookDto();
+        dto.setId(vm.getId());
+        dto.setTitle(vm.getTitle());
+        dto.setAuthorsText(vm.getAuthorsText());
+        dto.setSeries(vm.getSeries());
+        dto.setGenresText(vm.getGenresText());
+        dto.setSequenceNumber(vm.getSequenceNumber());
+        dto.setLanguage(vm.getLanguage());
+        dto.setFileName(vm.getFileName());
+        dto.setFolder(vm.getFolder());
+        dto.setArchiveEntry(vm.getArchiveEntry());
+        dto.setFileSize(vm.getFileSize());
+        dto.setKeywords(vm.getKeywords());
+        dto.setAnnotation(vm.getAnnotation());
+        dto.setRate(vm.getRate());
+        dto.setProgress(vm.getProgress());
+        dto.setUpdateDate(vm.getUpdateDate());
+        dto.setDeleted(vm.isDeleted());
+        dto.setLocal(vm.isLocal());
+        dto.setCollectionRoot(vm.getCollectionRoot());
+        dto.setReview(vm.getReview());
+        dto.setCreatedAt(vm.getCreatedAt());
+        return dto;
+    }
 }

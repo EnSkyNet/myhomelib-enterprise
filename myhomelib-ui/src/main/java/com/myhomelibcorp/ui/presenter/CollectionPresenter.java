@@ -1,9 +1,10 @@
 package com.myhomelibcorp.ui.presenter;
 
-import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
-import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
+import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
+import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
+import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.util.Optional;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -34,7 +36,7 @@ public class CollectionPresenter {
     private final DatabaseInitializer databaseInitializer;
     private final ApplicationState appState;
 
-    public void showCreateCollectionDialog(ObservableList<Collection> collectionList, Stage owner) {
+    public void showCreateCollectionDialog(ObservableList<CollectionDto> collectionList, Stage owner) {
         Optional<String> nameResult = dialogService.showTextInput("Створити колекцію",
                 "Введіть назву нової колекції", "Назва:", "");
         if (nameResult.isEmpty() || nameResult.get().isBlank()) {
@@ -47,29 +49,37 @@ public class CollectionPresenter {
                 name + ".db");
         String dbFilePath = dbFile != null ? dbFile.getAbsolutePath() : null;
 
+        // Якщо користувач не вибрав файл - створюємо в стандартній папці
         if (dbFilePath == null) {
             String defaultPath = System.getProperty("user.home") + "/.myhomelibcorp/libraries/" +
-                    java.util.UUID.randomUUID() + ".db";
+                    UUID.randomUUID() + ".db";
             dbFilePath = defaultPath;
+            log.info("Використовуємо стандартний шлях для БД: {}", dbFilePath);
         }
 
         try {
+            // Створюємо колекцію зі збереженим шляхом до БД
             Collection collection = new Collection(
                     null,
                     name,
                     null,
-                    dbFilePath,
+                    dbFilePath,  // <-- ЗБЕРІГАЄМО ФАКТИЧНИЙ ШЛЯХ
                     0,
                     null,
                     null,
                     null,
                     null
             );
+
+            // Зберігаємо через use case
             Collection saved = createCollectionUseCase.execute(
                     collection.getName(),
                     collection.getRootFolder() != null ? collection.getRootFolder().toString() : null
             );
-            collectionList.add(saved);
+
+            // Конвертуємо в DTO
+            CollectionDto dto = new CollectionDto(saved.getId(), saved.getName(), true);
+            collectionList.add(dto);
             appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
             collectionManager.switchToCollection(saved);
@@ -82,7 +92,7 @@ public class CollectionPresenter {
         }
     }
 
-    public void showRenameCollectionDialog(Collection collection, ObservableList<Collection> collectionList) {
+    public void showRenameCollectionDialog(CollectionDto collection, ObservableList<CollectionDto> collectionList) {
         if (collection == null) {
             dialogService.showError("Помилка", "Не вибрано колекцію");
             return;
@@ -93,9 +103,10 @@ public class CollectionPresenter {
             if (!newName.isBlank() && !newName.equals(collection.getName())) {
                 try {
                     Collection renamed = renameCollectionUseCase.execute(collection.getId(), newName);
+                    CollectionDto updated = new CollectionDto(renamed.getId(), renamed.getName(), true);
                     int index = collectionList.indexOf(collection);
                     if (index >= 0) {
-                        collectionList.set(index, renamed);
+                        collectionList.set(index, updated);
                     }
                     appState.getStatusBar().setStatusText("Колекцію перейменовано на '" + newName + "'");
                 } catch (Exception e) {
@@ -105,7 +116,7 @@ public class CollectionPresenter {
         });
     }
 
-    public void showDeleteCollectionDialog(Collection collection, ObservableList<Collection> collectionList) {
+    public void showDeleteCollectionDialog(CollectionDto collection, ObservableList<CollectionDto> collectionList) {
         if (collection == null) {
             dialogService.showError("Помилка", "Не вибрано колекцію");
             return;
@@ -131,7 +142,7 @@ public class CollectionPresenter {
         }
     }
 
-    public void loadCollections(ObservableList<Collection> collectionList) {
+    public void loadCollections(ObservableList<CollectionDto> collectionList) {
         try {
             var collections = loadCollectionsUseCase.execute();
             collectionList.setAll(collections);

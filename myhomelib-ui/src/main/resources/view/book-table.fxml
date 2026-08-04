@@ -1,7 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
+<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
-<?import javafx.scene.layout.VBox?>
+<?import javafx.scene.layout.*?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.table.BookTableController"
@@ -9,6 +10,7 @@
 
     <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
         <columns>
+            <!-- Колонка з чекбоксами буде додана в коді -->
             <TableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
             <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
             <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
@@ -18,4 +20,14 @@
             <TableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>
         </columns>
     </TableView>
+
+    <!-- Пагінація -->
+    <HBox spacing="10" alignment="CENTER_RIGHT" style="-fx-padding: 5 0 0 0;">
+        <Label text="Розмір сторінки:"/>
+        <ComboBox fx:id="pageSizeComboBox" prefWidth="70"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button fx:id="prevPageButton" text="◀"/>
+        <Label fx:id="pageInfoLabel" text="Сторінка 1 з 1"/>
+        <Button fx:id="nextPageButton" text="▶"/>
+    </HBox>
 </VBox>

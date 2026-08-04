@@ -5,13 +5,15 @@ import com.myhomelibcorp.application.mapper.BookListItemMapper;
 import com.myhomelibcorp.application.port.out.repository.PageableBookQueryRepository;
 import com.myhomelibcorp.application.query.book.PageableBookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
+import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.infrastructure.persistence.QueryExecutor;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
@@ -22,16 +24,27 @@ import java.util.List;
 @Slf4j
 public class SqlitePageableBookQueryRepository implements PageableBookQueryRepository {
 
-    private final QueryExecutor queryExecutor;
+    private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
     private final BookListItemMapper bookListItemMapper;
 
+    private JdbcTemplate getJdbcTemplate() {
+        return collectionManager.getCurrentJdbcTemplate();
+    }
+
+    private void enrichBooks(List<Book> books) {
+        if (books.isEmpty()) return;
+        bookAuthorHelper.loadAuthorsForBooks(books);
+        bookGenreHelper.loadGenresForBooks(books);
+    }
+
     @Override
     public PageResult<BookListItem> findPage(PageableBookQuery query) {
+        // Використовуємо правильну OFFSET пагінацію (тимчасово)
         SqlQuery sqlQuery = buildPagedQuery(query);
-        List<Book> books = queryExecutor.query(sqlQuery.sql, bookRowMapper, sqlQuery.params);
+        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
         enrichBooks(books);
 
         long total = count(query);
@@ -50,14 +63,10 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
     @Override
     public long count(PageableBookQuery query) {
         SqlQuery countSql = buildCountQuery(query);
-        return queryExecutor.queryForLong(countSql.sql, countSql.params);
+        return getJdbcTemplate().queryForObject(countSql.sql(), Long.class, countSql.params());
     }
 
-    private void enrichBooks(List<Book> books) {
-        if (books.isEmpty()) return;
-        bookAuthorHelper.loadAuthorsForBooks(books);
-        bookGenreHelper.loadGenresForBooks(books);
-    }
+    // ==================== ПОБУДОВА ЗАПИТІВ ====================
 
     private SqlQuery buildPagedQuery(PageableBookQuery query) {
         StringBuilder sql = new StringBuilder("SELECT b.* FROM books b ");
@@ -71,7 +80,6 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
         }
 
         if (query.seriesId() != null) {
-            // Додаємо TRIM для ігнорування пробілів на початку/кінці
             sql.append("AND EXISTS (SELECT 1 FROM series s WHERE s.id = ? AND TRIM(b.series) = TRIM(s.name)) ");
             params.add(query.seriesId().asString());
         }
@@ -101,16 +109,10 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
             sql.append("AND b.series IS NULL ");
         }
         if (query.withCover()) {
-            sql.append("AND b.cover_hash IS NOT NULL ");
+            sql.append("AND b.cover_hash IS NOT NULL "); // Виправлено: замість b.cover_id
         }
 
-        String sortColumn = switch (query.pageRequest().getSortBy()) {
-            case TITLE -> "b.title";
-            case AUTHOR -> "b.author_sort";
-            case DATE -> "b.update_date";
-            case RATING -> "b.rate";
-            case RANDOM -> "RANDOM()";
-        };
+        String sortColumn = getSortColumn(query);
         sql.append("ORDER BY ").append(sortColumn).append(" ")
                 .append(query.pageRequest().getDirection().name());
 
@@ -157,10 +159,20 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
             sql.append("AND b.series IS NULL ");
         }
         if (query.withCover()) {
-            sql.append("AND b.cover_hash IS NOT NULL ");
+            sql.append("AND b.cover_hash IS NOT NULL "); // Виправлено: замість b.cover_id
         }
 
         return new SqlQuery(sql.toString(), params.toArray());
+    }
+
+    private String getSortColumn(PageableBookQuery query) {
+        return switch (query.pageRequest().getSortBy()) {
+            case TITLE -> "b.title";
+            case AUTHOR -> "b.author_sort";
+            case DATE -> "b.update_date";
+            case RATING -> "b.rate";
+            case RANDOM -> "RANDOM()";
+        };
     }
 
     private record SqlQuery(String sql, Object[] params) {}

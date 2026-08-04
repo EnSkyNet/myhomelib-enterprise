@@ -101,6 +101,11 @@ public class DictionaryCache implements DictionaryCachePort {
         return seriesByName.keySet();
     }
 
+    @Override
+    public Collection<Series> getAllSeries() {
+        return seriesById.values();
+    }
+
     // ---- Індивідуальні геттери ----
 
     @Override

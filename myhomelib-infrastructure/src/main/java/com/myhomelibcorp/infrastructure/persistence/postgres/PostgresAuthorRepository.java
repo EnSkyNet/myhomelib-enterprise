@@ -63,4 +63,10 @@ public class PostgresAuthorRepository implements AuthorRepository {
         log.warn("PostgresAuthorRepository.findFavorites() ще не реалізовано");
         return List.of();
     }
+
+    @Override
+    public long countOrphanedAuthors() {
+        log.warn("PostgresAuthorRepository.countOrphanedAuthors() ще не реалізовано");
+        return 0;
+    }
 }

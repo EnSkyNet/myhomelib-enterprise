@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 @Component
 @RequiredArgsConstructor
 public class RenameCollectionUseCase {
+
     private final CollectionRepository collectionRepository;
 
     public Collection execute(String id, String newName) {

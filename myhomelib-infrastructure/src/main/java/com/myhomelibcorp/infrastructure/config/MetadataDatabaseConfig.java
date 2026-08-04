@@ -22,14 +22,18 @@ public class MetadataDatabaseConfig {
     public DataSource metadataDataSource() {
         Path dbPath = Paths.get(metadataDbPath);
         dbPath.getParent().toFile().mkdirs();
-        HikariDataSource ds = new HikariDataSource();
-        ds.setJdbcUrl("jdbc:sqlite:" + dbPath.toAbsolutePath());
-        ds.setDriverClassName("org.sqlite.JDBC");
-        ds.setMaximumPoolSize(5);
-        ds.setConnectionTimeout(30000);
-        ds.setIdleTimeout(300000);
-        ds.setMaxLifetime(600000);
-        return ds;
+
+        com.zaxxer.hikari.HikariConfig config = new com.zaxxer.hikari.HikariConfig();
+        config.setJdbcUrl("jdbc:sqlite:" + dbPath.toAbsolutePath());
+        config.setDriverClassName("org.sqlite.JDBC");
+        config.setMaximumPoolSize(5);
+        config.setMinimumIdle(1);
+        config.setIdleTimeout(300000);
+        config.setMaxLifetime(600000);
+        config.setConnectionTimeout(30000);
+        config.setPoolName("HikariPool-MetaDB");
+
+        return new HikariDataSource(config);
     }
 
     @Bean(name = "metadataJdbcTemplate")

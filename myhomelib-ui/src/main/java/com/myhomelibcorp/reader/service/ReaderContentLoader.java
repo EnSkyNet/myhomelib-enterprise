@@ -1,8 +1,9 @@
 package com.myhomelibcorp.reader.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.reader.model.BookDocument;
+import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.parser.Fb2DomParser;
+import com.myhomelibcorp.reader.parser.StreamingFb2Reader;
 import com.myhomelibcorp.reader.renderer.DocumentToHtmlConverter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -12,7 +13,9 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.Enumeration;
+import java.util.List;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -27,95 +30,196 @@ public class ReaderContentLoader {
             Charset.forName("KOI8-R")
     };
 
-    private final Fb2DomParser fb2Parser = new Fb2DomParser();
+    private static final long STREAMING_THRESHOLD = 1024 * 1024; // 1 MB
+
+    private final Fb2DomParser domParser = new Fb2DomParser();
+    private final StreamingFb2Reader streamingReader = new StreamingFb2Reader();
     private final DocumentToHtmlConverter htmlConverter = new DocumentToHtmlConverter();
 
-    /**
-     * Завантажує вміст книги та повертає HTML для відображення.
-     */
     public String loadBookContent(BookDto book) throws Exception {
-        BookDocument document;
+        log.info("Завантаження книги: id={}, title={}", book.getId(), book.getTitle());
+        log.debug("fileName={}, folder={}, archiveEntry={}, collectionRoot={}",
+                book.getFileName(), book.getFolder(), book.getArchiveEntry(), book.getCollectionRoot());
+
+        Path archivePath = null;
+        String entryName = null;
+        Path bookPath = null;
+        long fileSize = 0;
+
         String archiveEntry = book.getArchiveEntry();
 
         if (archiveEntry != null && !archiveEntry.isBlank()) {
-            Path archivePath = getArchivePath(book);
-            if (archivePath == null || !Files.exists(archivePath)) {
-                throw new IllegalArgumentException("Архів не знайдено: " + archivePath);
+            archivePath = getArchivePath(book);
+            if (archivePath == null) {
+                log.warn("Архів не знайдено для книги: {}", book.getTitle());
+                return createFallbackHtml(book, "Архів не знайдено: " + book.getFileName());
             }
-            try (InputStream is = getEntryStream(archivePath, archiveEntry)) {
+            if (!Files.exists(archivePath)) {
+                log.warn("Архів не існує: {}", archivePath);
+                return createFallbackHtml(book, "Архів не існує: " + archivePath);
+            }
+            fileSize = Files.size(archivePath);
+            entryName = archiveEntry;
+            log.info("Архів знайдено: {}, розмір: {} байт", archivePath, fileSize);
+        } else {
+            bookPath = buildFilePath(book);
+            if (bookPath == null) {
+                log.warn("Шлях до файлу не вдалося побудувати для книги: {}", book.getTitle());
+                return createFallbackHtml(book, "Шлях до файлу не вказано");
+            }
+            if (!Files.exists(bookPath)) {
+                log.warn("Файл не існує: {}", bookPath);
+                return createFallbackHtml(book, "Файл не існує: " + bookPath);
+            }
+            fileSize = Files.size(bookPath);
+            log.info("Файл знайдено: {}, розмір: {} байт", bookPath, fileSize);
+        }
+
+        // Визначаємо, який парсер використовувати
+        if (fileSize > STREAMING_THRESHOLD) {
+            log.info("Використання потокового парсера для файлу розміром {} bytes", fileSize);
+            return loadWithStreamingParser(book, archivePath, entryName, bookPath);
+        } else {
+            log.info("Використання DOM парсера для файлу розміром {} bytes", fileSize);
+            return loadWithDomParser(book, archivePath, entryName, bookPath);
+        }
+    }
+
+    private String createFallbackHtml(BookDto book, String error) {
+        return """
+                <html>
+                <body>
+                    <h1>Помилка завантаження книги</h1>
+                    <p><b>Назва:</b> %s</p>
+                    <p><b>Автор:</b> %s</p>
+                    <p><b>Помилка:</b> %s</p>
+                    <hr/>
+                    <p><i>Перевірте, чи файл існує та чи доступний для читання.</i></p>
+                </body>
+                </html>
+                """.formatted(
+                book.getTitle() != null ? book.getTitle() : "Без назви",
+                book.getAuthorsText() != null ? book.getAuthorsText() : "Невідомий автор",
+                error
+        );
+    }
+
+    private String loadWithDomParser(BookDto book, Path archivePath, String entryName, Path bookPath) throws Exception {
+        com.myhomelibcorp.reader.model.BookDocument document;
+
+        if (archivePath != null && entryName != null) {
+            try (InputStream is = getEntryStream(archivePath, entryName)) {
                 if (is == null) {
-                    throw new IllegalArgumentException("Не вдалося прочитати запис з архіву");
+                    return createFallbackHtml(book, "Не вдалося прочитати запис з архіву: " + entryName);
                 }
-                document = fb2Parser.parse(is);
+                document = domParser.parse(is);
+            }
+        } else if (bookPath != null) {
+            try (InputStream is = Files.newInputStream(bookPath)) {
+                document = domParser.parse(is);
             }
         } else {
-            Path bookPath = buildFilePath(book);
-            if (!Files.exists(bookPath)) {
-                throw new IllegalArgumentException("Файл не знайдено: " + bookPath);
-            }
-            try (InputStream is = Files.newInputStream(bookPath)) {
-                document = fb2Parser.parse(is);
-            }
+            return createFallbackHtml(book, "Немає джерела для читання");
         }
 
         return htmlConverter.convert(document);
     }
 
-    private Path getArchivePath(BookDto book) {
-        String folder = book.getFolder();
-        String fileName = book.getFileName();
-        String root = book.getCollectionRoot();
+    private String loadWithStreamingParser(BookDto book, Path archivePath, String entryName, Path bookPath) throws Exception {
+        List<Chapter> chapters = new ArrayList<>();
 
-        if (folder != null && !folder.isBlank() && isArchivePath(folder)) {
-            if (root != null && !root.isBlank() && !Paths.get(folder).isAbsolute()) {
-                return Paths.get(root, folder);
+        if (archivePath != null && entryName != null) {
+            try (InputStream is = getEntryStream(archivePath, entryName)) {
+                if (is == null) {
+                    return createFallbackHtml(book, "Не вдалося прочитати запис з архіву: " + entryName);
+                }
+                streamingReader.readChapters(is, chapters::add);
             }
-            return Paths.get(folder);
+        } else if (bookPath != null) {
+            try (InputStream is = Files.newInputStream(bookPath)) {
+                streamingReader.readChapters(is, chapters::add);
+            }
+        } else {
+            return createFallbackHtml(book, "Немає джерела для читання");
         }
-        if (fileName != null && !fileName.isBlank() && isArchivePath(fileName)) {
-            if (root != null && !root.isBlank() && !Paths.get(fileName).isAbsolute()) {
-                return Paths.get(root, fileName);
-            }
-            return Paths.get(fileName);
+
+        if (chapters.isEmpty()) {
+            log.warn("Потоковий парсер не знайшов параграфів, використовуємо DOM");
+            return loadWithDomParser(book, archivePath, entryName, bookPath);
         }
-        if (folder != null && !folder.isBlank() && fileName != null && !fileName.isBlank()) {
-            Path candidate = Paths.get(folder);
-            if (isArchivePath(fileName)) {
-                candidate = candidate.resolve(fileName);
-                if (Files.exists(candidate)) return candidate;
+
+        var metadata = extractMetadata(book);
+        var document = com.myhomelibcorp.reader.model.BookDocument.builder()
+                .metadata(metadata)
+                .chapters(chapters)
+                .footnotes(new ArrayList<>())
+                .images(new ArrayList<>())
+                .build();
+
+        return htmlConverter.convert(document);
+    }
+
+    // ==================== МЕТОДИ ДЛЯ РОБОТИ З ФАЙЛАМИ ====================
+
+    private Path getArchivePath(BookDto book) {
+        String fileName = book.getFileName();
+        String folder = book.getFolder();
+        String root = book.getCollectionRoot();
+        String archiveEntry = book.getArchiveEntry();
+
+        log.debug("getArchivePath: fileName={}, folder={}, root={}, archiveEntry={}",
+                fileName, folder, root, archiveEntry);
+
+        // Спроба 1: folder як архів
+        if (folder != null && !folder.isBlank()) {
+            Path folderPath = Paths.get(folder);
+            if (isArchivePath(folder) && Files.exists(folderPath)) {
+                return folderPath;
             }
-            if (isArchivePath(candidate.toString())) {
-                return candidate;
+            // folder + fileName як архів
+            if (fileName != null && !fileName.isBlank() && isArchivePath(fileName)) {
+                Path fullPath = folderPath.resolve(fileName);
+                if (Files.exists(fullPath)) {
+                    return fullPath;
+                }
             }
         }
+
+        // Спроба 2: корінь + folder + fileName
         if (root != null && !root.isBlank()) {
             Path rootPath = Paths.get(root);
             if (folder != null && !folder.isBlank()) {
-                Path full = rootPath.resolve(folder);
-                if (isArchivePath(full.toString()) && Files.exists(full)) {
-                    return full;
+                Path folderPath = rootPath.resolve(folder);
+                if (isArchivePath(folder) && Files.exists(folderPath)) {
+                    return folderPath;
                 }
-                if (fileName != null && !fileName.isBlank()) {
-                    full = rootPath.resolve(folder).resolve(fileName);
-                    if (isArchivePath(full.toString()) && Files.exists(full)) {
-                        return full;
+                if (fileName != null && !fileName.isBlank() && isArchivePath(fileName)) {
+                    Path fullPath = folderPath.resolve(fileName);
+                    if (Files.exists(fullPath)) {
+                        return fullPath;
                     }
                 }
-            } else if (fileName != null && !fileName.isBlank()) {
-                Path full = rootPath.resolve(fileName);
-                if (isArchivePath(full.toString()) && Files.exists(full)) {
-                    return full;
+                // folderPath сам по собі може бути архівом (якщо це файл)
+                if (Files.exists(folderPath) && isArchivePath(folderPath.toString())) {
+                    return folderPath;
+                }
+            }
+            if (fileName != null && !fileName.isBlank()) {
+                Path fullPath = rootPath.resolve(fileName);
+                if (Files.exists(fullPath) && isArchivePath(fileName)) {
+                    return fullPath;
                 }
             }
         }
-        if (folder != null && !folder.isBlank()) {
-            Path p = Paths.get(folder);
-            if (isArchivePath(p.toString()) && Files.exists(p)) return p;
-        }
+
+        // Спроба 3: fileName сам по собі
         if (fileName != null && !fileName.isBlank()) {
             Path p = Paths.get(fileName);
-            if (isArchivePath(p.toString()) && Files.exists(p)) return p;
+            if (isArchivePath(fileName) && Files.exists(p)) {
+                return p;
+            }
         }
+
         return null;
     }
 
@@ -126,27 +230,37 @@ public class ReaderContentLoader {
     }
 
     private InputStream getEntryStream(Path archivePath, String entryName) {
+        if (!Files.exists(archivePath)) {
+            log.warn("Архів не існує: {}", archivePath);
+            return null;
+        }
+
         for (Charset charset : ZIP_CHARSETS) {
-            try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
+            try {
+                ZipFile zip = new ZipFile(archivePath.toFile(), charset);
                 ZipEntry entry = zip.getEntry(entryName);
+
                 if (entry == null) {
+                    // Шукаємо за ім'ям файлу без шляху
                     String simpleName = Paths.get(entryName).getFileName().toString();
                     Enumeration<? extends ZipEntry> entries = zip.entries();
                     while (entries.hasMoreElements()) {
                         ZipEntry e = entries.nextElement();
-                        if (e.getName().endsWith(simpleName)) {
+                        if (e.getName().endsWith(simpleName) || e.getName().equals(entryName)) {
                             entry = e;
                             break;
                         }
                     }
                 }
+
                 if (entry != null) {
-                    try (InputStream is = zip.getInputStream(entry)) {
-                        return new java.io.ByteArrayInputStream(is.readAllBytes());
-                    }
+                    InputStream is = zip.getInputStream(entry);
+                    // Важливо: zip буде закрито після читання, але ми повертаємо скопійований потік
+                    byte[] data = is.readAllBytes();
+                    return new java.io.ByteArrayInputStream(data);
                 }
             } catch (Exception e) {
-                log.debug("Failed to read archive with charset {}: {}", charset, e.getMessage());
+                log.debug("Не вдалося прочитати архів з кодуванням {}: {}", charset, e.getMessage());
             }
         }
         return null;
@@ -157,38 +271,47 @@ public class ReaderContentLoader {
         String folder = book.getFolder();
         String root = book.getCollectionRoot();
 
-        if (fileName != null && !fileName.isBlank()) {
-            Path fileNamePath = Paths.get(fileName);
-            if (fileNamePath.isAbsolute()) {
-                return fileNamePath;
-            }
+        if (fileName == null || fileName.isBlank()) {
+            return null;
         }
+
+        Path fileNamePath = Paths.get(fileName);
+        if (fileNamePath.isAbsolute()) {
+            return fileNamePath;
+        }
+
         if (folder != null && !folder.isBlank()) {
             Path folderPath = Paths.get(folder);
             if (folderPath.isAbsolute()) {
-                if (fileName != null && !fileName.isBlank()) {
-                    return folderPath.resolve(fileName);
-                }
-                return folderPath;
+                return folderPath.resolve(fileName);
             }
-        }
-        if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
-            Path rootPath = Paths.get(root);
-            Path folderPath = Paths.get(folder);
-            if (fileName != null && !fileName.isBlank()) {
-                return rootPath.resolve(folderPath).resolve(fileName);
+            if (root != null && !root.isBlank()) {
+                return Paths.get(root).resolve(folderPath).resolve(fileName);
             }
-            return rootPath.resolve(folderPath);
+            return folderPath.resolve(fileName);
         }
-        if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
+
+        if (root != null && !root.isBlank()) {
             return Paths.get(root).resolve(fileName);
         }
-        if (fileName != null && !fileName.isBlank()) {
-            return Paths.get(fileName);
+
+        return fileNamePath;
+    }
+
+    private com.myhomelibcorp.reader.model.BookMetadata extractMetadata(BookDto book) {
+        List<String> authors = new ArrayList<>();
+        if (book.getAuthorsText() != null && !book.getAuthorsText().isEmpty()) {
+            for (String a : book.getAuthorsText().split(", ")) {
+                if (!a.trim().isEmpty()) {
+                    authors.add(a.trim());
+                }
+            }
         }
-        if (folder != null && !folder.isBlank()) {
-            return Paths.get(folder);
-        }
-        return Paths.get(".");
+        return com.myhomelibcorp.reader.model.BookMetadata.builder()
+                .title(book.getTitle())
+                .authors(authors)
+                .language(book.getLanguage())
+                .annotation(book.getAnnotation())
+                .build();
     }
 }

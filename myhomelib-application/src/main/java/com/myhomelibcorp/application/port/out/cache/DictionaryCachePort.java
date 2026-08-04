@@ -27,6 +27,7 @@ public interface DictionaryCachePort {
     Collection<Author> getAllAuthors();
     Collection<Genre> getAllGenres();
     Collection<String> getAllSeriesNames();
+    Collection<Series> getAllSeries(); // ДОДАНО
 
     // ---- Індивідуальні геттери ----
     Optional<Author> getAuthor(AuthorId id);

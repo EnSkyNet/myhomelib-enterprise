@@ -19,16 +19,9 @@ public class DeleteCollectionUseCase {
         Collection collection = collectionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Колекцію не знайдено: " + id));
 
-        // 1. Закриваємо всі ресурси
         storageManager.closeCollection(collection);
-
-        // 2. Виконуємо VACUUM (якщо потрібно)
         storageManager.vacuum(collection);
-
-        // 3. Видаляємо всі фізичні файли
         storageManager.deletePhysicalFiles(collection);
-
-        // 4. Видаляємо запис з мета-БД
         collectionRepository.deleteById(id);
         log.info("Колекцію видалено: {}", id);
     }

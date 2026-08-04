@@ -8,26 +8,15 @@ import javafx.collections.ObservableList;
 
 public class BookTableViewModel {
 
-    // Список книг для відображення в таблиці
     private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
-
-    // Поточна вибрана книга
     private final ObjectProperty<BookViewModel> selectedBook = new SimpleObjectProperty<>();
-
-    // Пагінація
     private final IntegerProperty currentPage = new SimpleIntegerProperty(0);
     private final IntegerProperty pageSize = new SimpleIntegerProperty(50);
     private final LongProperty totalElements = new SimpleLongProperty(0);
     private final IntegerProperty totalPages = new SimpleIntegerProperty(0);
-
-    // Сортування
     private final ObjectProperty<SortBy> sortBy = new SimpleObjectProperty<>(SortBy.TITLE);
     private final ObjectProperty<SortDirection> sortDirection = new SimpleObjectProperty<>(SortDirection.ASC);
-
-    // Стан завантаження
     private final BooleanProperty loading = new SimpleBooleanProperty(false);
-
-    // Повідомлення про статус
     private final StringProperty statusMessage = new SimpleStringProperty("");
 
     // ===================== ГЕТТЕРИ ВЛАСТИВОСТЕЙ =====================
@@ -152,23 +141,14 @@ public class BookTableViewModel {
 
     // ===================== ДОПОМІЖНІ МЕТОДИ =====================
 
-    /**
-     * Перевіряє, чи є наступна сторінка
-     */
     public boolean hasNextPage() {
         return currentPage.get() < totalPages.get() - 1;
     }
 
-    /**
-     * Перевіряє, чи є попередня сторінка
-     */
     public boolean hasPreviousPage() {
         return currentPage.get() > 0;
     }
 
-    /**
-     * Очищує всі дані
-     */
     public void clear() {
         books.clear();
         selectedBook.set(null);
@@ -179,9 +159,6 @@ public class BookTableViewModel {
         statusMessage.set("");
     }
 
-    /**
-     * Оновлює статус з інформацією про кількість книг
-     */
     public void updateStatus() {
         int size = books.size();
         long total = totalElements.get();

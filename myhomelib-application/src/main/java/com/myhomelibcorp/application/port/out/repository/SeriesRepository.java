@@ -11,7 +11,10 @@ public interface SeriesRepository {
     Optional<Series> findById(SeriesId id);
     Series save(Series series);
     void deleteById(SeriesId id);
-
-    /** Новий метод для отримання всіх назв серій (унікальних) */
     List<String> getAllSeriesNames();
+
+    /**
+     * Синхронізує серії з таблиці books у таблицю series.
+     */
+    void syncSeriesFromBooks();
 }

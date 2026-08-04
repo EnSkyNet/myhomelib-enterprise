@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.cache;
 
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -8,6 +9,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 @Component
+@Slf4j
 public class SearchCache {
 
     private final Map<String, List<BookId>> cache = new ConcurrentHashMap<>();
@@ -29,5 +31,6 @@ public class SearchCache {
 
     public void clear() {
         cache.clear();
+        log.debug("Кеш пошуку очищено");
     }
 }

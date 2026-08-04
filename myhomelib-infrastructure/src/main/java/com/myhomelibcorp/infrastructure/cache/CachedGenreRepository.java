@@ -75,4 +75,9 @@ public class CachedGenreRepository implements GenreRepository {
     public List<Genre> getAllGenresHierarchy() {
         return delegate.getAllGenresHierarchy();
     }
+
+    @Override
+    public long countOrphanedGenres() {
+        return delegate.countOrphanedGenres();
+    }
 }

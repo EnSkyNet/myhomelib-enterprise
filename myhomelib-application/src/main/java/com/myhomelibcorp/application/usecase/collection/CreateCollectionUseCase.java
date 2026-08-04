@@ -11,6 +11,7 @@ import java.nio.file.Paths;
 @Component
 @RequiredArgsConstructor
 public class CreateCollectionUseCase {
+
     private final CollectionRepository collectionRepository;
 
     public Collection execute(String name, String rootFolderPath) {

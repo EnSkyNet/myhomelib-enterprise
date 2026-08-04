@@ -1,249 +1,542 @@
-# ARCHITECTURE.md (оновлено 03.07.2026)
+# Архітектура проєкту MyHomeLib Enterprise
 
-Цей документ описує поточну архітектуру проєкту MyHomeLib Enterprise, фіксує виконані зміни та визначає подальші кроки розвитку.
+## Загальна концепція
 
----
+**MyHomeLib Enterprise** — це настільна система для керування великими електронними бібліотеками, орієнтована на роботу як із домашніми, так і з професійними колекціями, що можуть містити **сотні тисяч або навіть мільйони книг**.
 
-## 1. Бачення проєкту
+Основними принципами побудови системи є:
 
-**MyHomeLib** – це сучасна офлайн-орієнтована система керування домашньою електронною бібліотекою.
+* висока продуктивність;
+* мінімальне використання оперативної пам'яті;
+* модульність;
+* масштабованість;
+* простота підтримки;
+* незалежність бізнес-логіки від конкретних технологій;
+* можливість подальшого розвитку без масштабного переписування коду.
 
-Основні принципи:
-- **Offline First** – усі функції працюють без Інтернету.
-- **Local Database** – єдине джерело істини – локальна БД (SQLite).
-- **Domain First** – предметна область є головною.
-- **Незалежність від UI** – одна бізнес-логіка для всіх клієнтів (JavaFX, Web, Android).
-- **Незалежність від БД** – архітектура дозволяє змінювати SQLite на PostgreSQL без змін у Domain/Application.
-- **Незалежність від формату книги** – усі формати (FB2, EPUB, PDF тощо) підтримуються через імпортери.
-
----
-
-## 2. Поточна архітектура системи (після рефакторингу)
-
-### Загальна схема
-JavaFX UI
-│
-▼
-UI Controllers / Presenters
-│
-▼
-Application (Use Cases / Services)
-│
-▼
-Domain Model
-│
-▼
-Infrastructure (SQLite, Lucene, Filesystem, Cover, Importers)
-
-text
-
-### Модулі проєкту
-
-| Модуль | Призначення |
-|--------|-------------|
-| `myhomelib-domain` | Бізнес-модель (Book, Author, Genre, Value Objects, Events) |
-| `myhomelib-application` | Сценарії роботи (Use Cases), порти, DTO |
-| `myhomelib-infrastructure` | Реалізація портів (SQLite, Lucene, імпортери, обкладинки) |
-| `myhomelib-ui` | JavaFX-інтерфейс (контролери, презентери, сервіси, вьюмоделі, мапери) |
-| `myhomelib-bootstrap` | Збірка та запуск застосунку |
-| `myhomelib-architecture-tests` | Архітектурні тести (ArchUnit) |
-| `myhomelib-e2e-tests` | End-to-end тести |
+Архітектура базується на поєднанні **Hexagonal Architecture (Ports & Adapters)**, **DDD (Domain-Driven Design)** та **CQRS (Command Query Responsibility Segregation)**.
 
 ---
 
-## 3. Структура пакетів (поточна)
+# Загальна схема архітектури
 
-### Domain
-domain
-├── model
-│ ├── book (Book, BookSnapshot)
-│ ├── author (Author)
-│ ├── genre (Genre)
-│ ├── group (Group)
-│ ├── series (Series)
-│ ├── collection (Collection)
-│ └── cover (Cover)
-├── event (BookDeletedEvent, BookUpdatedEvent)
-└── valueobject (BookId, AuthorId, GenreId, GroupId, SeriesId, Isbn, LanguageCode, Cover, BookFile, BookMetadata)
-
-text
-
-### Application
-application
-├── dto (BookDto)
-├── event (BookImportedEvent, ImportFinishedEvent, ImportSummary)
-├── imports (розбито на підпакети)
-│ ├── context (ImportContext)
-│ ├── detector (BookFormatDetector)
-│ ├── duplicate (DuplicateDetector, DuplicatePolicy)
-│ ├── error (ImportErrorHandler)
-│ ├── saver (BookSaver)
-│ ├── scanner (LibraryScanner)
-│ ├── statistics (ImportResult, ImportStatistics)
-│ └── transaction (ImportTransaction)
-├── port
-│ └── out
-│ ├── cache (Cache)
-│ ├── cover (CoverCache, CoverExtractor, CoverReader, CoverLocator, ArchiveReader)
-│ ├── event (EventPublisher)
-│ ├── importer (BookImporterPort, ImporterRegistry)
-│ ├── repository(AuthorRepository, BookCommandRepository, BookQueryRepository, GenreRepository, GroupRepository, SeriesRepository)
-│ └── search (IndexRebuilder, SearchIndexer, SearchQueryService)
-├── query (розбито на підпакети)
-│ ├── book (BookQuery, BookFormat)
-│ ├── common (Pagination, SortBy, SortDirection)
-│ └── search (SearchRequest, SearchResult, SearchMode)
-└── usecase (реалізація сценаріїв)
-├── book (LoadBooksUseCase)
-├── genre (LoadGenresUseCase)
-├── group (CreateGroupUseCase, RenameGroupUseCase, DeleteGroupUseCase, AddBookToGroupUseCase, RemoveBookFromGroupUseCase)
-├── imports (ImportDirectoryUseCase, ImportFileUseCase)
-├── index (RebuildIndexUseCase)
-└── search (SearchBooksUseCase)
-
-text
-
-**Примітка:** у `application` відсутні пакети `service` та `mapper`. Уся бізнес-логіка виконується через `usecase`. Мапери для UI знаходяться в `ui.mapper` (або `infrastructure.mapper` для персистентності).
-
-### Infrastructure
-infrastructure
-├── cache (BookCache, BookCacheEvictor, CachedBookQueryRepository, CacheFactory, CaffeineCache, CoverCache)
-├── config (AsyncConfig, CacheConfig, DatabaseConfig)
-├── cover (ZipArchiveReader, CoverLocatorImpl, CoverReaderImpl)
-├── event (SimpleEventBus, різні EventHandler-и)
-├── image (Fb2CoverParser, ImageLoader) – застарілий, замінено на cover
-├── importer (AbstractBookImporter, DefaultImporterRegistry, Fb2Importer, InpxImporter, ZipImporter)
-├── parser (Fb2AnnotationParser, Fb2AuthorParser, Fb2GenreParser, Fb2KeywordsParser, Fb2LanguageParser, Fb2ParserContext, Fb2SequenceParser, Fb2TitleParser)
-├── persistence
-│ ├── mapper (AuthorRowMapper, BookRowMapper, BookMapper, GenreRowMapper, GroupRowMapper, SeriesRowMapper)
-│ ├── postgres (PostgresAuthorRepository, PostgresBookRepository) – заглушки
-│ └── sqlite
-│ ├── helper (BookAuthorHelper, BookGenreHelper, BookQueryBuilder)
-│ ├── query (AuthorQueries, BookQueries, BookAuthorQueries, BookGenreQueries, GenreQueries, GroupQueries, SeriesQueries)
-│ └── реалізації репозиторіїв (SqliteAuthorRepository, SqliteBookCommandRepository, SqliteBookQueryRepository, SqliteGroupRepository, SqliteSeriesRepository)
-├── search (LuceneIndexRebuilder, LuceneSearchIndexer, LuceneSearchQueryService, NGramAnalyzer, SearchDocument, SearchIndexConfig) – NGramAnalyzer замінено на StandardAnalyzer
-└── service (CoverService, GenreServiceImpl, GroupServiceImpl, SeriesServiceImpl) – Service замінено на репозиторії
-
-text
-
-### UI
-ui
-├── components (BookInfoPanel)
-├── controller (MainController, DetailsController, NavigationController)
-├── model (navigation) – перенесено з domain
-├── presentation (BookDetailsPresenter)
-├── presenter (BookImportPresenter, BookSearchPresenter, CoverPresenter, LibraryNavigationPresenter, ProgressPresenter, StatusBarPresenter)
-├── service (BackgroundExecutor, BookSelectionService, BookTableService, DialogService)
-├── util (UiExecutor)
-└── viewmodel (MainViewModel, NavigationViewModel)
-
-text
+```
+                     ┌─────────────────────┐
+                     │   myhomelib-ui      │
+                     │     (JavaFX UI)     │
+                     └──────────┬──────────┘
+                                │
+                                ▼
+                 ┌──────────────────────────┐
+                 │ myhomelib-application    │
+                 │   Application Layer      │
+                 └──────────┬───────────────┘
+                            │
+                            ▼
+                 ┌──────────────────────────┐
+                 │   myhomelib-domain       │
+                 │    Business Domain       │
+                 └──────────┬───────────────┘
+                            ▲
+                            │
+                 ┌──────────────────────────┐
+                 │ myhomelib-infrastructure │
+                 │     Adapters             │
+                 └──────────┬───────────────┘
+                            ▲
+                            │
+                 ┌──────────────────────────┐
+                 │ myhomelib-bootstrap      │
+                 │ Запуск застосунку        │
+                 └──────────────────────────┘
+```
 
 ---
 
-## 4. Виконаний рефакторинг (станом на 03.07.2026)
+# Основний принцип залежностей
 
-| № | Завдання | Статус |
-|---|----------|--------|
-| 1 | Розділити `application.port.out` на пакети (repository, importer, search, cover, cache, event) | ✅ |
-| 2 | Замінити `GenreService`, `SeriesService` на репозиторії (`GenreRepository`, `SeriesRepository`) | ✅ |
-| 3 | Перенести `navigation` з domain у `ui.model.navigation` | ✅ |
-| 4 | Об'єднати `ImporterRegistry` та `ImporterResolver` | ✅ |
-| 5 | Розбити `application.imports` на підпакети | ✅ |
-| 6 | Створити UseCase для завантаження даних з UI (автори, серії, жанри, групи) | ✅ |
-| 7 | Розділити `application.query` на пакети (book, search, common) | ✅ |
-| 8 | Додати архітектурні тести (LayerArchitectureTest) | ✅ |
-| 9 | Виправити пошук (Lucene): перехід на `StandardAnalyzer`, пакетний коміт | ✅ |
-| 10 | Виправити завантаження обкладинок: розділити на `ArchiveReader`, `CoverLocator`, `CoverReader`, оновити `Fb2CoverParser` | ✅ |
-| 11 | Додати обробку кодувань ZIP (CP866, Windows-1251, KOI8-R) | ✅ |
-| 12 | Видалити `NavigationManager` та `SearchManager` (функціонал перенесено в презентери) | ✅ |
-| 13 | Оновити `MainController` (видалити дублювання слухачів) | ✅ |
-| 14 | Додати конфігурацію `app.import.batch-size` | ✅ |
-| 15 | Додати метод `commit()` до `SearchIndexer` | ✅ |
+Залежності завжди спрямовані **зверху вниз**.
+
+```
+UI
+    ↓
+Application
+    ↓
+Domain
+```
+
+Інфраструктура реалізує інтерфейси прикладного рівня, але не впливає на бізнес-логіку.
+
+**Доменний шар не повинен залежати від жодного зовнішнього фреймворку.**
 
 ---
 
-## 5. Що залишилося зробити (пріоритетні завдання)
+# Структура модулів
 
-| № | Завдання | Пріоритет |
-|---|----------|-----------|
-| 1 | Повністю розділити `SqliteBookRepository` на окремі класи для команд та запитів (вже є інтерфейси, але реалізація ще об'єднана) | 🔴 Високий |
-| 2 | Створити окремі `BookSql`, `AuthorSql`, `GenreSql` тощо (SQL винесено в `query` пакет, але не скрізь) | 🔴 Високий |
-| 3 | Додати кешування для авторів, жанрів, серій (`AuthorCache`, `GenreCache`, `SeriesCache`) | 🟠 Середній |
-| 4 | Розширити систему подій (`BookAddedEvent`, `BookDeletedEvent`, `BookUpdatedEvent` тощо) | 🟠 Середній |
-| 5 | Створити `BookViewModel` та `BookViewModelMapper` для UI | 🟠 Середній |
-| 6 | Винести всі діалоги та повідомлення в `DialogService` (вже частково) | 🟠 Середній |
-| 7 | Створити єдиний `BackgroundTaskService` замість окремих `ExecutorService` | 🟠 Середній |
-| 8 | Розбити `MainController` на функціональні області (таблиця, пошук, імпорт тощо) | 🟠 Середній |
-| 9 | Додати інтеграційні тести для міграцій Flyway | 🟡 Низький |
-| 10 | Підготувати інтерфейси для плагінів (Plugin API) | 🟢 Майбутнє |
-| 11 | Реалізувати OPDS-клієнт/сервер | 🟢 Майбутнє |
-| 12 | Додати синхронізацію (Sync Engine) | 🟢 Майбутнє |
+## myhomelib-bootstrap
 
----
+Модуль запуску програми.
 
-## 6. Основні принципи кодування (актуальні)
+### Відповідає за
 
-- **Domain не залежить від Spring, JavaFX, SQLite, Lucene.**
-- **UI не працює з репозиторіями напряму** – тільки через UseCase.
-- **Repository бувають двох типів:** Command (зміна) та Query (читання).
-- **SQL винесено в окремі класи** (`*Queries`).
-- **RowMapper винесено** в окремий пакет `persistence.mapper`.
-- **Великі класи розбиваються** за відповідальністю (приклад: `CoverExtractor` розділено на `ArchiveReader`, `CoverLocator`, `CoverReader`).
-- **Усі зовнішні залежності проходять через порти** (`application.port.out`).
-- **У `application` немає пакетів `service` та `mapper`** – бізнес-логіка реалізується через UseCase, мапери для UI знаходяться у `ui.mapper`, для персистентності – у `infrastructure.persistence.mapper`.
-- **UseCase не є Port** – UseCase реалізують сценарії, Port – це контракти для Infrastructure.
-- **Bootstrap – єдиний модуль, який знає про всі інші модулі**. Жоден інший модуль не залежить від Bootstrap.
-- **Domain Service не має залежності від Infrastructure** (не використовує JdbcTemplate, Spring тощо).
-- **Policy не має доступу до Repository** – працює лише з Domain Model.
-- **`SearchDocument` – це DTO для Lucene**, не є Domain Model і не використовується поза Search Layer.
-- **Repository повертає Aggregate Root**, не містить бізнес-логіки та відповідає за ефективне відновлення Aggregate.
+* запуск Spring Boot;
+* запуск JavaFX;
+* створення контексту застосунку;
+* конфігурацію компонентів;
+* ініціалізацію сервісів;
+* керування життєвим циклом застосунку.
+
+### Не повинен містити
+
+* бізнес-логіку;
+* SQL-запити;
+* логіку інтерфейсу.
 
 ---
 
-## 7. Подальший план рефакторингу (деталі)
+## myhomelib-ui
 
-### Етап 1 (найближчий): завершення репозиторіїв
-- [ ] Остаточно розділити `SqliteBookRepository` на `SqliteBookCommandRepository` та `SqliteBookQueryRepository` (вже є, але деякі методи ще дублюються).
-- [ ] Винести всі SQL-запити в окремі класи (вже частково).
-- [ ] Додати `BatchInserter`, `BatchUpdater`.
+Рівень користувацького інтерфейсу.
 
-### Етап 2: кешування та події
-- [ ] Додати `AuthorCache`, `GenreCache`, `SeriesCache`.
-- [ ] Розширити події для всіх змін (BookAdded, BookDeleted, BookUpdated).
+### Відповідає за
 
-### Етап 3: UI рефакторинг
-- [ ] Створити `BookViewModel` та `BookViewModelMapper`.
-- [ ] Винести всі діалоги в `DialogService`.
-- [ ] Створити `BackgroundTaskService`.
-- [ ] Розбити `MainController` на окремі презентери/сервіси.
+* JavaFX;
+* Controllers;
+* ViewModel;
+* діалоги;
+* таблиці;
+* дерево авторів;
+* списки книг;
+* відображення інформації;
+* взаємодію користувача із системою.
 
-### Етап 4: тести та документація
-- [ ] Додати юніт-тести для критичних UseCase.
-- [ ] Додати інтеграційні тести для репозиторіїв.
+UI працює **лише через Application Layer**.
+
+Допускається використання:
+
+* DTO;
+* Application Services.
+
+Забороняється:
+
+* прямий доступ до Repository;
+* SQL;
+* Lucene;
+* файлової системи;
+* бізнес-логіки.
+
+Типовий сценарій:
+
+```
+Користувач
+
+↓
+
+Controller
+
+↓
+
+Application Service
+
+↓
+
+Domain
+
+↓
+
+Infrastructure
+
+↓
+
+Database
+```
 
 ---
 
-## 8. Архітектурні тести (ArchUnit)
+## myhomelib-application
 
-У проєкті є окремий модуль `myhomelib-architecture-tests`, який містить набір правил для автоматичної перевірки архітектури. Основні правила, які перевіряються:
+Прикладний рівень.
 
-- **Domain не залежить від Application, Infrastructure, UI, Spring, JavaFX, JDBC**.
-- **Application не залежить від Infrastructure, UI**.
-- **Infrastructure не залежить від UI, JavaFX**.
-- **UI не залежить від Infrastructure, Repository, Persistence, JDBC, SQLite**.
-- **Усі класи в `application.port.out` є інтерфейсами**.
-- **Шарова архітектура** (UI → Application → Domain ← Infrastructure) дотримується.
+Це координатор усіх сценаріїв роботи програми.
 
-Ці тести запускаються разом із `mvn test` і допомагають підтримувати чистоту архітектури при подальшому розвитку.
+Саме тут реалізуються всі бізнес-процеси.
+
+### Містить
+
+* Application Services;
+* Commands;
+* Queries;
+* DTO;
+* Ports;
+* Use Cases;
+* Events;
+* валідатори;
+* координатори операцій.
+
+### Основні задачі
+
+* виконання сценаріїв роботи;
+* координація декількох сервісів;
+* керування транзакціями;
+* перевірка правил доступу;
+* взаємодія через порти.
+
+Application Layer **не знає**, яка база даних використовується.
+
+Він також не знає:
+
+* SQLite;
+* PostgreSQL;
+* Lucene;
+* JavaFX.
 
 ---
 
-## 9. Висновок
+## myhomelib-domain
 
-На сьогоднішній день проєкт має чітку багатошарову архітектуру з ізольованими доменом, сценаріями, інфраструктурою та інтерфейсом. 
-Виконано значний обсяг рефакторингу, що дозволяє масштабувати систему до 1 000 000+ книг та готує основу для майбутніх клієнтів 
-(Web, Android) і функцій (синхронізація, плагіни, OPDS). Залишилося довести до кінця рефакторинг репозиторіїв та UI,
- щоб повністю усунути технічний борг.
+Найважливіший модуль системи.
 
-**Дата останнього оновлення:** 03.07.2026
+Містить тільки предметну область.
+
+### Складається з
+
+* Entities;
+* Value Objects;
+* Domain Services;
+* Domain Events;
+* Repository Interfaces;
+* бізнес-правил.
+
+### Категорично заборонено використовувати
+
+* Spring;
+* JavaFX;
+* SQL;
+* Hibernate;
+* Lucene;
+* файлову систему;
+* HTTP;
+* XML;
+* JSON;
+* JDBC.
+
+Доменний шар повинен компілюватися окремо від усієї програми.
+
+---
+
+## myhomelib-infrastructure
+
+Реалізація зовнішніх залежностей.
+
+Саме тут знаходяться всі технічні компоненти.
+
+### Містить
+
+* SQLite Repository;
+* PostgreSQL Repository;
+* Lucene;
+* імпорт бібліотек;
+* експорт;
+* файлову систему;
+* індексацію;
+* читання FB2;
+* читання EPUB;
+* ZIP;
+* кешування;
+* логування.
+
+Infrastructure реалізує порти, визначені в Application Layer.
+
+---
+
+# Hexagonal Architecture
+
+Система побудована за принципом "Порти та адаптери".
+
+```
+                Application
+
+      +---------------------------+
+
+      Port               Port
+
+       ▲                   ▲
+
+       │                   │
+
+SQLite Adapter     Lucene Adapter
+
+       │                   │
+
+ PostgreSQL Adapter   Import Adapter
+```
+
+Application визначає лише інтерфейси.
+
+Infrastructure реалізує їх.
+
+---
+
+# CQRS
+
+Читання і запис розділені.
+
+Для цього використовуються окремі інтерфейси.
+
+Наприклад:
+
+```
+BookQueryRepository
+```
+
+тільки читає.
+
+```
+BookCommandRepository
+```
+
+тільки змінює дані.
+
+Переваги такого підходу:
+
+* простіший код;
+* швидші запити;
+* легша оптимізація;
+* незалежний розвиток читання і запису.
+
+---
+
+# DTO
+
+Передача інформації між шарами здійснюється виключно через DTO.
+
+```
+UI
+
+↓
+
+DTO
+
+↓
+
+Application
+```
+
+Domain-об'єкти ніколи не повинні передаватися безпосередньо в UI.
+
+---
+
+# Репозиторії
+
+Application працює тільки з інтерфейсами.
+
+Наприклад:
+
+* BookQueryRepository;
+* BookCommandRepository;
+* AuthorRepository;
+* SeriesRepository;
+* SearchRepository;
+* ImportRepository.
+
+Конкретна реалізація вибирається Spring через механізм впровадження залежностей.
+
+---
+
+# Події
+
+Для слабкого зв'язування компонентів використовуються Application Events.
+
+Приклади:
+
+* відкриття бібліотеки;
+* завершення імпорту;
+* завершення індексації;
+* оновлення статистики;
+* зміна книги.
+
+Події дозволяють не створювати жорстких залежностей між сервісами.
+
+---
+
+# Пошук
+
+Пошуковий механізм ізольований від бізнес-логіки.
+
+Application працює лише з інтерфейсом.
+
+Конкретна реалізація може бути:
+
+* Lucene;
+* PostgreSQL Full Text Search;
+* будь-який інший пошуковий рушій.
+
+Заміна реалізації не повинна вимагати змін у бізнес-логіці.
+
+---
+
+# Робота з базою даних
+
+Архітектура підтримує декілька СУБД.
+
+Поточні:
+
+* SQLite;
+* PostgreSQL.
+
+Жоден сервіс предметної області не повинен містити SQL.
+
+Уся робота виконується через Repository.
+
+---
+
+# Конвеєр імпорту
+
+Процес імпорту проходить декілька незалежних етапів.
+
+```
+Сканування каталогів
+
+↓
+
+Виявлення формату книги
+
+↓
+
+Зчитування метаданих
+
+↓
+
+Перевірка дублікатів
+
+↓
+
+Збереження книги
+
+↓
+
+Оновлення індексу
+
+↓
+
+Генерація подій
+
+↓
+
+Оновлення інтерфейсу
+```
+
+Кожен етап виконує лише одну задачу.
+
+---
+
+# Багатопоточність
+
+Усі тривалі операції виконуються у фонових потоках.
+
+До них належать:
+
+* імпорт;
+* індексація;
+* пошук;
+* аналіз бібліотеки;
+* генерація статистики;
+* читання великих файлів.
+
+JavaFX Thread використовується тільки для оновлення інтерфейсу.
+
+---
+
+# Оптимізація продуктивності
+
+Оскільки система повинна працювати з дуже великими бібліотеками, необхідно дотримуватися таких принципів:
+
+* ліниве завантаження (Lazy Loading);
+* пакетні операції;
+* потокова обробка;
+* мінімальна кількість створюваних об'єктів;
+* повторне використання кешів;
+* асинхронна індексація;
+* віртуалізація таблиць;
+* пагінація великих наборів даних;
+* мінімізація звернень до бази даних.
+
+---
+
+# Структура пакетів
+
+## Domain
+
+```
+domain.model
+domain.service
+domain.event
+domain.valueobject
+domain.repository
+```
+
+## Application
+
+```
+application.service
+application.command
+application.query
+application.dto
+application.event
+application.port
+```
+
+## Infrastructure
+
+```
+infrastructure.sqlite
+infrastructure.postgresql
+infrastructure.lucene
+infrastructure.import
+infrastructure.export
+infrastructure.filesystem
+```
+
+## UI
+
+```
+ui.controller
+ui.view
+ui.viewmodel
+ui.service
+```
+
+---
+
+# Архітектурні правила
+
+При розробці нового функціоналу необхідно дотримуватися таких правил:
+
+1. Бізнес-логіка знаходиться лише в Domain.
+2. Усі сценарії роботи реалізуються лише в Application.
+3. UI не працює безпосередньо з Repository.
+4. Domain не залежить від жодного фреймворку.
+5. Усі зовнішні системи підключаються лише через порти.
+6. SQL не повинен з'являтися за межами Infrastructure.
+7. Читання і запис даних залишаються розділеними.
+8. Новий функціонал не повинен порушувати напрямок залежностей.
+9. Кожен клас повинен мати одну чітко визначену відповідальність.
+10. Архітектура повинна залишатися придатною для роботи з бібліотеками обсягом понад один мільйон книг.
+
+---
+
+# Подальший розвиток
+
+Поточна архітектура дозволяє без суттєвих змін додати:
+
+* підтримку OPDS-сервера;
+* HTTP API;
+* систему плагінів;
+* синхронізацію бібліотеки між пристроями;
+* підтримку декількох бібліотек;
+* альтернативні пошукові рушії;
+* AI-модулі для автоматичного заповнення метаданих;
+* розподілену індексацію;
+* нові формати електронних книг.
+
+Усі ці можливості повинні реалізовуватися шляхом додавання нових адаптерів та сервісів без внесення змін до доменного шару, що забезпечує довготривалу підтримуваність і масштабованість проєкту.

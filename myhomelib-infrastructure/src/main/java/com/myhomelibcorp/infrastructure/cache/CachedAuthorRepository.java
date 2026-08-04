@@ -59,4 +59,9 @@ public class CachedAuthorRepository implements AuthorRepository {
     public List<Author> findFavorites(int limit) {
         return delegate.findFavorites(limit);
     }
+
+    @Override
+    public long countOrphanedAuthors() {
+        return delegate.countOrphanedAuthors();
+    }
 }

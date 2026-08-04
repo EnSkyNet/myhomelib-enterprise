@@ -32,25 +32,36 @@ public class DatabaseInitializer {
 
         try {
             log.info("=== DatabaseInitializer.initializeCurrentCollection() START ===");
+
+            // ПЕРЕВІРКА: чи активна колекція
             if (!collectionManager.hasActiveCollection()) {
                 log.warn("Колекцію не вибрано, пропускаємо ініціалізацію");
                 return;
             }
 
+            // ПЕРЕВІРКА: чи доступний DataSource
             DataSource dataSource = collectionManager.getCurrentDataSource();
             if (dataSource == null) {
                 log.error("DataSource для поточної колекції дорівнює null");
                 throw new IllegalStateException("DataSource недоступний");
             }
 
-            log.info("Ініціалізація БД для колекції: {}", collectionManager.getCurrentCollection().getName());
-
-            try {
-                String url = dataSource.getConnection().getMetaData().getURL();
-                log.info("Підключення до БД: {}", url);
+            // ПЕРЕВІРКА: чи працює з'єднання
+            try (var conn = dataSource.getConnection()) {
+                if (!conn.isValid(1)) {
+                    log.error("З'єднання з БД невалідне");
+                    throw new IllegalStateException("Невалідне з'єднання з БД");
+                }
+                String url = conn.getMetaData().getURL();
+                log.info("✅ Підключення до БД: {}", url);
             } catch (Exception e) {
-                log.warn("Не вдалося отримати URL БД", e);
+                log.error("Помилка перевірки з'єднання з БД", e);
+                throw new IllegalStateException("Не вдалося підключитися до БД", e);
             }
+
+            log.info("Ініціалізація БД для колекції: {}",
+                    collectionManager.getCurrentCollection() != null ?
+                            collectionManager.getCurrentCollection().getName() : "unknown");
 
             // ---- 1. Запуск міграцій Flyway ----
             try {
@@ -60,9 +71,9 @@ public class DatabaseInitializer {
                         .baselineOnMigrate(true)
                         .load();
                 MigrateResult result = flyway.migrate();
-                log.info("Flyway міграції виконано. Застосовано {} міграцій.", result.migrationsExecuted);
+                log.info("✅ Flyway міграції виконано. Застосовано {} міграцій.", result.migrationsExecuted);
             } catch (Exception e) {
-                log.error("Помилка міграції Flyway для бібліотечної БД", e);
+                log.error("❌ Помилка міграції Flyway для бібліотечної БД", e);
                 throw new RuntimeException("Не вдалося виконати міграцію БД колекції", e);
             }
 
@@ -70,20 +81,21 @@ public class DatabaseInitializer {
             try {
                 authorRepository.addSearchNameColumnIfNotExists();
                 authorRepository.updateSearchNamesForAllAuthors();
-                log.info("Додаткові міграції виконано успішно");
+                log.info("✅ Додаткові міграції виконано успішно");
             } catch (Exception e) {
-                log.error("Помилка додаткових міграцій", e);
+                log.error("❌ Помилка додаткових міграцій", e);
             }
 
             // ---- 3. Синхронізація серій ----
             try {
                 seriesRepository.syncSeriesFromBooks();
-                log.info("Синхронізацію серій виконано");
+                log.info("✅ Синхронізацію серій виконано");
             } catch (Exception e) {
-                log.error("Помилка синхронізації серій", e);
+                log.error("❌ Помилка синхронізації серій", e);
             }
 
-            log.info("Ініціалізацію БД для колекції завершено");
+            log.info("✅ Ініціалізацію БД для колекції завершено");
+
         } finally {
             initializing.set(false);
         }

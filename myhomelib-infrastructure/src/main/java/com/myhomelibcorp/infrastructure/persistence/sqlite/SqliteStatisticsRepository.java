@@ -24,7 +24,6 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
     @Override
     public LibraryStatistics getStatistics() {
         try {
-            // FIX: використовуємо лише існуючі колонки (без languages_count тощо, якщо їх немає)
             String sql = "SELECT books_count, authors_count, series_count, genres_count, " +
                     "COALESCE(languages_count, 0) as languages_count, " +
                     "COALESCE(publishers_count, 0) as publishers_count, " +
@@ -64,7 +63,6 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
         long duplicates = 0;
         long missingCovers = 0;
 
-        // FIX: використовуємо правильну кількість параметрів (9 значень + id=1)
         String sql = """
                 INSERT OR REPLACE INTO library_statistics
                 (id, books_count, authors_count, series_count, genres_count,

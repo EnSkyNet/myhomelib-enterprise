@@ -54,4 +54,10 @@ public class CachedSeriesRepository implements SeriesRepository {
     public List<String> getAllSeriesNames() {
         return delegate.getAllSeriesNames();
     }
+
+    @Override
+    public void syncSeriesFromBooks() {
+        log.debug("CachedSeriesRepository: делегування syncSeriesFromBooks до delegate");
+        delegate.syncSeriesFromBooks();
+    }
 }

@@ -93,7 +93,7 @@ public class BookQueryBuilder {
 
         // WITH COVER
         if (query.withCover()) {
-            ctx.conditions.add("b.cover_id IS NOT NULL");
+            ctx.conditions.add("b.cover_hash IS NOT NULL");
         }
 
         // GROUP

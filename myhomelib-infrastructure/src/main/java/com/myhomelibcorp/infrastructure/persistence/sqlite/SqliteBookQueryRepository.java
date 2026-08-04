@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -15,14 +16,20 @@ import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.Spliterator;
+import java.util.Spliterators;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 @Repository
 @RequiredArgsConstructor
 @Slf4j
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
+    private static final int MAX_ALL_FETCH = 10000;
     private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
@@ -99,20 +106,34 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         }
     }
 
+    /**
+     * @deprecated Використовуйте {@link #find(BookQuery)} з пагінацією.
+     * Цей метод завантажує максимум {@value #MAX_ALL_FETCH} книг для безпеки.
+     */
     @Override
+    @Deprecated
     public List<Book> findAll() {
-        // Використовуємо проекцію тільки для необхідних полів
-        String sql = """
-                SELECT id, title, series, file_name, folder, collection_root,
-                       language, file_size, rate, progress, update_date, created_at
-                FROM books
-                """;
-        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper);
-        enrichBooks(books);
-        return books;
+        log.warn("Використання findAll() без пагінації. Обмежено {} записів.", MAX_ALL_FETCH);
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(MAX_ALL_FETCH, 0))
+                .build();
+        return find(query);
     }
 
-    // === Методи для Dashboard (з проекціями) ===
+    /**
+     * Потокове читання всіх книг з пагінацією.
+     * Використовує Stream для обробки великих наборів даних.
+     * Важливо: Stream потрібно закривати через try-with-resources.
+     */
+    public Stream<Book> findAllStreaming() {
+        return StreamSupport.stream(
+                Spliterators.spliteratorUnknownSize(
+                        new StreamingBookIterator(MAX_ALL_FETCH),
+                        Spliterator.ORDERED
+                ),
+                false
+        );
+    }
 
     @Override
     public List<Book> findRecent(int limit) {
@@ -144,7 +165,6 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findFavoriteAuthors(int limit) {
-        // Проекція для рейтингу
         String sql = """
                 SELECT id, title, series, file_name, folder, collection_root,
                        language, file_size, rate, progress, update_date, created_at
@@ -155,5 +175,99 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
         enrichBooks(books);
         return books;
+    }
+
+    @Override
+    public long countBooksWithoutAuthor() {
+        String sql = """
+                SELECT COUNT(*) FROM books b
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id
+                )
+                """;
+        return getJdbcTemplate().queryForObject(sql, Long.class);
+    }
+
+    @Override
+    public long countBooksWithoutGenre() {
+        String sql = """
+                SELECT COUNT(*) FROM books b
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id
+                )
+                """;
+        return getJdbcTemplate().queryForObject(sql, Long.class);
+    }
+
+    @Override
+    public List<BookId> findDuplicateBookIds() {
+        String sql = """
+                SELECT b.id
+                FROM books b
+                WHERE EXISTS (
+                    SELECT 1
+                    FROM books b2
+                    JOIN book_authors ba2 ON b2.id = ba2.book_id
+                    JOIN authors a2 ON ba2.author_id = a2.id
+                    WHERE b2.id != b.id
+                      AND b2.title = b.title
+                      AND a2.last_name = (
+                          SELECT a.last_name
+                          FROM book_authors ba
+                          JOIN authors a ON ba.author_id = a.id
+                          WHERE ba.book_id = b.id
+                          LIMIT 1
+                      )
+                )
+                """;
+        return getJdbcTemplate().query(sql, (rs, rowNum) -> BookId.fromString(rs.getString("id")));
+    }
+
+    // ==================== ВНУТРІШНІЙ КЛАС ІТЕРАТОРА ====================
+
+    private class StreamingBookIterator implements java.util.Iterator<Book> {
+        private final int pageSize;
+        private int offset = 0;
+        private List<Book> currentPage = new ArrayList<>();
+        private int currentIndex = 0;
+        private boolean finished = false;
+
+        public StreamingBookIterator(int pageSize) {
+            this.pageSize = pageSize;
+            loadNextPage();
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (finished) return false;
+            if (currentIndex < currentPage.size()) return true;
+            // Якщо сторінка порожня або менша за pageSize - це кінець
+            if (currentPage.size() < pageSize) {
+                finished = true;
+                return false;
+            }
+            loadNextPage();
+            return !currentPage.isEmpty();
+        }
+
+        @Override
+        public Book next() {
+            if (!hasNext()) {
+                throw new java.util.NoSuchElementException();
+            }
+            return currentPage.get(currentIndex++);
+        }
+
+        private void loadNextPage() {
+            BookQuery query = BookQuery.builder()
+                    .pagination(Pagination.of(pageSize, offset))
+                    .build();
+            currentPage = SqliteBookQueryRepository.this.find(query);
+            currentIndex = 0;
+            offset += pageSize;
+            if (currentPage.isEmpty() || currentPage.size() < pageSize) {
+                finished = true;
+            }
+        }
     }
 }

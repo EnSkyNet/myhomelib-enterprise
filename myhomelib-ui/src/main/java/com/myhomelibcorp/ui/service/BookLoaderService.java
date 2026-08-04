@@ -3,8 +3,8 @@ package com.myhomelibcorp.ui.service;
 import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.port.out.repository.PageableBookQueryRepository;
 import com.myhomelibcorp.application.query.book.PageableBookQuery;
-import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.common.PageRequest;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -34,10 +34,12 @@ public class BookLoaderService {
     private final BookViewModelMapper viewModelMapper;
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
+    private PageableBookQuery lastQuery;
 
     private static final int DEFAULT_PAGE_SIZE = 50;
 
     public void loadBooks(PageableBookQuery query) {
+        this.lastQuery = query;
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
 
@@ -54,6 +56,7 @@ public class BookLoaderService {
             vm.setTotalElements(result.totalElements());
             vm.setTotalPages(result.totalPages());
             vm.setCurrentPage(result.currentPage());
+
             if (!vms.isEmpty()) {
                 vm.setSelectedBook(vms.get(0));
             } else {
@@ -72,6 +75,14 @@ public class BookLoaderService {
         });
     }
 
+    public void reloadLastQuery() {
+        if (lastQuery != null) {
+            loadBooks(lastQuery);
+        } else {
+            loadAllBooks();
+        }
+    }
+
     public void loadBooksByAuthor(AuthorId authorId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .authorId(authorId)
@@ -83,18 +94,6 @@ public class BookLoaderService {
     public void loadBooksBySeries(SeriesId seriesId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .seriesId(seriesId)
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
-                .build();
-        loadBooks(query);
-    }
-
-    public void loadBooksBySeriesByName(String seriesName) {
-        if (seriesName == null || seriesName.isBlank()) {
-            loadAllBooks();
-            return;
-        }
-        PageableBookQuery query = PageableBookQuery.builder()
-                .text(seriesName)
                 .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
@@ -147,7 +146,6 @@ public class BookLoaderService {
                 .collect(Collectors.toList());
     }
 
-    // Перевантажені методи для зручності (без параметра limit)
     public void loadRecentBooks() {
         List<BookViewModel> books = loadRecentBooks(10);
         BookTableViewModel vm = appState.getBookTable();
@@ -194,20 +192,13 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    public void loadBooksByYear(int year) {
-        loadAllBooks();
-    }
-
-    public void loadBooksByPublisher(String publisher) {
-        loadAllBooks();
-    }
-
     public void nextPage() {
         BookTableViewModel vm = appState.getBookTable();
         if (vm.hasNextPage()) {
             int next = vm.getCurrentPage() + 1;
+            PageRequest pageRequest = new PageRequest(next, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection());
             PageableBookQuery query = PageableBookQuery.builder()
-                    .pageRequest(new PageRequest(next, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection()))
+                    .pageRequest(pageRequest)
                     .build();
             loadBooks(query);
         }
@@ -217,8 +208,9 @@ public class BookLoaderService {
         BookTableViewModel vm = appState.getBookTable();
         if (vm.hasPreviousPage()) {
             int prev = vm.getCurrentPage() - 1;
+            PageRequest pageRequest = new PageRequest(prev, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection());
             PageableBookQuery query = PageableBookQuery.builder()
-                    .pageRequest(new PageRequest(prev, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection()))
+                    .pageRequest(pageRequest)
                     .build();
             loadBooks(query);
         }
@@ -227,8 +219,9 @@ public class BookLoaderService {
     public void setPageSize(int size) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setPageSize(size);
+        PageRequest pageRequest = new PageRequest(0, size, vm.getSortBy(), vm.getSortDirection());
         PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new PageRequest(0, size, vm.getSortBy(), vm.getSortDirection()))
+                .pageRequest(pageRequest)
                 .build();
         loadBooks(query);
     }

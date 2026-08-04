@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.controller.ExportController"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      prefWidth="550" prefHeight="420">
+
+    <Label text="📤 Експорт книг" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+
+    <Label fx:id="selectedBooksLabel" text="0 книг вибрано" style="-fx-font-weight: bold; -fx-text-fill: #2196F3;"/>
+
+    <Separator/>
+
+    <GridPane hgap="10" vgap="10">
+        <!-- Формат -->
+        <Label text="Формат:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+        <ComboBox fx:id="formatComboBox" GridPane.columnIndex="1" GridPane.rowIndex="0" prefWidth="200"/>
+
+        <!-- Папка призначення -->
+        <Label text="Папка:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+        <HBox GridPane.columnIndex="1" GridPane.rowIndex="1" spacing="5">
+            <TextField fx:id="destinationField" promptText="Виберіть папку..." HBox.hgrow="ALWAYS"/>
+            <Button text="Обрати..." onAction="#onChooseDestination"/>
+        </HBox>
+
+        <!-- Шаблон імені -->
+        <Label text="Шаблон імені:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+        <TextField fx:id="fileNameTemplateField" GridPane.columnIndex="1" GridPane.rowIndex="2">
+            <promptText><![CDATA[%a - %t (автор - назва)]]></promptText>
+        </TextField>
+
+        <!-- Опції -->
+        <Label text="Опції:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+        <VBox GridPane.columnIndex="1" GridPane.rowIndex="3" spacing="5">
+            <CheckBox fx:id="overwriteCheckBox" text="Перезаписувати існуючі файли"/>
+            <CheckBox fx:id="extractOnlyCheckBox" text="Витягти з архіву без конвертації"/>
+        </VBox>
+    </GridPane>
+
+    <Separator/>
+
+    <HBox spacing="10" alignment="CENTER_RIGHT">
+        <Button fx:id="exportButton" text="Експортувати" onAction="#onExport"
+                style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
+        <Button fx:id="cancelButton" text="Скасувати" onAction="#onCancel"
+                style="-fx-background-color: #9E9E9E; -fx-text-fill: white;"/>
+    </HBox>
+</VBox>

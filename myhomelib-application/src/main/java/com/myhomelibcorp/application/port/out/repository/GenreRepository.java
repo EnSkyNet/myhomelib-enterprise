@@ -18,4 +18,11 @@ public interface GenreRepository {
     Map<String, String> getAllGenres();
     List<String> getAllGenreCodes();
     List<Genre> getAllGenresHierarchy();
+
+    // ----- НОВИЙ МЕТОД ДЛЯ DATA INTEGRITY -----
+
+    /**
+     * Повертає кількість жанрів, які не прив'язані до жодної книги.
+     */
+    long countOrphanedGenres();
 }

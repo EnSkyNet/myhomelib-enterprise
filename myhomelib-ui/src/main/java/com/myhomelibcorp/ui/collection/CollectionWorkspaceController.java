@@ -1,15 +1,8 @@
 package com.myhomelibcorp.ui.collection;
 
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GroupRepository;
-import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.CreateGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.DeleteGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.RemoveBookFromGroupUseCase;
-import com.myhomelibcorp.application.usecase.group.RenameGroupUseCase;
-import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.application.dto.BookListItem;
+import com.myhomelibcorp.application.dto.CollectionDto;
+import com.myhomelibcorp.application.usecase.collection.*;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -34,20 +27,20 @@ import java.util.stream.Collectors;
 @Slf4j
 public class CollectionWorkspaceController {
 
-    private final GroupRepository groupRepository;
-    private final BookQueryRepository bookQueryRepository;
-    private final BookMapper bookMapper;
-    private final BookViewModelMapper bookViewModelMapper;
-    private final CreateGroupUseCase createGroupUseCase;
-    private final RenameGroupUseCase renameGroupUseCase;
-    private final DeleteGroupUseCase deleteGroupUseCase;
-    private final AddBookToGroupUseCase addBookToGroupUseCase;
-    private final RemoveBookFromGroupUseCase removeBookFromGroupUseCase;
+    private final LoadCollectionsUseCase loadCollectionsUseCase;
+    private final LoadCollectionBooksUseCase loadCollectionBooksUseCase;
+    private final IsBookInCollectionUseCase isBookInCollectionUseCase;
+    private final AddBookToCollectionUseCase addBookToCollectionUseCase;
+    private final RemoveBookFromCollectionUseCase removeBookFromCollectionUseCase;
+    private final CreateCollectionUseCase createCollectionUseCase;
+    private final RenameCollectionUseCase renameCollectionUseCase;
+    private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final NavigationService navigationService;
     private final ApplicationState appState;
     private final DialogService dialogService;
+    private final BookViewModelMapper bookViewModelMapper;
 
-    @FXML private ListView<Group> collectionsListView;
+    @FXML private ListView<CollectionDto> collectionsListView;
     @FXML private Label collectionNameLabel;
     @FXML private Label booksCountLabel;
     @FXML private TableView<BookViewModel> booksTableView;
@@ -61,21 +54,19 @@ public class CollectionWorkspaceController {
     @FXML private Button createButton;
     @FXML private VBox collectionDetailsBox;
 
-    private Group currentCollection;
-    private final ObservableList<Group> groupList = FXCollections.observableArrayList();
+    private CollectionDto currentCollection;
+    private final ObservableList<CollectionDto> collectionList = FXCollections.observableArrayList();
     private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
 
     @FXML
     public void initialize() {
-        // Налаштування колонок таблиці
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         authorColumn.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
 
         booksTableView.setItems(books);
-        collectionsListView.setItems(groupList);   // <-- Явна прив'язка
+        collectionsListView.setItems(collectionList);
 
-        // Слухач вибору колекції
         collectionsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
                 currentCollection = selected;
@@ -87,7 +78,6 @@ public class CollectionWorkspaceController {
             }
         });
 
-        // Подвійний клік по книзі – навігація
         booksTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
@@ -100,13 +90,12 @@ public class CollectionWorkspaceController {
         loadCollections();
     }
 
-    // Завантаження всіх колекцій
     public void loadCollections() {
         try {
-            List<Group> groups = groupRepository.findAll();
-            groupList.setAll(groups);
-            log.info("Завантажено {} колекцій", groups.size());
-            if (!groups.isEmpty()) {
+            List<CollectionDto> collections = loadCollectionsUseCase.execute();
+            collectionList.setAll(collections);
+            log.info("Завантажено {} колекцій", collections.size());
+            if (!collections.isEmpty()) {
                 collectionsListView.getSelectionModel().selectFirst();
             } else {
                 collectionDetailsBox.setVisible(false);
@@ -117,25 +106,11 @@ public class CollectionWorkspaceController {
         }
     }
 
-    // Завантаження книг для вибраної колекції
-    private void loadCollectionBooks(Group collection) {
-        List<String> bookIds = groupRepository.findBookIdsByGroup(collection.getId().asLong());
-        if (bookIds.isEmpty()) {
-            books.clear();
-            collectionNameLabel.setText(collection.getName());
-            booksCountLabel.setText("0 книг");
-            return;
-        }
-
-        List<BookId> ids = bookIds.stream()
-                .map(BookId::fromString)
+    private void loadCollectionBooks(CollectionDto collection) {
+        List<BookListItem> items = loadCollectionBooksUseCase.execute(collection.getId());
+        List<BookViewModel> vms = items.stream()
+                .map(bookViewModelMapper::toViewModel)
                 .collect(Collectors.toList());
-
-        List<Book> foundBooks = bookQueryRepository.findByIds(ids);
-        List<BookViewModel> vms = foundBooks.stream()
-                .map(book -> bookViewModelMapper.toViewModel(bookMapper.toDto(book)))
-                .collect(Collectors.toList());
-
         books.setAll(vms);
         collectionNameLabel.setText(collection.getName());
         booksCountLabel.setText(vms.size() + " книг");
@@ -157,14 +132,14 @@ public class CollectionWorkspaceController {
             return;
         }
 
-        List<String> bookIds = groupRepository.findBookIdsByGroup(currentCollection.getId().asLong());
-        if (bookIds.contains(selectedBook.getId())) {
+        boolean inCollection = isBookInCollectionUseCase.execute(currentCollection.getId(), selectedBook.getId());
+        if (inCollection) {
             dialogService.showWarning("Вже є", "Ця книга вже в колекції \"" + currentCollection.getName() + "\".");
             return;
         }
 
         try {
-            addBookToGroupUseCase.execute(currentCollection.getId().asLong(), selectedBook.getId());
+            addBookToCollectionUseCase.execute(currentCollection.getId(), selectedBook.getId());
             loadCollectionBooks(currentCollection);
             dialogService.showInfo("Успішно", "Книгу додано до колекції \"" + currentCollection.getName() + "\".");
         } catch (Exception e) {
@@ -194,7 +169,7 @@ public class CollectionWorkspaceController {
         confirm.setContentText(selected.getTitle());
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
-                removeBookFromGroupUseCase.execute(currentCollection.getId().asLong(), selected.getId());
+                removeBookFromCollectionUseCase.execute(currentCollection.getId(), selected.getId());
                 books.remove(selected);
                 booksCountLabel.setText(books.size() + " книг");
                 dialogService.showInfo("Успішно", "Книгу видалено з колекції");
@@ -215,11 +190,17 @@ public class CollectionWorkspaceController {
         result.ifPresent(name -> {
             if (!name.isBlank()) {
                 try {
-                    Group group = createGroupUseCase.execute(name);
-                    groupList.add(group);
-                    collectionsListView.getSelectionModel().select(group);
+                    com.myhomelibcorp.domain.model.collection.Collection collection =
+                            createCollectionUseCase.execute(name, null);
+                    CollectionDto dto = new CollectionDto(
+                            collection.getId(),
+                            collection.getName(),
+                            true
+                    );
+                    collectionList.add(dto);
+                    collectionsListView.getSelectionModel().select(dto);
                     dialogService.showInfo("Успішно", "Колекцію \"" + name + "\" створено");
-                    log.info("Колекцію створено: id={}, name={}", group.getId(), group.getName());
+                    log.info("Колекцію створено: id={}, name={}", collection.getId(), collection.getName());
                 } catch (Exception e) {
                     log.error("Помилка створення колекції", e);
                     dialogService.showError("Помилка", "Не вдалося створити колекцію: " + e.getMessage());
@@ -230,7 +211,7 @@ public class CollectionWorkspaceController {
 
     @FXML
     private void onRenameCollection() {
-        Group selected = collectionsListView.getSelectionModel().getSelectedItem();
+        CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
             dialogService.showError("Помилка", "Виберіть колекцію");
             return;
@@ -247,12 +228,18 @@ public class CollectionWorkspaceController {
         result.ifPresent(newName -> {
             if (!newName.isBlank() && !newName.equals(selected.getName())) {
                 try {
-                    Group renamed = renameGroupUseCase.execute(selected.getId().asLong(), newName);
-                    int index = groupList.indexOf(selected);
+                    com.myhomelibcorp.domain.model.collection.Collection renamed =
+                            renameCollectionUseCase.execute(selected.getId(), newName);
+                    CollectionDto updated = new CollectionDto(
+                            renamed.getId(),
+                            renamed.getName(),
+                            true
+                    );
+                    int index = collectionList.indexOf(selected);
                     if (index >= 0) {
-                        groupList.set(index, renamed);
+                        collectionList.set(index, updated);
                     }
-                    collectionsListView.getSelectionModel().select(renamed);
+                    collectionsListView.getSelectionModel().select(updated);
                     dialogService.showInfo("Успішно", "Колекцію перейменовано на \"" + newName + "\"");
                 } catch (Exception e) {
                     log.error("Помилка перейменування колекції", e);
@@ -264,7 +251,7 @@ public class CollectionWorkspaceController {
 
     @FXML
     private void onDeleteCollection() {
-        Group selected = collectionsListView.getSelectionModel().getSelectedItem();
+        CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
             dialogService.showError("Помилка", "Виберіть колекцію");
             return;
@@ -279,8 +266,8 @@ public class CollectionWorkspaceController {
         confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
-                deleteGroupUseCase.execute(selected.getId().asLong());
-                groupList.remove(selected);
+                deleteCollectionUseCase.execute(selected.getId());
+                collectionList.remove(selected);
                 collectionDetailsBox.setVisible(false);
                 dialogService.showInfo("Успішно", "Колекцію видалено");
             } catch (Exception e) {
@@ -296,7 +283,6 @@ public class CollectionWorkspaceController {
         dialogService.showInfo("Оновлення", "Колекції перезавантажено.");
     }
 
-    // Публічний метод для оновлення ззовні (наприклад, після імпорту)
     public void refresh() {
         loadCollections();
     }

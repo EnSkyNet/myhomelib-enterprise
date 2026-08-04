@@ -3,6 +3,7 @@ package com.myhomelibcorp.reader.service;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.ReadingProgressDto;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
+import javafx.concurrent.Worker;
 import javafx.scene.web.WebEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,27 +23,54 @@ public class ReaderProgressManager {
     private BookDto currentBook;
     private ReadingProgressDto lastSaved = null;
     private double lastSavedPercent = -1;
+    private boolean isReaderActive = false;
 
     public void setCurrentBook(BookDto book) {
         this.currentBook = book;
+        this.isReaderActive = book != null;
+        if (book == null) {
+            log.debug("Reader деактивовано");
+        } else {
+            log.debug("Reader активовано для книги: {}", book.getTitle());
+        }
     }
 
     public BookDto getCurrentBook() {
         return currentBook;
     }
 
-    /**
-     * Отримує поточний прогрес на основі видимого абзацу та зсуву.
-     * Логує індекси для відстеження.
-     */
+    public boolean isReaderActive() {
+        return isReaderActive && currentBook != null;
+    }
+
+    public void deactivateReader() {
+        this.isReaderActive = false;
+        this.currentBook = null;
+        log.debug("Reader деактивовано");
+    }
+
     public ReadingProgressDto getCurrentProgress(WebEngine engine) {
-        if (currentBook == null || engine == null) {
+        // Перевірка активності Reader
+        if (!isReaderActive() || engine == null) {
+            log.trace("Reader неактивний, пропускаємо отримання прогресу");
+            return null;
+        }
+
+        // Перевіряємо, чи завантажена сторінка
+        if (engine.getLoadWorker().getState() != Worker.State.SUCCEEDED) {
+            log.trace("Сторінка ще не завантажена або не вдалося завантажити");
+            return null;
+        }
+
+        // ДОДАТКОВА ПЕРЕВІРКА: чи не змінилася книга
+        if (currentBook == null) {
+            log.trace("Немає поточної книги");
             return null;
         }
 
         int index = jsBridge.getFirstVisibleParagraphIndex(engine);
         if (index < 0) {
-            log.warn("Не вдалося визначити перший видимий абзац для книги {}", currentBook.getId());
+            log.trace("Немає видимих абзаців (сторінка порожня або ще не завантажена)");
             return null;
         }
 
@@ -66,7 +94,12 @@ public class ReaderProgressManager {
     }
 
     public void saveProgress(ReadingProgressDto progress) {
+        if (!isReaderActive()) {
+            log.trace("Reader неактивний, пропускаємо збереження прогресу");
+            return;
+        }
         if (progress == null) return;
+
         int fixedOffset = Math.max(0, progress.getCharOffset());
         ReadingProgressDto toSave = ReadingProgressDto.builder()
                 .bookId(progress.getBookId())
@@ -83,6 +116,7 @@ public class ReaderProgressManager {
     }
 
     public boolean shouldSave(ReadingProgressDto current) {
+        if (!isReaderActive()) return false;
         if (current == null) return false;
         if (lastSaved == null) return true;
         if (!lastSaved.getParagraphId().equals(current.getParagraphId())) return true;
@@ -94,12 +128,18 @@ public class ReaderProgressManager {
         return repository.findByBookId(bookId);
     }
 
-    /**
-     * Відновлює позицію за збереженим прогресом.
-     * Якщо індекс некоректний, використовує відсоток для грубої прокрутки,
-     * а потім шукає найближчий абзац.
-     */
     public boolean restorePosition(WebEngine engine, String bookId) {
+        if (!isReaderActive() || engine == null) {
+            log.trace("Reader неактивний, пропускаємо відновлення позиції");
+            return false;
+        }
+
+        // Перевіряємо, чи завантажена сторінка
+        if (engine.getLoadWorker().getState() != Worker.State.SUCCEEDED) {
+            log.trace("Сторінка не завантажена, пропускаємо відновлення");
+            return false;
+        }
+
         Optional<ReadingProgressDto> opt = loadProgress(bookId);
         if (opt.isEmpty()) {
             log.info("Немає збереженої позиції для книги {}", bookId);
@@ -117,18 +157,13 @@ public class ReaderProgressManager {
         if (index >= total) {
             log.warn("Індекс {} виходить за межі (всього {} абзаців). Використовуємо відсоток для прокрутки.",
                     index, total);
-            // Використовуємо відсоток для приблизної прокрутки
             double percent = progress.getPercent() / 100.0;
             String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
             engine.executeScript(script);
-            // Потім знаходимо перший видимий абзац і запам'ятовуємо його індекс
             int newIndex = jsBridge.getFirstVisibleParagraphIndex(engine);
             if (newIndex >= 0) {
-                log.debug("Після прокрутки за відсотком знайдено абзац з індексом {}", newIndex);
-                // Можна оновити збережений індекс для майбутніх відновлень
                 index = newIndex;
             } else {
-                // Якщо не вдалося, залишаємо останній абзац
                 index = total - 1;
             }
         }

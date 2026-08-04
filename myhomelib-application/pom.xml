@@ -37,7 +37,7 @@
             <scope>provided</scope>
         </dependency>
 
-        <!-- Spring Framework -->
+        <!-- Spring Framework (без spring-boot-starter-jdbc) -->
         <dependency>
             <groupId>org.springframework</groupId>
             <artifactId>spring-context</artifactId>
@@ -49,6 +49,21 @@
         <dependency>
             <groupId>org.springframework.modulith</groupId>
             <artifactId>spring-modulith-core</artifactId>
+        </dependency>
+
+        <!-- Spring Boot для @ConfigurationProperties (FeatureFlags) -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <optional>true</optional>
         </dependency>
 
         <!-- Lombok -->
@@ -64,23 +79,13 @@
             <artifactId>jakarta.annotation-api</artifactId>
         </dependency>
 
-        <!-- Lucene -->
+        <!-- Lucene (тільки для domain-об'єктів, не для SQL) -->
         <dependency>
             <groupId>org.apache.lucene</groupId>
             <artifactId>lucene-core</artifactId>
         </dependency>
 
-        <!-- Spring Boot -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-jdbc</artifactId>
-        </dependency>
-
-        <!-- Тестові залежності (без infrastructure) -->
+        <!-- Тестові залежності -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

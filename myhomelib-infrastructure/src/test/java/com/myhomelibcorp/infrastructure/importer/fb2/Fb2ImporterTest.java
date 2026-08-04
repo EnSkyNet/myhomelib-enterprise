@@ -54,4 +54,91 @@ class Fb2ImporterTest {
         assertThat(book.getLanguage().toString()).isEqualTo("uk");
         assertThat(book.getAnnotation()).isEqualTo("Короткий опис.");
     }
+
+    @Test
+    void usesDefaultLanguageWhenLangTagMissing() throws Exception {
+        Path file = tempDir.resolve("no-lang.fb2");
+        Files.writeString(file, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook>
+                  <description>
+                    <title-info>
+                      <book-title>Без мови</book-title>
+                    </title-info>
+                  </description>
+                </FictionBook>
+                """, StandardCharsets.UTF_8);
+
+        Fb2Importer importer = new Fb2Importer();
+        List<Book> books = importer.importBooks(file).toList();
+
+        assertThat(books).hasSize(1);
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+    }
+
+    @Test
+    void usesDefaultLanguageWhenLangTagEmpty() throws Exception {
+        Path file = tempDir.resolve("empty-lang.fb2");
+        Files.writeString(file, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook>
+                  <description>
+                    <title-info>
+                      <book-title>Порожня мова</book-title>
+                      <lang></lang>
+                    </title-info>
+                  </description>
+                </FictionBook>
+                """, StandardCharsets.UTF_8);
+
+        Fb2Importer importer = new Fb2Importer();
+        List<Book> books = importer.importBooks(file).toList();
+
+        assertThat(books).hasSize(1);
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+    }
+
+    @Test
+    void usesDefaultLanguageWhenLangTagInvalid() throws Exception {
+        Path file = tempDir.resolve("invalid-lang.fb2");
+        Files.writeString(file, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook>
+                  <description>
+                    <title-info>
+                      <book-title>Невірна мова</book-title>
+                      <lang>invalid</lang>
+                    </title-info>
+                  </description>
+                </FictionBook>
+                """, StandardCharsets.UTF_8);
+
+        Fb2Importer importer = new Fb2Importer();
+        List<Book> books = importer.importBooks(file).toList();
+
+        assertThat(books).hasSize(1);
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+    }
+
+    @Test
+    void importsRussianLanguage() throws Exception {
+        Path file = tempDir.resolve("ru-lang.fb2");
+        Files.writeString(file, """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook>
+                  <description>
+                    <title-info>
+                      <book-title>Російська книга</book-title>
+                      <lang>ru</lang>
+                    </title-info>
+                  </description>
+                </FictionBook>
+                """, StandardCharsets.UTF_8);
+
+        Fb2Importer importer = new Fb2Importer();
+        List<Book> books = importer.importBooks(file).toList();
+
+        assertThat(books).hasSize(1);
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+    }
 }

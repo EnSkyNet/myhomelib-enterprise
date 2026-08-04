@@ -12,7 +12,12 @@ public interface AuthorRepository {
     Author save(Author author);
     void deleteById(AuthorId id);
     Optional<Author> findByFullName(String firstName, String lastName);
-
-    // Новий метод
     List<Author> findFavorites(int limit);
+
+    // ----- НОВИЙ МЕТОД ДЛЯ DATA INTEGRITY -----
+
+    /**
+     * Повертає кількість авторів, які не прив'язані до жодної книги.
+     */
+    long countOrphanedAuthors();
 }

@@ -1,7 +1,4 @@
 spring:
-  config:
-    activate:
-      on-profile: prod
   main:
     allow-circular-references: false
     allow-bean-definition-overriding: false
@@ -46,7 +43,6 @@ logging:
     org.sqlite: WARN
     org.apache.lucene: INFO
 
-# === Додано для Actuator ===
 management:
   endpoints:
     web:

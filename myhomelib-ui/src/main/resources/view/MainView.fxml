@@ -39,14 +39,21 @@
                     <MenuItem text="Імпорт INPX..." onAction="#handleImportInpx"/>
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
                     <MenuItem text="Експорт..." onAction="#handleExport"/>
-                    <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="🔍 Перевірити цілісність..." onAction="#handleCheckIntegrity"/>
+                    <MenuItem text="⚡ Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
+                    <MenuItem text="🔄 Перебудувати індекс..." onAction="#handleRebuildIndex"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="💾 Резервне копіювання..." onAction="#handleBackup"/>
+                    <MenuItem text="📂 Відновити з копії..." onAction="#handleRestore"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="📊 Статистика" onAction="#handleStatistics"/>
                 </Menu>
                 <Menu text="Допомога">
                     <MenuItem text="Про програму" onAction="#handleAbout"/>
                 </Menu>
             </MenuBar>
 
-            <!-- Панель інструментів -->
             <ToolBar>
                 <Button fx:id="backButton" text="←" onAction="#handleBack" disable="true"/>
                 <Button fx:id="forwardButton" text="→" onAction="#handleForward" disable="true"/>
@@ -58,7 +65,17 @@
                 <Separator/>
                 <Button text="+Імпорт" onAction="#handleImportDirectory"/>
                 <Button text="+Книга" onAction="#handleAddBook"/>
-                <Button text="💾 Backup" onAction="#handleBackup"/>
+                <Separator/>
+                <Button text="⭐ Оцінити" onAction="#handleBatchRate" style="-fx-background-color: #FFC107; -fx-text-fill: black;"/>
+                <Button text="📖 Прочитано" onAction="#handleBatchMarkRead" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+                <Button text="📂 Додати до групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+                <Button text="✖ Зняти вибір" onAction="#handleClearSelection" style="-fx-background-color: #9E9E9E; -fx-text-fill: white;"/>
+                <Button text="🌳" onAction="#handleToggleView" style="-fx-background-color: #9C27B0; -fx-text-fill: white;"/>
+                <Separator/>
+                <Button text="📤 Експорт" onAction="#handleExport" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
+                <Button text="📦 INPX" onAction="#handleExportInpx" style="-fx-background-color: #673AB7; -fx-text-fill: white;"/>
+                <Separator/>
+                <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
                 <Separator/>
                 <Region HBox.hgrow="ALWAYS"/>
                 <Button text="⚙" onAction="#handleSettings"/>
@@ -73,9 +90,7 @@
     </left>
 
     <center>
-        <!-- Тут буде робоча область (Workspace), яка встановлюється програмою -->
-        <!-- За замовчуванням завантажуємо Dashboard -->
-        <fx:include source="dashboard.fxml"/>
+        <fx:include source="book-table.fxml"/>
     </center>
 
     <right>

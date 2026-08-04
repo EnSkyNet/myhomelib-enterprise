@@ -17,6 +17,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.List;
 
 @Repository
@@ -31,7 +32,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
     private final BookBatchWriter batchWriter;
-    private final BookCache bookCache; // <-- ДОДАНО
+    private final BookCache bookCache;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -98,7 +99,6 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             bookGenreHelper.saveGenres(book.getId(), book.getGenres());
         }
 
-        // Інвалідація кешу після збереження (на випадок, якщо змінились автори/жанри)
         bookCache.evict(book.getId());
 
         log.debug("Книгу збережено: id={}, title={}", book.getId().asString(), book.getTitle());
@@ -116,7 +116,6 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             if (book.getGenres() != null && !book.getGenres().isEmpty()) {
                 bookGenreHelper.saveGenres(book.getId(), book.getGenres());
             }
-            // Інвалідація кешу для кожної книги в батчі
             bookCache.evict(book.getId());
         }
         log.debug("Batch збережено {} книг", books.size());
@@ -125,7 +124,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     @Override
     public void deleteById(BookId id) {
         getJdbcTemplate().update(BookQueries.DELETE_BY_ID, id.asString());
-        bookCache.evict(id); // <-- інвалідація при видаленні
+        bookCache.evict(id);
         log.debug("Книгу видалено: id={}", id.asString());
     }
 
@@ -139,7 +138,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         int updated = getJdbcTemplate().update(sql, rate, bookId.asString());
         if (updated > 0) {
             log.debug("Оновлено рейтинг для книги {}: {}", bookId, rate);
-            bookCache.evict(bookId); // <-- інвалідація кешу
+            bookCache.evict(bookId);
         } else {
             log.warn("Не вдалося оновити рейтинг для книги {} (книгу не знайдено)", bookId);
         }
@@ -162,9 +161,45 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
 
         if (updated > 0) {
             log.info("✅ SQL оновлено прогрес для книги {}: {}%", bookId, progress);
-            bookCache.evict(bookId); // <-- інвалідація кешу
+            bookCache.evict(bookId);
         } else {
             log.warn("❌ Не вдалося оновити прогрес для книги {} (книгу не знайдено)", bookId);
         }
+    }
+
+    // ==================== НОВІ БАТЧ-МЕТОДИ ====================
+
+    @Override
+    public void updateRateBatch(List<BookId> bookIds, int rate) {
+        if (bookIds == null || bookIds.isEmpty()) {
+            return;
+        }
+        String placeholders = String.join(",", Collections.nCopies(bookIds.size(), "?"));
+        String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id IN (" + placeholders + ")";
+        Object[] params = new Object[bookIds.size() + 1];
+        params[0] = rate;
+        for (int i = 0; i < bookIds.size(); i++) {
+            params[i + 1] = bookIds.get(i).asString();
+        }
+        int updated = getJdbcTemplate().update(sql, params);
+        log.info("Batch оновлено рейтинг для {} книг", updated);
+        bookIds.forEach(bookCache::evict);
+    }
+
+    @Override
+    public void updateProgressBatch(List<BookId> bookIds, int progress) {
+        if (bookIds == null || bookIds.isEmpty()) {
+            return;
+        }
+        String placeholders = String.join(",", Collections.nCopies(bookIds.size(), "?"));
+        String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id IN (" + placeholders + ")";
+        Object[] params = new Object[bookIds.size() + 1];
+        params[0] = progress;
+        for (int i = 0; i < bookIds.size(); i++) {
+            params[i + 1] = bookIds.get(i).asString();
+        }
+        int updated = getJdbcTemplate().update(sql, params);
+        log.info("Batch оновлено прогрес для {} книг", updated);
+        bookIds.forEach(bookCache::evict);
     }
 }

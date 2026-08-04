@@ -1,6 +1,6 @@
 package com.myhomelibcorp.ui.presenter;
 
-import com.myhomelibcorp.application.navigation.NavigationService;
+import com.myhomelibcorp.application.usecase.navigation.LoadNavigationDataUseCase;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.NavigationViewModel;
@@ -13,32 +13,22 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class LibraryNavigationPresenter {
 
-    private final NavigationService navigationService;
+    private final LoadNavigationDataUseCase loadNavigationDataUseCase;
     private final ApplicationState appState;
 
     public void refreshAll() {
         NavigationViewModel vm = appState.getNavigation();
         vm.clear();
 
-        navigationService.getAllAuthors().thenAccept(authors -> UiExecutor.runOnUiThread(() ->
-                vm.setAuthors(authors)
-        )).exceptionally(ex -> {
-            log.error("Failed to load authors", ex);
-            return null;
-        });
-
-        navigationService.getAllSeriesNames().thenAccept(series -> UiExecutor.runOnUiThread(() ->
-                vm.setSeriesNames(series)
-        )).exceptionally(ex -> {
-            log.error("Failed to load series", ex);
-            return null;
-        });
-
-        navigationService.getAllGenres().thenAccept(genres -> UiExecutor.runOnUiThread(() ->
-                vm.setGenres(genres)
-        )).exceptionally(ex -> {
-            log.error("Failed to load genres", ex);
-            return null;
-        });
+        loadNavigationDataUseCase.execute()
+                .thenAccept(data -> UiExecutor.runOnUiThread(() -> {
+                    vm.setAuthors(data.getAuthors());
+                    vm.setGenres(data.getGenres());
+                    vm.setSeriesNames(data.getSeriesNames());
+                }))
+                .exceptionally(ex -> {
+                    log.error("Failed to load navigation data", ex);
+                    return null;
+                });
     }
 }

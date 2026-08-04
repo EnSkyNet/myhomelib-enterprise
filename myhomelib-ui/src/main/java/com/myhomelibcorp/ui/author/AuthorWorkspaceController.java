@@ -1,21 +1,14 @@
 package com.myhomelibcorp.ui.author;
 
 import com.myhomelibcorp.application.dto.AuthorDto;
+import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.mapper.AuthorMapper;
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.query.book.BookQuery;
-import com.myhomelibcorp.application.query.common.Pagination;
-import com.myhomelibcorp.application.query.common.SortBy;
-import com.myhomelibcorp.application.query.common.SortDirection;
-import com.myhomelibcorp.domain.model.author.Author;
+import com.myhomelibcorp.application.usecase.author.LoadAuthorByIdUseCase;
+import com.myhomelibcorp.application.usecase.book.LoadBooksByAuthorUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
-import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -39,15 +32,12 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AuthorWorkspaceController {
 
-    private final AuthorRepository authorRepository;
-    private final BookQueryRepository bookQueryRepository;
-    private final BookLoaderService bookLoaderService;
+    private final LoadAuthorByIdUseCase loadAuthorByIdUseCase;
+    private final LoadBooksByAuthorUseCase loadBooksByAuthorUseCase;
     private final NavigationService navigationService;
     private final CoverPresenter coverPresenter;
     private final ApplicationState appState;
-    private final AuthorMapper authorMapper;
-    private final BookMapper bookMapper;
-    private final BookViewModelMapper bookViewModelMapper;
+        private final BookViewModelMapper bookViewModelMapper;
 
     @FXML private Label authorNameLabel;
     @FXML private Label authorFullNameLabel;
@@ -68,7 +58,7 @@ public class AuthorWorkspaceController {
     @FXML private TextField searchField;
 
     private AuthorId currentAuthorId;
-    private Author currentAuthor;
+    private AuthorDto currentAuthor;
     private List<BookDto> allBooks;
 
     @FXML
@@ -83,11 +73,9 @@ public class AuthorWorkspaceController {
 
         booksTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
-                BookId bookId = BookId.fromString(selected.getId());
-                BookDto bookDto = bookQueryRepository.findById(bookId)
-                        .map(bookMapper::toDto)
-                        .orElse(null);
-                appState.getBookDetails().setCurrentBook(bookDto);
+                appState.getBookDetails().setCurrentBook(
+                        bookViewModelMapper.toDto(selected)
+                );
             }
         });
 
@@ -111,31 +99,39 @@ public class AuthorWorkspaceController {
     }
 
     private void loadAuthorData(AuthorId authorId) {
-        authorRepository.findById(authorId).ifPresentOrElse(author -> {
+        loadAuthorByIdUseCase.execute(authorId).ifPresentOrElse(author -> {
             this.currentAuthor = author;
             UiExecutor.runOnUiThread(() -> updateAuthorUI(author));
         }, () -> {
             log.warn("Author not found: {}", authorId);
         });
 
-        BookQuery query = BookQuery.builder()
-                .authorId(authorId)
-                .pagination(Pagination.of(1000, 0))
-                .sortBy(SortBy.TITLE)
-                .direction(SortDirection.ASC)
-                .build();
-        List<BookDto> books = bookQueryRepository.find(query).stream()
-                .map(bookMapper::toDto)
+        List<BookListItem> items = loadBooksByAuthorUseCase.execute(authorId, 1000, 0);
+        this.allBooks = items.stream()
+                .map(item -> {
+                    BookDto dto = new BookDto();
+                    dto.setId(item.getId());
+                    dto.setTitle(item.getTitle());
+                    dto.setAuthorsText(item.getAuthorsText());
+                    dto.setSeries(item.getSeries());
+                    dto.setGenresText(item.getGenresText());
+                    dto.setRate(item.getRate());
+                    dto.setProgress(item.getProgress());
+                    dto.setFileSize(item.getFileSize());
+                    dto.setLanguage(item.getLanguage());
+                    dto.setFileName(item.getFileName());
+                    dto.setFolder(item.getFolder());
+                    dto.setCollectionRoot(item.getCollectionRoot());
+                    dto.setAnnotation(item.getAnnotation());
+                    return dto;
+                })
                 .collect(Collectors.toList());
-        this.allBooks = books;
-        UiExecutor.runOnUiThread(() -> updateBooksUI(books));
+        UiExecutor.runOnUiThread(() -> updateBooksUI(allBooks));
     }
 
-    private void updateAuthorUI(Author author) {
-        AuthorDto authorDto = authorMapper.toDto(author);
-        authorNameLabel.setText(authorDto.getFullName());
-        authorFullNameLabel.setText(authorDto.getFullName());
-
+    private void updateAuthorUI(AuthorDto author) {
+        authorNameLabel.setText(author.getFullName());
+        authorFullNameLabel.setText(author.getFullName());
         booksCountLabel.setText("Книг: " + (allBooks != null ? allBooks.size() : 0));
         seriesCountLabel.setText("Серій: 0");
         genresCountLabel.setText("Жанрів: 0");
@@ -205,9 +201,20 @@ public class AuthorWorkspaceController {
     private void onReadBook() {
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
         if (selected != null) {
-            BookDto book = bookQueryRepository.findById(BookId.fromString(selected.getId()))
-                    .map(bookMapper::toDto)
-                    .orElse(null);
+            BookDto book = new BookDto();
+            book.setId(selected.getId());
+            book.setTitle(selected.getTitle());
+            book.setAuthorsText(selected.getAuthorsText());
+            book.setSeries(selected.getSeries());
+            book.setGenresText(selected.getGenresText());
+            book.setRate(selected.getRate());
+            book.setProgress(selected.getProgress());
+            book.setFileName(selected.getFileName());
+            book.setFolder(selected.getFolder());
+            book.setArchiveEntry(selected.getArchiveEntry());
+            book.setCollectionRoot(selected.getCollectionRoot());
+            book.setAnnotation(selected.getAnnotation());
+            book.setLanguage(selected.getLanguage());
             navigationService.readBook(book);
         }
     }

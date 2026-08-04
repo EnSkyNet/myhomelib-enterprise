@@ -11,4 +11,10 @@ public interface CollectionRepository {
     Optional<Collection> findByName(String name);
     Collection save(Collection collection);
     void deleteById(String id);
+
+    // Методи для роботи з книгами в колекції
+    void addBookToCollection(String collectionId, String bookId);
+    void removeBookFromCollection(String collectionId, String bookId);
+    List<String> findBookIdsByCollection(String collectionId);
+    boolean isBookInCollection(String collectionId, String bookId);
 }

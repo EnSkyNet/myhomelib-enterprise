@@ -21,6 +21,7 @@ public interface NavigationService {
     void openBookFile(BookDto book);
     void openBookFolder(BookDto book);
     void readBook(BookDto book);
+    void navigateToPublisher(String publisherName);
 
     boolean canGoBack();
     boolean canGoForward();

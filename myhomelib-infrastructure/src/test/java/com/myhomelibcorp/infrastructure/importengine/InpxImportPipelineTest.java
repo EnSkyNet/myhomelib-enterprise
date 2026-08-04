@@ -12,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
 
 import java.nio.file.Path;
+import java.util.Collections;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -44,6 +45,8 @@ class InpxImportPipelineTest {
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+        // За замовчуванням колекція не активна
+        when(collectionManager.hasActiveCollection()).thenReturn(false);
         pipeline = new InpxImportPipeline(
                 reader,
                 batchWriter,
@@ -57,33 +60,27 @@ class InpxImportPipelineTest {
 
     @Test
     void testImportFile_ShouldReturnZero_WhenReaderReturnsEmpty(@TempDir Path tempDir) throws Exception {
-        // Arrange
         Path testFile = tempDir.resolve("test.inpx");
-        // Створюємо порожній файл
         java.nio.file.Files.createFile(testFile);
 
-        // Mock reader to return empty iterator
-        when(reader.read(testFile)).thenReturn(java.util.Collections.emptyIterator());
+        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
 
-        // Act
         long result = pipeline.importFile(testFile, 100, tempDir);
 
-        // Assert
         assertThat(result).isZero();
         verify(bulkOptimizer).enableBulkInsertMode();
         verify(bulkOptimizer).disableBulkInsertMode();
+        // Перевіряємо, що методи dropIndexes/createIndexes не викликали JdbcTemplate (бо колекція не активна)
+        verify(collectionManager, never()).getCurrentJdbcTemplate();
     }
 
     @Test
     void testImportFile_ShouldHandleNullRootDirectory() throws Exception {
-        // Arrange
         Path testFile = java.nio.file.Files.createTempFile("test", ".inpx");
-        when(reader.read(testFile)).thenReturn(java.util.Collections.emptyIterator());
+        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
 
-        // Act
         long result = pipeline.importFile(testFile, 100, null);
 
-        // Assert
         assertThat(result).isZero();
     }
 }

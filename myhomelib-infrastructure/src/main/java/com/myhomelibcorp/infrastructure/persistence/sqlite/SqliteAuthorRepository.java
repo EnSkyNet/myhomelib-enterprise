@@ -11,6 +11,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Objects;
@@ -65,12 +66,14 @@ public class SqliteAuthorRepository implements AuthorRepository {
 
     // ---- ОСНОВНІ МЕТОДИ РЕПОЗИТОРІЮ ----
     @Override
+    @Transactional(readOnly = true)
     public List<Author> findAll() {
         String sql = "SELECT * FROM authors";
         return getJdbcTemplate().query(sql, authorRowMapper);
     }
 
     @Override
+    @Transactional(readOnly = true)
     public Optional<Author> findById(AuthorId id) {
         String sql = "SELECT * FROM authors WHERE id = ?";
         try {
@@ -150,5 +153,20 @@ public class SqliteAuthorRepository implements AuthorRepository {
         LIMIT ?
         """;
         return getJdbcTemplate().query(sql, authorRowMapper, limit);
+    }
+    @Override
+    public long countOrphanedAuthors() {
+        try {
+            String sql = """
+                SELECT COUNT(*) FROM authors a
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM book_authors ba WHERE ba.author_id = a.id
+                )
+                """;
+            return getJdbcTemplate().queryForObject(sql, Long.class);
+        } catch (Exception e) {
+            log.warn("Не вдалося підрахувати кількість авторів без книг", e);
+            return 0;
+        }
     }
 }

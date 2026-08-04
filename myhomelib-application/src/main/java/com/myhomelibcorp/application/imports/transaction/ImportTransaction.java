@@ -20,7 +20,25 @@ public class ImportTransaction {
     private final @Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate;
     private final BookSaver bookSaver;
 
+    /**
+     * Зберігає книги в одній транзакції (для великих обсягів).
+     * Використовується для всього файлу.
+     */
+    public int saveAllInTransaction(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
+        if (books == null || books.isEmpty()) {
+            return 0;
+        }
+        log.info("Збереження {} книг в одній транзакції", books.size());
+        return transactionTemplate.execute(status -> {
+            return bookSaver.saveBatch(books, indexAfterSave, policy);
+        });
+    }
 
+    /**
+     * @deprecated Використовуйте {@link #saveAllInTransaction(List, boolean, DuplicatePolicy)}
+     * для великих обсягів.
+     */
+    @Deprecated
     public int saveBatchInTransaction(List<Book> books, boolean indexAfterSave, DuplicatePolicy policy) {
         return transactionTemplate.execute(status -> {
             return bookSaver.saveBatch(books, indexAfterSave, policy);
@@ -29,6 +47,7 @@ public class ImportTransaction {
 
     /**
      * Зберігає книги з чанкуванням (для великих обсягів).
+     * Використовує ОДНУ транзакцію для всіх чанків.
      */
     public int saveBatchWithChunking(List<Book> books, int chunkSize, boolean indexAfterSave, DuplicatePolicy policy) {
         if (books == null || books.isEmpty()) {
@@ -38,25 +57,22 @@ public class ImportTransaction {
         List<Book> chunk = new ArrayList<>(chunkSize);
         int totalSaved = 0;
 
+        // Збираємо всі книги в один список для однієї транзакції
+        List<Book> allBooks = new ArrayList<>();
+
         for (Book book : books) {
             chunk.add(book);
             if (chunk.size() >= chunkSize) {
-                totalSaved += transactionTemplate.execute(status -> {
-                    return bookSaver.saveBatch(chunk, indexAfterSave, policy);
-                });
+                allBooks.addAll(chunk);
                 chunk.clear();
-                log.debug("Збережено частину: {} книг (всього {})", chunkSize, totalSaved);
             }
         }
 
         if (!chunk.isEmpty()) {
-            totalSaved += transactionTemplate.execute(status -> {
-                return bookSaver.saveBatch(chunk, indexAfterSave, policy);
-            });
-            log.debug("Збережено останню частину: {} книг (всього {})", chunk.size(), totalSaved);
+            allBooks.addAll(chunk);
         }
 
-        log.info("Всього збережено: {} книг", totalSaved);
-        return totalSaved;
+        log.info("Збереження {} книг в одній транзакції (з чанкуванням)", allBooks.size());
+        return saveAllInTransaction(allBooks, indexAfterSave, policy);
     }
 }

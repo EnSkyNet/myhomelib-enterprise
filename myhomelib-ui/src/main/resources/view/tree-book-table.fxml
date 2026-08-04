@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.VBox?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.table.TreeBookTableController"
+      spacing="5" style="-fx-padding: 10;">
+
+    <Label text="📚 Ієрархічний перегляд книг" style="-fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 0 0 5 0;"/>
+
+    <!-- Панель інструментів -->
+    <ToolBar style="-fx-background-color: #f0f0f0; -fx-padding: 2;">
+        <Button text="☑ Вибрати всі" onAction="#selectAll" style="-fx-font-size: 11px;">
+            <tooltip><Tooltip text="Вибрати всі книги в дереві"/></tooltip>
+        </Button>
+        <Button text="☐ Зняти вибір" onAction="#deselectAll" style="-fx-font-size: 11px;">
+            <tooltip><Tooltip text="Зняти вибір з усіх книг"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="📤 Експортувати вибрані" onAction="#exportSelected" style="-fx-font-size: 11px; -fx-background-color: #4CAF50; -fx-text-fill: white;">
+            <tooltip><Tooltip text="Експортувати вибрані книги"/></tooltip>
+        </Button>
+        <Button text="📖 Позначити прочитаними" onAction="#markSelectedAsRead" style="-fx-font-size: 11px; -fx-background-color: #2196F3; -fx-text-fill: white;">
+            <tooltip><Tooltip text="Позначити вибрані книги як прочитані"/></tooltip>
+        </Button>
+    </ToolBar>
+
+    <TreeTableView fx:id="treeTableView" VBox.vgrow="ALWAYS">
+        <columns>
+            <!-- ВАЖЛИВО: колонка з чекбоксами додається в коді ПЕРШОЮ -->
+            <!-- Інші колонки -->
+            <TreeTableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
+            <TreeTableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
+            <TreeTableColumn fx:id="seriesColumn" text="Серія" prefWidth="120"/>
+            <TreeTableColumn fx:id="genresColumn" text="Жанри" prefWidth="100"/>
+            <TreeTableColumn fx:id="rateColumn" text="Оцінка" prefWidth="80"/>
+            <TreeTableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+            <TreeTableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>
+        </columns>
+    </TreeTableView>
+</VBox>

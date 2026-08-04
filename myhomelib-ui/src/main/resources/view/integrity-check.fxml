@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.controller.IntegrityCheckController"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: #f5f5f5;"
+      prefWidth="700" prefHeight="550">
+
+    <!-- Заголовок -->
+    <HBox spacing="10" alignment="CENTER_LEFT">
+        <Label text="🔍 Перевірка цілісності" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+    </HBox>
+
+    <Separator/>
+
+    <!-- Кнопки управління -->
+    <HBox spacing="10" alignment="CENTER_LEFT">
+        <Button fx:id="checkButton" text="🔍 Перевірити" onAction="#onCheckIntegrity"
+                style="-fx-background-color: #2980b9; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 8 20;"/>
+
+        <Button fx:id="fixButton" text="🔧 Виправити проблеми" onAction="#onFixIssues"
+                style="-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 8 20;"/>
+
+        <ProgressIndicator fx:id="progressIndicator" visible="false" prefWidth="30" prefHeight="30"/>
+
+        <Label fx:id="statusLabel" text="Готово до перевірки" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+
+        <Region HBox.hgrow="ALWAYS"/>
+
+        <Button text="✕ Закрити" onAction="#closeDialog"
+                style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+    </HBox>
+
+    <!-- Підсумок проблем -->
+    <Label fx:id="issuesSummaryLabel" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+
+    <Separator/>
+
+    <!-- Область звіту -->
+    <TextArea fx:id="reportArea" VBox.vgrow="ALWAYS" editable="false"
+              style="-fx-font-family: 'Consolas', 'Monaco', monospace; -fx-font-size: 13px;
+                     -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 4px;"
+              wrapText="false"/>
+
+    <!-- Підказка -->
+    <HBox spacing="5" alignment="CENTER_LEFT">
+        <Label text="💡" style="-fx-font-size: 14px;"/>
+        <Label text="Перевірка аналізує цілісність бази даних і знаходить проблеми, які можна виправити автоматично."
+               style="-fx-text-fill: #7f8c8d; -fx-font-size: 12px;"/>
+    </HBox>
+
+</VBox>

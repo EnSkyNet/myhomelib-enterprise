@@ -288,6 +288,10 @@ public class InpxImportPipeline {
     }
 
     private void dropIndexes() {
+        if (!collectionManager.hasActiveCollection()) {
+            log.debug("Немає активної колекції, пропускаємо видалення індексів");
+            return;
+        }
         try {
             getJdbcTemplate().execute("DROP INDEX IF EXISTS idx_books_title");
             getJdbcTemplate().execute("DROP INDEX IF EXISTS idx_books_series");
@@ -301,6 +305,10 @@ public class InpxImportPipeline {
     }
 
     private void createIndexes() {
+        if (!collectionManager.hasActiveCollection()) {
+            log.debug("Немає активної колекції, пропускаємо створення індексів");
+            return;
+        }
         try {
             getJdbcTemplate().execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)");
             getJdbcTemplate().execute("CREATE INDEX IF NOT EXISTS idx_books_series ON books(series)");

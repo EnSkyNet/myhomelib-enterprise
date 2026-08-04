@@ -2,7 +2,7 @@ package com.myhomelibcorp.ui.event;
 
 import com.myhomelibcorp.application.event.ImportFinishedEvent;
 import com.myhomelibcorp.application.statistics.StatisticsService;
-import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteSeriesRepository;
+import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.navigation.NavigationController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
@@ -21,10 +21,10 @@ public class ImportEventHandler {
 
     private final ApplicationState appState;
     private final StatisticsService statisticsService;
-    private final SqliteSeriesRepository seriesRepository;
+    private final SyncSeriesUseCase syncSeriesUseCase; // ЗАМІСТЬ SqliteSeriesRepository
     private final BookLoaderService bookLoaderService;
-    private final NavigationController navigationController; // <-- додано
-    private final MainController mainController; // <-- додано
+    private final NavigationController navigationController;
+    private final MainController mainController;
 
     @PostConstruct
     public void init() {
@@ -54,9 +54,9 @@ public class ImportEventHandler {
             appState.getStatusBar().setStatusText(status);
             appState.getStatusBar().setProgressVisible(false);
 
-            // 3. Синхронізуємо серії
+            // 3. Синхронізуємо серії через Use Case
             try {
-                seriesRepository.syncSeriesFromBooks();
+                syncSeriesUseCase.execute();
                 log.info("Серії синхронізовано після імпорту");
             } catch (Exception e) {
                 log.error("Помилка синхронізації серій після імпорту", e);

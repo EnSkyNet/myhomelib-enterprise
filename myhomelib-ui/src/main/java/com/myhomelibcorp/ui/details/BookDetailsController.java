@@ -1,16 +1,19 @@
 package com.myhomelibcorp.ui.details;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookDetailsViewModel;
+import javafx.beans.value.ChangeListener;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
+import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -24,6 +27,7 @@ public class BookDetailsController {
     private final NavigationService navigationService;
     private final CoverPresenter coverPresenter;
     private final BookViewModelMapper viewModelMapper;
+    private final MainController mainController;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -36,7 +40,7 @@ public class BookDetailsController {
     @FXML private Label isbnLabel;
     @FXML private TextArea annotationArea;
 
-    private String lastBookId = null;
+    private ChangeListener<BookDto> bookChangeListener;
 
     @FXML
     public void initialize() {
@@ -44,33 +48,44 @@ public class BookDetailsController {
         coverPresenter.bind(coverImageView);
 
         BookDetailsViewModel vm = appState.getBookDetails();
-        vm.currentBookProperty().addListener((obs, old, bookDto) -> {
+
+        // Зберігаємо посилання на слухач для можливості видалення
+        bookChangeListener = (obs, old, bookDto) -> {
             log.info("BookDetailsController: змінено книгу: old={}, new={}",
                     old != null ? old.getTitle() : "null",
                     bookDto != null ? bookDto.getTitle() : "null");
 
-            // При зміні книги спочатку очищаємо обкладинку
             coverPresenter.clearCover();
 
             if (bookDto != null) {
                 updateUI(bookDto);
                 var bookViewModel = viewModelMapper.toViewModel(bookDto);
                 log.info("BookDetailsController: виклик coverPresenter.showCover для книги: {}", bookDto.getTitle());
-                // Невелика затримка, щоб ImageView встиг очиститися
                 javafx.application.Platform.runLater(() -> {
                     coverPresenter.showCover(bookViewModel);
                 });
             } else {
                 clearUI();
             }
-        });
+        };
 
-        // Якщо вже є книга при ініціалізації – показати
+        vm.currentBookProperty().addListener(bookChangeListener);
+
         BookDto current = vm.getCurrentBook();
         if (current != null) {
             log.info("BookDetailsController: початкова книга: {}", current.getTitle());
             updateUI(current);
             coverPresenter.showCover(viewModelMapper.toViewModel(current));
+        }
+    }
+
+    @PreDestroy
+    public void cleanup() {
+        log.info("BookDetailsController: очищення слухачів");
+        BookDetailsViewModel vm = appState.getBookDetails();
+        if (bookChangeListener != null) {
+            vm.currentBookProperty().removeListener(bookChangeListener);
+            bookChangeListener = null;
         }
     }
 
@@ -102,6 +117,8 @@ public class BookDetailsController {
     private void onRead() {
         BookDto book = appState.getBookDetails().getCurrentBook();
         if (book != null) {
+            // ЗАКРИВАЄМО ПОТОЧНИЙ READER ПЕРЕД ВІДКРИТТЯМ НОВОЇ КНИГИ
+            mainController.cleanupReader();
             navigationService.readBook(book);
         }
     }

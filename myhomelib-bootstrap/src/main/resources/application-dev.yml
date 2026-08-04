@@ -7,3 +7,7 @@ logging:
     console: UTF-8
   pattern:
     console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+
+app:
+  search:
+    index-path: ${user.home}/.myhomelibcorp/search-index

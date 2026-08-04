@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
@@ -41,6 +42,7 @@ public class DefaultNavigationService implements NavigationService {
     private final SeriesRepository seriesRepository;
     private final BookQueryRepository bookQueryRepository;
     private final BookMapper bookMapper;
+    private final DictionaryCachePort dictionaryCache;
 
     @Override
     public void navigateToAuthor(AuthorId authorId) {
@@ -54,15 +56,18 @@ public class DefaultNavigationService implements NavigationService {
     @Override
     public void navigateToSeries(SeriesId seriesId) {
         log.info("Навігація до серії: {}", seriesId);
-        Optional<Series> seriesOpt = seriesRepository.findById(seriesId);
+
+        // Шукаємо в кеші (а не в БД!)
+        Optional<Series> seriesOpt = dictionaryCache.getSeries(seriesId);
+
         if (seriesOpt.isEmpty()) {
-            log.warn("Серію з ID {} не знайдено", seriesId);
+            log.warn("Серію з ID {} не знайдено в кеші", seriesId);
             mainController.showSearchResults(List.of());
             mainController.updateNavigationButtons();
             return;
         }
+
         String seriesName = seriesOpt.get().getName();
-        log.info("Назва серії з таблиці series: '{}'", seriesName);
         navigateToSeriesByName(seriesName);
     }
 
@@ -228,6 +233,8 @@ public class DefaultNavigationService implements NavigationService {
     @Override
     public void readBook(BookDto book) {
         if (book != null) {
+            // Зберігаємо останню книгу для поточної колекції
+            sessionService.saveLastOpenedBookId(book.getId());
             mainController.showReaderWorkspace(BookId.fromString(book.getId()));
             mainController.updateNavigationButtons();
         }
@@ -258,5 +265,31 @@ public class DefaultNavigationService implements NavigationService {
     private String normalizeSeriesName(String name) {
         if (name == null) return "";
         return name.trim().toLowerCase().replaceAll("\\s+", " ");
+    }
+    @Override
+    public void navigateToPublisher(String publisherName) {
+        log.info("Навігація до видавництва: {}", publisherName);
+        if (publisherName == null || publisherName.isBlank()) {
+            mainController.showSearchResults(List.of());
+            return;
+        }
+
+        BookQuery query = BookQuery.builder()
+                .text(publisherName)
+                .pagination(Pagination.of(1000, 0))
+                .build();
+
+        List<Book> books = bookQueryRepository.find(query);
+        List<BookDto> dtos = books.stream()
+                .map(bookMapper::toDto)
+                .collect(Collectors.toList());
+
+        // Фільтруємо за видавництвом
+        List<BookDto> filtered = dtos.stream()
+                .filter(b -> publisherName.equalsIgnoreCase(b.getPublisher()))
+                .collect(Collectors.toList());
+
+        mainController.showSearchResults(filtered);
+        mainController.updateNavigationButtons();
     }
 }

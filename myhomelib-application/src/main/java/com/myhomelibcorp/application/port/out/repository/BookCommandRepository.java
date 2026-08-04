@@ -7,8 +7,12 @@ import java.util.List;
 
 public interface BookCommandRepository {
     Book save(Book book);
-    void saveBatch(List<Book> books); // Новий метод для batch-збереження
+    void saveBatch(List<Book> books);
     void deleteById(BookId id);
     void updateRate(BookId bookId, int rate);
     void updateProgress(BookId bookId, int progress);
+
+    // НОВІ БАТЧ-МЕТОДИ
+    void updateRateBatch(List<BookId> bookIds, int rate);
+    void updateProgressBatch(List<BookId> bookIds, int progress);
 }

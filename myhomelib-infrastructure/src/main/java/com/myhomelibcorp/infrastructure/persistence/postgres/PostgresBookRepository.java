@@ -74,4 +74,22 @@ public class PostgresBookRepository implements BookQueryRepository {
         log.warn("PostgresBookRepository.findFavoriteAuthors() not implemented yet");
         return List.of();
     }
+
+    @Override
+    public long countBooksWithoutAuthor() {
+        log.warn("PostgresBookRepository.countBooksWithoutAuthor() not implemented yet");
+        return 0;
+    }
+
+    @Override
+    public long countBooksWithoutGenre() {
+        log.warn("PostgresBookRepository.countBooksWithoutGenre() not implemented yet");
+        return 0;
+    }
+
+    @Override
+    public List<BookId> findDuplicateBookIds() {
+        log.warn("PostgresBookRepository.findDuplicateBookIds() not implemented yet");
+        return List.of();
+    }
 }
