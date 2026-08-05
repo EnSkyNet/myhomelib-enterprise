@@ -1,10 +1,13 @@
 package com.myhomelibcorp.reader.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.reader.core.ReaderSettings;
+import com.myhomelibcorp.reader.session.ReaderSession;
+import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import jakarta.annotation.PreDestroy;
 import javafx.application.Platform;
+import javafx.beans.value.ChangeListener;
 import javafx.concurrent.Worker;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
@@ -13,8 +16,10 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -23,230 +28,557 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Slf4j
 public class ReaderLifecycleManager {
 
+    private static final int MAX_RETRIES = 3;
+    private static final long RESTORE_DELAY_MS = 400;
+    private static final long SAVE_INTERVAL_SECONDS = 3;
+    private static final long DEBOUNCE_DELAY_MS = 500;
+
     private final ReaderContentLoader contentLoader;
     private final ReaderProgressManager progressManager;
     private final ReaderScheduler scheduler;
     private final ReaderJsBridge jsBridge;
+    private final CollectionLifecyclePort collectionLifecyclePort;
+    private final ReaderSessionManager sessionManager;
 
-    private WebEngine webEngine;
-    private BookDto currentBook;
-    private boolean isRestoring = false;
-    private ProgressBar progressBar;
-    private Label progressLabel;
+    private final ScheduledExecutorService restoreExecutor = Executors.newSingleThreadScheduledExecutor(
+            r -> {
+                Thread t = new Thread(r, "ReaderRestore");
+                t.setDaemon(true);
+                return t;
+            }
+    );
+
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
-    private final AtomicBoolean isReaderOpen = new AtomicBoolean(false);
-
-    private final ScheduledExecutorService restoreDelayExecutor = Executors.newSingleThreadScheduledExecutor(r -> {
-        Thread t = new Thread(r, "ReaderRestoreDelay");
-        t.setDaemon(true);
-        return t;
-    });
+    private ScheduledFuture<?> saveTask;
+    private ScheduledFuture<?> debounceFuture;
+    private volatile boolean isSavingActive = false;
 
     // ==================== ПУБЛІЧНІ МЕТОДИ ====================
 
-    public boolean isReaderOpen() {
-        return isReaderOpen.get();
-    }
-
-    public void openBook(BookDto book, WebEngine engine, ProgressBar bar, Label label) {
+    public ReaderSession openBook(BookDto book, WebEngine engine, ProgressBar bar, Label label) {
         if (isShuttingDown.get()) {
             log.warn("ReaderLifecycleManager завершується, пропускаємо відкриття книги");
-            return;
+            return null;
         }
 
-        // Закриваємо попередню книгу, якщо вона була
-        closeBook();
+        if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
+            log.warn("Немає активної колекції, книга не може бути відкрита");
+            return null;
+        }
 
-        this.webEngine = engine;
-        this.currentBook = book;
-        this.progressBar = bar;
-        this.progressLabel = label;
+        ReaderSession session = sessionManager.createSession(book);
+        session.setWebEngine(engine);
+        session.setProgressBar(bar);
+        session.setProgressLabel(label);
+        session.setProgressListenerSetup(false);
+        session.setRetryCount(0);
+        session.setLastLoadedHtml(null);
+        session.setCurrentHtml(null);
+        session.setContentLoaded(false);
+        session.setOpen(true);
+        session.setClosing(false);
 
-        progressManager.setCurrentBook(book);
-        isReaderOpen.set(true);
+        log.info("Відкриття книги: {} (сесія: {})", book.getTitle(), session.getSessionId());
 
-        log.info("Відкриття книги: {}, прогрес з БД: {}%", book.getTitle(), book.getProgress());
+        loadBookContent(session);
 
-        loadBookContent(book);
-        restorePositionWhenReady(book.getId());
+        return session;
     }
 
-    public void closeBook() {
-        if (isShuttingDown.get()) {
-            log.debug("ReaderLifecycleManager завершується, пропускаємо closeBook");
+    public void closeBook(ReaderSession session) {
+        if (session == null || !session.isActive()) {
             return;
         }
 
-        if (!isReaderOpen.get()) {
-            log.debug("Reader вже закрито");
+        if (session.isClosing()) {
+            log.debug("Вже виконується закриття сесії: {}", session.getSessionId());
+            return;
+        }
+        session.setClosing(true);
+
+        String sessionId = session.getSessionId();
+        log.info("Закриття книги: {} (сесія: {})",
+                session.getBook() != null ? session.getBook().getTitle() : "none",
+                sessionId);
+
+        stopSaving(sessionId);
+        cleanupWebView(session);
+        contentLoader.clearCache();
+        progressManager.deactivateReader(sessionId);
+
+        session.setOpen(false);
+        sessionManager.closeSession(sessionId);
+
+        log.info("Сесію Reader закрито: {}", sessionId);
+    }
+
+    public void setupProgressListener(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null) {
             return;
         }
 
-        log.info("Закриття книги: {}", currentBook != null ? currentBook.getTitle() : "none");
+        String sessionId = session.getSessionId();
+        if (!sessionManager.isCurrentSession(sessionId)) {
+            log.debug("Сесія неактивна, пропускаємо налаштування listener-а");
+            return;
+        }
 
-        // ЗУПИНЯЄМО ТАЙМЕР ПЕРШИМ
-        scheduler.stopSaving();
+        if (session.getWebEngine().getLoadWorker().getState() == Worker.State.SUCCEEDED) {
+            jsBridge.setupScrollListener(session.getWebEngine());
+            session.setProgressListenerSetup(true);
 
-        // ДЕАКТИВУЄМО READER
-        progressManager.deactivateReader();
-        isReaderOpen.set(false);
+            if (session.isContentLoaded() && session.isActive()) {
+                restorePosition(session);
+            }
+        }
+    }
 
-        // ОЧИЩУЄМО WEB ENGINE
-        if (webEngine != null) {
+    public void restorePosition(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return;
+        }
+
+        String sessionId = session.getSessionId();
+        if (!sessionManager.isCurrentSession(sessionId)) {
+            log.debug("Сесія неактивна, пропускаємо відновлення");
+            return;
+        }
+
+        if (!session.isContentLoaded()) {
+            log.debug("Контент ще не завантажено, пропускаємо відновлення");
+            return;
+        }
+
+        if (session.getWebEngine().getLoadWorker().getState() != Worker.State.SUCCEEDED) {
+            log.debug("Сторінка не завантажена, пропускаємо відновлення");
+            return;
+        }
+
+        final String finalSessionId = sessionId;
+        final String bookId = session.getBookId();
+
+        restoreExecutor.schedule(() -> {
+            if (!sessionManager.isCurrentSession(finalSessionId)) {
+                log.debug("Сесія {} вже неактивна, пропускаємо відновлення", finalSessionId);
+                return;
+            }
+
+            ReaderSession currentSession = sessionManager.getCurrentSession();
+            if (currentSession == null || !currentSession.isActive()) {
+                return;
+            }
+
             Platform.runLater(() -> {
-                webEngine.loadContent("");
-                webEngine.getLoadWorker().cancel();
+                if (!sessionManager.isCurrentSession(finalSessionId)) {
+                    return;
+                }
+                doRestore(currentSession, bookId);
             });
+        }, RESTORE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    public void startSaving(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return;
         }
 
-        currentBook = null;
-        progressBar = null;
-        progressLabel = null;
+        String sessionId = session.getSessionId();
+        if (!sessionManager.isCurrentSession(sessionId)) {
+            return;
+        }
 
-        log.info("Reader закрито, таймер зупинено");
+        if (session.getWebEngine().getLoadWorker().getState() != Worker.State.SUCCEEDED) {
+            log.debug("Сторінка не завантажена, таймер не запускається");
+            return;
+        }
+
+        stopSaving(sessionId);
+        isSavingActive = true;
+
+        final String finalSessionId = sessionId;
+
+        saveTask = restoreExecutor.scheduleAtFixedRate(() -> {
+            if (!isSavingActive || !sessionManager.isCurrentSession(finalSessionId) || isShuttingDown.get()) {
+                return;
+            }
+
+            ReaderSession currentSession = sessionManager.getCurrentSession();
+            if (currentSession == null || currentSession.getWebEngine() == null || !currentSession.isActive()) {
+                return;
+            }
+
+            Platform.runLater(() -> {
+                if (!sessionManager.isCurrentSession(finalSessionId)) {
+                    return;
+                }
+
+                ReaderSession s = sessionManager.getCurrentSession();
+                if (s == null || s.getWebEngine() == null) {
+                    return;
+                }
+
+                if (s.getWebEngine().getLoadWorker().getState() != Worker.State.SUCCEEDED) {
+                    return;
+                }
+
+                var progress = progressManager.getCurrentProgress(s);
+                if (progress == null) {
+                    return;
+                }
+
+                double percent = progress.getPercent() / 100.0;
+                if (s.getProgressBar() != null) {
+                    s.getProgressBar().setProgress(percent);
+                }
+                if (s.getProgressLabel() != null) {
+                    s.getProgressLabel().setText((int) (percent * 100) + "%");
+                }
+
+                if (progressManager.shouldSave(s, progress)) {
+                    scheduleDebouncedSave(s, progress);
+                }
+            });
+        }, SAVE_INTERVAL_SECONDS, SAVE_INTERVAL_SECONDS, TimeUnit.SECONDS);
+
+        log.info("Таймер збереження запущено для сесії: {}", sessionId);
+    }
+
+    public void saveState(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return;
+        }
+        forceSaveNow(session);
+    }
+
+    public BookDto getCurrentBook() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        return session != null ? session.getBook() : null;
+    }
+
+    public String getTextAtPosition(double position) {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return "";
+        }
+        return jsBridge.getTextAtPosition(session.getWebEngine(), position);
+    }
+
+    public String getCurrentChapterTitle() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return "Без заголовка";
+        }
+        return jsBridge.getCurrentChapterTitle(session.getWebEngine());
+    }
+
+    public boolean isReaderOpen() {
+        return sessionManager.hasActiveSession();
     }
 
     // ==================== ПРИВАТНІ МЕТОДИ ====================
 
-    private void loadBookContent(BookDto book) {
-        try {
-            String html = contentLoader.loadBookContent(book);
-            String css = ReaderSettings.getInstance().toCss();
-            html = injectStyles(html, css);
-            webEngine.loadContent(html);
-            log.info("Книгу завантажено");
-        } catch (Exception e) {
-            log.error("Помилка завантаження книги", e);
-            webEngine.loadContent("<html><body><h1>Помилка завантаження</h1><pre>" + e.getMessage() + "</pre></body></html>");
+    private void loadBookContent(ReaderSession session) {
+        if (session == null || !session.isActive()) {
+            return;
         }
+
+        final String sessionId = session.getSessionId();
+        final BookDto book = session.getBook();
+        final WebEngine targetEngine = session.getWebEngine();
+
+        log.info("Початок завантаження контенту для книги: {} (сесія: {})", book.getTitle(), sessionId);
+
+        restoreExecutor.execute(() -> {
+            try {
+                if (!sessionManager.isCurrentSession(sessionId)) {
+                    log.debug("Сесія {} вже неактивна, скасовуємо завантаження", sessionId);
+                    return;
+                }
+
+                String html = contentLoader.loadBookContent(book);
+                String css = ReaderSettings.getInstance().toCss();
+                String fullHtml = injectStyles(html, css);
+
+                if (!sessionManager.isCurrentSession(sessionId)) {
+                    log.debug("Сесія {} вже неактивна, скасовуємо завантаження HTML", sessionId);
+                    return;
+                }
+
+                final String finalFullHtml = fullHtml;
+                final String finalSessionId = sessionId;
+
+                Platform.runLater(() -> {
+                    ReaderSession currentSession = sessionManager.getCurrentSession();
+                    if (currentSession == null || !currentSession.isActive()) {
+                        log.debug("Немає активної сесії, скасовуємо завантаження HTML");
+                        return;
+                    }
+
+                    if (!currentSession.getSessionId().equals(finalSessionId)) {
+                        log.debug("Сесія змінилася (була: {}, поточна: {}), скасовуємо завантаження HTML",
+                                finalSessionId, currentSession.getSessionId());
+                        return;
+                    }
+
+                    if (currentSession.getWebEngine() != targetEngine) {
+                        log.debug("WebEngine змінився, скасовуємо завантаження HTML");
+                        return;
+                    }
+
+                    currentSession.setLastLoadedHtml(finalFullHtml);
+                    loadHtmlToWebView(currentSession, finalFullHtml);
+                });
+
+            } catch (Exception e) {
+                log.error("Помилка завантаження книги: {}", book.getTitle(), e);
+                Platform.runLater(() -> {
+                    ReaderSession currentSession = sessionManager.getCurrentSession();
+                    if (currentSession != null && currentSession.getSessionId().equals(sessionId)) {
+                        String errorHtml = createErrorHtml(book, e);
+                        loadHtmlToWebView(currentSession, errorHtml);
+                    }
+                });
+            }
+        });
+    }
+
+    private void loadHtmlToWebView(ReaderSession session, String html) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            log.warn("loadHtmlToWebView: session null або неактивна");
+            return;
+        }
+
+        final String sessionId = session.getSessionId();
+        final WebEngine engine = session.getWebEngine();
+
+        log.info("Завантаження HTML у WebView, сесія: {}, HTML розмір: {} chars", sessionId, html.length());
+
+        // Логуємо перші 500 символів для перевірки
+        String preview = html.length() > 500 ? html.substring(0, 500) : html;
+        log.debug("Перші 500 символів HTML: {}", preview);
+
+        // Створюємо listener
+        ChangeListener<Worker.State> listener = (obs, oldState, newState) -> {
+            log.info("loadListener: сесія={}, oldState={}, newState={}", sessionId, oldState, newState);
+
+            if (!sessionManager.isCurrentSession(sessionId)) {
+                log.debug("Сесія {} вже неактивна, пропускаємо", sessionId);
+                return;
+            }
+
+            if (newState == Worker.State.SUCCEEDED) {
+                log.info("✅ WebView успішно завантажив HTML, сесія: {}", sessionId);
+                session.setContentLoaded(true);
+                session.setRetryCount(0);
+
+                // Перевіряємо вміст DOM
+                try {
+                    // Перевіряємо body
+                    Object hasBody = engine.executeScript("document.body !== null");
+                    log.info("📄 document.body exists: {}", hasBody);
+
+                    if (Boolean.TRUE.equals(hasBody)) {
+                        Object bodyContent = engine.executeScript("document.body.innerText.length");
+                        log.info("📄 Довжина тексту в body: {} символів", bodyContent);
+
+                        // Перевіряємо HTML вміст
+                        Object htmlContent = engine.executeScript("document.documentElement.outerHTML.length");
+                        log.info("📄 Довжина HTML: {} символів", htmlContent);
+                    } else {
+                        log.warn("⚠️ document.body is null! WebView не відображає контент.");
+                        // Спроба примусово встановити контент
+                        engine.loadContent("<html><body><h1>Тестовий контент</h1><p>Якщо ви бачите цей текст, WebView працює.</p></body></html>");
+                    }
+                } catch (Exception e) {
+                    log.warn("Не вдалося отримати інформацію з DOM", e);
+                }
+
+                restorePosition(sessionManager.getCurrentSession());
+                startSaving(session);
+
+            } else if (newState == Worker.State.FAILED) {
+                log.error("❌ WebView не зміг завантажити HTML, сесія: {}", sessionId);
+                session.setContentLoaded(false);
+
+                Throwable exception = engine.getLoadWorker().getException();
+                if (exception != null) {
+                    log.error("Причина помилки: ", exception);
+                }
+
+                if (session.getLastLoadedHtml() != null && session.getRetryCount() < MAX_RETRIES) {
+                    session.setRetryCount(session.getRetryCount() + 1);
+                    log.info("Повторна спроба завантаження HTML ({} з {})", session.getRetryCount(), MAX_RETRIES);
+                    Platform.runLater(() -> {
+                        if (sessionManager.isCurrentSession(sessionId)) {
+                            // Спрощений HTML для тесту
+                            String testHtml = "<html><head><meta charset='UTF-8'/></head><body><h1>Тест</h1><p>Спроба " + session.getRetryCount() + "</p></body></html>";
+                            engine.loadContent(testHtml);
+                        }
+                    });
+                }
+            }
+        };
+
+        // Видаляємо старий listener
+        try {
+            engine.getLoadWorker().stateProperty().removeListener(listener);
+        } catch (Exception e) {
+            log.debug("Не вдалося видалити старий listener: {}", e.getMessage());
+        }
+
+        engine.getLoadWorker().stateProperty().addListener(listener);
+
+        // ОЧИЩУЄМО ТА ЗАВАНТАЖУЄМО
+        try {
+            // Спершу завантажуємо простий HTML для перевірки
+            String testHtml = "<html><head><meta charset='UTF-8'/></head><body><h1>Завантаження...</h1><p>Книга завантажується...</p></body></html>";
+            engine.loadContent(testHtml);
+
+            // Невелика затримка
+            Thread.sleep(100);
+
+            // Потім завантажуємо основний HTML
+            session.setCurrentHtml(html);
+            session.setContentLoaded(false);
+            engine.loadContent(html);
+            log.info("✅ HTML передано у WebView для завантаження, сесія: {}", sessionId);
+        } catch (Exception e) {
+            log.error("Помилка завантаження HTML у WebView", e);
+            String fallbackHtml = "<html><head><meta charset='UTF-8'/></head><body><h1>Помилка</h1><p>" + e.getMessage() + "</p></body></html>";
+            engine.loadContent(fallbackHtml);
+        }
+    }
+
+    private void scheduleDebouncedSave(ReaderSession session, com.myhomelibcorp.application.dto.ReadingProgressDto progress) {
+        if (session == null || !session.isActive()) {
+            return;
+        }
+
+        final String sessionId = session.getSessionId();
+
+        if (debounceFuture != null && !debounceFuture.isDone()) {
+            debounceFuture.cancel(false);
+        }
+
+        debounceFuture = restoreExecutor.schedule(() -> {
+            if (!sessionManager.isCurrentSession(sessionId) || isShuttingDown.get()) {
+                return;
+            }
+
+            Platform.runLater(() -> {
+                ReaderSession currentSession = sessionManager.getCurrentSession();
+                if (currentSession == null || !currentSession.isActive()) {
+                    return;
+                }
+                if (!currentSession.getSessionId().equals(sessionId)) {
+                    return;
+                }
+                var finalProgress = progressManager.getCurrentProgress(currentSession);
+                if (finalProgress != null) {
+                    progressManager.saveProgress(currentSession, finalProgress);
+                }
+            });
+        }, DEBOUNCE_DELAY_MS, TimeUnit.MILLISECONDS);
+    }
+
+    private void forceSaveNow(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return;
+        }
+
+        var progress = progressManager.getCurrentProgress(session);
+        if (progress != null) {
+            progressManager.saveProgress(session, progress);
+        }
+    }
+
+    private void stopSaving(String sessionId) {
+        isSavingActive = false;
+        if (saveTask != null && !saveTask.isDone()) {
+            saveTask.cancel(false);
+            saveTask = null;
+        }
+        if (debounceFuture != null && !debounceFuture.isDone()) {
+            debounceFuture.cancel(false);
+            debounceFuture = null;
+        }
+        log.debug("Таймер збереження зупинено для сесії: {}", sessionId);
+    }
+
+    private void cleanupWebView(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null) {
+            return;
+        }
+
+        Platform.runLater(() -> {
+            try {
+                jsBridge.cleanup(session.getWebEngine());
+                session.getWebEngine().loadContent("");
+                session.getWebEngine().getLoadWorker().cancel();
+            } catch (Exception e) {
+                log.warn("Помилка очищення WebView: {}", e.getMessage());
+            }
+        });
+
+        session.setWebEngine(null);
+        session.setWebView(null);
+        session.setCurrentHtml(null);
+        session.setLastLoadedHtml(null);
+        session.setContentLoaded(false);
+        session.setProgressListenerSetup(false);
+    }
+
+    private void doRestore(ReaderSession session, String bookId) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            return;
+        }
+        progressManager.restorePosition(session, bookId);
     }
 
     private String injectStyles(String html, String css) {
-        return html.replace("</head>", "<style>" + css + "</style></head>");
+        if (html.contains("<head>")) {
+            return html.replace("</head>", "<style>" + css + "</style></head>");
+        } else if (html.contains("<body>")) {
+            return html.replace("<body>", "<body><style>" + css + "</style>");
+        }
+        return "<!DOCTYPE html><html><head><style>" + css + "</style></head><body>" + html + "</body></html>";
     }
 
-    private void restorePositionWhenReady(String bookId) {
-        if (webEngine == null || isShuttingDown.get()) return;
-        Worker.State state = webEngine.getLoadWorker().getState();
-        if (state == Worker.State.SUCCEEDED) {
-            doRestore(bookId);
-        } else if (state == Worker.State.FAILED) {
-            log.warn("Сторінка не завантажилась, відновлення позиції неможливе");
-        } else {
-            webEngine.getLoadWorker().stateProperty().addListener((obs, old, newState) -> {
-                if (newState == Worker.State.SUCCEEDED && !isShuttingDown.get() && isReaderOpen.get()) {
-                    doRestore(bookId);
-                }
-            });
-        }
+    private String createErrorHtml(BookDto book, Exception e) {
+        return """
+                <html>
+                <head><meta charset="UTF-8"/></head>
+                <body>
+                    <h1>Помилка завантаження книги</h1>
+                    <p><b>Назва:</b> %s</p>
+                    <p><b>Автор:</b> %s</p>
+                    <p><b>Помилка:</b> %s</p>
+                </body>
+                </html>
+                """.formatted(
+                book.getTitle() != null ? book.getTitle() : "Без назви",
+                book.getAuthorsText() != null ? book.getAuthorsText() : "Невідомий автор",
+                e.getMessage()
+        );
     }
-
-    private void doRestore(String bookId) {
-        if (isShuttingDown.get() || !isReaderOpen.get()) {
-            log.debug("Reader неактивний або завершується, пропускаємо відновлення");
-            return;
-        }
-
-        if (restoreDelayExecutor.isShutdown() || restoreDelayExecutor.isTerminated()) {
-            log.warn("restoreDelayExecutor завершено, неможливо запланувати відновлення");
-            return;
-        }
-
-        isRestoring = true;
-        boolean success = progressManager.restorePosition(webEngine, bookId);
-        if (success) {
-            var progress = progressManager.loadProgress(bookId).orElse(null);
-            if (progress != null && progressBar != null) {
-                progressBar.setProgress(progress.getPercent() / 100.0);
-                progressLabel.setText((int) progress.getPercent() + "%");
-            }
-        }
-
-        // Запускаємо таймер збереження ТІЛЬКИ якщо Reader відкритий
-        if (isReaderOpen.get()) {
-            scheduler.startSaving(webEngine, progressManager, progressBar, progressLabel, null);
-        }
-
-        try {
-            restoreDelayExecutor.schedule(() -> {
-                if (!isShuttingDown.get() && isReaderOpen.get()) {
-                    isRestoring = false;
-                }
-            }, 1000, TimeUnit.MILLISECONDS);
-        } catch (Exception e) {
-            log.warn("Не вдалося запланувати скидання isRestoring: {}", e.getMessage());
-            isRestoring = false;
-        }
-    }
-
-    // ==================== ПУБЛІЧНІ СЕРВІСНІ МЕТОДИ ====================
-
-    public void setupProgressListener(WebEngine engine) {
-        if (isShuttingDown.get()) return;
-        this.webEngine = engine;
-        jsBridge.setupScrollListener(engine);
-        log.info("Слухач прогресу налаштовано");
-    }
-
-    public void saveState() {
-        if (isShuttingDown.get()) return;
-        if (webEngine != null && progressManager.isReaderActive() && isReaderOpen.get()) {
-            scheduler.forceSaveNow(webEngine, progressManager);
-        }
-    }
-
-    public BookDto getCurrentBook() {
-        return currentBook;
-    }
-
-    public String getTextAtPosition(double position) {
-        if (isShuttingDown.get() || webEngine == null || !progressManager.isReaderActive() || !isReaderOpen.get()) {
-            return "";
-        }
-        return jsBridge.getTextAtPosition(webEngine, position);
-    }
-
-    public String getCurrentChapterTitle() {
-        if (isShuttingDown.get() || webEngine == null || !progressManager.isReaderActive() || !isReaderOpen.get()) {
-            return "Без заголовка";
-        }
-        return jsBridge.getCurrentChapterTitle(webEngine);
-    }
-
-    public void updateProgress(BookId bookId, int progress) {
-        // Для зовнішніх викликів
-    }
-
-    public void restorePosition(String bookId) {
-        if (isShuttingDown.get() || webEngine == null || currentBook == null || !isReaderOpen.get()) {
-            log.debug("Неможливо відновити позицію: Reader неактивний або завершується");
-            return;
-        }
-        doRestore(bookId);
-    }
-
-    // ==================== ЗАВЕРШЕННЯ ====================
 
     @PreDestroy
     public void cleanup() {
         if (isShuttingDown.getAndSet(true)) {
-            log.debug("ReaderLifecycleManager вже завершується, пропускаємо повторний виклик");
             return;
         }
 
         log.info("ReaderLifecycleManager.cleanup()");
-        saveState();
-        closeBook();
-        scheduler.shutdown();
+        sessionManager.closeCurrentSession();
 
-        if (restoreDelayExecutor != null && !restoreDelayExecutor.isShutdown()) {
-            restoreDelayExecutor.shutdown();
+        if (restoreExecutor != null && !restoreExecutor.isShutdown()) {
+            restoreExecutor.shutdownNow();
             try {
-                if (!restoreDelayExecutor.awaitTermination(2, TimeUnit.SECONDS)) {
-                    restoreDelayExecutor.shutdownNow();
+                if (!restoreExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                    log.warn("restoreExecutor не завершив роботу примусово");
                 }
             } catch (InterruptedException e) {
-                restoreDelayExecutor.shutdownNow();
+                restoreExecutor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         }

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.session;
 
 import com.myhomelibcorp.application.event.CollectionOpenedEvent;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.SessionRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import lombok.RequiredArgsConstructor;
@@ -16,6 +17,7 @@ import java.util.prefs.Preferences;
 public class SessionService {
 
     private final SessionRepository sessionRepository;
+    private final CollectionLifecyclePort collectionLifecyclePort;
     private final Preferences prefs = Preferences.userNodeForPackage(SessionService.class);
 
     private String currentCollectionId;
@@ -34,7 +36,6 @@ public class SessionService {
 
         this.currentCollectionId = newCollectionId;
 
-        // Завантажуємо останню книгу для цієї колекції
         String lastBookId = sessionRepository.getLastOpenedBookId(newCollectionId);
         if (lastBookId != null && !lastBookId.isEmpty()) {
             this.currentBookId = lastBookId;
@@ -49,27 +50,37 @@ public class SessionService {
         if (bookId == null || bookId.isEmpty()) {
             return;
         }
-        if (currentCollectionId == null) {
+
+        // Отримуємо поточну колекцію через порт
+        Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
+        if (currentCollection == null) {
             log.warn("Спроба зберегти книгу без активної колекції");
             return;
         }
 
+        String collectionId = currentCollection.getId();
+        this.currentCollectionId = collectionId;
         this.currentBookId = bookId;
-        sessionRepository.saveLastOpenedBookId(currentCollectionId, bookId);
-        log.debug("Збережено останню книгу для колекції {}: {}", currentCollectionId, bookId);
+
+        sessionRepository.saveLastOpenedBookId(collectionId, bookId);
+        log.debug("Збережено останню книгу для колекції {}: {}", collectionId, bookId);
     }
 
     public String getLastOpenedBookId() {
-        if (currentCollectionId == null) {
+        Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
+        if (currentCollection == null) {
             log.warn("Спроба отримати книгу без активної колекції");
             return null;
         }
-        // Якщо в кеші є, повертаємо звідти
+
+        String collectionId = currentCollection.getId();
+        this.currentCollectionId = collectionId;
+
         if (currentBookId != null) {
             return currentBookId;
         }
-        // Інакше запитуємо з репозиторію
-        String bookId = sessionRepository.getLastOpenedBookId(currentCollectionId);
+
+        String bookId = sessionRepository.getLastOpenedBookId(collectionId);
         if (bookId != null) {
             currentBookId = bookId;
         }
@@ -77,26 +88,33 @@ public class SessionService {
     }
 
     public String getCurrentCollectionId() {
+        if (currentCollectionId == null) {
+            Collection current = collectionLifecyclePort.getCurrentCollection();
+            if (current != null) {
+                currentCollectionId = current.getId();
+            }
+        }
         return currentCollectionId;
     }
 
     public void saveSelectedAuthorId(String authorId) {
-        if (currentCollectionId == null) {
+        String collectionId = getCurrentCollectionId();
+        if (collectionId == null) {
             log.warn("Спроба зберегти автора без активної колекції");
             return;
         }
-        prefs.put("selectedAuthorId_" + currentCollectionId, authorId);
+        prefs.put("selectedAuthorId_" + collectionId, authorId);
     }
 
     public String getSelectedAuthorId() {
-        if (currentCollectionId == null) {
+        String collectionId = getCurrentCollectionId();
+        if (collectionId == null) {
             return null;
         }
-        return prefs.get("selectedAuthorId_" + currentCollectionId, null);
+        return prefs.get("selectedAuthorId_" + collectionId, null);
     }
 
     public void saveWindowState(double width, double height) {
-        // Window state не залежить від колекції
         prefs.putDouble("windowWidth", width);
         prefs.putDouble("windowHeight", height);
     }
@@ -109,33 +127,30 @@ public class SessionService {
     }
 
     public void saveSearchQuery(String query) {
-        if (currentCollectionId == null) {
+        String collectionId = getCurrentCollectionId();
+        if (collectionId == null) {
             log.warn("Спроба зберегти пошук без активної колекції");
             return;
         }
-        prefs.put("lastSearchQuery_" + currentCollectionId, query);
+        prefs.put("lastSearchQuery_" + collectionId, query);
     }
 
     public String getLastSearchQuery() {
-        if (currentCollectionId == null) {
+        String collectionId = getCurrentCollectionId();
+        if (collectionId == null) {
             return "";
         }
-        return prefs.get("lastSearchQuery_" + currentCollectionId, "");
+        return prefs.get("lastSearchQuery_" + collectionId, "");
     }
 
-    /**
-     * Очищує всі дані сесії для поточної колекції.
-     * Використовує репозиторій для очищення.
-     */
     public void clearCurrentSession() {
-        if (currentCollectionId == null) {
+        String collectionId = getCurrentCollectionId();
+        if (collectionId == null) {
             return;
         }
         currentBookId = null;
-        // Використовуємо репозиторій для очищення (потрібно додати метод в інтерфейс)
-        // Або просто очищаємо Preferences
-        String prefKey = "lastOpenedBookId_" + currentCollectionId;
+        String prefKey = "lastOpenedBookId_" + collectionId;
         prefs.remove(prefKey);
-        log.info("Очищено session для колекції {}", currentCollectionId);
+        log.info("Очищено session для колекції {}", collectionId);
     }
 }

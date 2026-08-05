@@ -1,30 +1,33 @@
 package com.myhomelibcorp.application.usecase.collection;
 
-import com.myhomelibcorp.application.event.CollectionOpenedEvent;
-import com.myhomelibcorp.application.port.out.infrastructure.CollectionSwitcher;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
+import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationEventPublisher;
-import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 
-@Component
+/**
+ * Use Case: переключення на іншу колекцію.
+ */
 @RequiredArgsConstructor
 @Slf4j
 public class SwitchCollectionUseCase {
 
     private final CollectionRepository collectionRepository;
-    private final CollectionSwitcher collectionSwitcher;
-    private final ApplicationEventPublisher eventPublisher;
+    private final CollectionLifecycleService collectionLifecycleService;
 
     public void execute(String collectionId) {
+        if (collectionId == null || collectionId.isBlank()) {
+            throw new IllegalArgumentException("ID колекції не може бути порожнім");
+        }
+
         Optional<Collection> collectionOpt = collectionRepository.findById(collectionId);
         if (collectionOpt.isEmpty()) {
             throw new IllegalArgumentException("Колекцію не знайдено: " + collectionId);
         }
+
         Collection collection = collectionOpt.get();
         execute(collection);
     }
@@ -34,14 +37,16 @@ public class SwitchCollectionUseCase {
             throw new IllegalArgumentException("Колекція не може бути null");
         }
 
-        log.info("Переключення на колекцію: {}", collection.getName());
+        log.info("🔄 Переключення на колекцію: {}", collection.getName());
 
-        // Технічне переключення
-        collectionSwitcher.switchToCollection(collection);
+        // Перевіряємо, чи це вже поточна колекція
+        Collection current = collectionLifecycleService.getCurrentCollection();
+        if (current != null && current.getId().equals(collection.getId())) {
+            log.info("Колекція {} вже активна", collection.getName());
+            return;
+        }
 
-        // Публікуємо подію ТІЛЬКИ ТУТ
-        CollectionOpenedEvent event = new CollectionOpenedEvent(collection);
-        eventPublisher.publishEvent(event);
-        log.info("Опубліковано подію CollectionOpenedEvent для колекції: {}", collection.getName());
+        // Виконуємо повну ініціалізацію
+        collectionLifecycleService.initializeCollection(collection, true);
     }
 }

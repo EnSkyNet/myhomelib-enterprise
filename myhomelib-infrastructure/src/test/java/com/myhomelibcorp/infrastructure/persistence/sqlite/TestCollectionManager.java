@@ -5,10 +5,10 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.config.DataSourceConfig;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import javax.sql.DataSource;
+import java.lang.reflect.Field;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -17,10 +17,8 @@ import java.util.concurrent.atomic.AtomicReference;
  */
 public class TestCollectionManager extends CollectionManager {
 
-    public TestCollectionManager(JdbcTemplate metadataJdbcTemplate,
-                                 ApplicationEventPublisher eventPublisher) {
-        // Передаємо тестову реалізацію DataSourceConfig
-        super(metadataJdbcTemplate, eventPublisher, new TestDataSourceConfig());
+    public TestCollectionManager(JdbcTemplate metadataJdbcTemplate) {
+        super(metadataJdbcTemplate, new TestDataSourceConfig());
     }
 
     /**
@@ -45,7 +43,7 @@ public class TestCollectionManager extends CollectionManager {
 
     public void setCurrentCollection(Collection collection) {
         try {
-            var field = CollectionManager.class.getDeclaredField("currentCollection");
+            Field field = CollectionManager.class.getDeclaredField("currentCollection");
             field.setAccessible(true);
             @SuppressWarnings("unchecked")
             AtomicReference<Collection> ref = (AtomicReference<Collection>) field.get(this);
@@ -57,7 +55,7 @@ public class TestCollectionManager extends CollectionManager {
 
     public void setCurrentDataSource(DataSource dataSource) {
         try {
-            var field = CollectionManager.class.getDeclaredField("currentDataSource");
+            Field field = CollectionManager.class.getDeclaredField("currentDataSource");
             field.setAccessible(true);
             @SuppressWarnings("unchecked")
             AtomicReference<DataSource> ref = (AtomicReference<DataSource>) field.get(this);
@@ -69,7 +67,7 @@ public class TestCollectionManager extends CollectionManager {
 
     public void setCurrentJdbcTemplate(JdbcTemplate jdbcTemplate) {
         try {
-            var field = CollectionManager.class.getDeclaredField("currentJdbcTemplate");
+            Field field = CollectionManager.class.getDeclaredField("currentJdbcTemplate");
             field.setAccessible(true);
             @SuppressWarnings("unchecked")
             AtomicReference<JdbcTemplate> ref = (AtomicReference<JdbcTemplate>) field.get(this);

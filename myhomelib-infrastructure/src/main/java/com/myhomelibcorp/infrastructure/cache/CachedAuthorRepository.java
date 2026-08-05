@@ -28,6 +28,11 @@ public class CachedAuthorRepository implements AuthorRepository {
 
     @Override
     public Optional<Author> findById(AuthorId id) {
+        if (id == null) {
+            log.debug("Спроба пошуку автора з null ID");
+            return Optional.empty();
+        }
+
         Optional<Author> cached = authorCache.get(id);
         if (cached.isPresent()) {
             return cached;
@@ -40,12 +45,18 @@ public class CachedAuthorRepository implements AuthorRepository {
     @Override
     public Author save(Author author) {
         Author saved = delegate.save(author);
-        authorCache.put(saved.getId(), saved);
+        if (saved != null && saved.getId() != null) {
+            authorCache.put(saved.getId(), saved);
+        }
         return saved;
     }
 
     @Override
     public void deleteById(AuthorId id) {
+        if (id == null) {
+            log.debug("Спроба видалення автора з null ID");
+            return;
+        }
         delegate.deleteById(id);
         authorCache.evict(id);
     }

@@ -4,16 +4,27 @@ import com.myhomelibcorp.reader.model.BookDocument;
 import com.myhomelibcorp.reader.model.BookMetadata;
 import com.myhomelibcorp.reader.model.Chapter;
 import lombok.extern.slf4j.Slf4j;
+import org.jsoup.Jsoup;
+import org.jsoup.safety.Safelist;
 
 @Slf4j
 public class DocumentToHtmlConverter {
 
+    private static final Safelist HTML_WHITELIST = Safelist.basic()
+            .addTags("h1", "h2", "h3", "h4", "h5", "h6", "div", "span", "br",
+                    "b", "i", "strong", "em", "u", "s", "sub", "sup", "code", "pre",
+                    "blockquote", "q", "ul", "ol", "li", "hr", "img")
+            .addAttributes("img", "src", "alt", "width", "height")
+            .addAttributes("p", "data-paragraph-id")
+            .addAttributes("div", "class")
+            .addAttributes("span", "class");
+
     public String convert(BookDocument document) {
         long startTime = System.currentTimeMillis();
 
-        StringBuilder html = new StringBuilder(1024 * 100);
-
         BookMetadata metadata = document.getMetadata();
+
+        StringBuilder html = new StringBuilder(1024 * 100);
 
         html.append("<!DOCTYPE html>\n");
         html.append("<html>\n");
@@ -21,28 +32,23 @@ public class DocumentToHtmlConverter {
         html.append("    <meta charset=\"UTF-8\"/>\n");
         html.append("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/>\n");
         html.append("    <title>").append(escapeHtml(metadata.getTitle())).append("</title>\n");
-        // Стилі будуть вставлені динамічно з ReaderSettings, тому не додаємо їх тут
         html.append("</head>\n");
         html.append("<body>\n");
 
-        // Заголовок книги
         html.append("<div class=\"book-title\">").append(escapeHtml(metadata.getTitle())).append("</div>\n");
 
-        // Автори
         if (metadata.getAuthors() != null && !metadata.getAuthors().isEmpty()) {
             html.append("<div class=\"authors\">");
             html.append(String.join(", ", metadata.getAuthors().stream().map(this::escapeHtml).toArray(String[]::new)));
             html.append("</div>\n");
         }
 
-        // Анотація
         if (metadata.getAnnotation() != null && !metadata.getAnnotation().isEmpty()) {
             html.append("<div class=\"annotation\">");
             html.append(escapeHtml(metadata.getAnnotation()));
             html.append("</div>\n");
         }
 
-        // Серія
         if (metadata.getSeries() != null) {
             html.append("<div class=\"series-info\">Серія: ").append(escapeHtml(metadata.getSeries()));
             if (metadata.getSequenceNumber() != null && metadata.getSequenceNumber() > 0) {
@@ -53,7 +59,6 @@ public class DocumentToHtmlConverter {
 
         html.append("<hr class=\"book-divider\"/>\n");
 
-        // Розділи
         for (Chapter chapter : document.getChapters()) {
             html.append(renderChapter(chapter, 1));
         }
@@ -79,7 +84,8 @@ public class DocumentToHtmlConverter {
         }
         if (chapter.getContent() != null && !chapter.getContent().isEmpty()) {
             sb.append("<div class=\"chapter-content\">\n");
-            sb.append(chapter.getContent());
+            String safeContent = Jsoup.clean(chapter.getContent(), HTML_WHITELIST);
+            sb.append(safeContent);
             sb.append("</div>\n");
         }
         for (Chapter child : chapter.getChildren()) {

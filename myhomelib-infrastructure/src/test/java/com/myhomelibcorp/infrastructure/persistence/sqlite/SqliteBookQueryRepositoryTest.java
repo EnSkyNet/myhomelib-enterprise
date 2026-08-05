@@ -19,7 +19,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
 import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -63,17 +62,11 @@ public class SqliteBookQueryRepositoryTest {
         }
 
         @Bean
-        public ApplicationEventPublisher applicationEventPublisher() {
-            return mock(ApplicationEventPublisher.class);
-        }
-
-        @Bean
         public CollectionManager collectionManager(
                 DataSource testDataSource,
-                @Qualifier("metadataJdbcTemplate") JdbcTemplate metadataJdbcTemplate,
-                ApplicationEventPublisher eventPublisher
+                @Qualifier("metadataJdbcTemplate") JdbcTemplate metadataJdbcTemplate
         ) {
-            TestCollectionManager manager = new TestCollectionManager(metadataJdbcTemplate, eventPublisher);
+            TestCollectionManager manager = new TestCollectionManager(metadataJdbcTemplate);
 
             Collection testCollection = new Collection(
                     "test-collection-id",

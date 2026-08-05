@@ -77,7 +77,6 @@ public class StreamingFb2Reader {
                 }
 
                 if (inSection && !inTitle) {
-                    // Обробка контенту
                     if ("p".equalsIgnoreCase(localName) || "epigraph".equalsIgnoreCase(localName)) {
                         String text = readElementText(reader, true);
                         if (text != null && !text.isEmpty()) {

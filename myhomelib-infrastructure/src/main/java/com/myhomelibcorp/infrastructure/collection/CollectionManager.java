@@ -1,14 +1,11 @@
 package com.myhomelibcorp.infrastructure.collection;
 
-import com.myhomelibcorp.application.event.CollectionOpenedEvent;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.config.DataSourceConfig;
 import com.zaxxer.hikari.HikariDataSource;
 import lombok.extern.slf4j.Slf4j;
-import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -30,22 +27,19 @@ public class CollectionManager {
     private final AtomicBoolean isSwitching = new AtomicBoolean(false);
 
     private final JdbcTemplate metadataJdbcTemplate;
-    private final ApplicationEventPublisher eventPublisher;
     private final DataSourceConfig dataSourceConfig;
 
     @Autowired
     public CollectionManager(
             @Qualifier("metadataJdbcTemplate") JdbcTemplate metadataJdbcTemplate,
-            ApplicationEventPublisher eventPublisher,
             DataSourceConfig dataSourceConfig
     ) {
         this.metadataJdbcTemplate = metadataJdbcTemplate;
-        this.eventPublisher = eventPublisher;
         this.dataSourceConfig = dataSourceConfig;
     }
 
     /**
-     * Переключає на іншу колекцію з повним очищенням ресурсів.
+     * Переключає на іншу колекцію.
      */
     public synchronized void switchToCollection(Collection collection) {
         if (collection == null) {
@@ -61,28 +55,19 @@ public class CollectionManager {
         try {
             log.info("🔄 Початок переключення на колекцію: {}", collection.getName());
 
-            // 1. Зберігаємо стан поточної колекції
-            saveCurrentState();
-
-            // 2. Закриваємо поточну колекцію з примусовим звільненням
+            // 1. Закриваємо поточну колекцію
             forceCloseCurrentCollection();
 
-            // 3. Встановлюємо нову колекцію
+            // 2. Встановлюємо нову колекцію
             currentCollection.set(collection);
 
-            // 4. Створюємо новий DataSource
+            // 3. Створюємо новий DataSource
             String dbPath = getDbPath(collection);
             Path path = Paths.get(dbPath);
 
             // Створюємо директорію, якщо її немає
-            try {
-                path.getParent().toFile().mkdirs();
-                log.info("📁 Створено директорію для БД: {}", path.getParent());
-            } catch (Exception e) {
-                log.warn("Не вдалося створити директорію для БД: {}", e.getMessage());
-            }
+            path.getParent().toFile().mkdirs();
 
-            // Створюємо HikariDataSource через конфігурацію
             HikariDataSource dataSource = dataSourceConfig.createDataSourceForPath(path.toAbsolutePath().toString());
 
             // Перевіряємо з'єднання
@@ -99,20 +84,10 @@ public class CollectionManager {
             currentDataSource.set(dataSource);
             currentJdbcTemplate.set(new JdbcTemplate(dataSource));
 
-            // 5. Виконуємо міграції Flyway
-            runFlywayMigrations(dataSource);
-
-            // 6. Оновлюємо метадані
-            updateCollectionMetadata(collection);
-
-            // 7. Публікуємо подію про відкриття колекції
-            eventPublisher.publishEvent(new CollectionOpenedEvent(collection));
-
             log.info("✅ Переключено на колекцію: {} (БД: {})", collection.getName(), path);
 
         } catch (Exception e) {
             log.error("❌ Помилка переключення колекції: {}", e.getMessage(), e);
-            // Скидаємо стан при помилці
             forceCloseCurrentCollection();
             throw new RuntimeException("Не вдалося переключити колекцію: " + e.getMessage(), e);
         } finally {
@@ -121,33 +96,31 @@ public class CollectionManager {
     }
 
     /**
-     * Зберігає стан поточної колекції перед переключенням.
+     * Примусове закриття поточної колекції.
      */
-    private void saveCurrentState() {
-        Collection current = currentCollection.get();
-        if (current == null) {
-            return;
+    public synchronized void forceCloseCurrentCollection() {
+        Collection collection = currentCollection.get();
+        if (collection != null) {
+            log.debug("🔒 Примусове закриття колекції: {}", collection.getName());
         }
 
-        try {
-            // Зберігаємо останню відкриту книгу, позицію читання тощо
-            log.debug("💾 Збереження стану колекції: {}", current.getName());
-            // Тут можна додати збереження стану
-        } catch (Exception e) {
-            log.warn("Не вдалося зберегти стан колекції: {}", e.getMessage());
+        forceCloseCurrentDataSource();
+        currentCollection.set(null);
+
+        if (collection != null) {
+            log.debug("✅ Колекцію {} примусово закрито", collection.getName());
         }
     }
 
     /**
-     * Закриває поточний DataSource з примусовим звільненням.
+     * Закриває поточний DataSource.
      */
     private synchronized void forceCloseCurrentDataSource() {
         HikariDataSource ds = currentHikariDataSource.getAndSet(null);
         if (ds != null) {
             try {
-                // Закриваємо всі з'єднання
                 ds.close();
-                log.info("✅ HikariDataSource закрито");
+                log.debug("✅ HikariDataSource закрито");
             } catch (Exception e) {
                 log.warn("⚠️ Помилка закриття HikariDataSource: {}", e.getMessage());
             }
@@ -157,73 +130,7 @@ public class CollectionManager {
     }
 
     /**
-     * Примусове закриття поточної колекції.
-     */
-    public synchronized void forceCloseCurrentCollection() {
-        Collection collection = currentCollection.get();
-        if (collection != null) {
-            log.info("🔒 Примусове закриття колекції: {}", collection.getName());
-        }
-
-        // Закриваємо DataSource
-        forceCloseCurrentDataSource();
-
-        // Очищаємо посилання
-        currentCollection.set(null);
-
-        // Примусове звільнення пам'яті
-        System.gc();
-        try {
-            Thread.sleep(100);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
-
-        if (collection != null) {
-            log.info("✅ Колекцію {} примусово закрито", collection.getName());
-        }
-    }
-
-    /**
-     * Виконує міграції Flyway для нової колекції.
-     */
-    private void runFlywayMigrations(DataSource dataSource) {
-        try {
-            Flyway flyway = Flyway.configure()
-                    .dataSource(dataSource)
-                    .locations("classpath:db/migration")
-                    .baselineOnMigrate(true)
-                    .load();
-
-            var result = flyway.migrate();
-            log.info("✅ Flyway міграції виконано. Застосовано {} міграцій.",
-                    result.migrationsExecuted);
-        } catch (Exception e) {
-            log.error("❌ Помилка міграції Flyway", e);
-            throw new RuntimeException("Не вдалося виконати міграцію БД", e);
-        }
-    }
-
-    /**
-     * Оновлює метадані колекції.
-     */
-    private void updateCollectionMetadata(Collection collection) {
-        try {
-            // Оновлюємо час останнього відкриття
-            String sql = """
-                    UPDATE collections 
-                    SET last_opened = CURRENT_TIMESTAMP 
-                    WHERE id = ?
-                    """;
-            metadataJdbcTemplate.update(sql, collection.getId());
-            log.debug("✅ Метадані колекції оновлено");
-        } catch (Exception e) {
-            log.warn("Не вдалося оновити метадані колекції: {}", e.getMessage());
-        }
-    }
-
-    /**
-     * Отримує шлях до БД з колекції або створює стандартний.
+     * Отримує шлях до БД з колекції.
      */
     private String getDbPath(Collection collection) {
         String dbPath = collection.getDbFile();
@@ -231,7 +138,6 @@ public class CollectionManager {
             dbPath = System.getProperty("user.home") +
                     "/.myhomelibcorp/libraries/" +
                     collection.getId() + ".db";
-            log.info("ℹ️ dbFile не вказано, використовуємо стандартний шлях: {}", dbPath);
         }
         return dbPath;
     }
@@ -245,7 +151,7 @@ public class CollectionManager {
     public JdbcTemplate getCurrentJdbcTemplate() {
         JdbcTemplate jt = currentJdbcTemplate.get();
         if (jt == null) {
-            throw new IllegalStateException("Колекцію не вибрано. Спочатку виберіть або створіть колекцію.");
+            throw new IllegalStateException("Колекцію не вибрано");
         }
         return jt;
     }
@@ -263,13 +169,9 @@ public class CollectionManager {
     }
 
     /**
-     * Закриває поточну колекцію (без примусового звільнення).
+     * Закриває поточну колекцію.
      */
     public synchronized void closeCurrentCollection() {
-        Collection collection = currentCollection.get();
-        if (collection != null) {
-            log.info("Закриття колекції: {}", collection.getName());
-        }
         forceCloseCurrentDataSource();
         currentCollection.set(null);
         log.info("Поточну колекцію закрито");
@@ -281,26 +183,10 @@ public class CollectionManager {
     public boolean isDatabaseLocked() {
         DataSource ds = currentDataSource.get();
         if (ds == null) return false;
-
         try (var conn = ds.getConnection()) {
             return !conn.isValid(1);
         } catch (Exception e) {
             return true;
-        }
-    }
-
-    /**
-     * Отримує розмір БД у байтах.
-     */
-    public long getDatabaseSize() {
-        Collection collection = currentCollection.get();
-        if (collection == null) return 0;
-
-        String dbPath = getDbPath(collection);
-        try {
-            return java.nio.file.Files.size(Paths.get(dbPath));
-        } catch (Exception e) {
-            return 0;
         }
     }
 }

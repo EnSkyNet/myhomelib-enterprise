@@ -24,6 +24,11 @@ public class CachedBookQueryRepository implements BookQueryRepository {
 
     @Override
     public Optional<Book> findById(BookId id) {
+        if (id == null) {
+            log.debug("Спроба пошуку книги з null ID");
+            return Optional.empty();
+        }
+
         Optional<Book> cached = bookCache.get(id);
         if (cached.isPresent()) {
             return cached;
@@ -35,9 +40,16 @@ public class CachedBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findByIds(List<BookId> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return List.of();
+        }
+
         List<Book> result = new ArrayList<>();
         List<BookId> missingIds = new ArrayList<>();
         for (BookId id : ids) {
+            if (id == null) {
+                continue;
+            }
             Optional<Book> cached = bookCache.get(id);
             if (cached.isPresent()) {
                 result.add(cached.get());
@@ -48,7 +60,9 @@ public class CachedBookQueryRepository implements BookQueryRepository {
         if (!missingIds.isEmpty()) {
             List<Book> loaded = delegate.findByIds(missingIds);
             for (Book book : loaded) {
-                bookCache.put(book.getId(), book);
+                if (book != null && book.getId() != null) {
+                    bookCache.put(book.getId(), book);
+                }
             }
             result.addAll(loaded);
         }

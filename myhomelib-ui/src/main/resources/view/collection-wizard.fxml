@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.controller.CollectionWizardController"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      prefWidth="620" prefHeight="480">
+
+    <Label text="📚 Майстер створення колекції" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+
+    <!-- Індикатор кроків -->
+    <HBox spacing="5" alignment="CENTER" style="-fx-padding: 0 0 10 0;">
+        <Label text="Крок 1" style="-fx-padding: 5 15; -fx-background-color: #3498db; -fx-text-fill: white; -fx-border-radius: 3; -fx-background-radius: 3;" id="step1Indicator"/>
+        <Label text="→"/>
+        <Label text="Крок 2" style="-fx-padding: 5 15; -fx-background-color: #ecf0f1; -fx-border-radius: 3; -fx-background-radius: 3;" id="step2Indicator"/>
+        <Label text="→"/>
+        <Label text="Крок 3" style="-fx-padding: 5 15; -fx-background-color: #ecf0f1; -fx-border-radius: 3; -fx-background-radius: 3;" id="step3Indicator"/>
+    </HBox>
+
+    <!-- Контент кроків -->
+    <StackPane fx:id="wizardContent" VBox.vgrow="ALWAYS">
+        <!-- Крок 1: Основна інформація -->
+        <VBox spacing="10" style="-fx-padding: 10; -fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-background-radius: 5;">
+            <Label text="📋 Основна інформація" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+            <GridPane hgap="10" vgap="10">
+                <Label text="Назва колекції:*" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+                <TextField fx:id="nameField" GridPane.columnIndex="1" GridPane.rowIndex="0" prefWidth="350" promptText="Введіть назву..."/>
+
+                <Label text="Тип:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+                <ComboBox fx:id="typeComboBox" GridPane.columnIndex="1" GridPane.rowIndex="1" prefWidth="200"/>
+
+                <Label text="Коренева папка:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+                <HBox GridPane.columnIndex="1" GridPane.rowIndex="2" spacing="5">
+                    <TextField fx:id="rootFolderField" HBox.hgrow="ALWAYS" promptText="Необов'язково"/>
+                    <Button text="📂 Обрати" onAction="#onSelectRootFolder"/>
+                </HBox>
+
+                <Label text="Шлях до БД:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+                <HBox GridPane.columnIndex="1" GridPane.rowIndex="3" spacing="5">
+                    <TextField fx:id="dbPathField" HBox.hgrow="ALWAYS" promptText="Необов'язково"/>
+                    <Button text="📂 Обрати" onAction="#onSelectDbPath"/>
+                </HBox>
+            </GridPane>
+            <Label text="* — обов'язкове поле" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        </VBox>
+
+        <!-- Крок 2: Джерело даних -->
+        <VBox spacing="10" style="-fx-padding: 10; -fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-background-radius: 5;">
+            <Label text="📂 Джерело даних" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+            <GridPane hgap="10" vgap="10">
+                <Label text="Файл джерела:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+                <HBox GridPane.columnIndex="1" GridPane.rowIndex="0" spacing="5">
+                    <TextField fx:id="sourcePathField" HBox.hgrow="ALWAYS" promptText="Шлях до INPX, FB2 або ZIP..."/>
+                    <Button text="📂 Обрати" onAction="#onSelectSourcePath"/>
+                </HBox>
+            </GridPane>
+            <CheckBox fx:id="importOnCreateCheck" text="Імпортувати при створенні" selected="true"/>
+            <CheckBox fx:id="createIndexCheck" text="Створити пошуковий індекс" selected="true"/>
+            <Label fx:id="errorLabel" style="-fx-text-fill: red; -fx-wrap-text: true;"/>
+        </VBox>
+
+        <!-- Крок 3: Підтвердження -->
+        <VBox spacing="10" style="-fx-padding: 10; -fx-background-color: white; -fx-border-color: #ddd; -fx-border-radius: 5; -fx-background-radius: 5;">
+            <Label text="✅ Підтвердження створення" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+            <Label text="Перевірте введені дані:" style="-fx-font-weight: bold;"/>
+            <GridPane hgap="10" vgap="5">
+                <Label text="Назва:" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmName" GridPane.columnIndex="1"/>
+
+                <Label text="Тип:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmType" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+
+                <Label text="Коренева папка:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmRootFolder" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+
+                <Label text="БД:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmDbFile" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+
+                <Label text="Джерело:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmSourcePath" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+
+                <Label text="Імпорт:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmImportOnCreate" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
+
+                <Label text="Індекс:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmCreateIndex" GridPane.columnIndex="1" GridPane.rowIndex="6"/>
+            </GridPane>
+            <Label fx:id="errorLabel2" style="-fx-text-fill: red; -fx-wrap-text: true;"/>
+        </VBox>
+    </StackPane>
+
+    <Separator/>
+
+    <!-- Кнопки -->
+    <HBox spacing="10" alignment="CENTER_RIGHT">
+        <Button fx:id="backButton" text="← Назад" onAction="#onBack" disable="true"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Button fx:id="nextButton" text="Далі →" onAction="#onNext" style="-fx-background-color: #3498db; -fx-text-fill: white;"/>
+        <Button fx:id="finishButton" text="✅ Створити" onAction="#onFinish" visible="false" style="-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold;"/>
+        <Button text="✕ Скасувати" onAction="#onCancel" style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+    </HBox>
+</VBox>

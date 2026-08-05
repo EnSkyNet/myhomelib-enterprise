@@ -17,6 +17,7 @@
                     <MenuItem text="Перейменувати колекцію..." onAction="#handleRenameCollection"/>
                     <MenuItem text="Видалити колекцію" onAction="#handleDeleteCollection"/>
                     <MenuItem text="Вибрати колекцію" onAction="#handleSelectCollection"/>
+                    <MenuItem text="Майстер створення колекції..." onAction="#handleCollectionWizard"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
@@ -48,6 +49,9 @@
                     <MenuItem text="📂 Відновити з копії..." onAction="#handleRestore"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="📊 Статистика" onAction="#handleStatistics"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="🔄 Синхронізувати папку..." onAction="#handleSyncFolder"/>
+                    <SeparatorMenuItem/>
                 </Menu>
                 <Menu text="Допомога">
                     <MenuItem text="Про програму" onAction="#handleAbout"/>
@@ -94,7 +98,8 @@
     </center>
 
     <right>
-        <VBox style="-fx-padding: 5; -fx-pref-width: 300; -fx-background-color: #fafafa;">
+        <VBox style="-fx-padding: 5; -fx-pref-width: 300; -fx-max-width: 300; -fx-background-color: #fafafa;"
+              VBox.vgrow="ALWAYS">
             <fx:include source="details.fxml"/>
         </VBox>
     </right>

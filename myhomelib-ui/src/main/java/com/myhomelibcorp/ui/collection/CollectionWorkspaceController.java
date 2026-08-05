@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.collection;
 
 import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.dto.CollectionDto;
+import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.usecase.collection.*;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
@@ -18,6 +19,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.nio.file.Paths;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -117,8 +119,6 @@ public class CollectionWorkspaceController {
         log.info("Завантажено {} книг для колекції {}", vms.size(), collection.getName());
     }
 
-    // ---- Дії з колекціями ----
-
     @FXML
     private void onAddBookToCollection() {
         BookViewModel selectedBook = appState.getBookTable().getSelectedBook();
@@ -190,8 +190,15 @@ public class CollectionWorkspaceController {
         result.ifPresent(name -> {
             if (!name.isBlank()) {
                 try {
+                    CreateCollectionRequest request = CreateCollectionRequest.builder()
+                            .name(name)
+                            .importOnCreate(true)
+                            .createIndex(true)
+                            .build();
+
                     com.myhomelibcorp.domain.model.collection.Collection collection =
-                            createCollectionUseCase.execute(name, null);
+                            createCollectionUseCase.execute(request);
+
                     CollectionDto dto = new CollectionDto(
                             collection.getId(),
                             collection.getName(),

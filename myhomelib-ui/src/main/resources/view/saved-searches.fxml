@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.controller.SavedSearchesController"
+      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;"
+      prefWidth="400" prefHeight="450">
+
+    <Label text="💾 Збережені пошуки" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+
+    <Separator/>
+
+    <Label text="Зберегти поточний пошук:" style="-fx-font-weight: bold;"/>
+    <HBox spacing="5">
+        <TextField fx:id="searchNameField" promptText="Назва..." HBox.hgrow="ALWAYS"/>
+    </HBox>
+    <HBox spacing="5">
+        <TextField fx:id="searchQueryField" promptText="Запит..." HBox.hgrow="ALWAYS"/>
+        <Button text="💾 Зберегти" onAction="#onSaveSearch" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+    </HBox>
+
+    <Separator/>
+
+    <Label text="Список збережених пошуків:" style="-fx-font-weight: bold;"/>
+    <ListView fx:id="savedSearchesListView" VBox.vgrow="ALWAYS"/>
+
+</VBox>

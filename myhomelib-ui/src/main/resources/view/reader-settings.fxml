@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:controller="com.myhomelibcorp.ui.reader.ReaderSettingsController"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      prefWidth="500" prefHeight="450">
+
+    <Label text="⚙ Налаштування Reader" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+
+    <Separator/>
+
+    <TabPane>
+        <Tab text="📖 Шрифт та текст">
+            <VBox spacing="10" style="-fx-padding: 15;">
+                <Label text="Шрифт:" style="-fx-font-weight: bold;"/>
+                <ComboBox fx:id="fontFamilyCombo" prefWidth="200"/>
+
+                <Label text="Розмір шрифту:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="fontSizeSlider" min="10" max="40" value="18" showTickLabels="true" showTickMarks="true" majorTickUnit="5" minorTickCount="4"/>
+
+                <Label text="Міжрядковий інтервал:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="lineSpacingSlider" min="1.0" max="3.0" value="1.6" showTickLabels="true" showTickMarks="true" majorTickUnit="0.5" minorTickCount="4"/>
+
+                <CheckBox fx:id="hyphenationCheck" text="Перенос слів"/>
+                <CheckBox fx:id="autoScrollCheck" text="Авто-прокрутка"/>
+            </VBox>
+        </Tab>
+
+        <Tab text="🎨 Тема">
+            <VBox spacing="10" style="-fx-padding: 15;">
+                <Label text="Тема оформлення:" style="-fx-font-weight: bold;"/>
+                <ComboBox fx:id="themeCombo" prefWidth="200">
+                    <items>
+                        <FXCollections fx:factory="observableArrayList">
+                            <String fx:value="light"/>
+                            <String fx:value="sepia"/>
+                            <String fx:value="dark"/>
+                            <String fx:value="amoled"/>
+                        </FXCollections>
+                    </items>
+                </ComboBox>
+
+                <Label text="Користувацький CSS:" style="-fx-font-weight: bold;"/>
+                <TextArea fx:id="customCssArea" prefHeight="100" promptText="Введіть власні CSS стилі..."/>
+            </VBox>
+        </Tab>
+
+        <Tab text="📄 Відступи">
+            <VBox spacing="10" style="-fx-padding: 15;">
+                <Label text="Відступ зверху:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="marginTopSlider" min="0" max="80" value="20" showTickLabels="true" showTickMarks="true" majorTickUnit="20" minorTickCount="4"/>
+
+                <Label text="Відступ знизу:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="marginBottomSlider" min="0" max="80" value="20" showTickLabels="true" showTickMarks="true" majorTickUnit="20" minorTickCount="4"/>
+
+                <Label text="Відступ зліва:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="marginLeftSlider" min="0" max="100" value="30" showTickLabels="true" showTickMarks="true" majorTickUnit="20" minorTickCount="4"/>
+
+                <Label text="Відступ справа:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="marginRightSlider" min="0" max="100" value="30" showTickLabels="true" showTickMarks="true" majorTickUnit="20" minorTickCount="4"/>
+
+                <Label text="Відступ абзацу:" style="-fx-font-weight: bold;"/>
+                <Slider fx:id="firstLineIndentSlider" min="0" max="3" value="1.5" showTickLabels="true" showTickMarks="true" majorTickUnit="0.5" minorTickCount="4"/>
+            </VBox>
+        </Tab>
+    </TabPane>
+
+    <Separator/>
+
+    <HBox spacing="10" alignment="CENTER_RIGHT">
+        <Button text="🔄 Скинути" onAction="#onReset" style="-fx-background-color: #f39c12; -fx-text-fill: white;"/>
+        <Button text="✅ Зберегти" onAction="#onSave" style="-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold;"/>
+        <Button text="✕ Скасувати" onAction="#onCancel" style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+    </HBox>
+</VBox>

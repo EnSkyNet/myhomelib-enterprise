@@ -27,6 +27,10 @@ public class CaffeineAuthorCache implements AuthorCache {
 
     @Override
     public Optional<Author> get(AuthorId id) {
+        if (id == null) {
+            log.debug("Спроба отримати автора з null ID");
+            return Optional.empty();
+        }
         return Optional.ofNullable(cache.getIfPresent(id));
     }
 
@@ -39,7 +43,9 @@ public class CaffeineAuthorCache implements AuthorCache {
 
     @Override
     public void evict(AuthorId id) {
-        cache.invalidate(id);
+        if (id != null) {
+            cache.invalidate(id);
+        }
     }
 
     @Override

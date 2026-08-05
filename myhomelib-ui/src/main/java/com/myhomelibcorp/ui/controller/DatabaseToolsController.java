@@ -192,5 +192,24 @@ public class DatabaseToolsController {
             dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
         }
     }
+    @FXML
+    public void handleStatistics(Stage owner) {
+        try {
+            FXMLLoader loader = new FXMLLoader(
+                    getClass().getResource("/view/statistics.fxml"));
+            loader.setControllerFactory(springContext::getBean);
+            Parent root = loader.load();
 
+            Stage stage = new Stage();
+            stage.setTitle("📊 Статистика колекції");
+            stage.setScene(new Scene(root, 600, 400));
+            stage.initModality(Modality.WINDOW_MODAL);
+            stage.initOwner(owner);
+            stage.show();
+
+        } catch (Exception e) {
+            log.error("Помилка відкриття статистики", e);
+            dialogService.showError("Помилка", "Не вдалося відкрити статистику: " + e.getMessage());
+        }
+    }
 }

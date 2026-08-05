@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.application.dto.CollectionDto;
+import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
@@ -49,7 +50,6 @@ public class CollectionPresenter {
                 name + ".db");
         String dbFilePath = dbFile != null ? dbFile.getAbsolutePath() : null;
 
-        // Якщо користувач не вибрав файл - створюємо в стандартній папці
         if (dbFilePath == null) {
             String defaultPath = System.getProperty("user.home") + "/.myhomelibcorp/libraries/" +
                     UUID.randomUUID() + ".db";
@@ -58,33 +58,22 @@ public class CollectionPresenter {
         }
 
         try {
-            // Створюємо колекцію зі збереженим шляхом до БД
-            Collection collection = new Collection(
-                    null,
-                    name,
-                    null,
-                    dbFilePath,  // <-- ЗБЕРІГАЄМО ФАКТИЧНИЙ ШЛЯХ
-                    0,
-                    null,
-                    null,
-                    null,
-                    null
-            );
+            CreateCollectionRequest request = CreateCollectionRequest.builder()
+                    .name(name)
+                    .dbFile(java.nio.file.Paths.get(dbFilePath))
+                    .importOnCreate(true)
+                    .createIndex(true)
+                    .build();
 
-            // Зберігаємо через use case
-            Collection saved = createCollectionUseCase.execute(
-                    collection.getName(),
-                    collection.getRootFolder() != null ? collection.getRootFolder().toString() : null
-            );
+            Collection collection = createCollectionUseCase.execute(request);
 
-            // Конвертуємо в DTO
-            CollectionDto dto = new CollectionDto(saved.getId(), saved.getName(), true);
+            CollectionDto dto = new CollectionDto(collection.getId(), collection.getName(), true);
             collectionList.add(dto);
             appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
-            collectionManager.switchToCollection(saved);
+            collectionManager.switchToCollection(collection);
             databaseInitializer.initializeCurrentCollection();
-            appState.getStatusBar().setStatusText("Переключено на колекцію: " + saved.getName());
+            appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());
 
         } catch (Exception e) {
             dialogService.showError("Помилка", e.getMessage());

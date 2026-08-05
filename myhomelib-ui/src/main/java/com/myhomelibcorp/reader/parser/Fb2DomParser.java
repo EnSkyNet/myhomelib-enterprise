@@ -27,9 +27,8 @@ public class Fb2DomParser {
         factory.setNamespaceAware(true);
         factory.setValidating(false);
         factory.setIgnoringComments(true);
-        factory.setIgnoringElementContentWhitespace(true);
+        factory.setIgnoringElementContentWhitespace(false);
 
-        // Захист від XXE
         try {
             factory.setFeature(XMLConstants.FEATURE_SECURE_PROCESSING, true);
             factory.setFeature("http://xml.org/sax/features/external-general-entities", false);
@@ -188,8 +187,10 @@ public class Fb2DomParser {
     private List<Chapter> extractChapters(Element root) {
         List<Chapter> chapters = new ArrayList<>();
         Element body = findFirstChild(root, "body");
+
         if (body == null) {
             log.warn("Не знайдено body");
+            // Спроба знайти будь-який контент
             String fullText = root.getTextContent();
             if (fullText != null && !fullText.trim().isEmpty()) {
                 Chapter fallback = Chapter.builder()
@@ -203,7 +204,7 @@ public class Fb2DomParser {
             return chapters;
         }
 
-        // ВИПРАВЛЕНО: беремо тільки direct child sections, а не всі вкладені
+        // Отримуємо всі дочірні елементи body
         NodeList childNodes = body.getChildNodes();
         int paragraphCounter = 0;
         int sectionCount = 0;
@@ -212,24 +213,52 @@ public class Fb2DomParser {
             Node child = childNodes.item(i);
             if (child.getNodeType() == Node.ELEMENT_NODE) {
                 Element el = (Element) child;
-                if ("section".equalsIgnoreCase(el.getLocalName())) {
+                String tagName = el.getTagName().toLowerCase();
+
+                if ("section".equals(tagName)) {
                     sectionCount++;
-                    // Передаємо mutable counter для унікальних ID
                     Chapter chapter = processSection(el, 1, new MutableInt(paragraphCounter));
                     if (chapter != null) {
                         chapters.add(chapter);
-                        paragraphCounter = chapter.getChildren().size() > 0 ?
-                                paragraphCounter + chapter.getChildren().size() :
-                                paragraphCounter + 1;
+                        // Оновлюємо лічильник параграфів
+                        paragraphCounter += countParagraphs(chapter);
+                    }
+                } else if ("p".equals(tagName)) {
+                    // Прямі параграфи в body (без секцій)
+                    String text = el.getTextContent();
+                    if (text != null && !text.trim().isEmpty()) {
+                        String pId = "p" + (++paragraphCounter);
+                        String content = "<p data-paragraph-id=\"" + pId + "\">" + escapeHtml(text.trim()) + "</p>\n";
+                        Chapter directChapter = Chapter.builder()
+                                .id(UUID.randomUUID().toString())
+                                .title("Текст")
+                                .level(1)
+                                .content(content)
+                                .children(new ArrayList<>())
+                                .build();
+                        chapters.add(directChapter);
+                    }
+                } else if ("title".equals(tagName)) {
+                    // Заголовок без секції
+                    String title = el.getTextContent().trim();
+                    if (!title.isEmpty()) {
+                        Chapter titleChapter = Chapter.builder()
+                                .id(UUID.randomUUID().toString())
+                                .title(title)
+                                .level(1)
+                                .content("<h1>" + escapeHtml(title) + "</h1>")
+                                .children(new ArrayList<>())
+                                .build();
+                        chapters.add(titleChapter);
                     }
                 }
             }
         }
 
-        log.info("Знайдено секцій: {}", sectionCount);
+        log.info("Знайдено секцій: {}, параграфів: {}", sectionCount, paragraphCounter);
 
         // Якщо секцій немає, використовуємо весь текст body
-        if (sectionCount == 0) {
+        if (chapters.isEmpty()) {
             String bodyText = body.getTextContent();
             if (bodyText != null && !bodyText.trim().isEmpty()) {
                 Chapter single = Chapter.builder()
@@ -256,22 +285,25 @@ public class Fb2DomParser {
         return chapters;
     }
 
-    /**
-     * Mutable counter для передачі посилання на лічильник.
-     */
+    private int countParagraphs(Chapter chapter) {
+        int count = 0;
+        if (chapter.getContent() != null) {
+            // Рахуємо кількість тегів <p> в контенті
+            count += chapter.getContent().split("<p").length - 1;
+        }
+        for (Chapter child : chapter.getChildren()) {
+            count += countParagraphs(child);
+        }
+        return count;
+    }
+
     private static class MutableInt {
         int value;
         MutableInt(int value) { this.value = value; }
     }
 
     private Chapter processSection(Element sectionEl, int level, MutableInt counter) {
-        String title = getChildText(sectionEl, "title");
-        if (title != null) {
-            title = title.replaceAll("\\s+", " ").trim();
-        }
-        if (title == null || title.isEmpty()) {
-            title = "Без заголовка";
-        }
+        String title = getSectionTitle(sectionEl);
 
         StringBuilder content = new StringBuilder(1024);
         NodeList children = sectionEl.getChildNodes();
@@ -280,28 +312,80 @@ public class Fb2DomParser {
             Node child = children.item(i);
             if (child.getNodeType() != Node.ELEMENT_NODE) continue;
             Element el = (Element) child;
-            String tag = el.getLocalName();
+            String tag = el.getTagName().toLowerCase();
 
             switch (tag) {
                 case "p": {
-                    String pText = el.getTextContent();
+                    String pText = getElementText(el);
                     if (pText != null && !pText.trim().isEmpty()) {
                         String pId = "p" + (++counter.value);
                         content.append("<p data-paragraph-id=\"").append(pId).append("\">")
-                                .append(escapeHtml(pText.trim()))
+                                .append(pText.trim())
                                 .append("</p>\n");
                     }
                     break;
                 }
-                // ... інші case залишаються без змін ...
-                case "section": {
-                    // ВИПРАВЛЕНО: не обробляємо вкладені секції тут
-                    // вони будуть оброблені на верхньому рівні
+                case "title": {
+                    String titleText = getElementText(el);
+                    if (titleText != null && !titleText.trim().isEmpty()) {
+                        content.append("<h2>").append(titleText.trim()).append("</h2>\n");
+                    }
                     break;
                 }
-                default:
+                case "subtitle": {
+                    String subText = getElementText(el);
+                    if (subText != null && !subText.trim().isEmpty()) {
+                        content.append("<h3>").append(subText.trim()).append("</h3>\n");
+                    }
                     break;
+                }
+                case "epigraph": {
+                    String epigraph = getElementText(el);
+                    if (epigraph != null && !epigraph.trim().isEmpty()) {
+                        content.append("<blockquote>").append(epigraph.trim()).append("</blockquote>\n");
+                    }
+                    break;
+                }
+                case "poem": {
+                    String poem = getElementText(el);
+                    if (poem != null && !poem.trim().isEmpty()) {
+                        content.append("<div class=\"poem\">").append(poem.trim()).append("</div>\n");
+                    }
+                    break;
+                }
+                case "cite": {
+                    String cite = getElementText(el);
+                    if (cite != null && !cite.trim().isEmpty()) {
+                        content.append("<blockquote>").append(cite.trim()).append("</blockquote>\n");
+                    }
+                    break;
+                }
+                case "empty-line": {
+                    content.append("<br/>\n");
+                    break;
+                }
+                case "section": {
+                    // Вкладені секції - обробляємо рекурсивно
+                    Chapter subChapter = processSection(el, level + 1, counter);
+                    if (subChapter != null && subChapter.getContent() != null && !subChapter.getContent().isEmpty()) {
+                        content.append(subChapter.getContent());
+                    }
+                    break;
+                }
+                default: {
+                    // Інші теги - просто беремо текст
+                    String text = getElementText(el);
+                    if (text != null && !text.trim().isEmpty()) {
+                        content.append(text.trim()).append(" ");
+                    }
+                    break;
+                }
             }
+        }
+
+        // Якщо контенту немає, повертаємо null
+        if (content.length() == 0) {
+            return null;
         }
 
         return Chapter.builder()
@@ -313,6 +397,40 @@ public class Fb2DomParser {
                 .build();
     }
 
+    private String getSectionTitle(Element sectionEl) {
+        // Шукаємо заголовок в секції
+        NodeList children = sectionEl.getChildNodes();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() == Node.ELEMENT_NODE) {
+                Element el = (Element) child;
+                if ("title".equalsIgnoreCase(el.getTagName())) {
+                    String title = getElementText(el);
+                    if (title != null && !title.trim().isEmpty()) {
+                        return title.trim();
+                    }
+                }
+            }
+        }
+        return "Без заголовка";
+    }
+
+    private String getElementText(Element el) {
+        if (el == null) return "";
+        NodeList children = el.getChildNodes();
+        StringBuilder text = new StringBuilder();
+        for (int i = 0; i < children.getLength(); i++) {
+            Node child = children.item(i);
+            if (child.getNodeType() == Node.TEXT_NODE) {
+                text.append(child.getTextContent());
+            } else if (child.getNodeType() == Node.ELEMENT_NODE) {
+                // Рекурсивно обробляємо вкладені елементи
+                text.append(getElementText((Element) child));
+            }
+        }
+        return text.toString();
+    }
+
     private Element findFirstChild(Element parent, String tagName) {
         if (parent == null) return null;
         NodeList children = parent.getChildNodes();
@@ -320,7 +438,7 @@ public class Fb2DomParser {
             Node child = children.item(i);
             if (child.getNodeType() == Node.ELEMENT_NODE) {
                 Element el = (Element) child;
-                if (tagName.equals(el.getLocalName())) {
+                if (tagName.equalsIgnoreCase(el.getTagName())) {
                     return el;
                 }
             }
@@ -330,7 +448,7 @@ public class Fb2DomParser {
 
     private String getChildText(Element parent, String tagName) {
         Element child = findFirstChild(parent, tagName);
-        return child != null ? child.getTextContent() : null;
+        return child != null ? getElementText(child) : null;
     }
 
     private String escapeHtml(String text) {

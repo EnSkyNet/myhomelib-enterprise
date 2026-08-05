@@ -3,12 +3,16 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
-<?import javafx.scene.web.WebView?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.reader.ReaderWorkspaceController"
-      spacing="0" style="-fx-background-color: #f5f5f5;">
+      spacing="0"
+      style="-fx-background-color: #f5f5f5;"
+      VBox.vgrow="ALWAYS"
+      prefHeight="0"
+      minHeight="0">
 
+    <!-- ToolBar -->
     <ToolBar style="-fx-background-color: #e0e0e0; -fx-padding: 5;">
         <Button text="← Назад" onAction="#onBack" style="-fx-font-weight: bold;"/>
         <Separator orientation="VERTICAL"/>
@@ -40,6 +44,9 @@
         <Button text="⭐" onAction="#onOpenBookmarks">
             <tooltip><Tooltip text="Закладки"/></tooltip>
         </Button>
+        <Button text="⚙" onAction="#onShowSettings">
+            <tooltip><Tooltip text="Налаштування"/></tooltip>
+        </Button>
     </ToolBar>
 
     <!-- Панель пошуку -->
@@ -61,9 +68,17 @@
         </Button>
     </HBox>
 
-    <WebView fx:id="webView" VBox.vgrow="ALWAYS"/>
+    <!-- ГОЛОВНА ПРОБЛЕМА ТУТ - ВИПРАВЛЕНО -->
+    <!-- StackPane має заповнювати всю доступну висоту -->
+    <StackPane fx:id="webViewContainer"
+               VBox.vgrow="ALWAYS"
+               style="-fx-background-color: #ffffff;">
+        <!-- WebView буде додано програмно -->
+    </StackPane>
 
-    <HBox style="-fx-background-color: #e0e0e0; -fx-padding: 5;" spacing="10" alignment="CENTER_LEFT">
+    <!-- Нижня панель - фіксована висота -->
+    <HBox style="-fx-background-color: #e0e0e0; -fx-padding: 5;" spacing="10" alignment="CENTER_LEFT"
+          prefHeight="30" minHeight="30" maxHeight="30">
         <ProgressBar fx:id="progressBar" prefWidth="200" progress="0"/>
         <Label fx:id="progressLabel" text="0%"/>
         <Region HBox.hgrow="ALWAYS"/>
