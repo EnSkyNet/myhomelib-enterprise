@@ -13,6 +13,7 @@ import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
+import com.myhomelibcorp.ui.table.BookTableController;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookTableViewModel;
@@ -38,6 +39,8 @@ public class BookLoaderService {
 
     private static final int DEFAULT_PAGE_SIZE = 50;
 
+    // ===================== ОСНОВНИЙ МЕТОД ЗАВАНТАЖЕННЯ =====================
+
     public void loadBooks(PageableBookQuery query) {
         this.lastQuery = query;
         BookTableViewModel vm = appState.getBookTable();
@@ -52,7 +55,17 @@ public class BookLoaderService {
             List<BookViewModel> vms = result.content().stream()
                     .map(viewModelMapper::toViewModel)
                     .collect(Collectors.toList());
-            vm.setBooks(vms);
+
+            // Отримуємо контролер через ApplicationState
+            BookTableController controller = appState.getBookTableController();
+            if (controller != null) {
+                controller.loadGroupedBooks(vms);
+            } else {
+                // Якщо контролер ще не готовий, просто зберігаємо книги в ViewModel
+                log.debug("BookTableController ще не готовий, зберігаємо книги в ViewModel");
+                vm.setBooks(vms);
+            }
+
             vm.setTotalElements(result.totalElements());
             vm.setTotalPages(result.totalPages());
             vm.setCurrentPage(result.currentPage());
@@ -83,10 +96,12 @@ public class BookLoaderService {
         }
     }
 
+    // ===================== СПЕЦІАЛІЗОВАНІ МЕТОДИ ЗАВАНТАЖЕННЯ =====================
+
     public void loadBooksByAuthor(AuthorId authorId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .authorId(authorId)
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
@@ -94,7 +109,7 @@ public class BookLoaderService {
     public void loadBooksBySeries(SeriesId seriesId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .seriesId(seriesId)
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
@@ -102,7 +117,7 @@ public class BookLoaderService {
     public void loadBooksByGenre(GenreId genreId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .genreId(genreId)
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
@@ -110,7 +125,7 @@ public class BookLoaderService {
     public void loadBooksByGroup(GroupId groupId) {
         PageableBookQuery query = PageableBookQuery.builder()
                 .groupId(groupId)
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
                 .build();
         loadBooks(query);
     }
@@ -121,6 +136,8 @@ public class BookLoaderService {
                 .build();
         loadBooks(query);
     }
+
+    // ===================== КЕШОВАНІ МЕТОДИ ДЛЯ DASHBOARD =====================
 
     @Cacheable(value = "recentBooks", key = "#limit", unless = "#result == null || #result.isEmpty()")
     public List<BookViewModel> loadRecentBooks(int limit) {
@@ -145,6 +162,8 @@ public class BookLoaderService {
                 .map(viewModelMapper::toViewModel)
                 .collect(Collectors.toList());
     }
+
+    // ===================== МЕТОДИ ДЛЯ ГОЛОВНОЇ СТОРІНКИ (DASHBOARD) =====================
 
     public void loadRecentBooks() {
         List<BookViewModel> books = loadRecentBooks(10);
@@ -191,6 +210,8 @@ public class BookLoaderService {
                 .build();
         loadBooks(query);
     }
+
+    // ===================== МЕТОДИ ПАГІНАЦІЇ =====================
 
     public void nextPage() {
         BookTableViewModel vm = appState.getBookTable();

@@ -49,24 +49,22 @@ public class DefaultNavigationService implements NavigationService {
         if (authorId != null) {
             sessionService.saveSelectedAuthorId(authorId.asString());
         }
-        mainController.showAuthorWorkspace(authorId);
+        // Цей метод передає authorId далі через workspaceManager та FxmlLoaderFactory
+        workspaceManager.showAuthorWorkspace(authorId);
         mainController.updateNavigationButtons();
     }
 
+    // ... решта методів без змін (navigateToSeries, navigateToBook, etc.)
     @Override
     public void navigateToSeries(SeriesId seriesId) {
         log.info("Навігація до серії: {}", seriesId);
-
-        // Шукаємо в кеші (а не в БД!)
         Optional<Series> seriesOpt = dictionaryCache.getSeries(seriesId);
-
         if (seriesOpt.isEmpty()) {
             log.warn("Серію з ID {} не знайдено в кеші", seriesId);
             mainController.showSearchResults(List.of());
             mainController.updateNavigationButtons();
             return;
         }
-
         String seriesName = seriesOpt.get().getName();
         navigateToSeriesByName(seriesName);
     }
@@ -233,7 +231,6 @@ public class DefaultNavigationService implements NavigationService {
     @Override
     public void readBook(BookDto book) {
         if (book != null) {
-            // Зберігаємо останню книгу для поточної колекції
             sessionService.saveLastOpenedBookId(book.getId());
             mainController.showReaderWorkspace(BookId.fromString(book.getId()));
             mainController.updateNavigationButtons();
@@ -266,6 +263,7 @@ public class DefaultNavigationService implements NavigationService {
         if (name == null) return "";
         return name.trim().toLowerCase().replaceAll("\\s+", " ");
     }
+
     @Override
     public void navigateToPublisher(String publisherName) {
         log.info("Навігація до видавництва: {}", publisherName);
@@ -273,22 +271,17 @@ public class DefaultNavigationService implements NavigationService {
             mainController.showSearchResults(List.of());
             return;
         }
-
         BookQuery query = BookQuery.builder()
                 .text(publisherName)
                 .pagination(Pagination.of(1000, 0))
                 .build();
-
         List<Book> books = bookQueryRepository.find(query);
         List<BookDto> dtos = books.stream()
                 .map(bookMapper::toDto)
                 .collect(Collectors.toList());
-
-        // Фільтруємо за видавництвом
         List<BookDto> filtered = dtos.stream()
                 .filter(b -> publisherName.equalsIgnoreCase(b.getPublisher()))
                 .collect(Collectors.toList());
-
         mainController.showSearchResults(filtered);
         mainController.updateNavigationButtons();
     }

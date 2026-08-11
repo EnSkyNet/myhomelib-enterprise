@@ -2,8 +2,8 @@ package com.myhomelibcorp.infrastructure.cleanup;
 
 import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
-import com.myhomelibcorp.infrastructure.cache.SearchCache;
-import com.myhomelibcorp.infrastructure.cache.CoverCache;
+import com.myhomelibcorp.application.port.out.cache.SearchCache;
+import com.myhomelibcorp.application.port.out.cover.CoverCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

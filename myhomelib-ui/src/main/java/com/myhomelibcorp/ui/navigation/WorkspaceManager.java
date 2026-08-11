@@ -13,6 +13,7 @@ import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.StackPane;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -28,28 +29,27 @@ public class WorkspaceManager {
 
     private final FxmlLoaderFactory fxmlLoaderFactory;
     private final ReaderLifecycleManager readerLifecycleManager;
-    private MainController mainController;
     private final ReaderSessionManager readerSessionManager;
+
+    private MainController mainController;
+    private StackPane workspaceStackPane;
+    private Pane currentWorkspace;
 
     private final Deque<WorkspaceEntry> history = new ArrayDeque<>();
     private final Deque<WorkspaceEntry> forwardStack = new ArrayDeque<>();
     private WorkspaceEntry currentEntry;
-    private Pane currentWorkspace;
 
     public void setMainController(MainController mainController) {
         this.mainController = mainController;
     }
 
-    /**
-     * Закриває Reader тільки якщо перехід НЕ на reader воркспейс.
-     */
+    public void init(StackPane stackPane) {
+        this.workspaceStackPane = stackPane;
+    }
+
     private void closeReaderIfNeeded(String targetType) {
-        if ("reader".equals(targetType)) {
-            log.debug("Перехід на reader воркспейс - не закриваємо Reader");
-            return;
-        }
+        if ("reader".equals(targetType)) return;
         if (readerLifecycleManager != null && readerLifecycleManager.isReaderOpen()) {
-            log.info("Закриття Reader перед зміною воркспейсу на: {}", targetType);
             ReaderSession session = readerSessionManager.getCurrentSession();
             if (session != null) {
                 readerLifecycleManager.saveState(session);
@@ -61,14 +61,23 @@ public class WorkspaceManager {
     public void setWorkspace(Pane workspace, String type) {
         closeReaderIfNeeded(type);
 
-        if (currentWorkspace != null) {
-            mainController.getMainPane().getChildren().remove(currentWorkspace);
+        if (workspaceStackPane == null) {
+            log.error("WorkspaceStackPane не ініціалізовано!");
+            return;
         }
+
+        if (currentWorkspace != null) {
+            workspaceStackPane.getChildren().remove(currentWorkspace);
+        }
+
         currentWorkspace = workspace;
         workspace.setMaxHeight(Double.MAX_VALUE);
         workspace.setMaxWidth(Double.MAX_VALUE);
-        mainController.getMainPane().setCenter(workspace);
-        mainController.updateNavigationButtons();
+        workspaceStackPane.getChildren().add(workspace);
+
+        if (mainController != null) {
+            mainController.updateNavigationButtons();
+        }
     }
 
     public void push(String type, String id) {
@@ -79,10 +88,12 @@ public class WorkspaceManager {
         }
         currentEntry = entry;
         log.info("Перехід до воркспейсу: {} (id: {})", type, id);
-        mainController.updateNavigationButtons();
+        if (mainController != null) {
+            mainController.updateNavigationButtons();
+        }
     }
 
-    // ==================== НАВІГАЦІЙНІ МЕТОДИ ====================
+    // ==================== МЕТОДИ ЗАВАНТАЖЕННЯ FXML ====================
 
     public void showDashboard() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/dashboard.fxml");
@@ -139,7 +150,6 @@ public class WorkspaceManager {
     }
 
     public void showReaderWorkspace(BookId bookId) {
-        // Не закриваємо Reader - передаємо "reader" як тип
         Pane workspace = fxmlLoaderFactory.loadReaderWorkspace(bookId);
         setWorkspace(workspace, "reader");
         push("reader", bookId != null ? bookId.asString() : "");
@@ -183,7 +193,9 @@ public class WorkspaceManager {
             case "import" -> showImportWorkspace();
             default -> showDashboard();
         }
-        mainController.updateNavigationButtons();
+        if (mainController != null) {
+            mainController.updateNavigationButtons();
+        }
     }
 
     public boolean canGoBack() {

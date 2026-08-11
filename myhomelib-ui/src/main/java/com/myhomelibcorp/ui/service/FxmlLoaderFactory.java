@@ -42,12 +42,19 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/author-workspace.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Pane pane = loader.load();
+
             AuthorWorkspaceController controller = loader.getController();
+            if (authorId == null) {
+                throw new IllegalArgumentException("AuthorId не може бути null при відкритті AuthorWorkspace");
+            }
+
+            // ПРЯМА ПЕРЕДАЧА ID
             controller.setAuthorId(authorId);
+
             return pane;
         } catch (IOException e) {
-            log.error("Failed to load author workspace", e);
-            throw new RuntimeException(e);
+            log.error("Не вдалося завантажити AuthorWorkspace", e);
+            throw new RuntimeException("Не вдалося завантажити /view/author-workspace.fxml", e);
         }
     }
 

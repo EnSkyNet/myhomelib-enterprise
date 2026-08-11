@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
+import com.myhomelibcorp.ui.table.BookTableController;
 import javafx.beans.property.*;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -19,7 +20,10 @@ public class BookTableViewModel {
     private final BooleanProperty loading = new SimpleBooleanProperty(false);
     private final StringProperty statusMessage = new SimpleStringProperty("");
 
-    // ===================== ГЕТТЕРИ ВЛАСТИВОСТЕЙ =====================
+    // Посилання на контролер таблиці
+    private BookTableController controller;
+
+    // ===================== ГЕТЕРИ ВЛАСТИВОСТЕЙ =====================
 
     public ObservableList<BookViewModel> getBooks() {
         return books;
@@ -61,7 +65,7 @@ public class BookTableViewModel {
         return statusMessage;
     }
 
-    // ===================== ГЕТТЕРИ ТА СЕТТЕРИ =====================
+    // ===================== ГЕТЕРИ ТА СЕТЕРИ =====================
 
     public void setBooks(java.util.List<BookViewModel> list) {
         books.setAll(list);
@@ -167,6 +171,16 @@ public class BookTableViewModel {
         } else {
             statusMessage.set(String.format("Показано %d з %d книг", size, total));
         }
+    }
+
+    // ===================== КОНТРОЛЕР =====================
+
+    public void setController(BookTableController controller) {
+        this.controller = controller;
+    }
+
+    public BookTableController getController() {
+        return controller;
     }
 
     @Override

@@ -172,6 +172,7 @@ public class SqlitePageableBookQueryRepository implements PageableBookQueryRepos
             case DATE -> "b.update_date";
             case RATING -> "b.rate";
             case RANDOM -> "RANDOM()";
+            case SERIES -> "b.series"; // Додано обробку для SERIES
         };
     }
 

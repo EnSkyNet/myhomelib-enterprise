@@ -31,6 +31,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
+import javafx.scene.layout.StackPane;
 
 import java.util.List;
 
@@ -67,6 +68,7 @@ public class MainController {
     @FXML private TextField searchField;
     @FXML private Button backButton;
     @FXML private Button forwardButton;
+    @FXML private StackPane workspaceStackPane;
 
     // ===== СТАН =====
     private Pane currentWorkspace;
@@ -77,6 +79,7 @@ public class MainController {
 
         viewModeController.init(mainPane);
         workspaceManager.setMainController(this);
+        workspaceManager.init(workspaceStackPane);
         navigationHistory.setMainController(this);
 
         searchField.setOnAction(event -> handleSearch());

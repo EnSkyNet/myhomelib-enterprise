@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<VBox xmlns:fx="http://javafx.com/fxml/1"
+      fx:id="navigationPanel"
+      fx:controller="com.myhomelibcorp.ui.navigation.NavigationPanelController"
+      spacing="5"
+      style="-fx-padding: 5; -fx-background-color: #f5f5f5; -fx-pref-width: 250; -fx-max-width: 300;"
+      VBox.vgrow="ALWAYS">
+
+    <Label text="Навігація" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+
+    <!-- Кнопки вибору режиму навігації -->
+    <HBox spacing="5" style="-fx-padding: 0 0 5 0;">
+        <Button text="Автори" onAction="#onAuthors" style="-fx-background-color: #2196F3; -fx-text-fill: white;" maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
+        <Button text="Серії" onAction="#onSeries" maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
+        <Button text="Жанри" onAction="#onGenres" maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
+    </HBox>
+
+    <Separator/>
+
+    <!-- Пошук по списку -->
+    <TextField fx:id="listSearchField" promptText="🔍 Пошук..." style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
+
+    <!-- Список (Авторів, Серій або Жанрів) -->
+    <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>
+</VBox>

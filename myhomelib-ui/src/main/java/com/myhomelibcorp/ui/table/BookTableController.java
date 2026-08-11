@@ -12,6 +12,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
+import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -29,7 +34,6 @@ public class BookTableController {
     @FXML private TableColumn<BookViewModel, String> progressColumn;
     @FXML private TableColumn<BookViewModel, String> dateColumn;
 
-    // Пагінація
     @FXML private Label pageInfoLabel;
     @FXML private Button prevPageButton;
     @FXML private Button nextPageButton;
@@ -37,21 +41,23 @@ public class BookTableController {
 
     @FXML
     public void initialize() {
+        // Реєструємо себе в ApplicationState
+        appState.setBookTableController(this);
+        log.info("BookTableController зареєстровано в ApplicationState.");
+
         BookTableViewModel vm = appState.getBookTable();
 
-        // Додаємо колонку з чекбоксами на початок - З БІЛЬШОЮ ШИРИНОЮ
-        TableColumn<BookViewModel, Boolean> selectCol = new TableColumn<>("");
+        TableColumn<BookViewModel, Boolean> selectCol = new TableColumn<>("☑");
         selectCol.setCellValueFactory(cellData -> cellData.getValue().selectedProperty());
         selectCol.setCellFactory(col -> new CheckBoxTableCell<>());
         selectCol.setEditable(true);
-        selectCol.setPrefWidth(150);  // ЗБІЛЬШЕНО
-        selectCol.setMaxWidth(150);
-        selectCol.setMinWidth(150);
+        selectCol.setPrefWidth(40);
         selectCol.setResizable(false);
-        selectCol.setText("☑");  // Додаємо іконку в заголовок
-        selectCol.setStyle("-fx-alignment: CENTER; -fx-padding: 0;");
+        selectCol.setStyle("-fx-alignment: CENTER;");
 
-        // Налаштування інших колонок
+        bookTableView.getColumns().add(0, selectCol);
+        bookTableView.setEditable(true);
+
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         authorColumn.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
@@ -60,13 +66,8 @@ public class BookTableController {
         progressColumn.setCellValueFactory(cellData -> cellData.getValue().progressFormattedProperty());
         dateColumn.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
 
-        // Додаємо колонку першою
-        bookTableView.getColumns().add(0, selectCol);
-        bookTableView.setEditable(true);
-
         bookTableView.setItems(vm.getBooks());
 
-        // Виділення книги для деталей
         bookTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             vm.setSelectedBook(selected);
             if (selected != null) {
@@ -92,7 +93,6 @@ public class BookTableController {
             }
         });
 
-        // Подвійний клік для відкриття книги
         bookTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 BookViewModel selected = bookTableView.getSelectionModel().getSelectedItem();
@@ -102,13 +102,11 @@ public class BookTableController {
             }
         });
 
-        // Налаштування пагінації
         setupPagination();
     }
 
     private void setupPagination() {
         BookTableViewModel vm = appState.getBookTable();
-
         pageSizeComboBox.getItems().addAll(10, 25, 50, 100, 200);
         pageSizeComboBox.setValue(vm.getPageSize());
         pageSizeComboBox.setOnAction(e -> {
@@ -118,28 +116,56 @@ public class BookTableController {
 
         prevPageButton.setOnAction(e -> {});
         nextPageButton.setOnAction(e -> {});
-
         vm.currentPageProperty().addListener((obs, old, page) -> updatePaginationState(vm));
         vm.totalPagesProperty().addListener((obs, old, pages) -> updatePaginationState(vm));
-
         updatePaginationState(vm);
     }
 
     private void updatePaginationState(BookTableViewModel vm) {
         int currentPage = vm.getCurrentPage();
         int totalPages = vm.getTotalPages();
-
         prevPageButton.setDisable(currentPage <= 0);
         nextPageButton.setDisable(currentPage >= totalPages - 1);
-
         pageInfoLabel.setText(String.format("Сторінка %d з %d", currentPage + 1, Math.max(1, totalPages)));
     }
 
-    public void refresh() {
-        bookTableView.refresh();
-    }
+    public void refresh() { bookTableView.refresh(); }
 
-    public TableView<BookViewModel> getTableView() {
-        return bookTableView;
+    public void loadGroupedBooks(List<BookViewModel> books) {
+        if (bookTableView == null) {
+            log.error("Спроба завантажити книги в неініціалізовану таблицю!");
+            return;
+        }
+
+        BookTableViewModel vm = appState.getBookTable();
+        Map<String, List<BookViewModel>> grouped = books.stream()
+                .collect(Collectors.groupingBy(
+                        book -> book.getSeries() != null && !book.getSeries().isBlank() ? book.getSeries() : "Без серії"
+                ));
+
+        List<BookViewModel> groupedBooks = new java.util.ArrayList<>();
+
+        grouped.entrySet().stream()
+                .filter(entry -> !entry.getKey().equals("Без серії"))
+                .sorted(Map.Entry.comparingByKey())
+                .forEach(entry -> {
+                    List<BookViewModel> seriesBooks = entry.getValue().stream()
+                            .sorted(Comparator.comparing(BookViewModel::getSequenceNumber, Comparator.nullsLast(Comparator.naturalOrder())))
+                            .collect(Collectors.toList());
+                    groupedBooks.addAll(seriesBooks);
+                });
+
+        if (grouped.containsKey("Без серії")) {
+            groupedBooks.addAll(grouped.get("Без серії"));
+        }
+
+        vm.setBooks(groupedBooks);
+        vm.setTotalElements(groupedBooks.size());
+        vm.setTotalPages(1);
+        vm.setCurrentPage(0);
+        if (!groupedBooks.isEmpty()) {
+            vm.setSelectedBook(groupedBooks.get(0));
+        }
+        log.info("Таблиця оновлена: {} книг (згруповано по серіях)", groupedBooks.size());
     }
 }

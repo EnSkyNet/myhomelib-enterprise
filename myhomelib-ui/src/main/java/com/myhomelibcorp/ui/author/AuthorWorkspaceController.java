@@ -1,8 +1,8 @@
 package com.myhomelibcorp.ui.author;
 
 import com.myhomelibcorp.application.dto.AuthorDto;
-import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.usecase.author.LoadAuthorByIdUseCase;
 import com.myhomelibcorp.application.usecase.book.LoadBooksByAuthorUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -10,6 +10,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
@@ -22,12 +23,15 @@ import javafx.scene.control.TextArea;
 import javafx.scene.image.ImageView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.stream.Collectors;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
 public class AuthorWorkspaceController {
@@ -37,7 +41,8 @@ public class AuthorWorkspaceController {
     private final NavigationService navigationService;
     private final CoverPresenter coverPresenter;
     private final ApplicationState appState;
-        private final BookViewModelMapper bookViewModelMapper;
+    private final BookViewModelMapper bookViewModelMapper;
+    private final UiBackgroundExecutor executor;
 
     @FXML private Label authorNameLabel;
     @FXML private Label authorFullNameLabel;
@@ -63,9 +68,12 @@ public class AuthorWorkspaceController {
 
     @FXML
     public void initialize() {
+        log.info("AuthorWorkspaceController.initialize() викликано");
+
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
         seqNumberColumn.setCellValueFactory(cellData -> cellData.getValue().sequenceNumberProperty());
+        // Використовуємо createdAtFormattedProperty, оскільки yearProperty відсутній
         yearColumn.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
         formatColumn.setCellValueFactory(cellData -> cellData.getValue().localStatusProperty());
         rateColumn.setCellValueFactory(cellData -> cellData.getValue().rateStarsProperty());
@@ -94,56 +102,109 @@ public class AuthorWorkspaceController {
     }
 
     public void setAuthorId(AuthorId authorId) {
+        if (authorId == null) {
+            throw new IllegalArgumentException("AuthorId не може бути null");
+        }
+
         this.currentAuthorId = authorId;
+        log.info("Встановлено автора для workspace: {}", authorId);
+
         loadAuthorData(authorId);
     }
 
     private void loadAuthorData(AuthorId authorId) {
-        loadAuthorByIdUseCase.execute(authorId).ifPresentOrElse(author -> {
-            this.currentAuthor = author;
-            UiExecutor.runOnUiThread(() -> updateAuthorUI(author));
-        }, () -> {
-            log.warn("Author not found: {}", authorId);
-        });
+        log.info("Завантаження workspace автора: {}", authorId);
 
-        List<BookListItem> items = loadBooksByAuthorUseCase.execute(authorId, 1000, 0);
-        this.allBooks = items.stream()
-                .map(item -> {
-                    BookDto dto = new BookDto();
-                    dto.setId(item.getId());
-                    dto.setTitle(item.getTitle());
-                    dto.setAuthorsText(item.getAuthorsText());
-                    dto.setSeries(item.getSeries());
-                    dto.setGenresText(item.getGenresText());
-                    dto.setRate(item.getRate());
-                    dto.setProgress(item.getProgress());
-                    dto.setFileSize(item.getFileSize());
-                    dto.setLanguage(item.getLanguage());
-                    dto.setFileName(item.getFileName());
-                    dto.setFolder(item.getFolder());
-                    dto.setCollectionRoot(item.getCollectionRoot());
-                    dto.setAnnotation(item.getAnnotation());
-                    return dto;
-                })
-                .collect(Collectors.toList());
-        UiExecutor.runOnUiThread(() -> updateBooksUI(allBooks));
+        executor.submit(() -> {
+            AuthorDto author = loadAuthorByIdUseCase.execute(authorId)
+                    .orElseThrow(() -> new IllegalStateException("Автор не знайдений: " + authorId));
+
+            List<BookListItem> items = loadBooksByAuthorUseCase.execute(authorId, 1000, 0);
+            List<BookDto> books = items.stream()
+                    .map(this::toBookDto)
+                    .collect(Collectors.toList());
+
+            return new AuthorWorkspaceData(author, books);
+
+        }).thenAccept(data -> {
+            this.currentAuthor = data.author();
+            this.allBooks = data.books();
+
+            UiExecutor.runOnUiThread(() -> {
+                updateAuthorUI(data.author());
+                updateBooksUI(data.books());
+            });
+
+        }).exceptionally(ex -> {
+            log.error("Помилка завантаження автора {}", authorId, ex);
+
+            UiExecutor.runOnUiThread(() -> {
+                booksTableView.getItems().clear();
+                booksCountLabel.setText("Книг: 0");
+                seriesCountLabel.setText("Серій: 0");
+                genresCountLabel.setText("Жанрів: 0");
+            });
+
+            return null;
+        });
+    }
+
+    private record AuthorWorkspaceData(AuthorDto author, List<BookDto> books) {}
+
+    private BookDto toBookDto(BookListItem item) {
+        BookDto dto = new BookDto();
+        dto.setId(item.getId());
+        dto.setTitle(item.getTitle());
+        dto.setAuthorsText(item.getAuthorsText());
+        dto.setSeries(item.getSeries());
+        dto.setGenresText(item.getGenresText());
+        dto.setRate(item.getRate());
+        dto.setProgress(item.getProgress());
+        dto.setFileSize(item.getFileSize());
+        dto.setLanguage(item.getLanguage());
+        dto.setFileName(item.getFileName());
+        dto.setFolder(item.getFolder());
+        dto.setCollectionRoot(item.getCollectionRoot());
+        dto.setAnnotation(item.getAnnotation());
+        dto.setYear(0); // Тимчасово
+        return dto;
     }
 
     private void updateAuthorUI(AuthorDto author) {
         authorNameLabel.setText(author.getFullName());
         authorFullNameLabel.setText(author.getFullName());
-        booksCountLabel.setText("Книг: " + (allBooks != null ? allBooks.size() : 0));
-        seriesCountLabel.setText("Серій: 0");
-        genresCountLabel.setText("Жанрів: 0");
-        bioLabel.setText("Біографія автора...");
+        bioLabel.setText("Біографія автора..."); // getBio не існує
     }
 
     private void updateBooksUI(List<BookDto> books) {
+        if (booksTableView == null) return;
+
         List<BookViewModel> vms = books.stream()
                 .map(bookViewModelMapper::toViewModel)
                 .collect(Collectors.toList());
         booksTableView.getItems().setAll(vms);
-        booksCountLabel.setText("Книг: " + vms.size());
+
+        booksCountLabel.setText("Книг: " + books.size());
+
+        long seriesCount = books.stream()
+                .map(BookDto::getSeries)
+                .filter(series -> series != null && !series.isBlank())
+                .distinct()
+                .count();
+        seriesCountLabel.setText("Серій: " + seriesCount);
+
+        long genresCount = books.stream()
+                .flatMap(book -> {
+                    if (book.getGenresText() == null || book.getGenresText().isBlank()) {
+                        return java.util.stream.Stream.empty();
+                    }
+                    return java.util.Arrays.stream(book.getGenresText().split(","));
+                })
+                .map(String::trim)
+                .filter(value -> !value.isBlank())
+                .distinct()
+                .count();
+        genresCountLabel.setText("Жанрів: " + genresCount);
     }
 
     private void filterBooks(String query) {
@@ -155,8 +216,12 @@ public class AuthorWorkspaceController {
         }
         String lowerQuery = query.toLowerCase();
         List<BookDto> filtered = allBooks.stream()
-                .filter(book -> book.getTitle().toLowerCase().contains(lowerQuery)
-                        || (book.getSeries() != null && book.getSeries().toLowerCase().contains(lowerQuery)))
+                .filter(book -> {
+                    String title = book.getTitle();
+                    String series = book.getSeries();
+                    return (title != null && title.toLowerCase().contains(lowerQuery)) ||
+                            (series != null && series.toLowerCase().contains(lowerQuery));
+                })
                 .collect(Collectors.toList());
         updateBooksUI(filtered);
     }

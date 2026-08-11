@@ -44,6 +44,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class MyHomeLibApp extends Application {
 
     private ConfigurableApplicationContext context;
+    private static ConfigurableApplicationContext applicationContext;
     private Stage splashStage;
     private final AtomicBoolean isShuttingDown = new AtomicBoolean(false);
 
@@ -52,11 +53,16 @@ public class MyHomeLibApp extends Application {
         try {
             log.info("Запуск Spring Boot контексту...");
             context = SpringApplication.run(MyHomeLibApp.class);
+            applicationContext = context; // <-- ДОДАНО
             log.info("Spring Boot контекст запущено");
         } catch (Exception e) {
             log.error("Помилка ініціалізації Spring Boot", e);
             throw new RuntimeException("Не вдалося запустити Spring Boot", e);
         }
+    }
+
+    public static ConfigurableApplicationContext getContext() {
+        return applicationContext;
     }
 
     @Override

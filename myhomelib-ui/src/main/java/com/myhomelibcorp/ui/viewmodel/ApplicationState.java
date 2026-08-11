@@ -2,11 +2,14 @@ package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.ui.table.BookTableController;
 import javafx.beans.property.ObjectProperty;
 import javafx.beans.property.SimpleObjectProperty;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 @Component
+@Slf4j
 public class ApplicationState {
 
     private final DashboardViewModel dashboard = new DashboardViewModel();
@@ -16,59 +19,32 @@ public class ApplicationState {
     private final BookDetailsViewModel bookDetails = new BookDetailsViewModel();
     private final StatusBarViewModel statusBar = new StatusBarViewModel();
 
-    // Поточна колекція (база даних)
-    private final ObjectProperty<Collection> currentLibraryCollection = new SimpleObjectProperty<>();
+    // Посилання на контролер таблиці
+    private BookTableController bookTableController;
 
-    // Поточна група (список книг)
+    private final ObjectProperty<Collection> currentLibraryCollection = new SimpleObjectProperty<>();
     private final ObjectProperty<Group> currentGroup = new SimpleObjectProperty<>();
 
-    // Геттери / сеттери
+    // Гетери / сетери
+    public DashboardViewModel getDashboard() { return dashboard; }
+    public SearchViewModel getSearch() { return search; }
+    public NavigationViewModel getNavigation() { return navigation; }
+    public BookTableViewModel getBookTable() { return bookTable; }
+    public BookDetailsViewModel getBookDetails() { return bookDetails; }
+    public StatusBarViewModel getStatusBar() { return statusBar; }
 
-    public DashboardViewModel getDashboard() {
-        return dashboard;
-    }
+    public ObjectProperty<Collection> currentLibraryCollectionProperty() { return currentLibraryCollection; }
+    public Collection getCurrentLibraryCollection() { return currentLibraryCollection.get(); }
+    public void setCurrentLibraryCollection(Collection collection) { currentLibraryCollection.set(collection); }
 
-    public SearchViewModel getSearch() {
-        return search;
-    }
+    public ObjectProperty<Group> currentGroupProperty() { return currentGroup; }
+    public Group getCurrentGroup() { return currentGroup.get(); }
+    public void setCurrentGroup(Group group) { currentGroup.set(group); }
 
-    public NavigationViewModel getNavigation() {
-        return navigation;
-    }
-
-    public BookTableViewModel getBookTable() {
-        return bookTable;
-    }
-
-    public BookDetailsViewModel getBookDetails() {
-        return bookDetails;
-    }
-
-    public StatusBarViewModel getStatusBar() {
-        return statusBar;
-    }
-
-    public ObjectProperty<Collection> currentLibraryCollectionProperty() {
-        return currentLibraryCollection;
-    }
-
-    public Collection getCurrentLibraryCollection() {
-        return currentLibraryCollection.get();
-    }
-
-    public void setCurrentLibraryCollection(Collection collection) {
-        currentLibraryCollection.set(collection);
-    }
-
-    public ObjectProperty<Group> currentGroupProperty() {
-        return currentGroup;
-    }
-
-    public Group getCurrentGroup() {
-        return currentGroup.get();
-    }
-
-    public void setCurrentGroup(Group group) {
-        currentGroup.set(group);
+    // Методи для роботи з контролером таблиці
+    public BookTableController getBookTableController() { return bookTableController; }
+    public void setBookTableController(BookTableController controller) {
+        this.bookTableController = controller;
+        log.info("ApplicationState: BookTableController встановлено.");
     }
 }

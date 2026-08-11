@@ -41,16 +41,16 @@
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
                     <MenuItem text="Експорт..." onAction="#handleExport"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="🔍 Перевірити цілісність..." onAction="#handleCheckIntegrity"/>
-                    <MenuItem text="⚡ Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
-                    <MenuItem text="🔄 Перебудувати індекс..." onAction="#handleRebuildIndex"/>
+                    <MenuItem text="Перевірити цілісність..." onAction="#handleCheckIntegrity"/>
+                    <MenuItem text="Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
+                    <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="💾 Резервне копіювання..." onAction="#handleBackup"/>
-                    <MenuItem text="📂 Відновити з копії..." onAction="#handleRestore"/>
+                    <MenuItem text="Резервне копіювання..." onAction="#handleBackup"/>
+                    <MenuItem text="Відновити з копії..." onAction="#handleRestore"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="📊 Статистика" onAction="#handleStatistics"/>
+                    <MenuItem text="Статистика" onAction="#handleStatistics"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="🔄 Синхронізувати папку..." onAction="#handleSyncFolder"/>
+                    <MenuItem text="Синхронізувати папку..." onAction="#handleSyncFolder"/>
                     <SeparatorMenuItem/>
                 </Menu>
                 <Menu text="Допомога">
@@ -88,17 +88,22 @@
     </top>
 
     <left>
-        <VBox style="-fx-padding: 5; -fx-background-color: #f5f5f5; -fx-pref-width: 200;">
-            <fx:include source="navigation.fxml"/>
-        </VBox>
+        <fx:include source="navigation-panel.fxml"/>
     </left>
 
     <center>
-        <fx:include source="book-table.fxml"/>
+        <!-- Центральний контейнер, який містить алфавіт та робочий простір -->
+        <VBox VBox.vgrow="ALWAYS" style="-fx-background-color: #ffffff;">
+            <!-- Алфавітна панель зверху -->
+            <fx:include source="alphabet-toolbar-view.fxml"/>
+
+            <!-- Робочий простір (змінюється через WorkspaceManager) -->
+            <StackPane fx:id="workspaceStackPane" VBox.vgrow="ALWAYS"/>
+        </VBox>
     </center>
 
     <right>
-        <VBox style="-fx-padding: 5; -fx-pref-width: 300; -fx-max-width: 300; -fx-background-color: #fafafa;"
+        <VBox style="-fx-padding: 5; -fx-pref-width: 320; -fx-max-width: 350; -fx-background-color: #fafafa;"
               VBox.vgrow="ALWAYS">
             <fx:include source="details.fxml"/>
         </VBox>

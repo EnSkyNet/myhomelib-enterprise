@@ -5,5 +5,6 @@ public enum SortBy {
     AUTHOR,
     DATE,
     RATING,
-    RANDOM
+    RANDOM,
+    SERIES  // <-- ДОДАНО
 }
