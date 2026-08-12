@@ -4,7 +4,7 @@ import com.myhomelibcorp.application.event.ImportFinishedEvent;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.ui.controller.MainController;
-import com.myhomelibcorp.ui.navigation.NavigationController;
+import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -21,10 +21,10 @@ public class ImportEventHandler {
 
     private final ApplicationState appState;
     private final StatisticsService statisticsService;
-    private final SyncSeriesUseCase syncSeriesUseCase; // ЗАМІСТЬ SqliteSeriesRepository
+    private final SyncSeriesUseCase syncSeriesUseCase;
     private final BookLoaderService bookLoaderService;
-    private final NavigationController navigationController;
     private final MainController mainController;
+    private final NavigationPanelController navigationPanelController; // <-- НОВА ЗАЛЕЖНІСТЬ
 
     @PostConstruct
     public void init() {
@@ -54,7 +54,7 @@ public class ImportEventHandler {
             appState.getStatusBar().setStatusText(status);
             appState.getStatusBar().setProgressVisible(false);
 
-            // 3. Синхронізуємо серії через Use Case
+            // 3. Синхронізуємо серії
             try {
                 syncSeriesUseCase.execute();
                 log.info("Серії синхронізовано після імпорту");
@@ -65,10 +65,10 @@ public class ImportEventHandler {
             // 4. Оновлюємо список книг
             bookLoaderService.loadAllBooks();
 
-            // 5. Оновлюємо навігаційне дерево
-            navigationController.refreshNavigation();
+            // 5. Оновлюємо навігацію через новий NavigationPanelController
+            navigationPanelController.refreshAll(); // <-- НОВИЙ МЕТОД
 
-            // 6. Показуємо дашборд, щоб оновити головну сторінку
+            // 6. Показуємо дашборд
             mainController.showDashboard();
 
             log.info("Оновлення UI після імпорту завершено");

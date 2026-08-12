@@ -3,8 +3,8 @@ package com.myhomelibcorp.infrastructure.adapter;
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
-import com.myhomelibcorp.application.port.out.cache.SearchCache;
-import com.myhomelibcorp.application.port.out.cover.CoverCache;
+import com.myhomelibcorp.infrastructure.cache.CaffeineSearchCache;
+import com.myhomelibcorp.infrastructure.cache.CaffeineCoverCache;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -16,8 +16,8 @@ public class CacheInvalidationAdapter implements CacheInvalidationPort {
 
     private final BookCache bookCache;
     private final DictionaryCache dictionaryCache;
-    private final SearchCache searchCache;
-    private final CoverCache coverCache;
+    private final CaffeineSearchCache searchCache;
+    private final CaffeineCoverCache coverCache;
 
     @Override
     public void invalidateAll() {

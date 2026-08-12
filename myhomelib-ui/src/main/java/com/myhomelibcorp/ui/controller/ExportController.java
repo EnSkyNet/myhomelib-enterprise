@@ -5,7 +5,6 @@ import com.myhomelibcorp.application.dto.InpxExportRequest;
 import com.myhomelibcorp.application.usecase.export.ExportToDeviceUseCase;
 import com.myhomelibcorp.application.usecase.export.ExportToInpxUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.ui.model.TreeNode;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
@@ -120,15 +119,14 @@ public class ExportController {
 
     /**
      * Збирає вибрані книги з поточного виду (таблиця або дерево)
-     * ВИПРАВЛЕНО: рекурсивний пошук у всіх дочірніх вузлах
      */
     private List<BookViewModel> collectSelectedBooks(BorderPane mainPane) {
         Node center = mainPane.getCenter();
 
         log.debug("Збір вибраних книг, центр: {}", center != null ? center.getClass().getSimpleName() : "null");
 
-        // Шукаємо TreeTableView або TableView у всіх дочірніх вузлах
-        TreeTableView<TreeNode> treeView = findTreeTableView(center);
+        // Шукаємо TreeTableView
+        TreeTableView<?> treeView = findTreeTableView(center);
         if (treeView != null) {
             log.debug("Знайдено TreeTableView, збір книг з дерева");
             List<BookViewModel> selected = collectSelectedFromTree(treeView);
@@ -136,6 +134,7 @@ public class ExportController {
             return selected;
         }
 
+        // Шукаємо TableView
         TableView<BookViewModel> tableView = findTableView(center);
         if (tableView != null) {
             log.debug("Знайдено TableView, збір книг з таблиці");
@@ -152,21 +151,18 @@ public class ExportController {
     /**
      * Рекурсивно шукає TreeTableView у вузлі та його дочірніх елементах
      */
-    @SuppressWarnings("unchecked")
-    private TreeTableView<TreeNode> findTreeTableView(Node node) {
+    private TreeTableView<?> findTreeTableView(Node node) {
         if (node == null) {
             return null;
         }
 
-        // Перевіряємо поточний вузол
         if (node instanceof TreeTableView) {
-            return (TreeTableView<TreeNode>) node;
+            return (TreeTableView<?>) node;
         }
 
-        // Якщо це контейнер, перевіряємо його дочірні елементи
         if (node instanceof Parent) {
             for (Node child : ((Parent) node).getChildrenUnmodifiable()) {
-                TreeTableView<TreeNode> result = findTreeTableView(child);
+                TreeTableView<?> result = findTreeTableView(child);
                 if (result != null) {
                     return result;
                 }
@@ -185,12 +181,10 @@ public class ExportController {
             return null;
         }
 
-        // Перевіряємо поточний вузол
         if (node instanceof TableView) {
             return (TableView<BookViewModel>) node;
         }
 
-        // Якщо це контейнер, перевіряємо його дочірні елементи
         if (node instanceof Parent) {
             for (Node child : ((Parent) node).getChildrenUnmodifiable()) {
                 TableView<BookViewModel> result = findTableView(child);
@@ -206,9 +200,9 @@ public class ExportController {
     /**
      * Рекурсивно збирає вибрані книги з дерева
      */
-    private List<BookViewModel> collectSelectedFromTree(TreeTableView<TreeNode> treeView) {
+    private List<BookViewModel> collectSelectedFromTree(TreeTableView<?> treeView) {
         List<BookViewModel> selected = new ArrayList<>();
-        TreeItem<TreeNode> root = treeView.getRoot();
+        TreeItem<?> root = treeView.getRoot();
         if (root != null) {
             collectSelectedFromTreeItem(root, selected);
         }
@@ -216,16 +210,37 @@ public class ExportController {
         return selected;
     }
 
-    private void collectSelectedFromTreeItem(TreeItem<TreeNode> item, List<BookViewModel> selected) {
-        TreeNode node = item.getValue();
-        if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.isSelected()) {
-            BookViewModel book = node.getBook();
-            if (book != null) {
+    @SuppressWarnings("unchecked")
+    private void collectSelectedFromTreeItem(TreeItem<?> item, List<BookViewModel> selected) {
+        Object value = item.getValue();
+
+        // Перевіряємо, чи це книга (BookViewModel)
+        if (value instanceof BookViewModel) {
+            BookViewModel book = (BookViewModel) value;
+            if (book.isSelected()) {
                 selected.add(book);
-                log.debug("✅ Додано книгу з дерева: {}", book.getTitle());
+                log.debug("✅ Додано вибрану книгу з дерева: {}", book.getTitle());
             }
         }
-        for (TreeItem<TreeNode> child : item.getChildren()) {
+        // Перевіряємо, чи це може бути інший тип вузла, що містить книгу
+        else if (value != null) {
+            // Спроба отримати книгу через рефлексію або інший спосіб
+            try {
+                // Якщо це старий TreeNode, пробуємо отримати книгу
+                if (value.getClass().getSimpleName().equals("TreeNode")) {
+                    java.lang.reflect.Method getBookMethod = value.getClass().getMethod("getBook");
+                    BookViewModel book = (BookViewModel) getBookMethod.invoke(value);
+                    if (book != null && book.isSelected()) {
+                        selected.add(book);
+                        log.debug("✅ Додано вибрану книгу з TreeNode: {}", book.getTitle());
+                    }
+                }
+            } catch (Exception e) {
+                // Ігноруємо, якщо не вдалося отримати книгу
+            }
+        }
+
+        for (TreeItem<?> child : item.getChildren()) {
             collectSelectedFromTreeItem(child, selected);
         }
     }

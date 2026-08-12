@@ -41,7 +41,13 @@ public class ReaderSettingsController {
     public void initialize() {
         // Шрифти
         fontFamilyCombo.getItems().addAll(
-                "Georgia", "Times New Roman", "Arial", "Helvetica", "Verdana", "Palatino", "Book Antiqua"
+                "Georgia",
+                "Times New Roman",
+                "Arial",
+                "Helvetica",
+                "Verdana",
+                "Palatino",
+                "Book Antiqua"
         );
         fontFamilyCombo.setValue("Georgia");
 
@@ -113,6 +119,7 @@ public class ReaderSettingsController {
         if (dialogService.showConfirmation("Скинути налаштування",
                 "Ви впевнені, що хочете скинути всі налаштування Reader до стандартних?",
                 "Цю дію не можна скасувати.")) {
+
             ReaderPreferences defaultPrefs = ReaderPreferences.builder().build();
             readerPreferencesPort.savePreferences(defaultPrefs);
             readerPreferencesPort.resetPreferences();

@@ -15,15 +15,22 @@
 
     <!-- Кнопки вибору режиму навігації -->
     <HBox spacing="5" style="-fx-padding: 0 0 5 0;">
-        <Button text="Автори" onAction="#onAuthors" style="-fx-background-color: #2196F3; -fx-text-fill: white;" maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
-        <Button text="Серії" onAction="#onSeries" maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
-        <Button text="Жанри" onAction="#onGenres" maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
+        <Button fx:id="authorsButton" text="Автори" onAction="#onAuthors"
+                style="-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;"
+                maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
+        <Button fx:id="seriesButton" text="Серії" onAction="#onSeries"
+                style="-fx-background-color: transparent; -fx-text-fill: #333333;"
+                maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
+        <Button fx:id="genresButton" text="Жанри" onAction="#onGenres"
+                style="-fx-background-color: transparent; -fx-text-fill: #333333;"
+                maxWidth="1.7976931348623157E308" HBox.hgrow="ALWAYS"/>
     </HBox>
 
     <Separator/>
 
     <!-- Пошук по списку -->
-    <TextField fx:id="listSearchField" promptText="🔍 Пошук..." style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
+    <TextField fx:id="listSearchField" promptText="🔍 Пошук..."
+               style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
 
     <!-- Список (Авторів, Серій або Жанрів) -->
     <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>

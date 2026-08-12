@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.session.SessionService;
@@ -16,7 +15,9 @@ import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.controller.MainController;
+import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
+import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -39,22 +40,31 @@ public class DefaultNavigationService implements NavigationService {
     private final MainController mainController;
     private final WorkspaceManager workspaceManager;
     private final BookLoaderService bookLoaderService;
-    private final SeriesRepository seriesRepository;
     private final BookQueryRepository bookQueryRepository;
     private final BookMapper bookMapper;
     private final DictionaryCachePort dictionaryCache;
+    private final NavigationPanelController navigationPanelController;
+
+    @PostConstruct
+    public void init() {
+        // Встановлюємо колбеки для навігаційної панелі
+        navigationPanelController.setNavigationCallbacks(
+                this::navigateToAuthor,
+                this::navigateToSeries,
+                this::navigateToGenre
+        );
+        log.info("Navigation callbacks встановлено");
+    }
 
     @Override
     public void navigateToAuthor(AuthorId authorId) {
         if (authorId != null) {
             sessionService.saveSelectedAuthorId(authorId.asString());
         }
-        // Цей метод передає authorId далі через workspaceManager та FxmlLoaderFactory
         workspaceManager.showAuthorWorkspace(authorId);
         mainController.updateNavigationButtons();
     }
 
-    // ... решта методів без змін (navigateToSeries, navigateToBook, etc.)
     @Override
     public void navigateToSeries(SeriesId seriesId) {
         log.info("Навігація до серії: {}", seriesId);
@@ -259,11 +269,6 @@ public class DefaultNavigationService implements NavigationService {
         mainController.updateNavigationButtons();
     }
 
-    private String normalizeSeriesName(String name) {
-        if (name == null) return "";
-        return name.trim().toLowerCase().replaceAll("\\s+", " ");
-    }
-
     @Override
     public void navigateToPublisher(String publisherName) {
         log.info("Навігація до видавництва: {}", publisherName);
@@ -284,5 +289,10 @@ public class DefaultNavigationService implements NavigationService {
                 .collect(Collectors.toList());
         mainController.showSearchResults(filtered);
         mainController.updateNavigationButtons();
+    }
+
+    private String normalizeSeriesName(String name) {
+        if (name == null) return "";
+        return name.trim().toLowerCase().replaceAll("\\s+", " ");
     }
 }

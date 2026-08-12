@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.usecase.group.CreateGroupUseCase;
 import com.myhomelibcorp.application.usecase.group.DeleteGroupUseCase;
 import com.myhomelibcorp.application.usecase.group.RenameGroupUseCase;
 import com.myhomelibcorp.domain.model.group.Group;
+import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.collections.ObservableList;
@@ -24,6 +25,7 @@ public class GroupPresenter {
     private final DeleteGroupUseCase deleteGroupUseCase;
     private final DialogService dialogService;
     private final ApplicationState appState;
+    private final NavigationPanelController navigationPanelController;
 
     public void showAddGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
         Optional<String> result = dialogService.showTextInput(
@@ -38,6 +40,7 @@ public class GroupPresenter {
                     createGroupUseCase.execute(name);
                     refreshGroupList(groupsListView);
                     appState.getStatusBar().setStatusText("Групу '" + name + "' створено");
+                    navigationPanelController.refreshAll();
                     if (onComplete != null) onComplete.run();
                 } catch (Exception e) {
                     dialogService.showError("Помилка", e.getMessage());
@@ -68,6 +71,7 @@ public class GroupPresenter {
                     renameGroupUseCase.execute(selected.getId().asLong(), newName);
                     refreshGroupList(groupsListView);
                     appState.getStatusBar().setStatusText("Групу перейменовано на '" + newName + "'");
+                    navigationPanelController.refreshAll();
                     if (onComplete != null) onComplete.run();
                 } catch (Exception e) {
                     dialogService.showError("Помилка", e.getMessage());
@@ -83,7 +87,7 @@ public class GroupPresenter {
             return;
         }
         if (!selected.isAllowDelete()) {
-            dialogService.showError("Помилка", "Цю групу не можна видалити (системна)");
+            dialogService.showError("Помилка", "Цю групу не можна видаляти (системна)");
             return;
         }
         if (dialogService.showConfirmation(
@@ -95,6 +99,7 @@ public class GroupPresenter {
                 deleteGroupUseCase.execute(selected.getId().asLong());
                 refreshGroupList(groupsListView);
                 appState.getStatusBar().setStatusText("Групу видалено");
+                navigationPanelController.refreshAll();
                 if (onComplete != null) onComplete.run();
             } catch (Exception e) {
                 dialogService.showError("Помилка", e.getMessage());
@@ -103,7 +108,7 @@ public class GroupPresenter {
     }
 
     private void refreshGroupList(ListView<Group> groupsListView) {
-        // Оновлення списку груп відбувається через NavigationViewModel, який оновлюється в NavigationController
-        // Можна викликати перезавантаження через сервіс
+        // Оновлення відбувається через NavigationPanelController.refreshAll()
+        log.debug("Оновлення списку груп");
     }
 }

@@ -11,6 +11,7 @@ import com.myhomelibcorp.reader.service.ReaderLifecycleManager;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
+import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationHistoryService;
@@ -24,6 +25,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Pane;
+import javafx.scene.layout.StackPane;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
@@ -31,13 +33,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
-import javafx.scene.layout.StackPane;
 
 import java.util.List;
 
 /**
  * Головний контролер програми.
- * Відповідає тільки за навігацію та координацію між воркспейсами.
+ * Відповідає за навігацію та координацію між воркспейсами.
  */
 @Component
 @RequiredArgsConstructor
@@ -62,6 +63,7 @@ public class MainController {
     private final ExportController exportController;
     private final DatabaseToolsController databaseToolsController;
     private final ImportController importController;
+    private final NavigationPanelController navigationPanelController;
 
     // ===== FXML =====
     @FXML private BorderPane mainPane;
@@ -177,6 +179,7 @@ public class MainController {
     @FXML
     public void handleRefresh() {
         eventPublisher.publishEvent(new NavigationRefreshEvent());
+        navigationPanelController.refreshAll();
         showDashboard();
     }
 
@@ -194,6 +197,7 @@ public class MainController {
 
     @FXML
     public void handleHome() {
+        cleanupReader();
         showDashboard();
     }
 
@@ -208,9 +212,79 @@ public class MainController {
                 "Версія 1.0.0-SNAPSHOT\nJava 21, Spring Boot 3.5, JavaFX 21");
     }
 
+    @FXML
+    public void handleSettings() {
+        dialogService.showInfo("Налаштування", "Функція налаштувань в розробці");
+    }
+
+    // ==================== НАВІГАЦІЙНІ МЕТОДИ ====================
+
+    @FXML
+    public void onAuthors() {
+        cleanupReader();
+        navigationPanelController.onAuthors();
+    }
+
+    @FXML
+    public void onSeries() {
+        cleanupReader();
+        navigationPanelController.onSeries();
+    }
+
+    @FXML
+    public void onGenres() {
+        cleanupReader();
+        navigationPanelController.onGenres();
+    }
+
+    @FXML
+    public void onCollections() {
+        cleanupReader();
+        showCollectionWorkspace();
+    }
+
+    @FXML
+    public void onGroups() {
+        cleanupReader();
+        Group currentGroup = appState.getCurrentGroup();
+        if (currentGroup != null) {
+            showGroupWorkspace(currentGroup);
+        } else {
+            showGroupWorkspace(null);
+        }
+    }
+
+    @FXML
+    public void onNewBooks() {
+        cleanupReader();
+        // Завантажуємо останні додані книги
+    }
+
+    @FXML
+    public void onHistory() {
+        cleanupReader();
+        dialogService.showInfo("Історія", "Функція в розробці");
+    }
+
+    @FXML
+    public void onSearch() {
+        cleanupReader();
+        String query = searchField.getText();
+        if (query != null && !query.isBlank()) {
+            showSearchResults(query);
+        } else {
+            showSearchResults("");
+        }
+    }
+
+    @FXML
+    public void onImport() {
+        cleanupReader();
+        showImportWorkspace();
+    }
+
     // ==================== ДЕЛЕГУВАННЯ КОНТРОЛЕРАМ ====================
 
-    // Колекції
     @FXML public void handleNewCollection() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         collectionController.handleNewCollection(stage, this::showDashboard);
@@ -228,7 +302,32 @@ public class MainController {
         collectionController.handleSelectCollection(this::showDashboard);
     }
 
-    // Групи
+    @FXML public void handleCollectionWizard() {
+        try {
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/collection-wizard.fxml"));
+            loader.setControllerFactory(springContext::getBean);
+            Parent root = loader.load();
+
+            CollectionWizardController controller = loader.getController();
+            Stage stage = new Stage();
+            stage.setTitle("📚 Майстер створення колекції");
+            stage.setScene(new Scene(root, 620, 480));
+            stage.initModality(Modality.WINDOW_MODAL);
+            stage.initOwner(mainPane.getScene().getWindow());
+            controller.setStage(stage);
+            controller.setOnComplete(() -> {
+                eventPublisher.publishEvent(new NavigationRefreshEvent());
+                navigationPanelController.refreshAll();
+                showDashboard();
+            });
+            stage.show();
+
+        } catch (Exception e) {
+            log.error("Помилка відкриття майстра колекцій", e);
+            dialogService.showError("Помилка", "Не вдалося відкрити майстер: " + e.getMessage());
+        }
+    }
+
     @FXML public void handleAddGroup() {
         groupController.handleAddGroup(this::showDashboard);
     }
@@ -241,7 +340,6 @@ public class MainController {
         groupController.handleDeleteGroup(this::showDashboard);
     }
 
-    // Масові операції
     @FXML public void handleBatchRate() {
         batchOperationsController.handleBatchRate(this::handleRefresh);
     }
@@ -258,7 +356,6 @@ public class MainController {
         batchOperationsController.handleClearSelection();
     }
 
-    // Вигляд
     @FXML public void handleToggleView() {
         viewModeController.toggleView();
     }
@@ -267,7 +364,6 @@ public class MainController {
         dialogService.showInfo("Налаштування колонок", "Функція в розробці");
     }
 
-    // Експорт
     @FXML public void handleExport() {
         exportController.handleExport(mainPane);
     }
@@ -276,7 +372,6 @@ public class MainController {
         exportController.handleExportInpx(mainPane, this::handleRefresh);
     }
 
-    // Імпорт
     @FXML public void handleImportFb2() {
         importController.importFb2(this::handleRefresh);
     }
@@ -293,7 +388,6 @@ public class MainController {
         importController.handleSyncFolder(this::handleRefresh);
     }
 
-    // Інструменти
     @FXML public void handleCheckIntegrity() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         databaseToolsController.handleCheckIntegrity(stage);
@@ -322,7 +416,6 @@ public class MainController {
         databaseToolsController.handleStatistics(stage);
     }
 
-    // Заглушки
     @FXML public void handleEditMetadata() {
         dialogService.showInfo("Редагування метаданих", "Функція в розробці");
     }
@@ -333,41 +426,5 @@ public class MainController {
 
     @FXML public void handleAddBook() {
         dialogService.showInfo("Додати книгу", "Використовуйте 'Імпорт'");
-    }
-
-    @FXML public void handleSettings() {
-        dialogService.showInfo("Налаштування", "Функція в розробці");
-    }
-
-    @FXML public void handleHistory() {
-        dialogService.showInfo("Історія", "Функція в розробці");
-    }
-
-    // ==================== МАЙСТЕР СТВОРЕННЯ КОЛЕКЦІЇ ====================
-
-    @FXML
-    public void handleCollectionWizard() {
-        try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/collection-wizard.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Parent root = loader.load();
-
-            CollectionWizardController controller = loader.getController();
-            Stage stage = new Stage();
-            stage.setTitle("📚 Майстер створення колекції");
-            stage.setScene(new Scene(root, 620, 480));
-            stage.initModality(Modality.WINDOW_MODAL);
-            stage.initOwner(mainPane.getScene().getWindow());
-            controller.setStage(stage);
-            controller.setOnComplete(() -> {
-                eventPublisher.publishEvent(new NavigationRefreshEvent());
-                showDashboard();
-            });
-            stage.show();
-
-        } catch (Exception e) {
-            log.error("Помилка відкриття майстра колекцій", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити майстер: " + e.getMessage());
-        }
     }
 }

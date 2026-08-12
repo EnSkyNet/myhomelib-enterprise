@@ -1,6 +1,6 @@
 package com.myhomelibcorp.application.session;
 
-import com.myhomelibcorp.application.event.CollectionOpenedEvent;
+import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.SessionRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -25,7 +25,7 @@ public class SessionService {
 
     @EventListener
     public void onCollectionOpened(CollectionOpenedEvent event) {
-        Collection collection = event.collection();
+        Collection collection = event.getCollection();
         if (collection == null) {
             log.warn("CollectionOpenedEvent отримано без колекції");
             return;
@@ -51,7 +51,6 @@ public class SessionService {
             return;
         }
 
-        // Отримуємо поточну колекцію через порт
         Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
         if (currentCollection == null) {
             log.warn("Спроба зберегти книгу без активної колекції");

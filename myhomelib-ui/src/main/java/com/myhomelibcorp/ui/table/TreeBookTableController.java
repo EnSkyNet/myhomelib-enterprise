@@ -8,13 +8,11 @@ import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
-import com.myhomelibcorp.ui.model.TreeNode;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.beans.value.ObservableValue;
-import javafx.beans.value.ChangeListener;
 import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
@@ -40,16 +38,16 @@ public class TreeBookTableController {
     private final ApplicationState appState;
     private final NavigationService navigationService;
 
-    @FXML private TreeTableView<TreeNode> treeTableView;
-    @FXML private TreeTableColumn<TreeNode, String> titleColumn;
-    @FXML private TreeTableColumn<TreeNode, String> authorColumn;
-    @FXML private TreeTableColumn<TreeNode, String> seriesColumn;
-    @FXML private TreeTableColumn<TreeNode, String> genresColumn;
-    @FXML private TreeTableColumn<TreeNode, String> rateColumn;
-    @FXML private TreeTableColumn<TreeNode, String> progressColumn;
-    @FXML private TreeTableColumn<TreeNode, String> dateColumn;
+    @FXML private TreeTableView<BookViewModel> treeTableView;
+    @FXML private TreeTableColumn<BookViewModel, String> titleColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> authorColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> seriesColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> genresColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> rateColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> progressColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> dateColumn;
 
-    private TreeTableColumn<TreeNode, Boolean> selectColumn;
+    private TreeTableColumn<BookViewModel, Boolean> selectColumn;
 
     @FXML
     public void initialize() {
@@ -78,84 +76,48 @@ public class TreeBookTableController {
         selectColumn.setEditable(true);
         selectColumn.setStyle("-fx-alignment: CENTER; -fx-padding: 0;");
 
-        selectColumn.setCellValueFactory(new Callback<TreeTableColumn.CellDataFeatures<TreeNode, Boolean>, ObservableValue<Boolean>>() {
-            @Override
-            public ObservableValue<Boolean> call(TreeTableColumn.CellDataFeatures<TreeNode, Boolean> param) {
-                TreeItem<TreeNode> treeItem = param.getValue();
-                if (treeItem == null) {
-                    return new SimpleBooleanProperty(false);
-                }
-                TreeNode node = treeItem.getValue();
-                if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                    return node.getBook().selectedProperty();
-                }
+        selectColumn.setCellValueFactory(param -> {
+            TreeItem<BookViewModel> treeItem = param.getValue();
+            if (treeItem == null || treeItem.getValue() == null) {
                 return new SimpleBooleanProperty(false);
             }
+            return treeItem.getValue().selectedProperty();
         });
 
-        selectColumn.setCellFactory(new Callback<TreeTableColumn<TreeNode, Boolean>, TreeTableCell<TreeNode, Boolean>>() {
+        selectColumn.setCellFactory(param -> new TreeTableCell<BookViewModel, Boolean>() {
+            private final CheckBox checkBox = new CheckBox();
+
             @Override
-            public TreeTableCell<TreeNode, Boolean> call(TreeTableColumn<TreeNode, Boolean> param) {
-                return new TreeTableCell<TreeNode, Boolean>() {
-                    private final CheckBox checkBox = new CheckBox();
-                    private ChangeListener<Boolean> checkBoxListener;
-                    private BookViewModel currentBook;
+            protected void updateItem(Boolean item, boolean empty) {
+                super.updateItem(item, empty);
 
-                    @Override
-                    protected void updateItem(Boolean item, boolean empty) {
-                        super.updateItem(item, empty);
+                if (empty || getTreeTableRow() == null) {
+                    setGraphic(null);
+                    return;
+                }
 
-                        // Видаляємо старий слухач
-                        if (checkBoxListener != null && currentBook != null) {
-                            checkBox.selectedProperty().removeListener(checkBoxListener);
-                            checkBoxListener = null;
-                            currentBook = null;
-                        }
+                TreeItem<BookViewModel> treeItem = getTreeTableRow().getTreeItem();
+                if (treeItem == null || treeItem.getValue() == null) {
+                    setGraphic(null);
+                    return;
+                }
 
-                        if (empty) {
-                            setGraphic(null);
-                            return;
-                        }
+                BookViewModel book = treeItem.getValue();
+                checkBox.setSelected(item != null && item);
+                checkBox.setDisable(false);
 
-                        TreeItem<TreeNode> treeItem = getTreeTableRow() != null ? getTreeTableRow().getTreeItem() : null;
-                        if (treeItem == null) {
-                            setGraphic(null);
-                            return;
-                        }
+                checkBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
+                    book.setSelected(newVal);
+                    log.debug("📚 Книгу '{}' {}", book.getTitle(), newVal ? "✅ ВИБРАНО" : "❌ ЗНЯТО ВИБІР");
+                });
 
-                        TreeNode node = treeItem.getValue();
-                        if (node == null || node.getType() != TreeNode.NodeType.BOOK || node.getBook() == null) {
-                            setGraphic(null);
-                            return;
-                        }
-
-                        currentBook = node.getBook();
-
-                        // Встановлюємо стан чекбокса
-                        boolean isSelected = item != null && item;
-                        checkBox.setSelected(isSelected);
-                        checkBox.setDisable(false);
-
-                        // Створюємо новий слухач
-                        checkBoxListener = (obs, oldVal, newVal) -> {
-                            if (currentBook != null) {
-                                currentBook.setSelected(newVal);
-                                log.debug("📚 Книгу '{}' {}", currentBook.getTitle(), newVal ? "✅ ВИБРАНО" : "❌ ЗНЯТО ВИБІР");
-                            }
-                        };
-
-                        checkBox.selectedProperty().addListener(checkBoxListener);
-
-                        setAlignment(Pos.CENTER);
-                        setGraphic(checkBox);
-                    }
-                };
+                setAlignment(Pos.CENTER);
+                setGraphic(checkBox);
             }
         });
 
         treeTableView.getColumns().add(0, selectColumn);
         treeTableView.setEditable(true);
-
         log.debug("Колонку з чекбоксами додано");
     }
 
@@ -165,61 +127,31 @@ public class TreeBookTableController {
     private void setupColumns() {
         log.debug("Налаштування колонок");
 
-        titleColumn.setCellValueFactory(new TreeItemPropertyValueFactory<>("name"));
+        titleColumn.setCellValueFactory(new TreeItemPropertyValueFactory<>("title"));
         titleColumn.setPrefWidth(250);
 
-        authorColumn.setCellValueFactory(cellData -> {
-            TreeNode node = cellData.getValue().getValue();
-            if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                return node.getBook().authorsTextProperty();
-            }
-            return null;
-        });
+        authorColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().authorsTextProperty());
         authorColumn.setPrefWidth(150);
 
-        seriesColumn.setCellValueFactory(cellData -> {
-            TreeNode node = cellData.getValue().getValue();
-            if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                return node.getBook().seriesProperty();
-            }
-            return null;
-        });
+        seriesColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().seriesProperty());
         seriesColumn.setPrefWidth(120);
 
-        genresColumn.setCellValueFactory(cellData -> {
-            TreeNode node = cellData.getValue().getValue();
-            if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                return node.getBook().genresTextProperty();
-            }
-            return null;
-        });
+        genresColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().genresTextProperty());
         genresColumn.setPrefWidth(100);
 
-        rateColumn.setCellValueFactory(cellData -> {
-            TreeNode node = cellData.getValue().getValue();
-            if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                return node.getBook().rateStarsProperty();
-            }
-            return null;
-        });
+        rateColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().rateStarsProperty());
         rateColumn.setPrefWidth(80);
 
-        progressColumn.setCellValueFactory(cellData -> {
-            TreeNode node = cellData.getValue().getValue();
-            if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                return node.getBook().progressFormattedProperty();
-            }
-            return null;
-        });
+        progressColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().progressFormattedProperty());
         progressColumn.setPrefWidth(80);
 
-        dateColumn.setCellValueFactory(cellData -> {
-            TreeNode node = cellData.getValue().getValue();
-            if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                return node.getBook().createdAtFormattedProperty();
-            }
-            return null;
-        });
+        dateColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().createdAtFormattedProperty());
         dateColumn.setPrefWidth(100);
 
         treeTableView.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
@@ -231,10 +163,7 @@ public class TreeBookTableController {
     private void setupSelectionListener() {
         treeTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null && selected.getValue() != null) {
-                TreeNode node = selected.getValue();
-                if (node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                    appState.getBookTable().setSelectedBook(node.getBook());
-                }
+                appState.getBookTable().setSelectedBook(selected.getValue());
             }
         });
     }
@@ -245,12 +174,9 @@ public class TreeBookTableController {
     private void setupDoubleClickHandler() {
         treeTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
-                TreeItem<TreeNode> selected = treeTableView.getSelectionModel().getSelectedItem();
+                TreeItem<BookViewModel> selected = treeTableView.getSelectionModel().getSelectedItem();
                 if (selected != null && selected.getValue() != null) {
-                    TreeNode node = selected.getValue();
-                    if (node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                        navigationService.navigateToBook(BookId.fromString(node.getBook().getId()));
-                    }
+                    navigationService.navigateToBook(BookId.fromString(selected.getValue().getId()));
                 }
             }
         });
@@ -271,12 +197,14 @@ public class TreeBookTableController {
             log.info("📚 Завантажено {} книг для побудови дерева", books.size());
 
             if (books.isEmpty()) {
-                TreeItem<TreeNode> emptyRoot = new TreeItem<>(new TreeNode(TreeNode.NodeType.ROOT, "Немає книг"));
+                TreeItem<BookViewModel> emptyRoot = new TreeItem<>(null);
+                emptyRoot.setValue(null);
                 treeTableView.setRoot(emptyRoot);
                 treeTableView.setShowRoot(false);
                 return;
             }
 
+            // Групуємо книги за автором та серією
             Map<String, Map<String, List<Book>>> grouped = books.stream()
                     .collect(Collectors.groupingBy(
                             book -> book.getAuthors().isEmpty() ? "Невідомий Автор" :
@@ -287,17 +215,22 @@ public class TreeBookTableController {
                             )
                     ));
 
-            TreeItem<TreeNode> root = new TreeItem<>(new TreeNode(TreeNode.NodeType.ROOT, "Книги"));
+            TreeItem<BookViewModel> root = new TreeItem<>(null);
+            root.setValue(null);
             root.setExpanded(true);
 
             grouped.forEach((authorName, seriesMap) -> {
-                TreeNode authorNode = new TreeNode(TreeNode.NodeType.AUTHOR, authorName);
-                TreeItem<TreeNode> authorItem = new TreeItem<>(authorNode);
+                TreeItem<BookViewModel> authorItem = new TreeItem<>(null);
+                BookViewModel authorVm = new BookViewModel();
+                authorVm.setTitle(authorName);
+                authorItem.setValue(authorVm);
                 authorItem.setExpanded(true);
 
                 seriesMap.forEach((seriesName, bookList) -> {
-                    TreeNode seriesNode = new TreeNode(TreeNode.NodeType.SERIES, seriesName);
-                    TreeItem<TreeNode> seriesItem = new TreeItem<>(seriesNode);
+                    TreeItem<BookViewModel> seriesItem = new TreeItem<>(null);
+                    BookViewModel seriesVm = new BookViewModel();
+                    seriesVm.setTitle(seriesName);
+                    seriesItem.setValue(seriesVm);
                     seriesItem.setExpanded(true);
 
                     bookList.stream()
@@ -309,10 +242,8 @@ public class TreeBookTableController {
                             .forEach(book -> {
                                 BookDto dto = bookMapper.toDto(book);
                                 BookViewModel vm = viewModelMapper.toViewModel(dto);
-                                // ВАЖЛИВО: скидаємо вибір при завантаженні
                                 vm.setSelected(false);
-                                TreeNode bookNode = new TreeNode(vm);
-                                TreeItem<TreeNode> bookItem = new TreeItem<>(bookNode);
+                                TreeItem<BookViewModel> bookItem = new TreeItem<>(vm);
                                 seriesItem.getChildren().add(bookItem);
                             });
 
@@ -341,11 +272,11 @@ public class TreeBookTableController {
     }
 
     /**
-     * Повертає вибрані книги - з покращеним логуванням
+     * Повертає вибрані книги
      */
     public List<BookViewModel> getSelectedBooks() {
         List<BookViewModel> selected = new ArrayList<>();
-        TreeItem<TreeNode> root = treeTableView.getRoot();
+        TreeItem<BookViewModel> root = treeTableView.getRoot();
 
         log.debug("🔍 Пошук вибраних книг у дереві...");
 
@@ -355,7 +286,6 @@ public class TreeBookTableController {
 
         log.info("📊 Знайдено {} вибраних книг", selected.size());
 
-        // Логуємо назви вибраних книг для перевірки
         if (!selected.isEmpty()) {
             log.info("📋 Список вибраних книг:");
             for (BookViewModel book : selected) {
@@ -366,18 +296,13 @@ public class TreeBookTableController {
         return selected;
     }
 
-    private void collectSelectedBooks(TreeItem<TreeNode> item, List<BookViewModel> selected) {
-        TreeNode node = item.getValue();
-        if (node != null) {
-            if (node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                BookViewModel book = node.getBook();
-                if (book.isSelected()) {
-                    selected.add(book);
-                    log.debug("✅ Додано вибрану книгу: {}", book.getTitle());
-                }
-            }
+    private void collectSelectedBooks(TreeItem<BookViewModel> item, List<BookViewModel> selected) {
+        BookViewModel book = item.getValue();
+        if (book != null && book.isSelected()) {
+            selected.add(book);
+            log.debug("✅ Додано вибрану книгу: {}", book.getTitle());
         }
-        for (TreeItem<TreeNode> child : item.getChildren()) {
+        for (TreeItem<BookViewModel> child : item.getChildren()) {
             collectSelectedBooks(child, selected);
         }
     }
@@ -391,7 +316,7 @@ public class TreeBookTableController {
     }
 
     private void selectAllBooks(boolean selected) {
-        TreeItem<TreeNode> root = treeTableView.getRoot();
+        TreeItem<BookViewModel> root = treeTableView.getRoot();
         if (root != null) {
             selectAllRecursive(root, selected);
         }
@@ -399,12 +324,12 @@ public class TreeBookTableController {
         treeTableView.refresh();
     }
 
-    private void selectAllRecursive(TreeItem<TreeNode> item, boolean selected) {
-        TreeNode node = item.getValue();
-        if (node != null && node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-            node.getBook().setSelected(selected);
+    private void selectAllRecursive(TreeItem<BookViewModel> item, boolean selected) {
+        BookViewModel book = item.getValue();
+        if (book != null) {
+            book.setSelected(selected);
         }
-        for (TreeItem<TreeNode> child : item.getChildren()) {
+        for (TreeItem<BookViewModel> child : item.getChildren()) {
             selectAllRecursive(child, selected);
         }
     }
@@ -459,7 +384,6 @@ public class TreeBookTableController {
         if (confirm.showAndWait().orElse(cancelButton) == exportButton) {
             log.info("📤 Початок експорту {} книг", selected.size());
             showAlert("Експорт", "📤 Експорт " + selected.size() + " вибраних книг розпочато!");
-            // Тут викликається реальний експорт
         }
     }
 
@@ -488,25 +412,20 @@ public class TreeBookTableController {
      */
     public void debugSelectionState() {
         log.info("=== ДІАГНОСТИКА ВИБОРУ ===");
-        TreeItem<TreeNode> root = treeTableView.getRoot();
+        TreeItem<BookViewModel> root = treeTableView.getRoot();
         if (root != null) {
             debugSelectionRecursive(root, 0);
         }
         log.info("==========================");
     }
 
-    private void debugSelectionRecursive(TreeItem<TreeNode> item, int depth) {
-        TreeNode node = item.getValue();
-        if (node != null) {
-            String indent = "  ".repeat(depth);
-            if (node.getType() == TreeNode.NodeType.BOOK && node.getBook() != null) {
-                log.info("{}📚 {} : selected={}",
-                        indent, node.getBook().getTitle(), node.getBook().isSelected());
-            } else {
-                log.info("{}📁 {} : type={}", indent, node.getName(), node.getType());
-            }
+    private void debugSelectionRecursive(TreeItem<BookViewModel> item, int depth) {
+        BookViewModel book = item.getValue();
+        String indent = "  ".repeat(depth);
+        if (book != null) {
+            log.info("{}📚 {} : selected={}", indent, book.getTitle(), book.isSelected());
         }
-        for (TreeItem<TreeNode> child : item.getChildren()) {
+        for (TreeItem<BookViewModel> child : item.getChildren()) {
             debugSelectionRecursive(child, depth + 1);
         }
     }

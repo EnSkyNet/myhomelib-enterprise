@@ -2,8 +2,8 @@ package com.myhomelibcorp.infrastructure.cleanup;
 
 import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
-import com.myhomelibcorp.application.port.out.cache.SearchCache;
-import com.myhomelibcorp.application.port.out.cover.CoverCache;
+import com.myhomelibcorp.infrastructure.cache.CaffeineSearchCache;
+import com.myhomelibcorp.infrastructure.cache.CaffeineCoverCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -22,12 +22,9 @@ public class DatabaseConnectionCleanup {
     private final CollectionManager collectionManager;
     private final BookCache bookCache;
     private final DictionaryCache dictionaryCache;
-    private final SearchCache searchCache;
-    private final CoverCache coverCache;
+    private final CaffeineSearchCache searchCache;
+    private final CaffeineCoverCache coverCache;
 
-    /**
-     * Повне очищення всіх ресурсів, пов'язаних з БД.
-     */
     public void cleanupAll() {
         log.info("🧹 Початок повного очищення ресурсів...");
 
@@ -43,19 +40,16 @@ public class DatabaseConnectionCleanup {
         if (ds != null) {
             try {
                 if (ds instanceof com.zaxxer.hikari.HikariDataSource hikariDs) {
-                    // Спроба викликати evictConnections через рефлексію (для сумісності)
                     try {
                         Method evictMethod = hikariDs.getClass().getMethod("evictConnections");
                         evictMethod.invoke(hikariDs);
                         log.info("  ✅ Evict connections виконано");
                     } catch (NoSuchMethodException e) {
-                        // Якщо методу немає - використовуємо альтернативний підхід
                         log.info("  ℹ️ evictConnections не підтримується, закриваємо DataSource");
                         hikariDs.close();
                         log.info("  ✅ HikariDataSource закрито");
                     } catch (Exception e) {
                         log.warn("  ⚠️ Не вдалося evict connections: {}", e.getMessage());
-                        // Якщо не вдалося - просто закриваємо
                         try {
                             hikariDs.close();
                             log.info("  ✅ HikariDataSource закрито (fallback)");
@@ -84,9 +78,6 @@ public class DatabaseConnectionCleanup {
         log.info("🧹 Очищення ресурсів завершено");
     }
 
-    /**
-     * Перевіряє, чи всі ресурси закриті.
-     */
     public boolean isFullyCleaned() {
         DataSource ds = collectionManager.getCurrentDataSource();
         if (ds == null) return true;

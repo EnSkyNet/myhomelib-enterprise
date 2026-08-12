@@ -33,23 +33,14 @@
         <Tab text="🎨 Тема">
             <VBox spacing="10" style="-fx-padding: 15;">
                 <Label text="Тема оформлення:" style="-fx-font-weight: bold;"/>
-                <ComboBox fx:id="themeCombo" prefWidth="200">
-                    <items>
-                        <FXCollections fx:factory="observableArrayList">
-                            <String fx:value="light"/>
-                            <String fx:value="sepia"/>
-                            <String fx:value="dark"/>
-                            <String fx:value="amoled"/>
-                        </FXCollections>
-                    </items>
-                </ComboBox>
+                <ComboBox fx:id="themeCombo" prefWidth="200"/>
 
                 <Label text="Користувацький CSS:" style="-fx-font-weight: bold;"/>
                 <TextArea fx:id="customCssArea" prefHeight="100" promptText="Введіть власні CSS стилі..."/>
             </VBox>
         </Tab>
 
-        <Tab text="📄 Відступи">
+        <Tab text="📐 Відступи">
             <VBox spacing="10" style="-fx-padding: 15;">
                 <Label text="Відступ зверху:" style="-fx-font-weight: bold;"/>
                 <Slider fx:id="marginTopSlider" min="0" max="80" value="20" showTickLabels="true" showTickMarks="true" majorTickUnit="20" minorTickCount="4"/>
