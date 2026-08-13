@@ -51,7 +51,8 @@ public class ReaderContentService {
 
         String cachedHtml = htmlCache.get(bookId);
         if (cachedHtml != null) {
-            log.info("Loading book from cache: {}", book.getTitle());
+            log.info("Loading book from cache and rendering: {}", book.getTitle());
+            // Завжди рендеримо при завантаженні з кешу
             renderHtml(session, cachedHtml);
             return;
         }
@@ -81,22 +82,34 @@ public class ReaderContentService {
             return;
         }
 
-        String css = settingsService.generateCss();
-        String script = """
-            (function() {
-                var style = document.getElementById('reader-styles');
-                if (!style) {
-                    style = document.createElement('style');
-                    style.id = 'reader-styles';
-                    document.head.appendChild(style);
-                }
-                style.textContent = CSS;
-            })();
-        """.replace("CSS", css.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
-
         try {
+            String css = settingsService.generateCss();
+            String escapedCss = css
+                    .replace("\\", "\\\\")
+                    .replace("'", "\\'")
+                    .replace("\"", "\\\"")
+                    .replace("\n", "\\n")
+                    .replace("\r", "\\r");
+
+            String script = """
+                (function() {
+                    try {
+                        var style = document.getElementById('reader-styles');
+                        if (!style) {
+                            style = document.createElement('style');
+                            style.id = 'reader-styles';
+                            document.head.appendChild(style);
+                        }
+                        style.textContent = CSS;
+                    } catch(e) {
+                        console.error('Failed to apply styles:', e);
+                    }
+                })();
+            """.replace("CSS", "'" + escapedCss + "'");
+
             session.getWebEngine().executeScript(script);
-            log.debug("Settings applied to current book");
+            log.debug("Settings applied to current book without reload");
+
         } catch (Exception e) {
             log.warn("Failed to apply settings: {}", e.getMessage());
         }
@@ -146,10 +159,6 @@ public class ReaderContentService {
                     <p><b>Назва:</b> %s</p>
                     <p><b>Автор:</b> %s</p>
                     <p><b>Помилка:</b> %s</p>
-                    <hr/>
-                    <p style="color: #888; font-size: 12px;">
-                        Перевірте, чи файл існує та чи не пошкоджений.
-                    </p>
                 </body>
                 </html>
                 """.formatted(
@@ -184,7 +193,6 @@ public class ReaderContentService {
         log.debug("readBookData: fileName={}, folder={}, root={}, archiveEntry={}",
                 fileName, folder, root, archiveEntry);
 
-        // 1. Якщо є archiveEntry і folder вказує на ZIP
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             Path archivePath = findArchivePath(book);
             if (archivePath != null && Files.exists(archivePath)) {
@@ -193,7 +201,6 @@ public class ReaderContentService {
             }
         }
 
-        // 2. Якщо fileName вказує на ZIP + FB2 всередині
         if (fileName != null && isArchive(fileName)) {
             Path archivePath = buildFilePath(root, folder, fileName);
             if (archivePath != null && Files.exists(archivePath)) {
@@ -202,7 +209,6 @@ public class ReaderContentService {
             }
         }
 
-        // 3. Якщо folder вказує на ZIP
         if (folder != null && isArchive(folder)) {
             Path archivePath = buildFilePath(root, null, folder);
             if (archivePath != null && Files.exists(archivePath)) {
@@ -211,7 +217,6 @@ public class ReaderContentService {
             }
         }
 
-        // 4. Звичайний FB2 файл
         Path bookPath = buildFilePath(root, folder, fileName);
         if (bookPath != null && Files.exists(bookPath) && !isArchive(bookPath.toString())) {
             log.debug("Reading regular file: {}", bookPath);
@@ -227,17 +232,14 @@ public class ReaderContentService {
         String fileName = book.getFileName();
         String root = book.getCollectionRoot();
 
-        // Перевіряємо, чи folder вказує на ZIP
         if (folder != null && !folder.isBlank() && isArchive(folder)) {
             return buildFilePath(root, null, folder);
         }
 
-        // Перевіряємо, чи fileName вказує на ZIP
         if (fileName != null && !fileName.isBlank() && isArchive(fileName)) {
             return buildFilePath(root, folder, fileName);
         }
 
-        // Перевіряємо комбінацію: folder + fileName
         if (folder != null && !folder.isBlank() && fileName != null && !fileName.isBlank()) {
             Path combined = buildFilePath(root, folder, fileName);
             if (combined != null && Files.exists(combined) && isArchive(combined.toString())) {
@@ -301,7 +303,6 @@ public class ReaderContentService {
             }
         }
 
-        // Спроба з дефолтним кодуванням
         try (ZipFile zip = new ZipFile(archivePath.toFile())) {
             log.debug("Trying to read ZIP with default charset");
             byte[] result = tryReadFromZip(zip, entryName, fileName);
@@ -324,7 +325,6 @@ public class ReaderContentService {
     private byte[] tryReadFromZip(ZipFile zip, String entryName, String fileName) throws Exception {
         ZipEntry targetEntry = null;
 
-        // 1. Шукаємо за точним entryName
         if (entryName != null && !entryName.isBlank()) {
             targetEntry = zip.getEntry(entryName);
             if (targetEntry != null) {
@@ -333,7 +333,6 @@ public class ReaderContentService {
             }
         }
 
-        // 2. Шукаємо за fileName (ігноруючи шлях)
         if (targetEntry == null && fileName != null && !fileName.isBlank()) {
             String searchName = Paths.get(fileName).getFileName().toString();
             Enumeration<? extends ZipEntry> entries = zip.entries();
@@ -352,7 +351,6 @@ public class ReaderContentService {
             }
         }
 
-        // 3. Шукаємо перший FB2
         if (targetEntry == null) {
             Enumeration<? extends ZipEntry> entries = zip.entries();
             while (entries.hasMoreElements()) {

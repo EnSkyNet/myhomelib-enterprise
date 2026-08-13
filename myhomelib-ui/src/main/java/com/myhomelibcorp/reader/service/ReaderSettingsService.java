@@ -120,6 +120,7 @@ public class ReaderSettingsService {
 
     /**
      * Генерує CSS для поточних налаштувань.
+     * Використовується для інжекції в WebView без перезавантаження.
      */
     public String generateCss() {
         ReaderSettings s = load();
@@ -196,6 +197,24 @@ public class ReaderSettingsService {
         }
 
         return css.toString();
+    }
+
+    /**
+     * Застосовує налаштування до WebView через JavaScript (без перезавантаження).
+     */
+    public String getApplyCssScript() {
+        String css = generateCss();
+        return """
+            (function() {
+                var style = document.getElementById('reader-styles');
+                if (!style) {
+                    style = document.createElement('style');
+                    style.id = 'reader-styles';
+                    document.head.appendChild(style);
+                }
+                style.textContent = CSS;
+            })();
+        """.replace("CSS", css.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
     }
 
     /**

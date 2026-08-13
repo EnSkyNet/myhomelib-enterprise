@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.session.ReaderSession;
+import javafx.application.Platform;
 import javafx.scene.web.WebEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,13 +13,13 @@ import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * Відповідає за отримання та збереження позиції читання.
- * Використовує один JS-виклик для отримання повного снапшоту.
- */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -27,11 +28,16 @@ public class ReaderPositionService {
     private final ReadingProgressRepository repository;
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final ReaderJsBridge jsBridge;
+    private final ReaderScheduler scheduler;
 
     private final ConcurrentMap<String, ReaderPosition> lastSavedPositions = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, ScheduledFuture<?>> saveTasks = new ConcurrentHashMap<>();
+
+    private static final long SAVE_DELAY_MS = 1000;
+    private static final long SAVE_INTERVAL_SECONDS = 5;
 
     /**
-     * Отримує поточну позицію з WebView одним викликом JS.
+     * Отримує поточну позицію з WebView через FX поток.
      */
     public ReaderPosition getCurrentPosition(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
@@ -40,7 +46,87 @@ public class ReaderPositionService {
 
         WebEngine engine = session.getWebEngine();
 
-        if (!jsBridge.isContentLoaded(engine)) {
+        // Перевіряємо чи завантажено контент через FX поток
+        if (!isContentLoadedOnFxThread(engine)) {
+            return null;
+        }
+
+        // Виконуємо JS на FX потоці
+        return getPositionOnFxThread(session);
+    }
+
+    /**
+     * Перевіряє чи завантажено контент на FX потоці.
+     */
+    private boolean isContentLoadedOnFxThread(WebEngine engine) {
+        if (engine == null) {
+            return false;
+        }
+
+        if (Platform.isFxApplicationThread()) {
+            return jsBridge.isContentLoaded(engine);
+        }
+
+        // Якщо не на FX потоці - виконуємо через Platform.runLater з очікуванням
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                boolean loaded = jsBridge.isContentLoaded(engine);
+                future.complete(loaded);
+            } catch (Exception e) {
+                future.complete(false);
+            }
+        });
+
+        try {
+            return future.get(3, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.debug("Failed to check content loaded: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    /**
+     * Отримує позицію на FX потоці.
+     */
+    private ReaderPosition getPositionOnFxThread(ReaderSession session) {
+        if (session == null || session.getWebEngine() == null) {
+            return null;
+        }
+
+        if (Platform.isFxApplicationThread()) {
+            return getPositionSync(session);
+        }
+
+        // Якщо не на FX потоці - виконуємо через Platform.runLater з очікуванням
+        CompletableFuture<ReaderPosition> future = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                ReaderPosition pos = getPositionSync(session);
+                future.complete(pos);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+
+        try {
+            return future.get(3, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            log.warn("Failed to get position: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * Синхронне отримання позиції (має викликатися тільки на FX потоці).
+     */
+    private ReaderPosition getPositionSync(ReaderSession session) {
+        if (!Platform.isFxApplicationThread()) {
+            throw new IllegalStateException("Must be called on FX application thread");
+        }
+
+        WebEngine engine = session.getWebEngine();
+        if (engine == null || !jsBridge.isContentLoaded(engine)) {
             return null;
         }
 
@@ -119,7 +205,6 @@ public class ReaderPositionService {
 
     private ReaderPosition parsePosition(String json, String bookId) {
         try {
-            // Простий парсинг без додаткових залежностей
             String paragraphId = extract(json, "paragraphId");
             int paragraphIndex = extractInt(json, "paragraphIndex");
             int charOffset = extractInt(json, "charOffset");
@@ -178,6 +263,65 @@ public class ReaderPositionService {
     }
 
     /**
+     * Зберігає позицію негайно (на FX потоці).
+     */
+    public void savePositionNow(ReaderSession session) {
+        if (session == null || !session.isActive()) {
+            return;
+        }
+
+        if (Platform.isFxApplicationThread()) {
+            ReaderPosition pos = getPositionSync(session);
+            if (pos != null) {
+                savePosition(pos);
+            }
+        } else {
+            // Якщо не на FX потоці - переносимо на FX
+            Platform.runLater(() -> {
+                if (session.isActive()) {
+                    ReaderPosition pos = getPositionSync(session);
+                    if (pos != null) {
+                        savePosition(pos);
+                    }
+                }
+            });
+        }
+    }
+
+    /**
+     * Планує збереження позиції з дебаунсом.
+     */
+    public void scheduleSave(ReaderSession session) {
+        if (session == null || session.getBookId() == null) {
+            return;
+        }
+
+        String sessionKey = session.getSessionId();
+
+        ScheduledFuture<?> oldTask = saveTasks.remove(sessionKey);
+        if (oldTask != null) {
+            oldTask.cancel(false);
+        }
+
+        ScheduledFuture<?> newTask = scheduler.schedule(() -> {
+            saveTasks.remove(sessionKey);
+            if (session.isActive()) {
+                // Виконуємо на FX потоці
+                Platform.runLater(() -> {
+                    if (session.isActive()) {
+                        ReaderPosition pos = getPositionSync(session);
+                        if (pos != null) {
+                            savePosition(pos);
+                        }
+                    }
+                });
+            }
+        }, SAVE_DELAY_MS, TimeUnit.MILLISECONDS);
+
+        saveTasks.put(sessionKey, newTask);
+    }
+
+    /**
      * Зберігає позицію в базу даних.
      */
     public void savePosition(ReaderPosition position) {
@@ -186,57 +330,61 @@ public class ReaderPositionService {
         }
 
         if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
+            log.warn("No active collection, cannot save position");
             return;
         }
 
-        // Не зберігаємо початок книги
         if (position.getPercent() < 0.5 && position.getParagraphIndex() < 2) {
             return;
         }
 
-        String sessionKey = position.getBookId();
+        String bookId = position.getBookId();
 
-        // Перевіряємо, чи змінилася позиція суттєво
-        ReaderPosition lastSaved = lastSavedPositions.get(sessionKey);
+        ReaderPosition lastSaved = lastSavedPositions.get(bookId);
         if (lastSaved != null) {
             if (lastSaved.getParagraphId().equals(position.getParagraphId()) &&
-                    Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 10 &&
-                    Math.abs(lastSaved.getPercent() - position.getPercent()) < 1.0) {
+                    Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 20 &&
+                    Math.abs(lastSaved.getPercent() - position.getPercent()) < 2.0) {
                 return;
             }
         }
 
-        ReadingProgressDto dto = ReadingProgressDto.builder()
-                .bookId(position.getBookId())
-                .paragraphId(position.getParagraphId())
-                .charOffset(Math.max(0, position.getCharOffset()))
-                .percent(position.getPercent())
-                .updatedAt(LocalDateTime.now())
-                .build();
+        try {
+            ReadingProgressDto dto = ReadingProgressDto.builder()
+                    .bookId(position.getBookId())
+                    .paragraphId(position.getParagraphId())
+                    .charOffset(Math.max(0, position.getCharOffset()))
+                    .percent(position.getPercent())
+                    .updatedAt(LocalDateTime.now())
+                    .build();
 
-        repository.save(dto);
-        lastSavedPositions.put(sessionKey, position);
-
-        log.debug("Saved position for book {}: {}%, paragraph {}",
-                position.getBookId(), (int) position.getPercent(), position.getParagraphIndex());
+            repository.save(dto);
+            lastSavedPositions.put(bookId, position);
+            log.debug("Saved position for book {}: {}%, paragraph {}",
+                    position.getBookId(), (int) position.getPercent(), position.getParagraphIndex());
+        } catch (Exception e) {
+            log.warn("Failed to save position: {}", e.getMessage());
+        }
     }
 
-    /**
-     * Завантажує збережену позицію.
-     */
     public Optional<ReaderPosition> loadPosition(String bookId) {
         if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
             return Optional.empty();
         }
 
-        return repository.findByBookId(bookId)
-                .map(dto -> ReaderPosition.builder()
-                        .bookId(bookId)
-                        .paragraphId(dto.getParagraphId())
-                        .charOffset(dto.getCharOffset())
-                        .percent(dto.getPercent())
-                        .paragraphIndex(extractParagraphIndex(dto.getParagraphId()))
-                        .build());
+        try {
+            return repository.findByBookId(bookId)
+                    .map(dto -> ReaderPosition.builder()
+                            .bookId(bookId)
+                            .paragraphId(dto.getParagraphId())
+                            .charOffset(dto.getCharOffset())
+                            .percent(dto.getPercent())
+                            .paragraphIndex(extractParagraphIndex(dto.getParagraphId()))
+                            .build());
+        } catch (Exception e) {
+            log.warn("Failed to load position for book {}: {}", bookId, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     private int extractParagraphIndex(String paragraphId) {
@@ -251,60 +399,128 @@ public class ReaderPositionService {
         }
     }
 
-    /**
-     * Відновлює позицію в WebView.
-     */
     public boolean restorePosition(ReaderSession session, ReaderPosition position) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return false;
         }
 
         if (position == null) {
-            // Початок книги
+            // Якщо позиції немає - скролимо на початок
+            Platform.runLater(() -> {
+                try {
+                    session.getWebEngine().executeScript("window.scrollTo(0, 0)");
+                } catch (Exception e) {
+                    // ignore
+                }
+            });
+            return true;
+        }
+
+        // Використовуємо AtomicReference для результату
+        AtomicReference<Boolean> resultRef = new AtomicReference<>(false);
+
+        Platform.runLater(() -> {
             try {
-                session.getWebEngine().executeScript("window.scrollTo(0, 0)");
-                return true;
+                int total = jsBridge.getParagraphCount(session.getWebEngine());
+                int index = position.getParagraphIndex();
+
+                if (total > 0 && index >= total) {
+                    index = total - 1;
+                }
+                if (index < 0) {
+                    index = 0;
+                }
+
+                boolean success = jsBridge.scrollToParagraph(
+                        session.getWebEngine(),
+                        index,
+                        position.getCharOffset()
+                );
+
+                if (success) {
+                    log.info("Restored position for book {}: {}%, paragraph {}",
+                            position.getBookId(), (int) position.getPercent(), index);
+                } else {
+                    // Fallback: скрол за відсотком
+                    double percent = position.getPercent() / 100.0;
+                    String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
+                    session.getWebEngine().executeScript(script);
+                    success = true;
+                }
+
+                resultRef.set(success);
+
             } catch (Exception e) {
-                return false;
+                log.warn("Failed to restore position: {}", e.getMessage());
+                resultRef.set(false);
+            }
+        });
+
+        // Чекаємо максимум 2 секунди
+        int attempts = 0;
+        while (attempts < 20 && resultRef.get() == null) {
+            try {
+                Thread.sleep(100);
+                attempts++;
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                break;
             }
         }
 
-        int total = jsBridge.getParagraphCount(session.getWebEngine());
-        int index = position.getParagraphIndex();
-
-        if (total > 0 && index >= total) {
-            index = total - 1;
-        }
-        if (index < 0) {
-            index = 0;
-        }
-
-        boolean success = jsBridge.scrollToParagraph(
-                session.getWebEngine(),
-                index,
-                position.getCharOffset()
-        );
-
-        if (success) {
-            log.info("Restored position for book {}: {}%, paragraph {}",
-                    position.getBookId(), (int) position.getPercent(), index);
-        } else {
-            // Fallback: скрол за відсотком
-            try {
-                double percent = position.getPercent() / 100.0;
-                String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
-                session.getWebEngine().executeScript(script);
-                return true;
-            } catch (Exception e) {
-                log.warn("Failed to restore position via fallback", e);
-                return false;
-            }
-        }
-
-        return success;
+        return resultRef.get() != null && resultRef.get();
     }
 
     public void clearCache() {
         lastSavedPositions.clear();
+        for (ScheduledFuture<?> task : saveTasks.values()) {
+            if (task != null) {
+                task.cancel(false);
+            }
+        }
+        saveTasks.clear();
+    }
+
+    public void startPeriodicSaving(ReaderSession session) {
+        if (session == null || session.getSessionId() == null) {
+            return;
+        }
+
+        String sessionKey = session.getSessionId() + "_periodic";
+
+        ScheduledFuture<?> oldTask = saveTasks.remove(sessionKey);
+        if (oldTask != null) {
+            oldTask.cancel(false);
+        }
+
+        ScheduledFuture<?> newTask = scheduler.scheduleAtFixedRate(() -> {
+            if (session.isActive()) {
+                // Виконуємо на FX потоці
+                Platform.runLater(() -> {
+                    if (session.isActive()) {
+                        ReaderPosition pos = getPositionSync(session);
+                        if (pos != null) {
+                            savePosition(pos);
+                        }
+                    }
+                });
+            }
+        }, SAVE_INTERVAL_SECONDS, SAVE_INTERVAL_SECONDS, TimeUnit.SECONDS);
+
+        saveTasks.put(sessionKey, newTask);
+        log.debug("Started periodic saving for session: {}", session.getSessionId());
+    }
+
+    public void stopPeriodicSaving(ReaderSession session) {
+        if (session == null || session.getSessionId() == null) {
+            return;
+        }
+
+        String sessionKey = session.getSessionId() + "_periodic";
+        ScheduledFuture<?> task = saveTasks.remove(sessionKey);
+        if (task != null) {
+            task.cancel(false);
+            log.debug("Stopped periodic saving for session: {}", session.getSessionId());
+        }
     }
 }

@@ -10,6 +10,7 @@ import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.service.NavigationService;
 import jakarta.annotation.PreDestroy;
 import javafx.application.Platform;
+import javafx.concurrent.Worker;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
@@ -56,6 +57,11 @@ public class ReaderWorkspaceController {
     private boolean isClosing = false;
     private Stage tocStage;
 
+    // Стан пошуку
+    private String lastSearchQuery = "";
+    private int searchMatchCount = 0;
+    private int searchCurrentMatch = 0;
+
     @FXML
     public void initialize() {
         if (isInitialized.getAndSet(true)) {
@@ -63,10 +69,6 @@ public class ReaderWorkspaceController {
         }
 
         createWebView();
-
-        searchField.textProperty().addListener((obs, old, query) -> {
-            // Пошук буде додано пізніше
-        });
 
         searchBar.setVisible(false);
         searchBar.setManaged(false);
@@ -101,13 +103,19 @@ public class ReaderWorkspaceController {
             return;
         }
 
+        // Закриваємо попередню книгу
         if (currentSession != null && currentSession.isActive()) {
             readerFacade.saveCurrentPosition();
             readerFacade.closeBook();
+            currentSession = null;
         }
 
         isClosing = false;
 
+        // ПЕРЕСТВОРЮЄМО WebView ПРИ КОЖНОМУ ВІДКРИТТІ
+        createWebView();
+
+        // Відкриваємо нову книгу
         currentSession = readerFacade.openBook(
                 bookId,
                 webView,
@@ -120,14 +128,30 @@ public class ReaderWorkspaceController {
             bookTitleLabel.setText(currentSession.getBook().getTitle());
             updateBookmarksCount();
 
-            Platform.runLater(() -> {
-                readerFacade.restorePosition();
+            readerFacade.startPeriodicSaving(currentSession);
+
+            webEngine.getLoadWorker().stateProperty().addListener(new javafx.beans.value.ChangeListener<>() {
+                @Override
+                public void changed(javafx.beans.value.ObservableValue<? extends Worker.State> obs,
+                                    Worker.State oldState,
+                                    Worker.State newState) {
+                    if (newState == Worker.State.SUCCEEDED) {
+                        webEngine.getLoadWorker().stateProperty().removeListener(this);
+                        Platform.runLater(() -> {
+                            boolean restored = readerFacade.restorePosition();
+                            if (!restored) {
+                                progressBar.setProgress(0);
+                                progressLabel.setText("0%");
+                                log.debug("No saved position for book: {}", currentSession.getBook().getTitle());
+                            }
+                        });
+                    }
+                }
             });
 
             log.info("Book opened: {}", currentSession.getBook().getTitle());
         }
     }
-
     @FXML
     private void onBack() {
         if (isClosing) {
@@ -136,8 +160,11 @@ public class ReaderWorkspaceController {
 
         isClosing = true;
 
-        readerFacade.saveCurrentPosition();
-        readerFacade.closeBook();
+        if (currentSession != null && currentSession.isActive()) {
+            readerFacade.saveCurrentPosition();
+            readerFacade.closeBook();
+            currentSession = null;
+        }
 
         navigationService.goBack();
 
@@ -150,6 +177,8 @@ public class ReaderWorkspaceController {
             isClosing = false;
         }).start();
     }
+
+    // ==================== TOC ====================
 
     @FXML
     private void onToggleToc() {
@@ -195,6 +224,8 @@ public class ReaderWorkspaceController {
         }
     }
 
+    // ==================== Закладки ====================
+
     @FXML
     private void onAddBookmark() {
         Bookmark bookmark = readerFacade.addBookmark();
@@ -206,8 +237,6 @@ public class ReaderWorkspaceController {
         }
     }
 
-    // ==================== ПОВНА ВЕРСІЯ ЗАКЛАДОК З Dialog + ListView ====================
-
     @FXML
     private void onOpenBookmarks() {
         List<Bookmark> bookmarks = readerFacade.getBookmarks();
@@ -216,13 +245,11 @@ public class ReaderWorkspaceController {
             return;
         }
 
-        // Створюємо діалог
         Dialog<Void> dialog = new Dialog<>();
         dialog.setTitle("Закладки (" + bookmarks.size() + ")");
         dialog.initOwner(webView.getScene().getWindow());
         dialog.setResizable(true);
 
-        // Створюємо ListView
         ListView<Bookmark> listView = new ListView<>();
         listView.getItems().setAll(bookmarks);
         listView.setCellFactory(lv -> new ListCell<>() {
@@ -233,14 +260,11 @@ public class ReaderWorkspaceController {
                     setText(null);
                     setGraphic(null);
                 } else {
-                    // Створюємо текст з інформацією
                     String text = item.getTitle();
                     if (item.getChapterTitle() != null && !item.getChapterTitle().isEmpty()) {
                         text += " (" + item.getChapterTitle() + ")";
                     }
                     setText(text);
-
-                    // Додаємо дату як підказку
                     if (item.getFormattedDate() != null && !item.getFormattedDate().isEmpty()) {
                         setTooltip(new Tooltip("Створено: " + item.getFormattedDate()));
                     }
@@ -248,7 +272,6 @@ public class ReaderWorkspaceController {
             }
         });
 
-        // Подвійний клік - перехід до закладки
         listView.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
                 Bookmark selected = listView.getSelectionModel().getSelectedItem();
@@ -259,9 +282,7 @@ public class ReaderWorkspaceController {
             }
         });
 
-        // Контекстне меню - видалення
         ContextMenu contextMenu = new ContextMenu();
-
         MenuItem goToItem = new MenuItem("Перейти до закладки");
         goToItem.setOnAction(e -> {
             Bookmark selected = listView.getSelectionModel().getSelectedItem();
@@ -320,22 +341,16 @@ public class ReaderWorkspaceController {
         contextMenu.getItems().addAll(goToItem, new SeparatorMenuItem(), deleteItem, deleteAllItem);
         listView.setContextMenu(contextMenu);
 
-        // Кнопки
         ButtonType closeButton = new ButtonType("Закрити", ButtonBar.ButtonData.CANCEL_CLOSE);
         dialog.getDialogPane().getButtonTypes().add(closeButton);
-
-        // Скасовуємо закриття при кліку на Close
         dialog.setResultConverter(buttonType -> null);
 
-        // Компонуємо діалог
         VBox content = new VBox(10);
         content.setStyle("-fx-padding: 10;");
 
-        // Статистика
         Label statsLabel = new Label("Всього закладок: " + bookmarks.size());
         statsLabel.setStyle("-fx-font-weight: bold; -fx-font-size: 14px;");
 
-        // Підказка
         Label hintLabel = new Label("Двічі клікніть для переходу, ПКМ для меню");
         hintLabel.setStyle("-fx-text-fill: #666; -fx-font-size: 11px;");
 
@@ -345,7 +360,6 @@ public class ReaderWorkspaceController {
         dialog.getDialogPane().setPrefSize(450, 500);
         dialog.getDialogPane().setMinSize(350, 400);
 
-        // Оновлюємо лічильник при зміні списку
         listView.itemsProperty().addListener((obs, old, newList) -> {
             statsLabel.setText("Всього закладок: " + (newList != null ? newList.size() : 0));
         });
@@ -353,23 +367,12 @@ public class ReaderWorkspaceController {
         dialog.showAndWait();
     }
 
-    // ==================== КІНЕЦЬ ВЕРСІЇ ЗАКЛАДОК ====================
-
-    private void goToBookmark(Bookmark bookmark) {
-        if (bookmark == null) return;
-        readerFacade.goToBookmark(bookmark);
-    }
-
-    private void deleteBookmark(Bookmark bookmark) {
-        if (bookmark == null) return;
-        readerFacade.removeBookmark(bookmark.getId());
-        updateBookmarksCount();
-    }
-
     private void updateBookmarksCount() {
         int count = readerFacade.getBookmarkCount();
         bookmarksLabel.setText("⭐ " + count);
     }
+
+    // ==================== Пошук ====================
 
     @FXML
     private void onToggleSearch() {
@@ -379,6 +382,8 @@ public class ReaderWorkspaceController {
         if (visible) {
             searchField.requestFocus();
             searchField.selectAll();
+        } else {
+            clearSearch();
         }
     }
 
@@ -387,13 +392,140 @@ public class ReaderWorkspaceController {
         searchBar.setVisible(false);
         searchBar.setManaged(false);
         searchField.clear();
-        searchStatus.setText("0/0");
+        clearSearch();
     }
+
+    @FXML
+    private void onSearchFieldAction() {
+        String query = searchField.getText();
+        if (query == null || query.trim().isEmpty()) {
+            clearSearch();
+            return;
+        }
+        lastSearchQuery = query.trim();
+        performSearch(lastSearchQuery);
+    }
+
+    @FXML
+    private void onSearchNext() {
+        if (lastSearchQuery.isEmpty()) {
+            return;
+        }
+        if (searchMatchCount == 0) {
+            performSearch(lastSearchQuery);
+            return;
+        }
+        searchCurrentMatch = searchCurrentMatch >= searchMatchCount ? 1 : searchCurrentMatch + 1;
+        findInBook(lastSearchQuery, false);
+        updateSearchStatus();
+    }
+
+    @FXML
+    private void onSearchPrev() {
+        if (lastSearchQuery.isEmpty()) {
+            return;
+        }
+        if (searchMatchCount == 0) {
+            performSearch(lastSearchQuery);
+            return;
+        }
+        searchCurrentMatch = searchCurrentMatch <= 1 ? searchMatchCount : searchCurrentMatch - 1;
+        findInBook(lastSearchQuery, true);
+        updateSearchStatus();
+    }
+
+    private void performSearch(String query) {
+        if (webEngine == null || query == null || query.trim().isEmpty()) {
+            clearSearch();
+            return;
+        }
+
+        try {
+            String escapedQuery = query.replace("'", "\\'").replace("\"", "\\\"");
+            String script = """
+                (function() {
+                    var query = '%s';
+                    var found = window.find(query, false, false, true, false, false, false);
+                    if (!found) {
+                        window.find(query, false, false, true, false, false, false);
+                    }
+                    var count = 0;
+                    var text = document.body.innerText || '';
+                    var searchText = query.toLowerCase();
+                    var textLower = text.toLowerCase();
+                    var pos = textLower.indexOf(searchText);
+                    while (pos !== -1) {
+                        count++;
+                        pos = textLower.indexOf(searchText, pos + searchText.length);
+                    }
+                    return count;
+                })();
+            """.formatted(escapedQuery);
+
+            Object result = webEngine.executeScript(script);
+            searchMatchCount = result instanceof Number ? ((Number) result).intValue() : 0;
+            searchCurrentMatch = searchMatchCount > 0 ? 1 : 0;
+            updateSearchStatus();
+
+        } catch (Exception e) {
+            log.warn("Пошук не вдався: {}", e.getMessage());
+            searchMatchCount = 0;
+            searchCurrentMatch = 0;
+            updateSearchStatus();
+        }
+    }
+
+    private void findInBook(String query, boolean reverse) {
+        if (webEngine == null || query == null || query.trim().isEmpty()) {
+            return;
+        }
+
+        try {
+            String escapedQuery = query.replace("'", "\\'").replace("\"", "\\\"");
+            String script = """
+                (function() {
+                    var query = '%s';
+                    return window.find(query, false, %s, true, false, false, false);
+                })();
+            """.formatted(escapedQuery, reverse ? "true" : "false");
+
+            webEngine.executeScript(script);
+
+        } catch (Exception e) {
+            log.warn("Навігація по пошуку не вдалася: {}", e.getMessage());
+        }
+    }
+
+    private void updateSearchStatus() {
+        if (searchMatchCount == 0) {
+            searchStatus.setText("0/0");
+        } else {
+            searchStatus.setText(searchCurrentMatch + "/" + searchMatchCount);
+        }
+    }
+
+    private void clearSearch() {
+        lastSearchQuery = "";
+        searchMatchCount = 0;
+        searchCurrentMatch = 0;
+        searchStatus.setText("0/0");
+        if (webEngine != null) {
+            try {
+                webEngine.executeScript("window.getSelection().removeAllRanges();");
+            } catch (Exception e) {
+                // ignore
+            }
+        }
+    }
+
+    // ==================== Тема ====================
 
     @FXML
     private void onToggleTheme() {
         readerFacade.toggleTheme();
     }
+
+    // ==================== Налаштування ====================
 
     @FXML
     private void onShowSettings() {
@@ -421,6 +553,8 @@ public class ReaderWorkspaceController {
         }
     }
 
+    // ==================== Zoom ====================
+
     @FXML
     private void onZoomIn() {
         double zoom = readerFacade.getZoom();
@@ -438,6 +572,8 @@ public class ReaderWorkspaceController {
         readerFacade.setZoom(1.0);
     }
 
+    // ==================== Діалоги ====================
+
     private void showInfo(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
@@ -454,6 +590,8 @@ public class ReaderWorkspaceController {
         alert.showAndWait();
     }
 
+    // ==================== Lifecycle ====================
+
     @PreDestroy
     public void cleanup() {
         if (!isInitialized.get()) {
@@ -463,8 +601,12 @@ public class ReaderWorkspaceController {
 
         log.info("ReaderWorkspaceController.cleanup()");
 
-        readerFacade.saveCurrentPosition();
-        readerFacade.closeBook();
+        if (currentSession != null && currentSession.isActive()) {
+            readerFacade.stopPeriodicSaving(currentSession);
+            readerFacade.saveCurrentPosition();
+            readerFacade.closeBook();
+            currentSession = null;
+        }
         readerFacade.clearCache();
 
         if (tocStage != null) {
@@ -479,24 +621,5 @@ public class ReaderWorkspaceController {
         }
 
         log.info("ReaderWorkspaceController cleaned up");
-    }
-
-    @FXML
-    private void onSearchNext() {
-        String query = searchField.getText();
-        if (query == null || query.trim().isEmpty()) {
-            return;
-        }
-        // TODO: реалізувати пошук наступного збігу
-        // Можна використовувати ReaderJsBridge для пошуку
-    }
-
-    @FXML
-    private void onSearchPrev() {
-        String query = searchField.getText();
-        if (query == null || query.trim().isEmpty()) {
-            return;
-        }
-        // TODO: реалізувати пошук попереднього збігу
     }
 }

@@ -10,6 +10,7 @@ import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
+import javafx.application.Platform;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.web.WebEngine;
@@ -86,10 +87,7 @@ public class ReaderFacade {
 
         isClosing.set(true);
 
-        ReaderPosition pos = positionService.getCurrentPosition(session);
-        if (pos != null) {
-            positionService.savePosition(pos);
-        }
+        positionService.savePositionNow(session);
 
         sessionManager.closeCurrentSession();
         log.info("Book closed");
@@ -102,11 +100,7 @@ public class ReaderFacade {
         if (session == null || !session.isActive()) {
             return;
         }
-
-        ReaderPosition pos = positionService.getCurrentPosition(session);
-        if (pos != null) {
-            positionService.savePosition(pos);
-        }
+        positionService.savePositionNow(session);
     }
 
     public ReaderPosition getCurrentPosition() {
@@ -117,6 +111,9 @@ public class ReaderFacade {
         return positionService.getCurrentPosition(session);
     }
 
+    /**
+     * Відновлює позицію та оновлює прогрес-бар.
+     */
     public boolean restorePosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
@@ -125,10 +122,36 @@ public class ReaderFacade {
 
         ReaderPosition pos = session.getRestorePosition();
         if (pos == null) {
+            // Немає збереженої позиції - скидаємо прогрес на 0
+            updateProgressUI(session, 0);
             return false;
         }
 
-        return positionService.restorePosition(session, pos);
+        boolean success = positionService.restorePosition(session, pos);
+
+        // Оновлюємо UI з позиції (навіть якщо відновлення не точне)
+        updateProgressUI(session, pos.getPercent());
+
+        return success;
+    }
+
+    /**
+     * Оновлює прогрес-бар у UI.
+     */
+    private void updateProgressUI(ReaderSession session, double percent) {
+        if (session == null) {
+            return;
+        }
+        double progress = Math.min(1.0, Math.max(0.0, percent / 100.0));
+        Platform.runLater(() -> {
+            if (session.getProgressBar() != null) {
+                session.getProgressBar().setProgress(progress);
+            }
+            if (session.getProgressLabel() != null) {
+                session.getProgressLabel().setText((int) percent + "%");
+            }
+            log.debug("Progress UI updated: {}%", (int) percent);
+        });
     }
 
     public List<Chapter> getToc() {
@@ -272,6 +295,34 @@ public class ReaderFacade {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
             contentService.applySettings(session);
+        }
+    }
+
+    public void startPeriodicSaving(ReaderSession session) {
+        positionService.startPeriodicSaving(session);
+    }
+
+    public void stopPeriodicSaving(ReaderSession session) {
+        positionService.stopPeriodicSaving(session);
+    }
+
+    public void applySettings(ReaderSession session) {
+        if (session != null && session.isActive()) {
+            contentService.applySettings(session);
+        }
+    }
+
+    /**
+     * Оновлює прогрес-бар з поточної позиції.
+     */
+    public void updateProgressFromCurrentPosition() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null || !session.isActive()) {
+            return;
+        }
+        ReaderPosition pos = positionService.getCurrentPosition(session);
+        if (pos != null) {
+            updateProgressUI(session, pos.getPercent());
         }
     }
 }

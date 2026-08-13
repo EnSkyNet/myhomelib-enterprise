@@ -5,10 +5,16 @@ import javafx.fxml.FXML;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.stage.Stage;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.function.Consumer;
 
+@Component
+@RequiredArgsConstructor
+@Slf4j
 public class TOCController {
 
     @FXML private ListView<Chapter> tocListView;

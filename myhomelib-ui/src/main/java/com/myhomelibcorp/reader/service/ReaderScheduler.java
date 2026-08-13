@@ -6,14 +6,19 @@ import org.springframework.stereotype.Component;
 
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * Єдиний планувальник для всіх завдань Reader.
+ * Використовується замість окремих executor-ів.
+ */
 @Component
 @Slf4j
 public class ReaderScheduler {
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(
-            1,
+            2,
             r -> {
                 Thread t = new Thread(r, "reader-scheduler");
                 t.setDaemon(true);
@@ -21,29 +26,58 @@ public class ReaderScheduler {
             }
     );
 
+    /**
+     * Виконує задачу негайно в окремому потоці.
+     */
     public void execute(Runnable task) {
         scheduler.execute(task);
     }
 
-    public void schedule(Runnable task, long delay, TimeUnit unit) {
-        scheduler.schedule(task, delay, unit);
+    /**
+     * Виконує задачу із затримкою.
+     */
+    public ScheduledFuture<?> schedule(Runnable task, long delay, TimeUnit unit) {
+        return scheduler.schedule(task, delay, unit);
     }
 
-    public void scheduleAtFixedRate(Runnable task, long initialDelay, long period, TimeUnit unit) {
-        scheduler.scheduleAtFixedRate(task, initialDelay, period, unit);
+    /**
+     * Виконує задачу періодично.
+     */
+    public ScheduledFuture<?> scheduleAtFixedRate(Runnable task, long initialDelay, long period, TimeUnit unit) {
+        return scheduler.scheduleAtFixedRate(task, initialDelay, period, unit);
+    }
+
+    /**
+     * Виконує задачу з фіксованою затримкою між виконаннями.
+     */
+    public ScheduledFuture<?> scheduleWithFixedDelay(Runnable task, long initialDelay, long delay, TimeUnit unit) {
+        return scheduler.scheduleWithFixedDelay(task, initialDelay, delay, unit);
+    }
+
+    /**
+     * Скасовує заплановану задачу.
+     */
+    public void cancel(ScheduledFuture<?> future) {
+        if (future != null && !future.isDone()) {
+            future.cancel(false);
+        }
     }
 
     @PreDestroy
     public void shutdown() {
-        scheduler.shutdownNow();
+        log.info("Shutting down ReaderScheduler...");
+        scheduler.shutdown();
         try {
             if (!scheduler.awaitTermination(5, TimeUnit.SECONDS)) {
-                log.warn("ReaderScheduler не завершив роботу примусово");
+                scheduler.shutdownNow();
+                if (!scheduler.awaitTermination(3, TimeUnit.SECONDS)) {
+                    log.warn("ReaderScheduler did not terminate gracefully");
+                }
             }
         } catch (InterruptedException e) {
             scheduler.shutdownNow();
             Thread.currentThread().interrupt();
         }
-        log.info("ReaderScheduler завершено");
+        log.info("ReaderScheduler shut down");
     }
 }

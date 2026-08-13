@@ -1,26 +1,76 @@
 package com.myhomelibcorp.reader.service;
 
+import javafx.application.Platform;
 import javafx.concurrent.Worker;
 import javafx.scene.web.WebEngine;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 @Component
 @Slf4j
 public class ReaderJsBridge {
+
+    /**
+     * Виконує JavaScript на FX потоку з очікуванням результату.
+     */
+    public Object executeScriptOnFxThread(WebEngine engine, String script) {
+        if (engine == null) {
+            throw new IllegalStateException("WebEngine is null");
+        }
+
+        if (Platform.isFxApplicationThread()) {
+            return executeScriptSafe(engine, script);
+        }
+
+        // Якщо не на FX потоці - виконуємо через Platform.runLater з очікуванням
+        CompletableFuture<Object> future = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            try {
+                Object result = executeScriptSafe(engine, script);
+                future.complete(result);
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+
+        try {
+            return future.get(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Interrupted while executing script", e);
+        } catch (ExecutionException e) {
+            throw new RuntimeException("Failed to execute script", e.getCause());
+        } catch (TimeoutException e) {
+            throw new RuntimeException("Script execution timed out", e);
+        }
+    }
+
+    public boolean isContentLoaded(WebEngine engine) {
+        if (engine == null) {
+            return false;
+        }
+        try {
+            Object result = executeScriptOnFxThread(engine,
+                    "document.readyState === 'complete' && document.body !== null");
+            return Boolean.TRUE.equals(result);
+        } catch (Exception e) {
+            log.error("JS помилка при виконанні: document.readyState === 'complete' && document.body !== null", e);
+            return false;
+        }
+    }
 
     public int getParagraphCount(WebEngine engine) {
         if (!isEngineReady(engine)) {
             return 0;
         }
         try {
-            String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    return paragraphs.length;
-                })();
-            """;
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine,
+                    "document.querySelectorAll('p[data-paragraph-id]').length");
             return result instanceof Number ? ((Number) result).intValue() : 0;
         } catch (Exception e) {
             log.warn("Не вдалося отримати кількість абзаців", e);
@@ -46,10 +96,10 @@ public class ReaderJsBridge {
                     return 0;
                 })();
             """;
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine, script);
             return result instanceof Number ? ((Number) result).intValue() : -1;
         } catch (Exception e) {
-            log.warn("Не вдалося отримати індекс першого видимого абзацу", e);
+            log.warn("Не вдалося отримати індекс видимого абзацу", e);
             return -1;
         }
     }
@@ -80,7 +130,7 @@ public class ReaderJsBridge {
                     return Math.floor(ratio * text.length);
                 })();
             """.replace("INDEX", String.valueOf(index));
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine, script);
             return result instanceof Number ? ((Number) result).intValue() : 0;
         } catch (Exception e) {
             log.warn("Не вдалося отримати зсув для абзацу {}", index, e);
@@ -101,7 +151,7 @@ public class ReaderJsBridge {
                     return scrollTop / scrollHeight;
                 })();
             """;
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine, script);
             return result instanceof Number ? ((Number) result).doubleValue() : 0.0;
         } catch (Exception e) {
             log.debug("Не вдалося отримати відсоток прокрутки", e);
@@ -125,7 +175,7 @@ public class ReaderJsBridge {
                     return Math.min(1.0, elTop / docHeight);
                 })();
             """.replace("INDEX", String.valueOf(index));
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine, script);
             return result instanceof Number ? ((Number) result).doubleValue() : 0.0;
         } catch (Exception e) {
             log.warn("Не вдалося отримати позицію абзацу {}", index, e);
@@ -165,7 +215,7 @@ public class ReaderJsBridge {
                 })();
             """.replace("INDEX", String.valueOf(index))
                     .replace("OFFSET", String.valueOf(charOffset));
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine, script);
             return Boolean.TRUE.equals(result);
         } catch (Exception e) {
             log.error("Помилка прокрутки до абзацу {}", index, e);
@@ -187,10 +237,10 @@ public class ReaderJsBridge {
                     var end = Math.min(len, p + 100);
                     return body.substring(start, end);
                 })(""" + position + ")";
-            Object result = executeScriptSafe(engine, script);
+            Object result = executeScriptOnFxThread(engine, script);
             return result != null ? result.toString().trim() : "";
         } catch (Exception e) {
-            log.warn("Не вдалося отримати текст за позицією {}", position, e);
+            log.warn("Не вдалося отримати текст на позиції {}", position, e);
             return "";
         }
     }
@@ -200,7 +250,7 @@ public class ReaderJsBridge {
             return "Без заголовка";
         }
         try {
-            Object title = executeScriptSafe(engine,
+            Object title = executeScriptOnFxThread(engine,
                     "document.querySelector('.chapter-title')?.innerText || ''");
             return title != null ? title.toString() : "Без заголовка";
         } catch (Exception e) {
@@ -214,7 +264,7 @@ public class ReaderJsBridge {
             return;
         }
         try {
-            engine.executeScript("""
+            executeScriptOnFxThread(engine, """
                 if (typeof window.progress === 'undefined') { window.progress = 0; }
                 window.addEventListener('scroll', function() {
                     var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
@@ -228,63 +278,12 @@ public class ReaderJsBridge {
         }
     }
 
-    public boolean isContentLoaded(WebEngine engine) {
-        if (engine == null) {
-            return false;
-        }
-        try {
-            Object result = executeScriptSafe(engine,
-                    "document.readyState === 'complete' && document.body !== null");
-            return Boolean.TRUE.equals(result);
-        } catch (Exception e) {
-            return false;
-        }
-    }
-
-    public int getDocumentLength(WebEngine engine) {
-        if (!isEngineReady(engine)) {
-            return 0;
-        }
-        try {
-            Object result = executeScriptSafe(engine, "document.body.innerText.length");
-            return result instanceof Number ? ((Number) result).intValue() : 0;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
-    public int getVisibleParagraphCount(WebEngine engine) {
-        if (!isEngineReady(engine)) {
-            return 0;
-        }
-        try {
-            String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    var count = 0;
-                    for (var i = 0; i < paragraphs.length; i++) {
-                        var rect = paragraphs[i].getBoundingClientRect();
-                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                            count++;
-                        }
-                    }
-                    return count;
-                })();
-            """;
-            Object result = executeScriptSafe(engine, script);
-            return result instanceof Number ? ((Number) result).intValue() : 0;
-        } catch (Exception e) {
-            return 0;
-        }
-    }
-
     public void cleanup(WebEngine engine) {
         if (engine == null) {
             return;
         }
         try {
-            engine.executeScript("window.myhomelib = null;");
-            engine.executeScript("window.progress = null;");
+            executeScriptOnFxThread(engine, "window.myhomelib = null; window.progress = null;");
         } catch (Exception e) {
             log.debug("Помилка очищення Bridge: {}", e.getMessage());
         }
@@ -301,6 +300,9 @@ public class ReaderJsBridge {
     private Object executeScriptSafe(WebEngine engine, String script) {
         if (engine == null) {
             throw new IllegalStateException("WebEngine is null");
+        }
+        if (!Platform.isFxApplicationThread()) {
+            throw new IllegalStateException("Not on FX application thread");
         }
         try {
             return engine.executeScript(script);

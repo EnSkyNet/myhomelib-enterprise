@@ -3,6 +3,9 @@ package com.myhomelibcorp.ui.reader;
 import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import com.myhomelibcorp.reader.core.ReaderSettings;
+import com.myhomelibcorp.reader.service.ReaderSettingsService;
+import com.myhomelibcorp.reader.session.ReaderSession;
+import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.service.DialogService;
 import javafx.fxml.FXML;
 import javafx.scene.control.CheckBox;
@@ -20,6 +23,8 @@ import org.springframework.stereotype.Component;
 public class ReaderSettingsController {
 
     private final ReaderPreferencesPort readerPreferencesPort;
+    private final ReaderSettingsService settingsService;
+    private final ReaderSessionManager sessionManager;
     private final DialogService dialogService;
 
     @FXML private ComboBox<String> fontFamilyCombo;
@@ -39,7 +44,6 @@ public class ReaderSettingsController {
 
     @FXML
     public void initialize() {
-        // Шрифти
         fontFamilyCombo.getItems().addAll(
                 "Georgia",
                 "Times New Roman",
@@ -51,7 +55,6 @@ public class ReaderSettingsController {
         );
         fontFamilyCombo.setValue("Georgia");
 
-        // Теми
         themeCombo.getItems().addAll("light", "sepia", "dark", "amoled");
         themeCombo.setValue("light");
 
@@ -63,7 +66,7 @@ public class ReaderSettingsController {
     }
 
     private void loadSettings() {
-        ReaderSettings settings = ReaderSettings.getInstance();
+        ReaderSettings settings = settingsService.getSettings();
         fontFamilyCombo.setValue(settings.getFontFamily());
         fontSizeSlider.setValue(settings.getFontSize());
         lineSpacingSlider.setValue(settings.getLineSpacing());
@@ -81,7 +84,7 @@ public class ReaderSettingsController {
     @FXML
     private void onSave() {
         try {
-            ReaderSettings settings = ReaderSettings.getInstance();
+            ReaderSettings settings = settingsService.getSettings();
             settings.setFontFamily(fontFamilyCombo.getValue());
             settings.setFontSize(fontSizeSlider.getValue());
             settings.setLineSpacing(lineSpacingSlider.getValue());
@@ -94,11 +97,28 @@ public class ReaderSettingsController {
             settings.setMarginLeft(marginLeftSlider.getValue());
             settings.setMarginRight(marginRightSlider.getValue());
             settings.setFirstLineIndent(firstLineIndentSlider.getValue());
-            settings.save();
 
-            // Зберігаємо через порт
-            ReaderPreferences prefs = settings.toDomain();
-            readerPreferencesPort.savePreferences(prefs);
+            // Зберігаємо через єдиний сервіс
+            settingsService.save();
+
+            // Застосовуємо налаштування до поточної книги БЕЗ перезавантаження
+            ReaderSession session = sessionManager.getCurrentSession();
+            if (session != null && session.isActive()) {
+                String css = settingsService.generateCss();
+                String script = """
+                    (function() {
+                        var style = document.getElementById('reader-styles');
+                        if (!style) {
+                            style = document.createElement('style');
+                            style.id = 'reader-styles';
+                            document.head.appendChild(style);
+                        }
+                        style.textContent = CSS;
+                    })();
+                """.replace("CSS", css.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
+                session.getWebEngine().executeScript(script);
+                log.info("Settings applied to current book without reload");
+            }
 
             dialogService.showInfo("Успішно", "Налаштування Reader збережено");
 
@@ -120,13 +140,26 @@ public class ReaderSettingsController {
                 "Ви впевнені, що хочете скинути всі налаштування Reader до стандартних?",
                 "Цю дію не можна скасувати.")) {
 
-            ReaderPreferences defaultPrefs = ReaderPreferences.builder().build();
-            readerPreferencesPort.savePreferences(defaultPrefs);
-            readerPreferencesPort.resetPreferences();
-
-            ReaderSettings settings = ReaderSettings.getInstance();
-            settings.load();
+            settingsService.resetToDefaults();
             loadSettings();
+
+            // Застосовуємо стандартні налаштування до поточної книги
+            ReaderSession session = sessionManager.getCurrentSession();
+            if (session != null && session.isActive()) {
+                String css = settingsService.generateCss();
+                String script = """
+                    (function() {
+                        var style = document.getElementById('reader-styles');
+                        if (!style) {
+                            style = document.createElement('style');
+                            style.id = 'reader-styles';
+                            document.head.appendChild(style);
+                        }
+                        style.textContent = CSS;
+                    })();
+                """.replace("CSS", css.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
+                session.getWebEngine().executeScript(script);
+            }
 
             dialogService.showInfo("Успішно", "Налаштування скинуто до стандартних");
         }
