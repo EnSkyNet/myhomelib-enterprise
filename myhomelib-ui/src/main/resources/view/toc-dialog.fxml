@@ -5,12 +5,12 @@
 <?import javafx.scene.layout.*?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.myhomelibcorp.ui.reader.BookmarksController"
+      fx:controller="com.myhomelibcorp.ui.reader.TOCController"
       spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;">
 
-    <Label text="Закладки" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+    <Label text="Зміст" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
 
-    <ListView fx:id="bookmarksListView" VBox.vgrow="ALWAYS"/>
+    <ListView fx:id="tocListView" VBox.vgrow="ALWAYS"/>
 
     <Separator/>
 

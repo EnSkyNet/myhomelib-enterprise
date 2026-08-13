@@ -2,6 +2,7 @@ package com.myhomelibcorp.reader.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.reader.core.ReaderSettings;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
@@ -39,6 +40,7 @@ public class ReaderLifecycleManager {
     private final ReaderJsBridge jsBridge;
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final ReaderSessionManager sessionManager;
+    private final ReaderFacade readerFacade;
 
     private final ScheduledExecutorService restoreExecutor = Executors.newSingleThreadScheduledExecutor(
             r -> {
@@ -55,61 +57,18 @@ public class ReaderLifecycleManager {
 
     // ==================== ПУБЛІЧНІ МЕТОДИ ====================
 
-    public ReaderSession openBook(BookDto book, WebEngine engine, ProgressBar bar, Label label) {
-        if (isShuttingDown.get()) {
-            log.warn("ReaderLifecycleManager завершується, пропускаємо відкриття книги");
-            return null;
-        }
-
-        if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
-            log.warn("Немає активної колекції, книга не може бути відкрита");
-            return null;
-        }
-
-        ReaderSession session = sessionManager.createSession(book);
-        session.setWebEngine(engine);
-        session.setProgressBar(bar);
-        session.setProgressLabel(label);
-        session.setProgressListenerSetup(false);
-        session.setRetryCount(0);
-        session.setLastLoadedHtml(null);
-        session.setCurrentHtml(null);
-        session.setContentLoaded(false);
-        session.setOpen(true);
-        session.setClosing(false);
-
-        log.info("Відкриття книги: {} (сесія: {})", book.getTitle(), session.getSessionId());
-
-        loadBookContent(session);
-
-        return session;
+    public void openBook(BookDto book, WebEngine engine, ProgressBar bar, Label label) {
+        readerFacade.openBook(
+                BookId.fromString(book.getId()),
+                null, // WebView передається окремо
+                engine,
+                bar,
+                label
+        );
     }
 
     public void closeBook(ReaderSession session) {
-        if (session == null || !session.isActive()) {
-            return;
-        }
-
-        if (session.isClosing()) {
-            log.debug("Вже виконується закриття сесії: {}", session.getSessionId());
-            return;
-        }
-        session.setClosing(true);
-
-        String sessionId = session.getSessionId();
-        log.info("Закриття книги: {} (сесія: {})",
-                session.getBook() != null ? session.getBook().getTitle() : "none",
-                sessionId);
-
-        stopSaving(sessionId);
-        cleanupWebView(session);
-        contentLoader.clearCache();
-        progressManager.deactivateReader(sessionId);
-
-        session.setOpen(false);
-        sessionManager.closeSession(sessionId);
-
-        log.info("Сесію Reader закрито: {}", sessionId);
+        readerFacade.closeBook();
     }
 
     public void setupProgressListener(ReaderSession session) {
@@ -244,10 +203,7 @@ public class ReaderLifecycleManager {
     }
 
     public void saveState(ReaderSession session) {
-        if (session == null || session.getWebEngine() == null || !session.isActive()) {
-            return;
-        }
-        forceSaveNow(session);
+        readerFacade.saveCurrentPosition();
     }
 
     public BookDto getCurrentBook() {
@@ -272,7 +228,7 @@ public class ReaderLifecycleManager {
     }
 
     public boolean isReaderOpen() {
-        return sessionManager.hasActiveSession();
+        return readerFacade.isBookOpen();
     }
 
     // ==================== ПРИВАТНІ МЕТОДИ ====================

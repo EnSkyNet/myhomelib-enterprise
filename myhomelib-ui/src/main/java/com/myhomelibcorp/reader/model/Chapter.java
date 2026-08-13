@@ -16,6 +16,7 @@ public class Chapter {
     private List<Chapter> children;
     private int startOffset;
     private int endOffset;
+    private String paragraphId;
 
     public List<Chapter> getChildren() {
         if (children == null) {

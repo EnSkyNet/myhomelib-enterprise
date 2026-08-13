@@ -1,27 +1,22 @@
 package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.domain.model.bookmark.Bookmark;
-import com.myhomelibcorp.reader.service.BookmarkManager;
-import javafx.application.Platform;
 import javafx.fxml.FXML;
-import javafx.scene.control.*;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
+import javafx.scene.control.MenuItem;
 import javafx.stage.Stage;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 import java.util.function.Consumer;
 
-@RequiredArgsConstructor
-@Slf4j
-public class BookmarkDialogController {
-
-    private final BookmarkManager bookmarkManager;
+public class BookmarksController {
 
     @FXML private ListView<Bookmark> bookmarksListView;
 
-    private String bookId;
     private Consumer<Bookmark> onBookmarkSelected;
+    private Consumer<Bookmark> onBookmarkDeleted;
 
     @FXML
     public void initialize() {
@@ -31,10 +26,8 @@ public class BookmarkDialogController {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    setGraphic(null);
                 } else {
                     setText(item.getTitle());
-                    setTooltip(new Tooltip(item.getContext() != null ? item.getContext() : "Без контексту"));
                 }
             }
         });
@@ -53,29 +46,24 @@ public class BookmarkDialogController {
         MenuItem deleteItem = new MenuItem("Видалити");
         deleteItem.setOnAction(e -> {
             Bookmark selected = bookmarksListView.getSelectionModel().getSelectedItem();
-            if (selected != null) {
-                bookmarkManager.removeBookmark(bookId, selected.getId());
-                loadBookmarks();
+            if (selected != null && onBookmarkDeleted != null) {
+                onBookmarkDeleted.accept(selected);
+                bookmarksListView.getItems().remove(selected);
+                if (bookmarksListView.getItems().isEmpty()) {
+                    closeDialog();
+                }
             }
         });
         contextMenu.getItems().add(deleteItem);
         bookmarksListView.setContextMenu(contextMenu);
     }
 
-    public void setBookId(String bookId, Consumer<Bookmark> onBookmarkSelected) {
-        this.bookId = bookId;
+    public void setBookmarks(List<Bookmark> bookmarks,
+                             Consumer<Bookmark> onBookmarkSelected,
+                             Consumer<Bookmark> onBookmarkDeleted) {
         this.onBookmarkSelected = onBookmarkSelected;
-        loadBookmarks();
-    }
-
-    private void loadBookmarks() {
-        List<Bookmark> bookmarks = bookmarkManager.getBookmarks(bookId);
-        Platform.runLater(() -> {
-            bookmarksListView.getItems().setAll(bookmarks);
-            if (bookmarks.isEmpty()) {
-                bookmarksListView.setPlaceholder(new Label("Немає закладок для цієї книги"));
-            }
-        });
+        this.onBookmarkDeleted = onBookmarkDeleted;
+        bookmarksListView.getItems().setAll(bookmarks);
     }
 
     @FXML

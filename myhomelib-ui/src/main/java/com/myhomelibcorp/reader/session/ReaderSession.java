@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.session;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.reader.model.ReaderPosition;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.web.WebEngine;
@@ -26,6 +27,7 @@ public class ReaderSession {
     private String currentHtml;
     private String lastLoadedHtml;
     private int retryCount;
+    private ReaderPosition restorePosition;
 
     @Builder.Default
     private final AtomicBoolean contentLoaded = new AtomicBoolean(false);

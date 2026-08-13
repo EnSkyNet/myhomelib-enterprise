@@ -1,6 +1,6 @@
 package com.myhomelibcorp.reader.service;
 
-import com.myhomelibcorp.reader.model.Bookmark;
+import com.myhomelibcorp.domain.model.bookmark.Bookmark;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
