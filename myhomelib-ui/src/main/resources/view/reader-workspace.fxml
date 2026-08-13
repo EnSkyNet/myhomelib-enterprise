@@ -47,6 +47,9 @@
         <Button text="⚙" onAction="#onShowSettings">
             <tooltip><Tooltip text="Налаштування"/></tooltip>
         </Button>
+        <Button text="⛶" onAction="#onToggleFullscreen">
+            <tooltip><Tooltip text="Повний екран (F11)"/></tooltip>
+        </Button>
     </ToolBar>
 
     <!-- Пошукова панель -->

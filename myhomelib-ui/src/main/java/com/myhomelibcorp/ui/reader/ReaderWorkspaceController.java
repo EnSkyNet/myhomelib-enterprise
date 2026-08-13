@@ -4,7 +4,9 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.bookmark.Bookmark;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.reader.model.Chapter;
+import com.myhomelibcorp.reader.service.AutoScrollService;
 import com.myhomelibcorp.reader.service.ReaderFacade;
+import com.myhomelibcorp.reader.service.ReaderSettingsService;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.service.NavigationService;
@@ -16,6 +18,8 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
@@ -28,6 +32,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -39,6 +45,8 @@ public class ReaderWorkspaceController {
     private final NavigationService navigationService;
     private final ReaderFacade readerFacade;
     private final ReaderSessionManager sessionManager;
+    private final AutoScrollService autoScrollService;
+    private final ReaderSettingsService settingsService;
     private final ApplicationContext springContext;
 
     @FXML private StackPane webViewContainer;
@@ -46,6 +54,7 @@ public class ReaderWorkspaceController {
     @FXML private Label progressLabel;
     @FXML private ProgressBar progressBar;
     @FXML private Label bookmarksLabel;
+    @FXML private Label pageInfoLabel;
     @FXML private HBox searchBar;
     @FXML private TextField searchField;
     @FXML private Label searchStatus;
@@ -62,6 +71,13 @@ public class ReaderWorkspaceController {
     private int searchMatchCount = 0;
     private int searchCurrentMatch = 0;
 
+    // Fullscreen
+    private boolean isFullscreen = false;
+
+    // Auto-scroll
+    private boolean isAutoScrollActive = false;
+    private double autoScrollSpeed = 2.0;
+
     @FXML
     public void initialize() {
         if (isInitialized.getAndSet(true)) {
@@ -72,6 +88,10 @@ public class ReaderWorkspaceController {
 
         searchBar.setVisible(false);
         searchBar.setManaged(false);
+
+        // Встановлюємо обробник клавіш
+        webViewContainer.setOnKeyPressed(this::onKeyPressed);
+        webViewContainer.setFocusTraversable(true);
 
         log.info("ReaderWorkspaceController initialized");
     }
@@ -110,9 +130,15 @@ public class ReaderWorkspaceController {
             currentSession = null;
         }
 
+        // Зупиняємо авто-скрол
+        if (isAutoScrollActive) {
+            autoScrollService.stop(currentSession);
+            isAutoScrollActive = false;
+        }
+
         isClosing = false;
 
-        // ПЕРЕСТВОРЮЄМО WebView ПРИ КОЖНОМУ ВІДКРИТТІ
+        // Перестворюємо WebView при кожному відкритті
         createWebView();
 
         // Відкриваємо нову книгу
@@ -128,8 +154,10 @@ public class ReaderWorkspaceController {
             bookTitleLabel.setText(currentSession.getBook().getTitle());
             updateBookmarksCount();
 
+            // Запускаємо періодичне збереження
             readerFacade.startPeriodicSaving(currentSession);
 
+            // Відновлюємо позицію після завантаження контенту
             webEngine.getLoadWorker().stateProperty().addListener(new javafx.beans.value.ChangeListener<>() {
                 @Override
                 public void changed(javafx.beans.value.ObservableValue<? extends Worker.State> obs,
@@ -144,6 +172,8 @@ public class ReaderWorkspaceController {
                                 progressLabel.setText("0%");
                                 log.debug("No saved position for book: {}", currentSession.getBook().getTitle());
                             }
+                            // Оновлюємо інформацію про розділ
+                            updatePageInfo();
                         });
                     }
                 }
@@ -152,6 +182,7 @@ public class ReaderWorkspaceController {
             log.info("Book opened: {}", currentSession.getBook().getTitle());
         }
     }
+
     @FXML
     private void onBack() {
         if (isClosing) {
@@ -159,6 +190,12 @@ public class ReaderWorkspaceController {
         }
 
         isClosing = true;
+
+        // Зупиняємо авто-скрол
+        if (isAutoScrollActive && currentSession != null) {
+            autoScrollService.stop(currentSession);
+            isAutoScrollActive = false;
+        }
 
         if (currentSession != null && currentSession.isActive()) {
             readerFacade.saveCurrentPosition();
@@ -222,6 +259,7 @@ public class ReaderWorkspaceController {
             tocStage.close();
             tocStage = null;
         }
+        updatePageInfo();
     }
 
     // ==================== Закладки ====================
@@ -523,6 +561,82 @@ public class ReaderWorkspaceController {
     @FXML
     private void onToggleTheme() {
         readerFacade.toggleTheme();
+        updatePageInfo();
+    }
+
+    // ==================== Fullscreen ====================
+
+    @FXML
+    private void onToggleFullscreen() {
+        Stage stage = (Stage) webView.getScene().getWindow();
+        if (stage == null) return;
+
+        isFullscreen = !isFullscreen;
+        stage.setFullScreen(isFullscreen);
+        log.info("Fullscreen: {}", isFullscreen);
+    }
+
+    // ==================== Auto-scroll ====================
+
+    @FXML
+    private void onToggleAutoScroll() {
+        if (currentSession == null || !currentSession.isActive()) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+
+        isAutoScrollActive = autoScrollService.toggle(currentSession);
+        log.info("Auto-scroll toggled: {}", isAutoScrollActive);
+    }
+
+    @FXML
+    private void onAutoScrollSpeedUp() {
+        if (currentSession == null) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+        autoScrollSpeed = Math.min(5.0, autoScrollSpeed + 0.5);
+        autoScrollService.setSpeed(currentSession, autoScrollSpeed);
+        log.info("Auto-scroll speed: {}", autoScrollSpeed);
+    }
+
+    @FXML
+    private void onAutoScrollSpeedDown() {
+        if (currentSession == null) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+        autoScrollSpeed = Math.max(0.5, autoScrollSpeed - 0.5);
+        autoScrollService.setSpeed(currentSession, autoScrollSpeed);
+        log.info("Auto-scroll speed: {}", autoScrollSpeed);
+    }
+
+    // ==================== Статистика ====================
+
+    @FXML
+    private void onShowStats() {
+        if (currentSession == null || !currentSession.isActive()) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+
+        String stats = String.format(
+                "📊 Статистика читання\n\n" +
+                        "📖 Книга: %s\n" +
+                        "📈 Прогрес: %d%%\n" +
+                        "⏱ Останнє читання: %s\n" +
+                        "📄 Поточний розділ: %s",
+                currentSession.getBook().getTitle(),
+                (int) (progressBar.getProgress() * 100),
+                LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")),
+                getCurrentChapterTitle()
+        );
+
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Статистика читання");
+        alert.setHeaderText(null);
+        alert.setContentText(stats);
+        alert.showAndWait();
     }
 
     // ==================== Налаштування ====================
@@ -538,6 +652,7 @@ public class ReaderWorkspaceController {
             controller.setOnSaveCallback(() -> {
                 if (currentSession != null && currentSession.isActive()) {
                     webView.setZoom(readerFacade.getZoom());
+                    readerFacade.applySettings(currentSession);
                 }
             });
 
@@ -572,6 +687,111 @@ public class ReaderWorkspaceController {
         readerFacade.setZoom(1.0);
     }
 
+    // ==================== Інформація про розділ ====================
+
+    private void updatePageInfo() {
+        String chapter = getCurrentChapterTitle();
+        if (chapter != null && !chapter.isEmpty()) {
+            pageInfoLabel.setText("Розділ: " + chapter);
+        } else {
+            pageInfoLabel.setText("Розділ 1");
+        }
+    }
+
+    private String getCurrentChapterTitle() {
+        if (currentSession == null || !currentSession.isActive()) {
+            return "";
+        }
+        return readerFacade.getCurrentChapterTitle();
+    }
+
+    // ==================== Клавіатурні скорочення ====================
+
+    @FXML
+    private void onKeyPressed(KeyEvent event) {
+        // F11 - Fullscreen
+        if (event.getCode() == KeyCode.F11) {
+            event.consume();
+            onToggleFullscreen();
+            return;
+        }
+
+        // Ctrl+F - Пошук
+        if (event.isControlDown() && event.getCode() == KeyCode.F) {
+            event.consume();
+            onToggleSearch();
+            return;
+        }
+
+        // Escape - закрити пошук або вийти з fullscreen
+        if (event.getCode() == KeyCode.ESCAPE) {
+            if (searchBar.isVisible()) {
+                event.consume();
+                onSearchClose();
+            } else if (isFullscreen) {
+                event.consume();
+                onToggleFullscreen();
+            }
+            return;
+        }
+
+        // Ctrl+G - наступний збіг
+        if (event.isControlDown() && event.getCode() == KeyCode.G) {
+            event.consume();
+            onSearchNext();
+            return;
+        }
+
+        // Ctrl+Shift+G - попередній збіг
+        if (event.isControlDown() && event.isShiftDown() && event.getCode() == KeyCode.G) {
+            event.consume();
+            onSearchPrev();
+            return;
+        }
+
+        // Ctrl++ - збільшити масштаб
+        if (event.isControlDown() && event.getCode() == KeyCode.PLUS) {
+            event.consume();
+            onZoomIn();
+            return;
+        }
+
+        // Ctrl+- - зменшити масштаб
+        if (event.isControlDown() && event.getCode() == KeyCode.MINUS) {
+            event.consume();
+            onZoomOut();
+            return;
+        }
+
+        // Ctrl+0 - скинути масштаб
+        if (event.isControlDown() && event.getCode() == KeyCode.DIGIT0) {
+            event.consume();
+            onZoomReset();
+            return;
+        }
+
+        // Пробіл - пауза/відновлення авто-скролу
+        if (event.getCode() == KeyCode.SPACE && !searchBar.isVisible()) {
+            event.consume();
+            onToggleAutoScroll();
+            return;
+        }
+
+        // Стрілка вправо - наступна сторінка (наступний розділ)
+        if (event.getCode() == KeyCode.RIGHT && event.isControlDown()) {
+            event.consume();
+            // Тут можна додати перехід до наступного розділу
+            return;
+        }
+
+        // Стрілка вліво - попередня сторінка (попередній розділ)
+        if (event.getCode() == KeyCode.LEFT && event.isControlDown()) {
+            event.consume();
+            // Тут можна додати перехід до попереднього розділу
+            return;
+        }
+    }
+
     // ==================== Діалоги ====================
 
     private void showInfo(String title, String message) {
@@ -600,6 +820,12 @@ public class ReaderWorkspaceController {
         isInitialized.set(false);
 
         log.info("ReaderWorkspaceController.cleanup()");
+
+        // Зупиняємо авто-скрол
+        if (isAutoScrollActive && currentSession != null) {
+            autoScrollService.stop(currentSession);
+            isAutoScrollActive = false;
+        }
 
         if (currentSession != null && currentSession.isActive()) {
             readerFacade.stopPeriodicSaving(currentSession);

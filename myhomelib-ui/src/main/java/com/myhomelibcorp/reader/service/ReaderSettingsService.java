@@ -196,6 +196,89 @@ public class ReaderSettingsService {
             css.append(s.getCustomCss());
         }
 
+        // Додати після існуючих стилів:
+
+        css.append("/* ===== Поезія ===== */\n");
+        css.append(".poem {\n");
+        css.append("    margin: 15px 0;\n");
+        css.append("    padding: 10px 20px;\n");
+        css.append("    font-family: Georgia, serif;\n");
+        css.append("    white-space: pre-wrap;\n");
+        css.append("    line-height: 1.8;\n");
+        css.append("}\n\n");
+
+        css.append(".stanza {\n");
+        css.append("    margin: 8px 0;\n");
+        css.append("}\n\n");
+
+        css.append(".verse {\n");
+        css.append("    padding-left: 10px;\n");
+        css.append("    white-space: pre-wrap;\n");
+        css.append("    font-family: Georgia, serif;\n");
+        css.append("}\n\n");
+
+        css.append(".poem-title {\n");
+        css.append("    font-weight: bold;\n");
+        css.append("    text-align: center;\n");
+        css.append("    margin: 10px 0;\n");
+        css.append("    font-size: 1.1em;\n");
+        css.append("}\n\n");
+
+        css.append(".poem-author {\n");
+        css.append("    text-align: right;\n");
+        css.append("    font-style: italic;\n");
+        css.append("    margin: 5px 0 10px 0;\n");
+        css.append("}\n\n");
+
+        css.append("/* ===== Епіграф ===== */\n");
+        css.append(".epigraph {\n");
+        css.append("    margin: 20px 30px;\n");
+        css.append("    padding: 10px 20px;\n");
+        css.append("    border-left: 3px solid ").append(theme.getQuoteBorder()).append(";\n");
+        css.append("    font-style: italic;\n");
+        css.append("    background-color: ").append(theme.getQuoteBackground()).append(";\n");
+        css.append("}\n\n");
+
+        css.append(".epigraph-author {\n");
+        css.append("    text-align: right;\n");
+        css.append("    margin-top: 5px;\n");
+        css.append("    font-style: normal;\n");
+        css.append("}\n\n");
+
+        css.append("/* ===== Цитати ===== */\n");
+        css.append("blockquote {\n");
+        css.append("    margin: 15px 30px;\n");
+        css.append("    padding: 10px 20px;\n");
+        css.append("    border-left: 4px solid ").append(theme.getQuoteBorder()).append(";\n");
+        css.append("    background-color: ").append(theme.getQuoteBackground()).append(";\n");
+        css.append("    font-style: italic;\n");
+        css.append("}\n\n");
+
+        css.append("/* ===== Підзаголовки ===== */\n");
+        css.append(".subtitle {\n");
+        css.append("    font-size: 1.1em;\n");
+        css.append("    font-weight: bold;\n");
+        css.append("    margin: 15px 0 10px 0;\n");
+        css.append("    color: ").append(theme.getForeground()).append(";\n");
+        css.append("}\n\n");
+
+        css.append("/* ===== Автор тексту ===== */\n");
+        css.append(".text-author {\n");
+        css.append("    text-align: right;\n");
+        css.append("    font-style: italic;\n");
+        css.append("    margin: 10px 0;\n");
+        css.append("}\n\n");
+
+        css.append("/* ===== Зображення ===== */\n");
+        css.append("img {\n");
+        css.append("    max-width: 100%;\n");
+        css.append("    height: auto;\n");
+        css.append("    display: block;\n");
+        css.append("    margin: 10px auto;\n");
+        css.append("    border-radius: 4px;\n");
+        css.append("    box-shadow: 0 2px 8px rgba(0,0,0,0.1);\n");
+        css.append("}\n\n");
+
         return css.toString();
     }
 
