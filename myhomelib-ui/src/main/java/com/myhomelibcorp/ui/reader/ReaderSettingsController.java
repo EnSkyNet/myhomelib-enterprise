@@ -1,6 +1,5 @@
 package com.myhomelibcorp.ui.reader;
 
-import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import com.myhomelibcorp.reader.core.ReaderSettings;
 import com.myhomelibcorp.reader.service.ReaderSettingsService;
@@ -17,12 +16,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.regex.Pattern;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class ReaderSettingsController {
 
-    private final ReaderPreferencesPort readerPreferencesPort;
     private final ReaderSettingsService settingsService;
     private final ReaderSessionManager sessionManager;
     private final DialogService dialogService;
@@ -98,26 +98,12 @@ public class ReaderSettingsController {
             settings.setMarginRight(marginRightSlider.getValue());
             settings.setFirstLineIndent(firstLineIndentSlider.getValue());
 
-            // Зберігаємо через єдиний сервіс
             settingsService.save();
 
-            // Застосовуємо налаштування до поточної книги БЕЗ перезавантаження
+            // Застосовуємо налаштування до поточної книги
             ReaderSession session = sessionManager.getCurrentSession();
             if (session != null && session.isActive()) {
-                String css = settingsService.generateCss();
-                String script = """
-                    (function() {
-                        var style = document.getElementById('reader-styles');
-                        if (!style) {
-                            style = document.createElement('style');
-                            style.id = 'reader-styles';
-                            document.head.appendChild(style);
-                        }
-                        style.textContent = CSS;
-                    })();
-                """.replace("CSS", css.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
-                session.getWebEngine().executeScript(script);
-                log.info("Settings applied to current book without reload");
+                applySettingsToBook(session);
             }
 
             dialogService.showInfo("Успішно", "Налаштування Reader збережено");
@@ -134,6 +120,66 @@ public class ReaderSettingsController {
         }
     }
 
+    /**
+     * Застосовує налаштування до книги через JavaScript
+     */
+    private void applySettingsToBook(ReaderSession session) {
+        try {
+            String css = settingsService.generateCss();
+
+            // ВИПРАВЛЕНО: правильне екранування CSS для передачі в JavaScript
+            String escapedCss = escapeCssForJavaScript(css);
+
+            String script = """
+                (function() {
+                    try {
+                        var style = document.getElementById('reader-styles');
+                        if (!style) {
+                            style = document.createElement('style');
+                            style.id = 'reader-styles';
+                            document.head.appendChild(style);
+                        }
+                        style.textContent = CSS;
+                    } catch(e) {
+                        console.error('Failed to apply styles:', e);
+                    }
+                })();
+            """.replace("CSS", escapedCss);
+
+            session.getWebEngine().executeScript(script);
+            log.info("Settings applied to current book without reload");
+
+        } catch (Exception e) {
+            log.warn("Failed to apply settings to current book: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * Екранує CSS для безпечної передачі в JavaScript
+     */
+    private String escapeCssForJavaScript(String css) {
+        if (css == null) {
+            return "''";
+        }
+
+        // Екрануємо спеціальні символи для JavaScript
+        String escaped = css
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t")
+                .replace("\f", "\\f")
+                .replace("\b", "\\b");
+
+        // Видаляємо потенційно небезпечні послідовності
+        // (залишаємо тільки безпечні CSS-символи)
+        escaped = Pattern.compile("[\\x00-\\x1F\\x7F]").matcher(escaped).replaceAll("");
+
+        return "'" + escaped + "'";
+    }
+
     @FXML
     private void onReset() {
         if (dialogService.showConfirmation("Скинути налаштування",
@@ -143,25 +189,12 @@ public class ReaderSettingsController {
             settingsService.resetToDefaults();
             loadSettings();
 
-            // Застосовуємо стандартні налаштування до поточної книги
             ReaderSession session = sessionManager.getCurrentSession();
             if (session != null && session.isActive()) {
-                String css = settingsService.generateCss();
-                String script = """
-                    (function() {
-                        var style = document.getElementById('reader-styles');
-                        if (!style) {
-                            style = document.createElement('style');
-                            style.id = 'reader-styles';
-                            document.head.appendChild(style);
-                        }
-                        style.textContent = CSS;
-                    })();
-                """.replace("CSS", css.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n"));
-                session.getWebEngine().executeScript(script);
+                applySettingsToBook(session);
             }
 
-            dialogService.showInfo("Успішно", "Налаштування скинуто до стандартних");
+            dialogService.showInfo("Успішно", "Налаштування Reader скинуто до стандартних");
         }
     }
 

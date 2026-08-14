@@ -17,6 +17,7 @@ import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -31,13 +32,15 @@ public class ReaderFacade {
     private final LoadBookByIdUseCase loadBookByIdUseCase;
     private final SessionService sessionService;
     private final ReaderSessionManager sessionManager;
-    private final ReaderContentService contentService;
+    @Lazy private final ReaderContentService contentService; // <-- @Lazy для уникнення циклу
     private final ReaderPositionService positionService;
     private final ReaderBookmarkService bookmarkService;
     private final ReaderTocService tocService;
     private final ReaderSettingsService settingsService;
 
     private final AtomicBoolean isClosing = new AtomicBoolean(false);
+
+    // ==================== Відкриття книги ====================
 
     public ReaderSession openBook(BookId bookId, WebView webView, WebEngine webEngine,
                                   ProgressBar progressBar, Label progressLabel) {
@@ -67,14 +70,54 @@ public class ReaderFacade {
 
         log.info("Opening book: {} (session: {})", book.getTitle(), session.getSessionId());
 
-        contentService.loadBookContent(session);
-
+        // Завантажуємо позицію ДО завантаження контенту
         positionService.loadPosition(bookId.asString())
-                .ifPresent(session::setRestorePosition);
+                .ifPresent(pos -> {
+                    session.setRestorePosition(pos);
+                    log.debug("Loaded position for book {}: {}%, paragraph {}",
+                            bookId, (int)pos.getPercent(), pos.getParagraphIndex());
+                });
+
+        // Завантажуємо контент (асинхронно)
+        contentService.loadBookContent(session);
 
         return session;
     }
 
+    /**
+     * Відновлення позиції після завантаження контенту.
+     * Викликається з ReaderContentService після рендерингу HTML.
+     */
+    public void restorePositionAfterLoad(ReaderSession session) {
+        if (session == null || !session.isActive()) {
+            return;
+        }
+
+        ReaderPosition pos = session.getRestorePosition();
+        if (pos == null) {
+            updateProgressUI(session, 0);
+            return;
+        }
+
+        // Відновлюємо позицію з невеликою затримкою для повного завантаження DOM
+        javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(
+                javafx.util.Duration.millis(500)
+        );
+        delay.setOnFinished(e -> {
+            if (session.isActive()) {
+                positionService.restorePosition(session, pos, () -> {
+                    updateProgressUI(session, pos.getPercent());
+                    log.info("Position restored for book {}: {}%, paragraph {}",
+                            session.getBookId(), (int)pos.getPercent(), pos.getParagraphIndex());
+                });
+            }
+        });
+        delay.play();
+    }
+
+    /**
+     * Закриття книги.
+     */
     public void closeBook() {
         if (isClosing.get()) {
             return;
@@ -87,14 +130,22 @@ public class ReaderFacade {
 
         isClosing.set(true);
 
+        // Зупиняємо періодичне збереження
+        positionService.stopPeriodicSaving(session);
+
+        // Зберігаємо позицію
         positionService.savePositionNow(session);
 
+        // Закриваємо сесію
         sessionManager.closeCurrentSession();
-        log.info("Book closed");
 
+        log.info("Book closed");
         isClosing.set(false);
     }
 
+    /**
+     * Збереження поточної позиції.
+     */
     public void saveCurrentPosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
@@ -103,17 +154,39 @@ public class ReaderFacade {
         positionService.savePositionNow(session);
     }
 
-    public ReaderPosition getCurrentPosition() {
+    /**
+     * Відновлення позиції.
+     */
+    public void restorePosition(Runnable onComplete) {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
-            return null;
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
         }
-        return positionService.getCurrentPosition(session);
+
+        ReaderPosition pos = session.getRestorePosition();
+        if (pos == null) {
+            updateProgressUI(session, 0);
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
+        }
+
+        // Оновлюємо прогрес (можливо 0)
+        updateProgressUI(session, pos.getPercent());
+
+        positionService.restorePosition(session, pos, () -> {
+            updateProgressUI(session, pos.getPercent());
+            if (onComplete != null) {
+                onComplete.run();
+            }
+        });
     }
 
-    /**
-     * Відновлює позицію та оновлює прогрес-бар.
-     */
+    // Версія без callback для зворотньої сумісності
     public boolean restorePosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
@@ -122,22 +195,29 @@ public class ReaderFacade {
 
         ReaderPosition pos = session.getRestorePosition();
         if (pos == null) {
-            // Немає збереженої позиції - скидаємо прогрес на 0
             updateProgressUI(session, 0);
             return false;
         }
 
-        boolean success = positionService.restorePosition(session, pos);
-
-        // Оновлюємо UI з позиції (навіть якщо відновлення не точне)
         updateProgressUI(session, pos.getPercent());
-
-        return success;
+        positionService.restorePosition(session, pos, null);
+        return true;
     }
 
     /**
-     * Оновлює прогрес-бар у UI.
+     * Оновлення прогресу з поточної позиції.
      */
+    public void updateProgressFromCurrentPosition() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null || !session.isActive()) {
+            return;
+        }
+        ReaderPosition pos = positionService.getCurrentPosition(session);
+        if (pos != null) {
+            updateProgressUI(session, pos.getPercent());
+        }
+    }
+
     private void updateProgressUI(ReaderSession session, double percent) {
         if (session == null) {
             return;
@@ -150,9 +230,20 @@ public class ReaderFacade {
             if (session.getProgressLabel() != null) {
                 session.getProgressLabel().setText((int) percent + "%");
             }
-            log.debug("Progress UI updated: {}%", (int) percent);
         });
     }
+
+    // ==================== Періодичне збереження ====================
+
+    public void startPeriodicSaving(ReaderSession session) {
+        positionService.startPeriodicSaving(session);
+    }
+
+    public void stopPeriodicSaving(ReaderSession session) {
+        positionService.stopPeriodicSaving(session);
+    }
+
+    // ==================== TOC ====================
 
     public List<Chapter> getToc() {
         ReaderSession session = sessionManager.getCurrentSession();
@@ -169,6 +260,16 @@ public class ReaderFacade {
         }
         return tocService.navigateToChapter(session, chapter);
     }
+
+    public String getCurrentChapterTitle() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null || !session.isActive()) {
+            return "";
+        }
+        return tocService.getCurrentChapterTitle(session);
+    }
+
+    // ==================== Закладки ====================
 
     public Bookmark addBookmark() {
         ReaderSession session = sessionManager.getCurrentSession();
@@ -198,6 +299,16 @@ public class ReaderFacade {
         return bookmarkService.goToBookmark(session, bookmark);
     }
 
+    public int getBookmarkCount() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null || session.getBook() == null) {
+            return 0;
+        }
+        return bookmarkService.getBookmarkCount(session.getBookId());
+    }
+
+    // ==================== Налаштування ====================
+
     public void toggleTheme() {
         String theme = settingsService.toggleTheme();
         ReaderSession session = sessionManager.getCurrentSession();
@@ -223,6 +334,30 @@ public class ReaderFacade {
         }
     }
 
+    public void applySettings(ReaderSession session) {
+        if (session != null && session.isActive()) {
+            contentService.applySettings(session);
+        }
+    }
+
+    public ReaderSettings getSettings() {
+        return settingsService.getSettings();
+    }
+
+    public List<String> getAvailableFonts() {
+        return settingsService.getAvailableFonts();
+    }
+
+    public void resetSettings() {
+        settingsService.resetToDefaults();
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session != null && session.isActive()) {
+            contentService.applySettings(session);
+        }
+    }
+
+    // ==================== Zoom ====================
+
     public void setZoom(double zoom) {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || session.getWebView() == null) {
@@ -240,6 +375,8 @@ public class ReaderFacade {
         return session.getWebView().getZoom();
     }
 
+    // ==================== Стан ====================
+
     public boolean isBookOpen() {
         return sessionManager.hasActiveSession();
     }
@@ -249,80 +386,22 @@ public class ReaderFacade {
         return session != null ? session.getBook() : null;
     }
 
-    public String getCurrentChapterTitle() {
+    public ReaderPosition getCurrentPosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
-            return "";
+            return null;
         }
-        return tocService.getCurrentChapterTitle(session);
-    }
-
-    public int getBookmarkCount() {
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session == null || session.getBook() == null) {
-            return 0;
-        }
-        return bookmarkService.getBookmarkCount(session.getBookId());
-    }
-
-    public void clearCache() {
-        contentService.clearCache();
-        positionService.clearCache();
+        return positionService.getCurrentPosition(session);
     }
 
     public boolean isClosing() {
         return isClosing.get();
     }
 
-    public void setClosing(boolean closing) {
-        isClosing.set(closing);
-    }
+    // ==================== Кеш ====================
 
-    public ReaderSettings getSettings() {
-        return settingsService.getSettings();
-    }
-
-    public String generateCss() {
-        return settingsService.generateCss();
-    }
-
-    public List<String> getAvailableFonts() {
-        return settingsService.getAvailableFonts();
-    }
-
-    public void resetSettings() {
-        settingsService.resetToDefaults();
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session != null && session.isActive()) {
-            contentService.applySettings(session);
-        }
-    }
-
-    public void startPeriodicSaving(ReaderSession session) {
-        positionService.startPeriodicSaving(session);
-    }
-
-    public void stopPeriodicSaving(ReaderSession session) {
-        positionService.stopPeriodicSaving(session);
-    }
-
-    public void applySettings(ReaderSession session) {
-        if (session != null && session.isActive()) {
-            contentService.applySettings(session);
-        }
-    }
-
-    /**
-     * Оновлює прогрес-бар з поточної позиції.
-     */
-    public void updateProgressFromCurrentPosition() {
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session == null || !session.isActive()) {
-            return;
-        }
-        ReaderPosition pos = positionService.getCurrentPosition(session);
-        if (pos != null) {
-            updateProgressUI(session, pos.getPercent());
-        }
+    public void clearCache() {
+        contentService.clearCache();
+        positionService.clearCache();
     }
 }

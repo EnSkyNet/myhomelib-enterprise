@@ -1,12 +1,15 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.BookListItem;
-import com.myhomelibcorp.application.port.out.repository.PageableBookQueryRepository;
-import com.myhomelibcorp.application.query.book.PageableBookQuery;
-import com.myhomelibcorp.application.query.common.PageRequest;
+import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
+import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
+import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
@@ -20,7 +23,6 @@ import com.myhomelibcorp.ui.viewmodel.BookTableViewModel;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -31,38 +33,39 @@ import java.util.stream.Collectors;
 @Slf4j
 public class BookLoaderService {
 
-    private final PageableBookQueryRepository pageableRepository;
+    private final BookQueryRepository bookQueryRepository;
     private final BookViewModelMapper viewModelMapper;
+    private final BookMapper bookMapper;
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
-    private PageableBookQuery lastQuery;
 
     private static final int DEFAULT_PAGE_SIZE = 50;
+    private BookQuery lastQuery;
 
-    // ===================== ОСНОВНИЙ МЕТОД ЗАВАНТАЖЕННЯ =====================
+    // ===== Завантаження книг =====
 
-    public void loadBooks(PageableBookQuery query) {
+    public void loadBooks(BookQuery query) {
         this.lastQuery = query;
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
 
         executor.submit(() -> {
-            PageResult<BookListItem> result = pageableRepository.findPage(query);
-            log.info("Завантажено {} книг з {} загалом", result.content().size(), result.totalElements());
+            PageResult<Book> result = bookQueryRepository.findPage(query);
+            log.info("Завантажено {} книг з {} всього", result.content().size(), result.totalElements());
             return result;
         }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
             vm.setLoading(false);
+
+            // Конвертуємо Book → BookDto → BookViewModel
             List<BookViewModel> vms = result.content().stream()
+                    .map(bookMapper::toDto)
                     .map(viewModelMapper::toViewModel)
                     .collect(Collectors.toList());
 
-            // Отримуємо контролер через ApplicationState
             BookTableController controller = appState.getBookTableController();
             if (controller != null) {
                 controller.loadGroupedBooks(vms);
             } else {
-                // Якщо контролер ще не готовий, просто зберігаємо книги в ViewModel
-                log.debug("BookTableController ще не готовий, зберігаємо книги в ViewModel");
                 vm.setBooks(vms);
             }
 
@@ -96,130 +99,109 @@ public class BookLoaderService {
         }
     }
 
-    // ===================== СПЕЦІАЛІЗОВАНІ МЕТОДИ ЗАВАНТАЖЕННЯ =====================
+    // ===== Спеціальні запити =====
 
     public void loadBooksByAuthor(AuthorId authorId) {
-        PageableBookQuery query = PageableBookQuery.builder()
+        BookQuery query = BookQuery.builder()
                 .authorId(authorId)
-                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
                 .build();
         loadBooks(query);
     }
 
     public void loadBooksBySeries(SeriesId seriesId) {
-        PageableBookQuery query = PageableBookQuery.builder()
+        BookQuery query = BookQuery.builder()
                 .seriesId(seriesId)
-                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
                 .build();
         loadBooks(query);
     }
 
     public void loadBooksByGenre(GenreId genreId) {
-        PageableBookQuery query = PageableBookQuery.builder()
+        BookQuery query = BookQuery.builder()
                 .genreId(genreId)
-                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
                 .build();
         loadBooks(query);
     }
 
     public void loadBooksByGroup(GroupId groupId) {
-        PageableBookQuery query = PageableBookQuery.builder()
+        BookQuery query = BookQuery.builder()
                 .groupId(groupId)
-                .pageRequest(new PageRequest(0, 10000, SortBy.TITLE, SortDirection.ASC))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
                 .build();
         loadBooks(query);
     }
 
     public void loadAllBooks() {
-        PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
                 .build();
         loadBooks(query);
     }
 
-    // ===================== КЕШОВАНІ МЕТОДИ ДЛЯ DASHBOARD =====================
+    // ===== Dashboard =====
 
-    @Cacheable(value = "recentBooks", key = "#limit", unless = "#result == null || #result.isEmpty()")
     public List<BookViewModel> loadRecentBooks(int limit) {
-        log.debug("Завантаження останніх книг з БД (кеш порожній)");
-        PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new PageRequest(0, limit, SortBy.DATE, SortDirection.DESC))
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(limit, 0))
+                .sortBy(SortBy.DATE)
+                .direction(SortDirection.DESC)
                 .build();
-        PageResult<BookListItem> result = pageableRepository.findPage(query);
+        PageResult<Book> result = bookQueryRepository.findPage(query);
         return result.content().stream()
+                .map(bookMapper::toDto)
                 .map(viewModelMapper::toViewModel)
                 .collect(Collectors.toList());
     }
 
-    @Cacheable(value = "recentlyAdded", key = "#limit", unless = "#result == null || #result.isEmpty()")
     public List<BookViewModel> loadRecentlyAdded(int limit) {
-        log.debug("Завантаження нещодавно доданих книг з БД (кеш порожній)");
-        PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(new PageRequest(0, limit, SortBy.DATE, SortDirection.DESC))
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(limit, 0))
+                .sortBy(SortBy.DATE)
+                .direction(SortDirection.DESC)
                 .build();
-        PageResult<BookListItem> result = pageableRepository.findPage(query);
+        PageResult<Book> result = bookQueryRepository.findPage(query);
         return result.content().stream()
+                .map(bookMapper::toDto)
                 .map(viewModelMapper::toViewModel)
                 .collect(Collectors.toList());
-    }
-
-    // ===================== МЕТОДИ ДЛЯ ГОЛОВНОЇ СТОРІНКИ (DASHBOARD) =====================
-
-    public void loadRecentBooks() {
-        List<BookViewModel> books = loadRecentBooks(10);
-        BookTableViewModel vm = appState.getBookTable();
-        vm.setBooks(books);
-        vm.setTotalElements(books.size());
-        vm.setTotalPages(1);
-        vm.setCurrentPage(0);
-        if (!books.isEmpty()) {
-            vm.setSelectedBook(books.get(0));
-        }
-        appState.getStatusBar().setStatusText("Показано останні " + books.size() + " книг");
-    }
-
-    public void loadRecentlyAdded() {
-        List<BookViewModel> books = loadRecentlyAdded(10);
-        BookTableViewModel vm = appState.getBookTable();
-        vm.setBooks(books);
-        vm.setTotalElements(books.size());
-        vm.setTotalPages(1);
-        vm.setCurrentPage(0);
-        if (!books.isEmpty()) {
-            vm.setSelectedBook(books.get(0));
-        }
-        appState.getStatusBar().setStatusText("Показано " + books.size() + " нещодавно доданих книг");
     }
 
     public void loadFavoriteBooks() {
         loadBooksByGroup(GroupId.fromLong(1L));
     }
 
-    public void loadContinueReading() {
-        PageableBookQuery query = PageableBookQuery.builder()
-                .onlyRead(false)
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.DATE, SortDirection.DESC))
-                .build();
-        loadBooks(query);
-    }
-
     public void loadBooksByLanguage(String languageCode) {
-        PageableBookQuery query = PageableBookQuery.builder()
+        BookQuery query = BookQuery.builder()
                 .language(LanguageCode.of(languageCode))
-                .pageRequest(new PageRequest(0, DEFAULT_PAGE_SIZE, SortBy.TITLE, SortDirection.ASC))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
                 .build();
         loadBooks(query);
     }
 
-    // ===================== МЕТОДИ ПАГІНАЦІЇ =====================
+    // ===== Пагінація =====
 
     public void nextPage() {
         BookTableViewModel vm = appState.getBookTable();
         if (vm.hasNextPage()) {
             int next = vm.getCurrentPage() + 1;
-            PageRequest pageRequest = new PageRequest(next, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection());
-            PageableBookQuery query = PageableBookQuery.builder()
-                    .pageRequest(pageRequest)
+            BookQuery query = BookQuery.builder()
+                    .pagination(Pagination.of(vm.getPageSize(), next * vm.getPageSize()))
+                    .sortBy(vm.getSortBy())
+                    .direction(vm.getSortDirection())
                     .build();
             loadBooks(query);
         }
@@ -229,9 +211,10 @@ public class BookLoaderService {
         BookTableViewModel vm = appState.getBookTable();
         if (vm.hasPreviousPage()) {
             int prev = vm.getCurrentPage() - 1;
-            PageRequest pageRequest = new PageRequest(prev, vm.getPageSize(), vm.getSortBy(), vm.getSortDirection());
-            PageableBookQuery query = PageableBookQuery.builder()
-                    .pageRequest(pageRequest)
+            BookQuery query = BookQuery.builder()
+                    .pagination(Pagination.of(vm.getPageSize(), prev * vm.getPageSize()))
+                    .sortBy(vm.getSortBy())
+                    .direction(vm.getSortDirection())
                     .build();
             loadBooks(query);
         }
@@ -240,9 +223,10 @@ public class BookLoaderService {
     public void setPageSize(int size) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setPageSize(size);
-        PageRequest pageRequest = new PageRequest(0, size, vm.getSortBy(), vm.getSortDirection());
-        PageableBookQuery query = PageableBookQuery.builder()
-                .pageRequest(pageRequest)
+        BookQuery query = BookQuery.builder()
+                .pagination(Pagination.of(size, 0))
+                .sortBy(vm.getSortBy())
+                .direction(vm.getSortDirection())
                 .build();
         loadBooks(query);
     }

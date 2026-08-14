@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.cache;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
@@ -22,6 +23,18 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     private final BookQueryRepository delegate;
     private final BookCache bookCache;
 
+    // ===== Пагінація (делегуємо без кешу) =====
+    @Override
+    public PageResult<Book> findPage(BookQuery query) {
+        return delegate.findPage(query);
+    }
+
+    @Override
+    public long count(BookQuery query) {
+        return delegate.count(query);
+    }
+
+    // ===== Пошук по ID (з кешем) =====
     @Override
     public Optional<Book> findById(BookId id) {
         if (id == null) {
@@ -69,25 +82,10 @@ public class CachedBookQueryRepository implements BookQueryRepository {
         return result;
     }
 
-    @Override
-    public List<Book> find(BookQuery query) {
-        return delegate.find(query);
-    }
-
-    @Override
-    public long count(BookQuery query) {
-        return delegate.count(query);
-    }
-
+    // ===== Спеціальні запити (делегуємо) =====
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
         return delegate.findByTitleAndAuthor(title, authorLastName);
-    }
-
-    @Override
-    @Deprecated
-    public List<Book> findAll() {
-        return delegate.findAll();
     }
 
     @Override
@@ -105,6 +103,7 @@ public class CachedBookQueryRepository implements BookQueryRepository {
         return delegate.findFavoriteAuthors(limit);
     }
 
+    // ===== DataIntegrity =====
     @Override
     public long countBooksWithoutAuthor() {
         return delegate.countBooksWithoutAuthor();
@@ -118,5 +117,18 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     @Override
     public List<BookId> findDuplicateBookIds() {
         return delegate.findDuplicateBookIds();
+    }
+
+    // ===== @Deprecated методи =====
+    @Override
+    @Deprecated
+    public List<Book> find(BookQuery query) {
+        return delegate.find(query);
+    }
+
+    @Override
+    @Deprecated
+    public List<Book> findAll() {
+        return delegate.findAll();
     }
 }

@@ -3,7 +3,6 @@ package com.myhomelibcorp.architecture;
 import com.tngtech.archunit.core.domain.JavaClasses;
 import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
@@ -14,6 +13,8 @@ class LayerArchitectureTest {
     private final JavaClasses classes = new ClassFileImporter()
             .withImportOption(new ImportOption.DoNotIncludeTests())
             .importPackages("com.myhomelibcorp");
+
+    // ===== DOMAIN =====
 
     @Test
     void domainDoesNotDependOnFrameworkOrOuterLayers() {
@@ -30,7 +31,8 @@ class LayerArchitectureTest {
                 .check(classes);
     }
 
-    @Disabled("Тимчасово вимкнено до завершення архітектурного рефакторингу (Етап 3)")
+    // ===== APPLICATION =====
+
     @Test
     void applicationDoesNotDependOnInfrastructureOrUi() {
         noClasses()
@@ -75,6 +77,16 @@ class LayerArchitectureTest {
     }
 
     @Test
+    void applicationPortsAreInterfacesOnly() {
+        classes()
+                .that().resideInAnyPackage("..application.port.out..")
+                .should().beInterfaces()
+                .check(classes);
+    }
+
+    // ===== INFRASTRUCTURE =====
+
+    @Test
     void infrastructureDoesNotDependOnUi() {
         noClasses()
                 .that().resideInAnyPackage("..infrastructure..")
@@ -84,7 +96,8 @@ class LayerArchitectureTest {
                 .check(classes);
     }
 
-    @Disabled("Тимчасово вимкнено до завершення архітектурного рефакторингу (Етап 3)")
+    // ===== UI =====
+
     @Test
     void uiDoesNotDependOnRepositoryDirectly() {
         noClasses()
@@ -98,7 +111,6 @@ class LayerArchitectureTest {
                 .check(classes);
     }
 
-    @Disabled("Тимчасово вимкнено до завершення архітектурного рефакторингу (Етап 3)")
     @Test
     void uiDoesNotDependOnApplicationPortOut() {
         noClasses()
@@ -123,13 +135,7 @@ class LayerArchitectureTest {
                 .check(classes);
     }
 
-    @Test
-    void applicationPortsAreInterfacesOnly() {
-        classes()
-                .that().resideInAnyPackage("..application.port.out..")
-                .should().beInterfaces()
-                .check(classes);
-    }
+    // ===== CROSS-CUTTING =====
 
     @Test
     void noJavaFxInDomain() {
@@ -144,6 +150,41 @@ class LayerArchitectureTest {
         noClasses()
                 .that().resideInAnyPackage("..domain..")
                 .should().dependOnClassesThat().resideInAnyPackage("org.springframework..")
+                .check(classes);
+    }
+
+    // ===== READER SPECIFIC =====
+
+    @Test
+    void readerDoesNotDependOnInfrastructureDirectly() {
+        noClasses()
+                .that().resideInAnyPackage("..reader..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "..infrastructure..",
+                        "..sqlite..",
+                        "..lucene.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void readerFacadeDoesNotDependOnUi() {
+        noClasses()
+                .that().resideInAnyPackage("..reader.service..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "..ui..",
+                        "javafx.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void readerModelDoesNotDependOnJavaFx() {
+        noClasses()
+                .that().resideInAnyPackage("..reader.model..")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "javafx.."
+                )
                 .check(classes);
     }
 }

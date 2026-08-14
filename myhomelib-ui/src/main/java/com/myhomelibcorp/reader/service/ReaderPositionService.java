@@ -10,6 +10,8 @@ import javafx.scene.web.WebEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -18,7 +20,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 @RequiredArgsConstructor
@@ -36,9 +37,8 @@ public class ReaderPositionService {
     private static final long SAVE_DELAY_MS = 1000;
     private static final long SAVE_INTERVAL_SECONDS = 5;
 
-    /**
-     * Отримує поточну позицію з WebView через FX поток.
-     */
+    // ==================== Отримання позиції ====================
+
     public ReaderPosition getCurrentPosition(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return null;
@@ -46,18 +46,13 @@ public class ReaderPositionService {
 
         WebEngine engine = session.getWebEngine();
 
-        // Перевіряємо чи завантажено контент через FX поток
         if (!isContentLoadedOnFxThread(engine)) {
             return null;
         }
 
-        // Виконуємо JS на FX потоці
         return getPositionOnFxThread(session);
     }
 
-    /**
-     * Перевіряє чи завантажено контент на FX потоці.
-     */
     private boolean isContentLoadedOnFxThread(WebEngine engine) {
         if (engine == null) {
             return false;
@@ -67,28 +62,23 @@ public class ReaderPositionService {
             return jsBridge.isContentLoaded(engine);
         }
 
-        // Якщо не на FX потоці - виконуємо через Platform.runLater з очікуванням
         CompletableFuture<Boolean> future = new CompletableFuture<>();
         Platform.runLater(() -> {
             try {
-                boolean loaded = jsBridge.isContentLoaded(engine);
-                future.complete(loaded);
+                future.complete(jsBridge.isContentLoaded(engine));
             } catch (Exception e) {
                 future.complete(false);
             }
         });
 
         try {
-            return future.get(3, TimeUnit.SECONDS);
+            return future.get(2, TimeUnit.SECONDS);
         } catch (Exception e) {
             log.debug("Failed to check content loaded: {}", e.getMessage());
             return false;
         }
     }
 
-    /**
-     * Отримує позицію на FX потоці.
-     */
     private ReaderPosition getPositionOnFxThread(ReaderSession session) {
         if (session == null || session.getWebEngine() == null) {
             return null;
@@ -98,12 +88,10 @@ public class ReaderPositionService {
             return getPositionSync(session);
         }
 
-        // Якщо не на FX потоці - виконуємо через Platform.runLater з очікуванням
         CompletableFuture<ReaderPosition> future = new CompletableFuture<>();
         Platform.runLater(() -> {
             try {
-                ReaderPosition pos = getPositionSync(session);
-                future.complete(pos);
+                future.complete(getPositionSync(session));
             } catch (Exception e) {
                 future.completeExceptionally(e);
             }
@@ -117,9 +105,6 @@ public class ReaderPositionService {
         }
     }
 
-    /**
-     * Синхронне отримання позиції (має викликатися тільки на FX потоці).
-     */
     private ReaderPosition getPositionSync(ReaderSession session) {
         if (!Platform.isFxApplicationThread()) {
             throw new IllegalStateException("Must be called on FX application thread");
@@ -132,62 +117,82 @@ public class ReaderPositionService {
 
         try {
             String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    if (paragraphs.length === 0) {
-                        return JSON.stringify({
-                            paragraphId: '',
-                            paragraphIndex: -1,
-                            charOffset: 0,
-                            percent: 0,
-                            chapterId: '',
-                            chapterTitle: '',
-                            totalParagraphs: 0
-                        });
-                    }
-
-                    var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
-                    var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                    var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-
-                    var firstVisible = 0;
-                    for (var i = 0; i < paragraphs.length; i++) {
-                        var rect = paragraphs[i].getBoundingClientRect();
-                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                            firstVisible = i;
-                            break;
-                        }
-                    }
-
-                    var el = paragraphs[firstVisible];
-                    var text = el.innerText || '';
-                    var totalHeight = el.getBoundingClientRect().height || 1;
-                    var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
-                    var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
-                    var visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                    var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
-                    var charOffset = Math.floor(ratio * text.length);
-
-                    var chapterTitle = '';
-                    var chapterEl = el.closest('.chapter');
-                    if (chapterEl) {
-                        var titleEl = chapterEl.querySelector('.chapter-title');
-                        if (titleEl) {
-                            chapterTitle = titleEl.innerText || '';
-                        }
-                    }
-
+            (function() {
+                var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
+                if (paragraphs.length === 0) {
                     return JSON.stringify({
-                        paragraphId: el.getAttribute('data-paragraph-id') || '',
-                        paragraphIndex: firstVisible,
-                        charOffset: charOffset,
-                        percent: Math.min(1, Math.max(0, percent)),
-                        chapterId: chapterEl ? chapterEl.id || '' : '',
-                        chapterTitle: chapterTitle,
-                        totalParagraphs: paragraphs.length
+                        paragraphId: '',
+                        paragraphIndex: 0,
+                        charOffset: 0,
+                        percent: 0,
+                        chapterId: '',
+                        chapterTitle: '',
+                        totalParagraphs: 0
                     });
-                })();
-            """;
+                }
+
+                var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
+                var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+                var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
+
+                // Знаходимо перший видимий параграф
+                var firstVisible = 0;
+                for (var i = 0; i < paragraphs.length; i++) {
+                    var rect = paragraphs[i].getBoundingClientRect();
+                    if (rect.bottom > 0 && rect.top < window.innerHeight) {
+                        firstVisible = i;
+                        break;
+                    }
+                }
+
+                var el = paragraphs[firstVisible];
+                var text = el.innerText || '';
+                var totalHeight = el.getBoundingClientRect().height || 1;
+                var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
+                var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
+                var visibleHeight = Math.max(0, visibleBottom - visibleTop);
+                var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
+                var charOffset = Math.floor(ratio * text.length);
+
+                var chapterTitle = '';
+                var chapterEl = el.closest('.chapter');
+                if (chapterEl) {
+                    var titleEl = chapterEl.querySelector('.chapter-title');
+                    if (titleEl) {
+                        chapterTitle = titleEl.innerText || '';
+                    }
+                }
+
+                if (!chapterTitle) {
+                    var parent = el.parentElement;
+                    while (parent) {
+                        if (parent.classList && parent.classList.contains('chapter')) {
+                            var titleEl = parent.querySelector('.chapter-title');
+                            if (titleEl) {
+                                chapterTitle = titleEl.innerText || '';
+                                break;
+                            }
+                        }
+                        parent = parent.parentElement;
+                    }
+                }
+
+                // ВИПРАВЛЕНО: використовуємо індекс + 1 для узгодження з HTML
+                // p-id в HTML: p1, p2, p3... а в масиві індекс 0, 1, 2...
+                var paragraphIndex = firstVisible + 1;
+                var paragraphId = el.getAttribute('data-paragraph-id') || 'p' + paragraphIndex;
+
+                return JSON.stringify({
+                    paragraphId: paragraphId,
+                    paragraphIndex: paragraphIndex,
+                    charOffset: charOffset,
+                    percent: Math.min(1, Math.max(0, percent)),
+                    chapterId: chapterEl ? chapterEl.id || '' : '',
+                    chapterTitle: chapterTitle || '',
+                    totalParagraphs: paragraphs.length
+                });
+            })();
+        """;
 
             Object result = engine.executeScript(script);
             if (result == null) {
@@ -205,19 +210,22 @@ public class ReaderPositionService {
 
     private ReaderPosition parsePosition(String json, String bookId) {
         try {
-            String paragraphId = extract(json, "paragraphId");
-            int paragraphIndex = extractInt(json, "paragraphIndex");
-            int charOffset = extractInt(json, "charOffset");
-            double percent = extractDouble(json, "percent");
-            String chapterId = extract(json, "chapterId");
-            String chapterTitle = extract(json, "chapterTitle");
+            ObjectMapper mapper = new ObjectMapper();
+            JsonNode node = mapper.readTree(json);
+
+            String paragraphId = node.has("paragraphId") ? node.get("paragraphId").asText() : "";
+            int paragraphIndex = node.has("paragraphIndex") ? node.get("paragraphIndex").asInt() : 0;
+            int charOffset = node.has("charOffset") ? node.get("charOffset").asInt() : 0;
+            double percent = node.has("percent") ? node.get("percent").asDouble() * 100 : 0;
+            String chapterId = node.has("chapterId") ? node.get("chapterId").asText() : "";
+            String chapterTitle = node.has("chapterTitle") ? node.get("chapterTitle").asText() : "";
 
             return ReaderPosition.builder()
                     .bookId(bookId)
                     .paragraphId(paragraphId)
                     .paragraphIndex(paragraphIndex)
                     .charOffset(charOffset)
-                    .percent(percent * 100)
+                    .percent(percent)
                     .chapterId(chapterId)
                     .chapterTitle(chapterTitle)
                     .build();
@@ -262,9 +270,8 @@ public class ReaderPositionService {
         }
     }
 
-    /**
-     * Зберігає позицію негайно (на FX потоці).
-     */
+    // ==================== Збереження позиції ====================
+
     public void savePositionNow(ReaderSession session) {
         if (session == null || !session.isActive()) {
             return;
@@ -276,7 +283,6 @@ public class ReaderPositionService {
                 savePosition(pos);
             }
         } else {
-            // Якщо не на FX потоці - переносимо на FX
             Platform.runLater(() -> {
                 if (session.isActive()) {
                     ReaderPosition pos = getPositionSync(session);
@@ -288,9 +294,6 @@ public class ReaderPositionService {
         }
     }
 
-    /**
-     * Планує збереження позиції з дебаунсом.
-     */
     public void scheduleSave(ReaderSession session) {
         if (session == null || session.getBookId() == null) {
             return;
@@ -306,7 +309,6 @@ public class ReaderPositionService {
         ScheduledFuture<?> newTask = scheduler.schedule(() -> {
             saveTasks.remove(sessionKey);
             if (session.isActive()) {
-                // Виконуємо на FX потоці
                 Platform.runLater(() -> {
                     if (session.isActive()) {
                         ReaderPosition pos = getPositionSync(session);
@@ -321,20 +323,17 @@ public class ReaderPositionService {
         saveTasks.put(sessionKey, newTask);
     }
 
-    /**
-     * Зберігає позицію в базу даних.
-     */
     public void savePosition(ReaderPosition position) {
         if (position == null || position.getBookId() == null) {
             return;
         }
 
         if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
-            log.warn("No active collection, cannot save position");
             return;
         }
 
-        if (position.getPercent() < 0.5 && position.getParagraphIndex() < 2) {
+        // Зберігаємо тільки якщо прогрес > 1%
+        if (position.getPercent() < 1.0) {
             return;
         }
 
@@ -342,9 +341,11 @@ public class ReaderPositionService {
 
         ReaderPosition lastSaved = lastSavedPositions.get(bookId);
         if (lastSaved != null) {
-            if (lastSaved.getParagraphId().equals(position.getParagraphId()) &&
-                    Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 20 &&
-                    Math.abs(lastSaved.getPercent() - position.getPercent()) < 2.0) {
+            boolean sameParagraph = lastSaved.getParagraphId().equals(position.getParagraphId());
+            boolean sameOffset = Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 10;
+            boolean samePercent = Math.abs(lastSaved.getPercent() - position.getPercent()) < 0.5;
+
+            if (sameParagraph && sameOffset && samePercent) {
                 return;
             }
         }
@@ -366,6 +367,8 @@ public class ReaderPositionService {
             log.warn("Failed to save position: {}", e.getMessage());
         }
     }
+
+    // ==================== Завантаження позиції ====================
 
     public Optional<ReaderPosition> loadPosition(String bookId) {
         if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
@@ -399,25 +402,32 @@ public class ReaderPositionService {
         }
     }
 
-    public boolean restorePosition(ReaderSession session, ReaderPosition position) {
+    // ==================== Відновлення позиції ====================
+
+    /**
+     * Відновлює позицію в WebView (з callback).
+     */
+    public void restorePosition(ReaderSession session, ReaderPosition position, Runnable onComplete) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
-            return false;
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
         }
 
         if (position == null) {
-            // Якщо позиції немає - скролимо на початок
             Platform.runLater(() -> {
                 try {
                     session.getWebEngine().executeScript("window.scrollTo(0, 0)");
                 } catch (Exception e) {
-                    // ignore
+                    log.debug("Failed to scroll to top: {}", e.getMessage());
+                }
+                if (onComplete != null) {
+                    onComplete.run();
                 }
             });
-            return true;
+            return;
         }
-
-        // Використовуємо AtomicReference для результату
-        AtomicReference<Boolean> resultRef = new AtomicReference<>(false);
 
         Platform.runLater(() -> {
             try {
@@ -441,45 +451,28 @@ public class ReaderPositionService {
                     log.info("Restored position for book {}: {}%, paragraph {}",
                             position.getBookId(), (int) position.getPercent(), index);
                 } else {
-                    // Fallback: скрол за відсотком
                     double percent = position.getPercent() / 100.0;
                     String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
                     session.getWebEngine().executeScript(script);
-                    success = true;
                 }
-
-                resultRef.set(success);
-
             } catch (Exception e) {
                 log.warn("Failed to restore position: {}", e.getMessage());
-                resultRef.set(false);
+            } finally {
+                if (onComplete != null) {
+                    onComplete.run();
+                }
             }
         });
-
-        // Чекаємо максимум 2 секунди
-        int attempts = 0;
-        while (attempts < 20 && resultRef.get() == null) {
-            try {
-                Thread.sleep(100);
-                attempts++;
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                break;
-            }
-        }
-
-        return resultRef.get() != null && resultRef.get();
     }
 
-    public void clearCache() {
-        lastSavedPositions.clear();
-        for (ScheduledFuture<?> task : saveTasks.values()) {
-            if (task != null) {
-                task.cancel(false);
-            }
-        }
-        saveTasks.clear();
+    /**
+     * Відновлює позицію в WebView (без callback - для зворотної сумісності).
+     */
+    public void restorePosition(ReaderSession session, ReaderPosition position) {
+        restorePosition(session, position, null);
     }
+
+    // ==================== Періодичне збереження ====================
 
     public void startPeriodicSaving(ReaderSession session) {
         if (session == null || session.getSessionId() == null) {
@@ -495,7 +488,6 @@ public class ReaderPositionService {
 
         ScheduledFuture<?> newTask = scheduler.scheduleAtFixedRate(() -> {
             if (session.isActive()) {
-                // Виконуємо на FX потоці
                 Platform.runLater(() -> {
                     if (session.isActive()) {
                         ReaderPosition pos = getPositionSync(session);
@@ -522,5 +514,15 @@ public class ReaderPositionService {
             task.cancel(false);
             log.debug("Stopped periodic saving for session: {}", session.getSessionId());
         }
+    }
+
+    public void clearCache() {
+        lastSavedPositions.clear();
+        for (ScheduledFuture<?> task : saveTasks.values()) {
+            if (task != null) {
+                task.cancel(false);
+            }
+        }
+        saveTasks.clear();
     }
 }

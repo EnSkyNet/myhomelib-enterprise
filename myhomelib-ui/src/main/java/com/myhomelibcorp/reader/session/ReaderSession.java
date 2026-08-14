@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.session;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
@@ -10,41 +11,48 @@ import lombok.Builder;
 import lombok.Getter;
 import lombok.Setter;
 
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+/**
+ * Сесія Reader для однієї книги.
+ * Містить тільки необхідні дані для роботи.
+ */
 @Getter
 @Setter
 @Builder
 public class ReaderSession {
+
     private final String sessionId;
     private final BookDto book;
 
+    // ===== UI компоненти =====
     private WebView webView;
     private WebEngine webEngine;
     private ProgressBar progressBar;
     private Label progressLabel;
-    private String currentHtml;
-    private String lastLoadedHtml;
-    private int retryCount;
+
+    // ===== Позиція для відновлення =====
     private ReaderPosition restorePosition;
 
+    // ===== TOC (зберігається під час парсингу) =====
     @Builder.Default
-    private final AtomicBoolean contentLoaded = new AtomicBoolean(false);
+    private List<Chapter> chapters = new ArrayList<>();
 
+    // ===== Стан =====
     @Builder.Default
     private final AtomicBoolean isOpen = new AtomicBoolean(true);
 
     @Builder.Default
     private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
-    private boolean progressListenerSetup;
-
     public static ReaderSession create(BookDto book) {
         return ReaderSession.builder()
                 .sessionId(UUID.randomUUID().toString())
                 .book(book)
-                .retryCount(0)
+                .chapters(new ArrayList<>())
                 .build();
     }
 
@@ -63,15 +71,6 @@ public class ReaderSession {
     public void markClosed() {
         isOpen.set(false);
         isClosing.set(false);
-        contentLoaded.set(false);
-    }
-
-    public boolean isContentLoaded() {
-        return contentLoaded.get();
-    }
-
-    public void setContentLoaded(boolean value) {
-        contentLoaded.set(value);
     }
 
     public boolean isOpen() {

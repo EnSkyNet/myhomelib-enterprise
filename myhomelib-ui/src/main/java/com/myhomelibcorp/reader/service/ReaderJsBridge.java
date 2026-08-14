@@ -27,7 +27,6 @@ public class ReaderJsBridge {
             return executeScriptSafe(engine, script);
         }
 
-        // Якщо не на FX потоці - виконуємо через Platform.runLater з очікуванням
         CompletableFuture<Object> future = new CompletableFuture<>();
         Platform.runLater(() -> {
             try {
@@ -59,7 +58,7 @@ public class ReaderJsBridge {
                     "document.readyState === 'complete' && document.body !== null");
             return Boolean.TRUE.equals(result);
         } catch (Exception e) {
-            log.error("JS помилка при виконанні: document.readyState === 'complete' && document.body !== null", e);
+            log.error("JS error checking content loaded", e);
             return false;
         }
     }
@@ -73,113 +72,8 @@ public class ReaderJsBridge {
                     "document.querySelectorAll('p[data-paragraph-id]').length");
             return result instanceof Number ? ((Number) result).intValue() : 0;
         } catch (Exception e) {
-            log.warn("Не вдалося отримати кількість абзаців", e);
+            log.warn("Failed to get paragraph count", e);
             return 0;
-        }
-    }
-
-    public int getFirstVisibleParagraphIndex(WebEngine engine) {
-        if (!isEngineReady(engine)) {
-            return -1;
-        }
-        try {
-            String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    if (paragraphs.length === 0) return -1;
-                    for (var i = 0; i < paragraphs.length; i++) {
-                        var rect = paragraphs[i].getBoundingClientRect();
-                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                            return i;
-                        }
-                    }
-                    return 0;
-                })();
-            """;
-            Object result = executeScriptOnFxThread(engine, script);
-            return result instanceof Number ? ((Number) result).intValue() : -1;
-        } catch (Exception e) {
-            log.warn("Не вдалося отримати індекс видимого абзацу", e);
-            return -1;
-        }
-    }
-
-    public int getCharOffsetForParagraph(WebEngine engine, int index) {
-        if (!isEngineReady(engine)) {
-            return 0;
-        }
-        try {
-            String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    if (paragraphs.length <= INDEX) return 0;
-                    var el = paragraphs[INDEX];
-                    var text = el.innerText;
-                    if (text.length === 0) return 0;
-                    var rect = el.getBoundingClientRect();
-                    var viewportTop = 0;
-                    var viewportBottom = window.innerHeight;
-                    var visibleTop = Math.max(rect.top, viewportTop);
-                    var visibleBottom = Math.min(rect.bottom, viewportBottom);
-                    var visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                    var totalHeight = rect.bottom - rect.top;
-                    if (totalHeight <= 0) return 0;
-                    var ratio = visibleHeight / totalHeight;
-                    if (ratio < 0) ratio = 0;
-                    if (ratio > 1) ratio = 1;
-                    return Math.floor(ratio * text.length);
-                })();
-            """.replace("INDEX", String.valueOf(index));
-            Object result = executeScriptOnFxThread(engine, script);
-            return result instanceof Number ? ((Number) result).intValue() : 0;
-        } catch (Exception e) {
-            log.warn("Не вдалося отримати зсув для абзацу {}", index, e);
-            return 0;
-        }
-    }
-
-    public double getScrollPercent(WebEngine engine) {
-        if (!isEngineReady(engine)) {
-            return 0.0;
-        }
-        try {
-            String script = """
-                (function() {
-                    var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-                    var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                    if (scrollHeight <= 0) return 0;
-                    return scrollTop / scrollHeight;
-                })();
-            """;
-            Object result = executeScriptOnFxThread(engine, script);
-            return result instanceof Number ? ((Number) result).doubleValue() : 0.0;
-        } catch (Exception e) {
-            log.debug("Не вдалося отримати відсоток прокрутки", e);
-            return 0.0;
-        }
-    }
-
-    public double getParagraphPositionPercent(WebEngine engine, int index) {
-        if (!isEngineReady(engine)) {
-            return 0.0;
-        }
-        try {
-            String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    if (paragraphs.length <= INDEX) return 0;
-                    var el = paragraphs[INDEX];
-                    var docHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                    if (docHeight <= 0) return 0;
-                    var elTop = el.getBoundingClientRect().top + window.scrollY;
-                    return Math.min(1.0, elTop / docHeight);
-                })();
-            """.replace("INDEX", String.valueOf(index));
-            Object result = executeScriptOnFxThread(engine, script);
-            return result instanceof Number ? ((Number) result).doubleValue() : 0.0;
-        } catch (Exception e) {
-            log.warn("Не вдалося отримати позицію абзацу {}", index, e);
-            return 0.0;
         }
     }
 
@@ -218,63 +112,45 @@ public class ReaderJsBridge {
             Object result = executeScriptOnFxThread(engine, script);
             return Boolean.TRUE.equals(result);
         } catch (Exception e) {
-            log.error("Помилка прокрутки до абзацу {}", index, e);
+            log.error("Failed to scroll to paragraph {}", index, e);
             return false;
-        }
-    }
-
-    public String getTextAtPosition(WebEngine engine, double position) {
-        if (!isEngineReady(engine)) {
-            return "";
-        }
-        try {
-            String script = """
-                (function(pos) {
-                    var body = document.body.innerText;
-                    var len = body.length;
-                    var p = Math.floor(pos * len);
-                    var start = Math.max(0, p - 100);
-                    var end = Math.min(len, p + 100);
-                    return body.substring(start, end);
-                })(""" + position + ")";
-            Object result = executeScriptOnFxThread(engine, script);
-            return result != null ? result.toString().trim() : "";
-        } catch (Exception e) {
-            log.warn("Не вдалося отримати текст на позиції {}", position, e);
-            return "";
         }
     }
 
     public String getCurrentChapterTitle(WebEngine engine) {
         if (!isEngineReady(engine)) {
-            return "Без заголовка";
+            return "";
         }
         try {
-            Object title = executeScriptOnFxThread(engine,
-                    "document.querySelector('.chapter-title')?.innerText || ''");
-            return title != null ? title.toString() : "Без заголовка";
+            // Шукаємо найближчий .chapter-title до видимої області
+            String script = """
+                (function() {
+                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
+                    if (paragraphs.length === 0) return '';
+                    var firstVisible = 0;
+                    for (var i = 0; i < paragraphs.length; i++) {
+                        var rect = paragraphs[i].getBoundingClientRect();
+                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
+                            firstVisible = i;
+                            break;
+                        }
+                    }
+                    var el = paragraphs[firstVisible];
+                    var chapterEl = el.closest('.chapter');
+                    if (chapterEl) {
+                        var titleEl = chapterEl.querySelector('.chapter-title');
+                        if (titleEl) {
+                            return titleEl.innerText || '';
+                        }
+                    }
+                    return '';
+                })();
+            """;
+            Object result = executeScriptOnFxThread(engine, script);
+            return result != null ? result.toString() : "";
         } catch (Exception e) {
-            log.warn("Не вдалося отримати назву розділу", e);
-            return "Без заголовка";
-        }
-    }
-
-    public void setupScrollListener(WebEngine engine) {
-        if (!isEngineReady(engine)) {
-            return;
-        }
-        try {
-            executeScriptOnFxThread(engine, """
-                if (typeof window.progress === 'undefined') { window.progress = 0; }
-                window.addEventListener('scroll', function() {
-                    var scrollTop = document.documentElement.scrollTop || document.body.scrollTop;
-                    var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                    var progress = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-                    window.progress = progress;
-                });
-            """);
-        } catch (Exception e) {
-            log.error("Не вдалося налаштувати слухач прокрутки", e);
+            log.warn("Failed to get current chapter title", e);
+            return "";
         }
     }
 
@@ -283,9 +159,9 @@ public class ReaderJsBridge {
             return;
         }
         try {
-            executeScriptOnFxThread(engine, "window.myhomelib = null; window.progress = null;");
+            executeScriptOnFxThread(engine, "window.myhomelib = null;");
         } catch (Exception e) {
-            log.debug("Помилка очищення Bridge: {}", e.getMessage());
+            log.debug("Cleanup error: {}", e.getMessage());
         }
     }
 
@@ -307,7 +183,7 @@ public class ReaderJsBridge {
         try {
             return engine.executeScript(script);
         } catch (Exception e) {
-            log.error("JS помилка при виконанні: {}", script, e);
+            log.error("JS error: {}", script, e);
             throw e;
         }
     }

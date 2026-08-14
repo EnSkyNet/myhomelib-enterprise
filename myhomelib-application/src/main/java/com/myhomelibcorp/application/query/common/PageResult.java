@@ -15,4 +15,9 @@ public record PageResult<T>(List<T> content, long totalElements, int totalPages,
     public static <T> PageResult<T> empty() {
         return new PageResult<>(List.of(), 0, 0, 0, 0);
     }
+
+    public static <T> PageResult<T> of(List<T> content, long totalElements, int page, int size) {
+        int totalPages = (int) Math.ceil((double) totalElements / size);
+        return new PageResult<>(content, totalElements, totalPages, page, size);
+    }
 }

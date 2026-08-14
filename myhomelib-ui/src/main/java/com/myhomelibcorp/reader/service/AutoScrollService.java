@@ -8,6 +8,7 @@ import javafx.util.Duration;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -32,7 +33,7 @@ public class AutoScrollService {
 
         String sessionId = session.getSessionId();
 
-        // Зупиняємо попередній скрол
+        // Зупиняємо попередній скрол для цієї сесії
         stop(session);
 
         double speed = scrollSpeeds.getOrDefault(sessionId, DEFAULT_SPEED);
@@ -42,32 +43,33 @@ public class AutoScrollService {
                 stop(session);
                 return;
             }
-            Platform.runLater(() -> {
-                try {
-                    // Скролимо вниз на невеликий крок
-                    String script = """
-                        (function() {
-                            var step = %f;
-                            var current = window.scrollY || document.documentElement.scrollTop || 0;
-                            var max = document.documentElement.scrollHeight - window.innerHeight;
-                            if (current < max) {
-                                window.scrollTo(0, current + step);
-                            } else {
-                                return false;
-                            }
-                            return true;
-                        })();
-                    """.formatted(speed);
 
-                    Object result = session.getWebEngine().executeScript(script);
-                    if (Boolean.FALSE.equals(result)) {
-                        // Дійшли до кінця
-                        stop(session);
-                    }
-                } catch (Exception ex) {
-                    log.debug("Auto-scroll error: {}", ex.getMessage());
+            try {
+                // ВИПРАВЛЕНО: використовуємо String.format для коректного форматування числа
+                String step = String.format(Locale.US, "%.2f", speed);
+                String script = """
+                    (function() {
+                        var step = %s;
+                        var current = window.scrollY || document.documentElement.scrollTop || 0;
+                        var max = document.documentElement.scrollHeight - window.innerHeight;
+                        if (current < max) {
+                            window.scrollTo(0, current + step);
+                            return true;
+                        } else {
+                            return false;
+                        }
+                    })();
+                """.formatted(step);
+
+                Object result = session.getWebEngine().executeScript(script);
+                if (Boolean.FALSE.equals(result)) {
+                    log.info("Auto-scroll reached end of book");
+                    stop(session);
                 }
-            });
+            } catch (Exception ex) {
+                log.debug("Auto-scroll error: {}", ex.getMessage());
+                // Не зупиняємо скрол при тимчасових помилках
+            }
         }));
 
         timeline.setCycleCount(Timeline.INDEFINITE);
@@ -78,10 +80,11 @@ public class AutoScrollService {
     }
 
     /**
-     * Зупиняє авто-скрол.
+     * Зупиняє авто-скрол для конкретної сесії.
      */
     public void stop(ReaderSession session) {
         if (session == null) {
+            log.debug("Auto-scroll stop called with null session, ignoring");
             return;
         }
 
@@ -90,27 +93,37 @@ public class AutoScrollService {
         if (timeline != null) {
             timeline.stop();
             log.info("Auto-scroll stopped for session: {}", sessionId);
+        } else {
+            log.debug("No active auto-scroll found for session: {}", sessionId);
         }
     }
 
     /**
-     * Змінює швидкість скролу.
+     * Зупиняє авто-скрол за ID сесії.
      */
-    public void setSpeed(ReaderSession session, double speed) {
-        if (session == null) {
+    public void stopById(String sessionId) {
+        if (sessionId == null) {
             return;
         }
-
-        double clampedSpeed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
-        scrollSpeeds.put(session.getSessionId(), clampedSpeed);
-
-        // Перезапускаємо з новою швидкістю
-        if (isActive(session)) {
-            stop(session);
-            start(session);
+        Timeline timeline = activeScrolls.remove(sessionId);
+        if (timeline != null) {
+            timeline.stop();
+            log.info("Auto-scroll stopped by ID: {}", sessionId);
         }
+    }
 
-        log.debug("Auto-scroll speed set to: {}", clampedSpeed);
+    /**
+     * Зупиняє всі авто-скроли.
+     */
+    public void stopAll() {
+        for (String sessionId : activeScrolls.keySet()) {
+            Timeline timeline = activeScrolls.remove(sessionId);
+            if (timeline != null) {
+                timeline.stop();
+                log.info("Auto-scroll stopped for session: {}", sessionId);
+            }
+        }
+        log.info("All auto-scrolls stopped");
     }
 
     /**
@@ -118,16 +131,39 @@ public class AutoScrollService {
      */
     public boolean toggle(ReaderSession session) {
         if (session == null) {
+            log.warn("Cannot toggle auto-scroll: session is null");
             return false;
         }
 
-        if (isActive(session)) {
+        String sessionId = session.getSessionId();
+        if (activeScrolls.containsKey(sessionId)) {
             stop(session);
             return false;
         } else {
             start(session);
             return true;
         }
+    }
+
+    /**
+     * Встановлює швидкість скролу.
+     */
+    public void setSpeed(ReaderSession session, double speed) {
+        if (session == null) {
+            return;
+        }
+
+        double clampedSpeed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
+        String sessionId = session.getSessionId();
+        scrollSpeeds.put(sessionId, clampedSpeed);
+
+        // Перезапускаємо скрол з новою швидкістю
+        if (isActive(session)) {
+            stop(session);
+            start(session);
+        }
+
+        log.debug("Auto-scroll speed set to: {}", clampedSpeed);
     }
 
     /**
@@ -141,15 +177,21 @@ public class AutoScrollService {
     }
 
     /**
-     * Зупиняє всі авто-скроли.
+     * Отримує поточну швидкість.
      */
-    public void stopAll() {
-        for (String sessionId : activeScrolls.keySet()) {
-            Timeline timeline = activeScrolls.remove(sessionId);
-            if (timeline != null) {
-                timeline.stop();
-            }
+    public double getSpeed(ReaderSession session) {
+        if (session == null) {
+            return DEFAULT_SPEED;
         }
-        log.info("All auto-scrolls stopped");
+        return scrollSpeeds.getOrDefault(session.getSessionId(), DEFAULT_SPEED);
+    }
+
+    /**
+     * Очищає всі дані.
+     */
+    public void clear() {
+        stopAll();
+        scrollSpeeds.clear();
+        log.info("Auto-scroll service cleared");
     }
 }

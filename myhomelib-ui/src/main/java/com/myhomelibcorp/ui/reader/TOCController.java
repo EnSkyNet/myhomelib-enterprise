@@ -42,6 +42,7 @@ public class TOCController {
             if (e.getClickCount() == 2) {
                 Chapter selected = tocListView.getSelectionModel().getSelectedItem();
                 if (selected != null && onChapterSelected != null) {
+                    log.info("Navigating to chapter: {}", selected.getTitle());
                     onChapterSelected.accept(selected);
                 }
             }
@@ -51,6 +52,9 @@ public class TOCController {
     public void setChapters(List<Chapter> chapters, Consumer<Chapter> onChapterSelected) {
         this.onChapterSelected = onChapterSelected;
         tocListView.getItems().setAll(chapters);
+        if (!chapters.isEmpty()) {
+            log.info("TOC loaded with {} chapters", chapters.size());
+        }
     }
 
     @FXML

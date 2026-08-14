@@ -4,9 +4,9 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.bookmark.Bookmark;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.reader.model.Chapter;
+import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.service.AutoScrollService;
 import com.myhomelibcorp.reader.service.ReaderFacade;
-import com.myhomelibcorp.reader.service.ReaderSettingsService;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.service.NavigationService;
@@ -46,7 +46,6 @@ public class ReaderWorkspaceController {
     private final ReaderFacade readerFacade;
     private final ReaderSessionManager sessionManager;
     private final AutoScrollService autoScrollService;
-    private final ReaderSettingsService settingsService;
     private final ApplicationContext springContext;
 
     @FXML private StackPane webViewContainer;
@@ -78,7 +77,29 @@ public class ReaderWorkspaceController {
     private boolean isAutoScrollActive = false;
     private double autoScrollSpeed = 2.0;
 
-    @FXML
+    private final javafx.animation.AnimationTimer progressUpdateTimer = new javafx.animation.AnimationTimer() {
+        private long lastUpdate = 0;
+        private static final long UPDATE_INTERVAL = 2_000_000_000L; // 2 секунди
+
+        @Override
+        public void handle(long now) {
+            if (now - lastUpdate < UPDATE_INTERVAL) {
+                return;
+            }
+            lastUpdate = now;
+
+            if (currentSession != null && currentSession.isActive()) {
+                // Оновлюємо позицію та прогрес-бар
+                ReaderPosition pos = readerFacade.getCurrentPosition();
+                if (pos != null) {
+                    updateProgressBar(pos.getPercent());
+                    updatePageInfo();
+                }
+            }
+        }
+    };
+
+
     public void initialize() {
         if (isInitialized.getAndSet(true)) {
             return;
@@ -89,16 +110,29 @@ public class ReaderWorkspaceController {
         searchBar.setVisible(false);
         searchBar.setManaged(false);
 
-        // Встановлюємо обробник клавіш
         webViewContainer.setOnKeyPressed(this::onKeyPressed);
         webViewContainer.setFocusTraversable(true);
 
+        // Запускаємо таймер оновлення прогресу
+        progressUpdateTimer.start();
+
         log.info("ReaderWorkspaceController initialized");
+    }
+
+    private void updateProgressBar(double percent) {
+        if (progressBar != null) {
+            progressBar.setProgress(Math.min(1.0, percent / 100.0));
+        }
+        if (progressLabel != null) {
+            progressLabel.setText((int) percent + "%");
+        }
     }
 
     private void createWebView() {
         if (webView != null) {
             webViewContainer.getChildren().remove(webView);
+            webView = null;
+            webEngine = null;
         }
 
         webView = new WebView();
@@ -123,6 +157,12 @@ public class ReaderWorkspaceController {
             return;
         }
 
+        // Зупиняємо авто-скрол
+        if (currentSession != null) {
+            autoScrollService.stop(currentSession);
+            isAutoScrollActive = false;
+        }
+
         // Закриваємо попередню книгу
         if (currentSession != null && currentSession.isActive()) {
             readerFacade.saveCurrentPosition();
@@ -130,15 +170,9 @@ public class ReaderWorkspaceController {
             currentSession = null;
         }
 
-        // Зупиняємо авто-скрол
-        if (isAutoScrollActive) {
-            autoScrollService.stop(currentSession);
-            isAutoScrollActive = false;
-        }
-
         isClosing = false;
 
-        // Перестворюємо WebView при кожному відкритті
+        // ПЕРЕСТВОРЮЄМО WebView ПРИ КОЖНОМУ ВІДКРИТТІ
         createWebView();
 
         // Відкриваємо нову книгу
@@ -154,10 +188,10 @@ public class ReaderWorkspaceController {
             bookTitleLabel.setText(currentSession.getBook().getTitle());
             updateBookmarksCount();
 
-            // Запускаємо періодичне збереження
             readerFacade.startPeriodicSaving(currentSession);
 
-            // Відновлюємо позицію після завантаження контенту
+            String sessionId = currentSession.getSessionId();
+
             webEngine.getLoadWorker().stateProperty().addListener(new javafx.beans.value.ChangeListener<>() {
                 @Override
                 public void changed(javafx.beans.value.ObservableValue<? extends Worker.State> obs,
@@ -166,14 +200,11 @@ public class ReaderWorkspaceController {
                     if (newState == Worker.State.SUCCEEDED) {
                         webEngine.getLoadWorker().stateProperty().removeListener(this);
                         Platform.runLater(() -> {
-                            boolean restored = readerFacade.restorePosition();
-                            if (!restored) {
-                                progressBar.setProgress(0);
-                                progressLabel.setText("0%");
-                                log.debug("No saved position for book: {}", currentSession.getBook().getTitle());
+                            if (sessionManager.isCurrentSession(sessionId)) {
+                                readerFacade.restorePosition(() -> {
+                                    log.debug("Position restore completed");
+                                });
                             }
-                            // Оновлюємо інформацію про розділ
-                            updatePageInfo();
                         });
                     }
                 }
@@ -191,8 +222,7 @@ public class ReaderWorkspaceController {
 
         isClosing = true;
 
-        // Зупиняємо авто-скрол
-        if (isAutoScrollActive && currentSession != null) {
+        if (currentSession != null) {
             autoScrollService.stop(currentSession);
             isAutoScrollActive = false;
         }
@@ -205,14 +235,7 @@ public class ReaderWorkspaceController {
 
         navigationService.goBack();
 
-        new Thread(() -> {
-            try {
-                Thread.sleep(300);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-            isClosing = false;
-        }).start();
+        isClosing = false;
     }
 
     // ==================== TOC ====================
@@ -620,16 +643,20 @@ public class ReaderWorkspaceController {
             return;
         }
 
+        String chapter = readerFacade.getCurrentChapterTitle();
+        ReaderPosition pos = readerFacade.getCurrentPosition();
+        int percent = pos != null ? (int) pos.getPercent() : (int) (progressBar.getProgress() * 100);
+
         String stats = String.format(
                 "📊 Статистика читання\n\n" +
                         "📖 Книга: %s\n" +
                         "📈 Прогрес: %d%%\n" +
-                        "⏱ Останнє читання: %s\n" +
-                        "📄 Поточний розділ: %s",
+                        "📄 Поточний розділ: %s\n" +
+                        "⏱ Останнє читання: %s",
                 currentSession.getBook().getTitle(),
-                (int) (progressBar.getProgress() * 100),
-                LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")),
-                getCurrentChapterTitle()
+                percent,
+                chapter != null && !chapter.isEmpty() ? chapter : "Розділ 1",
+                LocalDateTime.now().format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"))
         );
 
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
@@ -690,19 +717,17 @@ public class ReaderWorkspaceController {
     // ==================== Інформація про розділ ====================
 
     private void updatePageInfo() {
-        String chapter = getCurrentChapterTitle();
+        if (pageInfoLabel == null) {
+            log.warn("pageInfoLabel is null, cannot update page info");
+            return;
+        }
+
+        String chapter = readerFacade.getCurrentChapterTitle();
         if (chapter != null && !chapter.isEmpty()) {
             pageInfoLabel.setText("Розділ: " + chapter);
         } else {
             pageInfoLabel.setText("Розділ 1");
         }
-    }
-
-    private String getCurrentChapterTitle() {
-        if (currentSession == null || !currentSession.isActive()) {
-            return "";
-        }
-        return readerFacade.getCurrentChapterTitle();
     }
 
     // ==================== Клавіатурні скорочення ====================
@@ -776,20 +801,6 @@ public class ReaderWorkspaceController {
             onToggleAutoScroll();
             return;
         }
-
-        // Стрілка вправо - наступна сторінка (наступний розділ)
-        if (event.getCode() == KeyCode.RIGHT && event.isControlDown()) {
-            event.consume();
-            // Тут можна додати перехід до наступного розділу
-            return;
-        }
-
-        // Стрілка вліво - попередня сторінка (попередній розділ)
-        if (event.getCode() == KeyCode.LEFT && event.isControlDown()) {
-            event.consume();
-            // Тут можна додати перехід до попереднього розділу
-            return;
-        }
     }
 
     // ==================== Діалоги ====================
@@ -819,10 +830,12 @@ public class ReaderWorkspaceController {
         }
         isInitialized.set(false);
 
+        // Зупиняємо таймер
+        progressUpdateTimer.stop();
+
         log.info("ReaderWorkspaceController.cleanup()");
 
-        // Зупиняємо авто-скрол
-        if (isAutoScrollActive && currentSession != null) {
+        if (currentSession != null) {
             autoScrollService.stop(currentSession);
             isAutoScrollActive = false;
         }

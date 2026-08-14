@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.domain.model.valueobject.*;
 
 public record BookQuery(
+        // Фільтри
         AuthorId authorId,
         SeriesId seriesId,
         GenreId genreId,
@@ -13,9 +14,13 @@ public record BookQuery(
         String text,
         LanguageCode language,
         BookFormat format,
+
+        // Пагінація та сортування
         Pagination pagination,
         SortBy sortBy,
         SortDirection direction,
+
+        // Додаткові фільтри
         boolean onlyRead,
         boolean onlyFavorites,
         boolean withoutSeries,
@@ -64,20 +69,9 @@ public record BookQuery(
 
         public BookQuery build() {
             return new BookQuery(
-                    authorId,
-                    seriesId,
-                    genreId,
-                    groupId,
-                    text,
-                    language,
-                    format,
-                    pagination,
-                    sortBy,
-                    direction,
-                    onlyRead,
-                    onlyFavorites,
-                    withoutSeries,
-                    withCover
+                    authorId, seriesId, genreId, groupId, text, language, format,
+                    pagination, sortBy, direction,
+                    onlyRead, onlyFavorites, withoutSeries, withCover
             );
         }
     }

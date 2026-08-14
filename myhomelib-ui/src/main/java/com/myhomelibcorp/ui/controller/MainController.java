@@ -7,7 +7,7 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-import com.myhomelibcorp.reader.service.ReaderLifecycleManager;
+import com.myhomelibcorp.reader.service.ReaderFacade;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
@@ -38,24 +38,24 @@ import java.util.List;
 
 /**
  * Головний контролер програми.
- * Відповідає за навігацію та координацію між воркспейсами.
+ * Координує всі воркспейси та навігацію.
  */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class MainController {
 
-    // ===== БАЗОВІ КОМПОНЕНТИ =====
+    // ===== Залежності =====
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final WorkspaceManager workspaceManager;
     private final NavigationHistoryService navigationHistory;
     private final ApplicationEventPublisher eventPublisher;
-    private final ReaderLifecycleManager readerLifecycleManager;
+    private final ReaderFacade readerFacade;
     private final ApplicationContext springContext;
     private final ReaderSessionManager readerSessionManager;
 
-    // ===== КОНТРОЛЕРИ ДЛЯ ОКРЕМИХ ФУНКЦІЙ =====
+    // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
     private final BatchOperationsController batchOperationsController;
@@ -72,7 +72,7 @@ public class MainController {
     @FXML private Button forwardButton;
     @FXML private StackPane workspaceStackPane;
 
-    // ===== СТАН =====
+    // ===== Стан =====
     private Pane currentWorkspace;
 
     @FXML
@@ -87,13 +87,12 @@ public class MainController {
         searchField.setOnAction(event -> handleSearch());
 
         showDashboard();
-
         updateNavigationButtons();
 
         log.info("MainController готовий до роботи");
     }
 
-    // ==================== НАВІГАЦІЙНІ МЕТОДИ ====================
+    // ==================== Навігація по воркспейсах ====================
 
     public void showDashboard() {
         workspaceManager.showDashboard();
@@ -156,22 +155,29 @@ public class MainController {
         return mainPane;
     }
 
+    // ==================== Reader ====================
+
+    /**
+     * Очищує Reader при переході на інший воркспейс.
+     */
     public void cleanupReader() {
-        if (readerLifecycleManager != null && readerLifecycleManager.isReaderOpen()) {
+        if (readerFacade.isBookOpen()) {
             ReaderSession session = readerSessionManager.getCurrentSession();
             if (session != null) {
-                readerLifecycleManager.saveState(session);
-                readerLifecycleManager.closeBook(session);
+                log.info("Очищення Reader при переході...");
+                readerFacade.saveCurrentPosition();
+                readerFacade.closeBook();
             }
         }
     }
 
-    // ==================== ОБРОБНИКИ ПОДІЙ FXML ====================
+    // ==================== FXML дії ====================
 
     @FXML
     public void handleSearch() {
         String query = searchField.getText();
         if (query != null && !query.isBlank()) {
+            cleanupReader();
             showSearchResults(query);
         }
     }
@@ -214,10 +220,10 @@ public class MainController {
 
     @FXML
     public void handleSettings() {
-        dialogService.showInfo("Налаштування", "Функція налаштувань в розробці");
+        dialogService.showInfo("Налаштування", "Функція налаштувань", "Розробляється...");
     }
 
-    // ==================== НАВІГАЦІЙНІ МЕТОДИ ====================
+    // ==================== Навігаційні дії ====================
 
     @FXML
     public void onAuthors() {
@@ -257,13 +263,13 @@ public class MainController {
     @FXML
     public void onNewBooks() {
         cleanupReader();
-        // Завантажуємо останні додані книги
+        dialogService.showInfo("Нові книги", "Функція нових книг", "Розробляється...");
     }
 
     @FXML
     public void onHistory() {
         cleanupReader();
-        dialogService.showInfo("Історія", "Функція в розробці");
+        dialogService.showInfo("Історія", "Функція історії", "Розробляється...");
     }
 
     @FXML
@@ -283,26 +289,31 @@ public class MainController {
         showImportWorkspace();
     }
 
-    // ==================== ДЕЛЕГУВАННЯ КОНТРОЛЕРАМ ====================
+    // ==================== Дії з колекціями ====================
 
-    @FXML public void handleNewCollection() {
+    @FXML
+    public void handleNewCollection() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         collectionController.handleNewCollection(stage, this::showDashboard);
     }
 
-    @FXML public void handleRenameCollection() {
+    @FXML
+    public void handleRenameCollection() {
         collectionController.handleRenameCollection(this::showDashboard);
     }
 
-    @FXML public void handleDeleteCollection() {
+    @FXML
+    public void handleDeleteCollection() {
         collectionController.handleDeleteCollection(this::showDashboard);
     }
 
-    @FXML public void handleSelectCollection() {
+    @FXML
+    public void handleSelectCollection() {
         collectionController.handleSelectCollection(this::showDashboard);
     }
 
-    @FXML public void handleCollectionWizard() {
+    @FXML
+    public void handleCollectionWizard() {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/collection-wizard.fxml"));
             loader.setControllerFactory(springContext::getBean);
@@ -310,7 +321,7 @@ public class MainController {
 
             CollectionWizardController controller = loader.getController();
             Stage stage = new Stage();
-            stage.setTitle("📚 Майстер створення колекції");
+            stage.setTitle("Майстер створення колекції");
             stage.setScene(new Scene(root, 620, 480));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(mainPane.getScene().getWindow());
@@ -328,103 +339,141 @@ public class MainController {
         }
     }
 
-    @FXML public void handleAddGroup() {
+    // ==================== Дії з групами ====================
+
+    @FXML
+    public void handleAddGroup() {
         groupController.handleAddGroup(this::showDashboard);
     }
 
-    @FXML public void handleEditGroup() {
+    @FXML
+    public void handleEditGroup() {
         groupController.handleEditGroup(this::showDashboard);
     }
 
-    @FXML public void handleDeleteGroup() {
+    @FXML
+    public void handleDeleteGroup() {
         groupController.handleDeleteGroup(this::showDashboard);
     }
 
-    @FXML public void handleBatchRate() {
+    // ==================== Пакетні операції ====================
+
+    @FXML
+    public void handleBatchRate() {
         batchOperationsController.handleBatchRate(this::handleRefresh);
     }
 
-    @FXML public void handleBatchMarkRead() {
+    @FXML
+    public void handleBatchMarkRead() {
         batchOperationsController.handleBatchMarkRead(this::handleRefresh);
     }
 
-    @FXML public void handleBatchAddToGroup() {
+    @FXML
+    public void handleBatchAddToGroup() {
         batchOperationsController.handleBatchAddToGroup(this::handleRefresh);
     }
 
-    @FXML public void handleClearSelection() {
+    @FXML
+    public void handleClearSelection() {
         batchOperationsController.handleClearSelection();
     }
 
-    @FXML public void handleToggleView() {
+    // ==================== Вигляд ====================
+
+    @FXML
+    public void handleToggleView() {
         viewModeController.toggleView();
     }
 
-    @FXML public void handleShowColumns() {
-        dialogService.showInfo("Налаштування колонок", "Функція в розробці");
+    @FXML
+    public void handleShowColumns() {
+        dialogService.showInfo("Налаштування колонок", "Функція налаштування колонок", "Розробляється...");
     }
 
-    @FXML public void handleExport() {
+    // ==================== Експорт ====================
+
+    @FXML
+    public void handleExport() {
         exportController.handleExport(mainPane);
     }
 
-    @FXML public void handleExportInpx() {
+    @FXML
+    public void handleExportInpx() {
         exportController.handleExportInpx(mainPane, this::handleRefresh);
     }
 
-    @FXML public void handleImportFb2() {
+    // ==================== Імпорт ====================
+
+    @FXML
+    public void handleImportFb2() {
         importController.importFb2(this::handleRefresh);
     }
 
-    @FXML public void handleImportInpx() {
+    @FXML
+    public void handleImportInpx() {
         importController.importInpx(this::handleRefresh);
     }
 
-    @FXML public void handleImportDirectory() {
+    @FXML
+    public void handleImportDirectory() {
         importController.importDirectory(this::handleRefresh);
     }
 
-    @FXML public void handleSyncFolder() {
+    @FXML
+    public void handleSyncFolder() {
         importController.handleSyncFolder(this::handleRefresh);
     }
 
-    @FXML public void handleCheckIntegrity() {
+    // ==================== Інструменти БД ====================
+
+    @FXML
+    public void handleCheckIntegrity() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         databaseToolsController.handleCheckIntegrity(stage);
     }
 
-    @FXML public void handleVacuum() {
+    @FXML
+    public void handleVacuum() {
         databaseToolsController.handleVacuum();
     }
 
-    @FXML public void handleRebuildIndex() {
+    @FXML
+    public void handleRebuildIndex() {
         databaseToolsController.handleRebuildIndex();
     }
 
-    @FXML public void handleBackup() {
+    @FXML
+    public void handleBackup() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         databaseToolsController.handleBackup(stage);
     }
 
-    @FXML public void handleRestore() {
+    @FXML
+    public void handleRestore() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         databaseToolsController.handleRestore(stage);
     }
 
-    @FXML public void handleStatistics() {
+    @FXML
+    public void handleStatistics() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         databaseToolsController.handleStatistics(stage);
     }
 
-    @FXML public void handleEditMetadata() {
-        dialogService.showInfo("Редагування метаданих", "Функція в розробці");
+    // ==================== Редагування книг ====================
+
+    @FXML
+    public void handleEditMetadata() {
+        dialogService.showInfo("Редагування метаданих", "Функція редагування метаданих", "Розробляється...");
     }
 
-    @FXML public void handleDeleteBook() {
-        dialogService.showInfo("Видалення книги", "Функція в розробці");
+    @FXML
+    public void handleDeleteBook() {
+        dialogService.showInfo("Видалення книги", "Функція видалення книги", "Розробляється...");
     }
 
-    @FXML public void handleAddBook() {
-        dialogService.showInfo("Додати книгу", "Використовуйте 'Імпорт'");
+    @FXML
+    public void handleAddBook() {
+        dialogService.showInfo("Додати книгу", "Функція додавання книги", "Розробляється...");
     }
 }

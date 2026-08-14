@@ -10,7 +10,8 @@
       style="-fx-background-color: #f5f5f5;"
       VBox.vgrow="ALWAYS"
       prefHeight="0"
-      minHeight="0">
+      minHeight="0"
+      onKeyPressed="#onKeyPressed">
 
     <!-- ToolBar -->
     <ToolBar style="-fx-background-color: #e0e0e0; -fx-padding: 5;">
@@ -23,32 +24,49 @@
         <Button text="🔍" onAction="#onToggleSearch">
             <tooltip><Tooltip text="Пошук (Ctrl+F)"/></tooltip>
         </Button>
+        <Button text="⛶" onAction="#onToggleFullscreen">
+            <tooltip><Tooltip text="Повний екран (F11)"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="▶" onAction="#onToggleAutoScroll">
+            <tooltip><Tooltip text="Авто-скрол (Space)"/></tooltip>
+        </Button>
+        <Button text="+" onAction="#onAutoScrollSpeedUp">
+            <tooltip><Tooltip text="Збільшити швидкість авто-скролу"/></tooltip>
+        </Button>
+        <Button text="−" onAction="#onAutoScrollSpeedDown">
+            <tooltip><Tooltip text="Зменшити швидкість авто-скролу"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
         <Button text="🔍+" onAction="#onZoomIn">
-            <tooltip><Tooltip text="Збільшити"/></tooltip>
+            <tooltip><Tooltip text="Збільшити масштаб (Ctrl++)"/></tooltip>
         </Button>
         <Button text="🔍-" onAction="#onZoomOut">
-            <tooltip><Tooltip text="Зменшити"/></tooltip>
+            <tooltip><Tooltip text="Зменшити масштаб (Ctrl+-)"/></tooltip>
         </Button>
         <Button text="100%" onAction="#onZoomReset">
-            <tooltip><Tooltip text="Скинути масштаб"/></tooltip>
+            <tooltip><Tooltip text="Скинути масштаб (Ctrl+0)"/></tooltip>
         </Button>
+        <Separator orientation="VERTICAL"/>
         <Button text="🌙" onAction="#onToggleTheme">
             <tooltip><Tooltip text="Тема (світла/темна)"/></tooltip>
         </Button>
         <Button text="📑" onAction="#onToggleToc">
             <tooltip><Tooltip text="Зміст"/></tooltip>
         </Button>
+        <Separator orientation="VERTICAL"/>
         <Button text="⭐" onAction="#onAddBookmark">
             <tooltip><Tooltip text="Додати закладку"/></tooltip>
         </Button>
         <Button text="⭐" onAction="#onOpenBookmarks">
             <tooltip><Tooltip text="Закладки"/></tooltip>
         </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="📊" onAction="#onShowStats">
+            <tooltip><Tooltip text="Статистика читання"/></tooltip>
+        </Button>
         <Button text="⚙" onAction="#onShowSettings">
             <tooltip><Tooltip text="Налаштування"/></tooltip>
-        </Button>
-        <Button text="⛶" onAction="#onToggleFullscreen">
-            <tooltip><Tooltip text="Повний екран (F11)"/></tooltip>
         </Button>
     </ToolBar>
 
@@ -74,7 +92,8 @@
     <!-- WebView контейнер -->
     <StackPane fx:id="webViewContainer"
                VBox.vgrow="ALWAYS"
-               style="-fx-background-color: #ffffff;">
+               style="-fx-background-color: #ffffff;"
+               onKeyPressed="#onKeyPressed">
     </StackPane>
 
     <!-- Нижня панель -->
@@ -84,5 +103,7 @@
         <Label fx:id="progressLabel" text="0%"/>
         <Region HBox.hgrow="ALWAYS"/>
         <Label fx:id="bookmarksLabel" text="⭐ 0"/>
+        <Label text="|"/>
+        <Label fx:id="pageInfoLabel" text="Розділ 1"/>
     </HBox>
 </VBox>

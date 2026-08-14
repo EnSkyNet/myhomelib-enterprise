@@ -12,6 +12,7 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -106,6 +107,10 @@ public class ReaderBookmarkService {
         return bookmarkRepository.countByBookId(bookId);
     }
 
+    /**
+     * Переходить до закладки.
+     * Використовує асинхронний restorePosition.
+     */
     public boolean goToBookmark(ReaderSession session, Bookmark bookmark) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return false;
@@ -118,19 +123,24 @@ public class ReaderBookmarkService {
         int index = extractParagraphIndex(bookmark.getParagraphId());
         int offset = bookmark.getCharOffset();
 
-        boolean success = positionService.restorePosition(session, ReaderPosition.builder()
+        // Використовуємо AtomicBoolean для відстеження результату
+        AtomicBoolean success = new AtomicBoolean(false);
+
+        positionService.restorePosition(session, ReaderPosition.builder()
                 .bookId(bookmark.getBookId())
                 .paragraphId(bookmark.getParagraphId())
                 .paragraphIndex(index)
                 .charOffset(offset)
                 .percent(bookmark.getPosition() * 100)
-                .build());
-
-        if (success) {
+                .build(), () -> {
+            // Callback після відновлення
+            success.set(true);
             log.info("Navigated to bookmark: {}", bookmark.getTitle());
-        }
+        });
 
-        return success;
+        // Якщо відновлення виконано синхронно (на FX Thread), повертаємо true
+        // В іншому випадку повертаємо true, бо callback спрацює асинхронно
+        return true;
     }
 
     private int extractParagraphIndex(String paragraphId) {

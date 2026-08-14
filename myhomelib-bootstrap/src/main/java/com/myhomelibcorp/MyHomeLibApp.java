@@ -17,6 +17,8 @@ import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
 import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
 import com.myhomelibcorp.infrastructure.warmup.BackgroundWarmup;
+import com.myhomelibcorp.reader.service.ReaderFacade;
+import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -53,11 +55,11 @@ public class MyHomeLibApp extends Application {
         try {
             log.info("Запуск Spring Boot контексту...");
             context = SpringApplication.run(MyHomeLibApp.class);
-            applicationContext = context; // <-- ДОДАНО
-            log.info("Spring Boot контекст запущено");
+            applicationContext = context;
+            log.info("Spring Boot контекст завантажено");
         } catch (Exception e) {
             log.error("Помилка ініціалізації Spring Boot", e);
-            throw new RuntimeException("Не вдалося запустити Spring Boot", e);
+            throw new RuntimeException("Не вдалося завантажити Spring Boot", e);
         }
     }
 
@@ -98,7 +100,7 @@ public class MyHomeLibApp extends Application {
         });
     }
 
-    // ==================== ПРИВАТНІ МЕТОДИ ====================
+    // ==================== Splash Screen ====================
 
     private Stage buildSplashStage() {
         Stage splash = new Stage();
@@ -120,6 +122,7 @@ public class MyHomeLibApp extends Application {
         DatabaseInitializer initializer = context.getBean(DatabaseInitializer.class);
         SwitchCollectionUseCase switchCollectionUseCase = context.getBean(SwitchCollectionUseCase.class);
         SyncSeriesUseCase syncSeriesUseCase = context.getBean(SyncSeriesUseCase.class);
+        ReaderFacade readerFacade = context.getBean(ReaderFacade.class);
 
         List<Collection> collections = collectionRepository.findAll();
         Collection active;
@@ -142,14 +145,13 @@ public class MyHomeLibApp extends Application {
             active = collections.get(0);
         }
 
-        // ========== ВАЖЛИВО: ПРАВИЛЬНИЙ ПОРЯДОК ==========
-        // 1. СПОЧАТКУ переключаємо колекцію (створює DataSource)
+        // 1. Переключаємо колекцію
         switchCollectionUseCase.execute(active);
 
-        // 2. ПОТІМ синхронізуємо серії
+        // 2. Синхронізуємо серії
         syncSeriesUseCase.execute();
 
-        // 3. ПОТІМ ініціалізуємо БД (тепер DataSource вже існує)
+        // 3. Ініціалізуємо базу даних
         initializer.initializeCurrentCollection();
 
         // 4. Оновлюємо статистику
@@ -160,7 +162,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося оновити статистику (можливо, ще не виконана міграція)", e);
         }
 
-        // 5. Завантаження кешів
+        // 5. Завантажуємо кеші
         DictionaryCachePort dictCache = context.getBean(DictionaryCachePort.class);
         AuthorRepository authorRepo = context.getBean(AuthorRepository.class);
         GenreRepository genreRepo = context.getBean(GenreRepository.class);
@@ -177,7 +179,7 @@ public class MyHomeLibApp extends Application {
         InpxImporter inpxImporter = context.getBean(InpxImporter.class);
         inpxImporter.initialize();
 
-        // 6. Перебудова Lucene індексу
+        // 6. Перебудовуємо Lucene індекс
         try {
             log.info("Перебудова Lucene індексу...");
             var luceneService = context.getBean(LuceneSearchService.class);
@@ -204,20 +206,20 @@ public class MyHomeLibApp extends Application {
             luceneService.commit();
             log.info("Lucene індекс перебудовано. Проіндексовано {} книг", totalIndexed);
         } catch (Exception e) {
-            log.error("Помилка перебудови індексу", e);
+            log.error("Помилка перебудови Lucene індексу", e);
         }
 
         BackgroundWarmup backgroundWarmup = context.getBean(BackgroundWarmup.class);
         backgroundWarmup.warmup();
 
-        log.info("Всі кеші та компоненти ініціалізовано");
+        log.info("Всі кеші та компоненти готові до роботи");
         return collectionManager;
     }
 
     private void showMainWindow(Stage primaryStage, CollectionManager collectionManager) throws Exception {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
         if (loader.getLocation() == null) {
-            throw new RuntimeException("MainView.fxml відсутній у ресурсах");
+            throw new RuntimeException("MainView.fxml не знайдено у ресурсах");
         }
         loader.setControllerFactory(context::getBean);
         Parent root = loader.load();
@@ -225,7 +227,7 @@ public class MyHomeLibApp extends Application {
         String collectionName = collectionManager.getCurrentCollection() != null
                 ? collectionManager.getCurrentCollection().getName()
                 : "Без колекції";
-        primaryStage.setTitle("MyHomeLib Enterprise – " + collectionName);
+        primaryStage.setTitle("MyHomeLib Enterprise — " + collectionName);
         primaryStage.setScene(new Scene(root, 1100, 750));
         primaryStage.setMinWidth(800);
         primaryStage.setMinHeight(600);
@@ -241,7 +243,7 @@ public class MyHomeLibApp extends Application {
         Platform.exit();
     }
 
-    // ==================== ЗАВЕРШЕННЯ ====================
+    // ==================== Завершення роботи ====================
 
     @Override
     public void stop() {
@@ -252,6 +254,20 @@ public class MyHomeLibApp extends Application {
 
         log.info("Завершення програми...");
 
+        // 1. Закриваємо ReaderFacade
+        try {
+            ReaderFacade readerFacade = context.getBean(ReaderFacade.class);
+            if (readerFacade.isBookOpen()) {
+                readerFacade.saveCurrentPosition();
+                readerFacade.closeBook();
+            }
+            readerFacade.clearCache();
+            log.info("ReaderFacade закрито");
+        } catch (Exception e) {
+            log.warn("Не вдалося закрити ReaderFacade", e);
+        }
+
+        // 2. Закриваємо AsyncConfig
         try {
             var asyncConfig = context.getBean(com.myhomelibcorp.infrastructure.config.AsyncConfig.class);
             asyncConfig.shutdown();
@@ -259,6 +275,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити AsyncConfig", e);
         }
 
+        // 3. Закриваємо UiBackgroundExecutor
         try {
             var uiExecutor = context.getBean(com.myhomelibcorp.ui.service.UiBackgroundExecutor.class);
             uiExecutor.shutdown();
@@ -266,6 +283,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити UiBackgroundExecutor", e);
         }
 
+        // 4. Закриваємо BackgroundExecutor
         try {
             var bgExecutor = context.getBean(com.myhomelibcorp.infrastructure.executor.BackgroundExecutor.class);
             bgExecutor.shutdown();
@@ -273,6 +291,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити BackgroundExecutor", e);
         }
 
+        // 5. Закриваємо BackgroundTaskService
         try {
             var bgTaskService = context.getBean(com.myhomelibcorp.ui.service.BackgroundTaskService.class);
             bgTaskService.shutdown();
@@ -280,13 +299,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити BackgroundTaskService", e);
         }
 
-        try {
-            var readerLifecycle = context.getBean(com.myhomelibcorp.reader.service.ReaderLifecycleManager.class);
-            readerLifecycle.cleanup();
-        } catch (Exception e) {
-            log.warn("Не вдалося закрити ReaderLifecycleManager", e);
-        }
-
+        // 6. Закриваємо SpringExecutorAdapter
         try {
             var executorAdapter = context.getBean(com.myhomelibcorp.infrastructure.executor.SpringExecutorAdapter.class);
             executorAdapter.shutdown();
@@ -294,6 +307,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити SpringExecutorAdapter", e);
         }
 
+        // 7. Закриваємо LuceneSearchService
         try {
             var luceneService = context.getBean(LuceneSearchService.class);
             luceneService.close();
@@ -302,10 +316,12 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити LuceneSearchService", e);
         }
 
+        // 8. Закриваємо CollectionManager
         if (context != null) {
             try {
                 CollectionManager collectionManager = context.getBean(CollectionManager.class);
                 collectionManager.closeCurrentCollection();
+                log.info("CollectionManager закрито");
             } catch (Exception e) {
                 log.warn("Помилка закриття колекції", e);
             }
@@ -313,7 +329,7 @@ public class MyHomeLibApp extends Application {
         }
 
         Platform.exit();
-        log.info("Програму завершено");
+        log.info("Програма завершена");
     }
 
     public static void main(String[] args) {

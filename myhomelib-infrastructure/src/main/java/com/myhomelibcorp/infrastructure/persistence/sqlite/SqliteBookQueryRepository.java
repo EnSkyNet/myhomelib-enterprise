@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -46,13 +47,37 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         bookGenreHelper.loadGenresForBooks(books);
     }
 
+    // ===== Пошук з пагінацією =====
+
+    @Override
+    public PageResult<Book> findPage(BookQuery query) {
+        var sqlQuery = queryBuilder.build(query);
+        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
+        enrichBooks(books);
+
+        long total = count(query);
+
+        int page = query.pagination().offset() / Math.max(1, query.pagination().limit());
+        int size = query.pagination().limit();
+        int totalPages = (int) Math.ceil((double) total / size);
+
+        return new PageResult<>(books, total, totalPages, page, size);
+    }
+
+    @Override
+    public long count(BookQuery query) {
+        var sqlQuery = queryBuilder.buildCount(query);
+        Long result = getJdbcTemplate().queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
+        return result != null ? result : 0L;
+    }
+
+    // ===== Пошук по ID =====
+
     @Override
     public Optional<Book> findById(BookId id) {
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
             Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper, id.asString());
-            log.info("Завантажено книгу з БД: id={}, title={}, progress={}",
-                    id, book.getTitle(), book.getProgress());
             enrichBooks(List.of(book));
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
@@ -73,20 +98,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return books;
     }
 
-    @Override
-    public List<Book> find(BookQuery query) {
-        var sqlQuery = queryBuilder.build(query);
-        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
-        enrichBooks(books);
-        return books;
-    }
-
-    @Override
-    public long count(BookQuery query) {
-        var sqlQuery = queryBuilder.buildCount(query);
-        Long result = getJdbcTemplate().queryForObject(sqlQuery.sql(), Long.class, sqlQuery.params());
-        return result != null ? result : 0L;
-    }
+    // ===== Спеціальні запити =====
 
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
@@ -104,35 +116,6 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
-    }
-
-    /**
-     * @deprecated Використовуйте {@link #find(BookQuery)} з пагінацією.
-     * Цей метод завантажує максимум {@value #MAX_ALL_FETCH} книг для безпеки.
-     */
-    @Override
-    @Deprecated
-    public List<Book> findAll() {
-        log.warn("Використання findAll() без пагінації. Обмежено {} записів.", MAX_ALL_FETCH);
-        BookQuery query = BookQuery.builder()
-                .pagination(Pagination.of(MAX_ALL_FETCH, 0))
-                .build();
-        return find(query);
-    }
-
-    /**
-     * Потокове читання всіх книг з пагінацією.
-     * Використовує Stream для обробки великих наборів даних.
-     * Важливо: Stream потрібно закривати через try-with-resources.
-     */
-    public Stream<Book> findAllStreaming() {
-        return StreamSupport.stream(
-                Spliterators.spliteratorUnknownSize(
-                        new StreamingBookIterator(MAX_ALL_FETCH),
-                        Spliterator.ORDERED
-                ),
-                false
-        );
     }
 
     @Override
@@ -176,6 +159,8 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         enrichBooks(books);
         return books;
     }
+
+    // ===== DataIntegrity =====
 
     @Override
     public long countBooksWithoutAuthor() {
@@ -223,7 +208,19 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return getJdbcTemplate().query(sql, (rs, rowNum) -> BookId.fromString(rs.getString("id")));
     }
 
-    // ==================== ВНУТРІШНІЙ КЛАС ІТЕРАТОРА ====================
+    // ===== Streaming =====
+
+    public Stream<Book> findAllStreaming() {
+        return StreamSupport.stream(
+                Spliterators.spliteratorUnknownSize(
+                        new StreamingBookIterator(MAX_ALL_FETCH),
+                        Spliterator.ORDERED
+                ),
+                false
+        );
+    }
+
+    // ===== Внутрішній ітератор =====
 
     private class StreamingBookIterator implements java.util.Iterator<Book> {
         private final int pageSize;
@@ -241,7 +238,6 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         public boolean hasNext() {
             if (finished) return false;
             if (currentIndex < currentPage.size()) return true;
-            // Якщо сторінка порожня або менша за pageSize - це кінець
             if (currentPage.size() < pageSize) {
                 finished = true;
                 return false;

@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.postgres;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,20 @@ public class PostgresBookRepository implements BookQueryRepository {
 
     private final JdbcTemplate jdbcTemplate;
 
+    // ===== Пагінація =====
+    @Override
+    public PageResult<Book> findPage(BookQuery query) {
+        log.warn("PostgresBookRepository.findPage() not implemented yet");
+        return PageResult.empty();
+    }
+
+    @Override
+    public long count(BookQuery query) {
+        log.warn("PostgresBookRepository.count() not implemented yet");
+        return 0;
+    }
+
+    // ===== Пошук по ID =====
     @Override
     public Optional<Book> findById(BookId id) {
         log.warn("PostgresBookRepository.findById() not implemented yet");
@@ -33,28 +48,11 @@ public class PostgresBookRepository implements BookQueryRepository {
         return List.of();
     }
 
-    @Override
-    public List<Book> find(BookQuery query) {
-        log.warn("PostgresBookRepository.find() not implemented yet");
-        return List.of();
-    }
-
-    @Override
-    public long count(BookQuery query) {
-        log.warn("PostgresBookRepository.count() not implemented yet");
-        return 0;
-    }
-
+    // ===== Спеціальні запити =====
     @Override
     public Optional<Book> findByTitleAndAuthor(String title, String authorLastName) {
         log.warn("PostgresBookRepository.findByTitleAndAuthor() not implemented yet");
         return Optional.empty();
-    }
-
-    @Override
-    public List<Book> findAll() {
-        log.warn("PostgresBookRepository.findAll() not implemented yet");
-        return List.of();
     }
 
     @Override
@@ -75,6 +73,7 @@ public class PostgresBookRepository implements BookQueryRepository {
         return List.of();
     }
 
+    // ===== DataIntegrity =====
     @Override
     public long countBooksWithoutAuthor() {
         log.warn("PostgresBookRepository.countBooksWithoutAuthor() not implemented yet");
@@ -90,6 +89,21 @@ public class PostgresBookRepository implements BookQueryRepository {
     @Override
     public List<BookId> findDuplicateBookIds() {
         log.warn("PostgresBookRepository.findDuplicateBookIds() not implemented yet");
+        return List.of();
+    }
+
+    // ===== @Deprecated методи =====
+    @Override
+    @Deprecated
+    public List<Book> find(BookQuery query) {
+        log.warn("PostgresBookRepository.find() not implemented yet");
+        return List.of();
+    }
+
+    @Override
+    @Deprecated
+    public List<Book> findAll() {
+        log.warn("PostgresBookRepository.findAll() not implemented yet");
         return List.of();
     }
 }

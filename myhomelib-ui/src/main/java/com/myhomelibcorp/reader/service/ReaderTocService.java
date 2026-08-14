@@ -1,8 +1,8 @@
 package com.myhomelibcorp.reader.service;
 
 import com.myhomelibcorp.reader.model.Chapter;
+import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.session.ReaderSession;
-import javafx.scene.web.WebEngine;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,119 +16,92 @@ import java.util.List;
 public class ReaderTocService {
 
     private final ReaderJsBridge jsBridge;
+    private final ReaderPositionService positionService;
 
+    /**
+     * Отримує зміст з сесії (збережений під час парсингу).
+     */
     public List<Chapter> getToc(ReaderSession session) {
-        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+        if (session == null || session.getBook() == null) {
             return new ArrayList<>();
         }
-
-        WebEngine engine = session.getWebEngine();
-
-        if (!jsBridge.isContentLoaded(engine)) {
-            return new ArrayList<>();
-        }
-
-        try {
-            String script = """
-                (function() {
-                    var chapters = [];
-                    var chapterElements = document.querySelectorAll('.chapter');
-                    for (var i = 0; i < chapterElements.length; i++) {
-                        var el = chapterElements[i];
-                        var titleEl = el.querySelector('.chapter-title');
-                        var title = titleEl ? titleEl.innerText.trim() : 'Розділ ' + (i + 1);
-                        var firstParagraph = el.querySelector('p[data-paragraph-id]');
-                        var paragraphId = firstParagraph ? firstParagraph.getAttribute('data-paragraph-id') : '';
-                        var level = 1;
-                        var parent = el.parentElement;
-                        while (parent) {
-                            if (parent.classList && parent.classList.contains('chapter')) {
-                                level++;
-                            }
-                            parent = parent.parentElement;
-                        }
-                        chapters.push({
-                            id: el.id || 'chapter-' + i,
-                            title: title,
-                            level: Math.min(level, 6),
-                            paragraphId: paragraphId
-                        });
-                    }
-                    return JSON.stringify(chapters);
-                })();
-            """;
-
-            Object result = engine.executeScript(script);
-            if (result == null) {
-                return new ArrayList<>();
-            }
-
-            return parseChapters(result.toString());
-
-        } catch (Exception e) {
-            log.warn("Failed to get TOC: {}", e.getMessage());
-            return new ArrayList<>();
-        }
+        return session.getChapters() != null ? session.getChapters() : new ArrayList<>();
     }
 
-    private List<Chapter> parseChapters(String json) {
-        List<Chapter> chapters = new ArrayList<>();
-        try {
-            String[] items = json.split("\\}\\s*,\\s*\\{");
-            for (String item : items) {
-                String clean = item.replaceAll("[{}\"]", "");
-                String id = extractField(clean, "id");
-                String title = extractField(clean, "title");
-                String paragraphId = extractField(clean, "paragraphId");
-                int level = extractIntField(clean, "level");
-
-                Chapter chapter = Chapter.builder()
-                        .id(id)
-                        .title(title)
-                        .level(level)
-                        .paragraphId(paragraphId)
-                        .build();
-                chapters.add(chapter);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to parse chapters: {}", json, e);
-        }
-        return chapters;
-    }
-
-    private String extractField(String text, String key) {
-        String prefix = key + ":";
-        int start = text.indexOf(prefix);
-        if (start == -1) return "";
-        start += prefix.length();
-        int end = text.indexOf(",", start);
-        if (end == -1) end = text.length();
-        String value = text.substring(start, end).trim();
-        if (value.startsWith("\"") && value.endsWith("\"")) {
-            value = value.substring(1, value.length() - 1);
-        }
-        return value;
-    }
-
-    private int extractIntField(String text, String key) {
-        try {
-            return Integer.parseInt(extractField(text, key));
-        } catch (NumberFormatException e) {
-            return 1;
-        }
-    }
-
+    /**
+     * Переходить до вказаного розділу.
+     */
     public boolean navigateToChapter(ReaderSession session, Chapter chapter) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return false;
         }
 
-        if (chapter == null || chapter.getParagraphId() == null || chapter.getParagraphId().isEmpty()) {
+        if (chapter == null) {
             return false;
         }
 
-        int index = extractParagraphIndex(chapter.getParagraphId());
-        return jsBridge.scrollToParagraph(session.getWebEngine(), index, 0);
+        // ВИПРАВЛЕНО: спочатку шукаємо главу за назвою або id
+        // якщо не знайдено, використовуємо paragraphId
+        String script = String.format("""
+        (function() {
+            var chapterTitle = '%s';
+            var paragraphId = '%s';
+            
+            // 1. Шукаємо главу за назвою
+            var chapters = document.querySelectorAll('.chapter');
+            for (var i = 0; i < chapters.length; i++) {
+                var titleEl = chapters[i].querySelector('.chapter-title');
+                if (titleEl && titleEl.innerText.trim() === chapterTitle) {
+                    // Знайшли главу - шукаємо перший параграф у ній
+                    var firstP = chapters[i].querySelector('p[data-paragraph-id]');
+                    if (firstP) {
+                        var id = firstP.getAttribute('data-paragraph-id');
+                        var index = parseInt(id.replace('p', '')) - 1;
+                        if (index >= 0) {
+                            return index;
+                        }
+                    }
+                    // Якщо немає параграфів, скролимо до глави
+                    chapters[i].scrollIntoView({ block: 'start' });
+                    return -1;
+                }
+            }
+            
+            // 2. Якщо не знайшли за назвою, шукаємо за paragraphId
+            if (paragraphId) {
+                var p = document.querySelector('p[data-paragraph-id="' + paragraphId + '"]');
+                if (p) {
+                    p.scrollIntoView({ block: 'start' });
+                    return -1;
+                }
+                var index = parseInt(paragraphId.replace('p', '')) - 1;
+                if (index >= 0) {
+                    return index;
+                }
+            }
+            
+            return -1;
+        })();
+    """,
+                chapter.getTitle() != null ? chapter.getTitle().replace("'", "\\'") : "",
+                chapter.getParagraphId() != null ? chapter.getParagraphId() : ""
+        );
+
+        try {
+            Object result = session.getWebEngine().executeScript(script);
+            if (result instanceof Number) {
+                int index = ((Number) result).intValue();
+                if (index >= 0) {
+                    // Використовуємо ReaderJsBridge для скролу до параграфа
+                    return jsBridge.scrollToParagraph(session.getWebEngine(), index, 0);
+                }
+                return true; // вже виконали скрол
+            }
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to navigate to chapter: {}", chapter.getTitle(), e);
+            return false;
+        }
     }
 
     private int extractParagraphIndex(String paragraphId) {
@@ -143,10 +116,125 @@ public class ReaderTocService {
         }
     }
 
+    /**
+     * Отримує назву поточного розділу з позиції.
+     * Більше не використовує DOM.
+     */
     public String getCurrentChapterTitle(ReaderSession session) {
-        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+        if (session == null || !session.isActive()) {
             return "";
         }
-        return jsBridge.getCurrentChapterTitle(session.getWebEngine());
+
+        // 1. Спроба отримати з позиції
+        ReaderPosition pos = positionService.getCurrentPosition(session);
+        if (pos != null && pos.getChapterTitle() != null && !pos.getChapterTitle().isEmpty()) {
+            return pos.getChapterTitle();
+        }
+
+        // 2. Спроба отримати збережену позицію (якщо ще не завантажена)
+        if (session.getRestorePosition() != null) {
+            String title = session.getRestorePosition().getChapterTitle();
+            if (title != null && !title.isEmpty()) {
+                return title;
+            }
+        }
+
+        // 3. Fallback: якщо немає позиції - перший розділ з TOC
+        List<Chapter> chapters = getToc(session);
+        if (!chapters.isEmpty()) {
+            return chapters.get(0).getTitle();
+        }
+
+        // 4. Останній fallback
+        return "Розділ 1";
+    }
+
+    /**
+     * Знаходить розділ за позицією.
+     */
+    public Chapter findChapterAtPosition(ReaderSession session, ReaderPosition position) {
+        if (session == null || position == null) {
+            return null;
+        }
+
+        List<Chapter> chapters = getToc(session);
+        if (chapters.isEmpty()) {
+            return null;
+        }
+
+        // Шукаємо розділ за paragraphId
+        String paragraphId = position.getParagraphId();
+        if (paragraphId != null && !paragraphId.isEmpty()) {
+            return findChapterByParagraphId(chapters, paragraphId);
+        }
+
+        // Якщо не знайдено - повертаємо перший
+        return chapters.get(0);
+    }
+
+    private Chapter findChapterByParagraphId(List<Chapter> chapters, String paragraphId) {
+        for (Chapter chapter : chapters) {
+            if (chapter.getParagraphId() != null && chapter.getParagraphId().equals(paragraphId)) {
+                return chapter;
+            }
+            // Рекурсивно шукаємо в дітях
+            if (chapter.getChildren() != null && !chapter.getChildren().isEmpty()) {
+                Chapter found = findChapterByParagraphId(chapter.getChildren(), paragraphId);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Отримує наступний розділ.
+     */
+    public Chapter getNextChapter(ReaderSession session) {
+        List<Chapter> chapters = getToc(session);
+        if (chapters.isEmpty()) {
+            return null;
+        }
+
+        String currentTitle = getCurrentChapterTitle(session);
+        if (currentTitle.isEmpty()) {
+            return chapters.get(0);
+        }
+
+        for (int i = 0; i < chapters.size(); i++) {
+            if (chapters.get(i).getTitle().equals(currentTitle)) {
+                if (i + 1 < chapters.size()) {
+                    return chapters.get(i + 1);
+                }
+                return null;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Отримує попередній розділ.
+     */
+    public Chapter getPreviousChapter(ReaderSession session) {
+        List<Chapter> chapters = getToc(session);
+        if (chapters.isEmpty()) {
+            return null;
+        }
+
+        String currentTitle = getCurrentChapterTitle(session);
+        if (currentTitle.isEmpty()) {
+            return chapters.get(0);
+        }
+
+        for (int i = 0; i < chapters.size(); i++) {
+            if (chapters.get(i).getTitle().equals(currentTitle)) {
+                if (i > 0) {
+                    return chapters.get(i - 1);
+                }
+                return null;
+            }
+        }
+        return null;
     }
 }

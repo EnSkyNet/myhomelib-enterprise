@@ -1,13 +1,12 @@
 package com.myhomelibcorp.ui.navigation;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-import com.myhomelibcorp.reader.service.ReaderLifecycleManager;
+import com.myhomelibcorp.reader.service.ReaderFacade;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.controller.MainController;
@@ -28,7 +27,7 @@ import java.util.List;
 public class WorkspaceManager {
 
     private final FxmlLoaderFactory fxmlLoaderFactory;
-    private final ReaderLifecycleManager readerLifecycleManager;
+    private final ReaderFacade readerFacade;
     private final ReaderSessionManager readerSessionManager;
 
     private MainController mainController;
@@ -47,13 +46,20 @@ public class WorkspaceManager {
         this.workspaceStackPane = stackPane;
     }
 
+    /**
+     * Закриває Reader якщо він відкритий і targetType не є reader.
+     */
     private void closeReaderIfNeeded(String targetType) {
-        if ("reader".equals(targetType)) return;
-        if (readerLifecycleManager != null && readerLifecycleManager.isReaderOpen()) {
+        if ("reader".equals(targetType)) {
+            return;
+        }
+
+        if (readerFacade.isBookOpen()) {
             ReaderSession session = readerSessionManager.getCurrentSession();
             if (session != null) {
-                readerLifecycleManager.saveState(session);
-                readerLifecycleManager.closeBook(session);
+                log.info("Закриття Reader при переході до: {}", targetType);
+                readerFacade.saveCurrentPosition();
+                readerFacade.closeBook();
             }
         }
     }
@@ -93,7 +99,7 @@ public class WorkspaceManager {
         }
     }
 
-    // ==================== МЕТОДИ ЗАВАНТАЖЕННЯ FXML ====================
+    // ==================== Завантаження воркспейсів ====================
 
     public void showDashboard() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/dashboard.fxml");
@@ -161,10 +167,12 @@ public class WorkspaceManager {
         push("import", "");
     }
 
-    // ==================== ІСТОРІЯ ====================
+    // ==================== Навігація ====================
 
     public void goBack() {
-        if (history.isEmpty()) return;
+        if (history.isEmpty()) {
+            return;
+        }
         forwardStack.push(currentEntry);
         WorkspaceEntry previous = history.pop();
         currentEntry = previous;
@@ -172,7 +180,9 @@ public class WorkspaceManager {
     }
 
     public void goForward() {
-        if (forwardStack.isEmpty()) return;
+        if (forwardStack.isEmpty()) {
+            return;
+        }
         history.push(currentEntry);
         WorkspaceEntry next = forwardStack.pop();
         currentEntry = next;
@@ -180,6 +190,15 @@ public class WorkspaceManager {
     }
 
     private void restoreWorkspace(WorkspaceEntry entry) {
+        // Закриваємо Reader при відновленні будь-якого воркспейсу, крім reader
+        if (!"reader".equals(entry.type) && readerFacade.isBookOpen()) {
+            ReaderSession session = readerSessionManager.getCurrentSession();
+            if (session != null) {
+                readerFacade.saveCurrentPosition();
+                readerFacade.closeBook();
+            }
+        }
+
         switch (entry.type) {
             case "dashboard" -> showDashboard();
             case "author" -> showAuthorWorkspace(AuthorId.fromString(entry.id));
@@ -206,7 +225,7 @@ public class WorkspaceManager {
         return !forwardStack.isEmpty();
     }
 
-    // ==================== ВНУТРІШНІЙ КЛАС ====================
+    // ==================== Внутрішній клас ====================
 
     private record WorkspaceEntry(String type, String id) {
         @Override
