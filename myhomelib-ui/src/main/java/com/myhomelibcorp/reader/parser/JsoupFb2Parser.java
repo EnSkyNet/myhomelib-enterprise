@@ -12,18 +12,15 @@ import org.jsoup.nodes.Node;
 import org.jsoup.nodes.TextNode;
 import org.jsoup.select.Elements;
 
-import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import java.util.regex.Pattern;
 
 @Slf4j
 public class JsoupFb2Parser {
 
-    // Кодування для спроби
     private static final Charset[] CHARSETS = {
             Charset.forName("UTF-8"),
             Charset.forName("Windows-1251"),
@@ -32,7 +29,6 @@ public class JsoupFb2Parser {
             Charset.forName("ISO-8859-5")
     };
 
-    // Карта відповідності тегів FB2 → HTML
     private static final Map<String, String> TAG_MAP = new HashMap<>();
     static {
         TAG_MAP.put("emphasis", "em");
@@ -50,13 +46,14 @@ public class JsoupFb2Parser {
         TAG_MAP.put("empty-line", "br");
     }
 
+    // Регулярний вираз для пошуку paragraphId
+    private static final Pattern PARAGRAPH_ID_PATTERN = Pattern.compile("data-paragraph-id=\"([^\"]+)\"");
+
     public BookDocument parse(InputStream inputStream) throws Exception {
         long startTime = System.currentTimeMillis();
 
-        // Читаємо всі байти
         byte[] data = inputStream.readAllBytes();
 
-        // Визначаємо кодування
         String content = null;
         Charset usedCharset = null;
 
@@ -66,7 +63,7 @@ public class JsoupFb2Parser {
                 if (isValidContent(testContent)) {
                     content = testContent;
                     usedCharset = charset;
-                    log.info("✅ Знайдено правильне кодування: {}", charset);
+                    log.info("Знайдено правильне кодування: {}", charset);
                     break;
                 }
             } catch (Exception e) {
@@ -77,12 +74,11 @@ public class JsoupFb2Parser {
         if (content == null) {
             content = new String(data, StandardCharsets.UTF_8);
             usedCharset = StandardCharsets.UTF_8;
-            log.warn("⚠️ Не вдалося визначити кодування, використовуємо UTF-8");
+            log.warn("Не вдалося визначити кодування, використовую UTF-8");
         }
 
         log.info("Парсинг FB2 з кодуванням: {}", usedCharset);
 
-        // Парсимо JSoup
         Document doc = Jsoup.parse(content, "", org.jsoup.parser.Parser.xmlParser());
 
         Element root = doc.select("FictionBook").first();
@@ -91,35 +87,21 @@ public class JsoupFb2Parser {
             root = doc;
         }
 
-        log.info("Кореневий елемент: {}", root.nodeName());
-
-        // Витягуємо метадані
         BookMetadata metadata = extractMetadata(root);
-
-        // Витягуємо зображення
         List<ImageData> images = extractImages(root);
-
-        // Витягуємо розділи
         List<Chapter> chapters = extractChapters(root);
 
-        // Підраховуємо статистику
         int paragraphCount = countParagraphs(chapters);
 
         BookDocument document = BookDocument.builder()
                 .metadata(metadata)
                 .chapters(chapters)
                 .images(images)
-                .footnotes(new ArrayList<>())
                 .build();
 
         long elapsed = System.currentTimeMillis() - startTime;
-        log.info("FB2 parsed: title='{}', authors={}, chapters={}, images={}, paragraphs={} ({} ms)",
-                metadata.getTitle(),
-                metadata.getAuthors(),
-                chapters.size(),
-                images.size(),
-                paragraphCount,
-                elapsed);
+        log.info("FB2 розпарсено: title='{}', chapters={}, images={}, paragraphs={} ({} ms)",
+                metadata.getTitle(), chapters.size(), images.size(), paragraphCount, elapsed);
 
         return document;
     }
@@ -128,7 +110,6 @@ public class JsoupFb2Parser {
         if (text == null || text.isEmpty()) {
             return false;
         }
-
         boolean hasFictionBook = text.contains("FictionBook") || text.contains("fictionbook");
         boolean hasTitle = text.contains("book-title");
         boolean hasReplacementChar = text.contains("\uFFFD");
@@ -137,15 +118,8 @@ public class JsoupFb2Parser {
         if (hasFictionBook && !hasReplacementChar) {
             return true;
         }
-
-        if (hasCyrillic && (hasFictionBook || hasTitle)) {
-            return true;
-        }
-
-        return false;
+        return hasCyrillic && (hasFictionBook || hasTitle);
     }
-
-    // ==================== МЕТАДАНІ ====================
 
     private BookMetadata extractMetadata(Element root) {
         BookMetadata.BookMetadataBuilder builder = BookMetadata.builder();
@@ -153,7 +127,6 @@ public class JsoupFb2Parser {
         Element titleInfo = root.select("description > title-info, title-info").first();
 
         if (titleInfo != null) {
-            // Назва
             String title = titleInfo.select("book-title").text();
             if (title == null || title.isEmpty()) {
                 Element seq = titleInfo.select("sequence").first();
@@ -166,7 +139,6 @@ public class JsoupFb2Parser {
             }
             builder.title(title.trim());
 
-            // Автори
             List<String> authors = new ArrayList<>();
             Elements authorElements = titleInfo.select("author");
             for (Element authorEl : authorElements) {
@@ -185,7 +157,6 @@ public class JsoupFb2Parser {
             }
             builder.authors(authors);
 
-            // Жанри
             List<String> genres = new ArrayList<>();
             Elements genreElements = titleInfo.select("genre");
             for (Element genreEl : genreElements) {
@@ -198,11 +169,9 @@ public class JsoupFb2Parser {
                 builder.genre(String.join(", ", genres));
             }
 
-            // Мова
             String lang = titleInfo.select("lang").text();
             builder.language(lang != null && !lang.isEmpty() ? lang.trim() : "uk");
 
-            // Серія
             Element seq = titleInfo.select("sequence").first();
             if (seq != null) {
                 String series = seq.attr("name");
@@ -217,7 +186,6 @@ public class JsoupFb2Parser {
                 }
             }
 
-            // Анотація
             String annotation = titleInfo.select("annotation").text();
             if (annotation != null && !annotation.isEmpty()) {
                 builder.annotation(annotation.trim());
@@ -228,7 +196,6 @@ public class JsoupFb2Parser {
             builder.language("uk");
         }
 
-        // Видавництво
         Element publishInfo = root.select("description > publish-info, publish-info").first();
         if (publishInfo != null) {
             String publisher = publishInfo.select("publisher").text();
@@ -244,12 +211,9 @@ public class JsoupFb2Parser {
         return builder.build();
     }
 
-    // ==================== ЗОБРАЖЕННЯ ====================
-
     private List<ImageData> extractImages(Element root) {
         List<ImageData> images = new ArrayList<>();
 
-        // Шукаємо всі binary елементи
         Elements binaries = root.select("binary");
         for (Element binary : binaries) {
             String id = binary.attr("id");
@@ -258,7 +222,6 @@ public class JsoupFb2Parser {
 
             if (id != null && !id.isEmpty() && content != null && !content.isEmpty()) {
                 try {
-                    // Очищаємо base64
                     String cleanBase64 = content.replaceAll("\\s+", "");
                     byte[] imageData = Base64.getDecoder().decode(cleanBase64);
 
@@ -266,10 +229,9 @@ public class JsoupFb2Parser {
                             .id(id)
                             .mimeType(contentType != null ? contentType : "image/jpeg")
                             .data(imageData)
-                            .base64Data(cleanBase64)
                             .build();
                     images.add(image);
-                    log.debug("Зображення завантажено: id={}, type={}, size={} KB",
+                    log.debug("Завантажено зображення: id={}, type={}, size={} KB",
                             id, contentType, imageData.length / 1024);
                 } catch (Exception e) {
                     log.warn("Не вдалося декодувати зображення id={}: {}", id, e.getMessage());
@@ -280,32 +242,29 @@ public class JsoupFb2Parser {
         return images;
     }
 
-    // ==================== РОЗДІЛИ ====================
-
     private List<Chapter> extractChapters(Element root) {
         List<Chapter> chapters = new ArrayList<>();
 
-        // Шукаємо body
         Element body = root.select("body").first();
         if (body == null) {
             log.warn("Body не знайдено");
             return chapters;
         }
 
-        // Шукаємо секції
-        Elements sections = body.select("section");
+        List<Element> topLevelSections = body.children().stream()
+                .filter(element -> "section".equalsIgnoreCase(element.tagName()))
+                .toList();
+
         int paragraphCounter = 0;
 
-        if (sections.isEmpty()) {
-            // Немає секцій - весь текст в одному розділі
+        if (topLevelSections.isEmpty()) {
             Chapter singleChapter = processDirectBody(body, new Counter(paragraphCounter));
             if (singleChapter != null && singleChapter.getContent() != null && !singleChapter.getContent().isEmpty()) {
                 chapters.add(singleChapter);
             }
         } else {
-            // Обробляємо кожну секцію
-            for (Element section : sections) {
-                Counter counter = new Counter(paragraphCounter);
+            Counter counter = new Counter(paragraphCounter);
+            for (Element section : topLevelSections) {
                 Chapter chapter = processSection(section, 1, counter);
                 if (chapter != null) {
                     chapters.add(chapter);
@@ -314,19 +273,19 @@ public class JsoupFb2Parser {
             }
         }
 
-        // Якщо розділів немає - створюємо один
         if (chapters.isEmpty()) {
             Chapter defaultChapter = Chapter.builder()
                     .id(UUID.randomUUID().toString())
-                    .title("Розділ")
+                    .title("Зміст")
                     .level(1)
                     .content("<p>Немає тексту для відображення.</p>")
+                    .paragraphId("p1")
                     .build();
             chapters.add(defaultChapter);
-            log.warn("Створено розділ за замовчуванням");
+            log.warn("Створено дефолтний розділ");
         }
 
-        log.info("Знайдено секцій: {}, параграфів: {}", chapters.size(), paragraphCounter);
+        log.info("Знайдено розділів: {}, параграфів: {}", chapters.size(), paragraphCounter);
         return chapters;
     }
 
@@ -343,116 +302,103 @@ public class JsoupFb2Parser {
             return null;
         }
 
+        // Шукаємо перший paragraphId у контенті
+        String paragraphId = findFirstParagraphId(content);
+
         return Chapter.builder()
                 .id(UUID.randomUUID().toString())
-                .title("Розділ")
+                .title("Зміст")
                 .level(1)
                 .content(content.toString())
                 .children(new ArrayList<>())
+                .paragraphId(paragraphId)
                 .build();
     }
 
     private Chapter processSection(Element section, int level, Counter counter) {
-        // Визначаємо назву розділу
         String title = "Розділ";
-        Element titleEl = section.select("title").first();
-        if (titleEl != null) {
-            String t = titleEl.text();
-            if (t != null && !t.trim().isEmpty()) {
-                title = t.trim();
-            }
+        Element titleEl = section.children().stream()
+                .filter(e -> "title".equalsIgnoreCase(e.tagName()))
+                .findFirst()
+                .orElse(null);
+
+        if (titleEl != null && !titleEl.text().isBlank()) {
+            title = titleEl.text().trim();
         }
 
         StringBuilder content = new StringBuilder();
-        Elements children = section.children();
+        List<Chapter> children = new ArrayList<>();
 
-        for (Element child : children) {
-            String tag = child.tagName().toLowerCase();
+        for (Element child : section.children()) {
+            String tag = child.tagName().toLowerCase(Locale.ROOT);
 
             if ("section".equals(tag)) {
-                // Вкладений розділ
                 Chapter subChapter = processSection(child, level + 1, counter);
-                if (subChapter != null && subChapter.getContent() != null && !subChapter.getContent().isEmpty()) {
-                    content.append(subChapter.getContent());
+                if (subChapter != null) {
+                    children.add(subChapter);
                 }
-            } else {
+            } else if (!"title".equals(tag)) {
                 processElement(child, tag, content, counter, level);
             }
         }
 
-        if (content.length() == 0) {
+        if (content.isEmpty() && children.isEmpty()) {
             return null;
         }
+
+        // Шукаємо перший paragraphId у контенті
+        String paragraphId = findFirstParagraphId(content);
 
         return Chapter.builder()
                 .id(UUID.randomUUID().toString())
                 .title(title)
                 .level(Math.min(level, 6))
                 .content(content.toString())
-                .children(new ArrayList<>())
+                .children(children)
+                .paragraphId(paragraphId)
                 .build();
     }
 
-    // ==================== ОБРОБКА ЕЛЕМЕНТІВ ====================
+    /**
+     * Знаходить перший paragraphId у контенті за допомогою регулярного виразу.
+     */
+    private String findFirstParagraphId(StringBuilder content) {
+        if (content == null || content.length() == 0) {
+            return null;
+        }
+        String text = content.toString();
+        var matcher = PARAGRAPH_ID_PATTERN.matcher(text);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
 
     private void processElement(Element element, String tag, StringBuilder content, Counter counter, int level) {
         switch (tag) {
-            case "p":
-                processParagraph(element, content, counter);
-                break;
-            case "title":
-                processTitle(element, content, level);
-                break;
-            case "subtitle":
-                processSubtitle(element, content);
-                break;
-            case "epigraph":
-                processEpigraph(element, content);
-                break;
-            case "cite":
-                processCite(element, content);
-                break;
-            case "poem":
-                processPoem(element, content);
-                break;
-            case "text-author":
-                processTextAuthor(element, content);
-                break;
-            case "empty-line":
-                content.append("<br/>\n");
-                break;
-            case "emphasis":
-                processInline(element, "em", content);
-                break;
-            case "strong":
-                processInline(element, "strong", content);
-                break;
-            case "code":
-                processInline(element, "code", content);
-                break;
-            case "sub":
-                processInline(element, "sub", content);
-                break;
-            case "sup":
-                processInline(element, "sup", content);
-                break;
-            case "strikethrough":
-                processInline(element, "s", content);
-                break;
-            case "image":
-                processImage(element, content);
-                break;
-            default:
-                // Інші теги - просто текст
+            case "p" -> processParagraph(element, content, counter);
+            case "title" -> processTitle(element, content, level);
+            case "subtitle" -> processSubtitle(element, content);
+            case "epigraph" -> processEpigraph(element, content);
+            case "cite" -> processCite(element, content);
+            case "poem" -> processPoem(element, content);
+            case "text-author" -> processTextAuthor(element, content);
+            case "empty-line" -> content.append("<br/>\n");
+            case "emphasis" -> processInline(element, "em", content);
+            case "strong" -> processInline(element, "strong", content);
+            case "code" -> processInline(element, "code", content);
+            case "sub" -> processInline(element, "sub", content);
+            case "sup" -> processInline(element, "sup", content);
+            case "strikethrough" -> processInline(element, "s", content);
+            case "image" -> processImage(element, content);
+            default -> {
                 String text = element.text();
                 if (text != null && !text.trim().isEmpty()) {
                     content.append("<p>").append(escapeHtml(text.trim())).append("</p>\n");
                 }
-                break;
+            }
         }
     }
-
-    // ==================== ПАРАГРАФ ====================
 
     private void processParagraph(Element element, StringBuilder content, Counter counter) {
         String html = processElementContent(element);
@@ -463,8 +409,6 @@ public class JsoupFb2Parser {
                     .append("</p>\n");
         }
     }
-
-    // ==================== ЗАГОЛОВКИ ====================
 
     private void processTitle(Element element, StringBuilder content, int level) {
         String text = element.text();
@@ -486,14 +430,9 @@ public class JsoupFb2Parser {
         }
     }
 
-    // ==================== ЕПІГРАФ ====================
-
     private void processEpigraph(Element element, StringBuilder content) {
         content.append("<div class=\"epigraph\">\n");
-
-        // Обробляємо текст всередині епіграфа
-        Elements children = element.children();
-        for (Element child : children) {
+        for (Element child : element.children()) {
             String tag = child.tagName().toLowerCase();
             if ("p".equals(tag)) {
                 String text = child.text();
@@ -519,11 +458,8 @@ public class JsoupFb2Parser {
                 }
             }
         }
-
         content.append("</div>\n");
     }
-
-    // ==================== ЦИТАТА ====================
 
     private void processCite(Element element, StringBuilder content) {
         String html = processElementContent(element);
@@ -534,23 +470,17 @@ public class JsoupFb2Parser {
         }
     }
 
-    // ==================== ПОЕЗІЯ ====================
-
     private void processPoem(Element element, StringBuilder content) {
         content.append("<div class=\"poem\">\n");
-
-        Elements children = element.children();
-        for (Element child : children) {
+        for (Element child : element.children()) {
             String tag = child.tagName().toLowerCase();
             if ("stanza".equals(tag)) {
                 content.append("<div class=\"stanza\">\n");
-                Elements verses = child.children();
-                for (Element verse : verses) {
+                for (Element verse : child.children()) {
                     String vTag = verse.tagName().toLowerCase();
                     if ("v".equals(vTag)) {
                         String text = verse.html();
                         if (text != null && !text.trim().isEmpty()) {
-                            // Зберігаємо пробіли для поезії
                             content.append("<div class=\"verse\">")
                                     .append(text.replace("\n", "<br/>"))
                                     .append("</div>\n");
@@ -588,11 +518,8 @@ public class JsoupFb2Parser {
                 }
             }
         }
-
         content.append("</div>\n");
     }
-
-    // ==================== АВТОР ТЕКСТУ ====================
 
     private void processTextAuthor(Element element, StringBuilder content) {
         String text = element.text();
@@ -603,8 +530,6 @@ public class JsoupFb2Parser {
         }
     }
 
-    // ==================== INLINE ТЕГИ ====================
-
     private void processInline(Element element, String htmlTag, StringBuilder content) {
         String html = processElementContent(element);
         if (html != null && !html.trim().isEmpty()) {
@@ -614,10 +539,7 @@ public class JsoupFb2Parser {
         }
     }
 
-    // ==================== ЗОБРАЖЕННЯ ====================
-
     private void processImage(Element element, StringBuilder content) {
-        // Шукаємо href або src
         String href = element.attr("href");
         if (href == null || href.isEmpty()) {
             href = element.attr("xlink:href");
@@ -628,7 +550,6 @@ public class JsoupFb2Parser {
 
         if (href != null && href.startsWith("#")) {
             String imageId = href.substring(1);
-            // Зображення буде вставлено через DocumentToHtmlConverter
             content.append("<img data-image-id=\"").append(escapeHtml(imageId))
                     .append("\" src=\"data:image/jpeg;base64,PLACEHOLDER\" alt=\"Зображення\"/>");
         } else if (href != null && !href.isEmpty()) {
@@ -636,8 +557,6 @@ public class JsoupFb2Parser {
                     .append("\" alt=\"Зображення\"/>");
         }
     }
-
-    // ==================== ДОПОМІЖНІ МЕТОДИ ====================
 
     private String processElementContent(Element element) {
         if (element == null) {
@@ -656,14 +575,12 @@ public class JsoupFb2Parser {
                 String tag = child.tagName().toLowerCase();
                 String htmlTag = TAG_MAP.getOrDefault(tag, tag);
 
-                // Рекурсивно обробляємо вкладені елементи
                 String innerHtml = processElementContent(child);
                 if (innerHtml != null && !innerHtml.trim().isEmpty()) {
                     result.append("<").append(htmlTag).append(">")
                             .append(innerHtml)
                             .append("</").append(htmlTag).append(">");
                 } else {
-                    // Якщо немає вмісту - просто текст
                     String text = child.text();
                     if (text != null && !text.trim().isEmpty()) {
                         result.append(escapeHtml(text.trim()));
@@ -695,7 +612,6 @@ public class JsoupFb2Parser {
     private int countParagraphsInChapter(Chapter chapter) {
         int count = 0;
         if (chapter.getContent() != null) {
-            // Рахуємо <p> теги
             count += chapter.getContent().split("<p ").length - 1;
         }
         for (Chapter child : chapter.getChildren()) {

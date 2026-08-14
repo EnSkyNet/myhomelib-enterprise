@@ -1,21 +1,23 @@
 package com.myhomelibcorp.reader.model;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.util.ArrayList;
 import java.util.List;
 
 @Data
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class Chapter {
     private String id;
     private String title;
     private int level;
     private String content;
     private List<Chapter> children;
-    private int startOffset;
-    private int endOffset;
     private String paragraphId;
 
     public List<Chapter> getChildren() {

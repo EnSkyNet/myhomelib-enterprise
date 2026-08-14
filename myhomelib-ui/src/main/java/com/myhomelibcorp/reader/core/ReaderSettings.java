@@ -3,10 +3,6 @@ package com.myhomelibcorp.reader.core;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
-/**
- * Mutable runtime модель налаштувань Reader.
- * Не містить persistence логіки — тільки дані.
- */
 @Data
 @Slf4j
 public class ReaderSettings {
@@ -22,22 +18,18 @@ public class ReaderSettings {
     private double marginBottom = 20;
     private double marginLeft = 30;
     private double marginRight = 30;
-    private boolean fullScreen = false;
     private boolean autoScroll = false;
     private int scrollSpeed = 3;
-    private boolean showToolbar = true;
     private String customCss = "";
 
-    /**
-     * Створює новий екземпляр з дефолтними значеннями.
-     */
+    // Нові поля
+    private String widthMode = "medium";
+    private boolean pageMode = false;
+
     public static ReaderSettings createDefault() {
         return new ReaderSettings();
     }
 
-    /**
-     * Копіює налаштування з іншого об'єкта.
-     */
     public void copyFrom(ReaderSettings other) {
         this.theme = other.theme;
         this.fontFamily = other.fontFamily;
@@ -51,16 +43,13 @@ public class ReaderSettings {
         this.marginBottom = other.marginBottom;
         this.marginLeft = other.marginLeft;
         this.marginRight = other.marginRight;
-        this.fullScreen = other.fullScreen;
         this.autoScroll = other.autoScroll;
         this.scrollSpeed = other.scrollSpeed;
-        this.showToolbar = other.showToolbar;
         this.customCss = other.customCss;
+        this.widthMode = other.widthMode;
+        this.pageMode = other.pageMode;
     }
 
-    /**
-     * Конвертує в доменну модель для збереження.
-     */
     public com.myhomelibcorp.domain.model.reader.ReaderPreferences toDomain() {
         return com.myhomelibcorp.domain.model.reader.ReaderPreferences.builder()
                 .theme(theme)
@@ -75,17 +64,12 @@ public class ReaderSettings {
                 .marginBottom(marginBottom)
                 .marginLeft(marginLeft)
                 .marginRight(marginRight)
-                .fullScreen(fullScreen)
                 .autoScroll(autoScroll)
                 .scrollSpeed(scrollSpeed)
-                .showToolbar(showToolbar)
                 .customCss(customCss)
                 .build();
     }
 
-    /**
-     * Завантажує з доменної моделі.
-     */
     public void fromDomain(com.myhomelibcorp.domain.model.reader.ReaderPreferences prefs) {
         this.theme = prefs.getTheme();
         this.fontFamily = prefs.getFontFamily();
@@ -99,10 +83,8 @@ public class ReaderSettings {
         this.marginBottom = prefs.getMarginBottom();
         this.marginLeft = prefs.getMarginLeft();
         this.marginRight = prefs.getMarginRight();
-        this.fullScreen = prefs.isFullScreen();
         this.autoScroll = prefs.isAutoScroll();
         this.scrollSpeed = prefs.getScrollSpeed();
-        this.showToolbar = prefs.isShowToolbar();
         this.customCss = prefs.getCustomCss();
     }
 }

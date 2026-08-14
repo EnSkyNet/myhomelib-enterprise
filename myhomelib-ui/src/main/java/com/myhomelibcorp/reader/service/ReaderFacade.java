@@ -10,14 +10,8 @@ import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
-import javafx.application.Platform;
-import javafx.scene.control.Label;
-import javafx.scene.control.ProgressBar;
-import javafx.scene.web.WebEngine;
-import javafx.scene.web.WebView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -32,25 +26,22 @@ public class ReaderFacade {
     private final LoadBookByIdUseCase loadBookByIdUseCase;
     private final SessionService sessionService;
     private final ReaderSessionManager sessionManager;
-    @Lazy private final ReaderContentService contentService; // <-- @Lazy для уникнення циклу
+    private final ReaderContentService contentService;
     private final ReaderPositionService positionService;
     private final ReaderBookmarkService bookmarkService;
     private final ReaderTocService tocService;
     private final ReaderSettingsService settingsService;
+    private final ReaderScheduler scheduler;
 
     private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
-    // ==================== Відкриття книги ====================
-
-    public ReaderSession openBook(BookId bookId, WebView webView, WebEngine webEngine,
-                                  ProgressBar progressBar, Label progressLabel) {
+    public ReaderSession openBook(BookId bookId) {
         if (bookId == null) {
             log.warn("Cannot open book: bookId is null");
             return null;
         }
 
         closeBook();
-
         isClosing.set(false);
 
         Optional<BookDto> bookOpt = loadBookByIdUseCase.execute(bookId);
@@ -63,14 +54,9 @@ public class ReaderFacade {
         sessionService.saveLastOpenedBookId(bookId.asString());
 
         ReaderSession session = sessionManager.createSession(book);
-        session.setWebView(webView);
-        session.setWebEngine(webEngine);
-        session.setProgressBar(progressBar);
-        session.setProgressLabel(progressLabel);
 
         log.info("Opening book: {} (session: {})", book.getTitle(), session.getSessionId());
 
-        // Завантажуємо позицію ДО завантаження контенту
         positionService.loadPosition(bookId.asString())
                 .ifPresent(pos -> {
                     session.setRestorePosition(pos);
@@ -78,16 +64,20 @@ public class ReaderFacade {
                             bookId, (int)pos.getPercent(), pos.getParagraphIndex());
                 });
 
-        // Завантажуємо контент (асинхронно)
-        contentService.loadBookContent(session);
-
         return session;
     }
 
-    /**
-     * Відновлення позиції після завантаження контенту.
-     * Викликається з ReaderContentService після рендерингу HTML.
-     */
+    public void loadBookContent(ReaderSession session, Runnable onLoaded) {
+        if (session == null || session.getBook() == null) {
+            if (onLoaded != null) {
+                scheduler.runOnFxThread(onLoaded);
+            }
+            return;
+        }
+
+        contentService.loadBookContent(session, onLoaded);
+    }
+
     public void restorePositionAfterLoad(ReaderSession session) {
         if (session == null || !session.isActive()) {
             return;
@@ -99,25 +89,13 @@ public class ReaderFacade {
             return;
         }
 
-        // Відновлюємо позицію з невеликою затримкою для повного завантаження DOM
-        javafx.animation.PauseTransition delay = new javafx.animation.PauseTransition(
-                javafx.util.Duration.millis(500)
-        );
-        delay.setOnFinished(e -> {
-            if (session.isActive()) {
-                positionService.restorePosition(session, pos, () -> {
-                    updateProgressUI(session, pos.getPercent());
-                    log.info("Position restored for book {}: {}%, paragraph {}",
-                            session.getBookId(), (int)pos.getPercent(), pos.getParagraphIndex());
-                });
-            }
+        positionService.restorePosition(session, pos, () -> {
+            updateProgressUI(session, pos.getPercent());
+            log.info("Position restored for book {}: {}%, paragraph {}",
+                    session.getBookId(), (int)pos.getPercent(), pos.getParagraphIndex());
         });
-        delay.play();
     }
 
-    /**
-     * Закриття книги.
-     */
     public void closeBook() {
         if (isClosing.get()) {
             return;
@@ -130,22 +108,14 @@ public class ReaderFacade {
 
         isClosing.set(true);
 
-        // Зупиняємо періодичне збереження
         positionService.stopPeriodicSaving(session);
-
-        // Зберігаємо позицію
         positionService.savePositionNow(session);
-
-        // Закриваємо сесію
         sessionManager.closeCurrentSession();
 
         log.info("Book closed");
         isClosing.set(false);
     }
 
-    /**
-     * Збереження поточної позиції.
-     */
     public void saveCurrentPosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
@@ -154,14 +124,11 @@ public class ReaderFacade {
         positionService.savePositionNow(session);
     }
 
-    /**
-     * Відновлення позиції.
-     */
     public void restorePosition(Runnable onComplete) {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
             if (onComplete != null) {
-                onComplete.run();
+                scheduler.runOnFxThread(onComplete);
             }
             return;
         }
@@ -170,43 +137,21 @@ public class ReaderFacade {
         if (pos == null) {
             updateProgressUI(session, 0);
             if (onComplete != null) {
-                onComplete.run();
+                scheduler.runOnFxThread(onComplete);
             }
             return;
         }
 
-        // Оновлюємо прогрес (можливо 0)
         updateProgressUI(session, pos.getPercent());
 
         positionService.restorePosition(session, pos, () -> {
             updateProgressUI(session, pos.getPercent());
             if (onComplete != null) {
-                onComplete.run();
+                scheduler.runOnFxThread(onComplete);
             }
         });
     }
 
-    // Версія без callback для зворотньої сумісності
-    public boolean restorePosition() {
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session == null || !session.isActive()) {
-            return false;
-        }
-
-        ReaderPosition pos = session.getRestorePosition();
-        if (pos == null) {
-            updateProgressUI(session, 0);
-            return false;
-        }
-
-        updateProgressUI(session, pos.getPercent());
-        positionService.restorePosition(session, pos, null);
-        return true;
-    }
-
-    /**
-     * Оновлення прогресу з поточної позиції.
-     */
     public void updateProgressFromCurrentPosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
@@ -222,18 +167,24 @@ public class ReaderFacade {
         if (session == null) {
             return;
         }
-        double progress = Math.min(1.0, Math.max(0.0, percent / 100.0));
-        Platform.runLater(() -> {
-            if (session.getProgressBar() != null) {
-                session.getProgressBar().setProgress(progress);
-            }
-            if (session.getProgressLabel() != null) {
-                session.getProgressLabel().setText((int) percent + "%");
-            }
-        });
+        session.setProgressPercent(percent);
     }
 
-    // ==================== Періодичне збереження ====================
+    public void setZoom(double zoom) {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null) {
+            return;
+        }
+        session.setZoom(zoom);
+    }
+
+    public double getZoom() {
+        ReaderSession session = sessionManager.getCurrentSession();
+        if (session == null) {
+            return 1.0;
+        }
+        return session.getZoom();
+    }
 
     public void startPeriodicSaving(ReaderSession session) {
         positionService.startPeriodicSaving(session);
@@ -242,8 +193,6 @@ public class ReaderFacade {
     public void stopPeriodicSaving(ReaderSession session) {
         positionService.stopPeriodicSaving(session);
     }
-
-    // ==================== TOC ====================
 
     public List<Chapter> getToc() {
         ReaderSession session = sessionManager.getCurrentSession();
@@ -268,8 +217,6 @@ public class ReaderFacade {
         }
         return tocService.getCurrentChapterTitle(session);
     }
-
-    // ==================== Закладки ====================
 
     public Bookmark addBookmark() {
         ReaderSession session = sessionManager.getCurrentSession();
@@ -307,13 +254,11 @@ public class ReaderFacade {
         return bookmarkService.getBookmarkCount(session.getBookId());
     }
 
-    // ==================== Налаштування ====================
-
     public void toggleTheme() {
         String theme = settingsService.toggleTheme();
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
-            contentService.applySettings(session);
+            applySettings(session);
         }
         log.info("Theme toggled to: {}", theme);
     }
@@ -322,7 +267,7 @@ public class ReaderFacade {
         settingsService.setFontSize(size);
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
-            contentService.applySettings(session);
+            applySettings(session);
         }
     }
 
@@ -330,7 +275,7 @@ public class ReaderFacade {
         settingsService.setFontFamily(family);
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
-            contentService.applySettings(session);
+            applySettings(session);
         }
     }
 
@@ -352,30 +297,9 @@ public class ReaderFacade {
         settingsService.resetToDefaults();
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
-            contentService.applySettings(session);
+            applySettings(session);
         }
     }
-
-    // ==================== Zoom ====================
-
-    public void setZoom(double zoom) {
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session == null || session.getWebView() == null) {
-            return;
-        }
-        double newZoom = Math.max(0.5, Math.min(2.0, zoom));
-        session.getWebView().setZoom(newZoom);
-    }
-
-    public double getZoom() {
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session == null || session.getWebView() == null) {
-            return 1.0;
-        }
-        return session.getWebView().getZoom();
-    }
-
-    // ==================== Стан ====================
 
     public boolean isBookOpen() {
         return sessionManager.hasActiveSession();
@@ -397,8 +321,6 @@ public class ReaderFacade {
     public boolean isClosing() {
         return isClosing.get();
     }
-
-    // ==================== Кеш ====================
 
     public void clearCache() {
         contentService.clearCache();

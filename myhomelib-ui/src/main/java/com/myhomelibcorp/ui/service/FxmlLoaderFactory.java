@@ -7,6 +7,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
 import com.myhomelibcorp.ui.book.BookWorkspaceController;
 import com.myhomelibcorp.ui.group.GroupWorkspaceController;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.reader.ReaderWorkspaceController;
 import com.myhomelibcorp.ui.search.SearchWorkspaceController;
 import javafx.fxml.FXMLLoader;
@@ -30,7 +31,14 @@ public class FxmlLoaderFactory {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource(fxmlPath));
             loader.setControllerFactory(springContext::getBean);
-            return loader.load();
+            Pane pane = loader.load();
+
+            Object controller = loader.getController();
+            if (controller != null) {
+                pane.setUserData(controller);
+            }
+
+            return pane;
         } catch (IOException e) {
             log.error("Failed to load FXML: {}", fxmlPath, e);
             throw new RuntimeException("Не вдалося завантажити FXML: " + fxmlPath, e);
@@ -45,12 +53,11 @@ public class FxmlLoaderFactory {
 
             AuthorWorkspaceController controller = loader.getController();
             if (authorId == null) {
-                throw new IllegalArgumentException("AuthorId не може бути null при відкритті AuthorWorkspace");
+                throw new IllegalArgumentException("AuthorId не може бути null");
             }
-
-            // ПРЯМА ПЕРЕДАЧА ID
             controller.setAuthorId(authorId);
 
+            pane.setUserData(controller);
             return pane;
         } catch (IOException e) {
             log.error("Не вдалося завантажити AuthorWorkspace", e);
@@ -65,6 +72,7 @@ public class FxmlLoaderFactory {
             Pane pane = loader.load();
             BookWorkspaceController controller = loader.getController();
             controller.setBookId(bookId);
+            pane.setUserData(controller);
             return pane;
         } catch (IOException e) {
             log.error("Failed to load book workspace", e);
@@ -81,6 +89,7 @@ public class FxmlLoaderFactory {
             if (group != null) {
                 controller.setGroup(group);
             }
+            pane.setUserData(controller);
             return pane;
         } catch (IOException e) {
             log.error("Failed to load group workspace", e);
@@ -95,6 +104,9 @@ public class FxmlLoaderFactory {
             Pane pane = loader.load();
             ReaderWorkspaceController controller = loader.getController();
             controller.setBookId(bookId);
+
+            pane.setUserData(controller);
+
             return pane;
         } catch (IOException e) {
             log.error("Failed to load reader workspace", e);
@@ -109,6 +121,7 @@ public class FxmlLoaderFactory {
             Pane pane = loader.load();
             SearchWorkspaceController controller = loader.getController();
             controller.setInitialQuery(query);
+            pane.setUserData(controller);
             return pane;
         } catch (IOException e) {
             log.error("Failed to load search workspace", e);
@@ -123,6 +136,7 @@ public class FxmlLoaderFactory {
             Pane pane = loader.load();
             SearchWorkspaceController controller = loader.getController();
             controller.setResults(results);
+            pane.setUserData(controller);
             return pane;
         } catch (IOException e) {
             log.error("Failed to load search workspace with results", e);

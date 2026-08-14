@@ -7,8 +7,10 @@ import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.web.WebEngine;
 import javafx.scene.web.WebView;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
 
 import java.util.ArrayList;
@@ -16,35 +18,31 @@ import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * Сесія Reader для однієї книги.
- * Містить тільки необхідні дані для роботи.
- */
 @Getter
 @Setter
 @Builder
+@NoArgsConstructor
+@AllArgsConstructor
 public class ReaderSession {
+    private String sessionId;
+    private BookDto book;
 
-    private final String sessionId;
-    private final BookDto book;
-
-    // ===== UI компоненти =====
     private WebView webView;
     private WebEngine webEngine;
     private ProgressBar progressBar;
     private Label progressLabel;
 
-    // ===== Позиція для відновлення =====
     private ReaderPosition restorePosition;
+    private double progressPercent;
 
-    // ===== TOC (зберігається під час парсингу) =====
+    @Builder.Default
+    private double zoom = 1.0;
+
     @Builder.Default
     private List<Chapter> chapters = new ArrayList<>();
 
-    // ===== Стан =====
     @Builder.Default
     private final AtomicBoolean isOpen = new AtomicBoolean(true);
-
     @Builder.Default
     private final AtomicBoolean isClosing = new AtomicBoolean(false);
 
@@ -53,6 +51,8 @@ public class ReaderSession {
                 .sessionId(UUID.randomUUID().toString())
                 .book(book)
                 .chapters(new ArrayList<>())
+                .progressPercent(0)
+                .zoom(1.0)
                 .build();
     }
 
@@ -71,21 +71,5 @@ public class ReaderSession {
     public void markClosed() {
         isOpen.set(false);
         isClosing.set(false);
-    }
-
-    public boolean isOpen() {
-        return isOpen.get();
-    }
-
-    public void setOpen(boolean value) {
-        isOpen.set(value);
-    }
-
-    public boolean isClosing() {
-        return isClosing.get();
-    }
-
-    public void setClosing(boolean value) {
-        isClosing.set(value);
     }
 }

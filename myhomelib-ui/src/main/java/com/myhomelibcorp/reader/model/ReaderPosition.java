@@ -1,35 +1,30 @@
 package com.myhomelibcorp.reader.model;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Value;
 
-/**
- * Стабільна позиція читання, яка використовується для:
- * - збереження прогресу
- * - відновлення позиції
- * - закладок
- * - навігації по змісту
- */
 @Value
 @Builder
+@AllArgsConstructor
 public class ReaderPosition {
     String bookId;
+    String chapterId;
     String paragraphId;
+    int paragraphIndex;
     int charOffset;
     double percent;
-    String chapterId;
     String chapterTitle;
-    int paragraphIndex;
 
     public static ReaderPosition empty(String bookId) {
         return ReaderPosition.builder()
                 .bookId(bookId)
                 .paragraphId("")
+                .paragraphIndex(0)
                 .charOffset(0)
                 .percent(0.0)
                 .chapterId("")
                 .chapterTitle("")
-                .paragraphIndex(0)
                 .build();
     }
 
@@ -38,13 +33,10 @@ public class ReaderPosition {
     }
 
     public boolean hasChapter() {
-        return chapterTitle != null && !chapterTitle.isEmpty();
+        return chapterId != null && !chapterId.isEmpty();
     }
 
     public String getDisplayText() {
-        if (hasChapter()) {
-            return chapterTitle + " · " + (int) percent + "%";
-        }
         return (int) percent + "%";
     }
 }

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.service;
 
 import jakarta.annotation.PreDestroy;
+import javafx.application.Platform;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -36,6 +37,19 @@ public class ReaderScheduler {
 
     public ScheduledFuture<?> scheduleWithFixedDelay(Runnable task, long initialDelay, long delay, TimeUnit unit) {
         return scheduler.scheduleWithFixedDelay(task, initialDelay, delay, unit);
+    }
+
+    /**
+     * Виконує задачу на FX Application Thread.
+     * Якщо поточний потік - FX, виконує негайно.
+     * Інакше - через Platform.runLater().
+     */
+    public void runOnFxThread(Runnable task) {
+        if (Platform.isFxApplicationThread()) {
+            task.run();
+        } else {
+            Platform.runLater(task);
+        }
     }
 
     public void cancel(ScheduledFuture<?> future) {

@@ -7,7 +7,6 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.reader.service.ReaderFacade;
-import com.myhomelibcorp.reader.session.ReaderSession;
 import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
@@ -33,6 +32,7 @@ public class WorkspaceManager {
     private MainController mainController;
     private StackPane workspaceStackPane;
     private Pane currentWorkspace;
+    private WorkspaceLifecycle currentLifecycle;
 
     private final Deque<WorkspaceEntry> history = new ArrayDeque<>();
     private final Deque<WorkspaceEntry> forwardStack = new ArrayDeque<>();
@@ -46,34 +46,31 @@ public class WorkspaceManager {
         this.workspaceStackPane = stackPane;
     }
 
-    /**
-     * Закриває Reader якщо він відкритий і targetType не є reader.
-     */
-    private void closeReaderIfNeeded(String targetType) {
-        if ("reader".equals(targetType)) {
-            return;
-        }
-
-        if (readerFacade.isBookOpen()) {
-            ReaderSession session = readerSessionManager.getCurrentSession();
-            if (session != null) {
-                log.info("Закриття Reader при переході до: {}", targetType);
-                readerFacade.saveCurrentPosition();
-                readerFacade.closeBook();
+    private void disposeCurrentWorkspace() {
+        if (currentWorkspace != null) {
+            Object controller = currentWorkspace.getUserData();
+            if (controller instanceof WorkspaceLifecycle lifecycle) {
+                log.info("Disposing workspace lifecycle: {}", controller.getClass().getSimpleName());
+                lifecycle.dispose();
             }
+
+            workspaceStackPane.getChildren().remove(currentWorkspace);
+            currentWorkspace = null;
+            currentLifecycle = null;
         }
     }
 
     public void setWorkspace(Pane workspace, String type) {
-        closeReaderIfNeeded(type);
+        if (!"reader".equals(type) && readerFacade.isBookOpen()) {
+            readerFacade.saveCurrentPosition();
+            readerFacade.closeBook();
+        }
+
+        disposeCurrentWorkspace();
 
         if (workspaceStackPane == null) {
             log.error("WorkspaceStackPane не ініціалізовано!");
             return;
-        }
-
-        if (currentWorkspace != null) {
-            workspaceStackPane.getChildren().remove(currentWorkspace);
         }
 
         currentWorkspace = workspace;
@@ -190,13 +187,9 @@ public class WorkspaceManager {
     }
 
     private void restoreWorkspace(WorkspaceEntry entry) {
-        // Закриваємо Reader при відновленні будь-якого воркспейсу, крім reader
         if (!"reader".equals(entry.type) && readerFacade.isBookOpen()) {
-            ReaderSession session = readerSessionManager.getCurrentSession();
-            if (session != null) {
-                readerFacade.saveCurrentPosition();
-                readerFacade.closeBook();
-            }
+            readerFacade.saveCurrentPosition();
+            readerFacade.closeBook();
         }
 
         switch (entry.type) {

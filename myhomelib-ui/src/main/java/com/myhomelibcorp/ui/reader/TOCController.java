@@ -2,28 +2,32 @@ package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.reader.model.Chapter;
 import javafx.fxml.FXML;
-import javafx.scene.control.ListCell;
-import javafx.scene.control.ListView;
+import javafx.scene.control.TreeCell;
+import javafx.scene.control.TreeItem;
+import javafx.scene.control.TreeView;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.function.Consumer;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
 public class TOCController {
 
-    @FXML private ListView<Chapter> tocListView;
+    @FXML private TreeView<Chapter> tocTreeView;
 
     private Consumer<Chapter> onChapterSelected;
 
     @FXML
     public void initialize() {
-        tocListView.setCellFactory(lv -> new ListCell<>() {
+        tocTreeView.setCellFactory(tv -> new TreeCell<>() {
             @Override
             protected void updateItem(Chapter item, boolean empty) {
                 super.updateItem(item, empty);
@@ -38,12 +42,21 @@ public class TOCController {
             }
         });
 
-        tocListView.setOnMouseClicked(e -> {
+        tocTreeView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
+            if (selected != null && selected.getValue() != null && onChapterSelected != null) {
+                log.info("Navigating to chapter: {}", selected.getValue().getTitle());
+                onChapterSelected.accept(selected.getValue());
+                closeDialog();
+            }
+        });
+
+        tocTreeView.setOnMouseClicked(e -> {
             if (e.getClickCount() == 2) {
-                Chapter selected = tocListView.getSelectionModel().getSelectedItem();
-                if (selected != null && onChapterSelected != null) {
-                    log.info("Navigating to chapter: {}", selected.getTitle());
-                    onChapterSelected.accept(selected);
+                TreeItem<Chapter> selected = tocTreeView.getSelectionModel().getSelectedItem();
+                if (selected != null && selected.getValue() != null && onChapterSelected != null) {
+                    log.info("Navigating to chapter (double click): {}", selected.getValue().getTitle());
+                    onChapterSelected.accept(selected.getValue());
+                    closeDialog();
                 }
             }
         });
@@ -51,15 +64,42 @@ public class TOCController {
 
     public void setChapters(List<Chapter> chapters, Consumer<Chapter> onChapterSelected) {
         this.onChapterSelected = onChapterSelected;
-        tocListView.getItems().setAll(chapters);
-        if (!chapters.isEmpty()) {
-            log.info("TOC loaded with {} chapters", chapters.size());
+
+        TreeItem<Chapter> root = new TreeItem<>();
+        root.setValue(null);
+        root.setExpanded(true);
+
+        for (Chapter chapter : chapters) {
+            TreeItem<Chapter> item = buildTreeItem(chapter);
+            root.getChildren().add(item);
         }
+
+        tocTreeView.setRoot(root);
+        tocTreeView.setShowRoot(false);
+
+        log.info("TOC loaded with {} top-level chapters", chapters.size());
+    }
+
+    private TreeItem<Chapter> buildTreeItem(Chapter chapter) {
+        TreeItem<Chapter> item = new TreeItem<>(chapter);
+        item.setExpanded(true);
+
+        if (chapter.getChildren() != null && !chapter.getChildren().isEmpty()) {
+            for (Chapter child : chapter.getChildren()) {
+                item.getChildren().add(buildTreeItem(child));
+            }
+        }
+
+        return item;
     }
 
     @FXML
     private void onClose() {
-        Stage stage = (Stage) tocListView.getScene().getWindow();
+        closeDialog();
+    }
+
+    private void closeDialog() {
+        Stage stage = (Stage) tocTreeView.getScene().getWindow();
         if (stage != null) {
             stage.close();
         }

@@ -6,9 +6,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.prefs.Preferences;
 
 @Service
@@ -24,7 +21,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
         try {
             Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
             String json = prefs.get(PREF_KEY, null);
-            if (json != null) {
+            if (json != null && !json.isEmpty()) {
                 return objectMapper.readValue(json, ReaderPreferences.class);
             }
         } catch (Exception e) {
@@ -39,6 +36,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
             Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
             String json = objectMapper.writeValueAsString(preferences);
             prefs.put(PREF_KEY, json);
+            log.debug("Reader preferences saved");
         } catch (Exception e) {
             log.error("Не вдалося зберегти налаштування Reader", e);
         }
@@ -49,6 +47,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
         try {
             Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
             prefs.remove(PREF_KEY);
+            log.info("Reader preferences reset");
         } catch (Exception e) {
             log.error("Не вдалося скинути налаштування Reader", e);
         }

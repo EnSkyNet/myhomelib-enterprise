@@ -1,10 +1,14 @@
 package com.myhomelibcorp.domain.model.reader;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
+import lombok.NoArgsConstructor;
 import lombok.Value;
 
 @Value
 @Builder
+@NoArgsConstructor(force = true)
+@AllArgsConstructor
 public class ReaderPreferences {
     @Builder.Default
     String theme = "light";

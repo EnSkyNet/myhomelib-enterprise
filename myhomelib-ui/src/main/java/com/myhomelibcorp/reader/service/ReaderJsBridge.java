@@ -15,9 +15,6 @@ import java.util.concurrent.TimeoutException;
 @Slf4j
 public class ReaderJsBridge {
 
-    /**
-     * Виконує JavaScript на FX потоку з очікуванням результату.
-     */
     public Object executeScriptOnFxThread(WebEngine engine, String script) {
         if (engine == null) {
             throw new IllegalStateException("WebEngine is null");
@@ -109,48 +106,12 @@ public class ReaderJsBridge {
                 })();
             """.replace("INDEX", String.valueOf(index))
                     .replace("OFFSET", String.valueOf(charOffset));
+
             Object result = executeScriptOnFxThread(engine, script);
             return Boolean.TRUE.equals(result);
         } catch (Exception e) {
             log.error("Failed to scroll to paragraph {}", index, e);
             return false;
-        }
-    }
-
-    public String getCurrentChapterTitle(WebEngine engine) {
-        if (!isEngineReady(engine)) {
-            return "";
-        }
-        try {
-            // Шукаємо найближчий .chapter-title до видимої області
-            String script = """
-                (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    if (paragraphs.length === 0) return '';
-                    var firstVisible = 0;
-                    for (var i = 0; i < paragraphs.length; i++) {
-                        var rect = paragraphs[i].getBoundingClientRect();
-                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                            firstVisible = i;
-                            break;
-                        }
-                    }
-                    var el = paragraphs[firstVisible];
-                    var chapterEl = el.closest('.chapter');
-                    if (chapterEl) {
-                        var titleEl = chapterEl.querySelector('.chapter-title');
-                        if (titleEl) {
-                            return titleEl.innerText || '';
-                        }
-                    }
-                    return '';
-                })();
-            """;
-            Object result = executeScriptOnFxThread(engine, script);
-            return result != null ? result.toString() : "";
-        } catch (Exception e) {
-            log.warn("Failed to get current chapter title", e);
-            return "";
         }
     }
 

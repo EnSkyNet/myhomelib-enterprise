@@ -5,13 +5,11 @@ import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecycle
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.session.ReaderSession;
-import javafx.application.Platform;
-import javafx.scene.web.WebEngine;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -37,6 +35,8 @@ public class ReaderPositionService {
     private static final long SAVE_DELAY_MS = 1000;
     private static final long SAVE_INTERVAL_SECONDS = 5;
 
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
     // ==================== Отримання позиції ====================
 
     public ReaderPosition getCurrentPosition(ReaderSession session) {
@@ -44,52 +44,12 @@ public class ReaderPositionService {
             return null;
         }
 
-        WebEngine engine = session.getWebEngine();
-
-        if (!isContentLoadedOnFxThread(engine)) {
+        if (!jsBridge.isContentLoaded(session.getWebEngine())) {
             return null;
-        }
-
-        return getPositionOnFxThread(session);
-    }
-
-    private boolean isContentLoadedOnFxThread(WebEngine engine) {
-        if (engine == null) {
-            return false;
-        }
-
-        if (Platform.isFxApplicationThread()) {
-            return jsBridge.isContentLoaded(engine);
-        }
-
-        CompletableFuture<Boolean> future = new CompletableFuture<>();
-        Platform.runLater(() -> {
-            try {
-                future.complete(jsBridge.isContentLoaded(engine));
-            } catch (Exception e) {
-                future.complete(false);
-            }
-        });
-
-        try {
-            return future.get(2, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            log.debug("Failed to check content loaded: {}", e.getMessage());
-            return false;
-        }
-    }
-
-    private ReaderPosition getPositionOnFxThread(ReaderSession session) {
-        if (session == null || session.getWebEngine() == null) {
-            return null;
-        }
-
-        if (Platform.isFxApplicationThread()) {
-            return getPositionSync(session);
         }
 
         CompletableFuture<ReaderPosition> future = new CompletableFuture<>();
-        Platform.runLater(() -> {
+        scheduler.runOnFxThread(() -> {
             try {
                 future.complete(getPositionSync(session));
             } catch (Exception e) {
@@ -106,93 +66,87 @@ public class ReaderPositionService {
     }
 
     private ReaderPosition getPositionSync(ReaderSession session) {
-        if (!Platform.isFxApplicationThread()) {
+        if (!javafx.application.Platform.isFxApplicationThread()) {
             throw new IllegalStateException("Must be called on FX application thread");
         }
 
-        WebEngine engine = session.getWebEngine();
+        var engine = session.getWebEngine();
         if (engine == null || !jsBridge.isContentLoaded(engine)) {
             return null;
         }
 
         try {
             String script = """
-            (function() {
-                var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                if (paragraphs.length === 0) {
-                    return JSON.stringify({
-                        paragraphId: '',
-                        paragraphIndex: 0,
-                        charOffset: 0,
-                        percent: 0,
-                        chapterId: '',
-                        chapterTitle: '',
-                        totalParagraphs: 0
-                    });
-                }
-
-                var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
-                var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-
-                // Знаходимо перший видимий параграф
-                var firstVisible = 0;
-                for (var i = 0; i < paragraphs.length; i++) {
-                    var rect = paragraphs[i].getBoundingClientRect();
-                    if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                        firstVisible = i;
-                        break;
+                (function() {
+                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
+                    if (paragraphs.length === 0) {
+                        return JSON.stringify({
+                            paragraphId: '',
+                            paragraphIndex: 0,
+                            charOffset: 0,
+                            percent: 0,
+                            chapterId: '',
+                            chapterTitle: '',
+                            totalParagraphs: 0
+                        });
                     }
-                }
 
-                var el = paragraphs[firstVisible];
-                var text = el.innerText || '';
-                var totalHeight = el.getBoundingClientRect().height || 1;
-                var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
-                var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
-                var visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
-                var charOffset = Math.floor(ratio * text.length);
+                    var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
+                    var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+                    var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
 
-                var chapterTitle = '';
-                var chapterEl = el.closest('.chapter');
-                if (chapterEl) {
-                    var titleEl = chapterEl.querySelector('.chapter-title');
-                    if (titleEl) {
-                        chapterTitle = titleEl.innerText || '';
-                    }
-                }
-
-                if (!chapterTitle) {
-                    var parent = el.parentElement;
-                    while (parent) {
-                        if (parent.classList && parent.classList.contains('chapter')) {
-                            var titleEl = parent.querySelector('.chapter-title');
-                            if (titleEl) {
-                                chapterTitle = titleEl.innerText || '';
-                                break;
-                            }
+                    var firstVisible = 0;
+                    for (var i = 0; i < paragraphs.length; i++) {
+                        var rect = paragraphs[i].getBoundingClientRect();
+                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
+                            firstVisible = i;
+                            break;
                         }
-                        parent = parent.parentElement;
                     }
-                }
 
-                // ВИПРАВЛЕНО: використовуємо індекс + 1 для узгодження з HTML
-                // p-id в HTML: p1, p2, p3... а в масиві індекс 0, 1, 2...
-                var paragraphIndex = firstVisible + 1;
-                var paragraphId = el.getAttribute('data-paragraph-id') || 'p' + paragraphIndex;
+                    var el = paragraphs[firstVisible];
+                    var text = el.innerText || '';
+                    var totalHeight = el.getBoundingClientRect().height || 1;
+                    var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
+                    var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
+                    var visibleHeight = Math.max(0, visibleBottom - visibleTop);
+                    var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
+                    var charOffset = Math.floor(ratio * text.length);
 
-                return JSON.stringify({
-                    paragraphId: paragraphId,
-                    paragraphIndex: paragraphIndex,
-                    charOffset: charOffset,
-                    percent: Math.min(1, Math.max(0, percent)),
-                    chapterId: chapterEl ? chapterEl.id || '' : '',
-                    chapterTitle: chapterTitle || '',
-                    totalParagraphs: paragraphs.length
-                });
-            })();
-        """;
+                    var chapterTitle = '';
+                    var chapterEl = el.closest('.chapter');
+                    if (chapterEl) {
+                        var titleEl = chapterEl.querySelector('.chapter-title');
+                        if (titleEl) {
+                            chapterTitle = titleEl.innerText || '';
+                        }
+                    }
+
+                    if (!chapterTitle) {
+                        var parent = el.parentElement;
+                        while (parent) {
+                            if (parent.classList && parent.classList.contains('chapter')) {
+                                var titleEl = parent.querySelector('.chapter-title');
+                                if (titleEl) {
+                                    chapterTitle = titleEl.innerText || '';
+                                    break;
+                                }
+                            }
+                            parent = parent.parentElement;
+                        }
+                    }
+
+                    return JSON.stringify({
+                        paragraphId: el.getAttribute('data-paragraph-id') || '',
+                        paragraphIndex: firstVisible,
+                        charOffset: charOffset,
+                        percent: Math.min(1, Math.max(0, percent)),
+                        chapterId: chapterEl ? chapterEl.id || '' : '',
+                        chapterTitle: chapterTitle || '',
+                        totalParagraphs: paragraphs.length
+                    });
+                })();
+            """;
 
             Object result = engine.executeScript(script);
             if (result == null) {
@@ -210,8 +164,7 @@ public class ReaderPositionService {
 
     private ReaderPosition parsePosition(String json, String bookId) {
         try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode node = mapper.readTree(json);
+            JsonNode node = objectMapper.readTree(json);
 
             String paragraphId = node.has("paragraphId") ? node.get("paragraphId").asText() : "";
             int paragraphIndex = node.has("paragraphIndex") ? node.get("paragraphIndex").asInt() : 0;
@@ -235,41 +188,6 @@ public class ReaderPositionService {
         }
     }
 
-    private String extract(String json, String key) {
-        String pattern = "\"" + key + "\":\"";
-        int start = json.indexOf(pattern);
-        if (start == -1) {
-            pattern = "\"" + key + "\":";
-            start = json.indexOf(pattern);
-            if (start == -1) return "";
-            start += pattern.length();
-            int end = json.indexOf(",", start);
-            if (end == -1) end = json.indexOf("}", start);
-            if (end == -1) return "";
-            return json.substring(start, end).trim();
-        }
-        start += pattern.length();
-        int end = json.indexOf("\"", start);
-        if (end == -1) return "";
-        return json.substring(start, end);
-    }
-
-    private int extractInt(String json, String key) {
-        try {
-            return Integer.parseInt(extract(json, key));
-        } catch (NumberFormatException e) {
-            return 0;
-        }
-    }
-
-    private double extractDouble(String json, String key) {
-        try {
-            return Double.parseDouble(extract(json, key));
-        } catch (NumberFormatException e) {
-            return 0.0;
-        }
-    }
-
     // ==================== Збереження позиції ====================
 
     public void savePositionNow(ReaderSession session) {
@@ -277,21 +195,14 @@ public class ReaderPositionService {
             return;
         }
 
-        if (Platform.isFxApplicationThread()) {
-            ReaderPosition pos = getPositionSync(session);
-            if (pos != null) {
-                savePosition(pos);
-            }
-        } else {
-            Platform.runLater(() -> {
-                if (session.isActive()) {
-                    ReaderPosition pos = getPositionSync(session);
-                    if (pos != null) {
-                        savePosition(pos);
-                    }
+        scheduler.runOnFxThread(() -> {
+            if (session.isActive()) {
+                ReaderPosition pos = getPositionSync(session);
+                if (pos != null) {
+                    savePosition(pos);
                 }
-            });
-        }
+            }
+        });
     }
 
     public void scheduleSave(ReaderSession session) {
@@ -309,7 +220,7 @@ public class ReaderPositionService {
         ScheduledFuture<?> newTask = scheduler.schedule(() -> {
             saveTasks.remove(sessionKey);
             if (session.isActive()) {
-                Platform.runLater(() -> {
+                scheduler.runOnFxThread(() -> {
                     if (session.isActive()) {
                         ReaderPosition pos = getPositionSync(session);
                         if (pos != null) {
@@ -332,7 +243,6 @@ public class ReaderPositionService {
             return;
         }
 
-        // Зберігаємо тільки якщо прогрес > 1%
         if (position.getPercent() < 1.0) {
             return;
         }
@@ -342,8 +252,8 @@ public class ReaderPositionService {
         ReaderPosition lastSaved = lastSavedPositions.get(bookId);
         if (lastSaved != null) {
             boolean sameParagraph = lastSaved.getParagraphId().equals(position.getParagraphId());
-            boolean sameOffset = Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 10;
-            boolean samePercent = Math.abs(lastSaved.getPercent() - position.getPercent()) < 0.5;
+            boolean sameOffset = Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 20;
+            boolean samePercent = Math.abs(lastSaved.getPercent() - position.getPercent()) < 2.0;
 
             if (sameParagraph && sameOffset && samePercent) {
                 return;
@@ -404,19 +314,16 @@ public class ReaderPositionService {
 
     // ==================== Відновлення позиції ====================
 
-    /**
-     * Відновлює позицію в WebView (з callback).
-     */
     public void restorePosition(ReaderSession session, ReaderPosition position, Runnable onComplete) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             if (onComplete != null) {
-                onComplete.run();
+                scheduler.runOnFxThread(onComplete);
             }
             return;
         }
 
         if (position == null) {
-            Platform.runLater(() -> {
+            scheduler.runOnFxThread(() -> {
                 try {
                     session.getWebEngine().executeScript("window.scrollTo(0, 0)");
                 } catch (Exception e) {
@@ -429,7 +336,7 @@ public class ReaderPositionService {
             return;
         }
 
-        Platform.runLater(() -> {
+        scheduler.runOnFxThread(() -> {
             try {
                 int total = jsBridge.getParagraphCount(session.getWebEngine());
                 int index = position.getParagraphIndex();
@@ -465,9 +372,6 @@ public class ReaderPositionService {
         });
     }
 
-    /**
-     * Відновлює позицію в WebView (без callback - для зворотної сумісності).
-     */
     public void restorePosition(ReaderSession session, ReaderPosition position) {
         restorePosition(session, position, null);
     }
@@ -488,7 +392,7 @@ public class ReaderPositionService {
 
         ScheduledFuture<?> newTask = scheduler.scheduleAtFixedRate(() -> {
             if (session.isActive()) {
-                Platform.runLater(() -> {
+                scheduler.runOnFxThread(() -> {
                     if (session.isActive()) {
                         ReaderPosition pos = getPositionSync(session);
                         if (pos != null) {

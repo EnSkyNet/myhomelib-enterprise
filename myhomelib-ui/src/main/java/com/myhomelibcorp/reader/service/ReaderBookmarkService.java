@@ -12,7 +12,6 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -49,7 +48,7 @@ public class ReaderBookmarkService {
                 .paragraphId(position.getParagraphId())
                 .charOffset(position.getCharOffset())
                 .position(position.getPercent() / 100.0)
-                .chapterTitle(chapterTitle != null && !chapterTitle.isEmpty() ? chapterTitle : "Розділ")
+                .chapterTitle(chapterTitle != null && !chapterTitle.isEmpty() ? chapterTitle : "Зміст")
                 .context(context)
                 .createdAt(LocalDateTime.now())
                 .build();
@@ -107,24 +106,23 @@ public class ReaderBookmarkService {
         return bookmarkRepository.countByBookId(bookId);
     }
 
-    /**
-     * Переходить до закладки.
-     * Використовує асинхронний restorePosition.
-     */
-    public boolean goToBookmark(ReaderSession session, Bookmark bookmark) {
+    public void goToBookmark(ReaderSession session, Bookmark bookmark, Runnable onComplete) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
-            return false;
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
         }
 
         if (bookmark == null) {
-            return false;
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
         }
 
         int index = extractParagraphIndex(bookmark.getParagraphId());
         int offset = bookmark.getCharOffset();
-
-        // Використовуємо AtomicBoolean для відстеження результату
-        AtomicBoolean success = new AtomicBoolean(false);
 
         positionService.restorePosition(session, ReaderPosition.builder()
                 .bookId(bookmark.getBookId())
@@ -133,13 +131,19 @@ public class ReaderBookmarkService {
                 .charOffset(offset)
                 .percent(bookmark.getPosition() * 100)
                 .build(), () -> {
-            // Callback після відновлення
-            success.set(true);
             log.info("Navigated to bookmark: {}", bookmark.getTitle());
+            if (onComplete != null) {
+                onComplete.run();
+            }
         });
+    }
 
-        // Якщо відновлення виконано синхронно (на FX Thread), повертаємо true
-        // В іншому випадку повертаємо true, бо callback спрацює асинхронно
+    public boolean goToBookmark(ReaderSession session, Bookmark bookmark) {
+        if (session == null || !session.isActive()) {
+            return false;
+        }
+
+        goToBookmark(session, bookmark, null);
         return true;
     }
 

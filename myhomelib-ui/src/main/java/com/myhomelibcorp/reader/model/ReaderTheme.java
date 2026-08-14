@@ -1,10 +1,12 @@
 package com.myhomelibcorp.reader.model;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Value;
 
 @Value
 @Builder
+@AllArgsConstructor
 public class ReaderTheme {
     String name;
     String displayName;
@@ -35,7 +37,7 @@ public class ReaderTheme {
     public static ReaderTheme sepia() {
         return ReaderTheme.builder()
                 .name("sepia")
-                .displayName("Сепія")
+                .displayName("Селія")
                 .background("#f5ecd9")
                 .foreground("#331f0a")
                 .secondaryText("#6b5a4a")

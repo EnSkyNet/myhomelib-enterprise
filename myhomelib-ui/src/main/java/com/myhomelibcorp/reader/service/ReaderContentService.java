@@ -6,10 +6,8 @@ import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.parser.JsoupFb2Parser;
 import com.myhomelibcorp.reader.renderer.DocumentToHtmlConverter;
 import com.myhomelibcorp.reader.session.ReaderSession;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -35,12 +33,12 @@ public class ReaderContentService {
     private final ReaderScheduler scheduler;
     private final JsoupFb2Parser fb2Parser = new JsoupFb2Parser();
     private final DocumentToHtmlConverter htmlConverter = new DocumentToHtmlConverter();
-    private final ApplicationContext applicationContext; // Для отримання ReaderFacade через ApplicationContext
 
-    private final ConcurrentMap<String, String> htmlCache = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, List<Chapter>> tocCache = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, CompletableFuture<Void>> loadingTasks = new ConcurrentHashMap<>();
-    private static final int MAX_CACHE_SIZE = 3;
+    private final ConcurrentMap<String, ReaderBookContent> contentCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, CompletableFuture<ReaderBookContent>> loadingTasks = new ConcurrentHashMap<>();
+
+    private static final int MAX_CACHED_HTML_BYTES = 64 * 1024 * 1024;
+    private static final int MAX_CACHED_ITEMS = 5;
 
     private static final Charset[] ZIP_CHARSETS = {
             Charset.forName("IBM866"),
@@ -50,42 +48,32 @@ public class ReaderContentService {
             Charset.forName("ISO-8859-5")
     };
 
-    // Отримуємо ReaderFacade через ApplicationContext, щоб уникнути циклічної залежності
-    private ReaderFacade getReaderFacade() {
-        return applicationContext.getBean(ReaderFacade.class);
-    }
-
-    // ==================== Завантаження вмісту книги ====================
-
-    public void loadBookContent(ReaderSession session) {
-        if (session == null || session.getBook() == null || session.getWebEngine() == null) {
+    public void loadBookContent(ReaderSession session, Runnable onLoaded) {
+        if (session == null || session.getBook() == null) {
+            if (onLoaded != null) {
+                scheduler.runOnFxThread(onLoaded);
+            }
             return;
         }
 
         BookDto book = session.getBook();
         String bookId = book.getId();
-        String sessionId = session.getSessionId();
 
-        // ===== Перевіряємо кеш =====
-        String cachedHtml = htmlCache.get(bookId);
-        if (cachedHtml != null) {
-            log.info("Loading book from cache and rendering: {}", book.getTitle());
-            List<Chapter> cachedToc = tocCache.get(bookId);
-            if (cachedToc != null) {
-                session.setChapters(cachedToc);
-            }
-            renderHtml(session, cachedHtml);
+        ReaderBookContent cached = contentCache.get(bookId);
+        if (cached != null) {
+            log.info("Loading book from cache: {}", book.getTitle());
+            session.setChapters(cached.chapters());
+            renderHtml(session, cached.html(), onLoaded);
             return;
         }
 
-        // Перевіряємо, чи вже виконується завантаження
-        CompletableFuture<Void> existingTask = loadingTasks.get(bookId);
+        CompletableFuture<ReaderBookContent> existingTask = loadingTasks.get(bookId);
         if (existingTask != null && !existingTask.isDone()) {
             log.info("Book loading already in progress: {}", book.getTitle());
-            existingTask.thenRun(() -> {
-                String html = htmlCache.get(bookId);
-                if (html != null) {
-                    renderHtml(session, html);
+            existingTask.thenAccept(content -> {
+                if (session.isActive()) {
+                    session.setChapters(content.chapters());
+                    renderHtml(session, content.html(), onLoaded);
                 }
             });
             return;
@@ -93,56 +81,78 @@ public class ReaderContentService {
 
         log.info("Loading book content asynchronously: {}", book.getTitle());
 
-        // Очищаємо WebView перед завантаженням
-        session.getWebEngine().loadContent("");
+        scheduler.runOnFxThread(() -> {
+            if (session.getWebEngine() != null) {
+                session.getWebEngine().loadContent("");
+            }
+        });
 
         Executor executor = runnable -> scheduler.execute(runnable);
 
-        CompletableFuture<Void> task = CompletableFuture.runAsync(() -> {
+        CompletableFuture<ReaderBookContent> task = CompletableFuture.supplyAsync(() -> {
             try {
                 byte[] data = readBookData(book);
                 if (data == null || data.length == 0) {
-                    javafx.application.Platform.runLater(() -> {
-                        renderError(session, "Не вдалося прочитати книгу");
-                    });
-                    return;
+                    throw new RuntimeException("Failed to read book data");
                 }
 
                 BookDocument document = fb2Parser.parse(new ByteArrayInputStream(data));
                 String html = htmlConverter.convert(document);
 
-                // Зберігаємо в кеш
-                List<Chapter> chapters = document.getChapters();
-                tocCache.put(bookId, chapters);
-                cacheHtml(bookId, html);
-
-                // Відображаємо на FX Thread
-                javafx.application.Platform.runLater(() -> {
-                    if (session.isActive()) {
-                        session.setChapters(chapters);
-                        renderHtml(session, html);
-                    } else {
-                        log.debug("Session {} is no longer active, skipping render", sessionId);
-                    }
-                });
+                ReaderBookContent content = new ReaderBookContent(html, document.getChapters());
+                cacheContent(bookId, content);
+                return content;
 
             } catch (Exception e) {
                 log.error("Failed to load book content: {}", book.getTitle(), e);
-                javafx.application.Platform.runLater(() -> {
-                    renderError(session, "Помилка завантаження: " + e.getMessage());
-                });
-            } finally {
-                loadingTasks.remove(bookId);
+                throw new RuntimeException(e);
             }
         }, executor);
 
         loadingTasks.put(bookId, task);
+
+        task.thenAccept(content -> {
+            if (session.isActive()) {
+                session.setChapters(content.chapters());
+                renderHtml(session, content.html(), onLoaded);
+            }
+        }).exceptionally(ex -> {
+            log.error("Failed to load book: {}", book.getTitle(), ex);
+            scheduler.runOnFxThread(() -> {
+                renderError(session, "Помилка завантаження: " + ex.getMessage(), onLoaded);
+            });
+            return null;
+        }).thenRun(() -> {
+            loadingTasks.remove(bookId);
+        });
     }
 
-    // ==================== Рендеринг HTML ====================
+    private void cacheContent(String bookId, ReaderBookContent content) {
+        int htmlSize = content.html().getBytes().length;
+        if (htmlSize > MAX_CACHED_HTML_BYTES) {
+            log.debug("Book HTML too large ({} MB), not caching", htmlSize / 1024 / 1024);
+            return;
+        }
 
-    private void renderHtml(ReaderSession session, String html) {
+        if (contentCache.size() >= MAX_CACHED_ITEMS) {
+            String oldestKey = contentCache.keySet().iterator().next();
+            contentCache.remove(oldestKey);
+            log.debug("Removed oldest cache entry: {}", oldestKey);
+        }
+
+        contentCache.put(bookId, content);
+        log.debug("Cached book: {}", bookId);
+    }
+
+    private void renderHtml(ReaderSession session, String html, Runnable onLoaded) {
+        scheduler.runOnFxThread(() -> renderHtmlSync(session, html, onLoaded));
+    }
+
+    private void renderHtmlSync(ReaderSession session, String html, Runnable onLoaded) {
         if (session == null || session.getWebEngine() == null) {
+            if (onLoaded != null) {
+                onLoaded.run();
+            }
             return;
         }
 
@@ -153,8 +163,9 @@ public class ReaderContentService {
             session.getWebView().setVisible(true);
         }
 
-        // Додаємо listener для відновлення позиції після завантаження
         var engine = session.getWebEngine();
+
+        // Додаємо listener для виправлення скролу після завантаження
         engine.getLoadWorker().stateProperty().addListener(new javafx.beans.value.ChangeListener<>() {
             @Override
             public void changed(javafx.beans.value.ObservableValue<? extends javafx.concurrent.Worker.State> obs,
@@ -162,15 +173,12 @@ public class ReaderContentService {
                                 javafx.concurrent.Worker.State newState) {
                 if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
                     engine.getLoadWorker().stateProperty().removeListener(this);
-                    javafx.application.Platform.runLater(() -> {
-                        // Відновлюємо позицію через ReaderFacade
-                        try {
-                            ReaderFacade facade = getReaderFacade();
-                            if (facade != null) {
-                                facade.restorePositionAfterLoad(session);
-                            }
-                        } catch (Exception e) {
-                            log.warn("Failed to restore position after load: {}", e.getMessage());
+                    scheduler.runOnFxThread(() -> {
+                        // Виправляємо перекриття скролу через JavaScript
+                        fixScrollbarOverlap(engine);
+
+                        if (onLoaded != null) {
+                            onLoaded.run();
                         }
                     });
                 }
@@ -181,14 +189,71 @@ public class ReaderContentService {
         log.info("HTML rendered for book: {}", session.getBook().getTitle());
     }
 
-    private void renderError(ReaderSession session, String error) {
-        if (session == null || session.getWebEngine() == null) {
+    /**
+     * Виправляє перекриття тексту скролом через JavaScript.
+     */
+    private void fixScrollbarOverlap(javafx.scene.web.WebEngine engine) {
+        if (engine == null) {
+            return;
+        }
+
+        try {
+            String script = """
+                (function() {
+                    // Перевіряємо чи є скрол
+                    var hasScroll = document.documentElement.scrollHeight > document.documentElement.clientHeight;
+                    
+                    if (!hasScroll) {
+                        document.body.style.paddingRight = '0px';
+                        return;
+                    }
+                    
+                    // Отримуємо ширину скролу
+                    var scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
+                    
+                    if (scrollbarWidth > 0) {
+                        var body = document.body;
+                        if (!body) return;
+                        
+                        var computedStyle = window.getComputedStyle(body);
+                        var maxWidth = computedStyle.maxWidth;
+                        
+                        if (maxWidth === '100%' || maxWidth === 'none') {
+                            body.style.paddingRight = scrollbarWidth + 'px';
+                            body.style.boxSizing = 'border-box';
+                        } else {
+                            body.style.paddingRight = '0px';
+                        }
+                    }
+                })();
+            """;
+            engine.executeScript(script);
+        } catch (Exception e) {
+            log.debug("Failed to fix scrollbar overlap: {}", e.getMessage());
+        }
+    }
+
+    private void renderError(ReaderSession session, String error, Runnable onLoaded) {
+        scheduler.runOnFxThread(() -> renderErrorSync(session, error, onLoaded));
+    }
+
+    private void renderErrorSync(ReaderSession session, String error, Runnable onLoaded) {
+        if (session == null) {
+            if (onLoaded != null) {
+                onLoaded.run();
+            }
             return;
         }
 
         String html = createErrorHtml(session.getBook(), error);
-        session.getWebEngine().loadContent(html);
+        if (session.getWebEngine() != null) {
+            session.getWebEngine().loadContent(html);
+        }
         log.warn("Error rendered for book: {}", error);
+
+        if (onLoaded != null) {
+            onLoaded.run();
+        }
     }
 
     private String injectStyles(String html, String css) {
@@ -218,59 +283,50 @@ public class ReaderContentService {
         );
     }
 
-    private void cacheHtml(String bookId, String html) {
-        if (htmlCache.size() >= MAX_CACHE_SIZE) {
-            String oldest = htmlCache.keySet().iterator().next();
-            htmlCache.remove(oldest);
-            tocCache.remove(oldest);
-            log.debug("Removed oldest cache entry: {}", oldest);
-        }
-        htmlCache.put(bookId, html);
-    }
-
-    // ==================== Отримання даних книги ====================
+    // ==================== Читання даних книги ====================
 
     private byte[] readBookData(BookDto book) throws Exception {
-        String fileName = book.getFileName();
-        String folder = book.getFolder();
-        String root = book.getCollectionRoot();
-        String archiveEntry = book.getArchiveEntry();
+        try {
+            String fileName = book.getFileName();
+            String folder = book.getFolder();
+            String root = book.getCollectionRoot();
+            String archiveEntry = book.getArchiveEntry();
 
-        log.debug("readBookData: fileName={}, folder={}, root={}, archiveEntry={}",
-                fileName, folder, root, archiveEntry);
+            log.debug("readBookData: fileName={}, folder={}, root={}, archiveEntry={}",
+                    fileName, folder, root, archiveEntry);
 
-        if (archiveEntry != null && !archiveEntry.isBlank()) {
-            Path archivePath = findArchivePath(book);
-            if (archivePath != null && Files.exists(archivePath)) {
-                log.debug("Reading from archive: {}, entry: {}", archivePath, archiveEntry);
-                return readFromArchive(archivePath, archiveEntry, fileName);
+            if (archiveEntry != null && !archiveEntry.isBlank()) {
+                Path archivePath = findArchivePath(book);
+                if (archivePath != null && Files.exists(archivePath)) {
+                    return readFromArchive(archivePath, archiveEntry, fileName);
+                }
             }
-        }
 
-        if (fileName != null && isArchive(fileName)) {
-            Path archivePath = buildFilePath(root, folder, fileName);
-            if (archivePath != null && Files.exists(archivePath)) {
-                log.debug("Reading from archive (fileName is archive): {}", archivePath);
-                return readFromArchive(archivePath, null, fileName);
+            if (fileName != null && isArchive(fileName)) {
+                Path archivePath = buildFilePath(root, folder, fileName);
+                if (archivePath != null && Files.exists(archivePath)) {
+                    return readFromArchive(archivePath, null, fileName);
+                }
             }
-        }
 
-        if (folder != null && isArchive(folder)) {
-            Path archivePath = buildFilePath(root, null, folder);
-            if (archivePath != null && Files.exists(archivePath)) {
-                log.debug("Reading from archive (folder is archive): {}", archivePath);
-                return readFromArchive(archivePath, null, fileName);
+            if (folder != null && isArchive(folder)) {
+                Path archivePath = buildFilePath(root, null, folder);
+                if (archivePath != null && Files.exists(archivePath)) {
+                    return readFromArchive(archivePath, null, fileName);
+                }
             }
-        }
 
-        Path bookPath = buildFilePath(root, folder, fileName);
-        if (bookPath != null && Files.exists(bookPath) && !isArchive(bookPath.toString())) {
-            log.debug("Reading regular file: {}", bookPath);
-            return Files.readAllBytes(bookPath);
-        }
+            Path bookPath = buildFilePath(root, folder, fileName);
+            if (bookPath != null && Files.exists(bookPath) && !isArchive(bookPath.toString())) {
+                return Files.readAllBytes(bookPath);
+            }
 
-        log.warn("File not found: {}", bookPath);
-        return null;
+            log.warn("File not found: {}", bookPath);
+            return null;
+        } catch (Exception e) {
+            log.error("Failed to read book data for: {}", book.getTitle(), e);
+            throw new Exception("Failed to read book: " + e.getMessage(), e);
+        }
     }
 
     private Path findArchivePath(BookDto book) {
@@ -331,33 +387,25 @@ public class ReaderContentService {
     }
 
     private byte[] readFromArchive(Path archivePath, String entryName, String fileName) throws Exception {
-        log.debug("readFromArchive: archivePath={}, entryName={}, fileName={}", archivePath, entryName, fileName);
-
         Exception lastException = null;
 
         for (Charset charset : ZIP_CHARSETS) {
             try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
-                log.debug("Trying to read ZIP with charset: {}", charset);
                 byte[] result = tryReadFromZip(zip, entryName, fileName);
                 if (result != null) {
-                    log.debug("Successfully read with charset: {}", charset);
                     return result;
                 }
             } catch (Exception e) {
-                log.debug("Failed to read ZIP with charset {}: {}", charset, e.getMessage());
                 lastException = e;
             }
         }
 
         try (ZipFile zip = new ZipFile(archivePath.toFile())) {
-            log.debug("Trying to read ZIP with default charset");
             byte[] result = tryReadFromZip(zip, entryName, fileName);
             if (result != null) {
-                log.debug("Successfully read with default charset");
                 return result;
             }
         } catch (Exception e) {
-            log.debug("Failed to read ZIP with default charset: {}", e.getMessage());
             lastException = e;
         }
 
@@ -374,7 +422,6 @@ public class ReaderContentService {
         if (entryName != null && !entryName.isBlank()) {
             targetEntry = zip.getEntry(entryName);
             if (targetEntry != null) {
-                log.debug("Found entry by exact name: {}", entryName);
                 return zip.getInputStream(targetEntry).readAllBytes();
             }
         }
@@ -391,7 +438,6 @@ public class ReaderContentService {
                         entry.getName().equals(fileName) ||
                         entryFileName.equalsIgnoreCase(searchName)) {
                     targetEntry = entry;
-                    log.debug("Found entry by fileName: {} -> {}", searchName, entry.getName());
                     return zip.getInputStream(targetEntry).readAllBytes();
                 }
             }
@@ -404,7 +450,6 @@ public class ReaderContentService {
                 String name = entry.getName().toLowerCase();
                 if (name.endsWith(".fb2") || name.endsWith(".fbd")) {
                     targetEntry = entry;
-                    log.debug("Found first FB2 entry: {}", entry.getName());
                     return zip.getInputStream(targetEntry).readAllBytes();
                 }
             }
@@ -423,13 +468,20 @@ public class ReaderContentService {
             return session.getChapters();
         }
         String bookId = session.getBookId();
-        if (bookId != null && tocCache.containsKey(bookId)) {
-            return tocCache.get(bookId);
+        if (bookId != null) {
+            ReaderBookContent cached = contentCache.get(bookId);
+            if (cached != null) {
+                return cached.chapters();
+            }
         }
         return List.of();
     }
 
     public void applySettings(ReaderSession session) {
+        scheduler.runOnFxThread(() -> applySettingsSync(session));
+    }
+
+    private void applySettingsSync(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return;
         }
@@ -460,7 +512,11 @@ public class ReaderContentService {
             """.replace("CSS", "'" + escapedCss + "'");
 
             session.getWebEngine().executeScript(script);
-            log.debug("Settings applied to current book without reload");
+
+            // Після застосування стилів - виправляємо скрол
+            fixScrollbarOverlap(session.getWebEngine());
+
+            log.debug("Settings applied to current book");
 
         } catch (Exception e) {
             log.warn("Failed to apply settings: {}", e.getMessage());
@@ -468,8 +524,7 @@ public class ReaderContentService {
     }
 
     public void clearCache() {
-        htmlCache.clear();
-        tocCache.clear();
+        contentCache.clear();
         loadingTasks.clear();
         log.info("Reader cache cleared");
     }

@@ -7,10 +7,19 @@ import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
 import javafx.stage.Stage;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
+import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.function.Consumer;
 
+@Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
+@RequiredArgsConstructor
+@Slf4j
 public class BookmarksController {
 
     @FXML private ListView<Bookmark> bookmarksListView;
@@ -27,7 +36,14 @@ public class BookmarksController {
                 if (empty || item == null) {
                     setText(null);
                 } else {
-                    setText(item.getTitle());
+                    String text = item.getTitle();
+                    if (item.getChapterTitle() != null && !item.getChapterTitle().isEmpty()) {
+                        text += " (" + item.getChapterTitle() + ")";
+                    }
+                    setText(text);
+                    if (item.getFormattedDate() != null && !item.getFormattedDate().isEmpty()) {
+                        setTooltip(new javafx.scene.control.Tooltip("Створено: " + item.getFormattedDate()));
+                    }
                 }
             }
         });
@@ -43,7 +59,17 @@ public class BookmarksController {
         });
 
         ContextMenu contextMenu = new ContextMenu();
+        MenuItem goToItem = new MenuItem("Перейти до закладки");
+        goToItem.setOnAction(e -> {
+            Bookmark selected = bookmarksListView.getSelectionModel().getSelectedItem();
+            if (selected != null && onBookmarkSelected != null) {
+                onBookmarkSelected.accept(selected);
+                closeDialog();
+            }
+        });
+
         MenuItem deleteItem = new MenuItem("Видалити");
+        deleteItem.setStyle("-fx-text-fill: #d32f2f;");
         deleteItem.setOnAction(e -> {
             Bookmark selected = bookmarksListView.getSelectionModel().getSelectedItem();
             if (selected != null && onBookmarkDeleted != null) {
@@ -54,7 +80,8 @@ public class BookmarksController {
                 }
             }
         });
-        contextMenu.getItems().add(deleteItem);
+
+        contextMenu.getItems().addAll(goToItem, deleteItem);
         bookmarksListView.setContextMenu(contextMenu);
     }
 

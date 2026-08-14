@@ -84,21 +84,61 @@ public class ReaderSettingsService {
         save();
     }
 
+    public void setWidthMode(String mode) {
+        ReaderSettings s = load();
+        s.setWidthMode(mode);
+        save();
+        log.info("Width mode changed to: {}", mode);
+    }
+
+    public void togglePageMode() {
+        ReaderSettings s = load();
+        s.setPageMode(!s.isPageMode());
+        save();
+        log.info("Page mode toggled to: {}", s.isPageMode());
+    }
+
     public List<String> getAvailableFonts() {
         return Font.getFamilies().stream()
                 .sorted()
                 .collect(Collectors.toList());
     }
 
-    /**
-     * Генерує CSS для Reader.
-     * ВИПРАВЛЕНО: додано екранування для безпечного використання в JavaScript
-     */
     public String generateCss() {
         ReaderSettings s = load();
         ReaderTheme theme = ReaderTheme.fromName(s.getTheme());
 
+        // Визначаємо ширину тексту
+        String maxWidth = switch (s.getWidthMode() != null ? s.getWidthMode() : "medium") {
+            case "narrow" -> "600px";
+            case "medium" -> "720px";
+            case "wide" -> "900px";
+            case "full" -> "100%";
+            default -> "720px";
+        };
+
         StringBuilder css = new StringBuilder();
+
+        // Стилі для html - завжди резервуємо місце для скролу
+        css.append("html {\n");
+        css.append("    overflow-y: scroll;\n");
+        css.append("    scrollbar-gutter: stable;\n");
+        css.append("}\n\n");
+
+        // Стилі для скролу (WebKit)
+        css.append("::-webkit-scrollbar {\n");
+        css.append("    width: 8px;\n");
+        css.append("}\n\n");
+        css.append("::-webkit-scrollbar-track {\n");
+        css.append("    background: transparent;\n");
+        css.append("}\n\n");
+        css.append("::-webkit-scrollbar-thumb {\n");
+        css.append("    background: rgba(0,0,0,0.2);\n");
+        css.append("    border-radius: 4px;\n");
+        css.append("}\n\n");
+        css.append("::-webkit-scrollbar-thumb:hover {\n");
+        css.append("    background: rgba(0,0,0,0.3);\n");
+        css.append("}\n\n");
 
         css.append("body {\n");
         css.append("    color: ").append(escapeCssValue(theme.getForeground())).append(" !important;\n");
@@ -111,8 +151,11 @@ public class ReaderSettingsService {
         css.append("    margin-bottom: ").append(s.getMarginBottom()).append("px;\n");
         css.append("    margin-left: ").append(s.getMarginLeft()).append("px;\n");
         css.append("    margin-right: ").append(s.getMarginRight()).append("px;\n");
-        css.append("    max-width: 100%;\n");
+        css.append("    max-width: ").append(maxWidth).append(";\n");
+        css.append("    padding-right: 0px;\n");
         css.append("    box-sizing: border-box;\n");
+        css.append("    margin-left: auto;\n");
+        css.append("    margin-right: auto;\n");
         css.append("    word-wrap: break-word;\n");
         css.append("    overflow-wrap: break-word;\n");
         css.append("    white-space: normal;\n");
@@ -143,8 +186,6 @@ public class ReaderSettingsService {
         css.append("    border-radius: 4px;\n");
         css.append("}\n\n");
 
-        // Решта CSS...
-        css.append("/* ===== Поезія ===== */\n");
         css.append(".poem {\n");
         css.append("    margin: 15px 0;\n");
         css.append("    padding: 10px 20px;\n");
@@ -153,9 +194,92 @@ public class ReaderSettingsService {
         css.append("    line-height: 1.8;\n");
         css.append("}\n\n");
 
-        // ... інші стилі ...
+        css.append(".stanza {\n");
+        css.append("    margin: 8px 0;\n");
+        css.append("}\n\n");
 
-        // Користувацькі стилі
+        css.append(".verse {\n");
+        css.append("    padding-left: 10px;\n");
+        css.append("    white-space: pre-wrap;\n");
+        css.append("    font-family: Georgia, serif;\n");
+        css.append("}\n\n");
+
+        css.append(".poem-title {\n");
+        css.append("    font-weight: bold;\n");
+        css.append("    text-align: center;\n");
+        css.append("    margin: 10px 0;\n");
+        css.append("    font-size: 1.1em;\n");
+        css.append("}\n\n");
+
+        css.append(".poem-author {\n");
+        css.append("    text-align: right;\n");
+        css.append("    font-style: italic;\n");
+        css.append("    margin: 5px 0 10px 0;\n");
+        css.append("}\n\n");
+
+        css.append(".epigraph {\n");
+        css.append("    margin: 20px 30px;\n");
+        css.append("    padding: 10px 20px;\n");
+        css.append("    border-left: 3px solid ").append(escapeCssValue(theme.getQuoteBorder())).append(";\n");
+        css.append("    font-style: italic;\n");
+        css.append("    background-color: ").append(escapeCssValue(theme.getQuoteBackground())).append(";\n");
+        css.append("}\n\n");
+
+        css.append(".epigraph-author {\n");
+        css.append("    text-align: right;\n");
+        css.append("    margin-top: 5px;\n");
+        css.append("    font-style: normal;\n");
+        css.append("}\n\n");
+
+        css.append("blockquote {\n");
+        css.append("    margin: 15px 30px;\n");
+        css.append("    padding: 10px 20px;\n");
+        css.append("    border-left: 4px solid ").append(escapeCssValue(theme.getQuoteBorder())).append(";\n");
+        css.append("    background-color: ").append(escapeCssValue(theme.getQuoteBackground())).append(";\n");
+        css.append("    font-style: italic;\n");
+        css.append("}\n\n");
+
+        css.append(".subtitle {\n");
+        css.append("    font-size: 1.1em;\n");
+        css.append("    font-weight: bold;\n");
+        css.append("    margin: 15px 0 10px 0;\n");
+        css.append("    color: ").append(escapeCssValue(theme.getForeground())).append(";\n");
+        css.append("}\n\n");
+
+        css.append(".text-author {\n");
+        css.append("    text-align: right;\n");
+        css.append("    font-style: italic;\n");
+        css.append("    margin: 10px 0;\n");
+        css.append("}\n\n");
+
+        css.append("img {\n");
+        css.append("    max-width: 100%;\n");
+        css.append("    height: auto;\n");
+        css.append("    display: block;\n");
+        css.append("    margin: 10px auto;\n");
+        css.append("    border-radius: 4px;\n");
+        css.append("    box-shadow: 0 2px 8px rgba(0,0,0,0.1);\n");
+        css.append("}\n\n");
+
+        css.append(".footnote {\n");
+        css.append("    font-size: 0.9em;\n");
+        css.append("    color: ").append(escapeCssValue(theme.getSecondaryText())).append(";\n");
+        css.append("    margin: 10px 0;\n");
+        css.append("    padding: 8px 12px;\n");
+        css.append("    border-left: 3px solid ").append(escapeCssValue(theme.getQuoteBorder())).append(";\n");
+        css.append("}\n\n");
+
+        css.append(".footnote-ref {\n");
+        css.append("    color: ").append(escapeCssValue(theme.getLinkColor())).append(";\n");
+        css.append("    text-decoration: none;\n");
+        css.append("    font-size: 0.8em;\n");
+        css.append("    vertical-align: super;\n");
+        css.append("}\n\n");
+
+        css.append(".footnote-ref:hover {\n");
+        css.append("    text-decoration: underline;\n");
+        css.append("}\n\n");
+
         if (s.getCustomCss() != null && !s.getCustomCss().isEmpty()) {
             css.append("\n/* User styles */\n");
             css.append(s.getCustomCss());
@@ -164,14 +288,10 @@ public class ReaderSettingsService {
         return css.toString();
     }
 
-    /**
-     * Екранує значення CSS для безпечного використання
-     */
     private String escapeCssValue(String value) {
         if (value == null) {
             return "";
         }
-        // Видаляємо потенційно небезпечні символи
         return value.replace("\\", "\\\\")
                 .replace("\"", "\\\"")
                 .replace("\n", " ")
