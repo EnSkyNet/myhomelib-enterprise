@@ -37,7 +37,7 @@ public class ReaderPositionService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // ==================== Отримання позиції ====================
+    // ==================== Отримання позиції з DOM Range ====================
 
     public ReaderPosition getCurrentPosition(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
@@ -76,75 +76,178 @@ public class ReaderPositionService {
         }
 
         try {
+            // ВИПРАВЛЕНО: використовуємо DOM Range для точного визначення позиції
             String script = """
                 (function() {
-                    var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
-                    if (paragraphs.length === 0) {
-                        return JSON.stringify({
-                            paragraphId: '',
-                            paragraphIndex: 0,
-                            charOffset: 0,
-                            percent: 0,
-                            chapterId: '',
-                            chapterTitle: '',
-                            totalParagraphs: 0
-                        });
-                    }
-
-                    var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
-                    var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                    var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-
-                    var firstVisible = 0;
-                    for (var i = 0; i < paragraphs.length; i++) {
-                        var rect = paragraphs[i].getBoundingClientRect();
-                        if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                            firstVisible = i;
-                            break;
+                    function getSelectionPosition() {
+                        var sel = window.getSelection();
+                        if (!sel || sel.rangeCount === 0) {
+                            // Якщо немає виділення, використовуємо скрол
+                            return getScrollPosition();
                         }
-                    }
-
-                    var el = paragraphs[firstVisible];
-                    var text = el.innerText || '';
-                    var totalHeight = el.getBoundingClientRect().height || 1;
-                    var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
-                    var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
-                    var visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                    var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
-                    var charOffset = Math.floor(ratio * text.length);
-
-                    var chapterTitle = '';
-                    var chapterEl = el.closest('.chapter');
-                    if (chapterEl) {
-                        var titleEl = chapterEl.querySelector('.chapter-title');
-                        if (titleEl) {
-                            chapterTitle = titleEl.innerText || '';
+                        
+                        var range = sel.getRangeAt(0);
+                        var startContainer = range.startContainer;
+                        var startOffset = range.startOffset;
+                        
+                        // Знаходимо найближчий параграф
+                        var paragraph = findParentParagraph(startContainer);
+                        if (!paragraph) {
+                            return getScrollPosition();
                         }
-                    }
-
-                    if (!chapterTitle) {
-                        var parent = el.parentElement;
-                        while (parent) {
-                            if (parent.classList && parent.classList.contains('chapter')) {
-                                var titleEl = parent.querySelector('.chapter-title');
-                                if (titleEl) {
-                                    chapterTitle = titleEl.innerText || '';
-                                    break;
+                        
+                        var paragraphId = paragraph.getAttribute('data-paragraph-id');
+                        if (!paragraphId) {
+                            return getScrollPosition();
+                        }
+                        
+                        // Знаходимо індекс параграфа
+                        var allParagraphs = document.querySelectorAll('p[data-paragraph-id]');
+                        var index = -1;
+                        for (var i = 0; i < allParagraphs.length; i++) {
+                            if (allParagraphs[i] === paragraph) {
+                                index = i;
+                                break;
+                            }
+                        }
+                        
+                        if (index === -1) {
+                            return getScrollPosition();
+                        }
+                        
+                        // Обчислюємо точний charOffset всередині параграфа
+                        var textNodes = [];
+                        var walker = document.createTreeWalker(
+                            paragraph,
+                            NodeFilter.SHOW_TEXT,
+                            {
+                                acceptNode: function(node) {
+                                    var text = node.textContent;
+                                    if (text && text.trim().length > 0) {
+                                        return NodeFilter.FILTER_ACCEPT;
+                                    }
+                                    return NodeFilter.FILTER_REJECT;
                                 }
                             }
-                            parent = parent.parentElement;
+                        );
+                        
+                        var node;
+                        while (node = walker.nextNode()) {
+                            textNodes.push(node);
                         }
+                        
+                        var charOffset = 0;
+                        var found = false;
+                        for (var i = 0; i < textNodes.length; i++) {
+                            var textNode = textNodes[i];
+                            if (textNode === startContainer) {
+                                charOffset += startOffset;
+                                found = true;
+                                break;
+                            } else {
+                                charOffset += textNode.textContent.length;
+                            }
+                        }
+                        
+                        // Якщо не знайшли точне положення - використовуємо приблизне
+                        if (!found) {
+                            charOffset = Math.floor(range.getBoundingClientRect().top / paragraph.getBoundingClientRect().height * paragraph.innerText.length);
+                        }
+                        
+                        // Обчислюємо відсоток прокрутки
+                        var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
+                        var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+                        var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
+                        
+                        // Знаходимо назву розділу
+                        var chapterTitle = '';
+                        var chapterEl = paragraph.closest('.chapter');
+                        if (chapterEl) {
+                            var titleEl = chapterEl.querySelector('.chapter-title');
+                            if (titleEl) {
+                                chapterTitle = titleEl.innerText || '';
+                            }
+                        }
+                        
+                        return {
+                            paragraphId: paragraphId,
+                            paragraphIndex: index,
+                            charOffset: charOffset,
+                            percent: percent,
+                            chapterTitle: chapterTitle,
+                            totalParagraphs: allParagraphs.length
+                        };
                     }
-
-                    return JSON.stringify({
-                        paragraphId: el.getAttribute('data-paragraph-id') || '',
-                        paragraphIndex: firstVisible,
-                        charOffset: charOffset,
-                        percent: Math.min(1, Math.max(0, percent)),
-                        chapterId: chapterEl ? chapterEl.id || '' : '',
-                        chapterTitle: chapterTitle || '',
-                        totalParagraphs: paragraphs.length
-                    });
+                    
+                    function findParentParagraph(node) {
+                        while (node && node.nodeType !== Node.ELEMENT_NODE) {
+                            node = node.parentNode;
+                        }
+                        while (node) {
+                            if (node.tagName === 'P' && node.getAttribute('data-paragraph-id')) {
+                                return node;
+                            }
+                            node = node.parentNode;
+                        }
+                        return null;
+                    }
+                    
+                    function getScrollPosition() {
+                        var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
+                        if (paragraphs.length === 0) {
+                            return {
+                                paragraphId: '',
+                                paragraphIndex: 0,
+                                charOffset: 0,
+                                percent: 0,
+                                chapterTitle: '',
+                                totalParagraphs: 0
+                            };
+                        }
+                        
+                        var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
+                        var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
+                        var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
+                        
+                        var firstVisible = 0;
+                        for (var i = 0; i < paragraphs.length; i++) {
+                            var rect = paragraphs[i].getBoundingClientRect();
+                            if (rect.bottom > 0 && rect.top < window.innerHeight) {
+                                firstVisible = i;
+                                break;
+                            }
+                        }
+                        
+                        var el = paragraphs[firstVisible];
+                        var text = el.innerText || '';
+                        var totalHeight = el.getBoundingClientRect().height || 1;
+                        var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
+                        var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
+                        var visibleHeight = Math.max(0, visibleBottom - visibleTop);
+                        var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
+                        var charOffset = Math.floor(ratio * text.length);
+                        
+                        var chapterTitle = '';
+                        var chapterEl = el.closest('.chapter');
+                        if (chapterEl) {
+                            var titleEl = chapterEl.querySelector('.chapter-title');
+                            if (titleEl) {
+                                chapterTitle = titleEl.innerText || '';
+                            }
+                        }
+                        
+                        return {
+                            paragraphId: el.getAttribute('data-paragraph-id') || '',
+                            paragraphIndex: firstVisible,
+                            charOffset: charOffset,
+                            percent: percent,
+                            chapterTitle: chapterTitle,
+                            totalParagraphs: paragraphs.length
+                        };
+                    }
+                    
+                    var result = getSelectionPosition();
+                    return JSON.stringify(result);
                 })();
             """;
 
@@ -170,8 +273,8 @@ public class ReaderPositionService {
             int paragraphIndex = node.has("paragraphIndex") ? node.get("paragraphIndex").asInt() : 0;
             int charOffset = node.has("charOffset") ? node.get("charOffset").asInt() : 0;
             double percent = node.has("percent") ? node.get("percent").asDouble() * 100 : 0;
-            String chapterId = node.has("chapterId") ? node.get("chapterId").asText() : "";
             String chapterTitle = node.has("chapterTitle") ? node.get("chapterTitle").asText() : "";
+            int totalParagraphs = node.has("totalParagraphs") ? node.get("totalParagraphs").asInt() : 0;
 
             return ReaderPosition.builder()
                     .bookId(bookId)
@@ -179,7 +282,6 @@ public class ReaderPositionService {
                     .paragraphIndex(paragraphIndex)
                     .charOffset(charOffset)
                     .percent(percent)
-                    .chapterId(chapterId)
                     .chapterTitle(chapterTitle)
                     .build();
         } catch (Exception e) {
@@ -252,8 +354,8 @@ public class ReaderPositionService {
         ReaderPosition lastSaved = lastSavedPositions.get(bookId);
         if (lastSaved != null) {
             boolean sameParagraph = lastSaved.getParagraphId().equals(position.getParagraphId());
-            boolean sameOffset = Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 20;
-            boolean samePercent = Math.abs(lastSaved.getPercent() - position.getPercent()) < 2.0;
+            boolean sameOffset = Math.abs(lastSaved.getCharOffset() - position.getCharOffset()) < 5;
+            boolean samePercent = Math.abs(lastSaved.getPercent() - position.getPercent()) < 0.5;
 
             if (sameParagraph && sameOffset && samePercent) {
                 return;
@@ -265,14 +367,14 @@ public class ReaderPositionService {
                     .bookId(position.getBookId())
                     .paragraphId(position.getParagraphId())
                     .charOffset(Math.max(0, position.getCharOffset()))
-                    .percent(position.getPercent())
+                    .percent(Math.max(0, Math.min(100, position.getPercent())))
                     .updatedAt(LocalDateTime.now())
                     .build();
 
             repository.save(dto);
             lastSavedPositions.put(bookId, position);
-            log.debug("Saved position for book {}: {}%, paragraph {}",
-                    position.getBookId(), (int) position.getPercent(), position.getParagraphIndex());
+            log.debug("Saved position for book {}: {}%, paragraph {}, charOffset {}",
+                    position.getBookId(), (int) position.getPercent(), position.getParagraphIndex(), position.getCharOffset());
         } catch (Exception e) {
             log.warn("Failed to save position: {}", e.getMessage());
         }
@@ -355,12 +457,14 @@ public class ReaderPositionService {
                 );
 
                 if (success) {
-                    log.info("Restored position for book {}: {}%, paragraph {}",
-                            position.getBookId(), (int) position.getPercent(), index);
+                    log.info("Restored position for book {}: {}%, paragraph {}, charOffset {}",
+                            position.getBookId(), (int) position.getPercent(), index, position.getCharOffset());
                 } else {
+                    // Fallback: використовуємо відсоток
                     double percent = position.getPercent() / 100.0;
                     String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
                     session.getWebEngine().executeScript(script);
+                    log.info("Restored position using fallback: {}%", (int) position.getPercent());
                 }
             } catch (Exception e) {
                 log.warn("Failed to restore position: {}", e.getMessage());

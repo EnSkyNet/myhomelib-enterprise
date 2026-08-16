@@ -41,7 +41,7 @@
                 <Label text="Ширина тексту:" style="-fx-font-weight: bold;"/>
                 <ComboBox fx:id="widthModeCombo" prefWidth="200"/>
 
-                <CheckBox fx:id="pageModeCheck" text="Режим сторінок (експериментально)"/>
+                <CheckBox fx:id="pageModeCheck" text="Режим сторінок"/>
 
                 <Label text="Користувацькі CSS:" style="-fx-font-weight: bold;"/>
                 <TextArea fx:id="customCssArea" prefHeight="100" promptText="Введіть свої CSS стилі..."/>

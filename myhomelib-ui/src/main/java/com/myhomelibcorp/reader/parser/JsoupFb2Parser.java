@@ -44,10 +44,14 @@ public class JsoupFb2Parser {
         TAG_MAP.put("cite", "blockquote");
         TAG_MAP.put("text-author", "div");
         TAG_MAP.put("empty-line", "br");
+        // Додаємо теги для виносок
+        TAG_MAP.put("footnote", "div");
+        TAG_MAP.put("note", "div");
+        TAG_MAP.put("a", "a");
     }
 
-    // Регулярний вираз для пошуку paragraphId
     private static final Pattern PARAGRAPH_ID_PATTERN = Pattern.compile("data-paragraph-id=\"([^\"]+)\"");
+    private static final Pattern NOTE_REF_PATTERN = Pattern.compile("\\[([0-9]+)\\]");
 
     public BookDocument parse(InputStream inputStream) throws Exception {
         long startTime = System.currentTimeMillis();
@@ -89,7 +93,12 @@ public class JsoupFb2Parser {
 
         BookMetadata metadata = extractMetadata(root);
         List<ImageData> images = extractImages(root);
-        List<Chapter> chapters = extractChapters(root);
+
+        // Отримуємо виноски з документа
+        Map<String, String> footnotes = extractFootnotes(root);
+
+        // Парсимо розділи з виносками
+        List<Chapter> chapters = extractChapters(root, footnotes);
 
         int paragraphCount = countParagraphs(chapters);
 
@@ -100,8 +109,8 @@ public class JsoupFb2Parser {
                 .build();
 
         long elapsed = System.currentTimeMillis() - startTime;
-        log.info("FB2 розпарсено: title='{}', chapters={}, images={}, paragraphs={} ({} ms)",
-                metadata.getTitle(), chapters.size(), images.size(), paragraphCount, elapsed);
+        log.info("FB2 розпарсено: title='{}', chapters={}, images={}, footnotes={}, paragraphs={} ({} ms)",
+                metadata.getTitle(), chapters.size(), images.size(), footnotes.size(), paragraphCount, elapsed);
 
         return document;
     }
@@ -242,7 +251,48 @@ public class JsoupFb2Parser {
         return images;
     }
 
-    private List<Chapter> extractChapters(Element root) {
+    /**
+     * Видобуває виноски з документа.
+     */
+    private Map<String, String> extractFootnotes(Element root) {
+        Map<String, String> footnotes = new LinkedHashMap<>();
+
+        // Шукаємо секцію з виносками
+        Elements noteSections = root.select("section[type=\"notes\"], section[id*=\"note\"], section");
+        for (Element section : noteSections) {
+            // Шукаємо елементи з виносками
+            Elements noteElements = section.select("note, footnote, p[note-id]");
+            for (Element note : noteElements) {
+                String noteId = note.attr("id");
+                if (noteId.isEmpty()) {
+                    noteId = note.attr("note-id");
+                }
+                if (noteId.isEmpty()) {
+                    // Якщо немає ID, використовуємо порядковий номер
+                    noteId = "note-" + (footnotes.size() + 1);
+                }
+                String noteText = note.text().trim();
+                if (!noteText.isEmpty()) {
+                    footnotes.put(noteId, noteText);
+                }
+            }
+        }
+
+        // Шукаємо binary з виносками (в деяких FB2 виноски в binary)
+        Elements binaryNotes = root.select("binary[id*=\"note\"]");
+        for (Element binary : binaryNotes) {
+            String id = binary.attr("id");
+            String content = binary.text().trim();
+            if (!id.isEmpty() && !content.isEmpty() && !footnotes.containsKey(id)) {
+                footnotes.put(id, content);
+            }
+        }
+
+        log.info("Знайдено {} виносок", footnotes.size());
+        return footnotes;
+    }
+
+    private List<Chapter> extractChapters(Element root, Map<String, String> footnotes) {
         List<Chapter> chapters = new ArrayList<>();
 
         Element body = root.select("body").first();
@@ -258,18 +308,26 @@ public class JsoupFb2Parser {
         int paragraphCounter = 0;
 
         if (topLevelSections.isEmpty()) {
-            Chapter singleChapter = processDirectBody(body, new Counter(paragraphCounter));
+            Chapter singleChapter = processDirectBody(body, new Counter(paragraphCounter), footnotes);
             if (singleChapter != null && singleChapter.getContent() != null && !singleChapter.getContent().isEmpty()) {
                 chapters.add(singleChapter);
             }
         } else {
             Counter counter = new Counter(paragraphCounter);
             for (Element section : topLevelSections) {
-                Chapter chapter = processSection(section, 1, counter);
+                Chapter chapter = processSection(section, 1, counter, footnotes);
                 if (chapter != null) {
                     chapters.add(chapter);
                     paragraphCounter = counter.value;
                 }
+            }
+        }
+
+        // Додаємо секцію з виносками в кінці
+        if (!footnotes.isEmpty()) {
+            Chapter notesChapter = createNotesChapter(footnotes);
+            if (notesChapter != null) {
+                chapters.add(notesChapter);
             }
         }
 
@@ -285,24 +343,23 @@ public class JsoupFb2Parser {
             log.warn("Створено дефолтний розділ");
         }
 
-        log.info("Знайдено розділів: {}, параграфів: {}", chapters.size(), paragraphCounter);
+        log.info("Знайдено розділів: {}", chapters.size());
         return chapters;
     }
 
-    private Chapter processDirectBody(Element body, Counter counter) {
+    private Chapter processDirectBody(Element body, Counter counter, Map<String, String> footnotes) {
         StringBuilder content = new StringBuilder();
         Elements children = body.children();
 
         for (Element child : children) {
             String tag = child.tagName().toLowerCase();
-            processElement(child, tag, content, counter, 1);
+            processElement(child, tag, content, counter, 1, footnotes);
         }
 
         if (content.length() == 0) {
             return null;
         }
 
-        // Шукаємо перший paragraphId у контенті
         String paragraphId = findFirstParagraphId(content);
 
         return Chapter.builder()
@@ -315,7 +372,7 @@ public class JsoupFb2Parser {
                 .build();
     }
 
-    private Chapter processSection(Element section, int level, Counter counter) {
+    private Chapter processSection(Element section, int level, Counter counter, Map<String, String> footnotes) {
         String title = "Розділ";
         Element titleEl = section.children().stream()
                 .filter(e -> "title".equalsIgnoreCase(e.tagName()))
@@ -333,12 +390,12 @@ public class JsoupFb2Parser {
             String tag = child.tagName().toLowerCase(Locale.ROOT);
 
             if ("section".equals(tag)) {
-                Chapter subChapter = processSection(child, level + 1, counter);
+                Chapter subChapter = processSection(child, level + 1, counter, footnotes);
                 if (subChapter != null) {
                     children.add(subChapter);
                 }
             } else if (!"title".equals(tag)) {
-                processElement(child, tag, content, counter, level);
+                processElement(child, tag, content, counter, level, footnotes);
             }
         }
 
@@ -346,7 +403,6 @@ public class JsoupFb2Parser {
             return null;
         }
 
-        // Шукаємо перший paragraphId у контенті
         String paragraphId = findFirstParagraphId(content);
 
         return Chapter.builder()
@@ -359,24 +415,41 @@ public class JsoupFb2Parser {
                 .build();
     }
 
-    /**
-     * Знаходить перший paragraphId у контенті за допомогою регулярного виразу.
-     */
-    private String findFirstParagraphId(StringBuilder content) {
-        if (content == null || content.length() == 0) {
+    private Chapter createNotesChapter(Map<String, String> footnotes) {
+        if (footnotes.isEmpty()) {
             return null;
         }
-        String text = content.toString();
-        var matcher = PARAGRAPH_ID_PATTERN.matcher(text);
-        if (matcher.find()) {
-            return matcher.group(1);
+
+        StringBuilder content = new StringBuilder();
+        content.append("<div class=\"notes-section\">\n");
+        content.append("<h2>Примітки</h2>\n");
+
+        int index = 1;
+        for (Map.Entry<String, String> entry : footnotes.entrySet()) {
+            String id = entry.getKey();
+            String text = entry.getValue();
+            content.append("<div class=\"footnote\" id=\"").append(id).append("\">");
+            content.append("<span class=\"note-number\">").append(index).append(". </span>");
+            content.append(escapeHtml(text));
+            content.append("</div>\n");
+            index++;
         }
-        return null;
+
+        content.append("</div>\n");
+
+        return Chapter.builder()
+                .id(UUID.randomUUID().toString())
+                .title("Примітки")
+                .level(2)
+                .content(content.toString())
+                .children(new ArrayList<>())
+                .paragraphId(null)
+                .build();
     }
 
-    private void processElement(Element element, String tag, StringBuilder content, Counter counter, int level) {
+    private void processElement(Element element, String tag, StringBuilder content, Counter counter, int level, Map<String, String> footnotes) {
         switch (tag) {
-            case "p" -> processParagraph(element, content, counter);
+            case "p" -> processParagraph(element, content, counter, footnotes);
             case "title" -> processTitle(element, content, level);
             case "subtitle" -> processSubtitle(element, content);
             case "epigraph" -> processEpigraph(element, content);
@@ -391,6 +464,7 @@ public class JsoupFb2Parser {
             case "sup" -> processInline(element, "sup", content);
             case "strikethrough" -> processInline(element, "s", content);
             case "image" -> processImage(element, content);
+            case "a" -> processLink(element, content, footnotes);
             default -> {
                 String text = element.text();
                 if (text != null && !text.trim().isEmpty()) {
@@ -400,14 +474,108 @@ public class JsoupFb2Parser {
         }
     }
 
-    private void processParagraph(Element element, StringBuilder content, Counter counter) {
-        String html = processElementContent(element);
+    private void processParagraph(Element element, StringBuilder content, Counter counter, Map<String, String> footnotes) {
+        String html = processElementContent(element, footnotes);
         if (html != null && !html.trim().isEmpty()) {
             String pId = "p" + (++counter.value);
             content.append("<p data-paragraph-id=\"").append(pId).append("\">")
                     .append(html)
                     .append("</p>\n");
         }
+    }
+
+    /**
+     * Обробка посилань (внутрішніх та на виноски).
+     */
+    private void processLink(Element element, StringBuilder content, Map<String, String> footnotes) {
+        String href = element.attr("href");
+        String text = element.text();
+
+        if (href == null || href.isEmpty()) {
+            href = element.attr("l:href");
+        }
+
+        if (href != null && !href.isEmpty()) {
+            // Внутрішнє посилання на виноску
+            if (href.startsWith("#")) {
+                String targetId = href.substring(1);
+                if (footnotes.containsKey(targetId)) {
+                    content.append("<a href=\"#").append(targetId).append("\" class=\"footnote-ref\" data-note-id=\"")
+                            .append(targetId).append("\">")
+                            .append(escapeHtml(text))
+                            .append("</a>");
+                    return;
+                }
+                // Посилання на розділ
+                content.append("<a href=\"").append(escapeHtml(href)).append("\" class=\"internal-link\">")
+                        .append(escapeHtml(text))
+                        .append("</a>");
+                return;
+            }
+            // Звичайне посилання
+            content.append("<a href=\"").append(escapeHtml(href)).append("\" target=\"_blank\" class=\"external-link\">")
+                    .append(escapeHtml(text))
+                    .append("</a>");
+            return;
+        }
+
+        // Якщо немає href - просто текст
+        content.append(escapeHtml(text));
+    }
+
+    private String processElementContent(Element element, Map<String, String> footnotes) {
+        if (element == null) {
+            return null;
+        }
+
+        StringBuilder result = new StringBuilder();
+        for (Node node : element.childNodes()) {
+            if (node instanceof TextNode) {
+                String text = ((TextNode) node).text();
+                if (text != null) {
+                    result.append(escapeHtml(text));
+                }
+            } else if (node instanceof Element) {
+                Element child = (Element) node;
+                String tag = child.tagName().toLowerCase();
+                String htmlTag = TAG_MAP.getOrDefault(tag, tag);
+
+                if ("a".equals(tag)) {
+                    // Обробка посилань всередині
+                    processLink(child, result, footnotes);
+                } else {
+                    String innerHtml = processElementContent(child, footnotes);
+                    if (innerHtml != null && !innerHtml.trim().isEmpty()) {
+                        result.append("<").append(htmlTag).append(">")
+                                .append(innerHtml)
+                                .append("</").append(htmlTag).append(">");
+                    } else {
+                        String text = child.text();
+                        if (text != null && !text.trim().isEmpty()) {
+                            result.append(escapeHtml(text.trim()));
+                        }
+                    }
+                }
+            }
+        }
+
+        return result.toString();
+    }
+
+    private String findFirstParagraphId(StringBuilder content) {
+        if (content == null || content.length() == 0) {
+            return null;
+        }
+        String text = content.toString();
+        var matcher = PARAGRAPH_ID_PATTERN.matcher(text);
+        if (matcher.find()) {
+            return matcher.group(1);
+        }
+        return null;
+    }
+
+    private String processElementContent(Element element) {
+        return processElementContent(element, new HashMap<>());
     }
 
     private void processTitle(Element element, StringBuilder content, int level) {
@@ -556,40 +724,6 @@ public class JsoupFb2Parser {
             content.append("<img src=\"").append(escapeHtml(href))
                     .append("\" alt=\"Зображення\"/>");
         }
-    }
-
-    private String processElementContent(Element element) {
-        if (element == null) {
-            return null;
-        }
-
-        StringBuilder result = new StringBuilder();
-        for (Node node : element.childNodes()) {
-            if (node instanceof TextNode) {
-                String text = ((TextNode) node).text();
-                if (text != null) {
-                    result.append(escapeHtml(text));
-                }
-            } else if (node instanceof Element) {
-                Element child = (Element) node;
-                String tag = child.tagName().toLowerCase();
-                String htmlTag = TAG_MAP.getOrDefault(tag, tag);
-
-                String innerHtml = processElementContent(child);
-                if (innerHtml != null && !innerHtml.trim().isEmpty()) {
-                    result.append("<").append(htmlTag).append(">")
-                            .append(innerHtml)
-                            .append("</").append(htmlTag).append(">");
-                } else {
-                    String text = child.text();
-                    if (text != null && !text.trim().isEmpty()) {
-                        result.append(escapeHtml(text.trim()));
-                    }
-                }
-            }
-        }
-
-        return result.toString();
     }
 
     private String escapeHtml(String text) {

@@ -44,8 +44,6 @@ public class ReaderSettingsController {
     @FXML private Slider marginLeftSlider;
     @FXML private Slider marginRightSlider;
     @FXML private Slider firstLineIndentSlider;
-
-    // Нові елементи для ширини тексту та режиму сторінок
     @FXML private ComboBox<String> widthModeCombo;
     @FXML private CheckBox pageModeCheck;
 
@@ -81,7 +79,6 @@ public class ReaderSettingsController {
         );
         widthModeCombo.setValue("medium");
 
-        // Відображення назв режимів
         widthModeCombo.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
             @Override
             protected void updateItem(String item, boolean empty) {
@@ -117,7 +114,7 @@ public class ReaderSettingsController {
             }
         });
 
-        // Слухачі для автоматичного застосування змін
+        // Слухачі
         widthModeCombo.valueProperty().addListener((obs, old, val) -> {
             if (val != null && !val.equals(old)) {
                 applyCurrentSettings();
@@ -128,10 +125,6 @@ public class ReaderSettingsController {
             applyCurrentSettings();
         });
 
-        // Завантажуємо налаштування
-        loadSettings();
-
-        // Додаємо слухачі для інших елементів
         fontFamilyCombo.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
         fontSizeSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
         lineSpacingSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
@@ -145,6 +138,8 @@ public class ReaderSettingsController {
         marginLeftSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
         marginRightSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
         firstLineIndentSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
+
+        loadSettings();
     }
 
     public void setOnSaveCallback(Runnable callback) {
@@ -165,20 +160,15 @@ public class ReaderSettingsController {
         marginLeftSlider.setValue(settings.getMarginLeft());
         marginRightSlider.setValue(settings.getMarginRight());
         firstLineIndentSlider.setValue(settings.getFirstLineIndent());
-
-        // Нові налаштування
         widthModeCombo.setValue(settings.getWidthMode() != null ? settings.getWidthMode() : "medium");
         pageModeCheck.setSelected(settings.isPageMode());
     }
 
     private void applyCurrentSettings() {
-        // Застосовуємо налаштування до поточної книги без збереження
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
-            // Оновлюємо тимчасові налаштування
             ReaderSettings tempSettings = settingsService.getSettings();
 
-            // Копіюємо поточні значення в тимчасові налаштування
             tempSettings.setFontFamily(fontFamilyCombo.getValue());
             tempSettings.setFontSize(fontSizeSlider.getValue());
             tempSettings.setLineSpacing(lineSpacingSlider.getValue());
@@ -193,7 +183,6 @@ public class ReaderSettingsController {
             tempSettings.setWidthMode(widthModeCombo.getValue());
             tempSettings.setPageMode(pageModeCheck.isSelected());
 
-            // Застосовуємо до книги
             applySettingsToBook(session);
         }
     }
@@ -214,8 +203,6 @@ public class ReaderSettingsController {
             settings.setMarginLeft(marginLeftSlider.getValue());
             settings.setMarginRight(marginRightSlider.getValue());
             settings.setFirstLineIndent(firstLineIndentSlider.getValue());
-
-            // Нові налаштування
             settings.setWidthMode(widthModeCombo.getValue());
             settings.setPageMode(pageModeCheck.isSelected());
 
@@ -224,11 +211,6 @@ public class ReaderSettingsController {
             ReaderSession session = sessionManager.getCurrentSession();
             if (session != null && session.isActive()) {
                 applySettingsToBook(session);
-
-                // Оновлюємо автоскрол якщо потрібно
-                if (autoScrollCheck.isSelected()) {
-                    // Автоскрол буде застосовано при наступному відкритті книги
-                }
             }
 
             dialogService.showInfo("Успішно", "Налаштування Reader збережено");

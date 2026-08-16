@@ -8,6 +8,7 @@ import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.model.ReaderReadingStats;
 import com.myhomelibcorp.reader.service.AutoScrollService;
+import com.myhomelibcorp.reader.service.ImageCacheService;
 import com.myhomelibcorp.reader.service.ReaderFacade;
 import com.myhomelibcorp.reader.service.ReaderScheduler;
 import com.myhomelibcorp.reader.service.ReaderStatsService;
@@ -54,6 +55,7 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
     private final AutoScrollService autoScrollService;
     private final ReaderScheduler scheduler;
     private final ReaderStatsService statsService;
+    private final ImageCacheService imageCache;
     private final ApplicationContext springContext;
 
     @FXML private StackPane webViewContainer;
@@ -171,6 +173,11 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
             statsService.startReadingSession(currentSession);
             readerFacade.startPeriodicSaving(currentSession);
 
+            ReaderSettings settings = readerFacade.getSettings();
+            if (settings.isPageMode()) {
+                scheduler.runOnFxThread(this::enablePageMode);
+            }
+
             readerFacade.loadBookContent(currentSession, () -> {
                 if (currentSession != null && currentSession.isActive()) {
                     readerFacade.restorePositionAfterLoad(currentSession);
@@ -234,11 +241,39 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
-        String chapter = readerFacade.getCurrentChapterTitle();
-        if (chapter != null && !chapter.isEmpty()) {
-            pageInfoLabel.setText("Розділ: " + chapter);
+        ReaderSettings settings = readerFacade.getSettings();
+        if (settings.isPageMode()) {
+            if (webEngine != null) {
+                try {
+                    String script = """
+                        (function() {
+                            var data = window.__pageMode;
+                            if (!data || !data.enabled) return null;
+                            return { current: data.currentPage, total: data.totalPages };
+                        })();
+                    """;
+                    Object result = webEngine.executeScript(script);
+                    if (result != null) {
+                        String str = result.toString();
+                        String current = str.replaceAll(".*current=([0-9]+).*", "$1");
+                        String total = str.replaceAll(".*total=([0-9]+).*", "$1");
+                        if (current.matches("\\d+") && total.matches("\\d+")) {
+                            pageInfoLabel.setText("Сторінка " + current + " / " + total);
+                            return;
+                        }
+                    }
+                } catch (Exception e) {
+                    log.debug("Failed to get page info: {}", e.getMessage());
+                }
+            }
+            pageInfoLabel.setText("Режим сторінок");
         } else {
-            pageInfoLabel.setText("Розділ 1");
+            String chapter = readerFacade.getCurrentChapterTitle();
+            if (chapter != null && !chapter.isEmpty()) {
+                pageInfoLabel.setText("Розділ: " + chapter);
+            } else {
+                pageInfoLabel.setText("Розділ 1");
+            }
         }
     }
 
@@ -247,12 +282,358 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         bookmarksLabel.setText("⭐ " + count);
     }
 
+    // ==================== Режим сторінок ====================
+
+    @FXML
+    private void onTogglePageMode() {
+        if (currentSession == null || !currentSession.isActive() || webEngine == null) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+
+        ReaderSettings settings = readerFacade.getSettings();
+        settings.setPageMode(!settings.isPageMode());
+        readerFacade.saveSettings();
+
+        if (settings.isPageMode()) {
+            enablePageMode();
+        } else {
+            disablePageMode();
+        }
+    }
+
+    private void enablePageMode() {
+        if (webEngine == null) return;
+
+        scheduler.runOnFxThread(() -> {
+            try {
+                String script = """
+                    (function() {
+                        var body = document.body;
+                        var html = document.documentElement;
+                        
+                        if (!body || !html) return { error: 'No body or html' };
+                        
+                        var scrollY = window.scrollY || window.pageYOffset || 0;
+                        var pageHeight = window.innerHeight - 80;
+                        if (pageHeight <= 0) pageHeight = window.innerHeight - 100;
+                        
+                        var totalHeight = Math.max(
+                            html.scrollHeight,
+                            body.scrollHeight,
+                            document.documentElement.scrollHeight
+                        );
+                        
+                        var totalPages = Math.max(1, Math.ceil(totalHeight / pageHeight));
+                        var currentPage = Math.min(totalPages, Math.max(1, Math.floor(scrollY / pageHeight) + 1));
+                        
+                        window.__pageMode = {
+                            enabled: true,
+                            pageHeight: pageHeight,
+                            totalPages: totalPages,
+                            currentPage: currentPage,
+                            lastScrollY: scrollY,
+                            totalHeight: totalHeight
+                        };
+                        
+                        window.__savedScrollY = scrollY;
+                        
+                        var indicator = document.getElementById('page-indicator');
+                        if (!indicator) {
+                            indicator = document.createElement('div');
+                            indicator.id = 'page-indicator';
+                            indicator.style.cssText = [
+                                'position: fixed',
+                                'bottom: 20px',
+                                'left: 50%',
+                                'transform: translateX(-50%)',
+                                'background: rgba(0,0,0,0.75)',
+                                'color: #ffffff',
+                                'padding: 6px 16px',
+                                'border-radius: 20px',
+                                'font-size: 13px',
+                                'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                                'z-index: 1000',
+                                'pointer-events: none',
+                                'user-select: none',
+                                'opacity: 0.8',
+                                'transition: opacity 0.3s ease'
+                            ].join(';');
+                            document.body.appendChild(indicator);
+                        }
+                        indicator.textContent = currentPage + ' / ' + totalPages;
+                        indicator.style.display = 'block';
+                        indicator.style.opacity = '0.8';
+                        
+                        setTimeout(function() {
+                            indicator.style.opacity = '0.4';
+                        }, 3000);
+                        
+                        var targetScroll = (currentPage - 1) * pageHeight;
+                        window.scrollTo({ top: targetScroll, behavior: 'auto' });
+                        
+                        return { 
+                            totalPages: totalPages, 
+                            currentPage: currentPage,
+                            pageHeight: pageHeight,
+                            targetScroll: targetScroll
+                        };
+                    })();
+                """;
+
+                Object result = webEngine.executeScript(script);
+                log.info("Page mode enabled: {}", result);
+                updatePageInfo();
+                updateProgressFromPage();
+
+            } catch (Exception e) {
+                log.warn("Failed to enable page mode: {}", e.getMessage());
+            }
+        });
+    }
+
+    private void disablePageMode() {
+        if (webEngine == null) return;
+
+        scheduler.runOnFxThread(() -> {
+            try {
+                String script = """
+                    (function() {
+                        var body = document.body;
+                        var html = document.documentElement;
+                        
+                        var indicator = document.getElementById('page-indicator');
+                        if (indicator) {
+                            indicator.style.display = 'none';
+                        }
+                        
+                        var savedY = window.__savedScrollY || 0;
+                        if (savedY > 0) {
+                            window.scrollTo({ top: savedY, behavior: 'auto' });
+                        }
+                        
+                        window.__pageMode = { enabled: false };
+                        window.__savedScrollY = null;
+                    })();
+                """;
+                webEngine.executeScript(script);
+                log.info("Page mode disabled");
+                updatePageInfo();
+
+            } catch (Exception e) {
+                log.warn("Failed to disable page mode: {}", e.getMessage());
+            }
+        });
+    }
+
+    private void navigatePage(int direction) {
+        if (webEngine == null || currentSession == null) return;
+
+        scheduler.runOnFxThread(() -> {
+            try {
+                String script = """
+                    (function() {
+                        var data = window.__pageMode;
+                        if (!data || !data.enabled) return null;
+                        
+                        var newPage = data.currentPage + DIRECTION;
+                        if (newPage < 1) newPage = 1;
+                        if (newPage > data.totalPages) newPage = data.totalPages;
+                        
+                        if (newPage !== data.currentPage) {
+                            data.currentPage = newPage;
+                            var targetScroll = (newPage - 1) * data.pageHeight;
+                            window.__savedScrollY = targetScroll;
+                            
+                            window.scrollTo({ top: targetScroll, behavior: 'auto' });
+                            
+                            var indicator = document.getElementById('page-indicator');
+                            if (indicator) {
+                                indicator.textContent = newPage + ' / ' + data.totalPages;
+                                indicator.style.opacity = '0.8';
+                                clearTimeout(window.__pageIndicatorTimeout);
+                                window.__pageIndicatorTimeout = setTimeout(function() {
+                                    indicator.style.opacity = '0.4';
+                                }, 2000);
+                            }
+                            
+                            window.__pageMode = data;
+                        }
+                        
+                        return data.currentPage;
+                    })();
+                """.replace("DIRECTION", String.valueOf(direction));
+
+                Object result = webEngine.executeScript(script);
+                if (result != null) {
+                    log.debug("Navigated to page: {}", result);
+                    updatePageInfo();
+                    updateProgressFromPage();
+                }
+            } catch (Exception e) {
+                log.warn("Failed to navigate page: {}", e.getMessage());
+            }
+        });
+    }
+
+    @FXML
+    private void onNextPage() {
+        if (currentSession == null || !currentSession.isActive()) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+        ReaderSettings settings = readerFacade.getSettings();
+        if (!settings.isPageMode()) {
+            settings.setPageMode(true);
+            readerFacade.saveSettings();
+            enablePageMode();
+        } else {
+            navigatePage(1);
+        }
+    }
+
+    @FXML
+    private void onPrevPage() {
+        if (currentSession == null || !currentSession.isActive()) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+        ReaderSettings settings = readerFacade.getSettings();
+        if (!settings.isPageMode()) {
+            settings.setPageMode(true);
+            readerFacade.saveSettings();
+            enablePageMode();
+        } else {
+            navigatePage(-1);
+        }
+    }
+
+    @FXML
+    private void onGoToPage() {
+        if (currentSession == null || !currentSession.isActive() || webEngine == null) {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+            return;
+        }
+
+        try {
+            String script = """
+                (function() {
+                    var data = window.__pageMode;
+                    if (!data || !data.enabled) return null;
+                    return data.totalPages;
+                })();
+            """;
+            Object result = webEngine.executeScript(script);
+            if (result == null) {
+                showWarning("Увага", "Режим сторінок не активний");
+                return;
+            }
+
+            int totalPages = result instanceof Number ? ((Number) result).intValue() : 0;
+            if (totalPages <= 0) {
+                showWarning("Увага", "Не вдалося визначити кількість сторінок");
+                return;
+            }
+
+            TextInputDialog dialog = new TextInputDialog("1");
+            dialog.setTitle("Перехід на сторінку");
+            dialog.setHeaderText("Введіть номер сторінки (1-" + totalPages + ")");
+            dialog.setContentText("Сторінка:");
+
+            dialog.showAndWait().ifPresent(input -> {
+                try {
+                    int page = Integer.parseInt(input.trim());
+                    if (page < 1 || page > totalPages) {
+                        showWarning("Увага", "Номер сторінки має бути від 1 до " + totalPages);
+                        return;
+                    }
+                    goToPage(page);
+                } catch (NumberFormatException e) {
+                    showWarning("Увага", "Введіть коректний номер сторінки");
+                }
+            });
+        } catch (Exception e) {
+            log.warn("Failed to show go to page dialog: {}", e.getMessage());
+        }
+    }
+
+    private void goToPage(int page) {
+        if (webEngine == null) return;
+
+        scheduler.runOnFxThread(() -> {
+            try {
+                String script = """
+                    (function() {
+                        var data = window.__pageMode;
+                        if (!data || !data.enabled) return false;
+                        
+                        var newPage = Math.max(1, Math.min(PAGE, data.totalPages));
+                        if (newPage !== data.currentPage) {
+                            data.currentPage = newPage;
+                            var targetScroll = (newPage - 1) * data.pageHeight;
+                            window.__savedScrollY = targetScroll;
+                            
+                            window.scrollTo({ top: targetScroll, behavior: 'auto' });
+                            
+                            var indicator = document.getElementById('page-indicator');
+                            if (indicator) {
+                                indicator.textContent = newPage + ' / ' + data.totalPages;
+                                indicator.style.opacity = '0.8';
+                                clearTimeout(window.__pageIndicatorTimeout);
+                                window.__pageIndicatorTimeout = setTimeout(function() {
+                                    indicator.style.opacity = '0.4';
+                                }, 2000);
+                            }
+                            
+                            window.__pageMode = data;
+                        }
+                        return true;
+                    })();
+                """.replace("PAGE", String.valueOf(page));
+
+                webEngine.executeScript(script);
+                updatePageInfo();
+                updateProgressFromPage();
+                log.info("Navigated to page: {}", page);
+            } catch (Exception e) {
+                log.warn("Failed to go to page {}: {}", page, e.getMessage());
+            }
+        });
+    }
+
+    private void updateProgressFromPage() {
+        if (webEngine == null || currentSession == null) return;
+
+        try {
+            String script = """
+                (function() {
+                    var data = window.__pageMode;
+                    if (!data || !data.enabled) return null;
+                    return {
+                        current: data.currentPage,
+                        total: data.totalPages,
+                        percent: (data.currentPage / data.totalPages) * 100
+                    };
+                })();
+            """;
+            Object result = webEngine.executeScript(script);
+            if (result != null) {
+                String str = result.toString();
+                String percentStr = str.replaceAll(".*percent=([0-9.]+).*", "$1");
+                try {
+                    double percent = Double.parseDouble(percentStr);
+                    updateProgressBar(percent);
+                } catch (NumberFormatException e) {
+                    // ignore
+                }
+            }
+        } catch (Exception e) {
+            log.debug("Failed to update progress from page: {}", e.getMessage());
+        }
+    }
+
     // ==================== Виправлення скролу ====================
 
-    /**
-     * Виправляє перекриття тексту скролом.
-     * Викликається після завантаження HTML та при зміні ширини.
-     */
     private void fixScrollbarOverlap() {
         if (currentSession == null || !currentSession.isActive() || webEngine == null) {
             return;
@@ -261,7 +642,6 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             String script = """
                 (function() {
-                    // Перевіряємо чи є скрол
                     var hasScroll = document.documentElement.scrollHeight > document.documentElement.clientHeight;
                     
                     if (!hasScroll) {
@@ -269,7 +649,6 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                         return;
                     }
                     
-                    // Отримуємо ширину скролу
                     var scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
                     
                     if (scrollbarWidth > 0) {
@@ -294,9 +673,6 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    /**
-     * Оновлює макет після зміни налаштувань.
-     */
     public void updateLayout() {
         if (currentSession == null || !currentSession.isActive() || webEngine == null) {
             return;
@@ -688,6 +1064,21 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         log.info("Auto-scroll speed: {}", autoScrollSpeed);
     }
 
+    // ==================== Кеш ====================
+
+    @FXML
+    private void onClearCache() {
+        if (currentSession != null && currentSession.isActive()) {
+            if (imageCache != null) {
+                imageCache.clear();
+                showInfo("Кеш", "Кеш зображень очищено");
+                log.info("Image cache cleared");
+            }
+        } else {
+            showWarning("Увага", "Спочатку відкрийте книгу");
+        }
+    }
+
     // ==================== Статистика ====================
 
     @FXML
@@ -757,7 +1148,6 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                     double zoom = webView.getZoom();
                     currentSession.setZoom(zoom);
                     readerFacade.applySettings(currentSession);
-                    // Оновлюємо макет після зміни налаштувань
                     fixScrollbarOverlap();
                 }
             });
@@ -815,6 +1205,17 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
+        if (event.getCode() == KeyCode.PAGE_UP) {
+            event.consume();
+            onPrevPage();
+            return;
+        }
+        if (event.getCode() == KeyCode.PAGE_DOWN) {
+            event.consume();
+            onNextPage();
+            return;
+        }
+
         if (event.isControlDown() && event.getCode() == KeyCode.F) {
             event.consume();
             onToggleSearch();
@@ -833,6 +1234,11 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         }
 
         if (event.isControlDown() && event.getCode() == KeyCode.G) {
+            if (!searchBar.isVisible()) {
+                event.consume();
+                onGoToPage();
+                return;
+            }
             event.consume();
             onSearchNext();
             return;

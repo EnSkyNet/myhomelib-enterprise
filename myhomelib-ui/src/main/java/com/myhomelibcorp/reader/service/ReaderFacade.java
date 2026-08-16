@@ -326,4 +326,8 @@ public class ReaderFacade {
         contentService.clearCache();
         positionService.clearCache();
     }
+
+    public void saveSettings() {
+        settingsService.save();
+    }
 }

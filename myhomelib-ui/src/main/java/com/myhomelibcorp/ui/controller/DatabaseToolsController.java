@@ -1,7 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
-import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
+import com.myhomelibcorp.application.service.DatabaseToolsService;
+import com.myhomelibcorp.application.service.CollectionManagementService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -25,10 +25,9 @@ public class DatabaseToolsController {
     private final ApplicationContext springContext;
     private final ApplicationState appState;
     private final DialogService dialogService;
+    private final DatabaseToolsService databaseToolsService; // <-- Новий сервіс
+    private final CollectionManagementService collectionManagementService;
 
-    /**
-     * Перевірка цілісності
-     */
     @FXML
     public void handleCheckIntegrity(Stage owner) {
         try {
@@ -38,7 +37,7 @@ public class DatabaseToolsController {
             Parent root = loader.load();
 
             Stage stage = new Stage();
-            stage.setTitle("🔍 Перевірка цілісності");
+            stage.setTitle("Перевірка цілісності");
             stage.setScene(new Scene(root, 720, 580));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
@@ -50,9 +49,6 @@ public class DatabaseToolsController {
         }
     }
 
-    /**
-     * Оптимізація бази даних (VACUUM)
-     */
     @FXML
     public void handleVacuum() {
         Collection collection = appState.getCurrentLibraryCollection();
@@ -62,80 +58,69 @@ public class DatabaseToolsController {
         }
 
         if (!dialogService.showConfirmation(
-                "Оптимізація БД",
+                "Оптимізація бази даних",
                 "Виконати VACUUM для колекції \"" + collection.getName() + "\"?",
-                "Це може зайняти деякий час. База даних буде перепакована.\n\n" +
-                        "⚠️ Рекомендується зробити резервну копію перед оптимізацією.")) {
+                "Це може зайняти деякий час. База даних буде оптимізована.")) {
             return;
         }
 
-        appState.getStatusBar().setStatusText("⏳ Оптимізація БД...");
+        appState.getStatusBar().setStatusText("Оптимізація бази даних...");
         appState.getStatusBar().setProgressVisible(true);
 
         new Thread(() -> {
             try {
-                CollectionStorageManager storageManager = springContext.getBean(CollectionStorageManager.class);
-                storageManager.vacuum(collection);
+                databaseToolsService.vacuum(collection);
 
                 UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("✅ Базу даних оптимізовано");
-                    dialogService.showInfo("Успішно", "✅ Базу даних оптимізовано.");
+                    appState.getStatusBar().setStatusText("База даних оптимізована");
+                    dialogService.showInfo("Успішно", "База даних оптимізована.");
                 });
             } catch (Exception e) {
-                log.error("Помилка оптимізації БД", e);
+                log.error("Помилка оптимізації бази даних", e);
                 UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("❌ Помилка оптимізації БД");
-                    dialogService.showError("Помилка", "Не вдалося оптимізувати БД: " + e.getMessage());
+                    appState.getStatusBar().setStatusText("Помилка оптимізації");
+                    dialogService.showError("Помилка", "Не вдалося оптимізувати: " + e.getMessage());
                 });
             }
         }).start();
     }
 
-    /**
-     * Перебудова пошукового індексу
-     */
     @FXML
     public void handleRebuildIndex() {
         if (!dialogService.showConfirmation(
                 "Перебудова індексу",
                 "Ви впевнені, що хочете перебудувати пошуковий індекс?",
-                "Це може зайняти деякий час для великих бібліотек.\n\n" +
-                        "Індекс буде повністю перебудовано на основі поточних даних.")) {
+                "Це може зайняти деякий час для великих бібліотек.")) {
             return;
         }
 
-        appState.getStatusBar().setStatusText("⏳ Перебудова індексу...");
+        appState.getStatusBar().setStatusText("Перебудова індексу...");
         appState.getStatusBar().setProgressVisible(true);
 
         new Thread(() -> {
             try {
-                IndexRebuilder indexRebuilder = springContext.getBean(IndexRebuilder.class);
-                indexRebuilder.rebuildIndex();
+                databaseToolsService.rebuildIndex();
+                int count = databaseToolsService.getIndexedDocumentCount();
 
-                int count = indexRebuilder.getIndexedDocumentCount();
                 UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("✅ Індекс перебудовано. Проіндексовано " + count + " книг.");
+                    appState.getStatusBar().setStatusText("Індекс перебудовано. Проіндексовано " + count + " книг.");
                     dialogService.showInfo("Успішно",
-                            "✅ Пошуковий індекс перебудовано.\n" +
-                                    "📚 Проіндексовано " + count + " книг.");
+                            "Пошуковий індекс перебудовано.\nПроіндексовано " + count + " книг.");
                 });
             } catch (Exception e) {
                 log.error("Помилка перебудови індексу", e);
                 UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("❌ Помилка перебудови індексу");
+                    appState.getStatusBar().setStatusText("Помилка перебудови індексу");
                     dialogService.showError("Помилка", "Не вдалося перебудувати індекс: " + e.getMessage());
                 });
             }
         }).start();
     }
 
-    /**
-     * Резервне копіювання
-     */
     @FXML
     public void handleBackup(Stage owner) {
         try {
@@ -144,17 +129,15 @@ public class DatabaseToolsController {
             loader.setControllerFactory(springContext::getBean);
             Parent root = loader.load();
 
-            // Отримуємо контролер та передаємо сцену
             BackupController controller = loader.getController();
 
             Stage stage = new Stage();
-            stage.setTitle("💾 Резервне копіювання");
+            stage.setTitle("Резервне копіювання");
             stage.setScene(new Scene(root, 620, 520));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
 
             controller.setStage(stage);
-
             stage.show();
 
         } catch (Exception e) {
@@ -163,9 +146,6 @@ public class DatabaseToolsController {
         }
     }
 
-    /**
-     * Відкрити діалог відновлення з резервної копії
-     */
     @FXML
     public void handleRestore(Stage owner) {
         try {
@@ -174,17 +154,15 @@ public class DatabaseToolsController {
             loader.setControllerFactory(springContext::getBean);
             Parent root = loader.load();
 
-            // Отримуємо контролер та передаємо сцену
             RestoreController controller = loader.getController();
 
             Stage stage = new Stage();
-            stage.setTitle("📂 Відновлення з резервної копії");
+            stage.setTitle("Відновлення з резервної копії");
             stage.setScene(new Scene(root, 620, 450));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
 
             controller.setStage(stage);
-
             stage.show();
 
         } catch (Exception e) {
@@ -192,6 +170,7 @@ public class DatabaseToolsController {
             dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
         }
     }
+
     @FXML
     public void handleStatistics(Stage owner) {
         try {
@@ -201,7 +180,7 @@ public class DatabaseToolsController {
             Parent root = loader.load();
 
             Stage stage = new Stage();
-            stage.setTitle("📊 Статистика колекції");
+            stage.setTitle("Статистика колекції");
             stage.setScene(new Scene(root, 600, 400));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);

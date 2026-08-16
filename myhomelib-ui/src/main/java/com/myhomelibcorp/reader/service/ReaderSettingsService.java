@@ -91,11 +91,19 @@ public class ReaderSettingsService {
         log.info("Width mode changed to: {}", mode);
     }
 
-    public void togglePageMode() {
+    public void setPageMode(boolean enabled) {
+        ReaderSettings s = load();
+        s.setPageMode(enabled);
+        save();
+        log.info("Page mode set to: {}", enabled);
+    }
+
+    public boolean togglePageMode() {
         ReaderSettings s = load();
         s.setPageMode(!s.isPageMode());
         save();
         log.info("Page mode toggled to: {}", s.isPageMode());
+        return s.isPageMode();
     }
 
     public List<String> getAvailableFonts() {

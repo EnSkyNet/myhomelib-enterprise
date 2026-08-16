@@ -1,12 +1,12 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.application.service.CollectionManagementService;
+import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.infrastructure.collection.CollectionManager;
-import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.ui.event.CollectionChangedEvent;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.presenter.CollectionPresenter;
@@ -35,6 +35,7 @@ public class CollectionController {
     private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final StatisticsService statisticsService;
     private final ApplicationEventPublisher eventPublisher;
+    private final CollectionManagementService collectionManagementService; // <-- Новий сервіс
 
     public void switchToCollection(Collection collection, Runnable onComplete) {
         if (collection == null) {
@@ -65,11 +66,11 @@ public class CollectionController {
     public void handleRenameCollection(Runnable onComplete) {
         Collection current = appState.getCurrentLibraryCollection();
         if (current == null) {
-            dialogService.showWarning("Немає колекції", "Спочатку виберіть колекцію в навігації.");
+            dialogService.showWarning("Немає колекції", "Спочатку виберіть колекцію.");
             return;
         }
         Optional<String> result = dialogService.showTextInput(
-                "Перейменувати колекцію",
+                "Перейменування колекції",
                 "Введіть нову назву для \"" + current.getName() + "\"",
                 "Нова назва:",
                 current.getName()
@@ -125,5 +126,23 @@ public class CollectionController {
         if (current != null) {
             switchToCollection(current, onComplete);
         }
+    }
+
+    // ===== Delegated methods to CollectionManagementService =====
+
+    public Collection getCurrentCollection() {
+        return collectionManagementService.getCurrentCollection();
+    }
+
+    public boolean hasActiveCollection() {
+        return collectionManagementService.hasActiveCollection();
+    }
+
+    public boolean isCollectionReady() {
+        return collectionManagementService.isCollectionReady();
+    }
+
+    public long getDatabaseSize() {
+        return collectionManagementService.getDatabaseSize();
     }
 }

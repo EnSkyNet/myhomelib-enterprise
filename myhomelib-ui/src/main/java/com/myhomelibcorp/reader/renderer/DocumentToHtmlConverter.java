@@ -4,6 +4,7 @@ import com.myhomelibcorp.reader.model.BookDocument;
 import com.myhomelibcorp.reader.model.BookMetadata;
 import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.model.ImageData;
+import com.myhomelibcorp.reader.service.ImageCacheService;
 import lombok.extern.slf4j.Slf4j;
 import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
@@ -19,11 +20,21 @@ public class DocumentToHtmlConverter {
             .addTags("h1", "h2", "h3", "h4", "h5", "h6", "div", "span", "br",
                     "b", "i", "strong", "em", "u", "s", "sub", "sup", "code", "pre",
                     "blockquote", "q", "ul", "ol", "li", "hr", "img", "a")
-            .addAttributes("img", "src", "alt", "width", "height", "data-image-id")
+            .addAttributes("img", "src", "alt", "width", "height", "data-image-id", "data-cache-key")
             .addAttributes("p", "data-paragraph-id")
             .addAttributes("div", "class")
             .addAttributes("span", "class")
-            .addAttributes("a", "href", "class", "data-footnote-id", "data-note-id");
+            .addAttributes("a", "href", "class", "data-note-id", "target");
+
+    private final ImageCacheService imageCache;
+
+    public DocumentToHtmlConverter() {
+        this.imageCache = new ImageCacheService();
+    }
+
+    public DocumentToHtmlConverter(ImageCacheService imageCache) {
+        this.imageCache = imageCache;
+    }
 
     public String convert(BookDocument document) {
         long startTime = System.currentTimeMillis();
@@ -42,13 +53,25 @@ public class DocumentToHtmlConverter {
         html.append("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/>\n");
         html.append("    <title>").append(escapeHtml(metadata.getTitle())).append("</title>\n");
 
-        // Стилі для приміток
+        // Стилі для зображень
         html.append("    <style>\n");
-        html.append("        .footnote { font-size: 0.9em; color: #666; margin: 10px 0; padding: 8px 12px; border-left: 3px solid #ccc; }\n");
-        html.append("        .footnote-ref { color: #2196F3; text-decoration: none; font-size: 0.8em; vertical-align: super; }\n");
+        html.append("        img { max-width: 100%; height: auto; display: block; margin: 10px auto; border-radius: 4px; }\n");
+        html.append("        img.loading { opacity: 0.5; filter: blur(2px); }\n");
+        html.append("        img.loaded { opacity: 1; transition: opacity 0.3s ease; }\n");
+        html.append("        .footnote { font-size: 0.9em; color: #666; margin: 10px 0; padding: 8px 12px; border-left: 3px solid #ccc; background: #f9f9f9; border-radius: 4px; }\n");
+        html.append("        .footnote-ref { color: #2196F3; text-decoration: none; font-size: 0.75em; vertical-align: super; padding: 0 2px; cursor: pointer; }\n");
         html.append("        .footnote-ref:hover { text-decoration: underline; }\n");
-        html.append("        a[data-note-id] { color: #2196F3; text-decoration: none; }\n");
-        html.append("        a[data-note-id]:hover { text-decoration: underline; }\n");
+        html.append("        .internal-link { color: #2196F3; text-decoration: none; border-bottom: 1px dotted #2196F3; }\n");
+        html.append("        .internal-link:hover { text-decoration: underline; }\n");
+        html.append("        .external-link { color: #2196F3; text-decoration: none; }\n");
+        html.append("        .external-link:hover { text-decoration: underline; }\n");
+        html.append("        .external-link::after { content: ' ↗'; font-size: 0.8em; }\n");
+        html.append("        .notes-section { margin-top: 30px; padding-top: 20px; border-top: 2px solid #e0e0e0; }\n");
+        html.append("        .notes-section h2 { font-size: 1.2em; color: #333; }\n");
+        html.append("        .note-number { font-weight: bold; color: #555; margin-right: 5px; }\n");
+        html.append("        .back-to-text { font-size: 0.8em; color: #999; margin-left: 8px; text-decoration: none; }\n");
+        html.append("        .back-to-text:hover { color: #666; }\n");
+        html.append("        .footnote-target { scroll-margin-top: 20px; }\n");
         html.append("    </style>\n");
 
         html.append("</head>\n");
@@ -78,28 +101,21 @@ public class DocumentToHtmlConverter {
 
         html.append("<hr class=\"book-divider\"/>\n");
 
-        // Додаємо секцію для приміток в кінці
-        StringBuilder footnotesHtml = new StringBuilder();
-        footnotesHtml.append("<div class=\"footnotes-section\">\n");
-        footnotesHtml.append("<h3>Примітки</h3>\n");
-
         for (Chapter chapter : document.getChapters()) {
-            html.append(renderChapter(chapter, 1, imageMap, footnotesHtml));
+            html.append(renderChapter(chapter, 1, imageMap));
         }
-
-        html.append(footnotesHtml.toString());
-        html.append("</div>\n");
 
         html.append("</body>\n");
         html.append("</html>");
 
         long elapsed = System.currentTimeMillis() - startTime;
-        log.info("HTML generated: {} chars, {} ms", html.length(), elapsed);
+        log.info("HTML generated: {} chars, {} ms, image cache: {}",
+                html.length(), elapsed, imageCache.getStats());
 
         return html.toString();
     }
 
-    private String renderChapter(Chapter chapter, int level, Map<String, ImageData> imageMap, StringBuilder footnotes) {
+    private String renderChapter(Chapter chapter, int level, Map<String, ImageData> imageMap) {
         StringBuilder sb = new StringBuilder(1024);
         String tag = "h" + Math.min(level, 6);
 
@@ -114,24 +130,38 @@ public class DocumentToHtmlConverter {
         if (chapter.getContent() != null && !chapter.getContent().isEmpty()) {
             String content = chapter.getContent();
 
-            // Підставляємо зображення
+            // Обробляємо зображення з кешем
             if (imageMap != null && !imageMap.isEmpty()) {
                 for (Map.Entry<String, ImageData> entry : imageMap.entrySet()) {
                     String imageId = entry.getKey();
                     ImageData image = entry.getValue();
                     if (image != null && image.getData() != null) {
-                        String base64 = Base64.getEncoder().encodeToString(image.getData());
+                        // Перевіряємо кеш
+                        String cacheKey = "img_" + imageId;
+                        byte[] cachedData = imageCache.get(cacheKey);
+
+                        if (cachedData == null) {
+                            // Кешуємо зображення
+                            imageCache.put(cacheKey, image.getData(), image.getMimeType());
+                            cachedData = image.getData();
+                        }
+
+                        String base64 = Base64.getEncoder().encodeToString(cachedData);
+                        String mimeType = imageCache.getMimeType(cacheKey);
+                        if (mimeType == null) {
+                            mimeType = image.getMimeType() != null ? image.getMimeType() : "image/jpeg";
+                        }
+
+                        // Замінюємо плейсхолдер
                         String placeholder = "data:image/jpeg;base64,PLACEHOLDER";
+                        String replacement = "data:" + mimeType + ";base64," + base64;
                         content = content.replace(
                                 "data-image-id=\"" + imageId + "\" src=\"" + placeholder + "\"",
-                                "data-image-id=\"" + imageId + "\" src=\"data:" + image.getMimeType() + ";base64," + base64 + "\""
+                                "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + replacement + "\""
                         );
                     }
                 }
             }
-
-            // Обробляємо примітки
-            content = processFootnotes(content, footnotes);
 
             String safeContent = Jsoup.clean(content, HTML_WHITELIST);
             sb.append("<div class=\"chapter-content\">\n");
@@ -140,43 +170,11 @@ public class DocumentToHtmlConverter {
         }
 
         for (Chapter child : chapter.getChildren()) {
-            sb.append(renderChapter(child, level + 1, imageMap, footnotes));
+            sb.append(renderChapter(child, level + 1, imageMap));
         }
 
         sb.append("</div>\n");
         return sb.toString();
-    }
-
-    private String processFootnotes(String content, StringBuilder footnotes) {
-        // Шукаємо посилання на примітки у форматі [1], [2], тощо
-        // та замінюємо їх на HTML-посилання
-        String result = content;
-
-        // Проста обробка: шукаємо [цифра]
-        java.util.regex.Pattern pattern = java.util.regex.Pattern.compile("\\[(\\d+)\\]");
-        java.util.regex.Matcher matcher = pattern.matcher(content);
-
-        while (matcher.find()) {
-            String noteId = matcher.group(1);
-            String replacement = "<a href=\"#note-" + noteId + "\" data-note-id=\"" + noteId + "\" class=\"footnote-ref\">[" + noteId + "]</a>";
-            result = result.replace("[" + noteId + "]", replacement);
-
-            // Додаємо примітку в кінець
-            String noteContent = getNoteContent(content, noteId);
-            if (noteContent != null) {
-                footnotes.append("<div class=\"footnote\" id=\"note-").append(noteId).append("\">");
-                footnotes.append("<a href=\"#note-ref-").append(noteId).append("\">↩</a> ");
-                footnotes.append(noteContent);
-                footnotes.append("</div>\n");
-            }
-        }
-
-        return result;
-    }
-
-    private String getNoteContent(String content, String noteId) {
-        // Спрощена реалізація - в реальному проекті потрібен парсинг FB2
-        return "Примітка " + noteId;
     }
 
     private String escapeHtml(String text) {
@@ -186,5 +184,9 @@ public class DocumentToHtmlConverter {
                 .replace(">", "&gt;")
                 .replace("\"", "&quot;")
                 .replace("\n", "<br/>");
+    }
+
+    public ImageCacheService getImageCache() {
+        return imageCache;
     }
 }

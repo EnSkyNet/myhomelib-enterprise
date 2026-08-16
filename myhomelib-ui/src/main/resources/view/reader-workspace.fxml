@@ -25,30 +25,46 @@
             <tooltip><Tooltip text="Пошук (Ctrl+F)"/></tooltip>
         </Button>
         <Button text="⛶" onAction="#onToggleFullscreen">
-            <tooltip><Tooltip text="Повний екран (F11)"/></tooltip>
+            <tooltip><Tooltip text="Повноекранний режим (F11)"/></tooltip>
+        </Button>
+
+        <!-- Кнопки режиму сторінок -->
+        <Button text="📄" onAction="#onTogglePageMode" style="-fx-font-size: 14px;">
+            <tooltip><Tooltip text="Режим сторінок (вкл/викл)"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
-        <Button text="▶" onAction="#onToggleAutoScroll">
-            <tooltip><Tooltip text="Авто-скрол (Space)"/></tooltip>
+        <Button text="◀" onAction="#onPrevPage" style="-fx-font-size: 14px;">
+            <tooltip><Tooltip text="Попередня сторінка (PageUp)"/></tooltip>
+        </Button>
+        <Button text="▶" onAction="#onNextPage" style="-fx-font-size: 14px;">
+            <tooltip><Tooltip text="Наступна сторінка (PageDown)"/></tooltip>
+        </Button>
+        <Button text="🔢" onAction="#onGoToPage" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Перейти на сторінку (Ctrl+G)"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+
+        <Button text="▶▶" onAction="#onToggleAutoScroll">
+            <tooltip><Tooltip text="Автоскрол (Space)"/></tooltip>
         </Button>
         <Button text="+" onAction="#onAutoScrollSpeedUp">
-            <tooltip><Tooltip text="Збільшити швидкість авто-скролу"/></tooltip>
+            <tooltip><Tooltip text="Збільшити швидкість автоскролу"/></tooltip>
         </Button>
         <Button text="−" onAction="#onAutoScrollSpeedDown">
-            <tooltip><Tooltip text="Зменшити швидкість авто-скролу"/></tooltip>
+            <tooltip><Tooltip text="Зменшити швидкість автоскролу"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
         <Button text="🔍+" onAction="#onZoomIn">
             <tooltip><Tooltip text="Збільшити масштаб (Ctrl++)"/></tooltip>
         </Button>
-        <Button text="🔍-" onAction="#onZoomOut">
+        <Button text="🔍−" onAction="#onZoomOut">
             <tooltip><Tooltip text="Зменшити масштаб (Ctrl+-)"/></tooltip>
         </Button>
         <Button text="100%" onAction="#onZoomReset">
             <tooltip><Tooltip text="Скинути масштаб (Ctrl+0)"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
-        <Button text="🌙" onAction="#onToggleTheme">
+        <Button text="🎨" onAction="#onToggleTheme">
             <tooltip><Tooltip text="Тема (світла/темна)"/></tooltip>
         </Button>
         <Button text="📑" onAction="#onToggleToc">
@@ -62,15 +78,19 @@
             <tooltip><Tooltip text="Закладки"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
+        <Button text="🗑️" onAction="#onClearCache" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Очистити кеш зображень"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
         <Button text="📊" onAction="#onShowStats">
             <tooltip><Tooltip text="Статистика читання"/></tooltip>
         </Button>
-        <Button text="⚙" onAction="#onShowSettings">
+        <Button text="⚙️" onAction="#onShowSettings">
             <tooltip><Tooltip text="Налаштування"/></tooltip>
         </Button>
     </ToolBar>
 
-    <!-- Пошукова панель -->
+    <!-- Панель пошуку -->
     <HBox fx:id="searchBar" spacing="5" alignment="CENTER_LEFT"
           style="-fx-background-color: #f0f0f0; -fx-padding: 5 10; -fx-border-color: #ccc; -fx-border-width: 0 0 1 0;"
           visible="false" managed="false">
@@ -78,10 +98,10 @@
         <TextField fx:id="searchField" promptText="Введіть текст..." HBox.hgrow="ALWAYS"
                    onAction="#onSearchFieldAction"/>
         <Label fx:id="searchStatus" text="0/0" style="-fx-font-weight: bold; -fx-min-width: 40;"/>
-        <Button text="↑" onAction="#onSearchPrev" style="-fx-font-size: 12px;">
+        <Button text="▲" onAction="#onSearchPrev" style="-fx-font-size: 12px;">
             <tooltip><Tooltip text="Попередній збіг (Shift+Ctrl+G)"/></tooltip>
         </Button>
-        <Button text="↓" onAction="#onSearchNext" style="-fx-font-size: 12px;">
+        <Button text="▼" onAction="#onSearchNext" style="-fx-font-size: 12px;">
             <tooltip><Tooltip text="Наступний збіг (Ctrl+G)"/></tooltip>
         </Button>
         <Button text="✕" onAction="#onSearchClose">

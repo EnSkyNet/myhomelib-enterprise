@@ -21,8 +21,6 @@ public class ReaderSettings {
     private boolean autoScroll = false;
     private int scrollSpeed = 3;
     private String customCss = "";
-
-    // Нові поля
     private String widthMode = "medium";
     private boolean pageMode = false;
 

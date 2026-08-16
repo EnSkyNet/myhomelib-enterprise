@@ -13,4 +13,6 @@ public class ImageData {
     private String id;
     private String mimeType;
     private byte[] data;
+    private boolean cached; // Показує чи зображення в кеші
+    private String cacheKey; // Ключ для кешу
 }

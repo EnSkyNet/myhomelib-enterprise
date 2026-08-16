@@ -6,8 +6,8 @@ import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.parser.JsoupFb2Parser;
 import com.myhomelibcorp.reader.renderer.DocumentToHtmlConverter;
 import com.myhomelibcorp.reader.session.ReaderSession;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -25,14 +25,14 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class ReaderContentService {
 
     private final ReaderSettingsService settingsService;
     private final ReaderScheduler scheduler;
+    private final ImageCacheService imageCache;
     private final JsoupFb2Parser fb2Parser = new JsoupFb2Parser();
-    private final DocumentToHtmlConverter htmlConverter = new DocumentToHtmlConverter();
+    private final DocumentToHtmlConverter htmlConverter;
 
     private final ConcurrentMap<String, ReaderBookContent> contentCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, CompletableFuture<ReaderBookContent>> loadingTasks = new ConcurrentHashMap<>();
@@ -47,6 +47,16 @@ public class ReaderContentService {
             Charset.forName("KOI8-R"),
             Charset.forName("ISO-8859-5")
     };
+
+    @Autowired
+    public ReaderContentService(ReaderSettingsService settingsService,
+                                ReaderScheduler scheduler,
+                                ImageCacheService imageCache) {
+        this.settingsService = settingsService;
+        this.scheduler = scheduler;
+        this.imageCache = imageCache;
+        this.htmlConverter = new DocumentToHtmlConverter(imageCache);
+    }
 
     public void loadBookContent(ReaderSession session, Runnable onLoaded) {
         if (session == null || session.getBook() == null) {
@@ -165,7 +175,6 @@ public class ReaderContentService {
 
         var engine = session.getWebEngine();
 
-        // Додаємо listener для виправлення скролу після завантаження
         engine.getLoadWorker().stateProperty().addListener(new javafx.beans.value.ChangeListener<>() {
             @Override
             public void changed(javafx.beans.value.ObservableValue<? extends javafx.concurrent.Worker.State> obs,
@@ -174,9 +183,7 @@ public class ReaderContentService {
                 if (newState == javafx.concurrent.Worker.State.SUCCEEDED) {
                     engine.getLoadWorker().stateProperty().removeListener(this);
                     scheduler.runOnFxThread(() -> {
-                        // Виправляємо перекриття скролу через JavaScript
                         fixScrollbarOverlap(engine);
-
                         if (onLoaded != null) {
                             onLoaded.run();
                         }
@@ -189,9 +196,6 @@ public class ReaderContentService {
         log.info("HTML rendered for book: {}", session.getBook().getTitle());
     }
 
-    /**
-     * Виправляє перекриття тексту скролом через JavaScript.
-     */
     private void fixScrollbarOverlap(javafx.scene.web.WebEngine engine) {
         if (engine == null) {
             return;
@@ -200,7 +204,6 @@ public class ReaderContentService {
         try {
             String script = """
                 (function() {
-                    // Перевіряємо чи є скрол
                     var hasScroll = document.documentElement.scrollHeight > document.documentElement.clientHeight;
                     
                     if (!hasScroll) {
@@ -208,7 +211,6 @@ public class ReaderContentService {
                         return;
                     }
                     
-                    // Отримуємо ширину скролу
                     var scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
                     
                     if (scrollbarWidth > 0) {
@@ -512,10 +514,7 @@ public class ReaderContentService {
             """.replace("CSS", "'" + escapedCss + "'");
 
             session.getWebEngine().executeScript(script);
-
-            // Після застосування стилів - виправляємо скрол
             fixScrollbarOverlap(session.getWebEngine());
-
             log.debug("Settings applied to current book");
 
         } catch (Exception e) {
@@ -527,5 +526,10 @@ public class ReaderContentService {
         contentCache.clear();
         loadingTasks.clear();
         log.info("Reader cache cleared");
+    }
+
+    public void clearImageCache() {
+        imageCache.clear();
+        log.info("Image cache cleared");
     }
 }

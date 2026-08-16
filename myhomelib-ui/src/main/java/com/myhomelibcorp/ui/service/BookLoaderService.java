@@ -1,15 +1,12 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.dto.BookListItem;
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
-import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.application.usecase.book.LoadBooksUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
@@ -33,9 +30,8 @@ import java.util.stream.Collectors;
 @Slf4j
 public class BookLoaderService {
 
-    private final BookQueryRepository bookQueryRepository;
+    private final LoadBooksUseCase loadBooksUseCase;
     private final BookViewModelMapper viewModelMapper;
-    private final BookMapper bookMapper;
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
 
@@ -50,15 +46,13 @@ public class BookLoaderService {
         vm.setLoading(true);
 
         executor.submit(() -> {
-            PageResult<Book> result = bookQueryRepository.findPage(query);
-            log.info("Завантажено {} книг з {} всього", result.content().size(), result.totalElements());
+            PageResult<BookDto> result = loadBooksUseCase.execute(query);
+            log.info("Завантажено {} книг з {}", result.content().size(), result.totalElements());
             return result;
         }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
             vm.setLoading(false);
 
-            // Конвертуємо Book → BookDto → BookViewModel
             List<BookViewModel> vms = result.content().stream()
-                    .map(bookMapper::toDto)
                     .map(viewModelMapper::toViewModel)
                     .collect(Collectors.toList());
 
@@ -99,7 +93,7 @@ public class BookLoaderService {
         }
     }
 
-    // ===== Спеціальні запити =====
+    // ===== Спеціалізовані методи =====
 
     public void loadBooksByAuthor(AuthorId authorId) {
         BookQuery query = BookQuery.builder()
@@ -150,6 +144,20 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
+    public void loadBooksByLanguage(String languageCode) {
+        BookQuery query = BookQuery.builder()
+                .language(LanguageCode.of(languageCode))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadFavoriteBooks() {
+        loadBooksByGroup(GroupId.fromLong(1L));
+    }
+
     // ===== Dashboard =====
 
     public List<BookViewModel> loadRecentBooks(int limit) {
@@ -158,9 +166,8 @@ public class BookLoaderService {
                 .sortBy(SortBy.DATE)
                 .direction(SortDirection.DESC)
                 .build();
-        PageResult<Book> result = bookQueryRepository.findPage(query);
+        PageResult<BookDto> result = loadBooksUseCase.execute(query);
         return result.content().stream()
-                .map(bookMapper::toDto)
                 .map(viewModelMapper::toViewModel)
                 .collect(Collectors.toList());
     }
@@ -171,25 +178,10 @@ public class BookLoaderService {
                 .sortBy(SortBy.DATE)
                 .direction(SortDirection.DESC)
                 .build();
-        PageResult<Book> result = bookQueryRepository.findPage(query);
+        PageResult<BookDto> result = loadBooksUseCase.execute(query);
         return result.content().stream()
-                .map(bookMapper::toDto)
                 .map(viewModelMapper::toViewModel)
                 .collect(Collectors.toList());
-    }
-
-    public void loadFavoriteBooks() {
-        loadBooksByGroup(GroupId.fromLong(1L));
-    }
-
-    public void loadBooksByLanguage(String languageCode) {
-        BookQuery query = BookQuery.builder()
-                .language(LanguageCode.of(languageCode))
-                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
-                .sortBy(SortBy.TITLE)
-                .direction(SortDirection.ASC)
-                .build();
-        loadBooks(query);
     }
 
     // ===== Пагінація =====
