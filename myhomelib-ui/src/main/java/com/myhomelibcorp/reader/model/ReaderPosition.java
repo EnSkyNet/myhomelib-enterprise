@@ -9,22 +9,25 @@ import lombok.Value;
 @AllArgsConstructor
 public class ReaderPosition {
     String bookId;
-    String chapterId;
-    String paragraphId;
-    int paragraphIndex;
+    String chapterId;        // <-- НОВЕ ПОЛЕ: ID розділу
+    String chapterTitle;
+    String paragraphId;      // <-- ВИКОРИСТОВУЄТЬСЯ ЗАМІСТЬ ІНДЕКСУ
     int charOffset;
     double percent;
-    String chapterTitle;
+
+    // @Deprecated - залишено для зворотної сумісності
+    @Deprecated
+    int paragraphIndex;
 
     public static ReaderPosition empty(String bookId) {
         return ReaderPosition.builder()
                 .bookId(bookId)
                 .paragraphId("")
-                .paragraphIndex(0)
                 .charOffset(0)
                 .percent(0.0)
                 .chapterId("")
                 .chapterTitle("")
+                .paragraphIndex(0)
                 .build();
     }
 

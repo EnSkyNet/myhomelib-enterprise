@@ -21,6 +21,7 @@ public class AutoScrollService {
     private static final double MAX_SPEED = 5.0;
     private static final double DEFAULT_SPEED = 2.0;
 
+    // ВИПРАВЛЕНО: плавний автоскрол з easing
     public void start(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return;
@@ -31,21 +32,33 @@ public class AutoScrollService {
 
         double speed = currentSpeed;
 
-        timeline = new Timeline(new KeyFrame(Duration.millis(50), e -> {
+        // Використовуємо KeyFrame для плавного скролу
+        timeline = new Timeline(new KeyFrame(Duration.millis(16), e -> { // ~60 FPS
             if (!session.isActive() || session.getWebEngine() == null) {
                 stop(session);
                 return;
             }
 
             try {
-                String step = String.format(Locale.US, "%.2f", speed);
+                // Плавний скрол з невеликим прискоренням на початку
+                String step = String.format(Locale.US, "%.3f", speed);
                 String script = """
                     (function() {
                         var step = %s;
                         var current = window.scrollY || document.documentElement.scrollTop || 0;
                         var max = document.documentElement.scrollHeight - window.innerHeight;
+                        
                         if (current < max) {
-                            window.scrollTo(0, current + step);
+                            // Плавний скрол з easing
+                            var remaining = max - current;
+                            var newStep = Math.min(step, remaining);
+                            
+                            // Додаємо плавність - невелике прискорення на початку
+                            if (remaining > step * 10) {
+                                newStep = step * (1 + 0.1 * Math.sin(Date.now() / 1000));
+                            }
+                            
+                            window.scrollTo(0, current + newStep);
                             return true;
                         } else {
                             return false;
@@ -73,7 +86,7 @@ public class AutoScrollService {
         timeline.play();
 
         currentSessionId = sessionId;
-        log.info("Auto-scroll started for session: {}", sessionId);
+        log.info("Auto-scroll started for session: {} with speed: {}", sessionId, currentSpeed);
     }
 
     public void stop(ReaderSession session) {
@@ -115,8 +128,8 @@ public class AutoScrollService {
         currentSpeed = clampedSpeed;
 
         if (timeline != null && session.getSessionId().equals(currentSessionId)) {
-            stop(session);
-            start(session);
+            // Не перезапускаємо, просто оновлюємо швидкість для наступних кадрів
+            log.debug("Auto-scroll speed updated to: {}", clampedSpeed);
         }
 
         log.debug("Auto-scroll speed set to: {}", clampedSpeed);

@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.session.SessionService;
@@ -26,7 +27,6 @@ import java.awt.Desktop;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -44,10 +44,10 @@ public class DefaultNavigationService implements NavigationService {
     private final BookMapper bookMapper;
     private final DictionaryCachePort dictionaryCache;
     private final NavigationPanelController navigationPanelController;
+    private final BookResourcePort bookResourcePort;
 
     @PostConstruct
     public void init() {
-        // Встановлюємо колбеки для навігаційної панелі
         navigationPanelController.setNavigationCallbacks(
                 this::navigateToAuthor,
                 this::navigateToSeries,
@@ -146,95 +146,79 @@ public class DefaultNavigationService implements NavigationService {
 
     @Override
     public void openBookFile(BookDto book) {
+        if (book == null) {
+            log.warn("Спроба відкрити null книгу");
+            return;
+        }
+
         String fileName = book.getFileName();
         String folder = book.getFolder();
         String root = book.getCollectionRoot();
         String archiveEntry = book.getArchiveEntry();
 
+        log.debug("openBookFile: fileName='{}', folder='{}', root='{}', archiveEntry='{}'",
+                fileName, folder, root, archiveEntry);
+
+        // Якщо є archiveEntry - відкриваємо архів
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             String archivePathStr = (folder != null && !folder.isBlank()) ? folder : fileName;
             if (archivePathStr == null || archivePathStr.isBlank()) {
                 log.warn("Archive path is empty");
                 return;
             }
-            Path archivePath = buildFilePath(root, null, archivePathStr);
+            Path archivePath = bookResourcePort.buildFilePath(root, null, archivePathStr);
             File archiveFile = archivePath.toFile();
             if (archiveFile.exists()) {
                 try {
                     Desktop.getDesktop().open(archiveFile);
+                    log.info("Відкрито архів: {}", archivePath);
                 } catch (IOException e) {
-                    log.error("Failed to open archive: {}", archivePath, e);
+                    log.error("Не вдалося відкрити архів: {}", archivePath, e);
                 }
             } else {
-                log.warn("Archive not found: {}", archivePath);
+                log.warn("Архів не знайдено: {}", archivePath);
             }
             return;
         }
 
-        Path filePath = buildFilePath(root, folder, fileName);
+        // Звичайний файл
+        Path filePath = bookResourcePort.buildFilePath(root, folder, fileName);
         File file = filePath.toFile();
         if (file.exists()) {
             try {
                 Desktop.getDesktop().open(file);
+                log.info("Відкрито файл: {}", filePath);
             } catch (IOException e) {
-                log.error("Failed to open file: {}", filePath, e);
+                log.error("Не вдалося відкрити файл: {}", filePath, e);
             }
         } else {
-            log.warn("File not found: {}", filePath);
+            log.warn("Файл не знайдено: {}", filePath);
         }
-    }
-
-    private Path buildFilePath(String root, String folder, String fileName) {
-        if (fileName != null && !fileName.isBlank()) {
-            Path fileNamePath = Paths.get(fileName);
-            if (fileNamePath.isAbsolute()) {
-                return fileNamePath;
-            }
-        }
-
-        if (folder != null && !folder.isBlank()) {
-            Path folderPath = Paths.get(folder);
-            if (folderPath.isAbsolute()) {
-                if (fileName != null && !fileName.isBlank()) {
-                    return folderPath.resolve(fileName);
-                }
-                return folderPath;
-            }
-        }
-
-        if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
-            Path rootPath = Paths.get(root);
-            Path folderPath = Paths.get(folder);
-            if (fileName != null && !fileName.isBlank()) {
-                return rootPath.resolve(folderPath).resolve(fileName);
-            }
-            return rootPath.resolve(folderPath);
-        }
-
-        if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
-            return Paths.get(root).resolve(fileName);
-        }
-
-        if (fileName != null && !fileName.isBlank()) {
-            return Paths.get(fileName);
-        }
-        if (folder != null && !folder.isBlank()) {
-            return Paths.get(folder);
-        }
-        return Paths.get(".");
     }
 
     @Override
     public void openBookFolder(BookDto book) {
+        if (book == null) {
+            log.warn("Спроба відкрити папку для null книги");
+            return;
+        }
+
         String folder = book.getFolder();
-        if (folder == null || folder.isBlank()) return;
+        if (folder == null || folder.isBlank()) {
+            log.warn("Папка для книги {} не вказана", book.getTitle());
+            return;
+        }
+
         File dir = new File(folder);
         if (dir.exists() && dir.isDirectory()) {
             try {
                 Desktop.getDesktop().open(dir);
+                log.info("Відкрито папку: {}", folder);
             } catch (IOException e) {
-                log.error("Failed to open folder: {}", folder, e);
+                log.error("Не вдалося відкрити папку: {}", folder, e);
             }
+        } else {
+            log.warn("Папка не існує або не є директорією: {}", folder);
         }
     }
 
@@ -244,7 +228,32 @@ public class DefaultNavigationService implements NavigationService {
             sessionService.saveLastOpenedBookId(book.getId());
             mainController.showReaderWorkspace(BookId.fromString(book.getId()));
             mainController.updateNavigationButtons();
+            log.info("Відкрито книгу для читання: {}", book.getTitle());
+        } else {
+            log.warn("Спроба відкрити для читання null книгу");
         }
+    }
+
+    @Override
+    public void navigateToPublisher(String publisherName) {
+        log.info("Навігація до видавництва: {}", publisherName);
+        if (publisherName == null || publisherName.isBlank()) {
+            mainController.showSearchResults(List.of());
+            return;
+        }
+        BookQuery query = BookQuery.builder()
+                .text(publisherName)
+                .pagination(Pagination.of(1000, 0))
+                .build();
+        List<Book> books = bookQueryRepository.find(query);
+        List<BookDto> dtos = books.stream()
+                .map(bookMapper::toDto)
+                .collect(Collectors.toList());
+        List<BookDto> filtered = dtos.stream()
+                .filter(b -> publisherName.equalsIgnoreCase(b.getPublisher()))
+                .collect(Collectors.toList());
+        mainController.showSearchResults(filtered);
+        mainController.updateNavigationButtons();
     }
 
     @Override
@@ -269,27 +278,7 @@ public class DefaultNavigationService implements NavigationService {
         mainController.updateNavigationButtons();
     }
 
-    @Override
-    public void navigateToPublisher(String publisherName) {
-        log.info("Навігація до видавництва: {}", publisherName);
-        if (publisherName == null || publisherName.isBlank()) {
-            mainController.showSearchResults(List.of());
-            return;
-        }
-        BookQuery query = BookQuery.builder()
-                .text(publisherName)
-                .pagination(Pagination.of(1000, 0))
-                .build();
-        List<Book> books = bookQueryRepository.find(query);
-        List<BookDto> dtos = books.stream()
-                .map(bookMapper::toDto)
-                .collect(Collectors.toList());
-        List<BookDto> filtered = dtos.stream()
-                .filter(b -> publisherName.equalsIgnoreCase(b.getPublisher()))
-                .collect(Collectors.toList());
-        mainController.showSearchResults(filtered);
-        mainController.updateNavigationButtons();
-    }
+    // ==================== Допоміжні методи ====================
 
     private String normalizeSeriesName(String name) {
         if (name == null) return "";

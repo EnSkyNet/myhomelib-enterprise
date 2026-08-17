@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.cover;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.CoverLocator;
+import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -19,12 +20,7 @@ import java.util.stream.Collectors;
 public class CoverLocatorImpl implements CoverLocator {
 
     private final ZipArchiveReader archiveReader;
-
-    private boolean isArchivePath(String path) {
-        if (path == null) return false;
-        String lower = path.toLowerCase();
-        return lower.endsWith(".zip") || lower.endsWith(".fb2zip") || lower.endsWith(".fbd");
-    }
+    private final BookResourcePort bookResourcePort; // <-- НОВА ЗАЛЕЖНІСТЬ
 
     private final Function<String, String> normalize = s -> {
         if (s == null) return "";
@@ -32,49 +28,6 @@ public class CoverLocatorImpl implements CoverLocator {
                 .replaceAll("[\\s_\\-]+", "")
                 .replaceAll("[^a-zа-я0-9.]", "");
     };
-
-    /**
-     * Правильно будує шлях до файлу.
-     */
-    private Path buildFilePath(String root, String folder, String fileName) {
-        if (fileName != null && !fileName.isBlank()) {
-            Path fileNamePath = Paths.get(fileName);
-            if (fileNamePath.isAbsolute()) {
-                return fileNamePath;
-            }
-        }
-
-        if (folder != null && !folder.isBlank()) {
-            Path folderPath = Paths.get(folder);
-            if (folderPath.isAbsolute()) {
-                if (fileName != null && !fileName.isBlank()) {
-                    return folderPath.resolve(fileName);
-                }
-                return folderPath;
-            }
-        }
-
-        if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
-            Path rootPath = Paths.get(root);
-            Path folderPath = Paths.get(folder);
-            if (fileName != null && !fileName.isBlank()) {
-                return rootPath.resolve(folderPath).resolve(fileName);
-            }
-            return rootPath.resolve(folderPath);
-        }
-
-        if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
-            return Paths.get(root).resolve(fileName);
-        }
-
-        if (fileName != null && !fileName.isBlank()) {
-            return Paths.get(fileName);
-        }
-        if (folder != null && !folder.isBlank()) {
-            return Paths.get(folder);
-        }
-        return Paths.get(".");
-    }
 
     @Override
     public Optional<Path> locateCoverFile(BookDto book) {
@@ -95,19 +48,13 @@ public class CoverLocatorImpl implements CoverLocator {
             return Optional.of(path);
         }
 
-        if (isArchivePath(folder)) {
-            Path archivePath;
-            if (root != null && !root.isBlank() && !Paths.get(folder).isAbsolute()) {
-                archivePath = Paths.get(root, folder);
-            } else {
-                archivePath = Paths.get(folder);
-            }
+        if (bookResourcePort.isArchive(folder)) {
+            Path archivePath = bookResourcePort.buildFilePath(root, null, folder);
             log.debug("Шлях до архіву: {}", archivePath);
             return Optional.of(archivePath);
         }
 
-        // Використовуємо універсальний метод побудови шляху
-        Path resolvedPath = buildFilePath(root, folder, fileName);
+        Path resolvedPath = bookResourcePort.buildFilePath(root, folder, fileName);
         log.debug("locateCoverFile: resolved path: {}", resolvedPath);
         return Optional.of(resolvedPath);
     }

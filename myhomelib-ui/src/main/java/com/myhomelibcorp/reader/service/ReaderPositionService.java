@@ -3,6 +3,7 @@ package com.myhomelibcorp.reader.service;
 import com.myhomelibcorp.application.dto.ReadingProgressDto;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
+import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.model.ReaderPosition;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import com.fasterxml.jackson.databind.JsonNode;
@@ -12,6 +13,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -28,6 +30,7 @@ public class ReaderPositionService {
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final ReaderJsBridge jsBridge;
     private final ReaderScheduler scheduler;
+    private final ReaderContentService contentService;
 
     private final ConcurrentMap<String, ReaderPosition> lastSavedPositions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ScheduledFuture<?>> saveTasks = new ConcurrentHashMap<>();
@@ -37,7 +40,7 @@ public class ReaderPositionService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    // ==================== Отримання позиції з DOM Range ====================
+    // ==================== Отримання позиції ====================
 
     public ReaderPosition getCurrentPosition(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
@@ -76,13 +79,12 @@ public class ReaderPositionService {
         }
 
         try {
-            // ВИПРАВЛЕНО: використовуємо DOM Range для точного визначення позиції
+            // ВИПРАВЛЕНО: використовуємо chapterId та paragraphId замість індексу
             String script = """
                 (function() {
                     function getSelectionPosition() {
                         var sel = window.getSelection();
                         if (!sel || sel.rangeCount === 0) {
-                            // Якщо немає виділення, використовуємо скрол
                             return getScrollPosition();
                         }
                         
@@ -101,18 +103,16 @@ public class ReaderPositionService {
                             return getScrollPosition();
                         }
                         
-                        // Знаходимо індекс параграфа
-                        var allParagraphs = document.querySelectorAll('p[data-paragraph-id]');
-                        var index = -1;
-                        for (var i = 0; i < allParagraphs.length; i++) {
-                            if (allParagraphs[i] === paragraph) {
-                                index = i;
-                                break;
+                        // Знаходимо найближчий розділ (chapter)
+                        var chapterEl = paragraph.closest('.chapter');
+                        var chapterId = '';
+                        var chapterTitle = '';
+                        if (chapterEl) {
+                            chapterId = chapterEl.getAttribute('data-chapter-id') || '';
+                            var titleEl = chapterEl.querySelector('.chapter-title');
+                            if (titleEl) {
+                                chapterTitle = titleEl.innerText || '';
                             }
-                        }
-                        
-                        if (index === -1) {
-                            return getScrollPosition();
                         }
                         
                         // Обчислюємо точний charOffset всередині параграфа
@@ -149,7 +149,6 @@ public class ReaderPositionService {
                             }
                         }
                         
-                        // Якщо не знайшли точне положення - використовуємо приблизне
                         if (!found) {
                             charOffset = Math.floor(range.getBoundingClientRect().top / paragraph.getBoundingClientRect().height * paragraph.innerText.length);
                         }
@@ -159,23 +158,12 @@ public class ReaderPositionService {
                         var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
                         var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
                         
-                        // Знаходимо назву розділу
-                        var chapterTitle = '';
-                        var chapterEl = paragraph.closest('.chapter');
-                        if (chapterEl) {
-                            var titleEl = chapterEl.querySelector('.chapter-title');
-                            if (titleEl) {
-                                chapterTitle = titleEl.innerText || '';
-                            }
-                        }
-                        
                         return {
                             paragraphId: paragraphId,
-                            paragraphIndex: index,
                             charOffset: charOffset,
                             percent: percent,
-                            chapterTitle: chapterTitle,
-                            totalParagraphs: allParagraphs.length
+                            chapterId: chapterId,
+                            chapterTitle: chapterTitle
                         };
                     }
                     
@@ -197,11 +185,10 @@ public class ReaderPositionService {
                         if (paragraphs.length === 0) {
                             return {
                                 paragraphId: '',
-                                paragraphIndex: 0,
                                 charOffset: 0,
                                 percent: 0,
-                                chapterTitle: '',
-                                totalParagraphs: 0
+                                chapterId: '',
+                                chapterTitle: ''
                             };
                         }
                         
@@ -227,9 +214,11 @@ public class ReaderPositionService {
                         var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
                         var charOffset = Math.floor(ratio * text.length);
                         
-                        var chapterTitle = '';
                         var chapterEl = el.closest('.chapter');
+                        var chapterId = '';
+                        var chapterTitle = '';
                         if (chapterEl) {
+                            chapterId = chapterEl.getAttribute('data-chapter-id') || '';
                             var titleEl = chapterEl.querySelector('.chapter-title');
                             if (titleEl) {
                                 chapterTitle = titleEl.innerText || '';
@@ -238,11 +227,10 @@ public class ReaderPositionService {
                         
                         return {
                             paragraphId: el.getAttribute('data-paragraph-id') || '',
-                            paragraphIndex: firstVisible,
                             charOffset: charOffset,
                             percent: percent,
-                            chapterTitle: chapterTitle,
-                            totalParagraphs: paragraphs.length
+                            chapterId: chapterId,
+                            chapterTitle: chapterTitle
                         };
                     }
                     
@@ -270,20 +258,21 @@ public class ReaderPositionService {
             JsonNode node = objectMapper.readTree(json);
 
             String paragraphId = node.has("paragraphId") ? node.get("paragraphId").asText() : "";
-            int paragraphIndex = node.has("paragraphIndex") ? node.get("paragraphIndex").asInt() : 0;
             int charOffset = node.has("charOffset") ? node.get("charOffset").asInt() : 0;
             double percent = node.has("percent") ? node.get("percent").asDouble() * 100 : 0;
+            String chapterId = node.has("chapterId") ? node.get("chapterId").asText() : "";
             String chapterTitle = node.has("chapterTitle") ? node.get("chapterTitle").asText() : "";
-            int totalParagraphs = node.has("totalParagraphs") ? node.get("totalParagraphs").asInt() : 0;
 
             return ReaderPosition.builder()
                     .bookId(bookId)
                     .paragraphId(paragraphId)
-                    .paragraphIndex(paragraphIndex)
                     .charOffset(charOffset)
                     .percent(percent)
+                    .chapterId(chapterId)
                     .chapterTitle(chapterTitle)
+                    .paragraphIndex(0) // deprecated
                     .build();
+
         } catch (Exception e) {
             log.warn("Failed to parse position JSON: {}", json, e);
             return null;
@@ -374,7 +363,7 @@ public class ReaderPositionService {
             repository.save(dto);
             lastSavedPositions.put(bookId, position);
             log.debug("Saved position for book {}: {}%, paragraph {}, charOffset {}",
-                    position.getBookId(), (int) position.getPercent(), position.getParagraphIndex(), position.getCharOffset());
+                    position.getBookId(), (int) position.getPercent(), position.getParagraphId(), position.getCharOffset());
         } catch (Exception e) {
             log.warn("Failed to save position: {}", e.getMessage());
         }
@@ -394,23 +383,11 @@ public class ReaderPositionService {
                             .paragraphId(dto.getParagraphId())
                             .charOffset(dto.getCharOffset())
                             .percent(dto.getPercent())
-                            .paragraphIndex(extractParagraphIndex(dto.getParagraphId()))
+                            .paragraphIndex(0) // deprecated
                             .build());
         } catch (Exception e) {
             log.warn("Failed to load position for book {}: {}", bookId, e.getMessage());
             return Optional.empty();
-        }
-    }
-
-    private int extractParagraphIndex(String paragraphId) {
-        if (paragraphId == null) return 0;
-        try {
-            if (paragraphId.startsWith("p")) {
-                return Integer.parseInt(paragraphId.substring(1));
-            }
-            return Integer.parseInt(paragraphId);
-        } catch (NumberFormatException e) {
-            return 0;
         }
     }
 
@@ -424,7 +401,7 @@ public class ReaderPositionService {
             return;
         }
 
-        if (position == null) {
+        if (position == null || !position.isValid()) {
             scheduler.runOnFxThread(() -> {
                 try {
                     session.getWebEngine().executeScript("window.scrollTo(0, 0)");
@@ -440,32 +417,96 @@ public class ReaderPositionService {
 
         scheduler.runOnFxThread(() -> {
             try {
-                int total = jsBridge.getParagraphCount(session.getWebEngine());
-                int index = position.getParagraphIndex();
+                // Отримуємо всі параграфи
+                String paragraphId = position.getParagraphId();
 
-                if (total > 0 && index >= total) {
-                    index = total - 1;
-                }
-                if (index < 0) {
-                    index = 0;
-                }
+                // Шукаємо параграф за ID замість індексу
+                String script = """
+                    (function() {
+                        var paragraphId = '%s';
+                        var charOffset = %d;
+                        
+                        // Шукаємо параграф за data-paragraph-id
+                        var paragraph = document.querySelector('p[data-paragraph-id="' + paragraphId + '"]');
+                        if (!paragraph) {
+                            return false;
+                        }
+                        
+                        // Знаходимо всі параграфи для обчислення відсотка
+                        var allParagraphs = document.querySelectorAll('p[data-paragraph-id]');
+                        var index = -1;
+                        for (var i = 0; i < allParagraphs.length; i++) {
+                            if (allParagraphs[i] === paragraph) {
+                                index = i;
+                                break;
+                            }
+                        }
+                        
+                        // Прокручуємо до параграфа
+                        paragraph.scrollIntoView({ block: 'start' });
+                        
+                        // Якщо є charOffset - намагаємося встановити курсор
+                        if (charOffset > 0) {
+                            var textNodes = [];
+                            var walker = document.createTreeWalker(
+                                paragraph,
+                                NodeFilter.SHOW_TEXT,
+                                {
+                                    acceptNode: function(node) {
+                                        var text = node.textContent;
+                                        if (text && text.trim().length > 0) {
+                                            return NodeFilter.FILTER_ACCEPT;
+                                        }
+                                        return NodeFilter.FILTER_REJECT;
+                                    }
+                                }
+                            );
+                            
+                            var node;
+                            while (node = walker.nextNode()) {
+                                textNodes.push(node);
+                            }
+                            
+                            var currentOffset = 0;
+                            for (var i = 0; i < textNodes.length; i++) {
+                                var textNode = textNodes[i];
+                                var nodeText = textNode.textContent;
+                                if (currentOffset + nodeText.length >= charOffset) {
+                                    var localOffset = charOffset - currentOffset;
+                                    try {
+                                        var range = document.createRange();
+                                        range.setStart(textNode, Math.min(localOffset, nodeText.length));
+                                        range.setEnd(textNode, Math.min(localOffset, nodeText.length));
+                                        var sel = window.getSelection();
+                                        sel.removeAllRanges();
+                                        sel.addRange(range);
+                                    } catch(e) {
+                                        // ignore
+                                    }
+                                    break;
+                                }
+                                currentOffset += nodeText.length;
+                            }
+                        }
+                        
+                        return true;
+                    })();
+                """.formatted(paragraphId, position.getCharOffset());
 
-                boolean success = jsBridge.scrollToParagraph(
-                        session.getWebEngine(),
-                        index,
-                        position.getCharOffset()
-                );
+                Object result = session.getWebEngine().executeScript(script);
+                boolean success = Boolean.TRUE.equals(result);
 
                 if (success) {
                     log.info("Restored position for book {}: {}%, paragraph {}, charOffset {}",
-                            position.getBookId(), (int) position.getPercent(), index, position.getCharOffset());
+                            position.getBookId(), (int) position.getPercent(), position.getParagraphId(), position.getCharOffset());
                 } else {
                     // Fallback: використовуємо відсоток
                     double percent = position.getPercent() / 100.0;
-                    String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
-                    session.getWebEngine().executeScript(script);
+                    String fallbackScript = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
+                    session.getWebEngine().executeScript(fallbackScript);
                     log.info("Restored position using fallback: {}%", (int) position.getPercent());
                 }
+
             } catch (Exception e) {
                 log.warn("Failed to restore position: {}", e.getMessage());
             } finally {

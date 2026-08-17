@@ -36,6 +36,7 @@ public class TOCController {
                     setStyle("");
                 } else {
                     setText(item.getTitle());
+                    // Відступ залежно від рівня вкладеності
                     int indent = (item.getLevel() - 1) * 15;
                     setStyle("-fx-padding: 2 0 2 " + indent + "px;");
                 }
@@ -65,10 +66,12 @@ public class TOCController {
     public void setChapters(List<Chapter> chapters, Consumer<Chapter> onChapterSelected) {
         this.onChapterSelected = onChapterSelected;
 
+        // Створюємо кореневий елемент
         TreeItem<Chapter> root = new TreeItem<>();
         root.setValue(null);
         root.setExpanded(true);
 
+        // Додаємо всі розділи до кореня
         for (Chapter chapter : chapters) {
             TreeItem<Chapter> item = buildTreeItem(chapter);
             root.getChildren().add(item);
@@ -80,6 +83,9 @@ public class TOCController {
         log.info("TOC loaded with {} top-level chapters", chapters.size());
     }
 
+    /**
+     * Рекурсивно будує TreeItem з Chapter та його дочірніми розділами.
+     */
     private TreeItem<Chapter> buildTreeItem(Chapter chapter) {
         TreeItem<Chapter> item = new TreeItem<>(chapter);
         item.setExpanded(true);

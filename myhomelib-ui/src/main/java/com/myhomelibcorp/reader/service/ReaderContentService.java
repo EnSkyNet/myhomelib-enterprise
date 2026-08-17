@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.reader.model.BookDocument;
 import com.myhomelibcorp.reader.model.Chapter;
 import com.myhomelibcorp.reader.parser.JsoupFb2Parser;
@@ -11,12 +12,14 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
-import java.nio.charset.Charset;
+import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Enumeration;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
@@ -31,32 +34,39 @@ public class ReaderContentService {
     private final ReaderSettingsService settingsService;
     private final ReaderScheduler scheduler;
     private final ImageCacheService imageCache;
+    private final BookResourcePort bookResourcePort;
     private final JsoupFb2Parser fb2Parser = new JsoupFb2Parser();
     private final DocumentToHtmlConverter htmlConverter;
 
-    private final ConcurrentMap<String, ReaderBookContent> contentCache = new ConcurrentHashMap<>();
+    /**
+     * Кеш HTML контенту з LRU (Least Recently Used) політикою.
+     * Використовує LinkedHashMap з accessOrder=true для автоматичного LRU.
+     */
+    private final Map<String, ReaderBookContent> contentCache = new LinkedHashMap<>(16, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, ReaderBookContent> eldest) {
+            return size() > MAX_CACHED_ITEMS;
+        }
+    };
+
     private final ConcurrentMap<String, CompletableFuture<ReaderBookContent>> loadingTasks = new ConcurrentHashMap<>();
 
-    private static final int MAX_CACHED_HTML_BYTES = 64 * 1024 * 1024;
+    private static final int MAX_CACHED_HTML_BYTES = 64 * 1024 * 1024; // 64 MB
     private static final int MAX_CACHED_ITEMS = 5;
-
-    private static final Charset[] ZIP_CHARSETS = {
-            Charset.forName("IBM866"),
-            Charset.forName("Windows-1251"),
-            Charset.forName("UTF-8"),
-            Charset.forName("KOI8-R"),
-            Charset.forName("ISO-8859-5")
-    };
 
     @Autowired
     public ReaderContentService(ReaderSettingsService settingsService,
                                 ReaderScheduler scheduler,
-                                ImageCacheService imageCache) {
+                                ImageCacheService imageCache,
+                                BookResourcePort bookResourcePort) {
         this.settingsService = settingsService;
         this.scheduler = scheduler;
         this.imageCache = imageCache;
+        this.bookResourcePort = bookResourcePort;
         this.htmlConverter = new DocumentToHtmlConverter(imageCache);
     }
+
+    // ==================== Завантаження книги ====================
 
     public void loadBookContent(ReaderSession session, Runnable onLoaded) {
         if (session == null || session.getBook() == null) {
@@ -69,7 +79,7 @@ public class ReaderContentService {
         BookDto book = session.getBook();
         String bookId = book.getId();
 
-        ReaderBookContent cached = contentCache.get(bookId);
+        ReaderBookContent cached = getCachedContent(bookId);
         if (cached != null) {
             log.info("Loading book from cache: {}", book.getTitle());
             session.setChapters(cached.chapters());
@@ -137,22 +147,66 @@ public class ReaderContentService {
         });
     }
 
+    // ==================== Читання даних книги ====================
+
+    private byte[] readBookData(BookDto book) throws Exception {
+        if (book == null) {
+            throw new IllegalArgumentException("Book cannot be null");
+        }
+
+        String fileName = book.getFileName();
+        String folder = book.getFolder();
+        String collectionRoot = book.getCollectionRoot();
+        String archiveEntry = book.getArchiveEntry();
+
+        log.debug("readBookData: fileName='{}', folder='{}', root='{}', archiveEntry='{}'",
+                fileName, folder, collectionRoot, archiveEntry);
+
+        // Використовуємо BookResourcePort для читання
+        try (InputStream is = bookResourcePort
+                .readBookData(fileName, folder, collectionRoot, archiveEntry)
+                .orElseThrow(() -> new RuntimeException("Book file not found: " + fileName))) {
+            return is.readAllBytes();
+        }
+    }
+
+    // ==================== Кешування ====================
+
     private void cacheContent(String bookId, ReaderBookContent content) {
+        if (bookId == null || content == null) {
+            return;
+        }
+
         int htmlSize = content.html().getBytes().length;
         if (htmlSize > MAX_CACHED_HTML_BYTES) {
             log.debug("Book HTML too large ({} MB), not caching", htmlSize / 1024 / 1024);
             return;
         }
 
-        if (contentCache.size() >= MAX_CACHED_ITEMS) {
-            String oldestKey = contentCache.keySet().iterator().next();
-            contentCache.remove(oldestKey);
-            log.debug("Removed oldest cache entry: {}", oldestKey);
+        synchronized (contentCache) {
+            contentCache.put(bookId, content);
+            log.debug("Cached book: {}, cache size: {}", bookId, contentCache.size());
         }
-
-        contentCache.put(bookId, content);
-        log.debug("Cached book: {}", bookId);
     }
+
+    public ReaderBookContent getCachedContent(String bookId) {
+        if (bookId == null) {
+            return null;
+        }
+        synchronized (contentCache) {
+            return contentCache.get(bookId);
+        }
+    }
+
+    public void clearCache() {
+        synchronized (contentCache) {
+            contentCache.clear();
+        }
+        loadingTasks.clear();
+        log.info("Reader cache cleared");
+    }
+
+    // ==================== Рендеринг HTML ====================
 
     private void renderHtml(ReaderSession session, String html, Runnable onLoaded) {
         scheduler.runOnFxThread(() -> renderHtmlSync(session, html, onLoaded));
@@ -235,6 +289,19 @@ public class ReaderContentService {
         }
     }
 
+    private String injectStyles(String html, String css) {
+        if (html == null) {
+            return "<!DOCTYPE html><html><head><style>" + css + "</style></head><body></body></html>";
+        }
+
+        if (html.contains("<head>")) {
+            return html.replace("</head>", "<style id='reader-styles'>" + css + "</style></head>");
+        } else if (html.contains("<body>")) {
+            return html.replace("<body>", "<body><style id='reader-styles'>" + css + "</style>");
+        }
+        return "<!DOCTYPE html><html><head><style id='reader-styles'>" + css + "</style></head><body>" + html + "</body></html>";
+    }
+
     private void renderError(ReaderSession session, String error, Runnable onLoaded) {
         scheduler.runOnFxThread(() -> renderErrorSync(session, error, onLoaded));
     }
@@ -258,16 +325,10 @@ public class ReaderContentService {
         }
     }
 
-    private String injectStyles(String html, String css) {
-        if (html.contains("<head>")) {
-            return html.replace("</head>", "<style id='reader-styles'>" + css + "</style></head>");
-        } else if (html.contains("<body>")) {
-            return html.replace("<body>", "<body><style id='reader-styles'>" + css + "</style>");
-        }
-        return "<!DOCTYPE html><html><head><style id='reader-styles'>" + css + "</style></head><body>" + html + "</body></html>";
-    }
-
     private String createErrorHtml(BookDto book, String error) {
+        String title = book != null && book.getTitle() != null ? book.getTitle() : "Без назви";
+        String author = book != null && book.getAuthorsText() != null ? book.getAuthorsText() : "Невідомий автор";
+
         return """
                 <html>
                 <head><meta charset="UTF-8"/></head>
@@ -278,206 +339,32 @@ public class ReaderContentService {
                     <p><b>Помилка:</b> %s</p>
                 </body>
                 </html>
-                """.formatted(
-                book.getTitle() != null ? book.getTitle() : "Без назви",
-                book.getAuthorsText() != null ? book.getAuthorsText() : "Невідомий автор",
-                error
-        );
+                """.formatted(title, author, error);
     }
 
-    // ==================== Читання даних книги ====================
-
-    private byte[] readBookData(BookDto book) throws Exception {
-        try {
-            String fileName = book.getFileName();
-            String folder = book.getFolder();
-            String root = book.getCollectionRoot();
-            String archiveEntry = book.getArchiveEntry();
-
-            log.debug("readBookData: fileName={}, folder={}, root={}, archiveEntry={}",
-                    fileName, folder, root, archiveEntry);
-
-            if (archiveEntry != null && !archiveEntry.isBlank()) {
-                Path archivePath = findArchivePath(book);
-                if (archivePath != null && Files.exists(archivePath)) {
-                    return readFromArchive(archivePath, archiveEntry, fileName);
-                }
-            }
-
-            if (fileName != null && isArchive(fileName)) {
-                Path archivePath = buildFilePath(root, folder, fileName);
-                if (archivePath != null && Files.exists(archivePath)) {
-                    return readFromArchive(archivePath, null, fileName);
-                }
-            }
-
-            if (folder != null && isArchive(folder)) {
-                Path archivePath = buildFilePath(root, null, folder);
-                if (archivePath != null && Files.exists(archivePath)) {
-                    return readFromArchive(archivePath, null, fileName);
-                }
-            }
-
-            Path bookPath = buildFilePath(root, folder, fileName);
-            if (bookPath != null && Files.exists(bookPath) && !isArchive(bookPath.toString())) {
-                return Files.readAllBytes(bookPath);
-            }
-
-            log.warn("File not found: {}", bookPath);
-            return null;
-        } catch (Exception e) {
-            log.error("Failed to read book data for: {}", book.getTitle(), e);
-            throw new Exception("Failed to read book: " + e.getMessage(), e);
-        }
-    }
-
-    private Path findArchivePath(BookDto book) {
-        String folder = book.getFolder();
-        String fileName = book.getFileName();
-        String root = book.getCollectionRoot();
-
-        if (folder != null && !folder.isBlank() && isArchive(folder)) {
-            return buildFilePath(root, null, folder);
-        }
-
-        if (fileName != null && !fileName.isBlank() && isArchive(fileName)) {
-            return buildFilePath(root, folder, fileName);
-        }
-
-        if (folder != null && !folder.isBlank() && fileName != null && !fileName.isBlank()) {
-            Path combined = buildFilePath(root, folder, fileName);
-            if (combined != null && Files.exists(combined) && isArchive(combined.toString())) {
-                return combined;
-            }
-        }
-
-        return null;
-    }
-
-    private Path buildFilePath(String root, String folder, String fileName) {
-        if (fileName == null || fileName.isBlank()) {
-            return null;
-        }
-
-        Path filePath = Paths.get(fileName);
-        if (filePath.isAbsolute()) {
-            return filePath;
-        }
-
-        if (folder != null && !folder.isBlank()) {
-            Path folderPath = Paths.get(folder);
-            if (folderPath.isAbsolute()) {
-                return folderPath.resolve(fileName);
-            }
-            if (root != null && !root.isBlank()) {
-                return Paths.get(root).resolve(folderPath).resolve(fileName);
-            }
-            return folderPath.resolve(fileName);
-        }
-
-        if (root != null && !root.isBlank()) {
-            return Paths.get(root).resolve(fileName);
-        }
-
-        return filePath;
-    }
-
-    private boolean isArchive(String path) {
-        if (path == null) return false;
-        String lower = path.toLowerCase();
-        return lower.endsWith(".zip") || lower.endsWith(".fb2zip") || lower.endsWith(".fbd");
-    }
-
-    private byte[] readFromArchive(Path archivePath, String entryName, String fileName) throws Exception {
-        Exception lastException = null;
-
-        for (Charset charset : ZIP_CHARSETS) {
-            try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
-                byte[] result = tryReadFromZip(zip, entryName, fileName);
-                if (result != null) {
-                    return result;
-                }
-            } catch (Exception e) {
-                lastException = e;
-            }
-        }
-
-        try (ZipFile zip = new ZipFile(archivePath.toFile())) {
-            byte[] result = tryReadFromZip(zip, entryName, fileName);
-            if (result != null) {
-                return result;
-            }
-        } catch (Exception e) {
-            lastException = e;
-        }
-
-        log.warn("No FB2 entry found in archive: {}", archivePath);
-        if (lastException != null) {
-            throw new Exception("Failed to read ZIP archive: " + lastException.getMessage(), lastException);
-        }
-        return null;
-    }
-
-    private byte[] tryReadFromZip(ZipFile zip, String entryName, String fileName) throws Exception {
-        ZipEntry targetEntry = null;
-
-        if (entryName != null && !entryName.isBlank()) {
-            targetEntry = zip.getEntry(entryName);
-            if (targetEntry != null) {
-                return zip.getInputStream(targetEntry).readAllBytes();
-            }
-        }
-
-        if (targetEntry == null && fileName != null && !fileName.isBlank()) {
-            String searchName = Paths.get(fileName).getFileName().toString();
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                String entryFileName = Paths.get(entry.getName()).getFileName().toString();
-
-                if (entryFileName.equals(searchName) ||
-                        entry.getName().endsWith(fileName) ||
-                        entry.getName().equals(fileName) ||
-                        entryFileName.equalsIgnoreCase(searchName)) {
-                    targetEntry = entry;
-                    return zip.getInputStream(targetEntry).readAllBytes();
-                }
-            }
-        }
-
-        if (targetEntry == null) {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                String name = entry.getName().toLowerCase();
-                if (name.endsWith(".fb2") || name.endsWith(".fbd")) {
-                    targetEntry = entry;
-                    return zip.getInputStream(targetEntry).readAllBytes();
-                }
-            }
-        }
-
-        return null;
-    }
-
-    // ==================== Публічні методи ====================
+    // ==================== Отримання розділів ====================
 
     public List<Chapter> getChapters(ReaderSession session) {
         if (session == null) {
             return List.of();
         }
+
         if (session.getChapters() != null && !session.getChapters().isEmpty()) {
             return session.getChapters();
         }
+
         String bookId = session.getBookId();
         if (bookId != null) {
-            ReaderBookContent cached = contentCache.get(bookId);
+            ReaderBookContent cached = getCachedContent(bookId);
             if (cached != null) {
                 return cached.chapters();
             }
         }
+
         return List.of();
     }
+
+    // ==================== Застосування налаштувань ====================
 
     public void applySettings(ReaderSession session) {
         scheduler.runOnFxThread(() -> applySettingsSync(session));
@@ -490,12 +377,7 @@ public class ReaderContentService {
 
         try {
             String css = settingsService.generateCss();
-            String escapedCss = css
-                    .replace("\\", "\\\\")
-                    .replace("'", "\\'")
-                    .replace("\"", "\\\"")
-                    .replace("\n", "\\n")
-                    .replace("\r", "\\r");
+            String escapedCss = escapeCssForJavaScript(css);
 
             String script = """
                 (function() {
@@ -522,14 +404,33 @@ public class ReaderContentService {
         }
     }
 
-    public void clearCache() {
-        contentCache.clear();
-        loadingTasks.clear();
-        log.info("Reader cache cleared");
+    private String escapeCssForJavaScript(String css) {
+        if (css == null) {
+            return "";
+        }
+
+        return css
+                .replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
+
+    // ==================== Очищення кешів ====================
 
     public void clearImageCache() {
         imageCache.clear();
         log.info("Image cache cleared");
+    }
+
+    public ImageCacheService getImageCache() {
+        return imageCache;
+    }
+
+    // ==================== Внутрішній клас для кешу ====================
+
+    public record ReaderBookContent(String html, List<Chapter> chapters) {
     }
 }
