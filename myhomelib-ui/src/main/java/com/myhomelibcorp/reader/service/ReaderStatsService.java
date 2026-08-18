@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.service;
 
-import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
+import com.myhomelibcorp.application.dto.ReadingStatisticsDto;
+import com.myhomelibcorp.application.port.out.statistics.ReadingStatisticsPort;
 import com.myhomelibcorp.reader.model.ReaderReadingStats;
 import com.myhomelibcorp.reader.session.ReaderSession;
 import lombok.RequiredArgsConstructor;
@@ -17,10 +18,23 @@ import java.util.concurrent.ConcurrentMap;
 @Slf4j
 public class ReaderStatsService {
 
-    private final ReadingProgressRepository progressRepository;
+    private final ReadingStatisticsPort statisticsPort;
 
-    private final ConcurrentMap<String, ReaderReadingStats> statsCache = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, ReadingStatisticsDto> statsCache = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, LocalDateTime> sessionStartTimes = new ConcurrentHashMap<>();
+
+    public ReadingStatisticsDto loadOrCreateStats(String bookId, String bookTitle) {
+        if (bookId == null) {
+            return null;
+        }
+
+        return statisticsPort.findByBookId(bookId)
+                .orElseGet(() -> {
+                    ReadingStatisticsDto newStats = ReadingStatisticsDto.forBook(bookId, bookTitle);
+                    statisticsPort.save(newStats);
+                    return newStats;
+                });
+    }
 
     public void startReadingSession(ReaderSession session) {
         if (session == null || session.getBookId() == null) {
@@ -28,24 +42,13 @@ public class ReaderStatsService {
         }
 
         String bookId = session.getBookId();
+        String bookTitle = session.getBook() != null ? session.getBook().getTitle() : "Без назви";
+
+        ReadingStatisticsDto stats = loadOrCreateStats(bookId, bookTitle);
+        statsCache.put(bookId, stats);
         sessionStartTimes.put(bookId, LocalDateTime.now());
 
-        ReaderReadingStats stats = statsCache.get(bookId);
-        if (stats == null) {
-            stats = ReaderReadingStats.builder()
-                    .bookId(bookId)
-                    .bookTitle(session.getBook().getTitle())
-                    .firstReadAt(LocalDateTime.now())
-                    .lastReadAt(LocalDateTime.now())
-                    .readingSessions(0)
-                    .startPercent(0)
-                    .endPercent(0)
-                    .currentPercent(0)
-                    .build();
-            statsCache.put(bookId, stats);
-        }
-
-        log.debug("Started reading session for book: {}", session.getBook().getTitle());
+        log.debug("Started reading session for book: {}", bookTitle);
     }
 
     public void endReadingSession(ReaderSession session) {
@@ -60,40 +63,52 @@ public class ReaderStatsService {
             return;
         }
 
-        ReaderReadingStats stats = statsCache.get(bookId);
+        ReadingStatisticsDto stats = statsCache.get(bookId);
         if (stats == null) {
             return;
         }
 
         long sessionDuration = ChronoUnit.SECONDS.between(startTime, LocalDateTime.now());
-        long totalSeconds = stats.getTotalReadingSeconds() + sessionDuration;
-        int sessions = stats.getReadingSessions() + 1;
-
         int currentPercent = (int) session.getProgressPercent();
 
-        ReaderReadingStats updatedStats = ReaderReadingStats.builder()
-                .bookId(bookId)
-                .bookTitle(stats.getBookTitle())
-                .firstReadAt(stats.getFirstReadAt())
-                .lastReadAt(LocalDateTime.now())
-                .totalReadingSeconds(totalSeconds)
-                .readingSessions(sessions)
-                .startPercent(stats.getStartPercent())
-                .endPercent(currentPercent)
-                .currentPercent(currentPercent)
-                .completedAt(currentPercent >= 100 ? LocalDateTime.now() : null)
-                .build();
+        ReadingStatisticsDto updatedStats = stats.withSession(sessionDuration, currentPercent);
 
+        statisticsPort.save(updatedStats);
         statsCache.put(bookId, updatedStats);
-        log.debug("Ended reading session for book: {} ({} sec)",
-                session.getBook().getTitle(), sessionDuration);
+
+        log.debug("Ended reading session for book: {} ({} sec, {}%)",
+                session.getBook().getTitle(), sessionDuration, currentPercent);
     }
 
     public ReaderReadingStats getStats(String bookId) {
         if (bookId == null) {
             return null;
         }
-        return statsCache.get(bookId);
+
+        ReadingStatisticsDto cached = statsCache.get(bookId);
+        if (cached == null) {
+            cached = statisticsPort.findByBookId(bookId).orElse(null);
+            if (cached != null) {
+                statsCache.put(bookId, cached);
+            }
+        }
+
+        if (cached == null) {
+            return null;
+        }
+
+        return ReaderReadingStats.builder()
+                .bookId(cached.getBookId())
+                .bookTitle(cached.getBookTitle())
+                .firstReadAt(cached.getFirstReadAt())
+                .lastReadAt(cached.getLastReadAt())
+                .totalReadingSeconds(cached.getTotalReadingSeconds())
+                .readingSessions(cached.getReadingSessions())
+                .startPercent(cached.getStartPercent())
+                .endPercent(cached.getEndPercent())
+                .currentPercent(cached.getCurrentPercent())
+                .completedAt(cached.getCompletedAt())
+                .build();
     }
 
     public void updateProgress(ReaderSession session) {
@@ -102,26 +117,26 @@ public class ReaderStatsService {
         }
 
         String bookId = session.getBookId();
-        ReaderReadingStats stats = statsCache.get(bookId);
-        if (stats == null) {
-            return;
-        }
-
         int currentPercent = (int) session.getProgressPercent();
-        ReaderReadingStats updatedStats = ReaderReadingStats.builder()
-                .bookId(bookId)
-                .bookTitle(stats.getBookTitle())
-                .firstReadAt(stats.getFirstReadAt())
-                .lastReadAt(LocalDateTime.now())
-                .totalReadingSeconds(stats.getTotalReadingSeconds())
-                .readingSessions(stats.getReadingSessions())
-                .startPercent(stats.getStartPercent())
-                .endPercent(currentPercent > stats.getEndPercent() ? currentPercent : stats.getEndPercent())
-                .currentPercent(currentPercent)
-                .completedAt(currentPercent >= 100 ? LocalDateTime.now() : null)
-                .build();
 
-        statsCache.put(bookId, updatedStats);
+        statisticsPort.updateProgress(bookId, currentPercent);
+
+        ReadingStatisticsDto stats = statsCache.get(bookId);
+        if (stats != null) {
+            ReadingStatisticsDto updatedStats = ReadingStatisticsDto.builder()
+                    .bookId(stats.getBookId())
+                    .bookTitle(stats.getBookTitle())
+                    .firstReadAt(stats.getFirstReadAt())
+                    .lastReadAt(LocalDateTime.now())
+                    .totalReadingSeconds(stats.getTotalReadingSeconds())
+                    .readingSessions(stats.getReadingSessions())
+                    .startPercent(stats.getStartPercent())
+                    .endPercent(Math.max(stats.getEndPercent(), currentPercent))
+                    .currentPercent(currentPercent)
+                    .completedAt(currentPercent >= 100 ? LocalDateTime.now() : null)
+                    .build();
+            statsCache.put(bookId, updatedStats);
+        }
     }
 
     public void clearCache() {

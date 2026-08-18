@@ -22,7 +22,10 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
             Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
             String json = prefs.get(PREF_KEY, null);
             if (json != null && !json.isEmpty()) {
-                return objectMapper.readValue(json, ReaderPreferences.class);
+                ReaderPreferences loaded = objectMapper.readValue(json, ReaderPreferences.class);
+                log.debug("Loaded preferences: theme={}, fontSize={}, widthMode={}",
+                        loaded.getTheme(), loaded.getFontSize(), loaded.getWidthMode());
+                return loaded;
             }
         } catch (Exception e) {
             log.warn("Не вдалося завантажити налаштування Reader, використовуємо стандартні", e);
@@ -36,7 +39,8 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
             Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
             String json = objectMapper.writeValueAsString(preferences);
             prefs.put(PREF_KEY, json);
-            log.debug("Reader preferences saved");
+            log.debug("Saved preferences: theme={}, fontSize={}, widthMode={}",
+                    preferences.getTheme(), preferences.getFontSize(), preferences.getWidthMode());
         } catch (Exception e) {
             log.error("Не вдалося зберегти налаштування Reader", e);
         }

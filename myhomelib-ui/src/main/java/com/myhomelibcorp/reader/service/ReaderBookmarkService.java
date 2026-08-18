@@ -13,6 +13,10 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * Сервіс для роботи з закладками Reader.
+ * Використовує асинхронний API для навігації.
+ */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -22,8 +26,14 @@ public class ReaderBookmarkService {
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final ReaderPositionService positionService;
 
+    /**
+     * Додає закладку на поточній позиції.
+     * @param session сесія Reader
+     * @return створена закладка або null
+     */
     public Bookmark addBookmark(ReaderSession session) {
         if (session == null || session.getBook() == null) {
+            log.warn("Cannot add bookmark: session or book is null");
             return null;
         }
 
@@ -59,6 +69,102 @@ public class ReaderBookmarkService {
         return bookmark;
     }
 
+    /**
+     * Видаляє закладку за ID.
+     * @param bookmarkId ID закладки
+     */
+    public void removeBookmark(String bookmarkId) {
+        if (bookmarkId == null) {
+            return;
+        }
+        bookmarkRepository.deleteById(bookmarkId);
+        log.info("Bookmark removed: {}", bookmarkId);
+    }
+
+    /**
+     * Отримує всі закладки для книги.
+     * @param bookId ID книги
+     * @return список закладок
+     */
+    public List<Bookmark> getBookmarks(String bookId) {
+        if (bookId == null) {
+            return List.of();
+        }
+        return bookmarkRepository.findByBookId(bookId);
+    }
+
+    /**
+     * Отримує кількість закладок для книги.
+     * @param bookId ID книги
+     * @return кількість закладок
+     */
+    public int getBookmarkCount(String bookId) {
+        if (bookId == null) {
+            return 0;
+        }
+        return bookmarkRepository.countByBookId(bookId);
+    }
+
+    /**
+     * АСИНХРОННИЙ API: перехід до закладки.
+     * @param session сесія Reader
+     * @param bookmark закладка
+     * @param onComplete callback після завершення навігації
+     */
+    public void goToBookmark(ReaderSession session, Bookmark bookmark, Runnable onComplete) {
+        if (session == null || session.getWebEngine() == null || !session.isActive()) {
+            log.warn("Cannot go to bookmark: session is not active");
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
+        }
+
+        if (bookmark == null) {
+            log.warn("Cannot go to bookmark: bookmark is null");
+            if (onComplete != null) {
+                onComplete.run();
+            }
+            return;
+        }
+
+        ReaderPosition position = ReaderPosition.builder()
+                .bookId(bookmark.getBookId())
+                .paragraphId(bookmark.getParagraphId())
+                .paragraphIndex(extractParagraphIndex(bookmark.getParagraphId()))
+                .charOffset(bookmark.getCharOffset())
+                .percent(bookmark.getPosition() * 100)
+                .chapterTitle(bookmark.getChapterTitle())
+                .build();
+
+        log.info("Navigating to bookmark: {} (paragraph: {}, charOffset: {})",
+                bookmark.getTitle(), bookmark.getParagraphId(), bookmark.getCharOffset());
+
+        positionService.restorePosition(session, position, () -> {
+            log.info("Successfully navigated to bookmark: {}", bookmark.getTitle());
+            if (onComplete != null) {
+                onComplete.run();
+            }
+        });
+    }
+
+    /**
+     * Синхронна обгортка для асинхронного API.
+     * @deprecated Використовуйте {@link #goToBookmark(ReaderSession, Bookmark, Runnable)}
+     */
+    @Deprecated
+    public boolean goToBookmark(ReaderSession session, Bookmark bookmark) {
+        if (session == null || !session.isActive()) {
+            return false;
+        }
+
+        goToBookmark(session, bookmark, null);
+        return true;
+    }
+
+    /**
+     * Отримує текстовий контекст навколо позиції для закладки.
+     */
     private String getContextText(ReaderSession session, ReaderPosition position) {
         if (session.getWebEngine() == null) {
             return "";
@@ -77,7 +183,8 @@ public class ReaderBookmarkService {
                     if (start > 0) text = '...' + text;
                     if (end < len) text = text + '...';
                     return text.replace(/\\n/g, ' ').replace(/\\s+/g, ' ');
-                })(""" + position.getPercent() / 100.0 + ")";
+                })(%f)
+            """.formatted(position.getPercent() / 100.0);
 
             Object result = session.getWebEngine().executeScript(script);
             return result != null ? result.toString().trim() : "";
@@ -87,64 +194,38 @@ public class ReaderBookmarkService {
         }
     }
 
-    public void removeBookmark(String bookmarkId) {
+    /**
+     * ВИПРАВЛЕНО: видаляє всі закладки для книги з перевіркою на null.
+     * @param bookId ID книги (якщо null або порожній — метод нічого не робить)
+     */
+    public void clearBookmarks(String bookId) {
+        if (bookId == null || bookId.isEmpty()) {
+            log.debug("clearBookmarks called with null or empty bookId, skipping");
+            return;
+        }
+        bookmarkRepository.deleteByBookId(bookId);
+        log.info("All bookmarks cleared for book: {}", bookId);
+    }
+
+    /**
+     * Отримує закладку за ID.
+     * @param bookmarkId ID закладки
+     * @return закладка або null
+     */
+    public Bookmark getBookmark(String bookmarkId) {
         if (bookmarkId == null) {
-            return;
+            return null;
         }
-        bookmarkRepository.deleteById(bookmarkId);
-        log.info("Bookmark removed: {}", bookmarkId);
+        return bookmarkRepository.findById(bookmarkId).orElse(null);
     }
 
-    public List<Bookmark> getBookmarks(String bookId) {
-        if (bookId == null) {
-            return List.of();
-        }
-        return bookmarkRepository.findByBookId(bookId);
-    }
-
-    public int getBookmarkCount(String bookId) {
-        return bookmarkRepository.countByBookId(bookId);
-    }
-
-    public void goToBookmark(ReaderSession session, Bookmark bookmark, Runnable onComplete) {
-        if (session == null || session.getWebEngine() == null || !session.isActive()) {
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        if (bookmark == null) {
-            if (onComplete != null) {
-                onComplete.run();
-            }
-            return;
-        }
-
-        int index = extractParagraphIndex(bookmark.getParagraphId());
-        int offset = bookmark.getCharOffset();
-
-        positionService.restorePosition(session, ReaderPosition.builder()
-                .bookId(bookmark.getBookId())
-                .paragraphId(bookmark.getParagraphId())
-                .paragraphIndex(index)
-                .charOffset(offset)
-                .percent(bookmark.getPosition() * 100)
-                .build(), () -> {
-            log.info("Navigated to bookmark: {}", bookmark.getTitle());
-            if (onComplete != null) {
-                onComplete.run();
-            }
-        });
-    }
-
-    public boolean goToBookmark(ReaderSession session, Bookmark bookmark) {
-        if (session == null || !session.isActive()) {
-            return false;
-        }
-
-        goToBookmark(session, bookmark, null);
-        return true;
+    /**
+     * Перевіряє, чи існує закладка для книги.
+     * @param bookId ID книги
+     * @return true якщо є закладки
+     */
+    public boolean hasBookmarks(String bookId) {
+        return getBookmarkCount(bookId) > 0;
     }
 
     private int extractParagraphIndex(String paragraphId) {
@@ -157,13 +238,5 @@ public class ReaderBookmarkService {
         } catch (NumberFormatException e) {
             return 0;
         }
-    }
-
-    public void clearBookmarks(String bookId) {
-        if (bookId == null) {
-            return;
-        }
-        bookmarkRepository.deleteByBookId(bookId);
-        log.info("All bookmarks cleared for book: {}", bookId);
     }
 }

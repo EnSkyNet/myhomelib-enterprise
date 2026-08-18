@@ -18,6 +18,8 @@ public class BookDocument {
     private List<ImageData> images;
     private List<Note> footnotes;
 
+    // ВИДАЛЕНО: private String rawText = "";
+
     public List<Chapter> getChapters() {
         if (chapters == null) {
             chapters = new ArrayList<>();

@@ -60,4 +60,7 @@ public class ReaderPreferences {
 
     @Builder.Default
     String customCss = "";
+
+    @Builder.Default
+    String widthMode = "medium";
 }

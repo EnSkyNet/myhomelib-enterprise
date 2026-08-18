@@ -28,7 +28,6 @@ import java.io.File;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -82,20 +81,25 @@ public class ExportController {
         this.stage = stage;
     }
 
-    // ==================== ЕКСПОРТ НА ПРИСТРІЙ (З ДІАЛОГОМ) ====================
+    // ==================== ЕКСПОРТ НА ПРИСТРІЙ ====================
 
-    @SuppressWarnings("unchecked")
+    /**
+     * ВИПРАВЛЕНО: використовує ApplicationState як єдине джерело вибраних книг.
+     * Без рефлексії та рекурсивного обходу дерева.
+     */
     public void handleExport(BorderPane mainPane) {
+        // Отримуємо вибрані книги з ApplicationState
+        List<BookViewModel> selectedBooks = collectSelectedBooks();
+
+        if (selectedBooks.isEmpty()) {
+            dialogService.showWarning("Немає вибраних книг",
+                    "Будь ласка, виберіть книги за допомогою чекбоксів.\n" +
+                            "У режимі дерева вибирайте книги на рівні книг (не авторів або серій).\n\n" +
+                            "💡 Порада: використовуйте кнопку 'Вибрати всі' для вибору всіх книг.");
+            return;
+        }
+
         try {
-            List<BookViewModel> selectedBooks = collectSelectedBooks(mainPane);
-
-            if (selectedBooks.isEmpty()) {
-                dialogService.showWarning("Немає вибраних книг",
-                        "Будь ласка, виберіть книги за допомогою чекбоксів.\n" +
-                                "У режимі дерева вибирайте книги на рівні книг (не авторів або серій).");
-                return;
-            }
-
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/export-dialog.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Parent root = loader.load();
@@ -118,155 +122,30 @@ public class ExportController {
     }
 
     /**
-     * Збирає вибрані книги з поточного виду (таблиця або дерево)
+     * ВИПРАВЛЕНО: єдине джерело вибраних книг — ApplicationState.
      */
-    private List<BookViewModel> collectSelectedBooks(BorderPane mainPane) {
-        Node center = mainPane.getCenter();
+    private List<BookViewModel> collectSelectedBooks() {
+        // Використовуємо ApplicationState як єдине джерело
+        List<BookViewModel> selected = appState.getBookTable().getBooks().stream()
+                .filter(BookViewModel::isSelected)
+                .collect(Collectors.toList());
 
-        log.debug("Збір вибраних книг, центр: {}", center != null ? center.getClass().getSimpleName() : "null");
+        log.info("📊 Знайдено {} вибраних книг через ApplicationState", selected.size());
 
-        // Шукаємо TreeTableView
-        TreeTableView<?> treeView = findTreeTableView(center);
-        if (treeView != null) {
-            log.debug("Знайдено TreeTableView, збір книг з дерева");
-            List<BookViewModel> selected = collectSelectedFromTree(treeView);
-            log.info("Знайдено {} вибраних книг у дереві", selected.size());
-            return selected;
-        }
-
-        // Шукаємо TableView
-        TableView<BookViewModel> tableView = findTableView(center);
-        if (tableView != null) {
-            log.debug("Знайдено TableView, збір книг з таблиці");
-            List<BookViewModel> selected = collectSelectedFromTableView(tableView);
-            log.info("Знайдено {} вибраних книг у таблиці", selected.size());
-            return selected;
-        }
-
-        // Якщо нічого не знайдено, пробуємо отримати з appState
-        log.warn("Не знайдено TreeTableView або TableView, пробуємо отримати з appState");
-        return collectSelectedFromAppState();
-    }
-
-    /**
-     * Рекурсивно шукає TreeTableView у вузлі та його дочірніх елементах
-     */
-    private TreeTableView<?> findTreeTableView(Node node) {
-        if (node == null) {
-            return null;
-        }
-
-        if (node instanceof TreeTableView) {
-            return (TreeTableView<?>) node;
-        }
-
-        if (node instanceof Parent) {
-            for (Node child : ((Parent) node).getChildrenUnmodifiable()) {
-                TreeTableView<?> result = findTreeTableView(child);
-                if (result != null) {
-                    return result;
-                }
+        if (!selected.isEmpty()) {
+            log.info("📋 Список вибраних книг:");
+            for (BookViewModel book : selected) {
+                log.info("   - {} (ID: {})", book.getTitle(), book.getId());
             }
         }
 
-        return null;
-    }
-
-    /**
-     * Рекурсивно шукає TableView у вузлі та його дочірніх елементах
-     */
-    @SuppressWarnings("unchecked")
-    private TableView<BookViewModel> findTableView(Node node) {
-        if (node == null) {
-            return null;
-        }
-
-        if (node instanceof TableView) {
-            return (TableView<BookViewModel>) node;
-        }
-
-        if (node instanceof Parent) {
-            for (Node child : ((Parent) node).getChildrenUnmodifiable()) {
-                TableView<BookViewModel> result = findTableView(child);
-                if (result != null) {
-                    return result;
-                }
-            }
-        }
-
-        return null;
-    }
-
-    /**
-     * Рекурсивно збирає вибрані книги з дерева
-     */
-    private List<BookViewModel> collectSelectedFromTree(TreeTableView<?> treeView) {
-        List<BookViewModel> selected = new ArrayList<>();
-        TreeItem<?> root = treeView.getRoot();
-        if (root != null) {
-            collectSelectedFromTreeItem(root, selected);
-        }
-        log.debug("Зібрано {} вибраних книг з дерева", selected.size());
         return selected;
-    }
-
-    @SuppressWarnings("unchecked")
-    private void collectSelectedFromTreeItem(TreeItem<?> item, List<BookViewModel> selected) {
-        Object value = item.getValue();
-
-        // Перевіряємо, чи це книга (BookViewModel)
-        if (value instanceof BookViewModel) {
-            BookViewModel book = (BookViewModel) value;
-            if (book.isSelected()) {
-                selected.add(book);
-                log.debug("✅ Додано вибрану книгу з дерева: {}", book.getTitle());
-            }
-        }
-        // Перевіряємо, чи це може бути інший тип вузла, що містить книгу
-        else if (value != null) {
-            // Спроба отримати книгу через рефлексію або інший спосіб
-            try {
-                // Якщо це старий TreeNode, пробуємо отримати книгу
-                if (value.getClass().getSimpleName().equals("TreeNode")) {
-                    java.lang.reflect.Method getBookMethod = value.getClass().getMethod("getBook");
-                    BookViewModel book = (BookViewModel) getBookMethod.invoke(value);
-                    if (book != null && book.isSelected()) {
-                        selected.add(book);
-                        log.debug("✅ Додано вибрану книгу з TreeNode: {}", book.getTitle());
-                    }
-                }
-            } catch (Exception e) {
-                // Ігноруємо, якщо не вдалося отримати книгу
-            }
-        }
-
-        for (TreeItem<?> child : item.getChildren()) {
-            collectSelectedFromTreeItem(child, selected);
-        }
-    }
-
-    /**
-     * Збирає вибрані книги з TableView
-     */
-    private List<BookViewModel> collectSelectedFromTableView(TableView<BookViewModel> tableView) {
-        return tableView.getItems().stream()
-                .filter(BookViewModel::isSelected)
-                .collect(Collectors.toList());
-    }
-
-    /**
-     * Збирає вибрані книги з ApplicationState
-     */
-    private List<BookViewModel> collectSelectedFromAppState() {
-        return appState.getBookTable().getBooks().stream()
-                .filter(BookViewModel::isSelected)
-                .collect(Collectors.toList());
     }
 
     // ==================== ЕКСПОРТ В INPX ====================
 
     public void handleExportInpx(BorderPane mainPane, Runnable onComplete) {
-        List<BookViewModel> selectedBooks = collectSelectedBooks(mainPane);
+        List<BookViewModel> selectedBooks = collectSelectedBooks();
 
         List<BookId> bookIds;
         if (!selectedBooks.isEmpty()) {

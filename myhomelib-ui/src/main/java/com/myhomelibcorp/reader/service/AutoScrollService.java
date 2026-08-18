@@ -17,11 +17,13 @@ public class AutoScrollService {
     private String currentSessionId;
     private double currentSpeed = DEFAULT_SPEED;
 
+    // ВИДАЛЕНО: private final ConcurrentMap<String, Timeline> activeScrolls = new ConcurrentHashMap<>();
+    // ВИДАЛЕНО: private final ConcurrentMap<String, Double> scrollSpeeds = new ConcurrentHashMap<>();
+
     private static final double MIN_SPEED = 0.5;
     private static final double MAX_SPEED = 5.0;
     private static final double DEFAULT_SPEED = 2.0;
 
-    // ВИПРАВЛЕНО: плавний автоскрол з easing
     public void start(ReaderSession session) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             return;
@@ -32,7 +34,7 @@ public class AutoScrollService {
 
         double speed = currentSpeed;
 
-        // Використовуємо KeyFrame для плавного скролу
+        // Плавний автоскрол з Timeline
         timeline = new Timeline(new KeyFrame(Duration.millis(16), e -> { // ~60 FPS
             if (!session.isActive() || session.getWebEngine() == null) {
                 stop(session);
@@ -40,20 +42,18 @@ public class AutoScrollService {
             }
 
             try {
-                // Плавний скрол з невеликим прискоренням на початку
-                String step = String.format(Locale.US, "%.3f", speed);
-                String script = """
+                double step = speed;
+                String script = String.format(Locale.US, """
                     (function() {
-                        var step = %s;
+                        var step = %.3f;
                         var current = window.scrollY || document.documentElement.scrollTop || 0;
                         var max = document.documentElement.scrollHeight - window.innerHeight;
                         
                         if (current < max) {
-                            // Плавний скрол з easing
                             var remaining = max - current;
                             var newStep = Math.min(step, remaining);
                             
-                            // Додаємо плавність - невелике прискорення на початку
+                            // Плавне прискорення на початку
                             if (remaining > step * 10) {
                                 newStep = step * (1 + 0.1 * Math.sin(Date.now() / 1000));
                             }
@@ -64,7 +64,7 @@ public class AutoScrollService {
                             return false;
                         }
                     })();
-                """.formatted(step);
+                """, step);
 
                 Object result = session.getWebEngine().executeScript(script);
                 if (Boolean.FALSE.equals(result)) {
@@ -127,8 +127,8 @@ public class AutoScrollService {
         double clampedSpeed = Math.max(MIN_SPEED, Math.min(MAX_SPEED, speed));
         currentSpeed = clampedSpeed;
 
+        // Якщо автоскрол активний, оновлюємо швидкість
         if (timeline != null && session.getSessionId().equals(currentSessionId)) {
-            // Не перезапускаємо, просто оновлюємо швидкість для наступних кадрів
             log.debug("Auto-scroll speed updated to: {}", clampedSpeed);
         }
 

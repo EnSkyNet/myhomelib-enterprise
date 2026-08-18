@@ -1,5 +1,6 @@
 package com.myhomelibcorp.reader.core;
 
+import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import lombok.Data;
 import lombok.extern.slf4j.Slf4j;
 
@@ -48,8 +49,8 @@ public class ReaderSettings {
         this.pageMode = other.pageMode;
     }
 
-    public com.myhomelibcorp.domain.model.reader.ReaderPreferences toDomain() {
-        return com.myhomelibcorp.domain.model.reader.ReaderPreferences.builder()
+    public ReaderPreferences toDomain() {
+        return ReaderPreferences.builder()
                 .theme(theme)
                 .fontFamily(fontFamily)
                 .fontSize(fontSize)
@@ -65,10 +66,11 @@ public class ReaderSettings {
                 .autoScroll(autoScroll)
                 .scrollSpeed(scrollSpeed)
                 .customCss(customCss)
+                .widthMode(widthMode)
                 .build();
     }
 
-    public void fromDomain(com.myhomelibcorp.domain.model.reader.ReaderPreferences prefs) {
+    public void fromDomain(ReaderPreferences prefs) {
         this.theme = prefs.getTheme();
         this.fontFamily = prefs.getFontFamily();
         this.fontSize = prefs.getFontSize();
@@ -84,5 +86,6 @@ public class ReaderSettings {
         this.autoScroll = prefs.isAutoScroll();
         this.scrollSpeed = prefs.getScrollSpeed();
         this.customCss = prefs.getCustomCss();
+        this.widthMode = prefs.getWidthMode();
     }
 }

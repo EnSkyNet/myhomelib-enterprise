@@ -20,10 +20,30 @@ public class Chapter {
     private List<Chapter> children;
     private String paragraphId;
 
+    // ВИДАЛЕНО: private int startOffset;
+    // ВИДАЛЕНО: private int endOffset;
+
     public List<Chapter> getChildren() {
         if (children == null) {
             children = new ArrayList<>();
         }
         return children;
+    }
+
+    public boolean hasChildren() {
+        return children != null && !children.isEmpty();
+    }
+
+    public boolean hasContent() {
+        return content != null && !content.isEmpty();
+    }
+
+    public boolean hasParagraphId() {
+        return paragraphId != null && !paragraphId.isEmpty();
+    }
+
+    @Override
+    public String toString() {
+        return title != null ? title : "Розділ";
     }
 }

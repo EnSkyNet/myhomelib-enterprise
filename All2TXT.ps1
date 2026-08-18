@@ -1,32 +1,63 @@
 # Задаємо ім'я вихідного файлу
 $outFile = "merged_output.txt"
 
-# Створюємо чистий UTF-8 без BOM (false скасовує маркер байтів)
+# UTF-8 без BOM
 $utf8NoBom = [System.Text.UTF8Encoding]::new($false)
 
-# Отримуємо всі файли, ігноруючи сам вихідний файл та службові папки IDE
+# Отримуємо всі файли, ігноруючи вихідний файл та службові папки IDE
 $allFiles = Get-ChildItem -Path . -Recurse -File | Where-Object { 
     $_.Name -ne $outFile -and 
+    $_.Name -ne "All2TXT.ps1" -and
     $_.FullName -notlike "*\.idea\*" -and 
-    $_.FullName -notlike "*\target\*"
+    $_.FullName -notlike "*\target\*" -and
+    $_.FullName -notlike "*\.git\*" -and
+    $_.FullName -notlike "*\node_modules\*"
 }
 
-# Відкриваємо потік для запису з кодуванням без BOM
+# Сортуємо файли
+$allFiles = $allFiles | Sort-Object -Property Name
+
+if ($allFiles.Count -eq 0) {
+    Write-Host "No files found" -ForegroundColor Yellow
+    Read-Host "Press Enter"
+    exit
+}
+
+# Відкриваємо потік для запису
 $stream = [System.IO.StreamWriter]::new($outFile, $false, $utf8NoBom)
 
-foreach ($file in $allFiles) {
-    # Швидке розділення файлів візуальною межею
-    $stream.WriteLine("`n`n" + ("=" * 80))
-    $stream.WriteLine("ФАЙЛ: $($file.FullName)")
-    $stream.WriteLine("=" * 80)
-    
-    # Оптимізоване швидке зчитування всього файлу одним махом (-Raw)
-    $content = Get-Content -Path $file.FullName -Raw -ErrorAction SilentlyContinue
-    if ($content) {
-        $stream.WriteLine($content)
+try {
+    $count = 0
+    foreach ($file in $allFiles) {
+        $count++
+        Write-Host "Processing $count/$($allFiles.Count): $($file.Name)" -ForegroundColor Gray
+        
+        # Розділювач
+        $stream.WriteLine("`n`n" + ("=" * 80))
+        $stream.WriteLine("FILE: $($file.FullName)")
+        $stream.WriteLine("=" * 80)
+        
+        # ЧИТАЄМО ФАЙЛ В ПРАВИЛЬНОМУ КОДУВАННІ
+        # Java файли зазвичай в UTF-8
+        $content = Get-Content -Path $file.FullName -Raw -Encoding UTF8 -ErrorAction SilentlyContinue
+        
+        # Якщо не прочиталось як UTF-8, пробуємо Windows-1251
+        if (-not $content) {
+            $content = Get-Content -Path $file.FullName -Raw -Encoding Default -ErrorAction SilentlyContinue
+        }
+        
+        if ($content) {
+            $stream.Write($content)
+        }
     }
 }
+finally {
+    $stream.Close()
+}
 
-# Обов'язково закриваємо потік, щоб зберегти дані на диск
-$stream.Close()
-Write-Host "Збережено у $($PWD)\$outFile (UTF-8 без BOM, оптимізовано)" -ForegroundColor Green
+Write-Host "`n========================================" -ForegroundColor Green
+Write-Host "Saved: $($PWD)\$outFile" -ForegroundColor Green
+Write-Host "Files merged: $($allFiles.Count)" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Green
+
+Read-Host "Press Enter to exit"

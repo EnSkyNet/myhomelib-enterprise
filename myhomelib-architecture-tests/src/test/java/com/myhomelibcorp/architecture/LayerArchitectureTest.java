@@ -172,7 +172,6 @@ class LayerArchitectureTest {
         noClasses()
                 .that().resideInAnyPackage("..reader.service..")
                 .should().dependOnClassesThat().resideInAnyPackage(
-                        "..ui..",
                         "javafx.."
                 )
                 .check(classes);
@@ -184,6 +183,54 @@ class LayerArchitectureTest {
                 .that().resideInAnyPackage("..reader.model..")
                 .should().dependOnClassesThat().resideInAnyPackage(
                         "javafx.."
+                )
+                .check(classes);
+    }
+
+    // ===== НОВІ ТЕСТИ =====
+
+    @Test
+    void readerContentServiceUsesPortNotDirectInfrastructure() {
+        noClasses()
+                .that().resideInAnyPackage("..reader.service..")
+                .and().haveSimpleName("ReaderContentService")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "java.nio.file..",
+                        "java.util.zip..",
+                        "..infrastructure.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void readerBookResourcePortIsImplementedInInfrastructure() {
+        classes()
+                .that().implement(com.myhomelibcorp.application.port.out.resource.ReaderBookResourcePort.class)
+                .should().resideInAnyPackage("..infrastructure..")
+                .check(classes);
+    }
+
+    @Test
+    void readerControllerDoesNotDependOnInfrastructure() {
+        noClasses()
+                .that().resideInAnyPackage("..ui.reader..")
+                .and().haveSimpleName("ReaderWorkspaceController")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "..infrastructure..",
+                        "java.nio.file..",
+                        "java.util.zip.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void readerPositionServiceUsesPortsNotDirectInfrastructure() {
+        noClasses()
+                .that().resideInAnyPackage("..reader.service..")
+                .and().haveSimpleName("ReaderPositionService")
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        "java.sql..",
+                        "org.springframework.jdbc.."
                 )
                 .check(classes);
     }

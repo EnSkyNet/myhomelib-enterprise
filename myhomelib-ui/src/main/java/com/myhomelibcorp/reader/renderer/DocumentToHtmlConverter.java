@@ -10,6 +10,7 @@ import org.jsoup.Jsoup;
 import org.jsoup.safety.Safelist;
 
 import java.util.Base64;
+import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -44,6 +45,11 @@ public class DocumentToHtmlConverter {
         Map<String, ImageData> imageMap = document.getImages().stream()
                 .collect(Collectors.toMap(ImageData::getId, img -> img));
 
+        log.info("📚 Converting book: {}, images: {}", metadata.getTitle(), imageMap.size());
+
+        // ДІАГНОСТИКА: виводимо всі ID зображень
+        log.info("🖼️ Image IDs in map: {}", imageMap.keySet());
+
         StringBuilder html = new StringBuilder(1024 * 100);
 
         html.append("<!DOCTYPE html>\n");
@@ -53,7 +59,6 @@ public class DocumentToHtmlConverter {
         html.append("    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"/>\n");
         html.append("    <title>").append(escapeHtml(metadata.getTitle())).append("</title>\n");
 
-        // Стилі для зображень
         html.append("    <style>\n");
         html.append("        img { max-width: 100%; height: auto; display: block; margin: 10px auto; border-radius: 4px; }\n");
         html.append("        img.loading { opacity: 0.5; filter: blur(2px); }\n");
@@ -101,9 +106,8 @@ public class DocumentToHtmlConverter {
 
         html.append("<hr class=\"book-divider\"/>\n");
 
-        for (Chapter chapter : document.getChapters()) {
-            html.append(renderChapter(chapter, 1, imageMap));
-        }
+        String content = renderChapters(document.getChapters(), 1, imageMap);
+        html.append(content);
 
         html.append("</body>\n");
         html.append("</html>");
@@ -113,6 +117,14 @@ public class DocumentToHtmlConverter {
                 html.length(), elapsed, imageCache.getStats());
 
         return html.toString();
+    }
+
+    private String renderChapters(List<Chapter> chapters, int level, Map<String, ImageData> imageMap) {
+        StringBuilder sb = new StringBuilder(1024 * 100);
+        for (Chapter chapter : chapters) {
+            sb.append(renderChapter(chapter, level, imageMap));
+        }
+        return sb.toString();
     }
 
     private String renderChapter(Chapter chapter, int level, Map<String, ImageData> imageMap) {
@@ -130,36 +142,109 @@ public class DocumentToHtmlConverter {
         if (chapter.getContent() != null && !chapter.getContent().isEmpty()) {
             String content = chapter.getContent();
 
-            // Обробляємо зображення з кешем
-            if (imageMap != null && !imageMap.isEmpty()) {
+            // ДІАГНОСТИКА: перевіряємо наявність плейсхолдерів у кожному розділі
+            if (content.contains("PLACEHOLDER")) {
+                log.info("🔍 Chapter '{}' contains PLACEHOLDER!", chapter.getTitle());
+
+                // Знаходимо всі ID зображень у контенті
+                java.util.regex.Pattern idPattern = java.util.regex.Pattern.compile("data-image-id=\"([^\"]+)\"");
+                java.util.regex.Matcher idMatcher = idPattern.matcher(content);
+                java.util.Set<String> foundIds = new java.util.HashSet<>();
+                while (idMatcher.find()) {
+                    foundIds.add(idMatcher.group(1));
+                }
+                log.info("🔍 Found image IDs in chapter '{}': {}", chapter.getTitle(), foundIds);
+            }
+
+            // ================================================================
+            // ВИПРАВЛЕНО: пряма заміна плейсхолдерів зображень
+            // ================================================================
+            if (imageMap != null && !imageMap.isEmpty() && content.contains("PLACEHOLDER")) {
+                int totalReplaced = 0;
                 for (Map.Entry<String, ImageData> entry : imageMap.entrySet()) {
                     String imageId = entry.getKey();
                     ImageData image = entry.getValue();
-                    if (image != null && image.getData() != null) {
-                        // Перевіряємо кеш
-                        String cacheKey = "img_" + imageId;
-                        byte[] cachedData = imageCache.get(cacheKey);
 
-                        if (cachedData == null) {
-                            // Кешуємо зображення
-                            imageCache.put(cacheKey, image.getData(), image.getMimeType());
-                            cachedData = image.getData();
-                        }
-
-                        String base64 = Base64.getEncoder().encodeToString(cachedData);
-                        String mimeType = imageCache.getMimeType(cacheKey);
-                        if (mimeType == null) {
-                            mimeType = image.getMimeType() != null ? image.getMimeType() : "image/jpeg";
-                        }
-
-                        // Замінюємо плейсхолдер
-                        String placeholder = "data:image/jpeg;base64,PLACEHOLDER";
-                        String replacement = "data:" + mimeType + ";base64," + base64;
-                        content = content.replace(
-                                "data-image-id=\"" + imageId + "\" src=\"" + placeholder + "\"",
-                                "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + replacement + "\""
-                        );
+                    if (image == null || image.getData() == null || image.getData().length == 0) {
+                        continue;
                     }
+
+                    // Перевіряємо, чи є цей imageId в контенті
+                    String searchId = "data-image-id=\"" + imageId + "\"";
+                    if (!content.contains(searchId)) {
+                        continue;
+                    }
+
+                    // Кешуємо зображення
+                    String cacheKey = "img_" + imageId;
+                    byte[] cachedData = imageCache.get(cacheKey);
+                    if (cachedData == null) {
+                        imageCache.put(cacheKey, image.getData(), image.getMimeType());
+                        cachedData = image.getData();
+                    }
+
+                    // Конвертуємо в Base64
+                    String base64 = Base64.getEncoder().encodeToString(cachedData);
+                    String mimeType = imageCache.getMimeType(cacheKey);
+                    if (mimeType == null) {
+                        mimeType = image.getMimeType() != null ? image.getMimeType() : "image/jpeg";
+                    }
+
+                    String dataUri = "data:" + mimeType + ";base64," + base64;
+
+                    // ВАРІАНТ 1: точний збіг для JPEG
+                    String oldTag1 = "data-image-id=\"" + imageId + "\" src=\"data:image/jpeg;base64,PLACEHOLDER\"";
+                    if (content.contains(oldTag1)) {
+                        content = content.replace(oldTag1, "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\"");
+                        totalReplaced++;
+                        log.debug("✅ Replaced image (JPEG): {}", imageId);
+                        continue;
+                    }
+
+                    // ВАРІАНТ 2: точний збіг для PNG
+                    String oldTag2 = "data-image-id=\"" + imageId + "\" src=\"data:image/png;base64,PLACEHOLDER\"";
+                    if (content.contains(oldTag2)) {
+                        content = content.replace(oldTag2, "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\"");
+                        totalReplaced++;
+                        log.debug("✅ Replaced image (PNG): {}", imageId);
+                        continue;
+                    }
+
+                    // ВАРІАНТ 3: будь-який src з PLACEHOLDER (за допомогою replaceAll)
+                    String searchPattern = "data-image-id=\"" + imageId + "\" src=\"[^\"]*PLACEHOLDER[^\"]*\"";
+                    java.util.regex.Pattern p = java.util.regex.Pattern.compile(searchPattern);
+                    java.util.regex.Matcher m = p.matcher(content);
+                    if (m.find()) {
+                        String replacement = "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\"";
+                        content = m.replaceAll(replacement);
+                        totalReplaced++;
+                        log.debug("✅ Replaced image (regex): {}", imageId);
+                        continue;
+                    }
+
+                    // ВАРІАНТ 4: простий пошук і заміна всього тега
+                    String simpleSearch = "data-image-id=\"" + imageId + "\"";
+                    int startIdx = content.indexOf(simpleSearch);
+                    if (startIdx != -1) {
+                        // Знаходимо кінець тега
+                        int endIdx = content.indexOf("/>", startIdx);
+                        if (endIdx == -1) {
+                            endIdx = content.indexOf(">", startIdx);
+                        }
+                        if (endIdx != -1) {
+                            String oldTag = content.substring(startIdx, endIdx + 2);
+                            String newTag = "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\" />";
+                            content = content.replace(oldTag, newTag);
+                            totalReplaced++;
+                            log.debug("✅ Replaced image (fallback): {}", imageId);
+                        }
+                    } else {
+                        log.warn("❌ Could not find placeholder for image: {}", imageId);
+                    }
+                }
+
+                if (totalReplaced > 0) {
+                    log.info("🖼️ Replaced {} images in chapter '{}'", totalReplaced, chapter.getTitle());
                 }
             }
 

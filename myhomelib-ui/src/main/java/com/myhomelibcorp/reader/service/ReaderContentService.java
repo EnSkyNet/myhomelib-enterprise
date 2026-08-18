@@ -1,9 +1,10 @@
 package com.myhomelibcorp.reader.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
+import com.myhomelibcorp.application.port.out.resource.ReaderBookResourcePort;
 import com.myhomelibcorp.reader.model.BookDocument;
 import com.myhomelibcorp.reader.model.Chapter;
+import com.myhomelibcorp.reader.model.ReaderBookContent;
 import com.myhomelibcorp.reader.parser.JsoupFb2Parser;
 import com.myhomelibcorp.reader.renderer.DocumentToHtmlConverter;
 import com.myhomelibcorp.reader.session.ReaderSession;
@@ -13,10 +14,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.util.Enumeration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,9 +21,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
+/**
+ * Сервіс для завантаження та кешування контенту книг.
+ * Використовує LRU кеш з обмеженням за розміром.
+ * НЕ містить файлової логіки — використовує ReaderBookResourcePort.
+ */
 @Service
 @Slf4j
 public class ReaderContentService {
@@ -34,31 +34,36 @@ public class ReaderContentService {
     private final ReaderSettingsService settingsService;
     private final ReaderScheduler scheduler;
     private final ImageCacheService imageCache;
-    private final BookResourcePort bookResourcePort;
+    private final ReaderBookResourcePort bookResourcePort;
     private final JsoupFb2Parser fb2Parser = new JsoupFb2Parser();
     private final DocumentToHtmlConverter htmlConverter;
 
     /**
-     * Кеш HTML контенту з LRU (Least Recently Used) політикою.
-     * Використовує LinkedHashMap з accessOrder=true для автоматичного LRU.
+     * LRU кеш з LinkedHashMap (accessOrder=true).
+     * Автоматично видаляє найстаріші записи при перевищенні ліміту.
      */
     private final Map<String, ReaderBookContent> contentCache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, ReaderBookContent> eldest) {
-            return size() > MAX_CACHED_ITEMS;
+            if (size() > MAX_CACHED_ITEMS) {
+                evictEntry(eldest);
+                return true;
+            }
+            return false;
         }
     };
 
     private final ConcurrentMap<String, CompletableFuture<ReaderBookContent>> loadingTasks = new ConcurrentHashMap<>();
 
-    private static final int MAX_CACHED_HTML_BYTES = 64 * 1024 * 1024; // 64 MB
-    private static final int MAX_CACHED_ITEMS = 5;
+    private static final int MAX_CACHED_ITEMS = 3;
+    private static final long MAX_CACHE_BYTES = 64 * 1024 * 1024; // 64 MB
+    private long currentCacheSize = 0;
 
     @Autowired
     public ReaderContentService(ReaderSettingsService settingsService,
                                 ReaderScheduler scheduler,
                                 ImageCacheService imageCache,
-                                BookResourcePort bookResourcePort) {
+                                ReaderBookResourcePort bookResourcePort) {
         this.settingsService = settingsService;
         this.scheduler = scheduler;
         this.imageCache = imageCache;
@@ -66,7 +71,7 @@ public class ReaderContentService {
         this.htmlConverter = new DocumentToHtmlConverter(imageCache);
     }
 
-    // ==================== Завантаження книги ====================
+    // ==================== ЗАВАНТАЖЕННЯ КНИГИ ====================
 
     public void loadBookContent(ReaderSession session, Runnable onLoaded) {
         if (session == null || session.getBook() == null) {
@@ -80,7 +85,7 @@ public class ReaderContentService {
         String bookId = book.getId();
 
         ReaderBookContent cached = getCachedContent(bookId);
-        if (cached != null) {
+        if (cached != null && !cached.isEmpty()) {
             log.info("Loading book from cache: {}", book.getTitle());
             session.setChapters(cached.chapters());
             renderHtml(session, cached.html(), onLoaded);
@@ -91,7 +96,7 @@ public class ReaderContentService {
         if (existingTask != null && !existingTask.isDone()) {
             log.info("Book loading already in progress: {}", book.getTitle());
             existingTask.thenAccept(content -> {
-                if (session.isActive()) {
+                if (session.isActive() && content != null && !content.isEmpty()) {
                     session.setChapters(content.chapters());
                     renderHtml(session, content.html(), onLoaded);
                 }
@@ -109,30 +114,50 @@ public class ReaderContentService {
 
         Executor executor = runnable -> scheduler.execute(runnable);
 
-        CompletableFuture<ReaderBookContent> task = CompletableFuture.supplyAsync(() -> {
-            try {
-                byte[] data = readBookData(book);
-                if (data == null || data.length == 0) {
-                    throw new RuntimeException("Failed to read book data");
-                }
+        CompletableFuture<ReaderBookContent> task = loadingTasks.computeIfAbsent(bookId, id ->
+                CompletableFuture.supplyAsync(() -> {
+                    try {
+                        log.info("📖 Reading book data: {}", book.getTitle());
+                        byte[] data = readBookData(book);
+                        if (data == null || data.length == 0) {
+                            throw new RuntimeException("Failed to read book data");
+                        }
+                        log.info("📖 Book data read: {} bytes", data.length);
 
-                BookDocument document = fb2Parser.parse(new ByteArrayInputStream(data));
-                String html = htmlConverter.convert(document);
+                        log.info("📖 Parsing FB2: {}", book.getTitle());
+                        BookDocument document = fb2Parser.parse(new ByteArrayInputStream(data));
+                        log.info("📖 FB2 parsed: {} chapters, {} images",
+                                document.getChapters().size(), document.getImages().size());
 
-                ReaderBookContent content = new ReaderBookContent(html, document.getChapters());
-                cacheContent(bookId, content);
-                return content;
+                        // Діагностика зображень
+                        if (!document.getImages().isEmpty()) {
+                            log.info("🖼️ First 5 images:");
+                            document.getImages().stream().limit(5).forEach(img ->
+                                    log.info("  - id={}, type={}, size={} bytes",
+                                            img.getId(), img.getMimeType(),
+                                            img.getData() != null ? img.getData().length : 0)
+                            );
+                        }
 
-            } catch (Exception e) {
-                log.error("Failed to load book content: {}", book.getTitle(), e);
-                throw new RuntimeException(e);
-            }
-        }, executor);
+                        log.info("📖 Converting to HTML: {}", book.getTitle());
+                        String html = htmlConverter.convert(document);
+                        log.info("📖 HTML generated: {} chars", html.length());
 
-        loadingTasks.put(bookId, task);
+                        ReaderBookContent content = new ReaderBookContent(html, document.getChapters());
+                        cacheContent(bookId, content);
+
+                        log.info("📖 Book content ready: {}", book.getTitle());
+                        return content;
+
+                    } catch (Exception e) {
+                        log.error("Failed to load book content: {}", book.getTitle(), e);
+                        throw new RuntimeException(e);
+                    }
+                }, executor)
+        );
 
         task.thenAccept(content -> {
-            if (session.isActive()) {
+            if (session.isActive() && content != null && !content.isEmpty()) {
                 session.setChapters(content.chapters());
                 renderHtml(session, content.html(), onLoaded);
             }
@@ -147,45 +172,58 @@ public class ReaderContentService {
         });
     }
 
-    // ==================== Читання даних книги ====================
+    // ==================== ЧИТАННЯ ДАНИХ КНИГИ ====================
 
     private byte[] readBookData(BookDto book) throws Exception {
         if (book == null) {
             throw new IllegalArgumentException("Book cannot be null");
         }
 
-        String fileName = book.getFileName();
-        String folder = book.getFolder();
-        String collectionRoot = book.getCollectionRoot();
-        String archiveEntry = book.getArchiveEntry();
+        log.debug("readBookData: bookId={}, fileName={}", book.getId(), book.getFileName());
 
-        log.debug("readBookData: fileName='{}', folder='{}', root='{}', archiveEntry='{}'",
-                fileName, folder, collectionRoot, archiveEntry);
-
-        // Використовуємо BookResourcePort для читання
         try (InputStream is = bookResourcePort
-                .readBookData(fileName, folder, collectionRoot, archiveEntry)
-                .orElseThrow(() -> new RuntimeException("Book file not found: " + fileName))) {
+                .readBookData(book)
+                .orElseThrow(() -> new RuntimeException("Book file not found: " + book.getFileName()))) {
             return is.readAllBytes();
         }
     }
 
-    // ==================== Кешування ====================
+    // ==================== КЕШУВАННЯ ====================
 
     private void cacheContent(String bookId, ReaderBookContent content) {
-        if (bookId == null || content == null) {
+        if (bookId == null || content == null || content.isEmpty()) {
             return;
         }
 
-        int htmlSize = content.html().getBytes().length;
-        if (htmlSize > MAX_CACHED_HTML_BYTES) {
-            log.debug("Book HTML too large ({} MB), not caching", htmlSize / 1024 / 1024);
+        long size = content.sizeBytes();
+
+        if (size > MAX_CACHE_BYTES) {
+            log.debug("Book HTML too large ({} MB), not caching", size / 1024 / 1024);
             return;
         }
 
         synchronized (contentCache) {
+            while (currentCacheSize + size > MAX_CACHE_BYTES && !contentCache.isEmpty()) {
+                String oldestKey = contentCache.keySet().iterator().next();
+                ReaderBookContent oldest = contentCache.remove(oldestKey);
+                if (oldest != null) {
+                    currentCacheSize -= oldest.sizeBytes();
+                    log.debug("Evicted cache entry: {} ({} MB)", oldestKey, oldest.sizeBytes() / 1024 / 1024);
+                }
+            }
+
             contentCache.put(bookId, content);
-            log.debug("Cached book: {}, cache size: {}", bookId, contentCache.size());
+            currentCacheSize += size;
+            log.debug("Cached book: {}, size: {} MB, cache size: {} MB ({} items)",
+                    bookId, size / 1024 / 1024, currentCacheSize / 1024 / 1024, contentCache.size());
+        }
+    }
+
+    private void evictEntry(Map.Entry<String, ReaderBookContent> eldest) {
+        if (eldest != null && eldest.getValue() != null) {
+            currentCacheSize -= eldest.getValue().sizeBytes();
+            log.debug("Evicted cache entry by LRU: {} ({} MB)",
+                    eldest.getKey(), eldest.getValue().sizeBytes() / 1024 / 1024);
         }
     }
 
@@ -198,15 +236,46 @@ public class ReaderContentService {
         }
     }
 
+    public boolean isCached(String bookId) {
+        if (bookId == null) {
+            return false;
+        }
+        synchronized (contentCache) {
+            return contentCache.containsKey(bookId);
+        }
+    }
+
+    public long getCacheSize() {
+        synchronized (contentCache) {
+            return currentCacheSize;
+        }
+    }
+
+    public int getCacheItemCount() {
+        synchronized (contentCache) {
+            return contentCache.size();
+        }
+    }
+
+    public String getCacheStats() {
+        synchronized (contentCache) {
+            return String.format("Items: %d, Size: %.2f MB, Max: %d MB",
+                    contentCache.size(),
+                    currentCacheSize / 1024.0 / 1024.0,
+                    MAX_CACHE_BYTES / 1024 / 1024);
+        }
+    }
+
     public void clearCache() {
         synchronized (contentCache) {
             contentCache.clear();
+            currentCacheSize = 0;
         }
         loadingTasks.clear();
         log.info("Reader cache cleared");
     }
 
-    // ==================== Рендеринг HTML ====================
+    // ==================== РЕНДЕРИНГ HTML ====================
 
     private void renderHtml(ReaderSession session, String html, Runnable onLoaded) {
         scheduler.runOnFxThread(() -> renderHtmlSync(session, html, onLoaded));
@@ -342,7 +411,7 @@ public class ReaderContentService {
                 """.formatted(title, author, error);
     }
 
-    // ==================== Отримання розділів ====================
+    // ==================== ОТРИМАННЯ РОЗДІЛІВ ====================
 
     public List<Chapter> getChapters(ReaderSession session) {
         if (session == null) {
@@ -364,7 +433,7 @@ public class ReaderContentService {
         return List.of();
     }
 
-    // ==================== Застосування налаштувань ====================
+    // ==================== ЗАСТОСУВАННЯ НАЛАШТУВАНЬ ====================
 
     public void applySettings(ReaderSession session) {
         scheduler.runOnFxThread(() -> applySettingsSync(session));
@@ -418,7 +487,7 @@ public class ReaderContentService {
                 .replace("\t", "\\t");
     }
 
-    // ==================== Очищення кешів ====================
+    // ==================== ОЧИЩЕННЯ КЕШІВ ====================
 
     public void clearImageCache() {
         imageCache.clear();
@@ -427,10 +496,5 @@ public class ReaderContentService {
 
     public ImageCacheService getImageCache() {
         return imageCache;
-    }
-
-    // ==================== Внутрішній клас для кешу ====================
-
-    public record ReaderBookContent(String html, List<Chapter> chapters) {
     }
 }

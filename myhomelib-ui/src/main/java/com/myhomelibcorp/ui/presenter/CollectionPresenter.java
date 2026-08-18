@@ -2,13 +2,13 @@ package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
-import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
+import com.myhomelibcorp.application.service.CollectionManagementService;
+import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
-import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
+import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
+import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.infrastructure.collection.CollectionManager;
-import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -19,9 +19,14 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
+import java.nio.file.Paths;
 import java.util.Optional;
 import java.util.UUID;
 
+/**
+ * Презентер для роботи з колекціями.
+ * Використовує Application сервіси замість прямих залежностей від Infrastructure.
+ */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -33,8 +38,8 @@ public class CollectionPresenter {
     private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
-    private final CollectionManager collectionManager;
-    private final DatabaseInitializer databaseInitializer;
+    private final CollectionManagementService collectionManagementService;
+    private final DatabaseToolsService databaseToolsService;
     private final ApplicationState appState;
 
     public void showCreateCollectionDialog(ObservableList<CollectionDto> collectionList, Stage owner) {
@@ -60,7 +65,7 @@ public class CollectionPresenter {
         try {
             CreateCollectionRequest request = CreateCollectionRequest.builder()
                     .name(name)
-                    .dbFile(java.nio.file.Paths.get(dbFilePath))
+                    .dbFile(Paths.get(dbFilePath))
                     .importOnCreate(true)
                     .createIndex(true)
                     .build();
@@ -71,8 +76,9 @@ public class CollectionPresenter {
             collectionList.add(dto);
             appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
-            collectionManager.switchToCollection(collection);
-            databaseInitializer.initializeCurrentCollection();
+            // Використовуємо CollectionManagementService замість CollectionManager
+            collectionManagementService.switchToCollection(collection);
+
             appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());
 
         } catch (Exception e) {
@@ -111,7 +117,7 @@ public class CollectionPresenter {
             return;
         }
 
-        Collection current = collectionManager.getCurrentCollection();
+        Collection current = collectionManagementService.getCurrentCollection();
         if (current != null && current.getId().equals(collection.getId())) {
             dialogService.showWarning("Увага", "Неможливо видалити поточну колекцію",
                     "Спочатку виберіть іншу колекцію, а потім спробуйте видалити цю.");
@@ -138,6 +144,35 @@ public class CollectionPresenter {
         } catch (Exception e) {
             log.error("Помилка завантаження колекцій", e);
             dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
+        }
+    }
+
+    // ===== Делеговані методи =====
+
+    public boolean hasActiveCollection() {
+        return collectionManagementService.hasActiveCollection();
+    }
+
+    public boolean isCollectionReady() {
+        return collectionManagementService.isCollectionReady();
+    }
+
+    public long getDatabaseSize() {
+        return collectionManagementService.getDatabaseSize();
+    }
+
+    public void closeCurrentCollection() {
+        collectionManagementService.closeCurrentCollection();
+    }
+
+    public Collection getCurrentCollection() {
+        return collectionManagementService.getCurrentCollection();
+    }
+
+    public void vacuumCurrentCollection() {
+        Collection current = getCurrentCollection();
+        if (current != null) {
+            collectionManagementService.vacuum(current);
         }
     }
 }

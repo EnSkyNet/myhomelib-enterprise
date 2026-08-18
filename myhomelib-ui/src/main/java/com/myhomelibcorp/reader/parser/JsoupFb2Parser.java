@@ -17,6 +17,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 @Slf4j
 public class JsoupFb2Parser {
@@ -47,12 +48,19 @@ public class JsoupFb2Parser {
         TAG_MAP.put("footnote", "div");
         TAG_MAP.put("note", "div");
         TAG_MAP.put("a", "a");
+        TAG_MAP.put("image", "img");
+        TAG_MAP.put("poem", "div");
+        TAG_MAP.put("stanza", "div");
+        TAG_MAP.put("v", "div");
+        TAG_MAP.put("date", "span");
+        TAG_MAP.put("translator", "span");
+        TAG_MAP.put("annotation", "div");
     }
 
     private static final Pattern PARAGRAPH_ID_PATTERN = Pattern.compile("data-paragraph-id=\"([^\"]+)\"");
-    private static final Pattern NOTE_REF_PATTERN = Pattern.compile("\\[([0-9]+)\\]");
-
     private int paragraphCounter = 0;
+
+    // ==================== ОСНОВНИЙ МЕТОД ПАРСИНГУ ====================
 
     public BookDocument parse(InputStream inputStream) throws Exception {
         long startTime = System.currentTimeMillis();
@@ -97,7 +105,6 @@ public class JsoupFb2Parser {
         List<ImageData> images = extractImages(root);
         Map<String, String> footnotes = extractFootnotes(root);
 
-        // ОСНОВНЕ ВИПРАВЛЕННЯ: парсинг тільки top-level sections
         List<Chapter> chapters = extractChapters(root, footnotes);
 
         int paragraphCount = countParagraphs(chapters);
@@ -115,7 +122,7 @@ public class JsoupFb2Parser {
         return document;
     }
 
-    // ==================== Перевірка кодування ====================
+    // ==================== ПЕРЕВІРКА КОДУВАННЯ ====================
 
     private boolean isValidContent(String text) {
         if (text == null || text.isEmpty()) {
@@ -132,7 +139,7 @@ public class JsoupFb2Parser {
         return hasCyrillic && (hasFictionBook || hasTitle);
     }
 
-    // ==================== Метадані ====================
+    // ==================== МЕТАДАНІ ====================
 
     private BookMetadata extractMetadata(Element root) {
         BookMetadata.BookMetadataBuilder builder = BookMetadata.builder();
@@ -224,7 +231,7 @@ public class JsoupFb2Parser {
         return builder.build();
     }
 
-    // ==================== Зображення ====================
+    // ==================== ЗОБРАЖЕННЯ ====================
 
     private List<ImageData> extractImages(Element root) {
         List<ImageData> images = new ArrayList<>();
@@ -257,7 +264,7 @@ public class JsoupFb2Parser {
         return images;
     }
 
-    // ==================== Виноски ====================
+    // ==================== ВИНОСКИ ====================
 
     private Map<String, String> extractFootnotes(Element root) {
         Map<String, String> footnotes = new LinkedHashMap<>();
@@ -304,22 +311,38 @@ public class JsoupFb2Parser {
             return chapters;
         }
 
-        // ОТРИМУЄМО ТІЛЬКИ TOP-LEVEL SECTIONS (безпосередні діти body)
-        List<Element> topLevelSections = body.children().stream()
-                .filter(element -> "section".equalsIgnoreCase(element.tagName()))
-                .toList();
+        // Діагностика: перевіряємо наявність image тегів у body
+        int imageTagCount = 0;
+        for (Element el : body.getAllElements()) {
+            String tagName = el.tagName().toLowerCase();
+            if (tagName.contains("image")) {
+                imageTagCount++;
+                String href = el.attr("href");
+                if (href == null || href.isEmpty()) {
+                    href = el.attr("xlink:href");
+                }
+                if (href == null || href.isEmpty()) {
+                    href = el.attr("l:href");
+                }
+                log.debug("🖼️ Found image tag in body: tag={}, href={}", el.tagName(), href);
+            }
+        }
+        log.info("🖼️ Total image tags found in body: {}", imageTagCount);
 
-        // Скидаємо лічильник параграфів
+        // Отримуємо ТІЛЬКИ top-level sections
+        List<Element> topLevelSections = body.children()
+                .stream()
+                .filter(element -> "section".equalsIgnoreCase(element.tagName()))
+                .collect(Collectors.toList());
+
         paragraphCounter = 0;
 
         if (topLevelSections.isEmpty()) {
-            // Якщо немає секцій - створюємо один розділ з усього вмісту body
             Chapter singleChapter = processDirectBody(body, footnotes);
             if (singleChapter != null && singleChapter.getContent() != null && !singleChapter.getContent().isEmpty()) {
                 chapters.add(singleChapter);
             }
         } else {
-            // Обробляємо кожну top-level секцію
             for (Element section : topLevelSections) {
                 Chapter chapter = processSection(section, 1, footnotes);
                 if (chapter != null) {
@@ -352,13 +375,12 @@ public class JsoupFb2Parser {
         return chapters;
     }
 
-    /**
-     * ВИПРАВЛЕНО: Обробка секції з підтримкою вкладених секцій
-     */
+    // ==================== ОБРОБКА СЕКЦІЙ (ВИПРАВЛЕНО) ====================
+
     private Chapter processSection(Element section, int level, Map<String, String> footnotes) {
-        // Отримуємо назву з першого <title>
         String title = "Розділ";
-        Element titleEl = section.children().stream()
+        Element titleEl = section.children()
+                .stream()
                 .filter(e -> "title".equalsIgnoreCase(e.tagName()))
                 .findFirst()
                 .orElse(null);
@@ -370,23 +392,28 @@ public class JsoupFb2Parser {
         StringBuilder content = new StringBuilder();
         List<Chapter> children = new ArrayList<>();
 
-        // Обробляємо всі дочірні елементи секції
+        // ВИПРАВЛЕНО: обробляємо всі елементи в правильному порядку
         for (Element child : section.children()) {
             String tag = child.tagName().toLowerCase(Locale.ROOT);
 
             if ("section".equals(tag)) {
-                // ВКЛАДЕНА СЕКЦІЯ - рекурсивно обробляємо як дочірній розділ
+                // Вкладена секція - додаємо як дочірній розділ
                 Chapter subChapter = processSection(child, level + 1, footnotes);
                 if (subChapter != null) {
                     children.add(subChapter);
                 }
-            } else if (!"title".equals(tag)) {
-                // Звичайний контент (не title і не section)
+            } else if ("title".equals(tag)) {
+                // Заголовок - пропускаємо (вже оброблений вище)
+                // Але якщо заголовків кілька, додаємо як звичайний елемент
+            } else if (tag.contains("image")) {
+                // ЗОБРАЖЕННЯ: обробляємо в тому місці, де воно знаходиться
+                processImage(child, content);
+            } else {
+                // Всі інші елементи
                 processElement(child, tag, content, level, footnotes);
             }
         }
 
-        // Якщо немає ні контенту, ні дочірніх розділів - пропускаємо
         if (content.isEmpty() && children.isEmpty()) {
             return null;
         }
@@ -403,17 +430,19 @@ public class JsoupFb2Parser {
                 .build();
     }
 
-    /**
-     * Обробка body без секцій (весь вміст в один розділ)
-     */
+    // ==================== ОБРОБКА ТІЛА БЕЗ СЕКЦІЙ ====================
+
     private Chapter processDirectBody(Element body, Map<String, String> footnotes) {
         StringBuilder content = new StringBuilder();
         Elements children = body.children();
 
         for (Element child : children) {
             String tag = child.tagName().toLowerCase();
-            // Пропускаємо title, якщо він є прямим нащадком body
-            if (!"title".equals(tag)) {
+            if ("title".equals(tag)) {
+                // Пропускаємо заголовки на рівні body
+            } else if (tag.contains("image")) {
+                processImage(child, content);
+            } else {
                 processElement(child, tag, content, 1, footnotes);
             }
         }
@@ -434,9 +463,36 @@ public class JsoupFb2Parser {
                 .build();
     }
 
-    // ==================== Обробка елементів ====================
+    // ==================== ОБРОБКА ЗОБРАЖЕНЬ ====================
+
+    private void processImage(Element element, StringBuilder content) {
+        String href = element.attr("href");
+        if (href == null || href.isEmpty()) {
+            href = element.attr("xlink:href");
+        }
+        if (href == null || href.isEmpty()) {
+            href = element.attr("l:href");
+        }
+        if (href == null || href.isEmpty()) {
+            href = element.attr("src");
+        }
+
+        if (href != null && href.startsWith("#")) {
+            String imageId = href.substring(1);
+            content.append("<img data-image-id=\"")
+                    .append(escapeHtml(imageId))
+                    .append("\" src=\"data:image/jpeg;base64,PLACEHOLDER\" alt=\"Зображення\"/>");
+            log.debug("🖼️ Added image placeholder at current position: {}", imageId);
+        } else {
+            log.warn("⚠️ Image tag found but no valid href: tag={}, href={}", element.tagName(), href);
+        }
+    }
+
+    // ==================== ОБРОБКА ЕЛЕМЕНТІВ ====================
 
     private void processElement(Element element, String tag, StringBuilder content, int level, Map<String, String> footnotes) {
+        String mappedTag = TAG_MAP.getOrDefault(tag, tag);
+
         switch (tag) {
             case "p" -> processParagraph(element, content, footnotes);
             case "title" -> processTitle(element, content, level);
@@ -452,10 +508,11 @@ public class JsoupFb2Parser {
             case "sub" -> processInline(element, "sub", content);
             case "sup" -> processInline(element, "sup", content);
             case "strikethrough" -> processInline(element, "s", content);
-            case "image" -> processImage(element, content);
             case "a" -> processLink(element, content, footnotes);
+            case "date" -> processDate(element, content);
+            case "translator" -> processTranslator(element, content);
+            case "annotation" -> processAnnotation(element, content);
             default -> {
-                // Невідомий тег - просто текст
                 String text = element.text();
                 if (text != null && !text.trim().isEmpty()) {
                     content.append("<p>").append(escapeHtml(text.trim())).append("</p>\n");
@@ -463,6 +520,8 @@ public class JsoupFb2Parser {
             }
         }
     }
+
+    // ==================== ОБРОБКА ПАРАГРАФІВ ====================
 
     private void processParagraph(Element element, StringBuilder content, Map<String, String> footnotes) {
         String html = processElementContent(element, footnotes);
@@ -473,6 +532,8 @@ public class JsoupFb2Parser {
                     .append("</p>\n");
         }
     }
+
+    // ==================== ОБРОБКА ПОСИЛАНЬ ====================
 
     private void processLink(Element element, StringBuilder content, Map<String, String> footnotes) {
         String href = element.attr("href");
@@ -506,6 +567,8 @@ public class JsoupFb2Parser {
         content.append(escapeHtml(text));
     }
 
+    // ==================== ОБРОБКА ВМІСТУ ЕЛЕМЕНТІВ ====================
+
     private String processElementContent(Element element, Map<String, String> footnotes) {
         if (element == null) {
             return null;
@@ -525,6 +588,9 @@ public class JsoupFb2Parser {
 
                 if ("a".equals(tag)) {
                     processLink(child, result, footnotes);
+                } else if (tag.contains("image")) {
+                    // Обробка зображень всередині контенту (наприклад, всередині <p>)
+                    processImage(child, result);
                 } else {
                     String innerHtml = processElementContent(child, footnotes);
                     if (innerHtml != null && !innerHtml.trim().isEmpty()) {
@@ -544,7 +610,7 @@ public class JsoupFb2Parser {
         return result.toString();
     }
 
-    // ==================== Допоміжні методи для різних тегів ====================
+    // ==================== ДОПОМІЖНІ МЕТОДИ ====================
 
     private String findFirstParagraphId(StringBuilder content) {
         if (content == null || content.length() == 0) {
@@ -687,24 +753,34 @@ public class JsoupFb2Parser {
         }
     }
 
-    private void processImage(Element element, StringBuilder content) {
-        String href = element.attr("href");
-        if (href == null || href.isEmpty()) {
-            href = element.attr("xlink:href");
-        }
-        if (href == null || href.isEmpty()) {
-            href = element.attr("src");
-        }
-
-        if (href != null && href.startsWith("#")) {
-            String imageId = href.substring(1);
-            content.append("<img data-image-id=\"").append(escapeHtml(imageId))
-                    .append("\" src=\"data:image/jpeg;base64,PLACEHOLDER\" alt=\"Зображення\"/>");
-        } else if (href != null && !href.isEmpty()) {
-            content.append("<img src=\"").append(escapeHtml(href))
-                    .append("\" alt=\"Зображення\"/>");
+    private void processDate(Element element, StringBuilder content) {
+        String text = element.text();
+        if (text != null && !text.trim().isEmpty()) {
+            content.append("<span class=\"date\">")
+                    .append(escapeHtml(text.trim()))
+                    .append("</span>");
         }
     }
+
+    private void processTranslator(Element element, StringBuilder content) {
+        String text = element.text();
+        if (text != null && !text.trim().isEmpty()) {
+            content.append("<span class=\"translator\">")
+                    .append(escapeHtml(text.trim()))
+                    .append("</span>");
+        }
+    }
+
+    private void processAnnotation(Element element, StringBuilder content) {
+        String html = processElementContent(element, new HashMap<>());
+        if (html != null && !html.trim().isEmpty()) {
+            content.append("<div class=\"annotation\">")
+                    .append(html)
+                    .append("</div>\n");
+        }
+    }
+
+    // ==================== ВИНОСКИ ====================
 
     private Chapter createNotesChapter(Map<String, String> footnotes) {
         if (footnotes.isEmpty()) {
@@ -738,7 +814,7 @@ public class JsoupFb2Parser {
                 .build();
     }
 
-    // ==================== Допоміжні методи ====================
+    // ==================== ДОПОМІЖНІ МЕТОДИ ====================
 
     private String escapeHtml(String text) {
         if (text == null) return "";

@@ -1,6 +1,5 @@
 package com.myhomelibcorp.ui.reader;
 
-import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import com.myhomelibcorp.reader.core.ReaderSettings;
 import com.myhomelibcorp.reader.service.ReaderScheduler;
 import com.myhomelibcorp.reader.service.ReaderSettingsService;
@@ -48,6 +47,7 @@ public class ReaderSettingsController {
     @FXML private CheckBox pageModeCheck;
 
     private Runnable onSaveCallback;
+    private boolean isUpdatingUI = false;
 
     @FXML
     public void initialize() {
@@ -72,13 +72,14 @@ public class ReaderSettingsController {
 
         // Режими ширини тексту
         widthModeCombo.getItems().addAll(
-                "narrow",    // Вузький
-                "medium",    // Середній
-                "wide",      // Широкий
-                "full"       // На весь екран
+                "narrow",
+                "medium",
+                "wide",
+                "full"
         );
         widthModeCombo.setValue("medium");
 
+        // Налаштовуємо відображення для ComboBox
         widthModeCombo.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
             @Override
             protected void updateItem(String item, boolean empty) {
@@ -114,31 +115,80 @@ public class ReaderSettingsController {
             }
         });
 
-        // Слухачі
+        // Слухачі з флагом isUpdatingUI
         widthModeCombo.valueProperty().addListener((obs, old, val) -> {
-            if (val != null && !val.equals(old)) {
+            if (!isUpdatingUI && val != null && !val.equals(old)) {
                 applyCurrentSettings();
             }
         });
 
         pageModeCheck.selectedProperty().addListener((obs, old, val) -> {
-            applyCurrentSettings();
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
         });
 
-        fontFamilyCombo.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        fontSizeSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        lineSpacingSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        hyphenationCheck.selectedProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        autoScrollCheck.selectedProperty().addListener((obs, old, val) -> {
-            // Автоскрол застосовується при збереженні
+        fontFamilyCombo.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI && val != null && !val.equals(old)) {
+                applyCurrentSettings();
+            }
         });
-        themeCombo.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        marginTopSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        marginBottomSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        marginLeftSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        marginRightSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
-        firstLineIndentSlider.valueProperty().addListener((obs, old, val) -> applyCurrentSettings());
 
+        fontSizeSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        lineSpacingSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        hyphenationCheck.selectedProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        themeCombo.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI && val != null && !val.equals(old)) {
+                applyCurrentSettings();
+            }
+        });
+
+        marginTopSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        marginBottomSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        marginLeftSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        marginRightSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        firstLineIndentSlider.valueProperty().addListener((obs, old, val) -> {
+            if (!isUpdatingUI) {
+                applyCurrentSettings();
+            }
+        });
+
+        // Завантажуємо налаштування
         loadSettings();
     }
 
@@ -147,24 +197,53 @@ public class ReaderSettingsController {
     }
 
     private void loadSettings() {
-        ReaderSettings settings = settingsService.getSettings();
-        fontFamilyCombo.setValue(settings.getFontFamily());
-        fontSizeSlider.setValue(settings.getFontSize());
-        lineSpacingSlider.setValue(settings.getLineSpacing());
-        hyphenationCheck.setSelected(settings.isHyphenation());
-        autoScrollCheck.setSelected(settings.isAutoScroll());
-        themeCombo.setValue(settings.getTheme());
-        customCssArea.setText(settings.getCustomCss());
-        marginTopSlider.setValue(settings.getMarginTop());
-        marginBottomSlider.setValue(settings.getMarginBottom());
-        marginLeftSlider.setValue(settings.getMarginLeft());
-        marginRightSlider.setValue(settings.getMarginRight());
-        firstLineIndentSlider.setValue(settings.getFirstLineIndent());
-        widthModeCombo.setValue(settings.getWidthMode() != null ? settings.getWidthMode() : "medium");
-        pageModeCheck.setSelected(settings.isPageMode());
+        isUpdatingUI = true;
+
+        try {
+            settingsService.reload();
+            ReaderSettings settings = settingsService.getSettings();
+
+            log.info("Loading settings into UI: theme={}, widthMode={}, fontSize={}",
+                    settings.getTheme(), settings.getWidthMode(), settings.getFontSize());
+
+            fontFamilyCombo.setValue(settings.getFontFamily());
+            fontSizeSlider.setValue(settings.getFontSize());
+            lineSpacingSlider.setValue(settings.getLineSpacing());
+            hyphenationCheck.setSelected(settings.isHyphenation());
+            autoScrollCheck.setSelected(settings.isAutoScroll());
+            customCssArea.setText(settings.getCustomCss());
+            marginTopSlider.setValue(settings.getMarginTop());
+            marginBottomSlider.setValue(settings.getMarginBottom());
+            marginLeftSlider.setValue(settings.getMarginLeft());
+            marginRightSlider.setValue(settings.getMarginRight());
+            firstLineIndentSlider.setValue(settings.getFirstLineIndent());
+            pageModeCheck.setSelected(settings.isPageMode());
+
+            String currentTheme = settings.getTheme();
+            if (currentTheme != null && !currentTheme.isEmpty()) {
+                themeCombo.setValue(currentTheme);
+                log.debug("Theme set to: {}", currentTheme);
+            }
+
+            String currentWidthMode = settings.getWidthMode();
+            if (currentWidthMode != null && !currentWidthMode.isEmpty()) {
+                widthModeCombo.setValue(currentWidthMode);
+                log.debug("Width mode set to: {}", currentWidthMode);
+            }
+
+            log.info("UI loaded: themeCombo={}, widthModeCombo={}",
+                    themeCombo.getValue(), widthModeCombo.getValue());
+
+        } finally {
+            isUpdatingUI = false;
+        }
     }
 
     private void applyCurrentSettings() {
+        if (isUpdatingUI) {
+            return;
+        }
+
         ReaderSession session = sessionManager.getCurrentSession();
         if (session != null && session.isActive()) {
             ReaderSettings tempSettings = settingsService.getSettings();
@@ -190,7 +269,10 @@ public class ReaderSettingsController {
     @FXML
     private void onSave() {
         try {
+            isUpdatingUI = true;
+
             ReaderSettings settings = settingsService.getSettings();
+
             settings.setFontFamily(fontFamilyCombo.getValue());
             settings.setFontSize(fontSizeSlider.getValue());
             settings.setLineSpacing(lineSpacingSlider.getValue());
@@ -224,6 +306,8 @@ public class ReaderSettingsController {
         } catch (Exception e) {
             log.error("Помилка збереження налаштувань Reader", e);
             dialogService.showError("Помилка", "Не вдалося зберегти налаштування: " + e.getMessage());
+        } finally {
+            isUpdatingUI = false;
         }
     }
 
@@ -263,7 +347,7 @@ public class ReaderSettingsController {
             return "''";
         }
 
-        String escaped = css
+        return "'" + css
                 .replace("\\", "\\\\")
                 .replace("'", "\\'")
                 .replace("\"", "\\\"")
@@ -271,11 +355,8 @@ public class ReaderSettingsController {
                 .replace("\r", "\\r")
                 .replace("\t", "\\t")
                 .replace("\f", "\\f")
-                .replace("\b", "\\b");
-
-        escaped = Pattern.compile("[\\x00-\\x1F\\x7F]").matcher(escaped).replaceAll("");
-
-        return "'" + escaped + "'";
+                .replace("\b", "\\b")
+                .replaceAll("[\\x00-\\x1F\\x7F]", "") + "'";
     }
 
     @FXML

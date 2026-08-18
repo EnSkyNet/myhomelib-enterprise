@@ -12,11 +12,11 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.TextField;
 import javafx.scene.input.MouseButton;
+import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.Optional;
 import java.util.function.Consumer;
 
 @Component
@@ -61,6 +61,14 @@ public class SavedSearchesController {
 
         // Контекстне меню
         ContextMenu contextMenu = new ContextMenu();
+        MenuItem loadItem = new MenuItem("🔍 Завантажити");
+        loadItem.setOnAction(e -> {
+            SavedSearch selected = savedSearchesListView.getSelectionModel().getSelectedItem();
+            if (selected != null && onSearchSelected != null) {
+                onSearchSelected.accept(selected.getQuery());
+            }
+        });
+
         MenuItem deleteItem = new MenuItem("🗑 Видалити");
         deleteItem.setOnAction(e -> {
             SavedSearch selected = savedSearchesListView.getSelectionModel().getSelectedItem();
@@ -68,7 +76,8 @@ public class SavedSearchesController {
                 deleteSavedSearch(selected);
             }
         });
-        contextMenu.getItems().add(deleteItem);
+
+        contextMenu.getItems().addAll(loadItem, deleteItem);
         savedSearchesListView.setContextMenu(contextMenu);
 
         loadSearches();
@@ -130,6 +139,14 @@ public class SavedSearchesController {
             });
         } catch (Exception e) {
             log.error("Помилка завантаження збережених пошуків", e);
+        }
+    }
+
+    @FXML
+    private void onClose() {
+        Stage stage = (Stage) savedSearchesListView.getScene().getWindow();
+        if (stage != null) {
+            stage.close();
         }
     }
 }

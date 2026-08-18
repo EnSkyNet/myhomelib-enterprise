@@ -35,7 +35,7 @@ public class CollectionController {
     private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final StatisticsService statisticsService;
     private final ApplicationEventPublisher eventPublisher;
-    private final CollectionManagementService collectionManagementService; // <-- Новий сервіс
+    private final CollectionManagementService collectionManagementService;
 
     public void switchToCollection(Collection collection, Runnable onComplete) {
         if (collection == null) {

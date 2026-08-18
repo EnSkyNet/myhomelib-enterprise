@@ -3,58 +3,160 @@
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
+<?import javafx.scene.web.WebView?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.myhomelibcorp.ui.search.SearchWorkspaceController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;">
+      fx:controller="com.myhomelibcorp.ui.reader.ReaderWorkspaceController"
+      spacing="0"
+      style="-fx-background-color: #f5f5f5;"
+      VBox.vgrow="ALWAYS"
+      prefHeight="0"
+      minHeight="0"
+      onKeyPressed="#onKeyPressed">
 
-    <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="Пошук" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <!-- ToolBar -->
+    <ToolBar style="-fx-background-color: #e0e0e0; -fx-padding: 5;">
+        <Button text="← Назад" onAction="#onBack" style="-fx-font-weight: bold;"/>
+        <Separator orientation="VERTICAL"/>
+        <Label text="Книга:"/>
+        <Label fx:id="bookTitleLabel" text="Назва" style="-fx-font-weight: bold;"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <TextField fx:id="searchField" promptText="Введіть назву, автора, серію..." prefWidth="300"/>
-        <Button text="Знайти" onAction="#onSearch" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
-        <Button text="✕" onAction="#onClear"/>
+
+        <Button text="🔍" onAction="#onToggleSearch">
+            <tooltip><Tooltip text="Пошук (Ctrl+F)"/></tooltip>
+        </Button>
+        <Button text="⛶" onAction="#onToggleFullscreen">
+            <tooltip><Tooltip text="Повноекранний режим (F11)"/></tooltip>
+        </Button>
+
+        <Button text="📄" onAction="#onTogglePageMode" style="-fx-font-size: 14px;">
+            <tooltip><Tooltip text="Режим сторінок (вкл/викл)"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="◀" onAction="#onPrevPage" style="-fx-font-size: 14px;">
+            <tooltip><Tooltip text="Попередня сторінка (PageUp)"/></tooltip>
+        </Button>
+        <Button text="▶" onAction="#onNextPage" style="-fx-font-size: 14px;">
+            <tooltip><Tooltip text="Наступна сторінка (PageDown)"/></tooltip>
+        </Button>
+        <Button text="🔢" onAction="#onGoToPage" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Перейти на сторінку (Ctrl+G)"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+
+        <Button text="▶▶" onAction="#onToggleAutoScroll">
+            <tooltip><Tooltip text="Автоскрол (Space)"/></tooltip>
+        </Button>
+        <Button text="+" onAction="#onAutoScrollSpeedUp">
+            <tooltip><Tooltip text="Збільшити швидкість автоскролу"/></tooltip>
+        </Button>
+        <Button text="−" onAction="#onAutoScrollSpeedDown">
+            <tooltip><Tooltip text="Зменшити швидкість автоскролу"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+
+        <!-- Кнопки ширини тексту -->
+        <Button text="⬜" onAction="#onWidthModeNarrow" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Вузька ширина тексту"/></tooltip>
+        </Button>
+        <Button text="⬛" onAction="#onWidthModeMedium" style="-fx-font-size: 12px; -fx-font-weight: bold;">
+            <tooltip><Tooltip text="Середня ширина тексту"/></tooltip>
+        </Button>
+        <Button text="⬛⬛" onAction="#onWidthModeWide" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Широка ширина тексту"/></tooltip>
+        </Button>
+        <Button text="▬" onAction="#onWidthModeFull" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="На весь екран"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+
+        <Button text="🔍+" onAction="#onZoomIn">
+            <tooltip><Tooltip text="Збільшити масштаб (Ctrl++)"/></tooltip>
+        </Button>
+        <Button text="🔍−" onAction="#onZoomOut">
+            <tooltip><Tooltip text="Зменшити масштаб (Ctrl+-)"/></tooltip>
+        </Button>
+        <Button text="100%" onAction="#onZoomReset">
+            <tooltip><Tooltip text="Скинути масштаб (Ctrl+0)"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="🎨" onAction="#onToggleTheme">
+            <tooltip><Tooltip text="Тема (світла/темна)"/></tooltip>
+        </Button>
+        <Button text="📑" onAction="#onToggleToc">
+            <tooltip><Tooltip text="Зміст"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="⭐" onAction="#onAddBookmark">
+            <tooltip><Tooltip text="Додати закладку"/></tooltip>
+        </Button>
+        <Button text="⭐" onAction="#onOpenBookmarks">
+            <tooltip><Tooltip text="Закладки"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="🗑️" onAction="#onClearCache" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Очистити кеш зображень"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+        <Button text="📊" onAction="#onShowStats">
+            <tooltip><Tooltip text="Статистика читання"/></tooltip>
+        </Button>
+        <Button text="⚙️" onAction="#onShowSettings">
+            <tooltip><Tooltip text="Налаштування"/></tooltip>
+        </Button>
+    </ToolBar>
+
+    <!-- Панель пошуку -->
+    <HBox fx:id="searchBar" spacing="5" alignment="CENTER_LEFT"
+          style="-fx-background-color: #f0f0f0; -fx-padding: 5 10; -fx-border-color: #ccc; -fx-border-width: 0 0 1 0;"
+          visible="false" managed="false">
+        <Label text="Пошук:"/>
+        <TextField fx:id="searchField" promptText="Введіть текст..." HBox.hgrow="ALWAYS"
+                   onAction="#onSearchFieldAction"/>
+        <Label fx:id="searchStatus" text="0/0" style="-fx-font-weight: bold; -fx-min-width: 40;"/>
+        <Button text="▲" onAction="#onSearchPrev" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Попередній збіг (Shift+Ctrl+G)"/></tooltip>
+        </Button>
+        <Button text="▼" onAction="#onSearchNext" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Наступний збіг (Ctrl+G)"/></tooltip>
+        </Button>
+        <Button text="✕" onAction="#onSearchClose">
+            <tooltip><Tooltip text="Закрити пошук (Escape)"/></tooltip>
+        </Button>
     </HBox>
 
-    <Label fx:id="statusLabel" text="Введіть запит для пошуку" style="-fx-font-style: italic; -fx-text-fill: #666;"/>
+    <!-- WebView контейнер -->
+    <StackPane fx:id="webViewContainer"
+               VBox.vgrow="ALWAYS"
+               style="-fx-background-color: #ffffff;"
+               onKeyPressed="#onKeyPressed">
 
-    <Separator/>
+        <!-- WebView -->
+        <WebView fx:id="webView" visible="false" managed="false"/>
 
-    <VBox spacing="15" VBox.vgrow="ALWAYS">
-        <!-- Автори -->
-        <VBox fx:id="authorsSection" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-            <HBox spacing="5">
-                <Label text="Автори" style="-fx-font-weight: bold;"/>
-                <Label fx:id="authorsCountLabel" text="(0)"/>
-            </HBox>
-            <ListView fx:id="authorsListView" prefHeight="120"/>
+        <!-- Індикатор завантаження -->
+        <VBox fx:id="loadingIndicator"
+              alignment="CENTER"
+              spacing="15"
+              visible="false"
+              managed="false"
+              style="-fx-background-color: #ffffff; -fx-padding: 40;">
+
+            <ProgressIndicator fx:id="loadingProgress" prefWidth="60" prefHeight="60"/>
+            <Label fx:id="loadingLabel" text="Завантаження книги..." style="-fx-font-size: 16px; -fx-text-fill: #666666;"/>
+            <Label fx:id="loadingDetailLabel" text="" style="-fx-font-size: 12px; -fx-text-fill: #999999;"/>
         </VBox>
 
-        <!-- Серії -->
-        <VBox fx:id="seriesSection" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-            <HBox spacing="5">
-                <Label text="Серії" style="-fx-font-weight: bold;"/>
-                <Label fx:id="seriesCountLabel" text="(0)"/>
-            </HBox>
-            <ListView fx:id="seriesListView" prefHeight="120"/>
-        </VBox>
+    </StackPane>
 
-        <!-- Жанри -->
-        <VBox fx:id="genresSection" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;">
-            <HBox spacing="5">
-                <Label text="Жанри" style="-fx-font-weight: bold;"/>
-                <Label fx:id="genresCountLabel" text="(0)"/>
-            </HBox>
-            <ListView fx:id="genresListView" prefHeight="120"/>
-        </VBox>
-
-        <!-- Книги -->
-        <VBox fx:id="booksSection" style="-fx-background-color: white; -fx-padding: 10; -fx-border-color: #ddd; -fx-border-radius: 5;" VBox.vgrow="ALWAYS">
-            <HBox spacing="5">
-                <Label text="Книги" style="-fx-font-weight: bold;"/>
-                <Label fx:id="booksCountLabel" text="(0)"/>
-            </HBox>
-            <ListView fx:id="booksListView" prefHeight="300" VBox.vgrow="ALWAYS"/>
-        </VBox>
-    </VBox>
+    <!-- Нижня панель -->
+    <HBox style="-fx-background-color: #e0e0e0; -fx-padding: 5;" spacing="10" alignment="CENTER_LEFT"
+          prefHeight="30" minHeight="30" maxHeight="30">
+        <ProgressBar fx:id="progressBar" prefWidth="200" progress="0"/>
+        <Label fx:id="progressLabel" text="0%"/>
+        <Region HBox.hgrow="ALWAYS"/>
+        <Label fx:id="bookmarksLabel" text="⭐ 0"/>
+        <Label text="|"/>
+        <Label fx:id="pageInfoLabel" text="Розділ 1"/>
+    </HBox>
 </VBox>

@@ -35,6 +35,7 @@ public class BookmarksController {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
+                    setTooltip(null);
                 } else {
                     String text = item.getTitle();
                     if (item.getChapterTitle() != null && !item.getChapterTitle().isEmpty()) {
@@ -52,6 +53,7 @@ public class BookmarksController {
             if (e.getClickCount() == 2) {
                 Bookmark selected = bookmarksListView.getSelectionModel().getSelectedItem();
                 if (selected != null && onBookmarkSelected != null) {
+                    // Асинхронний перехід з callback для закриття діалогу
                     onBookmarkSelected.accept(selected);
                     closeDialog();
                 }
@@ -91,6 +93,12 @@ public class BookmarksController {
         this.onBookmarkSelected = onBookmarkSelected;
         this.onBookmarkDeleted = onBookmarkDeleted;
         bookmarksListView.getItems().setAll(bookmarks);
+
+        if (bookmarks.isEmpty()) {
+            bookmarksListView.setPlaceholder(
+                    new javafx.scene.control.Label("Немає закладок для цієї книги")
+            );
+        }
     }
 
     @FXML

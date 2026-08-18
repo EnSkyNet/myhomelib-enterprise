@@ -16,11 +16,11 @@ import javafx.scene.control.Button;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
-import javafx.scene.layout.HBox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
@@ -134,13 +134,11 @@ public class NavigationPanelController {
     }
 
     private void setActiveButton(Button activeButton) {
-        // Скидаємо стиль всіх кнопок
         String inactiveStyle = "-fx-background-color: transparent; -fx-text-fill: #333333; -fx-font-weight: normal;";
         authorsButton.setStyle(inactiveStyle);
         seriesButton.setStyle(inactiveStyle);
         genresButton.setStyle(inactiveStyle);
 
-        // Встановлюємо активний стиль
         String activeStyle = "-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold; -fx-background-radius: 4;";
         activeButton.setStyle(activeStyle);
     }
@@ -149,11 +147,16 @@ public class NavigationPanelController {
         currentMode = NavigationMode.AUTHORS;
         setActiveButton(authorsButton);
 
+        // ВИПРАВЛЕНО: сортуємо авторів за прізвищем (або повним ім'ям)
         List<Author> authors = dictionaryCache.getAllAuthors().stream()
+                .sorted(Comparator.comparing(a -> {
+                    String fullName = a.getFullName();
+                    return fullName != null ? fullName.toLowerCase() : "";
+                }))
                 .collect(Collectors.toList());
         this.allAuthors = authors;
         filterList();
-        log.info("📚 Завантажено {} авторів", authors.size());
+        log.info("📚 Завантажено та відсортовано {} авторів", authors.size());
     }
 
     public void loadSeries() {
@@ -161,15 +164,19 @@ public class NavigationPanelController {
         setActiveButton(seriesButton);
 
         loadNavigationDataUseCase.execute().thenAccept(data -> {
+            // ВИПРАВЛЕНО: сортуємо серії за назвою
             this.allSeries = data.getSeriesNames().stream()
                     .map(name -> new Series(SeriesId.generate(), name, null))
+                    .sorted(Comparator.comparing(s -> {
+                        String name = s.getName();
+                        return name != null ? name.toLowerCase() : "";
+                    }))
                     .collect(Collectors.toList());
 
-            // Оновлюємо кеш серій
             dictionaryCache.loadSeries(allSeries);
 
             filterList();
-            log.info("📚 Завантажено {} серій", allSeries.size());
+            log.info("📚 Завантажено та відсортовано {} серій", allSeries.size());
         }).exceptionally(ex -> {
             log.error("Помилка завантаження серій", ex);
             return null;
@@ -181,9 +188,16 @@ public class NavigationPanelController {
         setActiveButton(genresButton);
 
         loadNavigationDataUseCase.execute().thenAccept(data -> {
-            this.allGenres = data.getGenres();
+            // ВИПРАВЛЕНО: сортуємо жанри за назвою
+            this.allGenres = data.getGenres().stream()
+                    .sorted(Comparator.comparing(g -> {
+                        String name = g.getName();
+                        return name != null ? name.toLowerCase() : "";
+                    }))
+                    .collect(Collectors.toList());
+
             filterList();
-            log.info("📚 Завантажено {} жанрів", allGenres.size());
+            log.info("📚 Завантажено та відсортовано {} жанрів", allGenres.size());
         }).exceptionally(ex -> {
             log.error("Помилка завантаження жанрів", ex);
             return null;
@@ -198,7 +212,7 @@ public class NavigationPanelController {
             switch (currentMode) {
                 case AUTHORS -> {
                     List<Author> filtered = allAuthors.stream()
-                            .filter(a -> matchesFilter(a.getLastName(), letter, query))
+                            .filter(a -> matchesFilter(a.getFullName(), letter, query))
                             .collect(Collectors.toList());
                     navigationListView.getItems().setAll(filtered);
                 }

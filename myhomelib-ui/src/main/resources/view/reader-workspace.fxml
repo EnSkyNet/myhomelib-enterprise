@@ -28,7 +28,6 @@
             <tooltip><Tooltip text="Повноекранний режим (F11)"/></tooltip>
         </Button>
 
-        <!-- Кнопки режиму сторінок -->
         <Button text="📄" onAction="#onTogglePageMode" style="-fx-font-size: 14px;">
             <tooltip><Tooltip text="Режим сторінок (вкл/викл)"/></tooltip>
         </Button>
@@ -54,6 +53,21 @@
             <tooltip><Tooltip text="Зменшити швидкість автоскролу"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
+
+        <Button text="⬜" onAction="#onWidthModeNarrow" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Вузька ширина тексту"/></tooltip>
+        </Button>
+        <Button text="⬛" onAction="#onWidthModeMedium" style="-fx-font-size: 12px; -fx-font-weight: bold;">
+            <tooltip><Tooltip text="Середня ширина тексту"/></tooltip>
+        </Button>
+        <Button text="⬛⬛" onAction="#onWidthModeWide" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="Широка ширина тексту"/></tooltip>
+        </Button>
+        <Button text="▬" onAction="#onWidthModeFull" style="-fx-font-size: 12px;">
+            <tooltip><Tooltip text="На весь екран"/></tooltip>
+        </Button>
+        <Separator orientation="VERTICAL"/>
+
         <Button text="🔍+" onAction="#onZoomIn">
             <tooltip><Tooltip text="Збільшити масштаб (Ctrl++)"/></tooltip>
         </Button>
@@ -114,6 +128,19 @@
                VBox.vgrow="ALWAYS"
                style="-fx-background-color: #ffffff;"
                onKeyPressed="#onKeyPressed">
+
+        <VBox fx:id="loadingIndicator"
+              alignment="CENTER"
+              spacing="15"
+              visible="false"
+              managed="false"
+              style="-fx-background-color: #ffffff; -fx-padding: 40;">
+
+            <ProgressIndicator fx:id="loadingProgress" prefWidth="60" prefHeight="60"/>
+            <Label fx:id="loadingLabel" text="Завантаження книги..." style="-fx-font-size: 16px; -fx-text-fill: #666666;"/>
+            <Label fx:id="loadingDetailLabel" text="" style="-fx-font-size: 12px; -fx-text-fill: #999999;"/>
+        </VBox>
+
     </StackPane>
 
     <!-- Нижня панель -->

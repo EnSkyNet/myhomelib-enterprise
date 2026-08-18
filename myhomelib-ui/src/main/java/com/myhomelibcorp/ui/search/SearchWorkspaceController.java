@@ -7,21 +7,34 @@ import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
 import com.myhomelibcorp.application.search.SearchService;
+import com.myhomelibcorp.application.usecase.search.DeleteSavedSearchUseCase;
+import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
+import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.ui.controller.SavedSearchesController;
+import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
+import javafx.fxml.FXMLLoader;
+import javafx.scene.Parent;
+import javafx.scene.Scene;
+import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.VBox;
+import javafx.stage.Modality;
+import javafx.stage.Stage;
 import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -38,6 +51,12 @@ public class SearchWorkspaceController {
     private final BookMapper bookMapper;
     private final GenreMapper genreMapper;
     private final ApplicationState appState;
+    private final ApplicationContext springContext;
+    private final DialogService dialogService;
+    private final SaveSearchUseCase saveSearchUseCase;
+    private final LoadSavedSearchesUseCase loadSavedSearchesUseCase;
+    private final DeleteSavedSearchUseCase deleteSavedSearchUseCase;
+    private final UiBackgroundExecutor executor;
 
     @FXML private TextField searchField;
     @FXML private VBox resultsContainer;
@@ -59,6 +78,9 @@ public class SearchWorkspaceController {
     @FXML private ListView<BookDto> booksListView;
     @FXML private Label booksCountLabel;
 
+    @FXML private Button saveSearchButton;
+    @FXML private Button savedSearchesButton;
+
     private String lastQuery = "";
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
@@ -67,12 +89,20 @@ public class SearchWorkspaceController {
     public void initialize() {
         setupListViews();
         setupSearchListener();
+        setupButtons();
         searchField.requestFocus();
         setSectionVisible(authorsSection, false);
         setSectionVisible(seriesSection, false);
         setSectionVisible(genresSection, false);
         setSectionVisible(booksSection, false);
     }
+
+    private void setupButtons() {
+        saveSearchButton.setOnAction(e -> onSaveSearch());
+        savedSearchesButton.setOnAction(e -> onOpenSavedSearches());
+    }
+
+    // ==================== НАЛАШТУВАННЯ СПИСКІВ ====================
 
     private void setupListViews() {
         authorsListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
@@ -131,6 +161,8 @@ public class SearchWorkspaceController {
         });
     }
 
+    // ==================== ПОШУК ====================
+
     private void setupSearchListener() {
         searchField.textProperty().addListener((obs, old, query) -> {
             debounce.stop();
@@ -139,6 +171,9 @@ public class SearchWorkspaceController {
         });
     }
 
+    /**
+     * ВИПРАВЛЕНО: використовує Executor замість new Thread()
+     */
     public void performSearch(String query) {
         this.lastQuery = query;
         if (query == null || query.isBlank()) {
@@ -148,15 +183,18 @@ public class SearchWorkspaceController {
         }
 
         statusLabel.setText("Пошук...");
-        new Thread(() -> {
+
+        executor.submit(() -> {
             try {
                 Map<String, Object> results = searchService.searchAll(query);
                 UiExecutor.runOnUiThread(() -> updateResults(results));
+                return null;
             } catch (Exception e) {
                 log.error("Search failed", e);
                 UiExecutor.runOnUiThread(() -> statusLabel.setText("Помилка пошуку: " + e.getMessage()));
+                return null;
             }
-        }).start();
+        });
     }
 
     @SuppressWarnings("unchecked")
@@ -241,6 +279,73 @@ public class SearchWorkspaceController {
         }
     }
 
-    @FXML public void onSearch() { String q = searchField.getText(); if (q != null && !q.isBlank()) performSearch(q); }
-    @FXML public void onClear() { searchField.clear(); clearResults(); searchField.requestFocus(); }
+    // ==================== ЗБЕРЕЖЕНІ ПОШУКИ ====================
+
+    @FXML
+    private void onSaveSearch() {
+        String query = searchField.getText();
+        if (query == null || query.isBlank()) {
+            dialogService.showWarning("Увага", "Введіть запит для збереження");
+            return;
+        }
+
+        String name = dialogService.showTextInput(
+                "Зберегти пошук",
+                "Введіть назву для пошуку",
+                "Назва:",
+                query.length() > 30 ? query.substring(0, 30) + "..." : query
+        ).orElse(null);
+
+        if (name == null || name.isBlank()) {
+            return;
+        }
+
+        try {
+            saveSearchUseCase.execute(name, query, null);
+            dialogService.showInfo("Успішно", "Пошук '" + name + "' збережено");
+        } catch (Exception e) {
+            log.error("Помилка збереження пошуку", e);
+            dialogService.showError("Помилка", "Не вдалося зберегти пошук: " + e.getMessage());
+        }
+    }
+
+    @FXML
+    private void onOpenSavedSearches() {
+        try {
+            FXMLLoader loader = new FXMLLoader(
+                    getClass().getResource("/view/saved-searches.fxml"));
+            loader.setControllerFactory(springContext::getBean);
+            Parent root = loader.load();
+
+            SavedSearchesController controller = loader.getController();
+            controller.setOnSearchSelected(query -> {
+                searchField.setText(query);
+                performSearch(query);
+            });
+
+            Stage stage = new Stage();
+            stage.setTitle("Збережені пошуки");
+            stage.setScene(new Scene(root, 450, 500));
+            stage.initModality(Modality.WINDOW_MODAL);
+            stage.initOwner(searchField.getScene().getWindow());
+            stage.show();
+
+        } catch (Exception e) {
+            log.error("Помилка відкриття збережених пошуків", e);
+            dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
+        }
+    }
+
+    @FXML
+    public void onSearch() {
+        String q = searchField.getText();
+        if (q != null && !q.isBlank()) performSearch(q);
+    }
+
+    @FXML
+    public void onClear() {
+        searchField.clear();
+        clearResults();
+        searchField.requestFocus();
+    }
 }

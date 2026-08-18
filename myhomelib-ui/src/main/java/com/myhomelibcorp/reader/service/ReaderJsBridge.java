@@ -74,6 +74,9 @@ public class ReaderJsBridge {
         }
     }
 
+    // ==================== ВИДАЛЕНО: getCurrentChapterTitle() ====================
+    // Використовуйте ReaderTocService.getCurrentChapterTitle() або ReaderPosition.chapterTitle
+
     /**
      * Прокручує до параграфа з точним charOffset.
      * Використовує DOM Range для точного позиціонування.
@@ -100,7 +103,7 @@ public class ReaderJsBridge {
                     if (offset < 0) offset = 0;
                     if (offset > text.length) offset = text.length;
                     
-                    // ВИПРАВЛЕНО: використовуємо DOM Range для точного позиціонування
+                    // Використовуємо DOM Range для точного позиціонування
                     var textNode = null;
                     var walker = document.createTreeWalker(
                         el,

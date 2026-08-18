@@ -24,7 +24,7 @@ public class ImportEventHandler {
     private final SyncSeriesUseCase syncSeriesUseCase;
     private final BookLoaderService bookLoaderService;
     private final MainController mainController;
-    private final NavigationPanelController navigationPanelController; // <-- НОВА ЗАЛЕЖНІСТЬ
+    private final NavigationPanelController navigationPanelController;
 
     @PostConstruct
     public void init() {
@@ -54,7 +54,7 @@ public class ImportEventHandler {
             appState.getStatusBar().setStatusText(status);
             appState.getStatusBar().setProgressVisible(false);
 
-            // 3. Синхронізуємо серії
+            // 3. Синхронізуємо серії (ЄДИНЕ МІСЦЕ)
             try {
                 syncSeriesUseCase.execute();
                 log.info("Серії синхронізовано після імпорту");
@@ -65,8 +65,8 @@ public class ImportEventHandler {
             // 4. Оновлюємо список книг
             bookLoaderService.loadAllBooks();
 
-            // 5. Оновлюємо навігацію через новий NavigationPanelController
-            navigationPanelController.refreshAll(); // <-- НОВИЙ МЕТОД
+            // 5. Оновлюємо навігацію
+            navigationPanelController.refreshAll();
 
             // 6. Показуємо дашборд
             mainController.showDashboard();

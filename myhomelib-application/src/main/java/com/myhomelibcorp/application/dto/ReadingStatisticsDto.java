@@ -1,24 +1,28 @@
-package com.myhomelibcorp.reader.model;
+package com.myhomelibcorp.application.dto;
 
+import lombok.AllArgsConstructor;
 import lombok.Builder;
-import lombok.Value;
+import lombok.Data;
+import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-@Value
+@Data
 @Builder
-public class ReaderReadingStats {
-    String bookId;
-    String bookTitle;
-    LocalDateTime firstReadAt;
-    LocalDateTime lastReadAt;
-    long totalReadingSeconds;
-    int readingSessions;
-    int startPercent;
-    int endPercent;
-    int currentPercent;
-    LocalDateTime completedAt;
+@NoArgsConstructor
+@AllArgsConstructor
+public class ReadingStatisticsDto {
+    private String bookId;
+    private String bookTitle;
+    private LocalDateTime firstReadAt;
+    private LocalDateTime lastReadAt;
+    private long totalReadingSeconds;
+    private int readingSessions;
+    private int startPercent;
+    private int endPercent;
+    private int currentPercent;
+    private LocalDateTime completedAt;
 
     public String getFormattedTotalTime() {
         long seconds = totalReadingSeconds;
@@ -57,11 +61,8 @@ public class ReaderReadingStats {
         return lastReadAt.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
     }
 
-    /**
-     * Створює базову статистику для нової книги.
-     */
-    public static ReaderReadingStats forBook(String bookId, String bookTitle) {
-        return ReaderReadingStats.builder()
+    public static ReadingStatisticsDto forBook(String bookId, String bookTitle) {
+        return ReadingStatisticsDto.builder()
                 .bookId(bookId)
                 .bookTitle(bookTitle)
                 .firstReadAt(LocalDateTime.now())
@@ -74,14 +75,11 @@ public class ReaderReadingStats {
                 .build();
     }
 
-    /**
-     * Оновлює статистику з новою сесією.
-     */
-    public ReaderReadingStats withSession(long durationSeconds, int currentPercent) {
+    public ReadingStatisticsDto withSession(long durationSeconds, int currentPercent) {
         long newTotal = this.totalReadingSeconds + durationSeconds;
         int newSessions = this.readingSessions + 1;
 
-        return ReaderReadingStats.builder()
+        return ReadingStatisticsDto.builder()
                 .bookId(this.bookId)
                 .bookTitle(this.bookTitle)
                 .firstReadAt(this.firstReadAt)
