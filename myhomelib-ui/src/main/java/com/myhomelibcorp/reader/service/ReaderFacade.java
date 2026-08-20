@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 
@@ -39,8 +40,6 @@ public class ReaderFacade {
     private final AtomicBoolean isClosing = new AtomicBoolean(false);
     private final AtomicBoolean isRestoring = new AtomicBoolean(false);
 
-    // ==================== ВІДКРИТТЯ ТА ЗАКРИТТЯ КНИГИ ====================
-
     public ReaderSession openBook(BookId bookId) {
         if (bookId == null) {
             log.warn("Cannot open book: bookId is null");
@@ -49,6 +48,7 @@ public class ReaderFacade {
 
         closeBook();
         isClosing.set(false);
+        isRestoring.set(false);
 
         Optional<BookDto> bookOpt = loadBookByIdUseCase.execute(bookId);
         if (bookOpt.isEmpty()) {
@@ -65,8 +65,8 @@ public class ReaderFacade {
         positionService.loadPosition(bookId.asString())
                 .ifPresent(pos -> {
                     session.setRestorePosition(pos);
-                    log.debug("Loaded position for book {}: {}%, paragraph {}",
-                            bookId, (int) pos.getPercent(), pos.getParagraphId());
+                    log.debug("Loaded position for book {}: {}%, anchor={}",
+                            bookId, (int) pos.getPercent(), pos.getAnchorId());
                 });
 
         statsService.loadOrCreateStats(bookId.asString(), book.getTitle());
@@ -76,21 +76,37 @@ public class ReaderFacade {
 
     public void closeBook() {
         if (isClosing.get()) {
+            log.debug("Close already in progress, skipping");
             return;
         }
 
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
+            log.debug("No active session to close");
             return;
         }
 
         isClosing.set(true);
-        savePositionNow(session);
-        statsService.endReadingSession(session);
-        sessionManager.closeCurrentSession();
+        log.info("Closing book: {}", session.getBook() != null ? session.getBook().getTitle() : "unknown");
 
-        log.info("Book closed");
-        isClosing.set(false);
+        try {
+            boolean saved = positionService.savePositionNow(session);
+            if (saved) {
+                log.info("✅ Position saved successfully before closing");
+            } else {
+                log.warn("⚠️ Failed to save position before closing");
+            }
+
+            statsService.endReadingSession(session);
+            sessionManager.closeCurrentSession();
+
+            log.info("Book closed successfully");
+
+        } catch (Exception e) {
+            log.error("Error while closing book", e);
+        } finally {
+            isClosing.set(false);
+        }
     }
 
     public boolean isBookOpen() {
@@ -131,7 +147,7 @@ public class ReaderFacade {
         }
 
         contentService.loadBookContent(session, () -> {
-            restorePositionAfterLoad(session, null);
+            // Просто завантажуємо книгу, позицію відновлюємо пізніше
             if (onLoaded != null) {
                 scheduler.runOnFxThread(onLoaded);
             }
@@ -140,12 +156,12 @@ public class ReaderFacade {
 
     // ==================== ПОЗИЦІЯ ====================
 
-    public void saveCurrentPosition() {
+    public boolean saveCurrentPosition() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || !session.isActive()) {
-            return;
+            return false;
         }
-        positionService.savePositionNow(session);
+        return positionService.savePositionNow(session);
     }
 
     public void schedulePositionSave(ReaderSession session) {
@@ -155,92 +171,40 @@ public class ReaderFacade {
         positionService.scheduleSave(session);
     }
 
-    public void savePositionNow(ReaderSession session) {
+    /**
+     * ВІДНОВЛЕННЯ ПОЗИЦІЇ - викликається після того, як книга завантажена і показана.
+     */
+    public void restorePositionAfterLoad(ReaderSession session) {
         if (session == null || !session.isActive()) {
-            return;
-        }
-        positionService.savePositionNow(session);
-    }
-
-    public void restorePositionAfterLoad(ReaderSession session, Runnable onComplete) {
-        if (session == null || !session.isActive()) {
-            if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
-            }
             return;
         }
 
         if (isRestoring.getAndSet(true)) {
-            log.debug("Position restore already in progress, skipping duplicate");
-            if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
-            }
             return;
         }
 
         try {
             ReaderPosition pos = session.getRestorePosition();
-            if (pos == null || pos.getParagraphId() == null || pos.getParagraphId().isEmpty()) {
-                updateProgressUI(session, 0);
+            if (pos == null) {
                 isRestoring.set(false);
-                if (onComplete != null) {
-                    scheduler.runOnFxThread(onComplete);
-                }
                 return;
             }
 
-            log.info("Restoring position: book={}, paragraph={}, percent={}%",
-                    session.getBookId(), pos.getParagraphId(), (int)pos.getPercent());
+            log.info("🔄 Restoring position: book={}, anchor={}, percent={}%",
+                    session.getBookId(), pos.getAnchorId(), (int)pos.getPercent());
 
+            // Відновлюємо позицію
             positionService.restorePosition(session, pos, () -> {
                 updateProgressUI(session, pos.getPercent());
-                log.info("Position restored for book {}: {}%, paragraph {}",
-                        session.getBookId(), (int) pos.getPercent(), pos.getParagraphId());
+                log.info("✅ Position restored for book {}: {}%, anchor={}",
+                        session.getBookId(), (int) pos.getPercent(), pos.getAnchorId());
                 isRestoring.set(false);
-                if (onComplete != null) {
-                    scheduler.runOnFxThread(onComplete);
-                }
             });
+
         } catch (Exception e) {
             isRestoring.set(false);
             log.warn("Failed to restore position: {}", e.getMessage());
-            if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
-            }
         }
-    }
-
-    @Deprecated
-    public void restorePositionAfterLoad(ReaderSession session) {
-        restorePositionAfterLoad(session, null);
-    }
-
-    public void restorePosition(Runnable onComplete) {
-        ReaderSession session = sessionManager.getCurrentSession();
-        if (session == null || !session.isActive()) {
-            if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
-            }
-            return;
-        }
-
-        ReaderPosition pos = session.getRestorePosition();
-        if (pos == null) {
-            updateProgressUI(session, 0);
-            if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
-            }
-            return;
-        }
-
-        updateProgressUI(session, pos.getPercent());
-
-        positionService.restorePosition(session, pos, () -> {
-            updateProgressUI(session, pos.getPercent());
-            if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
-            }
-        });
     }
 
     public ReaderPosition getCurrentPosition() {
@@ -402,8 +366,6 @@ public class ReaderFacade {
         return settingsService.getAvailableFonts();
     }
 
-    // ==================== ZOOM ====================
-
     public void setZoom(double zoom) {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null) {
@@ -420,8 +382,6 @@ public class ReaderFacade {
         return session.getZoom();
     }
 
-    // ==================== КЕШ ====================
-
     public void clearCache() {
         contentService.clearCache();
         positionService.clearCache();
@@ -434,8 +394,6 @@ public class ReaderFacade {
         log.info("Image cache cleared");
     }
 
-    // ==================== СТАТИСТИКА ====================
-
     public ReaderReadingStats getReadingStats() {
         ReaderSession session = sessionManager.getCurrentSession();
         if (session == null || session.getBook() == null) {
@@ -443,8 +401,6 @@ public class ReaderFacade {
         }
         return statsService.getStats(session.getBookId());
     }
-
-    // ==================== СЕРВІСИ ДОСТУПУ ====================
 
     public ReaderPositionService getPositionService() {
         return positionService;

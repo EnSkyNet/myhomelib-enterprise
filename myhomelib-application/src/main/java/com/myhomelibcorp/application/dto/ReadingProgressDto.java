@@ -13,8 +13,21 @@ import java.time.LocalDateTime;
 @AllArgsConstructor
 public class ReadingProgressDto {
     private String bookId;
-    private String paragraphId;
+    private String anchorId;
+    private int paragraphIndex;
+
+    @Builder.Default
+    private String paragraphId = "";  // <-- DEFAULT ЗНАЧЕННЯ
+
     private int charOffset;
     private double percent;
+
+    @Builder.Default
+    private String chapterTitle = "";  // <-- DEFAULT ЗНАЧЕННЯ
+
+    @Builder.Default
+    private String chapterId = "";     // <-- DEFAULT ЗНАЧЕННЯ
+
     private LocalDateTime updatedAt;
+    private long readingTimeSeconds;
 }

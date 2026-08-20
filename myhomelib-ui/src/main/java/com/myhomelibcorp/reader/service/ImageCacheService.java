@@ -42,8 +42,8 @@ public class ImageCacheService {
         accessOrder.put(id, System.currentTimeMillis());
         currentCacheSize += dataSize;
 
-        log.debug("Image cached: id={}, size={} KB, total={} MB",
-                id, dataSize / 1024, currentCacheSize / 1024 / 1024);
+        //log.debug("Image cached: id={}, size={} KB, total={} MB",
+        //        id, dataSize / 1024, currentCacheSize / 1024 / 1024);
     }
 
     /**

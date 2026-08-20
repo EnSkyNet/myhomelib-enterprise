@@ -17,12 +17,18 @@ import java.util.stream.Collectors;
 @Slf4j
 public class DocumentToHtmlConverter {
 
+    // ===== ВИПРАВЛЕНО: ДОДАНО АТРИБУТИ ДЛЯ ANCHOR =====
     private static final Safelist HTML_WHITELIST = Safelist.basic()
             .addTags("h1", "h2", "h3", "h4", "h5", "h6", "div", "span", "br",
                     "b", "i", "strong", "em", "u", "s", "sub", "sup", "code", "pre",
                     "blockquote", "q", "ul", "ol", "li", "hr", "img", "a")
             .addAttributes("img", "src", "alt", "width", "height", "data-image-id", "data-cache-key")
-            .addAttributes("p", "data-paragraph-id")
+            // ===== КЛЮЧОВА ЗМІНА: ДОДАНО data-anchor-id =====
+            .addAttributes("p",
+                    "data-paragraph-id",
+                    "data-anchor-id",      // СТАБІЛЬНИЙ ІДЕНТИФІКАТОР
+                    "data-xpath",
+                    "data-paragraph-index")
             .addAttributes("div", "class")
             .addAttributes("span", "class")
             .addAttributes("a", "href", "class", "data-note-id", "target");
@@ -46,9 +52,6 @@ public class DocumentToHtmlConverter {
                 .collect(Collectors.toMap(ImageData::getId, img -> img));
 
         log.info("📚 Converting book: {}, images: {}", metadata.getTitle(), imageMap.size());
-
-        // ДІАГНОСТИКА: виводимо всі ID зображень
-        log.info("🖼️ Image IDs in map: {}", imageMap.keySet());
 
         StringBuilder html = new StringBuilder(1024 * 100);
 
@@ -142,23 +145,7 @@ public class DocumentToHtmlConverter {
         if (chapter.getContent() != null && !chapter.getContent().isEmpty()) {
             String content = chapter.getContent();
 
-            // ДІАГНОСТИКА: перевіряємо наявність плейсхолдерів у кожному розділі
-            if (content.contains("PLACEHOLDER")) {
-                log.info("🔍 Chapter '{}' contains PLACEHOLDER!", chapter.getTitle());
-
-                // Знаходимо всі ID зображень у контенті
-                java.util.regex.Pattern idPattern = java.util.regex.Pattern.compile("data-image-id=\"([^\"]+)\"");
-                java.util.regex.Matcher idMatcher = idPattern.matcher(content);
-                java.util.Set<String> foundIds = new java.util.HashSet<>();
-                while (idMatcher.find()) {
-                    foundIds.add(idMatcher.group(1));
-                }
-                log.info("🔍 Found image IDs in chapter '{}': {}", chapter.getTitle(), foundIds);
-            }
-
-            // ================================================================
-            // ВИПРАВЛЕНО: пряма заміна плейсхолдерів зображень
-            // ================================================================
+            // ===== ОБРОБКА ЗОБРАЖЕНЬ =====
             if (imageMap != null && !imageMap.isEmpty() && content.contains("PLACEHOLDER")) {
                 int totalReplaced = 0;
                 for (Map.Entry<String, ImageData> entry : imageMap.entrySet()) {
@@ -197,7 +184,6 @@ public class DocumentToHtmlConverter {
                     if (content.contains(oldTag1)) {
                         content = content.replace(oldTag1, "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\"");
                         totalReplaced++;
-                        log.debug("✅ Replaced image (JPEG): {}", imageId);
                         continue;
                     }
 
@@ -206,11 +192,10 @@ public class DocumentToHtmlConverter {
                     if (content.contains(oldTag2)) {
                         content = content.replace(oldTag2, "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\"");
                         totalReplaced++;
-                        log.debug("✅ Replaced image (PNG): {}", imageId);
                         continue;
                     }
 
-                    // ВАРІАНТ 3: будь-який src з PLACEHOLDER (за допомогою replaceAll)
+                    // ВАРІАНТ 3: будь-який src з PLACEHOLDER
                     String searchPattern = "data-image-id=\"" + imageId + "\" src=\"[^\"]*PLACEHOLDER[^\"]*\"";
                     java.util.regex.Pattern p = java.util.regex.Pattern.compile(searchPattern);
                     java.util.regex.Matcher m = p.matcher(content);
@@ -218,7 +203,6 @@ public class DocumentToHtmlConverter {
                         String replacement = "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\"";
                         content = m.replaceAll(replacement);
                         totalReplaced++;
-                        log.debug("✅ Replaced image (regex): {}", imageId);
                         continue;
                     }
 
@@ -226,7 +210,6 @@ public class DocumentToHtmlConverter {
                     String simpleSearch = "data-image-id=\"" + imageId + "\"";
                     int startIdx = content.indexOf(simpleSearch);
                     if (startIdx != -1) {
-                        // Знаходимо кінець тега
                         int endIdx = content.indexOf("/>", startIdx);
                         if (endIdx == -1) {
                             endIdx = content.indexOf(">", startIdx);
@@ -236,18 +219,16 @@ public class DocumentToHtmlConverter {
                             String newTag = "data-image-id=\"" + imageId + "\" data-cache-key=\"" + cacheKey + "\" src=\"" + dataUri + "\" />";
                             content = content.replace(oldTag, newTag);
                             totalReplaced++;
-                            log.debug("✅ Replaced image (fallback): {}", imageId);
                         }
-                    } else {
-                        log.warn("❌ Could not find placeholder for image: {}", imageId);
                     }
                 }
 
                 if (totalReplaced > 0) {
-                    log.info("🖼️ Replaced {} images in chapter '{}'", totalReplaced, chapter.getTitle());
+                    log.debug("🖼️ Replaced {} images in chapter '{}'", totalReplaced, chapter.getTitle());
                 }
             }
 
+            // ===== ВИПРАВЛЕНО: SAFELIST ЗБЕРІГАЄ data-anchor-id =====
             String safeContent = Jsoup.clean(content, HTML_WHITELIST);
             sb.append("<div class=\"chapter-content\">\n");
             sb.append(safeContent);

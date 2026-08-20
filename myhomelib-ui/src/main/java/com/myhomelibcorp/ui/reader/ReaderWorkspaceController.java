@@ -40,6 +40,7 @@ import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Component
@@ -85,20 +86,21 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
     private boolean isAutoScrollActive = false;
     private double autoScrollSpeed = 2.0;
 
-    // Стан завантаження
     private enum LoadState {
-        IDLE, LOADING, CONTENT_LOADED, POSITION_RESTORED, READY
+        IDLE,
+        LOADING,
+        CONTENT_LOADED,
+        READY
     }
     private LoadState loadState = LoadState.IDLE;
 
-    // Для відстеження зміни позиції (зберігаємо при будь-якій зміні)
     private String currentParagraphId = "";
     private int currentCharOffset = 0;
     private double currentPercent = -1;
 
     private final AnimationTimer progressUpdateTimer = new AnimationTimer() {
         private long lastUpdate = 0;
-        private static final long UPDATE_INTERVAL = 500_000_000L; // 0.5 секунди
+        private static final long UPDATE_INTERVAL = 500_000_000L;
 
         @Override
         public void handle(long now) {
@@ -116,57 +118,43 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
             }
 
             ReaderPosition pos = readerFacade.getCurrentPosition();
-            if (pos == null || pos.getParagraphId() == null || pos.getParagraphId().isEmpty()) {
+            if (pos == null) {
                 return;
             }
 
-            // Перевіряємо зміну позиції (навіть на 1 символ)
-            boolean paragraphChanged = !pos.getParagraphId().equals(currentParagraphId);
+            String anchorId = pos.getAnchorId() != null ? pos.getAnchorId() : "";
+            boolean anchorChanged = !anchorId.equals(currentParagraphId);
             boolean charOffsetChanged = Math.abs(pos.getCharOffset() - currentCharOffset) > 1;
             boolean percentChanged = Math.abs(pos.getPercent() - currentPercent) > 0.1;
 
-            if (paragraphChanged || charOffsetChanged || percentChanged) {
-                // Оновлюємо UI
+            if (anchorChanged || charOffsetChanged || percentChanged) {
                 updateProgressBar(pos.getPercent());
                 updatePageInfo();
 
-                // Запам'ятовуємо нову позицію
-                currentParagraphId = pos.getParagraphId();
+                currentParagraphId = anchorId;
                 currentCharOffset = pos.getCharOffset();
                 currentPercent = pos.getPercent();
 
-                // Заплановане збереження (з debounce)
                 readerFacade.schedulePositionSave(currentSession);
-
-                log.trace("📖 Position changed: paragraph={}, charOffset={}, percent={}%",
-                        currentParagraphId, currentCharOffset, (int)currentPercent);
             }
         }
     };
 
-    // ==================== INITIALIZE ====================
-
     @FXML
     public void initialize() {
         if (isInitialized.getAndSet(true)) {
-            log.info("ReaderWorkspaceController уже ініціалізовано, пропускаємо");
             return;
         }
-
-        log.info("ReaderWorkspaceController.initialize() - створення WebView програмно");
 
         createWebView();
 
         searchBar.setVisible(false);
         searchBar.setManaged(false);
-
         webViewContainer.setOnKeyPressed(this::onKeyPressed);
         webViewContainer.setFocusTraversable(true);
 
         progressUpdateTimer.start();
         loadState = LoadState.IDLE;
-
-        log.info("ReaderWorkspaceController ініціалізовано");
     }
 
     private void createWebView() {
@@ -190,11 +178,9 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         webViewContainer.getChildren().add(webView);
         webView.setVisible(false);
         webView.setManaged(false);
-
-        log.info("WebView створено програмно");
     }
 
-    // ==================== ВІДКРИТТЯ КНИГИ ====================
+    // ==================== OPEN BOOK ====================
 
     public void setBookId(BookId bookId) {
         if (bookId == null) {
@@ -202,15 +188,12 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
-        log.info("setBookId: {}", bookId);
-
-        // Скидаємо стан
         loadState = LoadState.LOADING;
         currentParagraphId = "";
         currentCharOffset = 0;
         currentPercent = -1;
 
-        showLoadingIndicator("Завантаження книги...", "Читання метаданих...");
+        showLoadingIndicator("Loading book...", "Reading metadata...");
 
         closeCurrentBook();
         isClosing = false;
@@ -237,29 +220,42 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                 scheduler.runOnFxThread(this::enablePageMode);
             }
 
-            updateLoadingDetail("Парсинг та конвертація...");
+            updateLoadingDetail("Parsing and converting...");
 
+            // ===== ЗАВАНТАЖУЄМО КНИГУ =====
             readerFacade.loadBookContent(
                     currentSession,
                     () -> {
                         if (currentSession != null && currentSession.isActive()) {
-                            loadState = LoadState.CONTENT_LOADED;
                             hideLoadingIndicator();
 
-                            readerFacade.restorePositionAfterLoad(currentSession, () -> {
-                                loadState = LoadState.READY;
-                                log.info("Reader is READY");
+                            // ===== ВІДНОВЛЮЄМО ПОЗИЦІЮ ПІСЛЯ ЗАВАНТАЖЕННЯ =====
+                            scheduler.schedule(() -> {
+                                scheduler.runOnFxThread(() -> {
+                                    if (currentSession != null && currentSession.isActive()) {
+                                        readerFacade.restorePositionAfterLoad(currentSession);
 
-                                // Ініціалізуємо поточну позицію
-                                ReaderPosition pos = readerFacade.getCurrentPosition();
-                                if (pos != null) {
-                                    currentParagraphId = pos.getParagraphId() != null ? pos.getParagraphId() : "";
-                                    currentCharOffset = pos.getCharOffset();
-                                    currentPercent = pos.getPercent();
-                                }
+                                        // Чекаємо завершення restore
+                                        scheduler.schedule(() -> {
+                                            scheduler.runOnFxThread(() -> {
+                                                if (currentSession != null && currentSession.isActive()) {
+                                                    ReaderPosition pos = readerFacade.getCurrentPosition();
+                                                    if (pos != null) {
+                                                        currentParagraphId = pos.getAnchorId() != null ? pos.getAnchorId() : "";
+                                                        currentCharOffset = pos.getCharOffset();
+                                                        currentPercent = pos.getPercent();
+                                                        updateProgressBar(pos.getPercent());
+                                                    }
 
-                                loadAutoScrollSettings();
-                            });
+                                                    loadState = LoadState.READY;
+                                                    log.info("Reader is READY");
+                                                    loadAutoScrollSettings();
+                                                }
+                                            });
+                                        }, 500, TimeUnit.MILLISECONDS);
+                                    }
+                                });
+                            }, 300, TimeUnit.MILLISECONDS);
                         } else {
                             hideLoadingIndicator();
                             loadState = LoadState.IDLE;
@@ -267,19 +263,15 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                     },
                     this::updateLoadingDetail
             );
-
-            log.info("Книгу відкрито: {}", currentSession.getBook().getTitle());
         } else {
             hideLoadingIndicator();
             loadState = LoadState.IDLE;
-            showError("Не вдалося відкрити книгу", "Можливо, файл пошкоджено або відсутній.");
+            showError("Failed to open book", "The file may be corrupted or missing.");
         }
     }
 
     private void loadAutoScrollSettings() {
-        if (currentSession == null) {
-            return;
-        }
+        if (currentSession == null) return;
 
         ReaderSettings settings = readerFacade.getSettings();
         autoScrollSpeed = settings.getScrollSpeed();
@@ -291,29 +283,27 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                     if (isAutoScrollActive) {
                         autoScrollService.setSpeed(currentSession, autoScrollSpeed);
                     }
-                    log.info("Auto-scroll started from settings: speed={}", autoScrollSpeed);
                 }
             });
         }
     }
 
-    // ==================== ЗАКРИТТЯ КНИГИ ====================
+    // ==================== CLOSE BOOK ====================
 
     private void closeCurrentBook() {
         if (currentSession != null) {
-            statsService.endReadingSession(currentSession);
             autoScrollService.stop(currentSession);
             isAutoScrollActive = false;
-
-            // Примусове збереження позиції при закритті
-            readerFacade.savePositionNow(currentSession);
-
             readerFacade.closeBook();
             currentSession = null;
+            loadState = LoadState.IDLE;
+            currentParagraphId = "";
+            currentCharOffset = 0;
+            currentPercent = -1;
         }
     }
 
-    // ==================== UI ОНОВЛЕННЯ ====================
+    // ==================== UI UPDATE ====================
 
     private void updateProgressBar(double percent) {
         if (progressBar != null) {
@@ -322,7 +312,6 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         if (progressLabel != null) {
             progressLabel.setText((int) percent + "%");
         }
-
         if (currentSession != null) {
             currentSession.setProgressPercent(percent);
             statsService.updateProgress(currentSession);
@@ -330,9 +319,7 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void updatePageInfo() {
-        if (pageInfoLabel == null) {
-            return;
-        }
+        if (pageInfoLabel == null) return;
 
         ReaderSettings settings = readerFacade.getSettings();
         if (settings.isPageMode()) {
@@ -351,36 +338,30 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                         String current = str.replaceAll(".*current=([0-9]+).*", "$1");
                         String total = str.replaceAll(".*total=([0-9]+).*", "$1");
                         if (current.matches("\\d+") && total.matches("\\d+")) {
-                            pageInfoLabel.setText("Сторінка " + current + " / " + total);
+                            pageInfoLabel.setText("Page " + current + " / " + total);
                             return;
                         }
                     }
                 } catch (Exception e) {
-                    log.debug("Failed to get page info: {}", e.getMessage());
+                    // ignore
                 }
             }
-            pageInfoLabel.setText("Режим сторінок");
+            pageInfoLabel.setText("Page mode");
         } else {
             String chapter = readerFacade.getCurrentChapterTitle();
-            if (chapter != null && !chapter.isEmpty()) {
-                pageInfoLabel.setText("Розділ: " + chapter);
-            } else {
-                pageInfoLabel.setText("Розділ 1");
-            }
+            pageInfoLabel.setText(chapter != null && !chapter.isEmpty() ? "Chapter: " + chapter : "Chapter 1");
         }
     }
 
     private void updateBookmarksCount() {
-        int count = readerFacade.getBookmarkCount();
-        bookmarksLabel.setText("⭐ " + count);
+        bookmarksLabel.setText("⭐ " + readerFacade.getBookmarkCount());
     }
 
-    // ==================== РЕЖИМ СТОРІНОК ====================
+    // ==================== PAGE MODE ====================
 
-    @FXML
-    private void onTogglePageMode() {
+    @FXML private void onTogglePageMode() {
         if (currentSession == null || !currentSession.isActive() || webEngine == null) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
 
@@ -397,29 +378,19 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void enablePageMode() {
         if (webEngine == null) return;
-
         scheduler.runOnFxThread(() -> {
             try {
                 String script = """
                     (function() {
                         var body = document.body;
                         var html = document.documentElement;
-                        
-                        if (!body || !html) return { error: 'No body or html' };
-                        
+                        if (!body || !html) return;
                         var scrollY = window.scrollY || window.pageYOffset || 0;
                         var pageHeight = window.innerHeight - 80;
                         if (pageHeight <= 0) pageHeight = window.innerHeight - 100;
-                        
-                        var totalHeight = Math.max(
-                            html.scrollHeight,
-                            body.scrollHeight,
-                            document.documentElement.scrollHeight
-                        );
-                        
+                        var totalHeight = Math.max(html.scrollHeight, body.scrollHeight, document.documentElement.scrollHeight);
                         var totalPages = Math.max(1, Math.ceil(totalHeight / pageHeight));
                         var currentPage = Math.min(totalPages, Math.max(1, Math.floor(scrollY / pageHeight) + 1));
-                        
                         window.__pageMode = {
                             enabled: true,
                             pageHeight: pageHeight,
@@ -428,56 +399,24 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                             lastScrollY: scrollY,
                             totalHeight: totalHeight
                         };
-                        
                         window.__savedScrollY = scrollY;
-                        
                         var indicator = document.getElementById('page-indicator');
                         if (!indicator) {
                             indicator = document.createElement('div');
                             indicator.id = 'page-indicator';
-                            indicator.style.cssText = [
-                                'position: fixed',
-                                'bottom: 20px',
-                                'left: 50%',
-                                'transform: translateX(-50%)',
-                                'background: rgba(0,0,0,0.75)',
-                                'color: #ffffff',
-                                'padding: 6px 16px',
-                                'border-radius: 20px',
-                                'font-size: 13px',
-                                'font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
-                                'z-index: 1000',
-                                'pointer-events: none',
-                                'user-select: none',
-                                'opacity: 0.8',
-                                'transition: opacity 0.3s ease'
-                            ].join(';');
+                            indicator.style.cssText = 'position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:rgba(0,0,0,0.75);color:#ffffff;padding:6px 16px;border-radius:20px;font-size:13px;z-index:1000;pointer-events:none;user-select:none;opacity:0.8;transition:opacity 0.3s ease';
                             document.body.appendChild(indicator);
                         }
                         indicator.textContent = currentPage + ' / ' + totalPages;
                         indicator.style.display = 'block';
                         indicator.style.opacity = '0.8';
-                        
-                        setTimeout(function() {
-                            indicator.style.opacity = '0.4';
-                        }, 3000);
-                        
-                        var targetScroll = (currentPage - 1) * pageHeight;
-                        window.scrollTo({ top: targetScroll, behavior: 'auto' });
-                        
-                        return { 
-                            totalPages: totalPages, 
-                            currentPage: currentPage,
-                            pageHeight: pageHeight,
-                            targetScroll: targetScroll
-                        };
+                        setTimeout(function() { indicator.style.opacity = '0.4'; }, 3000);
+                        window.scrollTo({ top: (currentPage - 1) * pageHeight, behavior: 'auto' });
                     })();
                 """;
                 webEngine.executeScript(script);
-                log.info("Page mode enabled");
                 updatePageInfo();
                 updateProgressFromPage();
-
             } catch (Exception e) {
                 log.warn("Failed to enable page mode: {}", e.getMessage());
             }
@@ -486,32 +425,20 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void disablePageMode() {
         if (webEngine == null) return;
-
         scheduler.runOnFxThread(() -> {
             try {
                 String script = """
                     (function() {
-                        var body = document.body;
-                        var html = document.documentElement;
-                        
                         var indicator = document.getElementById('page-indicator');
-                        if (indicator) {
-                            indicator.style.display = 'none';
-                        }
-                        
+                        if (indicator) indicator.style.display = 'none';
                         var savedY = window.__savedScrollY || 0;
-                        if (savedY > 0) {
-                            window.scrollTo({ top: savedY, behavior: 'auto' });
-                        }
-                        
+                        if (savedY > 0) window.scrollTo({ top: savedY, behavior: 'auto' });
                         window.__pageMode = { enabled: false };
                         window.__savedScrollY = null;
                     })();
                 """;
                 webEngine.executeScript(script);
-                log.info("Page mode disabled");
                 updatePageInfo();
-
             } catch (Exception e) {
                 log.warn("Failed to disable page mode: {}", e.getMessage());
             }
@@ -520,42 +447,30 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void navigatePage(int direction) {
         if (webEngine == null || currentSession == null) return;
-
         scheduler.runOnFxThread(() -> {
             try {
                 String script = """
                     (function() {
                         var data = window.__pageMode;
-                        if (!data || !data.enabled) return null;
-                        
+                        if (!data || !data.enabled) return;
                         var newPage = data.currentPage + DIRECTION;
                         if (newPage < 1) newPage = 1;
                         if (newPage > data.totalPages) newPage = data.totalPages;
-                        
                         if (newPage !== data.currentPage) {
                             data.currentPage = newPage;
-                            var targetScroll = (newPage - 1) * data.pageHeight;
-                            window.__savedScrollY = targetScroll;
-                            
-                            window.scrollTo({ top: targetScroll, behavior: 'auto' });
-                            
+                            window.__savedScrollY = (newPage - 1) * data.pageHeight;
+                            window.scrollTo({ top: window.__savedScrollY, behavior: 'auto' });
                             var indicator = document.getElementById('page-indicator');
                             if (indicator) {
                                 indicator.textContent = newPage + ' / ' + data.totalPages;
                                 indicator.style.opacity = '0.8';
                                 clearTimeout(window.__pageIndicatorTimeout);
-                                window.__pageIndicatorTimeout = setTimeout(function() {
-                                    indicator.style.opacity = '0.4';
-                                }, 2000);
+                                window.__pageIndicatorTimeout = setTimeout(function() { indicator.style.opacity = '0.4'; }, 2000);
                             }
-                            
                             window.__pageMode = data;
                         }
-                        
-                        return data.currentPage;
                     })();
                 """.replace("DIRECTION", String.valueOf(direction));
-
                 webEngine.executeScript(script);
                 updatePageInfo();
                 updateProgressFromPage();
@@ -565,10 +480,9 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         });
     }
 
-    @FXML
-    private void onNextPage() {
+    @FXML private void onNextPage() {
         if (currentSession == null || !currentSession.isActive()) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
         ReaderSettings settings = readerFacade.getSettings();
@@ -581,10 +495,9 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    @FXML
-    private void onPrevPage() {
+    @FXML private void onPrevPage() {
         if (currentSession == null || !currentSession.isActive()) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
         ReaderSettings settings = readerFacade.getSettings();
@@ -597,93 +510,68 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    @FXML
-    private void onGoToPage() {
+    @FXML private void onGoToPage() {
         if (currentSession == null || !currentSession.isActive() || webEngine == null) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
-
         try {
-            String script = """
-                (function() {
-                    var data = window.__pageMode;
-                    if (!data || !data.enabled) return null;
-                    return data.totalPages;
-                })();
-            """;
+            String script = "var data = window.__pageMode; return data && data.enabled ? data.totalPages : 0;";
             Object result = webEngine.executeScript(script);
-            if (result == null) {
-                showWarning("Увага", "Режим сторінок не активний");
-                return;
-            }
-
             int totalPages = result instanceof Number ? ((Number) result).intValue() : 0;
             if (totalPages <= 0) {
-                showWarning("Увага", "Не вдалося визначити кількість сторінок");
+                showWarning("Attention", "Page mode is not active or page count unknown");
                 return;
             }
-
             TextInputDialog dialog = new TextInputDialog("1");
-            dialog.setTitle("Перехід на сторінку");
-            dialog.setHeaderText("Введіть номер сторінки (1-" + totalPages + ")");
-            dialog.setContentText("Сторінка:");
-
+            dialog.setTitle("Go to page");
+            dialog.setHeaderText("Enter page number (1-" + totalPages + ")");
+            dialog.setContentText("Page:");
             dialog.showAndWait().ifPresent(input -> {
                 try {
                     int page = Integer.parseInt(input.trim());
                     if (page < 1 || page > totalPages) {
-                        showWarning("Увага", "Номер сторінки має бути від 1 до " + totalPages);
+                        showWarning("Attention", "Page must be between 1 and " + totalPages);
                         return;
                     }
                     goToPage(page);
                 } catch (NumberFormatException e) {
-                    showWarning("Увага", "Введіть коректний номер сторінки");
+                    showWarning("Attention", "Enter a valid number");
                 }
             });
         } catch (Exception e) {
-            log.warn("Failed to show go to page dialog: {}", e.getMessage());
+            log.warn("Failed to show go to page dialog", e);
         }
     }
 
     private void goToPage(int page) {
         if (webEngine == null) return;
-
         scheduler.runOnFxThread(() -> {
             try {
                 String script = """
                     (function() {
                         var data = window.__pageMode;
                         if (!data || !data.enabled) return false;
-                        
                         var newPage = Math.max(1, Math.min(PAGE, data.totalPages));
                         if (newPage !== data.currentPage) {
                             data.currentPage = newPage;
-                            var targetScroll = (newPage - 1) * data.pageHeight;
-                            window.__savedScrollY = targetScroll;
-                            
-                            window.scrollTo({ top: targetScroll, behavior: 'auto' });
-                            
+                            window.__savedScrollY = (newPage - 1) * data.pageHeight;
+                            window.scrollTo({ top: window.__savedScrollY, behavior: 'auto' });
                             var indicator = document.getElementById('page-indicator');
                             if (indicator) {
                                 indicator.textContent = newPage + ' / ' + data.totalPages;
                                 indicator.style.opacity = '0.8';
                                 clearTimeout(window.__pageIndicatorTimeout);
-                                window.__pageIndicatorTimeout = setTimeout(function() {
-                                    indicator.style.opacity = '0.4';
-                                }, 2000);
+                                window.__pageIndicatorTimeout = setTimeout(function() { indicator.style.opacity = '0.4'; }, 2000);
                             }
-                            
                             window.__pageMode = data;
                         }
                         return true;
                     })();
                 """.replace("PAGE", String.valueOf(page));
-
                 webEngine.executeScript(script);
                 updatePageInfo();
                 updateProgressFromPage();
-                log.info("Navigated to page: {}", page);
             } catch (Exception e) {
                 log.warn("Failed to go to page {}: {}", page, e.getMessage());
             }
@@ -692,67 +580,49 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void updateProgressFromPage() {
         if (webEngine == null || currentSession == null) return;
-
         try {
             String script = """
                 (function() {
                     var data = window.__pageMode;
                     if (!data || !data.enabled) return null;
-                    return {
-                        current: data.currentPage,
-                        total: data.totalPages,
-                        percent: (data.currentPage / data.totalPages) * 100
-                    };
+                    return (data.currentPage / data.totalPages) * 100;
                 })();
             """;
             Object result = webEngine.executeScript(script);
-            if (result != null) {
-                String str = result.toString();
-                String percentStr = str.replaceAll(".*percent=([0-9.]+).*", "$1");
-                try {
-                    double percent = Double.parseDouble(percentStr);
-                    updateProgressBar(percent);
-                } catch (NumberFormatException e) {
-                    // ignore
-                }
+            if (result instanceof Number) {
+                updateProgressBar(((Number) result).doubleValue());
             }
         } catch (Exception e) {
-            log.debug("Failed to update progress from page: {}", e.getMessage());
+            // ignore
         }
     }
 
     // ==================== TOC ====================
 
-    @FXML
-    private void onToggleToc() {
+    @FXML private void onToggleToc() {
         if (tocStage != null && tocStage.isShowing()) {
             tocStage.close();
             tocStage = null;
             return;
         }
-
         List<Chapter> chapters = readerFacade.getToc();
         if (chapters.isEmpty()) {
-            showInfo("Зміст", "У цій книзі немає розділів");
+            showInfo("Table of Contents", "No chapters");
             return;
         }
-
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/toc-dialog.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Parent root = loader.load();
-
             TOCController controller = loader.getController();
             controller.setChapters(chapters, this::navigateToChapter);
-
             tocStage = new Stage();
-            tocStage.setTitle("Зміст");
+            tocStage.setTitle("Table of Contents");
             tocStage.setScene(new Scene(root, 350, 450));
             tocStage.initModality(Modality.NONE);
             tocStage.initOwner(webView.getScene().getWindow());
             tocStage.setOnHidden(e -> tocStage = null);
             tocStage.show();
-
         } catch (Exception e) {
             log.error("Failed to open TOC", e);
         }
@@ -768,57 +638,45 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         updatePageInfo();
     }
 
-    // ==================== ЗАКЛАДКИ ====================
+    // ==================== BOOKMARKS ====================
 
-    @FXML
-    private void onAddBookmark() {
+    @FXML private void onAddBookmark() {
         Bookmark bookmark = readerFacade.addBookmark();
         if (bookmark != null) {
             updateBookmarksCount();
-            showInfo("Закладка", "Закладку додано");
-        } else {
-            showWarning("Помилка", "Не вдалося додати закладку");
+            showInfo("Bookmark", "Bookmark added");
         }
     }
 
-    @FXML
-    private void onOpenBookmarks() {
+    @FXML private void onOpenBookmarks() {
         List<Bookmark> bookmarks = readerFacade.getBookmarks();
         if (bookmarks.isEmpty()) {
-            showInfo("Закладки", "Немає закладок");
+            showInfo("Bookmarks", "No bookmarks");
             return;
         }
-
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/bookmark-dialog.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Parent root = loader.load();
-
             BookmarksController controller = loader.getController();
             controller.setBookmarks(bookmarks,
                     bookmark -> readerFacade.goToBookmark(bookmark),
-                    bookmark -> {
-                        readerFacade.removeBookmark(bookmark.getId());
-                        updateBookmarksCount();
-                    }
+                    bookmark -> { readerFacade.removeBookmark(bookmark.getId()); updateBookmarksCount(); }
             );
-
             Stage stage = new Stage();
-            stage.setTitle("Закладки (" + bookmarks.size() + ")");
+            stage.setTitle("Bookmarks (" + bookmarks.size() + ")");
             stage.setScene(new Scene(root, 450, 500));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(webView.getScene().getWindow());
             stage.show();
-
         } catch (Exception e) {
             log.error("Failed to open bookmarks dialog", e);
         }
     }
 
-    // ==================== ПОШУК ====================
+    // ==================== SEARCH ====================
 
-    @FXML
-    private void onToggleSearch() {
+    @FXML private void onToggleSearch() {
         boolean visible = !searchBar.isVisible();
         searchBar.setVisible(visible);
         searchBar.setManaged(visible);
@@ -830,16 +688,14 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    @FXML
-    private void onSearchClose() {
+    @FXML private void onSearchClose() {
         searchBar.setVisible(false);
         searchBar.setManaged(false);
         searchField.clear();
         clearSearch();
     }
 
-    @FXML
-    private void onSearchFieldAction() {
+    @FXML private void onSearchFieldAction() {
         String query = searchField.getText();
         if (query == null || query.trim().isEmpty()) {
             clearSearch();
@@ -849,29 +705,17 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         performSearch(lastSearchQuery);
     }
 
-    @FXML
-    private void onSearchNext() {
-        if (lastSearchQuery.isEmpty()) {
-            return;
-        }
-        if (searchMatchCount == 0) {
-            performSearch(lastSearchQuery);
-            return;
-        }
+    @FXML private void onSearchNext() {
+        if (lastSearchQuery.isEmpty()) return;
+        if (searchMatchCount == 0) { performSearch(lastSearchQuery); return; }
         searchCurrentMatch = searchCurrentMatch >= searchMatchCount ? 1 : searchCurrentMatch + 1;
         scrollToMatch(searchCurrentMatch);
         updateSearchStatus();
     }
 
-    @FXML
-    private void onSearchPrev() {
-        if (lastSearchQuery.isEmpty()) {
-            return;
-        }
-        if (searchMatchCount == 0) {
-            performSearch(lastSearchQuery);
-            return;
-        }
+    @FXML private void onSearchPrev() {
+        if (lastSearchQuery.isEmpty()) return;
+        if (searchMatchCount == 0) { performSearch(lastSearchQuery); return; }
         searchCurrentMatch = searchCurrentMatch <= 1 ? searchMatchCount : searchCurrentMatch - 1;
         scrollToMatch(searchCurrentMatch);
         updateSearchStatus();
@@ -882,52 +726,33 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
             clearSearch();
             return;
         }
-
         try {
-            String escapedQuery = query.replace("'", "\\'").replace("\"", "\\\"");
             clearHighlight();
-
+            String escapedQuery = query.replace("'", "\\'").replace("\"", "\\\"");
             String script = """
                 (function() {
                     var query = '%s';
                     var body = document.body;
                     if (!body) return 0;
-                    
-                    var walker = document.createTreeWalker(
-                        body,
-                        NodeFilter.SHOW_TEXT,
-                        {
-                            acceptNode: function(node) {
-                                var text = node.textContent.toLowerCase();
-                                if (text.indexOf(query.toLowerCase()) !== -1) {
-                                    return NodeFilter.FILTER_ACCEPT;
-                                }
-                                return NodeFilter.FILTER_REJECT;
-                            }
+                    var walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+                        acceptNode: function(node) {
+                            var text = node.textContent.toLowerCase();
+                            return text.indexOf(query.toLowerCase()) !== -1 ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
                         }
-                    );
-                    
-                    var nodes = [];
-                    var node;
-                    while (node = walker.nextNode()) {
-                        nodes.push(node);
-                    }
-                    
+                    });
+                    var nodes = [], node;
+                    while (node = walker.nextNode()) nodes.push(node);
                     var highlights = [];
-                    
                     nodes.forEach(function(textNode) {
                         var text = textNode.textContent;
                         var lowerText = text.toLowerCase();
                         var queryLower = query.toLowerCase();
                         var pos = lowerText.indexOf(queryLower);
-                        
                         if (pos !== -1) {
                             var parent = textNode.parentNode;
                             var fragment = document.createDocumentFragment();
-                            
                             var before = document.createTextNode(text.substring(0, pos));
                             fragment.appendChild(before);
-                            
                             var highlightSpan = document.createElement('span');
                             highlightSpan.className = 'search-highlight';
                             highlightSpan.style.backgroundColor = '#ffeb3b';
@@ -935,43 +760,31 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                             highlightSpan.style.padding = '0 2px';
                             highlightSpan.style.borderRadius = '2px';
                             highlightSpan.dataset.matchIndex = highlights.length;
-                            
                             var highlight = document.createTextNode(text.substring(pos, pos + query.length));
                             highlightSpan.appendChild(highlight);
                             fragment.appendChild(highlightSpan);
                             highlights.push(highlightSpan);
-                            
                             var after = document.createTextNode(text.substring(pos + query.length));
                             fragment.appendChild(after);
-                            
                             parent.replaceChild(fragment, textNode);
                         }
                     });
-                    
                     window.__searchHighlights = highlights;
-                    window.__searchQuery = query;
-                    
                     return highlights.length;
                 })();
             """.formatted(escapedQuery);
-
             Object result = webEngine.executeScript(script);
             searchMatchCount = result instanceof Number ? ((Number) result).intValue() : 0;
-
             if (searchMatchCount > 0) {
                 searchCurrentMatch = 1;
-                scheduler.runOnFxThread(() -> {
-                    scrollToMatch(searchCurrentMatch);
-                    updateSearchStatus();
-                });
+                scheduler.runOnFxThread(() -> { scrollToMatch(searchCurrentMatch); updateSearchStatus(); });
             } else {
                 searchCurrentMatch = 0;
                 updateSearchStatus();
-                showInfo("Пошук", "Текст не знайдено");
+                showInfo("Search", "Text not found");
             }
-
         } catch (Exception e) {
-            log.warn("Пошук не вдався: {}", e.getMessage());
+            log.warn("Search failed", e);
             searchMatchCount = 0;
             searchCurrentMatch = 0;
             updateSearchStatus();
@@ -981,10 +794,9 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
     private void clearHighlight() {
         if (webEngine == null) return;
         try {
-            String script = """
+            webEngine.executeScript("""
                 (function() {
-                    var highlights = document.querySelectorAll('.search-highlight');
-                    highlights.forEach(function(span) {
+                    document.querySelectorAll('.search-highlight').forEach(function(span) {
                         var parent = span.parentNode;
                         var text = span.textContent;
                         var textNode = document.createTextNode(text);
@@ -994,67 +806,32 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                     window.__searchHighlights = null;
                     window.__searchQuery = null;
                 })();
-            """;
-            webEngine.executeScript(script);
-        } catch (Exception e) {
-            log.debug("Failed to clear highlight: {}", e.getMessage());
-        }
+            """);
+        } catch (Exception e) { /* ignore */ }
     }
 
     private void scrollToMatch(int index) {
         if (webEngine == null || index < 1) return;
-
         try {
             String script = """
                 (function() {
-                    var highlights = window.__searchHighlights;
-                    if (!highlights || highlights.length === 0) {
-                        highlights = document.querySelectorAll('.search-highlight');
-                        window.__searchHighlights = highlights;
-                    }
-                    
+                    var highlights = window.__searchHighlights || document.querySelectorAll('.search-highlight');
                     var idx = INDEX - 1;
                     if (idx >= 0 && idx < highlights.length) {
-                        var el = highlights[idx];
-                        if (el) {
-                            el.scrollIntoView({ block: 'center', behavior: 'smooth' });
-                            el.style.backgroundColor = '#ff6b6b';
-                            setTimeout(function() {
-                                el.style.backgroundColor = '#ffeb3b';
-                            }, 1000);
-                            return true;
-                        }
+                        highlights[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
+                        highlights[idx].style.backgroundColor = '#ff6b6b';
+                        setTimeout(function() { highlights[idx].style.backgroundColor = '#ffeb3b'; }, 1000);
+                        return true;
                     }
                     return false;
                 })();
             """.replace("INDEX", String.valueOf(index));
-
-            Object result = webEngine.executeScript(script);
-            if (Boolean.FALSE.equals(result)) {
-                String fallbackScript = """
-                    (function() {
-                        var highlights = document.querySelectorAll('.search-highlight');
-                        var idx = INDEX - 1;
-                        if (idx >= 0 && idx < highlights.length) {
-                            highlights[idx].scrollIntoView({ block: 'center', behavior: 'smooth' });
-                            return true;
-                        }
-                        return false;
-                    })();
-                """.replace("INDEX", String.valueOf(index));
-                webEngine.executeScript(fallbackScript);
-            }
-        } catch (Exception e) {
-            log.debug("Failed to scroll to match {}: {}", index, e.getMessage());
-        }
+            webEngine.executeScript(script);
+        } catch (Exception e) { /* ignore */ }
     }
 
     private void updateSearchStatus() {
-        if (searchMatchCount == 0) {
-            searchStatus.setText("0/0");
-        } else {
-            searchStatus.setText(searchCurrentMatch + "/" + searchMatchCount);
-        }
+        searchStatus.setText(searchMatchCount == 0 ? "0/0" : searchCurrentMatch + "/" + searchMatchCount);
     }
 
     private void clearSearch() {
@@ -1064,199 +841,136 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         searchStatus.setText("0/0");
         clearHighlight();
         if (webEngine != null) {
-            try {
-                webEngine.executeScript("window.getSelection().removeAllRanges();");
-            } catch (Exception e) {
-                // ignore
-            }
+            try { webEngine.executeScript("window.getSelection().removeAllRanges();"); } catch (Exception e) { /* ignore */ }
         }
     }
 
-    // ==================== ШИРИНА ТЕКСТУ ====================
+    // ==================== TEXT WIDTH ====================
 
-    @FXML
-    private void onWidthModeNarrow() {
-        setWidthMode("narrow");
-    }
-
-    @FXML
-    private void onWidthModeMedium() {
-        setWidthMode("medium");
-    }
-
-    @FXML
-    private void onWidthModeWide() {
-        setWidthMode("wide");
-    }
-
-    @FXML
-    private void onWidthModeFull() {
-        setWidthMode("full");
-    }
+    @FXML private void onWidthModeNarrow() { setWidthMode("narrow"); }
+    @FXML private void onWidthModeMedium() { setWidthMode("medium"); }
+    @FXML private void onWidthModeWide() { setWidthMode("wide"); }
+    @FXML private void onWidthModeFull() { setWidthMode("full"); }
 
     private void setWidthMode(String mode) {
         if (currentSession == null || !currentSession.isActive()) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
-
         ReaderSettings settings = readerFacade.getSettings();
         settings.setWidthMode(mode);
         readerFacade.saveSettings();
         readerFacade.applySettings(currentSession);
-
-        log.info("Width mode changed to: {}", mode);
     }
 
-    // ==================== ТЕМА ====================
+    // ==================== THEME ====================
 
-    @FXML
-    private void onToggleTheme() {
+    @FXML private void onToggleTheme() {
         readerFacade.toggleTheme();
         updatePageInfo();
     }
 
     // ==================== FULLSCREEN ====================
 
-    @FXML
-    private void onToggleFullscreen() {
+    @FXML private void onToggleFullscreen() {
         Stage stage = (Stage) webView.getScene().getWindow();
         if (stage == null) return;
-
         isFullscreen = !isFullscreen;
         stage.setFullScreen(isFullscreen);
-        log.info("Fullscreen: {}", isFullscreen);
     }
 
     // ==================== AUTO-SCROLL ====================
 
-    @FXML
-    private void onToggleAutoScroll() {
+    @FXML private void onToggleAutoScroll() {
         if (currentSession == null || !currentSession.isActive()) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
-
         isAutoScrollActive = autoScrollService.toggle(currentSession);
-
         ReaderSettings settings = readerFacade.getSettings();
         settings.setAutoScroll(isAutoScrollActive);
         readerFacade.saveSettings();
-
-        log.info("Auto-scroll toggled: {}", isAutoScrollActive);
     }
 
-    @FXML
-    private void onAutoScrollSpeedUp() {
-        if (currentSession == null) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
-            return;
-        }
-
+    @FXML private void onAutoScrollSpeedUp() {
+        if (currentSession == null) { showWarning("Attention", "Please open a book first"); return; }
         autoScrollSpeed = Math.min(5.0, autoScrollSpeed + 0.5);
         autoScrollService.setSpeed(currentSession, autoScrollSpeed);
-
         ReaderSettings settings = readerFacade.getSettings();
         settings.setScrollSpeed((int) Math.round(autoScrollSpeed));
         readerFacade.saveSettings();
-
-        log.info("Auto-scroll speed: {}", autoScrollSpeed);
     }
 
-    @FXML
-    private void onAutoScrollSpeedDown() {
-        if (currentSession == null) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
-            return;
-        }
-
+    @FXML private void onAutoScrollSpeedDown() {
+        if (currentSession == null) { showWarning("Attention", "Please open a book first"); return; }
         autoScrollSpeed = Math.max(0.5, autoScrollSpeed - 0.5);
         autoScrollService.setSpeed(currentSession, autoScrollSpeed);
-
         ReaderSettings settings = readerFacade.getSettings();
         settings.setScrollSpeed((int) Math.round(autoScrollSpeed));
         readerFacade.saveSettings();
-
-        log.info("Auto-scroll speed: {}", autoScrollSpeed);
     }
 
-    // ==================== КЕШ ====================
+    // ==================== CACHE ====================
 
-    @FXML
-    private void onClearCache() {
+    @FXML private void onClearCache() {
         if (currentSession != null && currentSession.isActive()) {
             if (imageCache != null) {
                 imageCache.clear();
-                showInfo("Кеш", "Кеш зображень очищено");
-                log.info("Image cache cleared");
+                showInfo("Cache", "Image cache cleared");
             }
         } else {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
         }
     }
 
-    // ==================== СТАТИСТИКА ====================
+    // ==================== STATISTICS ====================
 
-    @FXML
-    private void onShowStats() {
+    @FXML private void onShowStats() {
         if (currentSession == null || !currentSession.isActive()) {
-            showWarning("Увага", "Спочатку відкрийте книгу");
+            showWarning("Attention", "Please open a book first");
             return;
         }
-
         ReaderReadingStats stats = readerFacade.getReadingStats();
-
         if (stats == null) {
-            showInfo("Статистика", "Немає даних про читання цієї книги");
+            showInfo("Statistics", "No reading data");
             return;
         }
-
         String chapter = readerFacade.getCurrentChapterTitle();
         ReaderPosition pos = readerFacade.getCurrentPosition();
         int percent = pos != null ? (int) pos.getPercent() : (int) (progressBar.getProgress() * 100);
-
         String statsText = String.format("""
-                📊 Статистика читання
-                ════════════════════════
-                
-                📚 Книга: %s
-                📈 Прогрес: %d%%
-                📖 Розділ: %s
-                
-                ⏱ Загальний час: %s
-                🎯 Сесій: %d
-                📅 Останнє читання: %s
-                
-                ⏳ Залишилось: %s
-                ✅ Завершено: %s
-                """,
-                stats.getBookTitle(),
-                percent,
-                chapter != null && !chapter.isEmpty() ? chapter : "Розділ 1",
-                stats.getFormattedTotalTime(),
-                stats.getReadingSessions(),
-                stats.getLastReadFormatted(),
-                stats.getEstimatedTimeRemaining(),
-                stats.getCompletedAt() != null ? "Так ✅" : "Ні"
+            📊 Reading Statistics
+            ════════════════════════
+            📚 Book: %s
+            📈 Progress: %d%%
+            📖 Chapter: %s
+            ⏱ Total time: %s
+            🎯 Sessions: %d
+            📅 Last read: %s
+            ⏳ Time remaining: %s
+            ✅ Completed: %s
+            """,
+                stats.getBookTitle(), percent,
+                chapter != null && !chapter.isEmpty() ? chapter : "Chapter 1",
+                stats.getFormattedTotalTime(), stats.getReadingSessions(),
+                stats.getLastReadFormatted(), stats.getEstimatedTimeRemaining(),
+                stats.getCompletedAt() != null ? "Yes ✅" : "No"
         );
-
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Статистика читання");
+        alert.setTitle("Reading Statistics");
         alert.setHeaderText(null);
         alert.setContentText(statsText);
         alert.getDialogPane().setPrefWidth(400);
         alert.showAndWait();
     }
 
-    // ==================== НАЛАШТУВАННЯ ====================
+    // ==================== SETTINGS ====================
 
-    @FXML
-    private void onShowSettings() {
+    @FXML private void onShowSettings() {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/reader-settings.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Parent root = loader.load();
-
             ReaderSettingsController controller = loader.getController();
             controller.setOnSaveCallback(() -> {
                 if (currentSession != null && currentSession.isActive() && webView != null) {
@@ -1266,14 +980,12 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
                     fixScrollbarOverlap();
                 }
             });
-
             Stage stage = new Stage();
-            stage.setTitle("Налаштування Reader");
+            stage.setTitle("Reader Settings");
             stage.setScene(new Scene(root, 500, 450));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(webView.getScene().getWindow());
             stage.show();
-
         } catch (Exception e) {
             log.error("Failed to open settings", e);
         }
@@ -1281,188 +993,92 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
 
     // ==================== ZOOM ====================
 
-    @FXML
-    private void onZoomIn() {
+    @FXML private void onZoomIn() {
         if (webView == null) return;
-        double zoom = webView.getZoom();
-        webView.setZoom(Math.min(2.0, zoom + 0.1));
-        if (currentSession != null) {
-            currentSession.setZoom(webView.getZoom());
-        }
+        webView.setZoom(Math.min(2.0, webView.getZoom() + 0.1));
+        if (currentSession != null) currentSession.setZoom(webView.getZoom());
     }
 
-    @FXML
-    private void onZoomOut() {
+    @FXML private void onZoomOut() {
         if (webView == null) return;
-        double zoom = webView.getZoom();
-        webView.setZoom(Math.max(0.5, zoom - 0.1));
-        if (currentSession != null) {
-            currentSession.setZoom(webView.getZoom());
-        }
+        webView.setZoom(Math.max(0.5, webView.getZoom() - 0.1));
+        if (currentSession != null) currentSession.setZoom(webView.getZoom());
     }
 
-    @FXML
-    private void onZoomReset() {
+    @FXML private void onZoomReset() {
         if (webView == null) return;
         webView.setZoom(1.0);
-        if (currentSession != null) {
-            currentSession.setZoom(1.0);
-        }
+        if (currentSession != null) currentSession.setZoom(1.0);
     }
 
-    // ==================== СКРОЛ ====================
+    // ==================== SCROLLBAR FIX ====================
 
     private void fixScrollbarOverlap() {
-        if (currentSession == null || !currentSession.isActive() || webEngine == null) {
-            return;
-        }
-
+        if (currentSession == null || !currentSession.isActive() || webEngine == null) return;
         try {
-            String script = """
+            webEngine.executeScript("""
                 (function() {
                     var hasScroll = document.documentElement.scrollHeight > document.documentElement.clientHeight;
-                    
-                    if (!hasScroll) {
-                        document.body.style.paddingRight = '0px';
-                        return;
-                    }
-                    
+                    if (!hasScroll) { document.body.style.paddingRight = '0px'; return; }
                     var scrollbarWidth = window.innerWidth - document.documentElement.clientWidth;
-                    
                     if (scrollbarWidth > 0) {
                         var body = document.body;
                         if (!body) return;
-                        
                         var computedStyle = window.getComputedStyle(body);
                         var maxWidth = computedStyle.maxWidth;
-                        
                         if (maxWidth === '100%' || maxWidth === 'none') {
                             body.style.paddingRight = scrollbarWidth + 'px';
                             body.style.boxSizing = 'border-box';
-                        } else {
-                            body.style.paddingRight = '0px';
                         }
                     }
                 })();
-            """;
-            webEngine.executeScript(script);
-        } catch (Exception e) {
-            log.debug("Failed to fix scrollbar overlap: {}", e.getMessage());
-        }
+            """);
+        } catch (Exception e) { /* ignore */ }
     }
 
-    // ==================== КЛАВІАТУРА ====================
+    // ==================== KEYBOARD ====================
 
-    @FXML
-    private void onKeyPressed(KeyEvent event) {
-        if (event.getCode() == KeyCode.F11) {
-            event.consume();
-            onToggleFullscreen();
-            return;
-        }
-
-        if (event.getCode() == KeyCode.PAGE_UP) {
-            event.consume();
-            onPrevPage();
-            return;
-        }
-        if (event.getCode() == KeyCode.PAGE_DOWN) {
-            event.consume();
-            onNextPage();
-            return;
-        }
-
-        if (event.isControlDown() && event.getCode() == KeyCode.F) {
-            event.consume();
-            onToggleSearch();
-            return;
-        }
-
+    @FXML private void onKeyPressed(KeyEvent event) {
+        if (event.getCode() == KeyCode.F11) { event.consume(); onToggleFullscreen(); return; }
+        if (event.getCode() == KeyCode.PAGE_UP) { event.consume(); onPrevPage(); return; }
+        if (event.getCode() == KeyCode.PAGE_DOWN) { event.consume(); onNextPage(); return; }
+        if (event.isControlDown() && event.getCode() == KeyCode.F) { event.consume(); onToggleSearch(); return; }
         if (event.getCode() == KeyCode.ESCAPE) {
-            if (searchBar.isVisible()) {
-                event.consume();
-                onSearchClose();
-            } else if (isFullscreen) {
-                event.consume();
-                onToggleFullscreen();
-            }
+            if (searchBar.isVisible()) { event.consume(); onSearchClose(); }
+            else if (isFullscreen) { event.consume(); onToggleFullscreen(); }
             return;
         }
-
         if (event.isControlDown() && event.getCode() == KeyCode.G) {
-            if (!searchBar.isVisible()) {
-                event.consume();
-                onGoToPage();
-                return;
-            }
-            event.consume();
-            onSearchNext();
-            return;
+            if (!searchBar.isVisible()) { event.consume(); onGoToPage(); return; }
+            event.consume(); onSearchNext(); return;
         }
-
         if (event.isControlDown() && event.isShiftDown() && event.getCode() == KeyCode.G) {
-            event.consume();
-            onSearchPrev();
-            return;
+            event.consume(); onSearchPrev(); return;
         }
-
-        if (event.isControlDown() && event.getCode() == KeyCode.PLUS) {
-            event.consume();
-            onZoomIn();
-            return;
-        }
-
-        if (event.isControlDown() && event.getCode() == KeyCode.MINUS) {
-            event.consume();
-            onZoomOut();
-            return;
-        }
-
-        if (event.isControlDown() && event.getCode() == KeyCode.DIGIT0) {
-            event.consume();
-            onZoomReset();
-            return;
-        }
-
-        if (event.getCode() == KeyCode.SPACE && !searchBar.isVisible()) {
-            event.consume();
-            onToggleAutoScroll();
-            return;
-        }
+        if (event.isControlDown() && event.getCode() == KeyCode.PLUS) { event.consume(); onZoomIn(); return; }
+        if (event.isControlDown() && event.getCode() == KeyCode.MINUS) { event.consume(); onZoomOut(); return; }
+        if (event.isControlDown() && event.getCode() == KeyCode.DIGIT0) { event.consume(); onZoomReset(); return; }
+        if (event.getCode() == KeyCode.SPACE && !searchBar.isVisible()) { event.consume(); onToggleAutoScroll(); return; }
     }
 
-    // ==================== НАВІГАЦІЯ ====================
+    // ==================== NAVIGATION ====================
 
-    @FXML
-    private void onBack() {
-        if (isClosing) {
-            return;
-        }
-
+    @FXML private void onBack() {
+        if (isClosing) return;
         isClosing = true;
-
-        try {
-            closeCurrentBook();
-        } catch (Exception e) {
-            log.warn("Error closing book: {}", e.getMessage());
-        } finally {
-            isClosing = false;
-            navigationService.goBack();
-        }
+        try { closeCurrentBook(); } catch (Exception e) { log.warn("Error closing book", e); }
+        finally { isClosing = false; navigationService.goBack(); }
     }
 
-    // ==================== ІНДИКАТОР ЗАВАНТАЖЕННЯ ====================
+    // ==================== LOADING INDICATOR ====================
 
     private void showLoadingIndicator(String message, String detail) {
         scheduler.runOnFxThread(() -> {
             loadingIndicator.setVisible(true);
             loadingIndicator.setManaged(true);
-            loadingLabel.setText(message != null ? message : "Завантаження книги...");
+            loadingLabel.setText(message != null ? message : "Loading book...");
             loadingDetailLabel.setText(detail != null ? detail : "");
-            if (webView != null) {
-                webView.setVisible(false);
-                webView.setManaged(false);
-            }
+            if (webView != null) { webView.setVisible(false); webView.setManaged(false); }
         });
     }
 
@@ -1470,20 +1086,15 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
         scheduler.runOnFxThread(() -> {
             loadingIndicator.setVisible(false);
             loadingIndicator.setManaged(false);
-            if (webView != null) {
-                webView.setVisible(true);
-                webView.setManaged(true);
-            }
+            if (webView != null) { webView.setVisible(true); webView.setManaged(true); }
         });
     }
 
     private void updateLoadingDetail(String detail) {
-        scheduler.runOnFxThread(() -> {
-            loadingDetailLabel.setText(detail != null ? detail : "");
-        });
+        scheduler.runOnFxThread(() -> loadingDetailLabel.setText(detail != null ? detail : ""));
     }
 
-    // ==================== ДІАЛОГИ ====================
+    // ==================== DIALOGS ====================
 
     private void showInfo(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
@@ -1504,7 +1115,7 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
     private void showError(String title, String message) {
         scheduler.runOnFxThread(() -> {
             Alert alert = new Alert(Alert.AlertType.ERROR);
-            alert.setTitle("Помилка");
+            alert.setTitle("Error");
             alert.setHeaderText(title);
             alert.setContentText(message);
             alert.showAndWait();
@@ -1515,48 +1126,21 @@ public class ReaderWorkspaceController implements WorkspaceLifecycle {
 
     @Override
     public void dispose() {
-        log.info("ReaderWorkspaceController.dispose() - очищення ресурсів");
-
         progressUpdateTimer.stop();
-
-        // Скидаємо стан
         loadState = LoadState.IDLE;
-        currentParagraphId = "";
-        currentCharOffset = 0;
-        currentPercent = -1;
-
-        if (currentSession != null) {
-            statsService.endReadingSession(currentSession);
-            autoScrollService.stop(currentSession);
-            isAutoScrollActive = false;
-            readerFacade.savePositionNow(currentSession);
-            readerFacade.closeBook();
-            currentSession = null;
-        }
-
-        if (tocStage != null) {
-            tocStage.close();
-            tocStage = null;
-        }
-
+        if (currentSession != null) { closeCurrentBook(); }
+        if (tocStage != null) { tocStage.close(); tocStage = null; }
         if (webViewContainer != null && webView != null) {
             webViewContainer.getChildren().remove(webView);
             webView = null;
             webEngine = null;
         }
-
         loadingIndicator.setVisible(false);
         loadingIndicator.setManaged(false);
-
-        readerFacade.clearCache();
         autoScrollService.clear();
         statsService.clearCache();
-
-        log.info("ReaderWorkspaceController disposed");
     }
 
     @PreDestroy
-    public void cleanup() {
-        dispose();
-    }
+    public void cleanup() { dispose(); }
 }

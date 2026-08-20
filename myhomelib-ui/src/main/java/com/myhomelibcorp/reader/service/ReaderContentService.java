@@ -22,11 +22,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Executor;
 
-/**
- * Сервіс для завантаження та кешування контенту книг.
- * Використовує LRU кеш з обмеженням за розміром.
- * НЕ містить файлової логіки — використовує ReaderBookResourcePort.
- */
 @Service
 @Slf4j
 public class ReaderContentService {
@@ -38,10 +33,6 @@ public class ReaderContentService {
     private final JsoupFb2Parser fb2Parser = new JsoupFb2Parser();
     private final DocumentToHtmlConverter htmlConverter;
 
-    /**
-     * LRU кеш з LinkedHashMap (accessOrder=true).
-     * Автоматично видаляє найстаріші записи при перевищенні ліміту.
-     */
     private final Map<String, ReaderBookContent> contentCache = new LinkedHashMap<>(16, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<String, ReaderBookContent> eldest) {
@@ -56,7 +47,7 @@ public class ReaderContentService {
     private final ConcurrentMap<String, CompletableFuture<ReaderBookContent>> loadingTasks = new ConcurrentHashMap<>();
 
     private static final int MAX_CACHED_ITEMS = 3;
-    private static final long MAX_CACHE_BYTES = 64 * 1024 * 1024; // 64 MB
+    private static final long MAX_CACHE_BYTES = 64 * 1024 * 1024;
     private long currentCacheSize = 0;
 
     @Autowired
@@ -71,8 +62,6 @@ public class ReaderContentService {
         this.htmlConverter = new DocumentToHtmlConverter(imageCache);
     }
 
-    // ==================== ЗАВАНТАЖЕННЯ КНИГИ ====================
-
     public void loadBookContent(ReaderSession session, Runnable onLoaded) {
         if (session == null || session.getBook() == null) {
             if (onLoaded != null) {
@@ -86,21 +75,9 @@ public class ReaderContentService {
 
         ReaderBookContent cached = getCachedContent(bookId);
         if (cached != null && !cached.isEmpty()) {
-            log.info("Loading book from cache: {}", book.getTitle());
+            log.info("📚 Loading book from cache: {}", book.getTitle());
             session.setChapters(cached.chapters());
             renderHtml(session, cached.html(), onLoaded);
-            return;
-        }
-
-        CompletableFuture<ReaderBookContent> existingTask = loadingTasks.get(bookId);
-        if (existingTask != null && !existingTask.isDone()) {
-            log.info("Book loading already in progress: {}", book.getTitle());
-            existingTask.thenAccept(content -> {
-                if (session.isActive() && content != null && !content.isEmpty()) {
-                    session.setChapters(content.chapters());
-                    renderHtml(session, content.html(), onLoaded);
-                }
-            });
             return;
         }
 
@@ -117,36 +94,16 @@ public class ReaderContentService {
         CompletableFuture<ReaderBookContent> task = loadingTasks.computeIfAbsent(bookId, id ->
                 CompletableFuture.supplyAsync(() -> {
                     try {
-                        log.info("📖 Reading book data: {}", book.getTitle());
                         byte[] data = readBookData(book);
                         if (data == null || data.length == 0) {
                             throw new RuntimeException("Failed to read book data");
                         }
-                        log.info("📖 Book data read: {} bytes", data.length);
 
-                        log.info("📖 Parsing FB2: {}", book.getTitle());
                         BookDocument document = fb2Parser.parse(new ByteArrayInputStream(data));
-                        log.info("📖 FB2 parsed: {} chapters, {} images",
-                                document.getChapters().size(), document.getImages().size());
-
-                        // Діагностика зображень
-                        if (!document.getImages().isEmpty()) {
-                            log.info("🖼️ First 5 images:");
-                            document.getImages().stream().limit(5).forEach(img ->
-                                    log.info("  - id={}, type={}, size={} bytes",
-                                            img.getId(), img.getMimeType(),
-                                            img.getData() != null ? img.getData().length : 0)
-                            );
-                        }
-
-                        log.info("📖 Converting to HTML: {}", book.getTitle());
                         String html = htmlConverter.convert(document);
-                        log.info("📖 HTML generated: {} chars", html.length());
 
                         ReaderBookContent content = new ReaderBookContent(html, document.getChapters());
                         cacheContent(bookId, content);
-
-                        log.info("📖 Book content ready: {}", book.getTitle());
                         return content;
 
                     } catch (Exception e) {
@@ -172,14 +129,10 @@ public class ReaderContentService {
         });
     }
 
-    // ==================== ЧИТАННЯ ДАНИХ КНИГИ ====================
-
     private byte[] readBookData(BookDto book) throws Exception {
         if (book == null) {
             throw new IllegalArgumentException("Book cannot be null");
         }
-
-        log.debug("readBookData: bookId={}, fileName={}", book.getId(), book.getFileName());
 
         try (InputStream is = bookResourcePort
                 .readBookData(book)
@@ -187,8 +140,6 @@ public class ReaderContentService {
             return is.readAllBytes();
         }
     }
-
-    // ==================== КЕШУВАННЯ ====================
 
     private void cacheContent(String bookId, ReaderBookContent content) {
         if (bookId == null || content == null || content.isEmpty()) {
@@ -298,6 +249,9 @@ public class ReaderContentService {
 
         var engine = session.getWebEngine();
 
+        // ВИДАЛЯЄМО ВСІ ЛОГИ КРІМ ЦЬОГО
+        log.info("📄 Loading HTML into WebEngine...");
+
         engine.getLoadWorker().stateProperty().addListener(new javafx.beans.value.ChangeListener<>() {
             @Override
             public void changed(javafx.beans.value.ObservableValue<? extends javafx.concurrent.Worker.State> obs,
@@ -316,7 +270,6 @@ public class ReaderContentService {
         });
 
         engine.loadContent(fullHtml);
-        log.info("HTML rendered for book: {}", session.getBook().getTitle());
     }
 
     private void fixScrollbarOverlap(javafx.scene.web.WebEngine engine) {
@@ -411,8 +364,6 @@ public class ReaderContentService {
                 """.formatted(title, author, error);
     }
 
-    // ==================== ОТРИМАННЯ РОЗДІЛІВ ====================
-
     public List<Chapter> getChapters(ReaderSession session) {
         if (session == null) {
             return List.of();
@@ -432,8 +383,6 @@ public class ReaderContentService {
 
         return List.of();
     }
-
-    // ==================== ЗАСТОСУВАННЯ НАЛАШТУВАНЬ ====================
 
     public void applySettings(ReaderSession session) {
         scheduler.runOnFxThread(() -> applySettingsSync(session));
@@ -486,8 +435,6 @@ public class ReaderContentService {
                 .replace("\r", "\\r")
                 .replace("\t", "\\t");
     }
-
-    // ==================== ОЧИЩЕННЯ КЕШІВ ====================
 
     public void clearImageCache() {
         imageCache.clear();

@@ -18,6 +18,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -29,13 +32,11 @@ public class ReaderPositionService {
     private final ReaderJsBridge jsBridge;
     private final ReaderScheduler scheduler;
 
-    // Зберігаємо останню збережену позицію для кожної книги
     private final ConcurrentMap<String, ReaderPosition> lastSavedPositions = new ConcurrentHashMap<>();
     private final ConcurrentMap<String, ScheduledFuture<?>> saveTasks = new ConcurrentHashMap<>();
-    private final ConcurrentMap<String, Long> lastSaveTime = new ConcurrentHashMap<>();
 
-    private static final long SAVE_DELAY_MS = 1500; // 1.5 секунди debounce
-    private static final long MIN_SAVE_INTERVAL_MS = 2000; // 2 секунди між збереженнями
+    private static final long SAVE_DELAY_MS = 1500;
+    private static final long RESTORE_STABILIZATION_MS = 2000;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -80,163 +81,70 @@ public class ReaderPositionService {
         try {
             String script = """
                 (function() {
-                    function getSelectionPosition() {
-                        var sel = window.getSelection();
-                        if (!sel || sel.rangeCount === 0) {
-                            return getScrollPosition();
-                        }
-                        
-                        var range = sel.getRangeAt(0);
-                        var startContainer = range.startContainer;
-                        var startOffset = range.startOffset;
-                        
-                        var paragraph = findParentParagraph(startContainer);
-                        if (!paragraph) {
-                            return getScrollPosition();
-                        }
-                        
-                        var paragraphId = paragraph.getAttribute('data-paragraph-id');
-                        if (!paragraphId) {
-                            return getScrollPosition();
-                        }
-                        
-                        var allParagraphs = document.querySelectorAll('p[data-paragraph-id]');
-                        var index = -1;
-                        for (var i = 0; i < allParagraphs.length; i++) {
-                            if (allParagraphs[i] === paragraph) {
-                                index = i;
-                                break;
-                            }
-                        }
-                        
-                        if (index === -1) {
-                            return getScrollPosition();
-                        }
-                        
-                        var textNodes = [];
-                        var walker = document.createTreeWalker(
-                            paragraph,
-                            NodeFilter.SHOW_TEXT,
-                            {
-                                acceptNode: function(node) {
-                                    var text = node.textContent;
-                                    if (text && text.trim().length > 0) {
-                                        return NodeFilter.FILTER_ACCEPT;
-                                    }
-                                    return NodeFilter.FILTER_REJECT;
-                                }
-                            }
-                        );
-                        
-                        var node;
-                        while (node = walker.nextNode()) {
-                            textNodes.push(node);
-                        }
-                        
-                        var charOffset = 0;
-                        var found = false;
-                        for (var i = 0; i < textNodes.length; i++) {
-                            var textNode = textNodes[i];
-                            if (textNode === startContainer) {
-                                charOffset += Math.min(startOffset, textNode.textContent.length);
-                                found = true;
-                                break;
-                            } else {
-                                charOffset += textNode.textContent.length;
-                            }
-                        }
-                        
-                        if (!found) {
-                            var paraRect = paragraph.getBoundingClientRect();
-                            var rangeRect = range.getBoundingClientRect();
-                            if (paraRect.height > 0 && rangeRect.height > 0) {
-                                var text = paragraph.innerText || '';
-                                var ratio = (rangeRect.top - paraRect.top) / paraRect.height;
-                                charOffset = Math.max(0, Math.min(Math.floor(ratio * text.length), text.length));
-                            }
-                        }
-                        
-                        var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
-                        var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                        var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
-                        
-                        var chapterId = '';
-                        var chapterTitle = '';
-                        var chapterEl = paragraph.closest('.chapter');
-                        if (chapterEl) {
-                            chapterId = chapterEl.getAttribute('data-chapter-id') || '';
-                            var titleEl = chapterEl.querySelector('.chapter-title');
-                            if (titleEl) {
-                                chapterTitle = titleEl.innerText || '';
-                            }
-                        }
-                        
-                        return {
-                            paragraphId: paragraphId,
-                            paragraphIndex: index,
-                            charOffset: charOffset,
-                            percent: percent,
-                            chapterId: chapterId,
-                            chapterTitle: chapterTitle,
-                            totalParagraphs: allParagraphs.length
-                        };
-                    }
-                    
-                    function findParentParagraph(node) {
-                        while (node && node.nodeType !== Node.ELEMENT_NODE) {
-                            node = node.parentNode;
-                        }
-                        while (node) {
-                            if (node.tagName === 'P' && node.getAttribute('data-paragraph-id')) {
-                                return node;
-                            }
-                            node = node.parentNode;
-                        }
-                        return null;
-                    }
-                    
-                    function getScrollPosition() {
-                        var paragraphs = document.querySelectorAll('p[data-paragraph-id]');
+                    function getPositionFromViewport() {
+                        var paragraphs = document.querySelectorAll('p[data-anchor-id], p[data-paragraph-id]');
                         if (paragraphs.length === 0) {
-                            return {
-                                paragraphId: '',
-                                paragraphIndex: 0,
-                                charOffset: 0,
-                                percent: 0,
-                                chapterId: '',
-                                chapterTitle: '',
-                                totalParagraphs: 0
-                            };
+                            return getPositionFromScroll();
                         }
                         
-                        var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
-                        var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;
-                        var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
+                        var viewportHeight = window.innerHeight;
+                        var readingLine = viewportHeight * 0.15;
                         
-                        var firstVisible = 0;
+                        var best = null;
+                        var bestIndex = -1;
+                        var bestDistance = Infinity;
+                        
                         for (var i = 0; i < paragraphs.length; i++) {
                             var rect = paragraphs[i].getBoundingClientRect();
-                            if (rect.bottom > 0 && rect.top < window.innerHeight) {
-                                firstVisible = i;
-                                break;
+                            
+                            if (rect.bottom <= 0 || rect.top >= viewportHeight) {
+                                continue;
+                            }
+                            
+                            var distance = Math.abs(rect.top - readingLine);
+                            if (distance < bestDistance) {
+                                bestDistance = distance;
+                                best = paragraphs[i];
+                                bestIndex = i;
                             }
                         }
                         
-                        var el = paragraphs[firstVisible];
-                        var paraId = el.getAttribute('data-paragraph-id') || '';
-                        var text = el.innerText || '';
-                        var totalHeight = el.getBoundingClientRect().height || 1;
-                        var visibleTop = Math.max(el.getBoundingClientRect().top, 0);
-                        var visibleBottom = Math.min(el.getBoundingClientRect().bottom, window.innerHeight);
-                        var visibleHeight = Math.max(0, visibleBottom - visibleTop);
-                        var ratio = Math.min(1, Math.max(0, visibleHeight / totalHeight));
-                        var charOffset = Math.floor(ratio * text.length);
+                        if (!best) {
+                            return getPositionFromScroll();
+                        }
                         
-                        var chapterId = '';
+                        var anchorId = best.getAttribute('data-anchor-id') || 
+                                       best.getAttribute('data-paragraph-id') || '';
+                        
+                        var charOffset = 0;
+                        var rect = best.getBoundingClientRect();
+                        var x = rect.left + 10;
+                        var y = rect.top + Math.max(10, rect.height * 0.3);
+                        
+                        var range = document.caretRangeFromPoint(x, y);
+                        if (range && range.startContainer) {
+                            var textNode = range.startContainer;
+                            if (textNode.nodeType === Node.TEXT_NODE) {
+                                charOffset = range.startOffset;
+                            }
+                        } else {
+                            var text = best.innerText || '';
+                            if (text.length > 0) {
+                                var relativeY = (readingLine - rect.top) / Math.max(1, rect.height);
+                                relativeY = Math.max(0, Math.min(1, relativeY));
+                                charOffset = Math.floor(relativeY * text.length);
+                            }
+                        }
+                        
+                        var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
+                        var docHeight = document.documentElement.scrollHeight;
+                        var clientHeight = document.documentElement.clientHeight;
+                        var scrollHeight = docHeight - clientHeight;
+                        var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
+                        
                         var chapterTitle = '';
-                        var chapterEl = el.closest('.chapter');
+                        var chapterEl = best.closest('.chapter');
                         if (chapterEl) {
-                            chapterId = chapterEl.getAttribute('data-chapter-id') || '';
                             var titleEl = chapterEl.querySelector('.chapter-title');
                             if (titleEl) {
                                 chapterTitle = titleEl.innerText || '';
@@ -244,17 +152,46 @@ public class ReaderPositionService {
                         }
                         
                         return {
-                            paragraphId: paraId,
-                            paragraphIndex: firstVisible,
+                            anchorId: anchorId,
+                            paragraphIndex: bestIndex,
                             charOffset: charOffset,
-                            percent: percent,
-                            chapterId: chapterId,
+                            percent: percent * 100,
                             chapterTitle: chapterTitle,
                             totalParagraphs: paragraphs.length
                         };
                     }
                     
-                    var result = getSelectionPosition();
+                    function getPositionFromScroll() {
+                        var scrollTop = document.documentElement.scrollTop || document.body.scrollTop || 0;
+                        var docHeight = document.documentElement.scrollHeight;
+                        var clientHeight = document.documentElement.clientHeight;
+                        var scrollHeight = docHeight - clientHeight;
+                        var percent = scrollHeight > 0 ? scrollTop / scrollHeight : 0;
+                        
+                        var paragraphs = document.querySelectorAll('p[data-anchor-id], p[data-paragraph-id]');
+                        var anchorId = '';
+                        var paragraphIndex = 0;
+                        
+                        if (paragraphs.length > 0) {
+                            var index = Math.floor(percent * paragraphs.length);
+                            index = Math.max(0, Math.min(index, paragraphs.length - 1));
+                            var el = paragraphs[index];
+                            anchorId = el.getAttribute('data-anchor-id') || 
+                                       el.getAttribute('data-paragraph-id') || '';
+                            paragraphIndex = index;
+                        }
+                        
+                        return {
+                            anchorId: anchorId,
+                            paragraphIndex: paragraphIndex,
+                            charOffset: 0,
+                            percent: percent * 100,
+                            chapterTitle: '',
+                            totalParagraphs: paragraphs.length
+                        };
+                    }
+                    
+                    var result = getPositionFromViewport();
                     return JSON.stringify(result);
                 })();
             """;
@@ -277,21 +214,21 @@ public class ReaderPositionService {
         try {
             JsonNode node = objectMapper.readTree(json);
 
-            String paragraphId = node.has("paragraphId") ? node.get("paragraphId").asText() : "";
+            String anchorId = node.has("anchorId") ? node.get("anchorId").asText() : "";
             int paragraphIndex = node.has("paragraphIndex") ? node.get("paragraphIndex").asInt() : 0;
             int charOffset = node.has("charOffset") ? node.get("charOffset").asInt() : 0;
-            double percent = node.has("percent") ? node.get("percent").asDouble() * 100 : 0;
-            String chapterId = node.has("chapterId") ? node.get("chapterId").asText() : "";
+            double percent = node.has("percent") ? node.get("percent").asDouble() : 0;
             String chapterTitle = node.has("chapterTitle") ? node.get("chapterTitle").asText() : "";
+
+            percent = Math.max(0, Math.min(100, percent));
 
             return ReaderPosition.builder()
                     .bookId(bookId)
-                    .paragraphId(paragraphId)
-                    .paragraphIndex(paragraphIndex)
+                    .anchorId(anchorId)
+                    .paragraphIndex(Math.max(0, paragraphIndex))
                     .charOffset(Math.max(0, Math.min(charOffset, 10000)))
                     .percent(percent)
-                    .chapterId(chapterId)
-                    .chapterTitle(chapterTitle)
+                    .chapterTitle(chapterTitle != null ? chapterTitle : "")
                     .build();
 
         } catch (Exception e) {
@@ -300,174 +237,20 @@ public class ReaderPositionService {
         }
     }
 
-    // ==================== Збереження позиції ====================
+    // ==================== ВІДНОВЛЕННЯ ====================
 
     /**
-     * Заплановане збереження позиції з debounce.
-     * Викликається при будь-якій зміні позиції.
+     * ВІДНОВЛЕННЯ ПОЗИЦІЇ - простий і надійний.
      */
-    public void scheduleSave(ReaderSession session) {
-        if (session == null || session.getBookId() == null) {
-            return;
-        }
-
-        String sessionKey = session.getSessionId();
-
-        // Відміняємо попереднє заплановане збереження
-        ScheduledFuture<?> oldTask = saveTasks.remove(sessionKey);
-        if (oldTask != null) {
-            oldTask.cancel(false);
-        }
-
-        // Плануємо нове збереження з debounce
-        ScheduledFuture<?> newTask = scheduler.schedule(() -> {
-            saveTasks.remove(sessionKey);
-            if (session.isActive()) {
-                scheduler.runOnFxThread(() -> {
-                    if (session.isActive()) {
-                        ReaderPosition currentPos = getPositionSync(session);
-                        if (currentPos != null && isPositionChanged(currentPos)) {
-                            savePosition(currentPos);
-                        }
-                    }
-                });
-            }
-        }, SAVE_DELAY_MS, TimeUnit.MILLISECONDS);
-
-        saveTasks.put(sessionKey, newTask);
-        log.trace("⏳ Position save scheduled for session: {}", sessionKey);
-    }
-
-    /**
-     * Примусове збереження позиції (без debounce).
-     * Використовується при закритті книги.
-     */
-    public void savePositionNow(ReaderSession session) {
-        if (session == null || !session.isActive()) {
-            return;
-        }
-
-        scheduler.runOnFxThread(() -> {
-            if (session.isActive()) {
-                ReaderPosition pos = getPositionSync(session);
-                if (pos != null) {
-                    savePosition(pos);
-                }
-            }
-        });
-    }
-
-    /**
-     * Перевіряє, чи змінилася позиція (навіть на 1 символ).
-     */
-    private boolean isPositionChanged(ReaderPosition newPos) {
-        if (newPos == null) {
-            return false;
-        }
-
-        ReaderPosition lastSaved = lastSavedPositions.get(newPos.getBookId());
-        if (lastSaved == null) {
-            return true; // Немає збереженої позиції - потрібно зберегти
-        }
-
-        // Перевіряємо зміну параграфа
-        boolean paragraphChanged = !lastSaved.getParagraphId().equals(newPos.getParagraphId());
-
-        // Перевіряємо зміну charOffset (навіть на 1 символ)
-        boolean charOffsetChanged = Math.abs(lastSaved.getCharOffset() - newPos.getCharOffset()) > 1;
-
-        // Перевіряємо зміну відсотка (більше ніж на 0.1%)
-        boolean percentChanged = Math.abs(lastSaved.getPercent() - newPos.getPercent()) > 0.1;
-
-        return paragraphChanged || charOffsetChanged || percentChanged;
-    }
-
-    /**
-     * Внутрішній метод збереження позиції.
-     */
-    private void savePosition(ReaderPosition position) {
-        if (position == null || position.getBookId() == null) {
-            return;
-        }
-
-        if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
-            return;
-        }
-
-        // Перевіряємо, чи змінилася позиція
-        if (!isPositionChanged(position)) {
-            log.trace("Position unchanged, skipping save");
-            return;
-        }
-
-        // Перевіряємо інтервал між збереженнями
-        Long lastTime = lastSaveTime.get(position.getBookId());
-        if (lastTime != null && System.currentTimeMillis() - lastTime < MIN_SAVE_INTERVAL_MS) {
-            log.trace("Too frequent save, skipping (last save {} ms ago)",
-                    System.currentTimeMillis() - lastTime);
-            return;
-        }
-
-        try {
-            int safeCharOffset = Math.max(0, Math.min(position.getCharOffset(), 10000));
-
-            ReadingProgressDto dto = ReadingProgressDto.builder()
-                    .bookId(position.getBookId())
-                    .paragraphId(position.getParagraphId())
-                    .charOffset(safeCharOffset)
-                    .percent(Math.max(0, Math.min(100, position.getPercent())))
-                    .updatedAt(LocalDateTime.now())
-                    .build();
-
-            repository.save(dto);
-            lastSavedPositions.put(position.getBookId(), position);
-            lastSaveTime.put(position.getBookId(), System.currentTimeMillis());
-
-            log.debug("✅ Saved position: paragraph={}, charOffset={}, percent={}%",
-                    position.getParagraphId(), safeCharOffset, (int)position.getPercent());
-        } catch (Exception e) {
-            log.warn("Failed to save position: {}", e.getMessage());
-        }
-    }
-
-    // ==================== Завантаження позиції ====================
-
-    public Optional<ReaderPosition> loadPosition(String bookId) {
-        if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
-            return Optional.empty();
-        }
-
-        try {
-            return repository.findByBookId(bookId)
-                    .map(dto -> {
-                        ReaderPosition pos = ReaderPosition.builder()
-                                .bookId(bookId)
-                                .paragraphId(dto.getParagraphId())
-                                .charOffset(dto.getCharOffset())
-                                .percent(dto.getPercent())
-                                .paragraphIndex(extractParagraphIndex(dto.getParagraphId()))
-                                .build();
-                        // Відновлюємо останню збережену позицію в кеш
-                        lastSavedPositions.put(bookId, pos);
-                        return pos;
-                    });
-        } catch (Exception e) {
-            log.warn("Failed to load position for book {}: {}", bookId, e.getMessage());
-            return Optional.empty();
-        }
-    }
-
-    // ==================== Відновлення позиції ====================
-
     public void restorePosition(ReaderSession session, ReaderPosition position, Runnable onComplete) {
         if (session == null || session.getWebEngine() == null || !session.isActive()) {
             if (onComplete != null) {
-                scheduler.runOnFxThread(onComplete);
+                onComplete.run();
             }
             return;
         }
 
-        if (position == null || position.getParagraphId() == null || position.getParagraphId().isEmpty()) {
+        if (position == null) {
             scheduler.runOnFxThread(() -> {
                 try {
                     session.getWebEngine().executeScript("window.scrollTo(0, 0)");
@@ -483,41 +266,21 @@ public class ReaderPositionService {
 
         scheduler.runOnFxThread(() -> {
             try {
-                // Спроба відновлення за paragraphId
-                boolean success = scrollToParagraphById(session, position.getParagraphId(), position.getCharOffset());
-                if (success) {
-                    log.info("Restored position by paragraphId: {}, charOffset: {}",
-                            position.getParagraphId(), position.getCharOffset());
-                    if (onComplete != null) {
-                        onComplete.run();
-                    }
-                    return;
-                }
+                String anchorId = position.getAnchorId() != null && !position.getAnchorId().isEmpty()
+                        ? position.getAnchorId()
+                        : String.valueOf(position.getParagraphIndex());
+                int charOffset = position.getCharOffset();
 
-                // Fallback: використовуємо індекс
-                int index = position.getParagraphIndex();
-                int total = jsBridge.getParagraphCount(session.getWebEngine());
-                if (total > 0 && index >= total) {
-                    index = total - 1;
-                }
-                if (index < 0) {
-                    index = 0;
-                }
+                log.info("🔍 Restoring position: anchorId={}, charOffset={}", anchorId, charOffset);
 
-                success = jsBridge.scrollToParagraph(session.getWebEngine(), index, position.getCharOffset());
-                if (success) {
-                    log.info("Restored position by index: {}, charOffset: {}",
-                            index, position.getCharOffset());
-                } else {
-                    // Другий fallback: використовуємо відсоток
-                    double percent = position.getPercent() / 100.0;
-                    String script = "window.scrollTo(0, (document.documentElement.scrollHeight - document.documentElement.clientHeight) * " + percent + ")";
-                    session.getWebEngine().executeScript(script);
-                    log.info("Restored position using fallback: {}%", (int) position.getPercent());
-                }
+                String script = buildRestoreScript(anchorId, charOffset, position.getPercent());
+
+                session.getWebEngine().executeScript(script);
+                log.info("✅ Restored position: anchor={}, charOffset={}, percent={}%",
+                        anchorId, charOffset, (int)position.getPercent());
 
             } catch (Exception e) {
-                log.warn("Failed to restore position: {}", e.getMessage());
+                log.warn("Failed to restore position: {}", e.getMessage(), e);
             } finally {
                 if (onComplete != null) {
                     onComplete.run();
@@ -526,77 +289,312 @@ public class ReaderPositionService {
         });
     }
 
-    private boolean scrollToParagraphById(ReaderSession session, String paragraphId, int charOffset) {
-        if (session == null || session.getWebEngine() == null) {
+    public void restorePosition(ReaderSession session, ReaderPosition position) {
+        restorePosition(session, position, null);
+    }
+
+    private String buildRestoreScript(String anchorId, int charOffset, double percent) {
+        String escapedAnchorId = escapeJsString(anchorId);
+
+        StringBuilder script = new StringBuilder();
+        script.append("(function() {\n");
+        script.append("    var anchorId = '").append(escapedAnchorId).append("';\n");
+        script.append("    var charOffset = ").append(charOffset).append(";\n");
+        script.append("    var percent = ").append(String.format(java.util.Locale.US, "%.6f", percent / 100.0)).append(";\n");
+        script.append("    \n");
+        script.append("    var el = document.querySelector('[data-anchor-id=\"' + anchorId + '\"]');\n");
+        script.append("    if (!el) {\n");
+        script.append("        el = document.querySelector('[data-paragraph-id=\"' + anchorId + '\"]');\n");
+        script.append("    }\n");
+        script.append("    if (!el) {\n");
+        script.append("        var index = parseInt(anchorId);\n");
+        script.append("        if (!isNaN(index)) {\n");
+        script.append("            var paragraphs = document.querySelectorAll('p[data-anchor-id], p[data-paragraph-id]');\n");
+        script.append("            if (index >= 0 && index < paragraphs.length) {\n");
+        script.append("                el = paragraphs[index];\n");
+        script.append("            }\n");
+        script.append("        }\n");
+        script.append("    }\n");
+        script.append("    \n");
+        script.append("    if (!el) {\n");
+        script.append("        var scrollHeight = document.documentElement.scrollHeight - document.documentElement.clientHeight;\n");
+        script.append("        var targetScroll = scrollHeight * percent;\n");
+        script.append("        if (targetScroll < 0) targetScroll = 0;\n");
+        script.append("        window.scrollTo({ top: targetScroll, behavior: 'auto' });\n");
+        script.append("        return;\n");
+        script.append("    }\n");
+        script.append("    \n");
+        script.append("    var textNodes = [];\n");
+        script.append("    var walker = document.createTreeWalker(\n");
+        script.append("        el,\n");
+        script.append("        NodeFilter.SHOW_TEXT,\n");
+        script.append("        {\n");
+        script.append("            acceptNode: function(node) {\n");
+        script.append("                var text = node.textContent;\n");
+        script.append("                if (text && text.trim().length > 0) {\n");
+        script.append("                    return NodeFilter.FILTER_ACCEPT;\n");
+        script.append("                }\n");
+        script.append("                return NodeFilter.FILTER_REJECT;\n");
+        script.append("            }\n");
+        script.append("        }\n");
+        script.append("    );\n");
+        script.append("    \n");
+        script.append("    var node;\n");
+        script.append("    while (node = walker.nextNode()) {\n");
+        script.append("        textNodes.push(node);\n");
+        script.append("    }\n");
+        script.append("    \n");
+        script.append("    var targetNode = null;\n");
+        script.append("    var targetOffset = 0;\n");
+        script.append("    var currentOffset = 0;\n");
+        script.append("    \n");
+        script.append("    if (textNodes.length > 0) {\n");
+        script.append("        for (var i = 0; i < textNodes.length; i++) {\n");
+        script.append("            var textNode = textNodes[i];\n");
+        script.append("            var nodeText = textNode.textContent;\n");
+        script.append("            if (currentOffset + nodeText.length >= charOffset) {\n");
+        script.append("                targetNode = textNode;\n");
+        script.append("                targetOffset = charOffset - currentOffset;\n");
+        script.append("                targetOffset = Math.min(targetOffset, nodeText.length);\n");
+        script.append("                break;\n");
+        script.append("            }\n");
+        script.append("            currentOffset += nodeText.length;\n");
+        script.append("        }\n");
+        script.append("        if (!targetNode && textNodes.length > 0) {\n");
+        script.append("            targetNode = textNodes[textNodes.length - 1];\n");
+        script.append("            targetOffset = targetNode.textContent.length;\n");
+        script.append("        }\n");
+        script.append("    }\n");
+        script.append("    \n");
+        script.append("    var range = document.createRange();\n");
+        script.append("    if (targetNode) {\n");
+        script.append("        range.setStart(targetNode, Math.min(targetOffset, targetNode.textContent.length));\n");
+        script.append("        range.setEnd(targetNode, Math.min(targetOffset, targetNode.textContent.length));\n");
+        script.append("    } else {\n");
+        script.append("        range.selectNodeContents(el);\n");
+        script.append("    }\n");
+        script.append("    \n");
+        script.append("    var rect = range.getClientRects()[0];\n");
+        script.append("    if (rect) {\n");
+        script.append("        var targetY = rect.top + window.scrollY - 80;\n");
+        script.append("        if (targetY < 0) targetY = 0;\n");
+        script.append("        window.scrollTo({ top: targetY, behavior: 'auto' });\n");
+        script.append("    } else {\n");
+        script.append("        el.scrollIntoView({ block: 'start' });\n");
+        script.append("    }\n");
+        script.append("    \n");
+        script.append("    return;\n");
+        script.append("})();\n");
+
+        return script.toString();
+    }
+
+    private String escapeJsString(String str) {
+        if (str == null) {
+            return "";
+        }
+        return str.replace("\\", "\\\\")
+                .replace("'", "\\'")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
+    }
+
+    // ==================== Збереження позиції ====================
+
+    public void scheduleSave(ReaderSession session) {
+        if (session == null || session.getBookId() == null) {
+            return;
+        }
+
+        String sessionId = session.getSessionId();
+
+        ScheduledFuture<?> oldTask = saveTasks.remove(sessionId);
+        if (oldTask != null) {
+            oldTask.cancel(false);
+        }
+
+        ScheduledFuture<?> newTask = scheduler.schedule(() -> {
+            saveTasks.remove(sessionId);
+            if (session.isActive()) {
+                scheduler.runOnFxThread(() -> {
+                    if (session.isActive()) {
+                        ReaderPosition currentPos = getPositionSync(session);
+                        if (currentPos != null && isPositionChanged(currentPos)) {
+                            savePosition(currentPos);
+                        }
+                    }
+                });
+            }
+        }, SAVE_DELAY_MS, TimeUnit.MILLISECONDS);
+
+        saveTasks.put(sessionId, newTask);
+        log.trace("⏳ Position save scheduled for session: {}", sessionId);
+    }
+
+    public boolean savePositionNow(ReaderSession session) {
+        if (session == null || !session.isActive()) {
+            log.warn("Cannot save position: session is null or inactive");
             return false;
         }
 
-        try {
-            String script = """
-                (function() {
-                    var paragraphId = '%s';
-                    var charOffset = %d;
-                    
-                    var paragraph = document.querySelector('p[data-paragraph-id="' + paragraphId + '"]');
-                    if (!paragraph) return false;
-                    
-                    paragraph.scrollIntoView({ block: 'start' });
-                    
-                    if (charOffset > 0) {
-                        var textNodes = [];
-                        var walker = document.createTreeWalker(
-                            paragraph,
-                            NodeFilter.SHOW_TEXT,
-                            {
-                                acceptNode: function(node) {
-                                    var text = node.textContent;
-                                    if (text && text.trim().length > 0) {
-                                        return NodeFilter.FILTER_ACCEPT;
-                                    }
-                                    return NodeFilter.FILTER_REJECT;
-                                }
-                            }
-                        );
-                        
-                        var node;
-                        while (node = walker.nextNode()) {
-                            textNodes.push(node);
-                        }
-                        
-                        var currentOffset = 0;
-                        for (var i = 0; i < textNodes.length; i++) {
-                            var textNode = textNodes[i];
-                            var nodeText = textNode.textContent;
-                            if (currentOffset + nodeText.length >= charOffset) {
-                                var localOffset = charOffset - currentOffset;
-                                try {
-                                    var range = document.createRange();
-                                    range.setStart(textNode, Math.min(localOffset, nodeText.length));
-                                    range.setEnd(textNode, Math.min(localOffset, nodeText.length));
-                                    var sel = window.getSelection();
-                                    sel.removeAllRanges();
-                                    sel.addRange(range);
-                                } catch(e) {}
-                                break;
-                            }
-                            currentOffset += nodeText.length;
-                        }
-                    }
-                    
-                    return true;
-                })();
-            """.formatted(paragraphId, charOffset);
+        if (javafx.application.Platform.isFxApplicationThread()) {
+            return savePositionSyncOnFx(session);
+        }
 
-            Object result = session.getWebEngine().executeScript(script);
-            return Boolean.TRUE.equals(result);
+        CompletableFuture<Boolean> future = new CompletableFuture<>();
+        scheduler.runOnFxThread(() -> {
+            try {
+                future.complete(savePositionSyncOnFx(session));
+            } catch (Exception e) {
+                future.completeExceptionally(e);
+            }
+        });
+
+        try {
+            return future.get(3, TimeUnit.SECONDS);
         } catch (Exception e) {
-            log.debug("Failed to scroll to paragraph by id: {}", e.getMessage());
+            log.error("Failed to save position", e);
             return false;
         }
     }
 
-    public void restorePosition(ReaderSession session, ReaderPosition position) {
-        restorePosition(session, position, null);
+    private boolean savePositionSyncOnFx(ReaderSession session) {
+        if (!javafx.application.Platform.isFxApplicationThread()) {
+            throw new IllegalStateException("Must be called on FX application thread");
+        }
+
+        if (session == null || !session.isActive()) {
+            return false;
+        }
+
+        try {
+            ReaderPosition pos = getPositionSync(session);
+            if (pos == null) {
+                return false;
+            }
+            savePosition(pos);
+            log.debug("✅ Position saved synchronously: anchor={}, charOffset={}, percent={}%",
+                    pos.getAnchorId(), pos.getCharOffset(), (int)pos.getPercent());
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to save position synchronously", e);
+            return false;
+        }
+    }
+
+    private boolean isPositionChanged(ReaderPosition newPos) {
+        if (newPos == null) {
+            return false;
+        }
+
+        ReaderPosition lastSaved = lastSavedPositions.get(newPos.getBookId());
+        if (lastSaved == null) {
+            return true;
+        }
+
+        String newId = newPos.getAnchorId() != null && !newPos.getAnchorId().isEmpty()
+                ? newPos.getAnchorId() : String.valueOf(newPos.getParagraphIndex());
+        String oldId = lastSaved.getAnchorId() != null && !lastSaved.getAnchorId().isEmpty()
+                ? lastSaved.getAnchorId() : String.valueOf(lastSaved.getParagraphIndex());
+
+        boolean idChanged = !newId.equals(oldId);
+        boolean offsetChanged = Math.abs(lastSaved.getCharOffset() - newPos.getCharOffset()) > 10;
+        boolean percentChanged = Math.abs(lastSaved.getPercent() - newPos.getPercent()) > 1.0;
+
+        return idChanged || offsetChanged || percentChanged;
+    }
+
+    private void savePosition(ReaderPosition position) {
+        if (position == null || position.getBookId() == null) {
+            return;
+        }
+
+        if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
+            return;
+        }
+
+        if (!isPositionChanged(position)) {
+            return;
+        }
+
+        try {
+            String stableId = position.getAnchorId() != null && !position.getAnchorId().isEmpty()
+                    ? position.getAnchorId()
+                    : String.valueOf(position.getParagraphIndex());
+
+            String paragraphId = stableId;
+            String chapterTitle = position.getChapterTitle();
+            if (chapterTitle == null) {
+                chapterTitle = "";
+            }
+
+            ReadingProgressDto dto = ReadingProgressDto.builder()
+                    .bookId(position.getBookId())
+                    .anchorId(stableId)
+                    .paragraphIndex(position.getParagraphIndex())
+                    .paragraphId(paragraphId)
+                    .charOffset(Math.max(0, Math.min(position.getCharOffset(), 10000)))
+                    .percent(Math.max(0, Math.min(100, position.getPercent())))
+                    .chapterTitle(chapterTitle)
+                    .chapterId("")
+                    .updatedAt(LocalDateTime.now())
+                    .readingTimeSeconds(0)
+                    .build();
+
+            repository.save(dto);
+            lastSavedPositions.put(position.getBookId(), position);
+
+            if (log.isDebugEnabled()) {
+                log.debug("✅ Saved position: anchor={}, charOffset={}, percent={}%, chapter={}",
+                        stableId, position.getCharOffset(),
+                        (int)position.getPercent(), chapterTitle);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to save position: {}", e.getMessage(), e);
+        }
+    }
+
+    // ==================== Завантаження ====================
+
+    public Optional<ReaderPosition> loadPosition(String bookId) {
+        if (collectionLifecyclePort == null || !collectionLifecyclePort.hasActiveCollection()) {
+            return Optional.empty();
+        }
+
+        try {
+            return repository.findByBookId(bookId)
+                    .map(dto -> {
+                        String savedId = dto.getAnchorId() != null && !dto.getAnchorId().isEmpty()
+                                ? dto.getAnchorId()
+                                : dto.getParagraphId();
+
+                        if (savedId == null || savedId.isEmpty()) {
+                            savedId = String.valueOf(dto.getParagraphIndex());
+                        }
+
+                        log.info("📖 Loading position: savedId={}", savedId);
+
+                        ReaderPosition pos = ReaderPosition.builder()
+                                .bookId(bookId)
+                                .anchorId(savedId)
+                                .paragraphIndex(dto.getParagraphIndex())
+                                .charOffset(dto.getCharOffset())
+                                .percent(dto.getPercent())
+                                .chapterTitle(dto.getChapterTitle() != null ? dto.getChapterTitle() : "")
+                                .build();
+
+                        log.info("📖 Loaded position: anchor={}, percent={}%",
+                                pos.getAnchorId(), (int)pos.getPercent());
+
+                        lastSavedPositions.put(bookId, pos);
+                        return pos;
+                    });
+        } catch (Exception e) {
+            log.warn("Failed to load position for book {}: {}", bookId, e.getMessage());
+            return Optional.empty();
+        }
     }
 
     // ==================== КЕШ ====================
@@ -609,19 +607,6 @@ public class ReaderPositionService {
             }
         }
         saveTasks.clear();
-        lastSaveTime.clear();
         log.info("Reader position cache cleared");
-    }
-
-    private int extractParagraphIndex(String paragraphId) {
-        if (paragraphId == null) return 0;
-        try {
-            if (paragraphId.startsWith("p")) {
-                return Integer.parseInt(paragraphId.substring(1));
-            }
-            return Integer.parseInt(paragraphId);
-        } catch (NumberFormatException e) {
-            return 0;
-        }
     }
 }

@@ -58,13 +58,25 @@ public class JsoupFb2Parser {
     }
 
     private static final Pattern PARAGRAPH_ID_PATTERN = Pattern.compile("data-paragraph-id=\"([^\"]+)\"");
+    private static final Pattern ANCHOR_ID_PATTERN = Pattern.compile("data-anchor-id=\"([^\"]+)\"");
+
     private int paragraphCounter = 0;
+    private Element rootElement;
+    private Element bodyElement;
+
+    // Кеш для генерації стабільних anchorId
+    private final Map<String, Integer> sectionAnchorCache = new HashMap<>();
+    private String currentSectionId = "";
 
     // ==================== ОСНОВНИЙ МЕТОД ПАРСИНГУ ====================
 
     public BookDocument parse(InputStream inputStream) throws Exception {
         long startTime = System.currentTimeMillis();
         paragraphCounter = 0;
+        rootElement = null;
+        bodyElement = null;
+        sectionAnchorCache.clear();
+        currentSectionId = "";
 
         byte[] data = inputStream.readAllBytes();
 
@@ -97,9 +109,26 @@ public class JsoupFb2Parser {
 
         Element root = doc.select("FictionBook").first();
         if (root == null) {
-            log.warn("Кореневий елемент FictionBook не знайдено");
+            log.warn("Кореневий елемент FictionBook не знайдено, використовуємо весь документ");
             root = doc;
         }
+
+        // ЗБЕРІГАЄМО ROOT ДЛЯ ГЕНЕРАЦІЇ XPATH
+        this.rootElement = root;
+
+        // ЗБЕРІГАЄМО BODY ДЛЯ XPATH
+        Element body = root.select("body").first();
+        if (body == null) {
+            body = root.select("body").first();
+            if (body == null) {
+                body = root;
+            }
+        }
+        this.bodyElement = body;
+
+        log.info("📄 rootElement: {}, bodyElement: {}",
+                rootElement != null ? rootElement.tagName() : "null",
+                bodyElement != null ? bodyElement.tagName() : "null");
 
         BookMetadata metadata = extractMetadata(root);
         List<ImageData> images = extractImages(root);
@@ -253,8 +282,6 @@ public class JsoupFb2Parser {
                             .data(imageData)
                             .build();
                     images.add(image);
-                    log.debug("Завантажено зображення: id={}, type={}, size={} KB",
-                            id, contentType, imageData.length / 1024);
                 } catch (Exception e) {
                     log.warn("Не вдалося декодувати зображення id={}: {}", id, e.getMessage());
                 }
@@ -317,14 +344,6 @@ public class JsoupFb2Parser {
             String tagName = el.tagName().toLowerCase();
             if (tagName.contains("image")) {
                 imageTagCount++;
-                String href = el.attr("href");
-                if (href == null || href.isEmpty()) {
-                    href = el.attr("xlink:href");
-                }
-                if (href == null || href.isEmpty()) {
-                    href = el.attr("l:href");
-                }
-                log.debug("🖼️ Found image tag in body: tag={}, href={}", el.tagName(), href);
             }
         }
         log.info("🖼️ Total image tags found in body: {}", imageTagCount);
@@ -344,10 +363,17 @@ public class JsoupFb2Parser {
             }
         } else {
             for (Element section : topLevelSections) {
+                // Встановлюємо контекст для секції перед обробкою
+                String prevSectionId = currentSectionId;
+                currentSectionId = getSectionContext(section);
+
                 Chapter chapter = processSection(section, 1, footnotes);
                 if (chapter != null) {
                     chapters.add(chapter);
                 }
+
+                // Відновлюємо попередній контекст
+                currentSectionId = prevSectionId;
             }
         }
 
@@ -375,92 +401,291 @@ public class JsoupFb2Parser {
         return chapters;
     }
 
-    // ==================== ОБРОБКА СЕКЦІЙ (ВИПРАВЛЕНО) ====================
+    // ==================== ГЕНЕРАЦІЯ СТАБІЛЬНОГО ANCHOR ====================
 
-    private Chapter processSection(Element section, int level, Map<String, String> footnotes) {
-        String title = "Розділ";
-        Element titleEl = section.children()
-                .stream()
-                .filter(e -> "title".equalsIgnoreCase(e.tagName()))
-                .findFirst()
-                .orElse(null);
-
-        if (titleEl != null && !titleEl.text().isBlank()) {
-            title = titleEl.text().trim();
+    /**
+     * Генерує стабільний anchorId на основі контексту.
+     * Не залежить від порядку парсингу.
+     */
+    private String generateAnchorId(Element element, String sectionContext) {
+        // 1. Якщо елемент має власний id - використовуємо його
+        String ownId = element.attr("id");
+        if (ownId != null && !ownId.isEmpty()) {
+            return "a_" + ownId;
         }
 
-        StringBuilder content = new StringBuilder();
-        List<Chapter> children = new ArrayList<>();
+        // 2. Використовуємо контекст section + порядковий номер у цій секції
+        String base = sectionContext != null && !sectionContext.isEmpty()
+                ? sectionContext
+                : "sec_" + (sectionAnchorCache.size() + 1);
 
-        // ВИПРАВЛЕНО: обробляємо всі елементи в правильному порядку
-        for (Element child : section.children()) {
-            String tag = child.tagName().toLowerCase(Locale.ROOT);
+        int ordinal = sectionAnchorCache.getOrDefault(base, 0) + 1;
+        sectionAnchorCache.put(base, ordinal);
 
-            if ("section".equals(tag)) {
-                // Вкладена секція - додаємо як дочірній розділ
-                Chapter subChapter = processSection(child, level + 1, footnotes);
-                if (subChapter != null) {
-                    children.add(subChapter);
-                }
-            } else if ("title".equals(tag)) {
-                // Заголовок - пропускаємо (вже оброблений вище)
-                // Але якщо заголовків кілька, додаємо як звичайний елемент
-            } else if (tag.contains("image")) {
-                // ЗОБРАЖЕННЯ: обробляємо в тому місці, де воно знаходиться
-                processImage(child, content);
-            } else {
-                // Всі інші елементи
-                processElement(child, tag, content, level, footnotes);
-            }
-        }
-
-        if (content.isEmpty() && children.isEmpty()) {
-            return null;
-        }
-
-        String paragraphId = findFirstParagraphId(content);
-
-        return Chapter.builder()
-                .id(UUID.randomUUID().toString())
-                .title(title)
-                .level(Math.min(level, 6))
-                .content(content.toString())
-                .children(children)
-                .paragraphId(paragraphId)
-                .build();
+        return "a_" + base + "_" + ordinal;
     }
 
-    // ==================== ОБРОБКА ТІЛА БЕЗ СЕКЦІЙ ====================
+    /**
+     * Генерує стабільний контекст для section.
+     * На основі id, назви або хешу вмісту.
+     */
+    private String getSectionContext(Element section) {
+        // Спроба взяти id
+        String id = section.attr("id");
+        if (id != null && !id.isEmpty()) {
+            return "sec_" + id;
+        }
 
-    private Chapter processDirectBody(Element body, Map<String, String> footnotes) {
-        StringBuilder content = new StringBuilder();
-        Elements children = body.children();
-
-        for (Element child : children) {
-            String tag = child.tagName().toLowerCase();
-            if ("title".equals(tag)) {
-                // Пропускаємо заголовки на рівні body
-            } else if (tag.contains("image")) {
-                processImage(child, content);
-            } else {
-                processElement(child, tag, content, 1, footnotes);
+        // Спроба взяти назву
+        Element titleEl = section.select("title").first();
+        if (titleEl != null) {
+            String title = titleEl.text().trim();
+            if (!title.isEmpty()) {
+                // Нормалізуємо для використання в anchor
+                String normalized = title.toLowerCase()
+                        .replaceAll("[^a-zа-я0-9]", "_")
+                        .replaceAll("_+", "_");
+                if (normalized.length() > 30) {
+                    normalized = normalized.substring(0, 30);
+                }
+                return "sec_" + normalized;
             }
         }
 
-        if (content.length() == 0) {
-            return null;
+        // Генеруємо на основі хешу вмісту (перші 100 символів)
+        String content = section.text();
+        if (content.length() > 100) {
+            content = content.substring(0, 100);
+        }
+        String hash = Integer.toHexString(content.hashCode());
+        return "sec_hash_" + hash;
+    }
+
+    // ==================== ОБРОБКА СЕКЦІЙ ====================
+
+    private Chapter processSection(Element section, int level, Map<String, String> footnotes) {
+        // Зберігаємо поточний контекст
+        String prevSectionId = currentSectionId;
+
+        // Встановлюємо контекст для цієї секції
+        String sectionContext = getSectionContext(section);
+        currentSectionId = sectionContext;
+
+        try {
+            String title = "Розділ";
+            Element titleEl = section.children()
+                    .stream()
+                    .filter(e -> "title".equalsIgnoreCase(e.tagName()))
+                    .findFirst()
+                    .orElse(null);
+
+            if (titleEl != null && !titleEl.text().isBlank()) {
+                title = titleEl.text().trim();
+            }
+
+            StringBuilder content = new StringBuilder();
+            List<Chapter> children = new ArrayList<>();
+
+            for (Element child : section.children()) {
+                String tag = child.tagName().toLowerCase(Locale.ROOT);
+
+                if ("section".equals(tag)) {
+                    Chapter subChapter = processSection(child, level + 1, footnotes);
+                    if (subChapter != null) {
+                        children.add(subChapter);
+                    }
+                } else if ("title".equals(tag)) {
+                    // Заголовок - пропускаємо (вже оброблений вище)
+                } else if (tag.contains("image")) {
+                    processImage(child, content);
+                } else {
+                    processElement(child, tag, content, level, footnotes);
+                }
+            }
+
+            if (content.isEmpty() && children.isEmpty()) {
+                return null;
+            }
+
+            String paragraphId = findFirstParagraphId(content);
+
+            return Chapter.builder()
+                    .id(UUID.randomUUID().toString())
+                    .title(title)
+                    .level(Math.min(level, 6))
+                    .content(content.toString())
+                    .children(children)
+                    .paragraphId(paragraphId)
+                    .build();
+
+        } finally {
+            // Відновлюємо попередній контекст
+            currentSectionId = prevSectionId;
+        }
+    }
+
+    private Chapter processDirectBody(Element body, Map<String, String> footnotes) {
+        // Для прямого body використовуємо контекст за замовчуванням
+        String prevSectionId = currentSectionId;
+        currentSectionId = "sec_body";
+
+        try {
+            StringBuilder content = new StringBuilder();
+            Elements children = body.children();
+
+            for (Element child : children) {
+                String tag = child.tagName().toLowerCase();
+                if ("title".equals(tag)) {
+                    // Пропускаємо заголовки на рівні body
+                } else if (tag.contains("image")) {
+                    processImage(child, content);
+                } else {
+                    processElement(child, tag, content, 1, footnotes);
+                }
+            }
+
+            if (content.length() == 0) {
+                return null;
+            }
+
+            String paragraphId = findFirstParagraphId(content);
+
+            return Chapter.builder()
+                    .id(UUID.randomUUID().toString())
+                    .title("Зміст")
+                    .level(1)
+                    .content(content.toString())
+                    .children(new ArrayList<>())
+                    .paragraphId(paragraphId)
+                    .build();
+
+        } finally {
+            currentSectionId = prevSectionId;
+        }
+    }
+
+    // ==================== ОБРОБКА ЕЛЕМЕНТІВ ====================
+
+    private void processElement(Element element, String tag, StringBuilder content, int level, Map<String, String> footnotes) {
+        switch (tag) {
+            case "p" -> processParagraph(element, content, footnotes);
+            case "title" -> processTitle(element, content, level);
+            case "subtitle" -> processSubtitle(element, content);
+            case "epigraph" -> processEpigraph(element, content);
+            case "cite" -> processCite(element, content);
+            case "poem" -> processPoem(element, content);
+            case "text-author" -> processTextAuthor(element, content);
+            case "empty-line" -> content.append("<br/>\n");
+            case "emphasis" -> processInline(element, "em", content);
+            case "strong" -> processInline(element, "strong", content);
+            case "code" -> processInline(element, "code", content);
+            case "sub" -> processInline(element, "sub", content);
+            case "sup" -> processInline(element, "sup", content);
+            case "strikethrough" -> processInline(element, "s", content);
+            case "a" -> processLink(element, content, footnotes);
+            case "date" -> processDate(element, content);
+            case "translator" -> processTranslator(element, content);
+            case "annotation" -> processAnnotation(element, content);
+            default -> {
+                // ===== ВИПРАВЛЕНО: КОЖЕН ТЕКСТОВИЙ БЛОК ОТРИМУЄ ANCHOR =====
+                String text = element.text();
+                if (text != null && !text.trim().isEmpty()) {
+                    String anchorId = generateAnchorId(element, currentSectionId);
+                    String pId = "p" + (++paragraphCounter);
+                    String xpath = generateXPath(element);
+
+                    content.append("<p data-paragraph-id=\"").append(pId).append("\"")
+                            .append(" data-anchor-id=\"").append(anchorId).append("\"")
+                            .append(" data-xpath=\"").append(escapeHtml(xpath)).append("\"")
+                            .append(" data-paragraph-index=\"").append(paragraphCounter).append("\"")
+                            .append(">")
+                            .append(escapeHtml(text.trim()))
+                            .append("</p>\n");
+                }
+            }
+        }
+    }
+
+    // ==================== ОБРОБКА ПАРАГРАФІВ З ANCHOR ====================
+
+    /**
+     * ВИПРАВЛЕНО: кожен параграф отримує стабільний anchorId.
+     */
+    private void processParagraph(Element element, StringBuilder content, Map<String, String> footnotes) {
+        String html = processElementContent(element, footnotes);
+        if (html != null && !html.trim().isEmpty()) {
+            // Генеруємо стабільний anchorId
+            String anchorId = generateAnchorId(element, currentSectionId);
+            String pId = "p" + (++paragraphCounter);
+            String xpath = generateXPath(element);
+
+            content.append("<p data-paragraph-id=\"").append(pId).append("\"")
+                    .append(" data-anchor-id=\"").append(anchorId).append("\"")
+                    .append(" data-xpath=\"").append(escapeHtml(xpath)).append("\"")
+                    .append(" data-paragraph-index=\"").append(paragraphCounter).append("\"")
+                    .append(">")
+                    .append(html)
+                    .append("</p>\n");
+        }
+    }
+
+    // ==================== ГЕНЕРАЦІЯ XPATH ====================
+
+    private String generateXPath(Element element) {
+        if (element == null || rootElement == null || bodyElement == null) {
+            log.warn("⚠️ generateXPath: element={}, rootElement={}, bodyElement={}",
+                    element != null, rootElement != null, bodyElement != null);
+            return "";
         }
 
-        String paragraphId = findFirstParagraphId(content);
+        StringBuilder path = new StringBuilder();
+        Element current = element;
+        int depth = 0;
+        int MAX_DEPTH = 20;
 
-        return Chapter.builder()
-                .id(UUID.randomUUID().toString())
-                .title("Зміст")
-                .level(1)
-                .content(content.toString())
-                .children(new ArrayList<>())
-                .paragraphId(paragraphId)
-                .build();
+        // Шукаємо шлях від body до елемента
+        while (current != null && !current.equals(bodyElement) && depth < MAX_DEPTH) {
+            String tag = current.tagName().toLowerCase();
+            int index = 1;
+            Element parent = current.parent();
+
+            if (parent != null) {
+                int count = 0;
+                for (Element child : parent.children()) {
+                    if (child.tagName().equalsIgnoreCase(tag)) {
+                        count++;
+                        if (child.equals(current)) {
+                            index = count;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            path.insert(0, "/" + tag + "[" + index + "]");
+            current = current.parent();
+            depth++;
+        }
+
+        // Додаємо body
+        if (bodyElement != null) {
+            path.insert(0, "/body");
+        }
+        // Додаємо FictionBook
+        if (rootElement != null) {
+            path.insert(0, "/FictionBook");
+        }
+
+        String xpath = path.toString();
+
+        // Якщо XPath занадто довгий, використовуємо хеш
+        if (xpath.length() > 200) {
+            String hash = Integer.toHexString(xpath.hashCode());
+            xpath = "/FictionBook/body/hash[" + hash + "]";
+            log.debug("XPath too long ({} chars), using hash: {}", path.length(), xpath);
+        }
+
+        return xpath;
     }
 
     // ==================== ОБРОБКА ЗОБРАЖЕНЬ ====================
@@ -482,54 +707,8 @@ public class JsoupFb2Parser {
             content.append("<img data-image-id=\"")
                     .append(escapeHtml(imageId))
                     .append("\" src=\"data:image/jpeg;base64,PLACEHOLDER\" alt=\"Зображення\"/>");
-            log.debug("🖼️ Added image placeholder at current position: {}", imageId);
         } else {
             log.warn("⚠️ Image tag found but no valid href: tag={}, href={}", element.tagName(), href);
-        }
-    }
-
-    // ==================== ОБРОБКА ЕЛЕМЕНТІВ ====================
-
-    private void processElement(Element element, String tag, StringBuilder content, int level, Map<String, String> footnotes) {
-        String mappedTag = TAG_MAP.getOrDefault(tag, tag);
-
-        switch (tag) {
-            case "p" -> processParagraph(element, content, footnotes);
-            case "title" -> processTitle(element, content, level);
-            case "subtitle" -> processSubtitle(element, content);
-            case "epigraph" -> processEpigraph(element, content);
-            case "cite" -> processCite(element, content);
-            case "poem" -> processPoem(element, content);
-            case "text-author" -> processTextAuthor(element, content);
-            case "empty-line" -> content.append("<br/>\n");
-            case "emphasis" -> processInline(element, "em", content);
-            case "strong" -> processInline(element, "strong", content);
-            case "code" -> processInline(element, "code", content);
-            case "sub" -> processInline(element, "sub", content);
-            case "sup" -> processInline(element, "sup", content);
-            case "strikethrough" -> processInline(element, "s", content);
-            case "a" -> processLink(element, content, footnotes);
-            case "date" -> processDate(element, content);
-            case "translator" -> processTranslator(element, content);
-            case "annotation" -> processAnnotation(element, content);
-            default -> {
-                String text = element.text();
-                if (text != null && !text.trim().isEmpty()) {
-                    content.append("<p>").append(escapeHtml(text.trim())).append("</p>\n");
-                }
-            }
-        }
-    }
-
-    // ==================== ОБРОБКА ПАРАГРАФІВ ====================
-
-    private void processParagraph(Element element, StringBuilder content, Map<String, String> footnotes) {
-        String html = processElementContent(element, footnotes);
-        if (html != null && !html.trim().isEmpty()) {
-            String pId = "p" + (++paragraphCounter);
-            content.append("<p data-paragraph-id=\"").append(pId).append("\">")
-                    .append(html)
-                    .append("</p>\n");
         }
     }
 
@@ -589,7 +768,6 @@ public class JsoupFb2Parser {
                 if ("a".equals(tag)) {
                     processLink(child, result, footnotes);
                 } else if (tag.contains("image")) {
-                    // Обробка зображень всередині контенту (наприклад, всередині <p>)
                     processImage(child, result);
                 } else {
                     String innerHtml = processElementContent(child, footnotes);
@@ -617,10 +795,19 @@ public class JsoupFb2Parser {
             return null;
         }
         String text = content.toString();
-        var matcher = PARAGRAPH_ID_PATTERN.matcher(text);
+
+        // Спочатку шукаємо anchorId
+        var matcher = ANCHOR_ID_PATTERN.matcher(text);
         if (matcher.find()) {
             return matcher.group(1);
         }
+
+        // Fallback: шукаємо paragraphId
+        var pMatcher = PARAGRAPH_ID_PATTERN.matcher(text);
+        if (pMatcher.find()) {
+            return pMatcher.group(1);
+        }
+
         return null;
     }
 
@@ -836,7 +1023,11 @@ public class JsoupFb2Parser {
     private int countParagraphsInChapter(Chapter chapter) {
         int count = 0;
         if (chapter.getContent() != null) {
-            count += chapter.getContent().split("<p ").length - 1;
+            // Рахуємо параграфи з data-anchor-id або data-paragraph-id
+            String content = chapter.getContent();
+            int anchorCount = content.split("data-anchor-id=\"").length - 1;
+            int pCount = content.split("data-paragraph-id=\"").length - 1;
+            count += Math.max(anchorCount, pCount);
         }
         for (Chapter child : chapter.getChildren()) {
             count += countParagraphsInChapter(child);
