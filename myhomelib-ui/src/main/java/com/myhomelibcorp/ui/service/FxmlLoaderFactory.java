@@ -8,7 +8,7 @@ import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
 import com.myhomelibcorp.ui.book.BookWorkspaceController;
 import com.myhomelibcorp.ui.group.GroupWorkspaceController;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
-import com.myhomelibcorp.ui.reader.ReaderWorkspaceController;
+import com.myhomelibcorp.ui.reader.NewReaderWorkspaceController;
 import com.myhomelibcorp.ui.search.SearchWorkspaceController;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.layout.Pane;
@@ -97,19 +97,24 @@ public class FxmlLoaderFactory {
         }
     }
 
-    public Pane loadReaderWorkspace(BookId bookId) {
+    /**
+     * НОВИЙ МЕТОД: завантажує новий Reader Workspace (без WebView, на Canvas).
+     */
+    public Pane loadNewReaderWorkspace(BookId bookId) {
         try {
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/reader-workspace.fxml"));
+            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/new-reader-workspace.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Pane pane = loader.load();
-            ReaderWorkspaceController controller = loader.getController();
-            controller.setBookId(bookId);
+
+            NewReaderWorkspaceController controller = loader.getController();
+            if (bookId != null) {
+                controller.setBookId(bookId);
+            }
 
             pane.setUserData(controller);
-
             return pane;
         } catch (IOException e) {
-            log.error("Failed to load reader workspace", e);
+            log.error("Failed to load new reader workspace", e);
             throw new RuntimeException(e);
         }
     }

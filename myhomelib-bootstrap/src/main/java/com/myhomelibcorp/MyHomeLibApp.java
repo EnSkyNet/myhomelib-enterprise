@@ -4,21 +4,18 @@ import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
 import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
 import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
 import com.myhomelibcorp.infrastructure.warmup.BackgroundWarmup;
-import com.myhomelibcorp.reader.service.ReaderFacade;
-import com.myhomelibcorp.reader.session.ReaderSessionManager;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -122,7 +119,7 @@ public class MyHomeLibApp extends Application {
         DatabaseInitializer initializer = context.getBean(DatabaseInitializer.class);
         SwitchCollectionUseCase switchCollectionUseCase = context.getBean(SwitchCollectionUseCase.class);
         SyncSeriesUseCase syncSeriesUseCase = context.getBean(SyncSeriesUseCase.class);
-        ReaderFacade readerFacade = context.getBean(ReaderFacade.class);
+        // ReaderFacade readerFacade = context.getBean(ReaderFacade.class); // Тимчасово закоментовано
 
         List<Collection> collections = collectionRepository.findAll();
         Collection active;
@@ -254,7 +251,8 @@ public class MyHomeLibApp extends Application {
 
         log.info("Завершення програми...");
 
-        // 1. Закриваємо ReaderFacade
+        // 1. Закриваємо ReaderFacade (тимчасово закоментовано)
+        /*
         try {
             ReaderFacade readerFacade = context.getBean(ReaderFacade.class);
             if (readerFacade.isBookOpen()) {
@@ -266,6 +264,7 @@ public class MyHomeLibApp extends Application {
         } catch (Exception e) {
             log.warn("Не вдалося закрити ReaderFacade", e);
         }
+        */
 
         // 2. Закриваємо AsyncConfig
         try {

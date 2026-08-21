@@ -60,6 +60,23 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     @PostConstruct
     public void init() {
         log.info("Ініціалізація LuceneSearchService...");
+
+        // Перевіряємо та видаляємо несумісний індекс
+        try {
+            Path indexPath = Paths.get(System.getProperty("user.home"), ".myhomelibcorp", "search-index");
+            if (Files.exists(indexPath)) {
+                // Перевіряємо, чи є файли індексу
+                try (var stream = Files.list(indexPath)) {
+                    boolean hasIndexFiles = stream.anyMatch(p -> p.getFileName().toString().startsWith("_"));
+                    if (hasIndexFiles) {
+                        log.info("Виявлено існуючий індекс, спроба відкриття...");
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Помилка перевірки індексу: {}", e.getMessage());
+        }
+
         IndexWriterConfig config = new IndexWriterConfig(analyzer);
         config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
         config.setRAMBufferSizeMB(64.0);
@@ -84,6 +101,26 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
                     Thread.currentThread().interrupt();
                     throw new RuntimeException("Перервано під час очікування lock", ie);
                 }
+            } catch (IndexFormatTooNewException | IndexFormatTooOldException e) {
+                // Несумісна версія індексу - видаляємо і створюємо новий
+                log.warn("Несумісна версія індексу Lucene: {}", e.getMessage());
+                log.info("Видалення старого індексу та створення нового...");
+                try {
+                    // Закриваємо директорію
+                    directory.close();
+                    // Видаляємо папку індексу
+                    Path indexPath = Paths.get(System.getProperty("user.home"), ".myhomelibcorp", "search-index");
+                    deleteDirectory(indexPath);
+                    // Створюємо нову директорію
+                    Files.createDirectories(indexPath);
+                    // Створюємо новий IndexWriter
+                    this.indexWriter = new IndexWriter(directory, config);
+                    log.info("✅ Новий індекс створено");
+                    break;
+                } catch (Exception ex) {
+                    log.error("Не вдалося створити новий індекс", ex);
+                    throw new RuntimeException("Не вдалося створити IndexWriter", ex);
+                }
             } catch (IOException e) {
                 log.error("Помилка створення IndexWriter", e);
                 throw new RuntimeException("Не вдалося створити IndexWriter", e);
@@ -104,6 +141,21 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         }
 
         log.info("LuceneSearchService ініціалізовано");
+    }
+
+    private void deleteDirectory(Path path) throws IOException {
+        if (Files.exists(path)) {
+            try (var stream = Files.walk(path)) {
+                stream.sorted((p1, p2) -> -p1.compareTo(p2))
+                        .forEach(p -> {
+                            try {
+                                Files.deleteIfExists(p);
+                            } catch (IOException e) {
+                                log.warn("Не вдалося видалити: {}", p, e);
+                            }
+                        });
+            }
+        }
     }
 
     // ==================== SEARCH INDEXER ====================
@@ -311,21 +363,9 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
         log.info("Закриття LuceneSearchService...");
 
-        // 1. Виконуємо commit ДО встановлення isClosed
         try {
             if (indexWriter != null) {
                 indexWriter.commit();
-                log.debug("Lucene індекс закомічено перед закриттям");
-            }
-        } catch (IOException e) {
-            log.error("Помилка commit перед закриттям", e);
-        }
-
-        // 2. Тепер встановлюємо isClosed
-        isClosed.set(true);
-
-        try {
-            if (indexWriter != null) {
                 indexWriter.close();
                 log.info("IndexWriter закрито");
             }
@@ -340,31 +380,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         } catch (IOException e) {
             log.error("Помилка закриття LuceneSearchService", e);
         }
+        isClosed.set(true);
         log.info("LuceneSearchService завершено");
     }
-
-    /**
-     * Примусове закриття з очищенням lock-файлів.
-     */
-    public void forceClose() {
-        if (isClosed.get()) return;
-
-        log.info("Примусове закриття LuceneSearchService...");
-
-        // Спроба видалити lock файли
-        try {
-            if (directory != null) {
-                // Закриваємо всі ресурси
-                close();
-                // Додаткова спроба видалити lock
-                Path lockFile = Paths.get(System.getProperty("user.home") + "/.myhomelibcorp/search-index/write.lock");
-                Files.deleteIfExists(lockFile);
-                log.info("Lock файл видалено");
-            }
-        } catch (Exception e) {
-            log.warn("Не вдалося видалити lock файл", e);
-        }
-    }
-
-
 }

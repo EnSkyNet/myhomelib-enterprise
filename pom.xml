@@ -28,7 +28,7 @@
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <lombok.version>1.18.30</lombok.version>
         <caffeine.version>3.1.8</caffeine.version>
-        <lucene.version>9.10.0</lucene.version>
+        <lucene.version>9.11.0</lucene.version>
 
         <junit.version>5.10.2</junit.version>
         <mockito.version>5.10.0</mockito.version>
@@ -40,6 +40,7 @@
     </properties>
 
     <modules>
+        <!-- Існуючі модулі -->
         <module>myhomelib-shared</module>
         <module>myhomelib-domain</module>
         <module>myhomelib-application</module>
@@ -49,10 +50,14 @@
         <module>myhomelib-architecture-tests</module>
         <module>myhomelib-e2e-tests</module>
         <module>myhomelib-benchmark</module>
+
+        <!-- ОДИН МОДУЛЬ READER (без дублікатів!) -->
+        <module>myhomelib-reader</module>
     </modules>
 
     <dependencyManagement>
         <dependencies>
+            <!-- Spring Boot BOM -->
             <dependency>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
@@ -60,6 +65,8 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
+            <!-- Spring Modulith BOM -->
             <dependency>
                 <groupId>org.springframework.modulith</groupId>
                 <artifactId>spring-modulith-bom</artifactId>
@@ -67,6 +74,8 @@
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>
+
+            <!-- JavaFX BOM -->
             <dependency>
                 <groupId>org.openjfx</groupId>
                 <artifactId>javafx</artifactId>
@@ -75,50 +84,67 @@
                 <scope>import</scope>
             </dependency>
 
+            <!-- Базові залежності -->
             <dependency>
                 <groupId>org.xerial</groupId>
                 <artifactId>sqlite-jdbc</artifactId>
                 <version>${sqlite.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.flywaydb</groupId>
                 <artifactId>flyway-core</artifactId>
                 <version>${flyway.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.mapstruct</groupId>
                 <artifactId>mapstruct</artifactId>
                 <version>${mapstruct.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.mapstruct</groupId>
                 <artifactId>mapstruct-processor</artifactId>
                 <version>${mapstruct.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.projectlombok</groupId>
                 <artifactId>lombok</artifactId>
                 <version>${lombok.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>com.github.ben-manes.caffeine</groupId>
                 <artifactId>caffeine</artifactId>
                 <version>${caffeine.version}</version>
             </dependency>
+
+            <!-- Lucene -->
             <dependency>
                 <groupId>org.apache.lucene</groupId>
                 <artifactId>lucene-core</artifactId>
                 <version>${lucene.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.apache.lucene</groupId>
                 <artifactId>lucene-queryparser</artifactId>
                 <version>${lucene.version}</version>
             </dependency>
+
             <dependency>
                 <groupId>org.apache.lucene</groupId>
                 <artifactId>lucene-analysis-common</artifactId>
                 <version>${lucene.version}</version>
+            </dependency>
+
+            <!-- Reader модуль -->
+            <dependency>
+                <groupId>com.myhomelibcorp</groupId>
+                <artifactId>myhomelib-reader</artifactId>
+                <version>${project.version}</version>
             </dependency>
 
             <!-- Тестові залежності -->
@@ -128,30 +154,35 @@
                 <version>${junit.version}</version>
                 <scope>test</scope>
             </dependency>
+
             <dependency>
                 <groupId>org.mockito</groupId>
                 <artifactId>mockito-core</artifactId>
                 <version>${mockito.version}</version>
                 <scope>test</scope>
             </dependency>
+
             <dependency>
                 <groupId>org.assertj</groupId>
                 <artifactId>assertj-core</artifactId>
                 <version>${assertj.version}</version>
                 <scope>test</scope>
             </dependency>
+
             <dependency>
                 <groupId>com.tngtech.archunit</groupId>
                 <artifactId>archunit-junit5</artifactId>
                 <version>${archunit.version}</version>
                 <scope>test</scope>
             </dependency>
+
             <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>testcontainers</artifactId>
                 <version>${testcontainers.version}</version>
                 <scope>test</scope>
             </dependency>
+
             <dependency>
                 <groupId>org.testcontainers</groupId>
                 <artifactId>junit-jupiter</artifactId>
@@ -171,6 +202,7 @@
                     <configuration>
                         <source>21</source>
                         <target>21</target>
+                        <encoding>UTF-8</encoding>
                         <annotationProcessorPaths>
                             <path>
                                 <groupId>org.mapstruct</groupId>
@@ -190,14 +222,20 @@
                         </annotationProcessorPaths>
                     </configuration>
                 </plugin>
+
                 <plugin>
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-maven-plugin</artifactId>
                     <version>${spring-boot.version}</version>
                     <configuration>
-                        <jvmArguments>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8</jvmArguments>
+                        <jvmArguments>
+                            -Dfile.encoding=UTF-8
+                            -Dconsole.encoding=UTF-8
+                            -Dsun.jnu.encoding=UTF-8
+                        </jvmArguments>
                     </configuration>
                 </plugin>
+
                 <plugin>
                     <groupId>org.openjfx</groupId>
                     <artifactId>javafx-maven-plugin</artifactId>
@@ -211,11 +249,22 @@
                         </options>
                     </configuration>
                 </plugin>
+
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-surefire-plugin</artifactId>
+                    <version>3.2.5</version>
+                    <configuration>
+                        <includes>
+                            <include>**/*Test.java</include>
+                            <include>**/*Tests.java</include>
+                        </includes>
+                    </configuration>
+                </plugin>
             </plugins>
         </pluginManagement>
     </build>
 
-    <!-- Профілі -->
     <profiles>
         <profile>
             <id>dev</id>
@@ -226,12 +275,14 @@
                 <spring.profiles.active>dev</spring.profiles.active>
             </properties>
         </profile>
+
         <profile>
             <id>benchmark</id>
             <properties>
                 <spring.profiles.active>benchmark</spring.profiles.active>
             </properties>
         </profile>
+
         <profile>
             <id>production</id>
             <properties>

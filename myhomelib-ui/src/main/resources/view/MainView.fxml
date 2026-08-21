@@ -30,6 +30,12 @@
                     <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
                     <MenuItem text="Видалити книгу" onAction="#handleDeleteBook"/>
                 </Menu>
+                <!-- ОНОВЛЕНИЙ МЕНЮ READER: тільки новий Reader -->
+                <Menu text="Reader">
+                    <MenuItem text="Відкрити в Reader" onAction="#handleOpenNewReader"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Закрити Reader" onAction="#handleCloseReader"/>
+                </Menu>
                 <Menu text="Вигляд">
                     <MenuItem text="Оновити" onAction="#handleRefresh"/>
                     <SeparatorMenuItem/>
@@ -81,6 +87,9 @@
                 <Separator/>
                 <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
                 <Separator/>
+                <!-- НОВА КНОПКА ДЛЯ НОВОГО READER -->
+                <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
+                <Separator/>
                 <Region HBox.hgrow="ALWAYS"/>
                 <Button text="⚙" onAction="#handleSettings"/>
             </ToolBar>
@@ -92,12 +101,8 @@
     </left>
 
     <center>
-        <!-- Центральний контейнер, який містить алфавіт та робочий простір -->
         <VBox VBox.vgrow="ALWAYS" style="-fx-background-color: #ffffff;">
-            <!-- Алфавітна панель зверху -->
             <fx:include source="alphabet-toolbar-view.fxml"/>
-
-            <!-- Робочий простір (змінюється через WorkspaceManager) -->
             <StackPane fx:id="workspaceStackPane" VBox.vgrow="ALWAYS"/>
         </VBox>
     </center>

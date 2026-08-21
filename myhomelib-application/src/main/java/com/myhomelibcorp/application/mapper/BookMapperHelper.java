@@ -1,40 +1,20 @@
 package com.myhomelibcorp.application.mapper;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.*;
-import org.mapstruct.Mapper;
-import org.mapstruct.Mapping;
+import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.List;
 
-@Mapper(componentModel = "spring")
-public interface BookMapper {
-
-    @Mapping(target = "id", expression = "java(book.getId().asString())")
-    @Mapping(target = "authorsText", expression = "java(book.authorsText())")
-    @Mapping(target = "genres", ignore = true)
-    @Mapping(target = "genresText", expression = "java(book.genresText())")
-    @Mapping(target = "language", expression = "java(book.getLanguage() != null ? book.getLanguage().toString() : \"\")")
-    @Mapping(target = "isbn", expression = "java(book.getIsbn() != null ? book.getIsbn().toString() : null)")
-    @Mapping(target = "year", constant = "0")
-    @Mapping(target = "publisher", constant = "")
-    @Mapping(target = "fileSize", source = "file.fileSize")
-    @Mapping(target = "fileName", source = "file.fileName")
-    @Mapping(target = "folder", source = "file.folder")
-    @Mapping(target = "archiveEntry", source = "file.archiveEntry")
-    @Mapping(target = "collectionRoot", source = "file.collectionRoot")
-    BookDto toDto(Book book);
+@Component
+public class BookMapperHelper {
 
     /**
      * Конвертує BookDto в Book (для використання в портах).
-     * Це default метод, який не потребує генерації MapStruct.
      */
-    default Book toDomain(BookDto dto) {
+    public Book toDomain(BookDto dto) {
         if (dto == null) {
             return null;
         }
@@ -73,8 +53,8 @@ public interface BookMapper {
         return Book.builder()
                 .id(bookId)
                 .title(dto.getTitle() != null ? dto.getTitle() : "")
-                .authors(new ArrayList<>()) // Автори будуть заповнені окремо
-                .genres(new ArrayList<>())  // Жанри будуть заповнені окремо
+                .authors(new ArrayList<>())
+                .genres(new ArrayList<>())
                 .series(dto.getSeries() != null ? dto.getSeries() : "")
                 .sequenceNumber(dto.getSequenceNumber() != null ? dto.getSequenceNumber() : 0)
                 .metadata(metadata)

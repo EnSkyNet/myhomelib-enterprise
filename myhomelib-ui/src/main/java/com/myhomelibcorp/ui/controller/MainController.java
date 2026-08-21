@@ -7,9 +7,9 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-import com.myhomelibcorp.reader.service.ReaderFacade;
-import com.myhomelibcorp.reader.session.ReaderSession;
-import com.myhomelibcorp.reader.session.ReaderSessionManager;
+// import com.myhomelibcorp.reader.service.ReaderFacade; // Тимчасово закоментовано
+// import com.myhomelibcorp.reader.session.ReaderSession; // Тимчасово закоментовано
+// import com.myhomelibcorp.reader.session.ReaderSessionManager; // Тимчасово закоментовано
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
@@ -36,10 +36,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 
-/**
- * Головний контролер програми.
- * Координує всі воркспейси та навігацію.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -51,9 +47,9 @@ public class MainController {
     private final WorkspaceManager workspaceManager;
     private final NavigationHistoryService navigationHistory;
     private final ApplicationEventPublisher eventPublisher;
-    private final ReaderFacade readerFacade;
+    // private final ReaderFacade readerFacade; // Тимчасово закоментовано
     private final ApplicationContext springContext;
-    private final ReaderSessionManager readerSessionManager;
+    // private final ReaderSessionManager readerSessionManager; // Тимчасово закоментовано
 
     // ===== Контролери =====
     private final CollectionController collectionController;
@@ -71,9 +67,6 @@ public class MainController {
     @FXML private Button backButton;
     @FXML private Button forwardButton;
     @FXML private StackPane workspaceStackPane;
-
-    // ===== Стан =====
-    private Pane currentWorkspace;
 
     @FXML
     public void initialize() {
@@ -134,6 +127,13 @@ public class MainController {
         workspaceManager.showReaderWorkspace(bookId);
     }
 
+    /**
+     * НОВИЙ МЕТОД: відкриває новий Reader (без WebView).
+     */
+    public void showNewReaderWorkspace(BookId bookId) {
+        workspaceManager.showNewReaderWorkspace(bookId);
+    }
+
     public void showImportWorkspace() {
         workspaceManager.showImportWorkspace();
     }
@@ -157,10 +157,9 @@ public class MainController {
 
     // ==================== Reader ====================
 
-    /**
-     * Очищує Reader при переході на інший воркспейс.
-     */
     public void cleanupReader() {
+        // Тимчасово закоментовано
+        /*
         if (readerFacade.isBookOpen()) {
             ReaderSession session = readerSessionManager.getCurrentSession();
             if (session != null) {
@@ -169,6 +168,8 @@ public class MainController {
                 readerFacade.closeBook();
             }
         }
+        */
+        log.info("🧹 Reader очищено (тимчасово)");
     }
 
     // ==================== FXML дії ====================
@@ -215,7 +216,8 @@ public class MainController {
     @FXML
     public void handleAbout() {
         dialogService.showInfo("Про програму", "MyHomeLib Enterprise",
-                "Версія 1.0.0-SNAPSHOT\nJava 21, Spring Boot 3.5, JavaFX 21");
+                "Версія 1.0.0-SNAPSHOT\nJava 21, Spring Boot 3.5, JavaFX 21\n\n" +
+                        "Новий Reader на Canvas (без WebView)");
     }
 
     @FXML
@@ -475,5 +477,30 @@ public class MainController {
     @FXML
     public void handleAddBook() {
         dialogService.showInfo("Додати книгу", "Функція додавання книги", "Розробляється...");
+    }
+
+    // ==================== МЕТОДИ ДЛЯ РОБОТИ З READER ====================
+
+    @FXML
+    public void handleOpenNewReader() {
+        BookDto selectedBook = appState.getBookDetails().getCurrentBook();
+        if (selectedBook != null) {
+            showNewReaderWorkspace(BookId.fromString(selectedBook.getId()));
+        } else {
+            dialogService.showWarning("Немає книги", "Спочатку виберіть книгу в таблиці.");
+        }
+    }
+
+    public void openInNewReader(BookId bookId) {
+        if (bookId != null) {
+            showNewReaderWorkspace(bookId);
+        }
+    }
+
+    @FXML
+    public void handleCloseReader() {
+        cleanupReader();
+        showDashboard();
+        dialogService.showInfo("Reader закрито", "Поточну книгу закрито.");
     }
 }

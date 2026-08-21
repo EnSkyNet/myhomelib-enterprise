@@ -6,8 +6,8 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-import com.myhomelibcorp.reader.service.ReaderFacade;
-import com.myhomelibcorp.reader.session.ReaderSessionManager;
+// import com.myhomelibcorp.reader.service.ReaderFacade; // Тимчасово закоментовано
+// import com.myhomelibcorp.reader.session.ReaderSessionManager; // Тимчасово закоментовано
 import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import javafx.scene.layout.Pane;
@@ -26,8 +26,8 @@ import java.util.List;
 public class WorkspaceManager {
 
     private final FxmlLoaderFactory fxmlLoaderFactory;
-    private final ReaderFacade readerFacade;
-    private final ReaderSessionManager readerSessionManager;
+    // private final ReaderFacade readerFacade; // Тимчасово закоментовано
+    // private final ReaderSessionManager readerSessionManager; // Тимчасово закоментовано
 
     private MainController mainController;
     private StackPane workspaceStackPane;
@@ -61,10 +61,13 @@ public class WorkspaceManager {
     }
 
     public void setWorkspace(Pane workspace, String type) {
-        if (!"reader".equals(type) && readerFacade.isBookOpen()) {
+        // Тимчасово закоментовано
+        /*
+        if (!"reader".equals(type) && !"new-reader".equals(type) && readerFacade.isBookOpen()) {
             readerFacade.saveCurrentPosition();
             readerFacade.closeBook();
         }
+        */
 
         disposeCurrentWorkspace();
 
@@ -152,10 +155,26 @@ public class WorkspaceManager {
         push("groups", group != null ? group.getId().toString() : "");
     }
 
+    /**
+     * Старий Reader (WebView) - тимчасово закоментовано.
+     */
     public void showReaderWorkspace(BookId bookId) {
+        // Тимчасово показуємо новий Reader замість старого
+        showNewReaderWorkspace(bookId);
+        /*
         Pane workspace = fxmlLoaderFactory.loadReaderWorkspace(bookId);
         setWorkspace(workspace, "reader");
         push("reader", bookId != null ? bookId.asString() : "");
+        */
+    }
+
+    /**
+     * НОВИЙ МЕТОД: показує новий Reader Workspace (без WebView).
+     */
+    public void showNewReaderWorkspace(BookId bookId) {
+        Pane workspace = fxmlLoaderFactory.loadNewReaderWorkspace(bookId);
+        setWorkspace(workspace, "new-reader");
+        push("new-reader", bookId != null ? bookId.asString() : "");
     }
 
     public void showImportWorkspace() {
@@ -187,10 +206,12 @@ public class WorkspaceManager {
     }
 
     private void restoreWorkspace(WorkspaceEntry entry) {
-        if (!"reader".equals(entry.type) && readerFacade.isBookOpen()) {
+        /*
+        if (!"reader".equals(entry.type) && !"new-reader".equals(entry.type) && readerFacade.isBookOpen()) {
             readerFacade.saveCurrentPosition();
             readerFacade.closeBook();
         }
+        */
 
         switch (entry.type) {
             case "dashboard" -> showDashboard();
@@ -198,7 +219,8 @@ public class WorkspaceManager {
             case "series" -> showSeriesWorkspace(SeriesId.fromString(entry.id));
             case "genre" -> showGenreWorkspace(GenreId.fromCode(entry.id));
             case "book" -> showBookWorkspace(BookId.fromString(entry.id));
-            case "reader" -> showReaderWorkspace(BookId.fromString(entry.id));
+            case "reader" -> showNewReaderWorkspace(BookId.fromString(entry.id)); // Перенаправляємо на новий Reader
+            case "new-reader" -> showNewReaderWorkspace(BookId.fromString(entry.id));
             case "search" -> showSearchResults(entry.id);
             case "collection" -> showCollectionWorkspace();
             case "groups" -> showGroupWorkspace(null);
