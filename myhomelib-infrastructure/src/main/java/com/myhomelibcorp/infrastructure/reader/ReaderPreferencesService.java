@@ -1,30 +1,29 @@
 package com.myhomelibcorp.infrastructure.reader;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myhomelibcorp.shared.util.AppPaths;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.prefs.Preferences;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 @Service
 @Slf4j
 public class ReaderPreferencesService implements ReaderPreferencesPort {
 
-    private static final String PREFS_NODE = "myhomelib/reader";
-    private static final String PREF_KEY = "preferences";
     private final ObjectMapper objectMapper = new ObjectMapper();
+    private final Path file = AppPaths.configDir().resolve("reader-preferences.json");
 
     @Override
     public ReaderPreferences loadPreferences() {
         try {
-            Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
-            String json = prefs.get(PREF_KEY, null);
-            if (json != null && !json.isEmpty()) {
-                ReaderPreferences loaded = objectMapper.readValue(json, ReaderPreferences.class);
-                log.debug("Loaded preferences: theme={}, fontSize={}, widthMode={}",
-                        loaded.getTheme(), loaded.getFontSize(), loaded.getWidthMode());
+            if (Files.isRegularFile(file)) {
+                ReaderPreferences loaded = objectMapper.readValue(file.toFile(), ReaderPreferences.class);
+                log.debug("Loaded reader preferences from {}", file);
                 return loaded;
             }
         } catch (Exception e) {
@@ -36,11 +35,15 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
     @Override
     public void savePreferences(ReaderPreferences preferences) {
         try {
-            Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
-            String json = objectMapper.writeValueAsString(preferences);
-            prefs.put(PREF_KEY, json);
-            log.debug("Saved preferences: theme={}, fontSize={}, widthMode={}",
-                    preferences.getTheme(), preferences.getFontSize(), preferences.getWidthMode());
+            Files.createDirectories(file.getParent());
+            Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+            objectMapper.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), preferences);
+            try {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+            } catch (Exception unsupported) {
+                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
+            }
+            log.debug("Saved reader preferences to {}", file);
         } catch (Exception e) {
             log.error("Не вдалося зберегти налаштування Reader", e);
         }
@@ -49,8 +52,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
     @Override
     public void resetPreferences() {
         try {
-            Preferences prefs = Preferences.userRoot().node(PREFS_NODE);
-            prefs.remove(PREF_KEY);
+            Files.deleteIfExists(file);
             log.info("Reader preferences reset");
         } catch (Exception e) {
             log.error("Не вдалося скинути налаштування Reader", e);

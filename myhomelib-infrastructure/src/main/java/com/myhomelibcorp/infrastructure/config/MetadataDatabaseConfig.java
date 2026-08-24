@@ -26,7 +26,7 @@ public class MetadataDatabaseConfig {
         com.zaxxer.hikari.HikariConfig config = new com.zaxxer.hikari.HikariConfig();
         config.setJdbcUrl("jdbc:sqlite:" + dbPath.toAbsolutePath());
         config.setDriverClassName("org.sqlite.JDBC");
-        config.setMaximumPoolSize(5);
+        config.setMaximumPoolSize(2);
         config.setMinimumIdle(1);
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);

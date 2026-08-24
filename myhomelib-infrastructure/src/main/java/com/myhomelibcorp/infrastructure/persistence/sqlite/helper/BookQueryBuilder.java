@@ -33,7 +33,8 @@ public class BookQueryBuilder {
             ctx.joins.add("JOIN book_authors ba ON b.id = ba.book_id");
         }
         if (query.onlyFavorites()) {
-            ctx.joins.add("JOIN book_groups bgf ON b.id = bgf.book_id AND bgf.group_id = 1");
+            ctx.conditions.add("EXISTS (SELECT 1 FROM book_groups bgf JOIN groups gf ON gf.id = bgf.group_id " +
+                    "WHERE bgf.book_id = b.id AND LOWER(TRIM(gf.name)) IN ('favorites','обране','избрани','улюблене'))");
         }
         // FIX: JOIN з таблицею series з урахуванням регістру та пробілів
         if (query.seriesId() != null) {
@@ -42,6 +43,9 @@ public class BookQueryBuilder {
     }
 
     private void addConditions(QueryContext ctx, BookQuery query) {
+        // Deleted rows are tombstones used by catalogue updates and must never leak into normal browsing.
+        ctx.conditions.add("b.deleted = 0");
+
         // AUTHOR
         if (query.authorId() != null) {
             ctx.conditions.add("ba.author_id = ?");
@@ -142,7 +146,11 @@ public class BookQueryBuilder {
             case RANDOM:   column = "RANDOM()"; break;
             default:       column = "b.title";
         }
-        return "ORDER BY " + column + " " + dir;
+        if (sortBy == SortBy.RANDOM) {
+            return "ORDER BY RANDOM()";
+        }
+        // Stable tie-break is required for offset paging and full Lucene rebuilds.
+        return "ORDER BY " + column + " " + dir + ", b.id " + dir;
     }
 
     private static class QueryContext {

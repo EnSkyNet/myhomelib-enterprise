@@ -7,6 +7,8 @@ import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 
+import java.time.LocalDate;
+
 public record SearchRequest(
         String text,
         AuthorId authorId,
@@ -17,6 +19,9 @@ public record SearchRequest(
         Integer ratingTo,
         Integer yearFrom,
         Integer yearTo,
+        LocalDate addedFrom,
+        LocalDate addedTo,
+        Boolean localOnly,
         int limit,
         int offset,
         SortBy sortBy,
@@ -37,6 +42,9 @@ public record SearchRequest(
         private Integer ratingTo;
         private Integer yearFrom;
         private Integer yearTo;
+        private LocalDate addedFrom;
+        private LocalDate addedTo;
+        private Boolean localOnly;
         private int limit = 100;
         private int offset = 0;
         private SortBy sortBy = SortBy.TITLE;
@@ -52,6 +60,9 @@ public record SearchRequest(
         public Builder ratingTo(Integer ratingTo) { this.ratingTo = ratingTo; return this; }
         public Builder yearFrom(Integer yearFrom) { this.yearFrom = yearFrom; return this; }
         public Builder yearTo(Integer yearTo) { this.yearTo = yearTo; return this; }
+        public Builder addedFrom(LocalDate addedFrom) { this.addedFrom = addedFrom; return this; }
+        public Builder addedTo(LocalDate addedTo) { this.addedTo = addedTo; return this; }
+        public Builder localOnly(Boolean localOnly) { this.localOnly = localOnly; return this; }
         public Builder limit(int limit) { this.limit = limit; return this; }
         public Builder offset(int offset) { this.offset = offset; return this; }
         public Builder sortBy(SortBy sortBy) { this.sortBy = sortBy; return this; }
@@ -61,7 +72,7 @@ public record SearchRequest(
         public SearchRequest build() {
             return new SearchRequest(
                     text, authorId, seriesId, genreId, language,
-                    ratingFrom, ratingTo, yearFrom, yearTo,
+                    ratingFrom, ratingTo, yearFrom, yearTo, addedFrom, addedTo, localOnly,
                     limit, offset, sortBy, direction, mode
             );
         }

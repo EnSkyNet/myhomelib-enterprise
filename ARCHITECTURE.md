@@ -3,7 +3,7 @@
 # MyHomeLib Enterprise — архітектура поточного проекту
 
 **Стан документа:** 19.08.2026  
-**Версія проекту:** `1.0.0-SNAPSHOT`  
+**Версія проекту:** `1.0.0`  
 **Java:** 21  
 **UI:** JavaFX 21.0.2 + JavaFX WebView  
 **Backend/Application runtime:** Spring Boot 3.5.0  

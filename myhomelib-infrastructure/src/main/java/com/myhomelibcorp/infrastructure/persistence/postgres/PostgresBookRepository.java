@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 @Repository
 @Profile("postgres")
@@ -46,6 +47,25 @@ public class PostgresBookRepository implements BookQueryRepository {
     public List<Book> findByIds(List<BookId> ids) {
         log.warn("PostgresBookRepository.findByIds() not implemented yet");
         return List.of();
+    }
+
+    // ===== Пошук за зберіганням =====
+    @Override
+    public Optional<Book> findByStorage(String collectionRoot, String folder, String fileName, String archiveEntry) {
+        log.warn("PostgresBookRepository.findByStorage() not implemented yet");
+        return Optional.empty();
+    }
+
+    @Override
+    public List<Book> findByArchiveContainer(String collectionRoot, String relativeArchivePath, String absoluteArchivePath) {
+        log.warn("PostgresBookRepository.findByArchiveContainer() not implemented yet");
+        return List.of();
+    }
+
+    @Override
+    public Stream<Book> streamAll() {
+        log.warn("PostgresBookRepository.streamAll() not implemented yet");
+        return Stream.empty();
     }
 
     // ===== Спеціальні запити =====

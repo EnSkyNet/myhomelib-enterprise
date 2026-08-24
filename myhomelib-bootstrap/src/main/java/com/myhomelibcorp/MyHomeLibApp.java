@@ -16,6 +16,7 @@ import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
 import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
 import com.myhomelibcorp.infrastructure.warmup.BackgroundWarmup;
+import com.myhomelibcorp.shared.util.AppPaths;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -108,7 +109,7 @@ public class MyHomeLibApp extends Application {
         box.setPadding(new javafx.geometry.Insets(30));
         Scene scene = new Scene(box, 320, 180);
         splash.setScene(scene);
-        splash.setTitle("MyHomeLib Enterprise");
+        splash.setTitle("MyHomeLib");
         splash.setAlwaysOnTop(true);
         return splash;
     }
@@ -125,8 +126,7 @@ public class MyHomeLibApp extends Application {
         Collection active;
         if (collections.isEmpty()) {
             log.info("Колекцій не знайдено, створюємо стандартну...");
-            String dbPath = System.getProperty("user.home") + "/.myhomelibcorp/libraries/" +
-                    UUID.randomUUID() + ".db";
+            String dbPath = AppPaths.librariesDir().resolve(UUID.randomUUID() + ".db").toString();
             active = collectionRepository.save(new Collection(
                     null,
                     "Моя бібліотека",
@@ -224,7 +224,7 @@ public class MyHomeLibApp extends Application {
         String collectionName = collectionManager.getCurrentCollection() != null
                 ? collectionManager.getCurrentCollection().getName()
                 : "Без колекції";
-        primaryStage.setTitle("MyHomeLib Enterprise — " + collectionName);
+        primaryStage.setTitle("MyHomeLib — " + collectionName);
         primaryStage.setScene(new Scene(root, 1100, 750));
         primaryStage.setMinWidth(800);
         primaryStage.setMinHeight(600);
@@ -251,20 +251,13 @@ public class MyHomeLibApp extends Application {
 
         log.info("Завершення програми...");
 
-        // 1. Закриваємо ReaderFacade (тимчасово закоментовано)
-        /*
+        // 1. Dispose active workspace/Reader before stopping executors and DB.
         try {
-            ReaderFacade readerFacade = context.getBean(ReaderFacade.class);
-            if (readerFacade.isBookOpen()) {
-                readerFacade.saveCurrentPosition();
-                readerFacade.closeBook();
-            }
-            readerFacade.clearCache();
-            log.info("ReaderFacade закрито");
+            context.getBean(com.myhomelibcorp.ui.navigation.WorkspaceManager.class).disposeCurrent();
+            log.info("Активний workspace закрито");
         } catch (Exception e) {
-            log.warn("Не вдалося закрити ReaderFacade", e);
+            log.warn("Не вдалося закрити активний workspace", e);
         }
-        */
 
         // 2. Закриваємо AsyncConfig
         try {
@@ -332,6 +325,7 @@ public class MyHomeLibApp extends Application {
     }
 
     public static void main(String[] args) {
+        AppPaths.configureSystemProperties();
         launch(args);
     }
 }

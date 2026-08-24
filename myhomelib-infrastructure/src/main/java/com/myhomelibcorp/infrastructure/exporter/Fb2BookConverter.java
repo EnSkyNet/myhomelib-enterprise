@@ -16,8 +16,10 @@ public class Fb2BookConverter implements BookConverter {
 
     @Override
     public boolean supports(Book book) {
-        String fileName = book.getFileName().toLowerCase();
-        return fileName.endsWith(".fb2") || fileName.endsWith(".fbd");
+        String name = book.getArchiveEntry();
+        if (name == null || name.isBlank()) name = book.getFileName();
+        name = name == null ? "" : name.toLowerCase();
+        return name.endsWith(".fb2") || name.endsWith(".fbd");
     }
 
     @Override

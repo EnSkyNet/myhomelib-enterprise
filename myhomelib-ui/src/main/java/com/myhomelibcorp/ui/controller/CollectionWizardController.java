@@ -39,6 +39,9 @@ public class CollectionWizardController {
     @FXML private TextField dbPathField;
     @FXML private ComboBox<CollectionType> typeComboBox;
     @FXML private TextField sourcePathField;
+    @FXML private TextField urlField;
+    @FXML private TextField userField;
+    @FXML private PasswordField passwordField;
     @FXML private CheckBox importOnCreateCheck;
     @FXML private CheckBox createIndexCheck;
     @FXML private Button nextButton;
@@ -85,6 +88,9 @@ public class CollectionWizardController {
                 }
         );
         sourcePathField.textProperty().bindBidirectional(model.sourcePathProperty());
+        urlField.textProperty().bindBidirectional(model.urlProperty());
+        userField.textProperty().bindBidirectional(model.userProperty());
+        passwordField.textProperty().bindBidirectional(model.passwordProperty());
         typeComboBox.valueProperty().bindBidirectional(model.typeProperty());
         importOnCreateCheck.selectedProperty().bindBidirectional(model.importOnCreateProperty());
         createIndexCheck.selectedProperty().bindBidirectional(model.createIndexProperty());
@@ -94,6 +100,7 @@ public class CollectionWizardController {
         rootFolderField.textProperty().addListener((obs, old, val) -> validate());
         dbPathField.textProperty().addListener((obs, old, val) -> validate());
         sourcePathField.textProperty().addListener((obs, old, val) -> validate());
+        urlField.textProperty().addListener((obs, old, val) -> validate());
 
         // Початкова валідація
         validate();
@@ -196,11 +203,12 @@ public class CollectionWizardController {
     @FXML
     private void onSelectSourcePath() {
         File file = fileChooserService.chooseFile(stage,
-                "Виберіть файл джерела (INPX, FB2, ZIP)",
+                "Виберіть файл джерела",
                 List.of(
-                        new javafx.stage.FileChooser.ExtensionFilter("Всі підтримувані", "*.inpx", "*.fb2", "*.fbd", "*.zip"),
-                        new javafx.stage.FileChooser.ExtensionFilter("INPX файли", "*.inpx"),
-                        new javafx.stage.FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd")
+                        new javafx.stage.FileChooser.ExtensionFilter("Всі підтримувані", "*.inpx", "*.inp", "*.fb2", "*.fbd", "*.epub", "*.txt", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz"),
+                        new javafx.stage.FileChooser.ExtensionFilter("INPX/INP", "*.inpx", "*.inp"),
+                        new javafx.stage.FileChooser.ExtensionFilter("Книги", "*.fb2", "*.fbd", "*.epub", "*.txt"),
+                        new javafx.stage.FileChooser.ExtensionFilter("Архіви", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz")
                 ));
         if (file != null) {
             model.setSourcePath(file.getAbsolutePath());
@@ -246,6 +254,9 @@ public class CollectionWizardController {
                 .typeCode(model.getType().getCode())
                 .importOnCreate(model.isImportOnCreate())
                 .createIndex(model.isCreateIndex())
+                .url(model.getUrl())
+                .user(model.getUser())
+                .password(model.getPassword())
                 .build();
     }
 

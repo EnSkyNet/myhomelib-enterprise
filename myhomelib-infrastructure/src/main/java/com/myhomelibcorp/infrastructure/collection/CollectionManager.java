@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import javax.sql.DataSource;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import com.myhomelibcorp.shared.util.AppPaths;
 import java.sql.SQLException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -66,7 +67,9 @@ public class CollectionManager {
             Path path = Paths.get(dbPath);
 
             // Створюємо директорію, якщо її немає
-            path.getParent().toFile().mkdirs();
+            if (path.toAbsolutePath().getParent() != null) {
+                java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());
+            }
 
             HikariDataSource dataSource = dataSourceConfig.createDataSourceForPath(path.toAbsolutePath().toString());
 
@@ -135,9 +138,7 @@ public class CollectionManager {
     private String getDbPath(Collection collection) {
         String dbPath = collection.getDbFile();
         if (dbPath == null || dbPath.isBlank()) {
-            dbPath = System.getProperty("user.home") +
-                    "/.myhomelibcorp/libraries/" +
-                    collection.getId() + ".db";
+            dbPath = AppPaths.librariesDir().resolve(collection.getId() + ".db").toString();
         }
         return dbPath;
     }

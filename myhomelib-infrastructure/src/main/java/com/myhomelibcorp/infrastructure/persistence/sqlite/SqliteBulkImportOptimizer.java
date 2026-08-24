@@ -37,9 +37,7 @@ public class SqliteBulkImportOptimizer implements BulkImportOptimizer {
         JdbcTemplate jt = getJdbcTemplate();
         try {
             jt.execute("PRAGMA synchronous = NORMAL");
-            try {
-                jt.execute("COMMIT");
-            } catch (Exception ignored) {}
+            // Commit/rollback is owned by the surrounding Spring transaction.
             log.debug("PRAGMA відновлено до стандартних");
         } catch (Exception e) {
             log.warn("Помилка при відновленні PRAGMA: {}", e.getMessage());

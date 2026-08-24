@@ -16,4 +16,5 @@ public class AuthorDto {
     private String lastName;
     private String fullName;
     private String shortName;
+    private String annotation;
 }

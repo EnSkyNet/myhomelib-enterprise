@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
 @RequiredArgsConstructor
@@ -19,5 +20,10 @@ public class InpxFastImportService implements FastImportService {
     public long importInpx(Path file, int batchSize, Path rootDirectory) {
         log.info("Fast import INPX: {} (root: {})", file, rootDirectory);
         return pipeline.importFile(file, batchSize, rootDirectory);
+    }
+    @Override
+    public long importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag) {
+        log.info("Fast import INPX with cancellation: {} (root: {})", file, rootDirectory);
+        return pipeline.importFile(file, batchSize, rootDirectory, cancelFlag);
     }
 }

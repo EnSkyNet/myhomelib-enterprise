@@ -7,7 +7,7 @@
 
     <groupId>com.myhomelibcorp</groupId>
     <artifactId>myhomelib-enterprise</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0</version>
     <packaging>pom</packaging>
 
     <name>MyHomeLib Enterprise</name>
@@ -29,6 +29,8 @@
         <lombok.version>1.18.30</lombok.version>
         <caffeine.version>3.1.8</caffeine.version>
         <lucene.version>9.11.0</lucene.version>
+        <commons-compress.version>1.28.0</commons-compress.version>
+        <junrar.version>8.1.0</junrar.version>
 
         <junit.version>5.10.2</junit.version>
         <mockito.version>5.10.0</mockito.version>
@@ -53,6 +55,7 @@
 
         <!-- ОДИН МОДУЛЬ READER (без дублікатів!) -->
         <module>myhomelib-reader</module>
+        <module>myhomelib-mcp</module>
     </modules>
 
     <dependencyManagement>
@@ -119,6 +122,18 @@
                 <groupId>com.github.ben-manes.caffeine</groupId>
                 <artifactId>caffeine</artifactId>
                 <version>${caffeine.version}</version>
+            </dependency>
+
+            <!-- Multi-format archives -->
+            <dependency>
+                <groupId>org.apache.commons</groupId>
+                <artifactId>commons-compress</artifactId>
+                <version>${commons-compress.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.junrar</groupId>
+                <artifactId>junrar</artifactId>
+                <version>${junrar.version}</version>
             </dependency>
 
             <!-- Lucene -->

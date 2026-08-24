@@ -6,7 +6,7 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <modelVersion>4.0.0</modelVersion>
@@ -96,12 +96,14 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <configuration>
-                    <jvmArguments>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8</jvmArguments>
                     <mainClass>com.myhomelibcorp.MyHomeLibApp</mainClass>
-                    <jvmArguments>
-                        --add-modules=javafx.controls,javafx.fxml
-                    </jvmArguments>
+                    <jvmArguments>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8</jvmArguments>
                 </configuration>
+                <executions>
+                    <execution>
+                        <goals><goal>repackage</goal></goals>
+                    </execution>
+                </executions>
             </plugin>
 
             <!-- maven-shade-plugin ВИДАЛЕНО – зайвий -->

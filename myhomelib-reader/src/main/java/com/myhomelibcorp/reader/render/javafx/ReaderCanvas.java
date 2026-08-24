@@ -6,71 +6,85 @@ import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.core.ReaderEngine;
 import com.myhomelibcorp.reader.model.PageLayout;
 import com.myhomelibcorp.reader.render.api.ReaderRenderer;
+import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.input.KeyCode;
 import javafx.scene.input.KeyEvent;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.ScrollEvent;
+import javafx.scene.input.SwipeEvent;
 import javafx.scene.layout.StackPane;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.function.Consumer;
 
+/**
+ * JavaFX viewport reader-а. Важливо: використовує ТОЙ САМИЙ Canvas, який
+ * належить JavaFxReaderRenderer. Раніше тут створювався другий Canvas, через
+ * що renderer малював у невидимий вузол.
+ */
 @Slf4j
 public class ReaderCanvas extends StackPane {
+
+    private static final int MAX_PAGE_HISTORY = 256;
 
     private final Canvas canvas;
     private final JavaFxReaderRenderer renderer;
     private final ReaderEngine engine;
-
-    private final PageModeController pageModeController;
     private final AutoScrollController autoScrollController;
+    private final Deque<ReaderPosition> pageHistory = new ArrayDeque<>();
 
     @Getter
     private double zoom = 1.0;
     @Getter
     private PageDimensions currentDimensions;
 
+    private double zoomBaseFontSize;
+    private boolean pageModeEnabled;
+    private boolean rendering;
+    private boolean renderScheduled;
+    private boolean sizeUpdated;
+    private boolean dragging;
+    private boolean swipeHandled;
+    private double dragStartX;
+    private double dragStartY;
+    private double accumulatedScroll;
+    private long lastWheelPageNanos;
+
     private Consumer<ReaderPosition> onPositionChanged;
     private Runnable onPageChanged;
     private Runnable onBookClosed;
+    private Runnable onCloseRequested;
     private Consumer<Integer> onPageNumberChanged;
-
-    private boolean isDragging = false;
-    private double dragStartX = 0;
-    private double dragStartY = 0;
-
-    // Прапорець, щоб уникнути повторних викликів render
-    private boolean isRendering = false;
-    private boolean isSizeUpdated = false;
+    private Runnable onCenterTap;
+    private Runnable onSearchRequested;
 
     public ReaderCanvas(ReaderEngine engine, ReaderRenderer renderer) {
+        if (engine == null) {
+            throw new IllegalArgumentException("engine is required");
+        }
+        if (!(renderer instanceof JavaFxReaderRenderer fxRenderer)) {
+            throw new IllegalArgumentException("ReaderCanvas requires JavaFxReaderRenderer");
+        }
+
         this.engine = engine;
-        this.renderer = (JavaFxReaderRenderer) renderer;
+        this.renderer = fxRenderer;
+        this.canvas = fxRenderer.getCanvas(); // критичний fix: один спільний Canvas
+        this.zoomBaseFontSize = engine.getSettings().fontSize();
+        this.pageModeEnabled = engine.getSettings().pageMode();
+        this.autoScrollController = new AutoScrollController(this::nextPage);
 
-        this.canvas = new Canvas();
-        this.canvas.setFocusTraversable(true);
-
-        this.pageModeController = new PageModeController(canvas);
-        this.autoScrollController = new AutoScrollController(canvas);
-
+        canvas.setFocusTraversable(true);
         getChildren().add(canvas);
-
         canvas.widthProperty().bind(widthProperty());
         canvas.heightProperty().bind(heightProperty());
 
-        widthProperty().addListener((obs, old, val) -> {
-            if (val.doubleValue() > 0 && engine.isOpen()) {
-                scheduleRender();
-            }
-        });
-        heightProperty().addListener((obs, old, val) -> {
-            if (val.doubleValue() > 0 && engine.isOpen()) {
-                scheduleRender();
-            }
-        });
+        widthProperty().addListener((obs, oldValue, newValue) -> scheduleRender());
+        heightProperty().addListener((obs, oldValue, newValue) -> scheduleRender());
 
         setFocusTraversable(true);
         setOnKeyPressed(this::onKeyPressed);
@@ -79,52 +93,25 @@ public class ReaderCanvas extends StackPane {
         setOnMousePressed(this::onMousePressed);
         setOnMouseDragged(this::onMouseDragged);
         setOnMouseReleased(this::onMouseReleased);
-
-        setPadding(new Insets(0));
-
-        log.info("✅ ReaderCanvas створено");
+        setOnSwipeLeft(this::onSwipeLeft);
+        setOnSwipeRight(this::onSwipeRight);
+        setPadding(Insets.EMPTY);
     }
 
     public void updateSize() {
-        double w = canvas.getWidth();
-        double h = canvas.getHeight();
-
-        // Якщо Canvas ще не має розмірів - пробуємо взяти з контейнера
-        if (w <= 0 || h <= 0) {
-            w = getWidth();
-            h = getHeight();
+        if (!engine.isOpen()) {
+            return;
         }
-
-        log.debug("📐 updateSize: width={}, height={}", w, h);
-
-        if (w > 0 && h > 0 && engine.isOpen()) {
-            ReaderSettings settings = engine.getSettings();
-
-            currentDimensions = new PageDimensions(
-                    (int) w,
-                    (int) h,
-                    (int) (settings.leftMargin() * zoom),
-                    (int) (settings.rightMargin() * zoom),
-                    (int) (settings.topMargin() * zoom),
-                    (int) (settings.bottomMargin() * zoom)
-            );
-
-            isSizeUpdated = true;
+        if (canvas.getWidth() > 0 && canvas.getHeight() > 0) {
             render();
-        } else {
-            // Якщо розмірів немає - пробуємо ще раз пізніше
-            if (engine.isOpen()) {
-                javafx.application.Platform.runLater(this::updateSize);
-            }
         }
+        // Якщо layout ще не відбувся, width/height listeners самі викличуть render.
     }
 
     public void render() {
-        if (isRendering) {
-            log.trace("⏭️ Рендеринг вже виконується, пропускаємо");
+        if (rendering) {
             return;
         }
-
         if (!engine.isOpen()) {
             clear();
             return;
@@ -132,33 +119,35 @@ public class ReaderCanvas extends StackPane {
 
         double w = canvas.getWidth();
         double h = canvas.getHeight();
-
-        if (w <= 0 || h <= 0) {
-            log.warn("⚠️ Немає дійсних розмірів сторінки: w={}, h={}", w, h);
+        if (w <= 1 || h <= 1) {
             return;
         }
 
-        isRendering = true;
-
+        rendering = true;
         try {
             ReaderSettings settings = engine.getSettings();
-
-            currentDimensions = new PageDimensions(
-                    (int) w,
-                    (int) h,
-                    (int) (settings.leftMargin() * zoom),
-                    (int) (settings.rightMargin() * zoom),
-                    (int) (settings.topMargin() * zoom),
-                    (int) (settings.bottomMargin() * zoom)
+            PageDimensions newDimensions = new PageDimensions(
+                    Math.max(1, (int) Math.floor(w)),
+                    Math.max(1, (int) Math.floor(h)),
+                    Math.max(0, (int) Math.round(settings.leftMargin())),
+                    Math.max(0, (int) Math.round(settings.rightMargin())),
+                    Math.max(0, (int) Math.round(settings.topMargin())),
+                    Math.max(0, (int) Math.round(settings.bottomMargin()))
             );
-
-            engine.renderPage();
-
-            if (onPageChanged != null) {
-                onPageChanged.run();
+            if (currentDimensions != null && !currentDimensions.equals(newDimensions)) {
+                pageHistory.clear();
             }
+            currentDimensions = newDimensions;
+            sizeUpdated = currentDimensions.isValid();
+            if (!sizeUpdated) {
+                return;
+            }
+
+            // Другий критичний fix: dimensions передаються engine ДО renderPage.
+            engine.renderPage(currentDimensions);
+            notifyPageChanged();
         } finally {
-            isRendering = false;
+            rendering = false;
         }
     }
 
@@ -167,128 +156,163 @@ public class ReaderCanvas extends StackPane {
     }
 
     private void scheduleRender() {
-        if (!isSizeUpdated) {
+        if (!engine.isOpen() || renderScheduled) {
             return;
         }
-        javafx.application.Platform.runLater(this::render);
+        renderScheduled = true;
+        Platform.runLater(() -> {
+            renderScheduled = false;
+            render();
+        });
     }
 
     // ==================== НАВІГАЦІЯ ====================
 
     public void nextPage() {
-        if (!engine.isOpen() || currentDimensions == null) {
+        if (!engine.isOpen() || !ensureDimensions()) {
             return;
         }
-
-        if (pageModeController.isPageModeEnabled()) {
-            pageModeController.nextPage();
-            if (onPageNumberChanged != null) {
-                onPageNumberChanged.accept(pageModeController.getCurrentPage());
-            }
-            render();
-            return;
-        }
-
+        ReaderPosition before = engine.getCurrentPosition();
         engine.nextPage(currentDimensions);
-        render();
+        ReaderPosition after = engine.getCurrentPosition();
+        if (!sameOffset(before, after)) {
+            pushHistory(before);
+            render();
+            notifyPositionChanged();
+        } else if (autoScrollController.isRunning()) {
+            autoScrollController.stop();
+        }
     }
 
     public void previousPage() {
-        if (!engine.isOpen() || currentDimensions == null) {
+        if (!engine.isOpen() || !ensureDimensions()) {
             return;
         }
-
-        if (pageModeController.isPageModeEnabled()) {
-            pageModeController.previousPage();
-            if (onPageNumberChanged != null) {
-                onPageNumberChanged.accept(pageModeController.getCurrentPage());
-            }
+        ReaderPosition before = engine.getCurrentPosition();
+        ReaderPosition target = pageHistory.pollLast();
+        if (target != null) {
+            engine.goToPosition(target);
+        } else {
+            engine.previousPage(currentDimensions);
+        }
+        if (!sameOffset(before, engine.getCurrentPosition())) {
             render();
-            return;
+            notifyPositionChanged();
         }
-
-        engine.previousPage(currentDimensions);
-        render();
     }
 
     public void previousChapter() {
         if (!engine.isOpen()) {
             return;
         }
+        ReaderPosition before = engine.getCurrentPosition();
+        pageHistory.clear();
         engine.previousChapter();
-        render();
+        if (!sameOffset(before, engine.getCurrentPosition())) {
+            render();
+            notifyPositionChanged();
+        }
     }
 
     public void nextChapter() {
         if (!engine.isOpen()) {
             return;
         }
+        ReaderPosition before = engine.getCurrentPosition();
+        pageHistory.clear();
         engine.nextChapter();
-        render();
+        if (!sameOffset(before, engine.getCurrentPosition())) {
+            render();
+            notifyPositionChanged();
+        }
     }
 
     public void goToPercent(double percent) {
         if (!engine.isOpen()) {
             return;
         }
+        pageHistory.clear();
         engine.goToPercent(percent);
         render();
+        notifyPositionChanged();
     }
 
     public void goToPosition(ReaderPosition position) {
-        if (!engine.isOpen()) {
+        if (!engine.isOpen() || position == null) {
             return;
         }
-
-        // Перевіряємо, чи позиція в межах книги
-        if (engine.getCurrentDocument() != null) {
-            long totalLength = engine.getCurrentDocument().totalTextLength();
-            if (position.textOffset() >= totalLength) {
-                position = new ReaderPosition(
-                        position.chapterIndex(),
-                        totalLength > 0 ? totalLength - 1 : 0,
-                        position.paragraphIndex(),
-                        position.charOffset()
-                );
-            }
-        }
-
+        pageHistory.clear();
         engine.goToPosition(position);
         render();
-
-        if (onPositionChanged != null) {
-            onPositionChanged.accept(position);
-        }
+        notifyPositionChanged();
     }
 
-    // ==================== СТОРІНКОВИЙ РЕЖИМ ====================
+    private void pushHistory(ReaderPosition position) {
+        if (position == null) {
+            return;
+        }
+        if (pageHistory.size() >= MAX_PAGE_HISTORY) {
+            pageHistory.pollFirst();
+        }
+        pageHistory.addLast(position);
+    }
+
+    private boolean sameOffset(ReaderPosition a, ReaderPosition b) {
+        return a == null ? b == null : b != null && a.textOffset() == b.textOffset();
+    }
+
+    private boolean ensureDimensions() {
+        if (currentDimensions != null && currentDimensions.isValid()) {
+            return true;
+        }
+        render();
+        return currentDimensions != null && currentDimensions.isValid();
+    }
+
+    // ==================== РЕЖИМИ ====================
 
     public void togglePageMode() {
-        pageModeController.toggle();
-        render();
+        pageModeEnabled = !pageModeEnabled;
     }
 
     public boolean isPageModeEnabled() {
-        return pageModeController.isPageModeEnabled();
+        return pageModeEnabled;
     }
 
+    /** Номер приблизний; повну карту сторінок навмисно не тримаємо в RAM. */
     public int getCurrentPageNumber() {
-        return pageModeController.getCurrentPage();
+        if (!engine.isOpen() || currentDimensions == null) {
+            return 1;
+        }
+        long pageSize = currentPageLength();
+        return (int) Math.max(1, engine.getCurrentPosition().textOffset() / pageSize + 1);
     }
 
     public int getTotalPages() {
-        return pageModeController.getTotalPages();
+        if (!engine.isOpen() || currentDimensions == null || engine.getCurrentDocument() == null) {
+            return 1;
+        }
+        long pageSize = currentPageLength();
+        long total = engine.getCurrentDocument().totalTextLength();
+        return (int) Math.max(1, Math.min(Integer.MAX_VALUE, (total + pageSize - 1) / pageSize));
+    }
+
+    private long currentPageLength() {
+        PageLayout page = engine.getCurrentPage(currentDimensions);
+        return Math.max(1, page.getEndOffset() - page.getStartOffset());
     }
 
     public void goToPage(int page) {
-        if (!engine.isOpen() || !pageModeController.isPageModeEnabled()) {
+        if (page <= 1) {
+            goToPercent(0);
             return;
         }
-        pageModeController.goToPage(page);
+        int total = getTotalPages();
+        double percent = Math.min(100.0, (page - 1) * 100.0 / Math.max(1, total));
+        goToPercent(percent);
         if (onPageNumberChanged != null) {
-            onPageNumberChanged.accept(pageModeController.getCurrentPage());
+            onPageNumberChanged.accept(getCurrentPageNumber());
         }
-        render();
     }
 
     // ==================== АВТОПРОКРУТКА ====================
@@ -309,24 +333,32 @@ public class ReaderCanvas extends StackPane {
         return autoScrollController.getSpeed();
     }
 
-    // ==================== ЗУМ ====================
+    // ==================== ЗУМ / НАЛАШТУВАННЯ ====================
 
     public void zoomIn() {
         zoom = Math.min(2.0, zoom + 0.1);
-        render();
+        applyZoom();
     }
 
     public void zoomOut() {
-        zoom = Math.max(0.5, zoom - 0.1);
-        render();
+        zoom = Math.max(0.55, zoom - 0.1);
+        applyZoom();
     }
 
     public void resetZoom() {
         zoom = 1.0;
-        render();
+        applyZoom();
     }
 
-    // ==================== ТЕМИ ====================
+    private void applyZoom() {
+        pageHistory.clear();
+        ReaderSettings effective = engine.getSettings().withFontSize(
+                Math.max(8, Math.min(72, zoomBaseFontSize * zoom))
+        );
+        renderer.applySettings(effective);
+        engine.applySettings(effective);
+        render();
+    }
 
     public void cycleTheme() {
         String current = engine.getSettings().themeName();
@@ -336,42 +368,49 @@ public class ReaderCanvas extends StackPane {
             case "dark" -> "amoled";
             default -> "light";
         };
-        updateTheme(next);
+        ReaderSettings themed = engine.getSettings().withTheme(next);
+        renderer.applySettings(themed);
+        engine.applySettings(themed);
+        render();
     }
 
     public void updateTheme(String themeName) {
-        ReaderSettings newSettings = engine.getSettings().withTheme(themeName);
-        applySettings(newSettings);
-        log.info("🎨 Тему змінено на: {}", themeName);
+        ReaderSettings themed = engine.getSettings().withTheme(themeName);
+        renderer.applySettings(themed);
+        engine.applySettings(themed);
+        render();
     }
 
     public void applySettings(ReaderSettings settings) {
+        if (settings == null) {
+            return;
+        }
+        zoom = 1.0;
+        zoomBaseFontSize = settings.fontSize();
+        pageModeEnabled = settings.pageMode();
+        pageHistory.clear();
+        renderer.applySettings(settings);
         engine.applySettings(settings);
         render();
     }
 
     public void updateFontSize(double size) {
-        ReaderSettings newSettings = engine.getSettings().withFontSize(size);
-        applySettings(newSettings);
+        zoom = 1.0;
+        zoomBaseFontSize = Math.max(8, Math.min(72, size));
+        applySettings(engine.getSettings().withFontSize(zoomBaseFontSize));
     }
 
     public void updateFontFamily(String family) {
-        ReaderSettings newSettings = engine.getSettings().withFontFamily(family);
-        applySettings(newSettings);
+        applySettings(engine.getSettings().withFontFamily(family));
     }
 
-    // ==================== ОБРОБКА ПОДІЙ ====================
+    // ==================== INPUT ====================
 
     private void onKeyPressed(KeyEvent event) {
         KeyCode code = event.getCode();
-
         if (code == KeyCode.PAGE_DOWN || code == KeyCode.RIGHT || code == KeyCode.SPACE) {
             event.consume();
-            if (event.isShiftDown()) {
-                previousPage();
-            } else {
-                nextPage();
-            }
+            if (event.isShiftDown()) previousPage(); else nextPage();
         } else if (code == KeyCode.PAGE_UP || code == KeyCode.LEFT) {
             event.consume();
             previousPage();
@@ -390,25 +429,26 @@ public class ReaderCanvas extends StackPane {
         } else if (code == KeyCode.P) {
             event.consume();
             togglePageMode();
+            notifyPageChanged();
         } else if (code == KeyCode.A) {
             event.consume();
             toggleAutoScroll();
-        } else if (code == KeyCode.ADD || code == KeyCode.PLUS) {
+            notifyPageChanged();
+        } else if ((code == KeyCode.ADD || code == KeyCode.PLUS) && event.isControlDown()) {
             event.consume();
-            if (event.isControlDown()) {
-                zoomIn();
-            }
-        } else if (code == KeyCode.SUBTRACT || code == KeyCode.MINUS) {
+            zoomIn();
+        } else if ((code == KeyCode.SUBTRACT || code == KeyCode.MINUS) && event.isControlDown()) {
             event.consume();
-            if (event.isControlDown()) {
-                zoomOut();
-            }
+            zoomOut();
         } else if (code == KeyCode.DIGIT0 && event.isControlDown()) {
             event.consume();
             resetZoom();
         } else if (code == KeyCode.T) {
             event.consume();
             cycleTheme();
+        } else if (code == KeyCode.F && event.isControlDown()) {
+            event.consume();
+            if (onSearchRequested != null) onSearchRequested.run();
         } else if (code == KeyCode.F11) {
             event.consume();
             toggleFullscreen();
@@ -416,100 +456,134 @@ public class ReaderCanvas extends StackPane {
             event.consume();
             if (autoScrollController.isRunning()) {
                 autoScrollController.stop();
-            } else if (onBookClosed != null) {
-                onBookClosed.run();
+            } else if (onCloseRequested != null) {
+                onCloseRequested.run();
+            } else {
+                closeBook();
             }
         }
     }
 
     private void onScroll(ScrollEvent event) {
         if (event.isControlDown()) {
-            double delta = event.getDeltaY() / 100;
-            zoom = Math.max(0.5, Math.min(2.0, zoom + delta));
-            render();
+            if (event.getDeltaY() > 0) zoomIn();
+            else if (event.getDeltaY() < 0) zoomOut();
             event.consume();
-        } else if (event.getDeltaY() > 0) {
-            previousPage();
-            event.consume();
-        } else if (event.getDeltaY() < 0) {
-            nextPage();
-            event.consume();
+            return;
         }
+
+        // Touchpad/mouse-wheel може відправляти десятки дрібних подій. Накопичуємо
+        // дельту і робимо максимум один page turn за короткий інтервал.
+        accumulatedScroll += event.getDeltaY();
+        long now = System.nanoTime();
+        boolean enoughDelta = Math.abs(accumulatedScroll) >= 35.0;
+        boolean debouncePassed = now - lastWheelPageNanos >= 160_000_000L;
+        if (enoughDelta && debouncePassed) {
+            if (accumulatedScroll > 0) previousPage();
+            else nextPage();
+            accumulatedScroll = 0;
+            lastWheelPageNanos = now;
+        }
+        event.consume();
     }
 
     private void onMouseClicked(MouseEvent event) {
-        if (!engine.isOpen()) {
+        if (!engine.isOpen()) return;
+        if (swipeHandled) {
+            swipeHandled = false;
+            event.consume();
+            requestFocus();
             return;
         }
 
         double x = event.getX();
         double w = canvas.getWidth();
-
         if (x < w / 3) {
             previousPage();
             event.consume();
         } else if (x > w * 2 / 3) {
             nextPage();
             event.consume();
+        } else if (onCenterTap != null) {
+            onCenterTap.run();
+            event.consume();
         }
+        requestFocus();
     }
 
     private void onMousePressed(MouseEvent event) {
-        if (event.isPrimaryButtonDown() && event.isControlDown()) {
-            isDragging = true;
+        if (event.isPrimaryButtonDown()) {
+            dragging = true;
+            swipeHandled = false;
             dragStartX = event.getX();
             dragStartY = event.getY();
-            event.consume();
         }
     }
 
     private void onMouseDragged(MouseEvent event) {
-        if (!isDragging || !engine.isOpen()) {
-            return;
-        }
-
+        if (!dragging || !engine.isOpen() || swipeHandled) return;
         double dx = event.getX() - dragStartX;
-
-        if (Math.abs(dx) > 50) {
-            if (dx > 0) {
-                previousPage();
-            } else {
-                nextPage();
-            }
-            isDragging = false;
+        double dy = event.getY() - dragStartY;
+        if (Math.abs(dx) >= 55 && Math.abs(dx) > Math.abs(dy) * 1.2) {
+            if (dx > 0) previousPage();
+            else nextPage();
+            swipeHandled = true;
             event.consume();
         }
     }
 
     private void onMouseReleased(MouseEvent event) {
-        isDragging = false;
+        dragging = false;
+    }
+
+    private void onSwipeLeft(SwipeEvent event) {
+        if (engine.isOpen()) {
+            nextPage();
+            swipeHandled = true;
+            event.consume();
+        }
+    }
+
+    private void onSwipeRight(SwipeEvent event) {
+        if (engine.isOpen()) {
+            previousPage();
+            swipeHandled = true;
+            event.consume();
+        }
     }
 
     private void toggleFullscreen() {
-        javafx.stage.Stage stage = (javafx.stage.Stage) getScene().getWindow();
-        if (stage != null) {
+        if (getScene() != null && getScene().getWindow() instanceof javafx.stage.Stage stage) {
             stage.setFullScreen(!stage.isFullScreen());
         }
     }
 
-    // ==================== ЗАКРИТТЯ ====================
+    // ==================== LIFECYCLE / CALLBACKS ====================
 
     public void closeBook() {
-        if (engine.isOpen()) {
-            if (autoScrollController.isRunning()) {
-                autoScrollController.stop();
-            }
-            engine.close();
-            clear();
-            isSizeUpdated = false;
-            if (onBookClosed != null) {
-                onBookClosed.run();
-            }
-            log.info("📖 Книгу закрито через ReaderCanvas");
-        }
+        if (!engine.isOpen()) return;
+        autoScrollController.stop();
+        engine.close();
+        renderer.setResourceRepository(null);
+        clear();
+        pageHistory.clear();
+        sizeUpdated = false;
+        if (onBookClosed != null) onBookClosed.run();
     }
 
-    // ==================== КОЛБЕКИ ====================
+    private void notifyPositionChanged() {
+        if (onPositionChanged != null && engine.getCurrentPosition() != null) {
+            onPositionChanged.accept(engine.getCurrentPosition());
+        }
+        notifyPageChanged();
+    }
+
+    private void notifyPageChanged() {
+        if (onPageChanged != null) onPageChanged.run();
+        if (onPageNumberChanged != null && engine.isOpen()) {
+            onPageNumberChanged.accept(getCurrentPageNumber());
+        }
+    }
 
     public void setOnPositionChanged(Consumer<ReaderPosition> listener) {
         this.onPositionChanged = listener;
@@ -523,61 +597,40 @@ public class ReaderCanvas extends StackPane {
         this.onBookClosed = listener;
     }
 
+    public void setOnCloseRequested(Runnable listener) {
+        this.onCloseRequested = listener;
+    }
+
     public void setOnPageNumberChanged(Consumer<Integer> listener) {
         this.onPageNumberChanged = listener;
     }
 
-    // ==================== СТАН ====================
-
-    public ReaderEngine getEngine() {
-        return engine;
+    public void setOnCenterTap(Runnable listener) {
+        this.onCenterTap = listener;
     }
 
-    public JavaFxReaderRenderer getRenderer() {
-        return renderer;
+    public void setOnSearchRequested(Runnable listener) {
+        this.onSearchRequested = listener;
     }
 
-    public Canvas getCanvas() {
-        return canvas;
-    }
-
-    public double getProgressPercent() {
-        return engine.getProgressPercent();
-    }
-
-    public String getCurrentChapterTitle() {
-        return engine.getCurrentChapterTitle();
-    }
-
-    public ReaderPosition getCurrentPosition() {
-        return engine.getCurrentPosition();
-    }
-
-    public boolean isBookOpen() {
-        return engine.isOpen();
-    }
-
-    public String getCacheStats() {
-        return engine.getCacheStats();
-    }
-
-    public boolean isSizeUpdated() {
-        return isSizeUpdated;
-    }
-
-    // ==================== ЗВІЛЬНЕННЯ РЕСУРСІВ ====================
+    public ReaderEngine getEngine() { return engine; }
+    public JavaFxReaderRenderer getRenderer() { return renderer; }
+    public Canvas getCanvas() { return canvas; }
+    public double getProgressPercent() { return engine.getProgressPercent(); }
+    public String getCurrentChapterTitle() { return engine.getCurrentChapterTitle(); }
+    public ReaderPosition getCurrentPosition() { return engine.getCurrentPosition(); }
+    public boolean isBookOpen() { return engine.isOpen(); }
+    public String getCacheStats() { return engine.getCacheStats(); }
+    public boolean isSizeUpdated() { return sizeUpdated; }
 
     public void dispose() {
-        if (autoScrollController.isRunning()) {
-            autoScrollController.stop();
-        }
-        if (engine.isOpen()) {
-            engine.close();
-        }
+        autoScrollController.stop();
+        if (engine.isOpen()) engine.close();
+        renderer.setResourceRepository(null);
         renderer.clear();
         renderer.clearFontCache();
         renderer.clearImageCache();
-        isSizeUpdated = false;
-        log.info("🧹 ReaderCanvas знищено");
+        pageHistory.clear();
+        sizeUpdated = false;
     }
 }

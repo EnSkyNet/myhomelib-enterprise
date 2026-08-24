@@ -18,6 +18,16 @@
                     <MenuItem text="Видалити колекцію" onAction="#handleDeleteCollection"/>
                     <MenuItem text="Вибрати колекцію" onAction="#handleSelectCollection"/>
                     <MenuItem text="Майстер створення колекції..." onAction="#handleCollectionWizard"/>
+                    <MenuItem text="Підключити існуючу .hlc2 / SQLite..." onAction="#handleAttachCollection"/>
+                    <MenuItem text="Властивості колекції..." onAction="#handleCollectionProperties"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Оновити колекцію з INPX..." onAction="#handleUpdateCollectionManual"/>
+                    <MenuItem text="Оновити колекцію з мережі..." onAction="#handleUpdateCollectionNetwork"/>
+                    <MenuItem text="Скасувати оновлення колекції" onAction="#handleCancelCollectionUpdate"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Експорт користувацьких даних..." onAction="#handleExportUserData"/>
+                    <MenuItem text="Імпорт користувацьких даних..." onAction="#handleImportUserData"/>
+                    <MenuItem text="Копіювати вибрані книги в іншу колекцію..." onAction="#handleCopyToCollection"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
@@ -25,6 +35,7 @@
                     <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
                     <MenuItem text="Редагувати групу..." onAction="#handleEditGroup"/>
                     <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
+                    <MenuItem text="Очистити групу" onAction="#handleClearGroup"/>
                 </Menu>
                 <Menu text="Редагування">
                     <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
@@ -32,7 +43,11 @@
                 </Menu>
                 <!-- ОНОВЛЕНИЙ МЕНЮ READER: тільки новий Reader -->
                 <Menu text="Reader">
-                    <MenuItem text="Відкрити в Reader" onAction="#handleOpenNewReader"/>
+                    <MenuItem text="Відкрити у вбудованому Reader" onAction="#handleOpenNewReader"/>
+                    <MenuItem text="Відкрити у зовнішній читалці" onAction="#handleOpenExternalReader"/>
+                    <MenuItem text="Завантажити книгу" onAction="#handleDownloadBook"/>
+                    <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
+                    <MenuItem text="Скасувати завантаження" onAction="#handleCancelDownload"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Закрити Reader" onAction="#handleCloseReader"/>
                 </Menu>
@@ -40,12 +55,26 @@
                     <MenuItem text="Оновити" onAction="#handleRefresh"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Нові книги" onAction="#onNewBooks"/>
+                    <MenuItem text="Історія читання" onAction="#onHistory"/>
+                    <SeparatorMenuItem/>
+                    <Menu fx:id="languageMenu" text="Мова / Language">
+                        <MenuItem text="Українська" onAction="#handleLanguageUkrainian"/>
+                        <MenuItem text="English" onAction="#handleLanguageEnglish"/>
+                        <MenuItem text="Български" onAction="#handleLanguageBulgarian"/>
+                    </Menu>
                 </Menu>
                 <Menu text="Інструменти">
-                    <MenuItem text="Імпорт FB2..." onAction="#handleImportFb2"/>
+                    <MenuItem text="Імпорт книги/архіву..." onAction="#handleImportFb2"/>
                     <MenuItem text="Імпорт INPX..." onAction="#handleImportInpx"/>
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
-                    <MenuItem text="Експорт..." onAction="#handleExport"/>
+                    <MenuItem text="Експорт книг / на пристрій..." onAction="#handleExport"/>
+                    <Menu text="Експорт поточного списку">
+                        <MenuItem text="HTML..." onAction="#handleExportListHtml"/>
+                        <MenuItem text="TXT..." onAction="#handleExportListTxt"/>
+                        <MenuItem text="RTF..." onAction="#handleExportListRtf"/>
+                    </Menu>
                     <SeparatorMenuItem/>
                     <MenuItem text="Перевірити цілісність..." onAction="#handleCheckIntegrity"/>
                     <MenuItem text="Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
@@ -58,8 +87,12 @@
                     <SeparatorMenuItem/>
                     <MenuItem text="Синхронізувати папку..." onAction="#handleSyncFolder"/>
                     <SeparatorMenuItem/>
+                    <MenuItem text="Налаштування..." onAction="#handleSettings"/>
                 </Menu>
                 <Menu text="Допомога">
+                    <MenuItem text="Довідка (F1)" onAction="#handleHelp"/>
+                    <MenuItem text="INPX / online" onAction="#handleInpxHelp"/>
+                    <SeparatorMenuItem/>
                     <MenuItem text="Про програму" onAction="#handleAbout"/>
                 </Menu>
             </MenuBar>
@@ -88,6 +121,9 @@
                 <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
                 <Separator/>
                 <!-- НОВА КНОПКА ДЛЯ НОВОГО READER -->
+                <Button text="⬇ Завантажити" onAction="#handleDownloadBook"/>
+                <Button text="⌫ Локальна копія" onAction="#handleRemoveLocalCopy"/>
+                <Button text="✕ Завантаження" onAction="#handleCancelDownload"/>
                 <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
                 <Separator/>
                 <Region HBox.hgrow="ALWAYS"/>

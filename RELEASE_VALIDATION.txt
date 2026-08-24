@@ -1,0 +1,42 @@
+MyHomeLib 1.0.0 — final local validation
+========================================
+Date: 2026-08-23
+
+LOCAL CHECKS COMPLETED
+- Main Java sources: 483
+- Java test sources: 22
+- POM/FXML XML files parsed: 36; errors: 0
+- FXML workspaces: 24
+- FXML handler references: 142; missing handlers: 0
+- SQLite migrations: V1-V29; apply on clean file-backed SQLite: PASS
+- SQLite integrity_check after migrations: ok
+- Root shell scripts: 7; bash -n: PASS
+- Active TODO/FIXME/XXX/not-implemented placeholders in Java/FXML/SQL: 0
+- Syntax-oriented javac pass: no parser/syntax diagnostics (unresolved external dependencies expected without Maven cache)
+- SupportBundleService JDK-only compile + runtime ZIP/redaction harness: PASS
+- Reader TXT/EPUB JDK-only runtime harness: PASS (Windows-1251 TXT, EPUB spine order, nav TOC)
+- logback-spring.xml XML parse: PASS
+
+CODE HARDENING INCLUDED
+- Folder sync re-import of changed ordinary files and changed archive reconciliation.
+- Memory-bounded folder walk and corrected paged iterator tail handling.
+- Transactional INPX refresh/recovery, legacy encoding fallback and compatibility fixtures.
+- Online archive-path download coordination, retry/backoff, HTTP Range resume and entry validation.
+- Shared archive safety limits and ZIP multi-entry stream-lifetime fix.
+- EPUB/TXT Reader support, EPUB OPF spine + nav/NCX, archive-entry materialization.
+- MCP EPUB spine/TOC, byte-accurate framed protocol, method-not-found semantics and WAL-safe read-only mode.
+- Safer external command-template expansion and command test diagnostics.
+- Export collision policies (overwrite/skip/rename), batch progress and cooperative cancellation.
+- Rolling file logs and privacy-aware support diagnostic ZIP export.
+- Maven Wrapper and build/package/release/checksum scripts.
+
+EXPLICITLY SKIPPED IN THIS ENVIRONMENT (per user instruction)
+- Full ./mvnw clean verify: Maven dependencies cannot be downloaded/resolved in this container.
+- Runtime JavaFX/Spring/FXML smoke test with complete external dependency classpath.
+- Real 7z/RAR/TAR corpus tests requiring dependency resolution and external sample archives.
+- Legacy Delphi .hlc2 corpus tests without historical sample databases.
+- jpackage installer build/upgrade/uninstall and clean Windows 10/11 smoke testing.
+- External converter binary/license packaging where third-party binaries are not supplied.
+- Release code signing with a real publisher certificate/private signing key.
+
+This file records what was actually verified locally. Skipped external gates are not claimed as passed.

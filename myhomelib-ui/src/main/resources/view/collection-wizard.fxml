@@ -53,10 +53,17 @@
             <GridPane hgap="10" vgap="10">
                 <Label text="Файл джерела:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
                 <HBox GridPane.columnIndex="1" GridPane.rowIndex="0" spacing="5">
-                    <TextField fx:id="sourcePathField" HBox.hgrow="ALWAYS" promptText="Шлях до INPX, FB2 або ZIP..."/>
+                    <TextField fx:id="sourcePathField" HBox.hgrow="ALWAYS" promptText="INPX/INP, FB2, EPUB, TXT, ZIP, 7z, RAR..."/>
                     <Button text="📂 Обрати" onAction="#onSelectSourcePath"/>
                 </HBox>
+                <Label text="URL online-бібліотеки:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+                <TextField fx:id="urlField" GridPane.columnIndex="1" GridPane.rowIndex="1" promptText="https://server/books/ або шаблон .../{archive}"/>
+                <Label text="Користувач:" GridPane.columnIndex="0" GridPane.rowIndex="2"/>
+                <TextField fx:id="userField" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+                <Label text="Пароль:" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
+                <PasswordField fx:id="passwordField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
             </GridPane>
+            <Label text="Для віддаленої колекції вкажіть INPX та базовий URL. Підтримуються шаблони {archive}, {file}, {entry}." wrapText="true" style="-fx-text-fill: #607d8b;"/>
             <CheckBox fx:id="importOnCreateCheck" text="Імпортувати при створенні" selected="true"/>
             <CheckBox fx:id="createIndexCheck" text="Створити пошуковий індекс" selected="true"/>
             <Label fx:id="errorLabel" style="-fx-text-fill: red; -fx-wrap-text: true;"/>

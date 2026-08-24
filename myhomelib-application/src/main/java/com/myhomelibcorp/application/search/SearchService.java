@@ -62,6 +62,13 @@ public class SearchService {
         return loadBooks(ids);
     }
 
+
+    public List<BookDto> search(SearchRequest request) {
+        if (request == null) return List.of();
+        SearchResult result = searchQueryService.search(request);
+        return result.isEmpty() ? List.of() : loadBooks(result.bookIds());
+    }
+
     private List<BookDto> loadBooks(List<BookId> ids) {
         return bookQueryRepository.findByIds(ids).stream()
                 .map(bookMapper::toDto)

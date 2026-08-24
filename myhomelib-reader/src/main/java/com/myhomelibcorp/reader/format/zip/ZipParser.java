@@ -2,9 +2,11 @@ package com.myhomelibcorp.reader.format.zip;
 
 import com.myhomelibcorp.reader.api.*;
 import com.myhomelibcorp.reader.format.fb2.Fb2StreamingParser;
+import com.myhomelibcorp.reader.format.epub.EpubParser;
+import com.myhomelibcorp.reader.format.txt.TxtParser;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import lombok.extern.slf4j.Slf4j;
 
-import javax.xml.stream.XMLStreamException;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
@@ -24,11 +26,16 @@ public class ZipParser implements BookParser {
             Charset.forName("KOI8-R")
     };
 
-    private static final int MAX_ENTRY_SIZE = 50 * 1024 * 1024; // 50 MB
 
     @Override
     public BookDocumentMetadata readMetadata(BookSource source) throws IOException {
-        return null;
+        ReaderDocument document = parse(source, ParseOptions.minimal());
+        return new BookDocumentMetadataSnapshot(
+                document.metadata(),
+                document.totalTextLength(),
+                document.resources() != null && document.resources().count() > 0,
+                document.chapters().size()
+        );
     }
 
     @Override
@@ -64,30 +71,67 @@ public class ZipParser implements BookParser {
 
             try (ZipFile zipFile = new ZipFile(tempFile.toFile(), charset)) {
                 Enumeration<? extends ZipEntry> entries = zipFile.entries();
+                int entryCount = 0;
 
                 while (entries.hasMoreElements()) {
                     ZipEntry entry = entries.nextElement();
-                    String name = entry.getName().toLowerCase();
+                    if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT)
+                        throw new IOException("ZIP contains too many entries");
+                    String name = entry.getName().toLowerCase(Locale.ROOT);
 
-                    if (name.endsWith(".fb2") || name.endsWith(".fbd")) {
-                        log.info("📄 Знайдено FB2 в архіві: {} (кодування: {})", entry.getName(), charset);
+                    if (isReaderBook(name)) {
+                        log.info("📄 Знайдено книгу в ZIP: {} (кодування імен: {})", entry.getName(), charset);
 
-                        try (InputStream entryStream = zipFile.getInputStream(entry)) {
-                            byte[] data = entryStream.readAllBytes();
+                        if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
+                            log.warn("⚠️ Розмір FB2 перевищує ліміт: {} байт", entry.getSize());
+                            continue;
+                        }
 
-                            if (data.length > MAX_ENTRY_SIZE) {
-                                log.warn("⚠️ Розмір FB2 перевищує ліміт: {} байт", data.length);
+                        // Не тримаємо розпакований FB2 (до 50 MB) як byte[] у heap.
+                        // Тимчасовий файл також дозволяє FB2 parser-у безкоштовно
+                        // перевідкрити stream для fallback-кодувань.
+                        String suffix = name.endsWith(".epub") ? ".epub" :
+                                (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? ".txt" : ".fb2";
+                        java.nio.file.Path extractedBook = java.nio.file.Files.createTempFile("myhomelib_zip_book_", suffix);
+                        try {
+                            boolean tooLarge = false;
+                            try (InputStream entryStream = zipFile.getInputStream(entry);
+                                 java.io.OutputStream out = java.nio.file.Files.newOutputStream(extractedBook)) {
+                                byte[] buffer = new byte[64 * 1024];
+                                long total = 0;
+                                int read;
+                                while ((read = entryStream.read(buffer)) >= 0) {
+                                    if (read == 0) continue;
+                                    total += read;
+                                    if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
+                                        tooLarge = true;
+                                        break;
+                                    }
+                                    out.write(buffer, 0, read);
+                                }
+                            }
+
+                            if (tooLarge) {
+                                log.warn("⚠️ Розпакований FB2 перевищує ліміт {} MB", ArchiveSafetyLimits.MAX_ENTRY_BYTES / 1024 / 1024);
                                 continue;
                             }
 
-                            Fb2BookSource fb2Source = new Fb2BookSource(data, entry.getName(), source.id());
-                            Fb2StreamingParser fb2Parser = new Fb2StreamingParser();
+                            BookSource innerSource = new FileBookSource(
+                                    extractedBook, source.id() + "!" + entry.getName());
+                            BookParser parser = name.endsWith(".epub") ? new EpubParser() :
+                                    (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? new TxtParser() :
+                                    new Fb2StreamingParser();
 
                             try {
-                                return fb2Parser.parse(fb2Source, options);
+                                return parser.parse(innerSource, options);
                             } catch (Exception e) {
-                                log.error("Помилка парсингу FB2 з кодуванням {}: {}", charset, e.getMessage());
-                                throw new IOException("Не вдалося розпарсити FB2 з кодуванням " + charset, e);
+                                log.error("Помилка парсингу {} з ZIP: {}", entry.getName(), e.getMessage());
+                                throw new IOException("Не вдалося розпарсити " + entry.getName(), e);
+                            }
+                        } finally {
+                            try {
+                                java.nio.file.Files.deleteIfExists(extractedBook);
+                            } catch (IOException ignored) {
                             }
                         }
                     }
@@ -112,41 +156,10 @@ public class ZipParser implements BookParser {
         }
     }
 
-    private static class Fb2BookSource implements BookSource {
-        private final byte[] data;
-        private final String name;
-        private final String archiveId;
 
-        public Fb2BookSource(byte[] data, String name, String archiveId) {
-            this.data = data;
-            this.name = name;
-            this.archiveId = archiveId;
-        }
-
-        @Override
-        public InputStream openStream() {
-            return new java.io.ByteArrayInputStream(data);
-        }
-
-        @Override
-        public OptionalLong size() {
-            return OptionalLong.of(data.length);
-        }
-
-        @Override
-        public String name() {
-            return name;
-        }
-
-        @Override
-        public String extension() {
-            int dot = name.lastIndexOf('.');
-            return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
-        }
-
-        @Override
-        public String id() {
-            return archiveId + "!" + name;
-        }
+    private boolean isReaderBook(String name) {
+        return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".epub")
+                || name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md");
     }
+
 }

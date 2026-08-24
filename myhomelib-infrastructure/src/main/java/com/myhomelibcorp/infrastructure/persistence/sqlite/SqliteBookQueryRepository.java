@@ -98,6 +98,59 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return books;
     }
 
+    @Override
+    public Optional<Book> findByStorage(String collectionRoot, String folder, String fileName, String archiveEntry) {
+        String sql = """
+                SELECT * FROM books
+                WHERE COALESCE(collection_root, '') = ?
+                  AND COALESCE(folder, '') = ?
+                  AND COALESCE(file_name, '') = ?
+                  AND COALESCE(archive_entry, '') = ?
+                LIMIT 1
+                """;
+        try {
+            Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper,
+                    safe(collectionRoot), safe(folder), safe(fileName), safe(archiveEntry));
+            enrichBooks(List.of(book));
+            return Optional.of(book);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
+    public List<Book> findByArchiveContainer(String collectionRoot, String relativeArchivePath, String absoluteArchivePath) {
+        String rel = normalizePath(relativeArchivePath);
+        String abs = normalizePath(absoluteArchivePath);
+        String root = normalizePath(collectionRoot);
+        String sql = """
+                SELECT * FROM books
+                WHERE COALESCE(archive_entry, '') <> ''
+                  AND (
+                       lower(replace(COALESCE(folder, ''), '\\', '/')) = lower(?)
+                    OR lower(replace(COALESCE(folder, ''), '\\', '/')) = lower(?)
+                    OR (lower(replace(COALESCE(collection_root, ''), '\\', '/')) = lower(?)
+                        AND lower(replace(COALESCE(folder, ''), '\\', '/')) = lower(?))
+                  )
+                """;
+        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, rel, abs, root, rel);
+        enrichBooks(books);
+        return books;
+    }
+
+    @Override
+    public Stream<Book> streamAll() {
+        return findAllStreaming();
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    private static String normalizePath(String value) {
+        return safe(value).replace('\\', '/');
+    }
+
     // ===== Спеціальні запити =====
 
     @Override
@@ -106,7 +159,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             SELECT b.* FROM books b
             JOIN book_authors ba ON b.id = ba.book_id
             JOIN authors a ON ba.author_id = a.id
-            WHERE b.title = ? AND a.last_name = ?
+            WHERE b.title = ? AND a.last_name = ? AND b.deleted = 0
             LIMIT 1
             """;
         try {
@@ -124,6 +177,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                 SELECT id, title, series, file_name, folder, collection_root,
                        language, file_size, rate, progress, update_date, created_at
                 FROM books
+                WHERE deleted = 0
                 ORDER BY update_date DESC
                 LIMIT ?
                 """;
@@ -138,6 +192,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                 SELECT id, title, series, file_name, folder, collection_root,
                        language, file_size, rate, progress, update_date, created_at
                 FROM books
+                WHERE deleted = 0
                 ORDER BY created_at DESC
                 LIMIT ?
                 """;
@@ -152,6 +207,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                 SELECT id, title, series, file_name, folder, collection_root,
                        language, file_size, rate, progress, update_date, created_at
                 FROM books
+                WHERE deleted = 0
                 ORDER BY rate DESC
                 LIMIT ?
                 """;
@@ -227,7 +283,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         private int offset = 0;
         private List<Book> currentPage = new ArrayList<>();
         private int currentIndex = 0;
-        private boolean finished = false;
+        private boolean endReached = false;
 
         public StreamingBookIterator(int pageSize) {
             this.pageSize = pageSize;
@@ -236,14 +292,14 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
         @Override
         public boolean hasNext() {
-            if (finished) return false;
-            if (currentIndex < currentPage.size()) return true;
-            if (currentPage.size() < pageSize) {
-                finished = true;
+            if (currentIndex < currentPage.size()) {
+                return true;
+            }
+            if (endReached) {
                 return false;
             }
             loadNextPage();
-            return !currentPage.isEmpty();
+            return currentIndex < currentPage.size();
         }
 
         @Override
@@ -260,10 +316,8 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                     .build();
             currentPage = SqliteBookQueryRepository.this.find(query);
             currentIndex = 0;
-            offset += pageSize;
-            if (currentPage.isEmpty() || currentPage.size() < pageSize) {
-                finished = true;
-            }
+            offset += currentPage.size();
+            endReached = currentPage.size() < pageSize;
         }
     }
 }

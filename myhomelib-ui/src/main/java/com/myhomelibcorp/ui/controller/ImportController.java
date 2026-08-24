@@ -104,7 +104,7 @@ public class ImportController {
         CheckBox updateChanged = new CheckBox("Оновлювати змінені файли");
         updateChanged.setSelected(true);
 
-        CheckBox processArchives = new CheckBox("Обробляти архіви (ZIP, FB2ZIP)");
+        CheckBox processArchives = new CheckBox("Обробляти архіви (ZIP, 7z, RAR, CBZ)");
         processArchives.setSelected(true);
 
         content.getChildren().addAll(

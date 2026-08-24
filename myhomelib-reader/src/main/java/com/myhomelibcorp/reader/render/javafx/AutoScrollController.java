@@ -1,58 +1,59 @@
 package com.myhomelibcorp.reader.render.javafx;
 
 import javafx.animation.AnimationTimer;
-import javafx.scene.canvas.Canvas;
 import lombok.extern.slf4j.Slf4j;
 
+/**
+ * Легка автопрокрутка без постійного зсуву Canvas. Для e-ink/desktop режиму
+ * переходить на наступну сторінку через інтервал, що залежить від швидкості.
+ */
 @Slf4j
 public class AutoScrollController {
 
-    private final Canvas canvas;
+    private final Runnable nextPageAction;
     private AnimationTimer scrollTimer;
-    private boolean isRunning = false;
-    private double scrollSpeed = 1.0;
+    private boolean running;
+    private double speed = 1.0;
 
-    public AutoScrollController(Canvas canvas) {
-        this.canvas = canvas;
+    public AutoScrollController(Runnable nextPageAction) {
+        this.nextPageAction = nextPageAction;
     }
 
     public void start() {
-        if (isRunning) {
+        if (running || nextPageAction == null) {
             return;
         }
-        isRunning = true;
-
+        running = true;
         scrollTimer = new AnimationTimer() {
-            private long lastUpdate = 0;
+            private long lastPageTime;
 
             @Override
             public void handle(long now) {
-                if (now - lastUpdate < 16_000_000) {
+                if (lastPageTime == 0) {
+                    lastPageTime = now;
                     return;
                 }
-                lastUpdate = now;
-
-                // TODO: реалізувати скрол
-                // double scrollY = canvas.getTranslateY() + scrollSpeed;
-                // canvas.setTranslateY(scrollY);
+                long interval = intervalNanos();
+                if (now - lastPageTime >= interval) {
+                    lastPageTime = now;
+                    nextPageAction.run();
+                }
             }
         };
         scrollTimer.start();
-        log.info("▶️ Автопрокрутку запущено, швидкість: {}", scrollSpeed);
+        log.info("▶️ Автопрокрутка: speed={}", speed);
     }
 
     public void stop() {
-        if (!isRunning || scrollTimer == null) {
-            return;
+        if (scrollTimer != null) {
+            scrollTimer.stop();
+            scrollTimer = null;
         }
-        scrollTimer.stop();
-        scrollTimer = null;
-        isRunning = false;
-        log.info("⏹️ Автопрокрутку зупинено");
+        running = false;
     }
 
     public void toggle() {
-        if (isRunning) {
+        if (running) {
             stop();
         } else {
             start();
@@ -60,15 +61,19 @@ public class AutoScrollController {
     }
 
     public boolean isRunning() {
-        return isRunning;
+        return running;
     }
 
     public void setSpeed(double speed) {
-        this.scrollSpeed = Math.max(0.1, Math.min(5.0, speed));
-        log.info("⚡ Швидкість автопрокрутки: {}", this.scrollSpeed);
+        this.speed = Math.max(0.1, Math.min(5.0, speed));
     }
 
     public double getSpeed() {
-        return scrollSpeed;
+        return speed;
+    }
+
+    private long intervalNanos() {
+        // speed=1 -> ~8 сек/сторінку; speed=5 -> ~1.6 сек.
+        return (long) ((8.0 / speed) * 1_000_000_000L);
     }
 }

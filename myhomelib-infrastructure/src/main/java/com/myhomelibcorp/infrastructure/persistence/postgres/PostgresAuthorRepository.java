@@ -31,42 +31,42 @@ public class PostgresAuthorRepository implements AuthorRepository {
 
     @Override
     public List<Author> findAll() {
-        log.warn("PostgresAuthorRepository.findAll() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.findAll() not implemented yet");
         return List.of();
     }
 
     @Override
     public Optional<Author> findById(AuthorId id) {
-        log.warn("PostgresAuthorRepository.findById() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.findById() not implemented yet");
         return Optional.empty();
     }
 
     @Override
     public Author save(Author author) {
-        log.warn("PostgresAuthorRepository.save() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.save() not implemented yet");
         return author;
     }
 
     @Override
     public void deleteById(AuthorId id) {
-        log.warn("PostgresAuthorRepository.deleteById() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.deleteById() not implemented yet");
     }
 
     @Override
     public Optional<Author> findByFullName(String firstName, String lastName) {
-        log.warn("PostgresAuthorRepository.findByFullName() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.findByFullName() not implemented yet");
         return Optional.empty();
     }
 
     @Override
     public List<Author> findFavorites(int limit) {
-        log.warn("PostgresAuthorRepository.findFavorites() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.findFavorites() not implemented yet");
         return List.of();
     }
 
     @Override
     public long countOrphanedAuthors() {
-        log.warn("PostgresAuthorRepository.countOrphanedAuthors() ще не реалізовано");
+        log.warn("PostgresAuthorRepository.countOrphanedAuthors() not implemented yet");
         return 0;
     }
 }

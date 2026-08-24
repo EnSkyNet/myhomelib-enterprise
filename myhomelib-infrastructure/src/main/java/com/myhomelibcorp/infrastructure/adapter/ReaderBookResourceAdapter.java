@@ -27,7 +27,7 @@ public class ReaderBookResourceAdapter implements ReaderBookResourcePort {
     private final BookResourceResolver bookResourceResolver;
     private final ZipArchiveReader archiveReader;
 
-    private static final List<String> ARCHIVE_EXTENSIONS = List.of(".zip", ".fb2zip", ".fbd");
+    private static final List<String> ARCHIVE_EXTENSIONS = List.of(".zip", ".fb2zip", ".fb2.zip", ".cbz", ".jar", ".7z", ".rar");
 
     @Override
     public Optional<InputStream> readBookData(BookDto bookDto) {

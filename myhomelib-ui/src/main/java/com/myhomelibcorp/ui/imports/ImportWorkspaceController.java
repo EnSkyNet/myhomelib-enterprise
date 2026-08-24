@@ -14,6 +14,7 @@ import javafx.scene.control.Button;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressBar;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputDialog;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
@@ -26,6 +27,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.prefs.Preferences;
 
 @Component
 @RequiredArgsConstructor
@@ -54,9 +56,12 @@ public class ImportWorkspaceController {
 
     private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
     private volatile boolean importRunning = false;
+    private final Preferences preferences = Preferences.userNodeForPackage(ImportWorkspaceController.class);
+    private int batchSize;
 
     @FXML
     public void initialize() {
+        batchSize = clampBatchSize(preferences.getInt("import.batchSize", defaultBatchSize));
         if (cancelButton != null) {
             cancelButton.setDisable(true);
         }
@@ -77,10 +82,10 @@ public class ImportWorkspaceController {
         Stage stage = new Stage();
         File file = fileChooserService.chooseFile(stage, "Виберіть файл для імпорту",
                 List.of(
-                        new FileChooser.ExtensionFilter("Всі підтримувані", "*.fb2", "*.fbd", "*.inpx", "*.inp", "*.zip", "*.fb2zip", "*.fb2.zip"),
-                        new FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd"),
-                        new FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp"),
-                        new FileChooser.ExtensionFilter("ZIP архіви", "*.zip", "*.fb2zip", "*.fb2.zip")
+                        new FileChooser.ExtensionFilter("Всі підтримувані", "*.fb2", "*.fbd", "*.epub", "*.txt", "*.inpx", "*.inp", "*.zip", "*.fb2zip", "*.fb2.zip", "*.7z", "*.rar", "*.cbz"),
+                        new FileChooser.ExtensionFilter("Книги", "*.fb2", "*.fbd", "*.epub", "*.txt"),
+                        new FileChooser.ExtensionFilter("INPX/INP", "*.inpx", "*.inp"),
+                        new FileChooser.ExtensionFilter("Архіви", "*.zip", "*.fb2zip", "*.fb2.zip", "*.7z", "*.rar", "*.cbz")
                 ));
         if (file != null) {
             fileField.setText(file.getAbsolutePath());
@@ -117,7 +122,7 @@ public class ImportWorkspaceController {
         startImport(() -> {
             ImportContext context = ImportContext.builder()
                     .file(file)
-                    .batchSize(defaultBatchSize)
+                    .batchSize(batchSize)
                     .indexAfterSave(true)
                     .cancelFlag(cancelFlag)
                     .progressListener(this::updateProgress)
@@ -130,7 +135,7 @@ public class ImportWorkspaceController {
     private ImportContext createContext(Path directory) {
         return ImportContext.builder()
                 .rootDirectory(directory)
-                .batchSize(defaultBatchSize)
+                .batchSize(batchSize)
                 .indexAfterSave(true)
                 .cancelFlag(cancelFlag)
                 .progressListener(this::updateProgress)
@@ -201,7 +206,24 @@ public class ImportWorkspaceController {
 
     @FXML
     private void onSettings() {
-        dialogService.showInfo("Налаштування", "Налаштування імпорту", "Функція поки що не реалізована");
+        TextInputDialog dialog = new TextInputDialog(String.valueOf(batchSize));
+        dialog.setTitle("Налаштування імпорту");
+        dialog.setHeaderText("Розмір пакета імпорту");
+        dialog.setContentText("Книг у пакеті (50–10000):");
+        dialog.showAndWait().ifPresent(value -> {
+            try {
+                int parsed = clampBatchSize(Integer.parseInt(value.trim()));
+                batchSize = parsed;
+                preferences.putInt("import.batchSize", parsed);
+                dialogService.showInfo("Налаштування", "Збережено", "Розмір пакета: " + parsed);
+            } catch (NumberFormatException e) {
+                dialogService.showError("Помилка", "Введіть ціле число від 50 до 10000");
+            }
+        });
+    }
+
+    private int clampBatchSize(int value) {
+        return Math.max(50, Math.min(10_000, value));
     }
 
     private void setStatus(String text) {

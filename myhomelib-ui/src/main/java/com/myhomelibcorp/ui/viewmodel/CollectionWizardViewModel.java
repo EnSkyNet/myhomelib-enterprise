@@ -11,6 +11,9 @@ public class CollectionWizardViewModel {
     private final ObjectProperty<Path> rootFolder = new SimpleObjectProperty<>();
     private final ObjectProperty<Path> dbFile = new SimpleObjectProperty<>();
     private final StringProperty sourcePath = new SimpleStringProperty();
+    private final StringProperty url = new SimpleStringProperty();
+    private final StringProperty user = new SimpleStringProperty();
+    private final StringProperty password = new SimpleStringProperty();
     private final ObjectProperty<CollectionType> type = new SimpleObjectProperty<>(CollectionType.FB2_LOCAL);
     private final BooleanProperty importOnCreate = new SimpleBooleanProperty(true);
     private final BooleanProperty createIndex = new SimpleBooleanProperty(true);
@@ -22,6 +25,9 @@ public class CollectionWizardViewModel {
     public ObjectProperty<Path> rootFolderProperty() { return rootFolder; }
     public ObjectProperty<Path> dbFileProperty() { return dbFile; }
     public StringProperty sourcePathProperty() { return sourcePath; }
+    public StringProperty urlProperty() { return url; }
+    public StringProperty userProperty() { return user; }
+    public StringProperty passwordProperty() { return password; }
     public ObjectProperty<CollectionType> typeProperty() { return type; }
     public BooleanProperty importOnCreateProperty() { return importOnCreate; }
     public BooleanProperty createIndexProperty() { return createIndex; }
@@ -40,6 +46,12 @@ public class CollectionWizardViewModel {
 
     public String getSourcePath() { return sourcePath.get(); }
     public void setSourcePath(String sourcePath) { this.sourcePath.set(sourcePath); }
+    public String getUrl() { return url.get(); }
+    public void setUrl(String value) { url.set(value); }
+    public String getUser() { return user.get(); }
+    public void setUser(String value) { user.set(value); }
+    public String getPassword() { return password.get(); }
+    public void setPassword(String value) { password.set(value); }
 
     public CollectionType getType() { return type.get(); }
     public void setType(CollectionType type) { this.type.set(type); }
@@ -61,6 +73,9 @@ public class CollectionWizardViewModel {
         rootFolder.set(null);
         dbFile.set(null);
         sourcePath.set("");
+        url.set("");
+        user.set("");
+        password.set("");
         type.set(CollectionType.FB2_LOCAL);
         importOnCreate.set(true);
         createIndex.set(true);
@@ -82,10 +97,10 @@ public class CollectionWizardViewModel {
     }
 
     private boolean isStep2Valid() {
-        if (getType() == CollectionType.FB2_LOCAL) {
-            return true;
-        }
-        return getSourcePath() != null && !getSourcePath().isBlank();
+        CollectionType type = getType() == null ? CollectionType.FB2_LOCAL : getType();
+        boolean sourceOk = getSourcePath() != null && !getSourcePath().isBlank();
+        if (type.requiresUrl() && (getUrl() == null || getUrl().isBlank())) return false;
+        return !type.requiresSource() || sourceOk;
     }
 
     public boolean isValid() {

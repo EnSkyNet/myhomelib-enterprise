@@ -28,7 +28,7 @@
     </HBox>
 
     <!-- Біографія -->
-    <Label text="Біографія:" style="-fx-font-weight: bold;"/>
+    <HBox alignment="CENTER_LEFT"><Label text="Біографія:" style="-fx-font-weight: bold;"/><Region HBox.hgrow="ALWAYS"/><Button text="Редагувати опис" onAction="#onEditAuthorDescription"/></HBox>
     <TextArea fx:id="bioLabel" prefHeight="60" editable="false" wrapText="true"
               style="-fx-background-color: #f0f0f0; -fx-border-color: #ddd;"/>
 

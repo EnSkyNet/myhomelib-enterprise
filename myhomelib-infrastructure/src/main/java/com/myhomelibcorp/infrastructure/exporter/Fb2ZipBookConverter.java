@@ -17,8 +17,10 @@ public class Fb2ZipBookConverter implements BookConverter {
 
     @Override
     public boolean supports(Book book) {
-        String fileName = book.getFileName().toLowerCase();
-        return fileName.endsWith(".fb2") || fileName.endsWith(".fbd");
+        String name = book.getArchiveEntry();
+        if (name == null || name.isBlank()) name = book.getFileName();
+        name = name == null ? "" : name.toLowerCase();
+        return name.endsWith(".fb2") || name.endsWith(".fbd");
     }
 
     @Override
@@ -35,7 +37,8 @@ public class Fb2ZipBookConverter implements BookConverter {
     public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
         log.debug("Архівація FB2: {}", book.getTitle());
 
-        String entryName = book.getFileName();
+        String entryName = book.getArchiveEntry();
+        if (entryName == null || entryName.isBlank()) entryName = book.getFileName();
         if (!entryName.toLowerCase().endsWith(".fb2") && !entryName.toLowerCase().endsWith(".fbd")) {
             entryName = book.getTitle() + ".fb2";
         }

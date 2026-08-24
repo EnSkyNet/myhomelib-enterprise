@@ -47,6 +47,13 @@ public class BookRowMapper implements RowMapper<Book> {
         String language = safeGetString(rs, "language");
         String isbn = safeGetString(rs, "isbn");
         String review = safeGetString(rs, "review");
+        Integer year = safeGetNullableInt(rs, "year");
+        String publisher = safeGetString(rs, "publisher");
+        String libId = safeGetString(rs, "lib_id");
+        int libraryRate = safeGetInt(rs, "library_rate");
+        String translators = safeGetString(rs, "translators");
+        String city = safeGetString(rs, "city");
+        String sourceUrl = safeGetString(rs, "source_url");
         int rate = safeGetInt(rs, "rate");
         int progress = safeGetInt(rs, "progress");
 
@@ -56,6 +63,13 @@ public class BookRowMapper implements RowMapper<Book> {
                 .language(language != null ? LanguageCode.of(language) : LanguageCode.of("uk"))
                 .isbn(isbn != null ? Isbn.of(isbn) : null)
                 .review(review != null ? review : "")
+                .year(year)
+                .publisher(publisher != null ? publisher : "")
+                .libId(libId != null ? libId : "")
+                .libraryRate(libraryRate)
+                .translators(translators != null ? translators : "")
+                .city(city != null ? city : "")
+                .sourceUrl(sourceUrl != null ? sourceUrl : "")
                 .rate(rate)
                 .progress(progress)
                 .build();
@@ -94,6 +108,15 @@ public class BookRowMapper implements RowMapper<Book> {
             return rs.getInt(column);
         } catch (SQLException e) {
             return 0;
+        }
+    }
+
+    private Integer safeGetNullableInt(ResultSet rs, String column) {
+        try {
+            int value = rs.getInt(column);
+            return rs.wasNull() ? null : value;
+        } catch (SQLException e) {
+            return null;
         }
     }
 

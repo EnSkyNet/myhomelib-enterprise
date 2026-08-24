@@ -6,6 +6,7 @@ import java.io.InputStream;
 import java.nio.file.Path;
 
 public interface BookConverter {
+    default boolean isAvailable() { return true; }
     boolean supports(Book book);
     String getTargetExtension();
     String getFormatName();

@@ -188,38 +188,29 @@ public class BookLoaderService {
 
     public void nextPage() {
         BookTableViewModel vm = appState.getBookTable();
-        if (vm.hasNextPage()) {
-            int next = vm.getCurrentPage() + 1;
-            BookQuery query = BookQuery.builder()
-                    .pagination(Pagination.of(vm.getPageSize(), next * vm.getPageSize()))
-                    .sortBy(vm.getSortBy())
-                    .direction(vm.getSortDirection())
-                    .build();
-            loadBooks(query);
-        }
+        if (vm.hasNextPage()) loadBooks(withPagination(lastQuery, vm.getPageSize(), vm.getCurrentPage() + 1));
     }
 
     public void previousPage() {
         BookTableViewModel vm = appState.getBookTable();
-        if (vm.hasPreviousPage()) {
-            int prev = vm.getCurrentPage() - 1;
-            BookQuery query = BookQuery.builder()
-                    .pagination(Pagination.of(vm.getPageSize(), prev * vm.getPageSize()))
-                    .sortBy(vm.getSortBy())
-                    .direction(vm.getSortDirection())
-                    .build();
-            loadBooks(query);
-        }
+        if (vm.hasPreviousPage()) loadBooks(withPagination(lastQuery, vm.getPageSize(), vm.getCurrentPage() - 1));
     }
 
     public void setPageSize(int size) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setPageSize(size);
-        BookQuery query = BookQuery.builder()
-                .pagination(Pagination.of(size, 0))
-                .sortBy(vm.getSortBy())
-                .direction(vm.getSortDirection())
+        loadBooks(withPagination(lastQuery, size, 0));
+    }
+
+    private BookQuery withPagination(BookQuery base, int pageSize, int page) {
+        if (base == null) base = BookQuery.builder().build();
+        return BookQuery.builder()
+                .authorId(base.authorId()).seriesId(base.seriesId()).genreId(base.genreId()).groupId(base.groupId())
+                .text(base.text()).language(base.language()).format(base.format())
+                .pagination(Pagination.of(pageSize, Math.max(0, page) * pageSize))
+                .sortBy(base.sortBy()).direction(base.direction())
+                .onlyRead(base.onlyRead()).onlyFavorites(base.onlyFavorites())
+                .withoutSeries(base.withoutSeries()).withCover(base.withCover())
                 .build();
-        loadBooks(query);
     }
 }

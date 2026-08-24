@@ -101,6 +101,12 @@ public class CollectionLifecycleService {
         }
     }
 
+    /** Rebuilds the search index for the currently active collection. */
+    public void rebuildSearchIndex() {
+        indexRebuilder.rebuildIndex();
+        log.info("✅ Індекс перебудовано. Проіндексовано {} документів", indexRebuilder.getIndexedDocumentCount());
+    }
+
     /**
      * Закриває поточну колекцію.
      */

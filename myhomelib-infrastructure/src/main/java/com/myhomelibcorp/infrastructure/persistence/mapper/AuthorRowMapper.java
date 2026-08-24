@@ -18,7 +18,11 @@ public class AuthorRowMapper implements RowMapper<Author> {
                 id,
                 rs.getString("first_name"),
                 rs.getString("middle_name"),
-                rs.getString("last_name")
+                rs.getString("last_name"),
+                column(rs, "annotation")
         );
+    }
+    private static String column(ResultSet rs, String name) {
+        try { String v=rs.getString(name); return v==null?"":v; } catch (SQLException e) { return ""; }
     }
 }

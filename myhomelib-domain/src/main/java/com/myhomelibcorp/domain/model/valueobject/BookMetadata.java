@@ -11,12 +11,20 @@ public class BookMetadata {
     LanguageCode language;
     Isbn isbn;
     String review;
+    Integer year;
+    String publisher;
+    String libId;
+    int libraryRate;
+    String translators;
+    String city;
+    String sourceUrl;
     int rate;
     int progress;
 
     public static BookMetadata empty() {
         return BookMetadata.builder()
                 .language(LanguageCode.of("uk"))
+                .libraryRate(0)
                 .rate(0)
                 .progress(0)
                 .build();

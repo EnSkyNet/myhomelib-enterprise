@@ -42,8 +42,9 @@ public class JdbcBatchWriter {
                 id, title, series, sequence_number, file_name, folder,
                 archive_entry, language, file_size, keywords, annotation,
                 rate, progress, update_date, isbn, deleted, local,
-                review, created_at, collection_root
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                review, created_at, collection_root, year, publisher,
+                lib_id, library_rate, translators, city, source_url
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 series = excluded.series,
@@ -55,15 +56,22 @@ public class JdbcBatchWriter {
                 file_size = excluded.file_size,
                 keywords = excluded.keywords,
                 annotation = excluded.annotation,
-                rate = excluded.rate,
-                progress = excluded.progress,
+                rate = books.rate,
+                progress = books.progress,
                 update_date = excluded.update_date,
                 isbn = excluded.isbn,
                 deleted = excluded.deleted,
                 local = excluded.local,
-                review = excluded.review,
-                created_at = excluded.created_at,
-                collection_root = excluded.collection_root
+                review = books.review,
+                created_at = books.created_at,
+                collection_root = excluded.collection_root,
+                year = excluded.year,
+                publisher = excluded.publisher,
+                lib_id = CASE WHEN COALESCE(excluded.lib_id,'') <> '' THEN excluded.lib_id ELSE books.lib_id END,
+                library_rate = excluded.library_rate,
+                translators = excluded.translators,
+                city = excluded.city,
+                source_url = CASE WHEN COALESCE(excluded.source_url,'') <> '' THEN excluded.source_url ELSE books.source_url END
             """;
 
         List<Object[]> bookBatch = new ArrayList<>();
@@ -71,9 +79,16 @@ public class JdbcBatchWriter {
         List<Object[]> genreLinkBatch = new ArrayList<>();
 
         for (Object[] row : booksData) {
-            Object[] bookRow = new Object[20];
+            Object[] bookRow = new Object[27];
             System.arraycopy(row, 0, bookRow, 0, 19);
             bookRow[19] = row[21]; // collection_root
+            bookRow[20] = row[22]; // year
+            bookRow[21] = row[23]; // publisher
+            bookRow[22] = row[24]; // lib_id
+            bookRow[23] = row[25]; // library_rate
+            bookRow[24] = row[26]; // translators
+            bookRow[25] = row[27]; // city
+            bookRow[26] = row[28]; // source_url
             bookBatch.add(bookRow);
 
             String bookId = (String) row[0];
@@ -113,7 +128,22 @@ public class JdbcBatchWriter {
             ps.setString(idx++, (String) row[17]);
             ps.setString(idx++, (String) row[18]);
             ps.setString(idx++, (String) row[19]);
+            if (row[20] == null) ps.setNull(idx++, java.sql.Types.INTEGER); else ps.setInt(idx++, (Integer) row[20]);
+            ps.setString(idx++, (String) row[21]);
+            ps.setString(idx++, (String) row[22]);
+            ps.setInt(idx++, row[23] == null ? 0 : (Integer) row[23]);
+            ps.setString(idx++, (String) row[24]);
+            ps.setString(idx++, (String) row[25]);
+            ps.setString(idx++, (String) row[26]);
         });
+
+        // Re-import must replace metadata links instead of accumulating stale authors/genres.
+        List<Object[]> bookIdsForCleanup = new ArrayList<>(booksData.size());
+        for (Object[] row : booksData) bookIdsForCleanup.add(new Object[]{row[0]});
+        jt.batchUpdate("DELETE FROM book_authors WHERE book_id = ?", bookIdsForCleanup, 1000,
+                (ps, row) -> ps.setString(1, (String) row[0]));
+        jt.batchUpdate("DELETE FROM book_genres WHERE book_id = ?", bookIdsForCleanup, 1000,
+                (ps, row) -> ps.setString(1, (String) row[0]));
 
         if (!authorLinkBatch.isEmpty()) {
             // authorLinkBatch зараз містить книгу + ключ автора

@@ -1,6 +1,6 @@
-// myhomelib-reader/src/main/java/com/myhomelibcorp/reader/service/ReaderSearchService.java
 package com.myhomelibcorp.reader.service;
 
+import com.myhomelibcorp.reader.api.ParagraphInfo;
 import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.TextStorage;
@@ -8,9 +8,13 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
+/** Пошук по абзацах без створення lowercase-копії всієї книги. */
 @Slf4j
 public class ReaderSearchService {
+
+    private static final int MAX_RESULTS = 10_000;
 
     public record SearchResult(int matchIndex, long textOffset, int paragraphIndex, String context) {}
 
@@ -19,44 +23,42 @@ public class ReaderSearchService {
             return List.of();
         }
 
-        TextStorage text = document.text();
-        if (text == null || text.length() == 0) {
+        TextStorage storage = document.text();
+        if (storage == null || storage.length() == 0) {
             return List.of();
         }
 
-        String fullText = text.getFullText().toLowerCase();
-        String lowerQuery = query.toLowerCase();
-
+        String needle = query.toLowerCase(Locale.ROOT);
+        List<ParagraphInfo> paragraphs = storage.getParagraphs();
         List<SearchResult> results = new ArrayList<>();
-        int index = 0;
-        int matchCount = 0;
+        int matchIndex = 0;
 
-        while (index < fullText.length()) {
-            int pos = fullText.indexOf(lowerQuery, index);
-            if (pos == -1) {
-                break;
-            }
+        for (int p = 0; p < paragraphs.size() && results.size() < MAX_RESULTS; p++) {
+            ParagraphInfo paragraph = paragraphs.get(p);
+            int start = paragraph.offset();
+            int end = p + 1 < paragraphs.size() ? paragraphs.get(p + 1).offset() : storage.length();
+            if (start >= end) continue;
 
-            // Знаходимо параграф для цієї позиції
-            var paragraph = text.findParagraphAt(pos);
-            if (paragraph != null) {
-                // Контекст (50 символів до і після)
-                int start = Math.max(0, pos - 50);
-                int end = Math.min(fullText.length(), pos + query.length() + 50);
-                String context = fullText.substring(start, end);
+            String original = storage.getText(start, end);
+            String haystack = original.toLowerCase(Locale.ROOT);
+            int from = 0;
+            while (from < haystack.length() && results.size() < MAX_RESULTS) {
+                int local = haystack.indexOf(needle, from);
+                if (local < 0) break;
 
+                int contextStart = Math.max(0, local - 50);
+                int contextEnd = Math.min(original.length(), local + query.length() + 50);
                 results.add(new SearchResult(
-                        matchCount++,
-                        pos,
+                        matchIndex++,
+                        start + local,
                         paragraph.index(),
-                        context
+                        original.substring(contextStart, contextEnd).trim()
                 ));
+                from = local + Math.max(1, needle.length());
             }
-
-            index = pos + 1;
         }
 
-        log.debug("🔍 Знайдено {} збігів для '{}'", results.size(), query);
+        log.debug("🔍 '{}' -> {} matches", query, results.size());
         return results;
     }
 

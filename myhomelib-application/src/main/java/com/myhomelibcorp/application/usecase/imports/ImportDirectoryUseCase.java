@@ -15,7 +15,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.List;
+import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.DoubleConsumer;
@@ -75,44 +75,42 @@ public class ImportDirectoryUseCase {
         bulkImportOptimizer.enableBulkInsertMode();
 
         try {
-            List<Path> files = libraryScanner.scan(directory);
-            long totalFiles = files.size();
+            long totalFiles = libraryScanner.countSupportedFiles(directory);
             log.info("Знайдено {} файлів для імпорту", totalFiles);
-
             AtomicLong processed = new AtomicLong(0);
 
-            for (Path file : files) {
-                if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
-                    log.info("Імпорт скасовано");
-                    break;
-                }
+            try (Stream<Path> files = libraryScanner.streamSupportedFiles(directory)) {
+                var iterator = files.iterator();
+                while (iterator.hasNext()) {
+                    if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
+                        log.info("Імпорт скасовано");
+                        break;
+                    }
+                    Path file = iterator.next();
+                    try {
+                        ImportContext fileContext = ImportContext.builder()
+                                .file(file)
+                                .rootDirectory(directory)
+                                .updateExisting(context.isUpdateExisting())
+                                .indexAfterSave(false)
+                                .batchSize(batchSize)
+                                .cancelFlag(context.getCancelFlag())
+                                .progressListener(context.getProgressListener())
+                                .build();
 
-                try {
-                    ImportContext fileContext = ImportContext.builder()
-                            .file(file)
-                            .rootDirectory(directory)
-                            .updateExisting(context.isUpdateExisting())
-                            .indexAfterSave(false)
-                            .batchSize(batchSize)
-                            .cancelFlag(context.getCancelFlag())
-                            .progressListener(context.getProgressListener())
-                            .build();
-
-                    ImportResult result = importFileUseCase.execute(fileContext);
-
-                    totalStats.getImported().addAndGet(result.imported());
-                    totalStats.getSkipped().addAndGet(result.skipped());
-                    totalStats.getDuplicates().addAndGet(result.duplicates());
-                    totalStats.getErrors().addAndGet(result.errors());
-
-                } catch (Exception e) {
-                    log.error("Помилка імпорту файлу: {}", file, e);
-                    totalStats.incrementErrors();
-                }
-
-                long processedCount = processed.incrementAndGet();
-                if (context.getProgressListener() != null && totalFiles > 0) {
-                    context.getProgressListener().accept((double) processedCount / totalFiles);
+                        ImportResult result = importFileUseCase.execute(fileContext);
+                        totalStats.getImported().addAndGet(result.imported());
+                        totalStats.getSkipped().addAndGet(result.skipped());
+                        totalStats.getDuplicates().addAndGet(result.duplicates());
+                        totalStats.getErrors().addAndGet(result.errors());
+                    } catch (Exception e) {
+                        log.error("Помилка імпорту файлу: {}", file, e);
+                        totalStats.incrementErrors();
+                    }
+                    long processedCount = processed.incrementAndGet();
+                    if (context.getProgressListener() != null && totalFiles > 0) {
+                        context.getProgressListener().accept((double) processedCount / totalFiles);
+                    }
                 }
             }
 

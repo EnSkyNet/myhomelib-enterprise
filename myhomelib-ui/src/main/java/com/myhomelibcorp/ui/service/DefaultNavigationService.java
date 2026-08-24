@@ -45,6 +45,7 @@ public class DefaultNavigationService implements NavigationService {
     private final DictionaryCachePort dictionaryCache;
     private final NavigationPanelController navigationPanelController;
     private final BookResourcePort bookResourcePort;
+    private final BookDownloadCoordinator bookDownloadCoordinator;
 
     @PostConstruct
     public void init() {
@@ -224,14 +225,19 @@ public class DefaultNavigationService implements NavigationService {
 
     @Override
     public void readBook(BookDto book) {
-        if (book != null) {
-            sessionService.saveLastOpenedBookId(book.getId());
-            mainController.showReaderWorkspace(BookId.fromString(book.getId()));
-            mainController.updateNavigationButtons();
-            log.info("Відкрито книгу для читання: {}", book.getTitle());
-        } else {
+        if (book == null) {
             log.warn("Спроба відкрити для читання null книгу");
+            return;
         }
+        bookDownloadCoordinator.ensureLocal(book).whenComplete((path, error) -> {
+            if (error != null) return;
+            javafx.application.Platform.runLater(() -> {
+                sessionService.saveLastOpenedBookId(book.getId());
+                mainController.showReaderWorkspace(BookId.fromString(book.getId()));
+                mainController.updateNavigationButtons();
+                log.info("Відкрито книгу для читання: {}", book.getTitle());
+            });
+        });
     }
 
     @Override

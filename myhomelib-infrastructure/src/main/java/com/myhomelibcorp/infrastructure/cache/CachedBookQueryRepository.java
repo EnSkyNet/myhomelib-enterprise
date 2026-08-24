@@ -13,6 +13,7 @@ import org.springframework.stereotype.Repository;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 
 @Repository
 @Primary
@@ -80,6 +81,21 @@ public class CachedBookQueryRepository implements BookQueryRepository {
             result.addAll(loaded);
         }
         return result;
+    }
+
+    @Override
+    public Optional<Book> findByStorage(String collectionRoot, String folder, String fileName, String archiveEntry) {
+        return delegate.findByStorage(collectionRoot, folder, fileName, archiveEntry);
+    }
+
+    @Override
+    public List<Book> findByArchiveContainer(String collectionRoot, String relativeArchivePath, String absoluteArchivePath) {
+        return delegate.findByArchiveContainer(collectionRoot, relativeArchivePath, absoluteArchivePath);
+    }
+
+    @Override
+    public Stream<Book> streamAll() {
+        return delegate.streamAll();
     }
 
     // ===== Спеціальні запити (делегуємо) =====

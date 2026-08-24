@@ -1,12 +1,18 @@
 package com.myhomelibcorp.reader.render.javafx;
 
+import com.myhomelibcorp.reader.api.BookFormat;
 import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.core.ReaderEngine;
 import com.myhomelibcorp.reader.core.ReaderEngineBuilder;
 import com.myhomelibcorp.reader.core.registry.DefaultBookFormatRegistry;
-import javafx.animation.AnimationTimer;
+import com.myhomelibcorp.reader.format.fb2.Fb2Format;
+import com.myhomelibcorp.reader.format.epub.EpubFormat;
+import com.myhomelibcorp.reader.format.txt.TxtFormat;
+import com.myhomelibcorp.reader.format.zip.ZipFormat;
+import javafx.application.Platform;
+import javafx.scene.canvas.Canvas;
 import javafx.scene.layout.BorderPane;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +20,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.io.IOException;
 import java.util.function.Consumer;
 
+/** Готовий JavaFX-компонент читалки. */
 @Slf4j
 public class ReaderView extends BorderPane {
 
@@ -35,138 +42,109 @@ public class ReaderView extends BorderPane {
     private Runnable onBackClick;
 
     public ReaderView() {
-        this.formatRegistry = new DefaultBookFormatRegistry();
+        formatRegistry = new DefaultBookFormatRegistry();
+        formatRegistry.register(new Fb2Format());
+        formatRegistry.register(new EpubFormat());
+        formatRegistry.register(new TxtFormat());
+        formatRegistry.register(new ZipFormat());
 
-        FontProvider fontProvider = new FontProvider("Georgia");
-        javafx.scene.canvas.Canvas canvasNode = new javafx.scene.canvas.Canvas();
-        this.renderer = new JavaFxReaderRenderer(canvasNode, fontProvider);
-
-        ReaderEngineBuilder builder = new ReaderEngineBuilder()
+        // Один Canvas на весь render pipeline.
+        Canvas canvasNode = new Canvas();
+        renderer = new JavaFxReaderRenderer(canvasNode, new FontProvider("Georgia"));
+        engine = new ReaderEngineBuilder()
                 .formatRegistry(formatRegistry)
-                .renderer(renderer);
+                .renderer(renderer)
+                .build();
 
-        this.engine = builder.build();
-
-        this.canvas = new ReaderCanvas(engine, renderer);
-        this.toolbar = new ReaderToolbar(canvas);
+        canvas = new ReaderCanvas(engine, renderer);
+        toolbar = new ReaderToolbar(canvas);
 
         setTop(toolbar);
         setCenter(canvas);
-
         setupCallbacks();
-
-        AnimationTimer timer = new AnimationTimer() {
-            private long lastUpdate = 0;
-
-            @Override
-            public void handle(long now) {
-                if (now - lastUpdate > 500_000_000) {
-                    lastUpdate = now;
-                    toolbar.updateState();
-                }
-            }
-        };
-        timer.start();
-
-        log.info("✅ ReaderView створено");
     }
 
     private void setupCallbacks() {
         canvas.setOnPageChanged(toolbar::updateState);
-        canvas.setOnPositionChanged(pos -> toolbar.updateState());
         canvas.setOnPageNumberChanged(page -> toolbar.updateState());
+        canvas.setOnCloseRequested(() -> {
+            if (onBackClick != null) onBackClick.run();
+            else closeBook();
+        });
+        canvas.setOnCenterTap(this::toggleToolbarVisibility);
+        canvas.setOnSearchRequested(() -> {
+            if (onSearchClick != null) onSearchClick.run();
+        });
 
         toolbar.setOnSettingsClick(settings -> {
-            if (onSettingsClick != null) {
-                onSettingsClick.accept(settings);
-            }
+            if (onSettingsClick != null) onSettingsClick.accept(settings);
         });
-
         toolbar.setOnBookmarkClick(() -> {
-            if (onBookmarkClick != null) {
-                onBookmarkClick.run();
-            }
+            if (onBookmarkClick != null) onBookmarkClick.run();
         });
-
         toolbar.setOnTocClick(() -> {
-            if (onTocClick != null) {
-                onTocClick.run();
-            }
+            if (onTocClick != null) onTocClick.run();
         });
-
         toolbar.setOnSearchClick(() -> {
-            if (onSearchClick != null) {
-                onSearchClick.run();
-            }
+            if (onSearchClick != null) onSearchClick.run();
         });
-
         toolbar.setOnBackClick(() -> {
-            if (onBackClick != null) {
-                onBackClick.run();
-            }
+            if (onBackClick != null) onBackClick.run();
         });
     }
 
-    // ==================== КОЛБЕКИ ====================
+    private void toggleToolbarVisibility() {
+        boolean visible = !toolbar.isVisible();
+        toolbar.setVisible(visible);
+        toolbar.setManaged(visible);
+        // Зміна висоти toolbar змінює viewport; layout оновиться після pulse.
+        Platform.runLater(() -> {
+            if (isBookOpen()) canvas.updateSize();
+            canvas.requestFocus();
+        });
+    }
 
     public void setOnSettingsClick(Consumer<ReaderSettings> listener) {
-        this.onSettingsClick = listener;
-        toolbar.setOnSettingsClick(listener);
+        onSettingsClick = listener;
     }
 
     public void setOnBookmarkClick(Runnable listener) {
-        this.onBookmarkClick = listener;
-        toolbar.setOnBookmarkClick(listener);
+        onBookmarkClick = listener;
     }
 
     public void setOnTocClick(Runnable listener) {
-        this.onTocClick = listener;
-        toolbar.setOnTocClick(listener);
+        onTocClick = listener;
     }
 
     public void setOnSearchClick(Runnable listener) {
-        this.onSearchClick = listener;
-        toolbar.setOnSearchClick(listener);
+        onSearchClick = listener;
     }
 
     public void setOnBackClick(Runnable listener) {
-        this.onBackClick = listener;
-        toolbar.setOnBackClick(listener);
+        onBackClick = listener;
     }
-
-    // ==================== ОСНОВНІ МЕТОДИ ====================
 
     public void openBook(BookSource source) throws IOException {
         engine.open(source);
-
-        // Кешуємо зображення для рендерингу
         if (engine.getCurrentDocument() != null) {
-            var resources = engine.getCurrentDocument().resources();
-            for (String id : resources.getAllIds()) {
-                var info = resources.getInfo(id).orElse(null);
-                if (info != null && info.isImage()) {
-                    var data = resources.open(id).orElse(null);
-                    if (data != null) {
-                        try {
-                            byte[] bytes = data.readAllBytes();
-                            renderer.cacheImage(id, bytes);
-                        } catch (Exception e) {
-                            log.warn("Не вдалося завантажити зображення {}: {}", id, e.getMessage());
-                        }
-                    }
-                }
-            }
+            renderer.setResourceRepository(engine.getCurrentDocument().resources());
         }
-
-        canvas.render();
+        renderer.applySettings(engine.getSettings());
+        toolbar.setVisible(engine.getSettings().showToolbar());
+        toolbar.setManaged(engine.getSettings().showToolbar());
+        canvas.setAutoScrollSpeed(engine.getSettings().scrollSpeed());
+        if (engine.getSettings().autoScroll() && !canvas.isAutoScrollRunning()) {
+            canvas.toggleAutoScroll();
+        }
+        canvas.updateSize();
         toolbar.updateState();
-        log.info("📖 Книгу відкрито в ReaderView");
+        Platform.runLater(canvas::requestFocus);
+        log.info("📖 ReaderView opened: {}", source.name());
     }
 
     public void closeBook() {
         canvas.closeBook();
         toolbar.updateState();
-        renderer.clearImageCache();
     }
 
     public boolean isBookOpen() {
@@ -174,50 +152,35 @@ public class ReaderView extends BorderPane {
     }
 
     public void applySettings(ReaderSettings settings) {
+        if (settings == null) return;
         canvas.applySettings(settings);
+        toolbar.setVisible(settings.showToolbar());
+        toolbar.setManaged(settings.showToolbar());
+        canvas.setAutoScrollSpeed(settings.scrollSpeed());
+        if (settings.autoScroll() && isBookOpen() && !canvas.isAutoScrollRunning()) {
+            canvas.toggleAutoScroll();
+        } else if (!settings.autoScroll() && canvas.isAutoScrollRunning()) {
+            canvas.toggleAutoScroll();
+        }
         toolbar.updateState();
     }
 
-    public void goToPercent(double percent) {
-        canvas.goToPercent(percent);
-    }
+    public void goToPercent(double percent) { canvas.goToPercent(percent); }
+    public void goToPosition(ReaderPosition position) { canvas.goToPosition(position); }
+    public void nextPage() { canvas.nextPage(); }
+    public void previousPage() { canvas.previousPage(); }
+    public double getProgressPercent() { return canvas.getProgressPercent(); }
+    public String getCurrentChapterTitle() { return canvas.getCurrentChapterTitle(); }
+    public ReaderPosition getCurrentPosition() { return canvas.getCurrentPosition(); }
+    public String getCacheStats() { return canvas.getCacheStats(); }
 
-    public void goToPosition(ReaderPosition position) {
-        canvas.goToPosition(position);
-    }
-
-    public void nextPage() {
-        canvas.nextPage();
-    }
-
-    public void previousPage() {
-        canvas.previousPage();
-    }
-
-    public double getProgressPercent() {
-        return canvas.getProgressPercent();
-    }
-
-    public String getCurrentChapterTitle() {
-        return canvas.getCurrentChapterTitle();
-    }
-
-    public ReaderPosition getCurrentPosition() {
-        return canvas.getCurrentPosition();
-    }
-
-    public String getCacheStats() {
-        return canvas.getCacheStats();
-    }
-
-    public void registerFormat(com.myhomelibcorp.reader.api.BookFormat format) {
+    public void registerFormat(BookFormat format) {
         formatRegistry.register(format);
-        log.info("📚 Формат зареєстровано: {}", format.displayName());
     }
 
     public void dispose() {
-        renderer.clearImageCache();
         canvas.dispose();
-        log.info("🧹 ReaderView знищено");
+        renderer.setResourceRepository(null);
+        log.info("🧹 ReaderView disposed");
     }
 }

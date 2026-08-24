@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.usecase.author.LoadAuthorByIdUseCase;
+import com.myhomelibcorp.application.usecase.author.UpdateAuthorDescriptionUseCase;
 import com.myhomelibcorp.application.usecase.book.LoadBooksByAuthorUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -37,6 +38,7 @@ import java.util.stream.Collectors;
 public class AuthorWorkspaceController {
 
     private final LoadAuthorByIdUseCase loadAuthorByIdUseCase;
+    private final UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase;
     private final LoadBooksByAuthorUseCase loadBooksByAuthorUseCase;
     private final NavigationService navigationService;
     private final CoverPresenter coverPresenter;
@@ -173,7 +175,7 @@ public class AuthorWorkspaceController {
     private void updateAuthorUI(AuthorDto author) {
         authorNameLabel.setText(author.getFullName());
         authorFullNameLabel.setText(author.getFullName());
-        bioLabel.setText("Біографія автора..."); // getBio не існує
+        bioLabel.setText(author.getAnnotation() == null ? "" : author.getAnnotation());
     }
 
     private void updateBooksUI(List<BookDto> books) {
@@ -283,4 +285,18 @@ public class AuthorWorkspaceController {
             navigationService.readBook(book);
         }
     }
+    @FXML
+    private void onEditAuthorDescription() {
+        if (currentAuthorId == null || currentAuthor == null) return;
+        TextArea area = new TextArea(currentAuthor.getAnnotation() == null ? "" : currentAuthor.getAnnotation());
+        area.setWrapText(true); area.setPrefRowCount(14);
+        javafx.scene.control.Dialog<javafx.scene.control.ButtonType> d = new javafx.scene.control.Dialog<>();
+        d.setTitle("Опис автора"); d.setHeaderText(currentAuthor.getFullName());
+        d.getDialogPane().setContent(area); d.getDialogPane().getButtonTypes().addAll(javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
+        if (d.showAndWait().orElse(javafx.scene.control.ButtonType.CANCEL) == javafx.scene.control.ButtonType.OK) {
+            updateAuthorDescriptionUseCase.execute(currentAuthorId, area.getText());
+            currentAuthor.setAnnotation(area.getText()); bioLabel.setText(area.getText());
+        }
+    }
+
 }

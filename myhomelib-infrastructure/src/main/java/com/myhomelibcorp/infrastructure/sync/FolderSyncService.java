@@ -1,6 +1,8 @@
 package com.myhomelibcorp.infrastructure.sync;
 
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
+import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.infrastructure.FolderSyncPort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
@@ -8,6 +10,8 @@ import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
+import com.myhomelibcorp.domain.model.valueobject.BookFile;
+import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.infrastructure.importengine.InpxImportPipeline;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -17,12 +21,18 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 @Service
 @RequiredArgsConstructor
@@ -33,6 +43,7 @@ public class FolderSyncService implements FolderSyncPort {
     private final BookCommandRepository bookCommandRepository;
     private final SearchIndexer searchIndexer;
     private final LibraryScanner libraryScanner;
+    private final ImporterRegistry importerRegistry;
     private final InpxImportPipeline inpxImportPipeline;
 
     private final AtomicBoolean isSyncing = new AtomicBoolean(false);
@@ -43,100 +54,83 @@ public class FolderSyncService implements FolderSyncPort {
         if (!isSyncing.compareAndSet(false, true)) {
             throw new IllegalStateException("Синхронізація вже виконується");
         }
+        if (directory == null) {
+            isSyncing.set(false);
+            throw new IllegalArgumentException("Каталог синхронізації не задано");
+        }
 
+        SyncOptions effective = options == null ? SyncOptions.builder().build() : options;
+        Path root = directory.toAbsolutePath().normalize();
         cancelFlag.set(false);
         LocalDateTime startTime = LocalDateTime.now();
 
-        int added = 0;
-        int updated = 0;
-        int deleted = 0;
-        int skipped = 0;
-        int errors = 0;
+        Counters counters = new Counters();
         List<String> errorMessages = new ArrayList<>();
+        boolean indexDirty = false;
 
         try {
-            log.info("📂 Початок синхронізації папки: {}", directory);
-            log.info("📋 Опції: deleteOrphans={}, updateChanged={}, includeSubfolders={}",
-                    options.isDeleteOrphans(), options.isUpdateChanged(), options.isIncludeSubfolders());
+            log.info("📂 Початок синхронізації папки: {}", root);
+            log.info("📋 Опції: deleteOrphans={}, updateChanged={}, includeSubfolders={}, processArchives={}",
+                    effective.isDeleteOrphans(), effective.isUpdateChanged(), effective.isIncludeSubfolders(), effective.isProcessArchives());
 
-            // 1. Будуємо індекс існуючих книг
-            Map<String, Book> existingBooks = buildBookIndex();
-            log.info("📚 Знайдено {} книг у бібліотеці", existingBooks.size());
+            try (Stream<Path> files = libraryScanner.streamSupportedFiles(
+                    root,
+                    effective.isIncludeSubfolders(),
+                    effective.getMaxDepth(),
+                    effective.getMaxFileSize())) {
 
-            // 2. Скануємо файлову систему
-            List<Path> files = libraryScanner.scan(directory);
-            log.info("📄 Знайдено {} файлів для обробки", files.size());
-
-            Map<String, Path> fileMap = buildFileIndex(files, directory);
-            int processed = 0;
-            int total = fileMap.size();
-
-            // 3. Обробляємо кожен файл
-            for (Map.Entry<String, Path> entry : fileMap.entrySet()) {
-                if (cancelFlag.get()) {
-                    log.info("⏹ Синхронізацію скасовано");
-                    break;
-                }
-
-                String key = entry.getKey();
-                Path file = entry.getValue();
-                processed++;
-
-                try {
-                    Book existing = existingBooks.remove(key);
-
-                    if (existing == null) {
-                        // Новий файл - імпортуємо
-                        if (importFile(file)) {
-                            added++;
-                        } else {
-                            skipped++;
-                        }
-                    } else if (options.isUpdateChanged() && fileChanged(file, existing)) {
-                        // Файл змінився - оновлюємо
-                        if (updateBook(file, existing)) {
-                            updated++;
-                        }
+                var iterator = files.iterator();
+                long processed = 0;
+                while (iterator.hasNext()) {
+                    if (cancelFlag.get()) {
+                        log.info("⏹ Синхронізацію скасовано");
+                        break;
                     }
-                } catch (Exception e) {
-                    log.error("Помилка обробки файлу: {}", file, e);
-                    errors++;
-                    errorMessages.add(e.getMessage());
-                }
 
-                // Логуємо прогрес кожні 100 файлів
-                if (processed % 100 == 0) {
-                    log.info("⏳ Оброблено {}/{} файлів", processed, total);
+                    Path file = iterator.next().toAbsolutePath().normalize();
+                    processed++;
+                    try {
+                        FileResult result = processPhysicalFile(file, root, effective);
+                        counters.add(result);
+                        indexDirty |= result.indexDirty();
+                    } catch (Exception e) {
+                        counters.errors++;
+                        String message = file + ": " + safeMessage(e);
+                        errorMessages.add(message);
+                        log.error("Помилка обробки файлу {}", file, e);
+                    }
+
+                    if (processed % 100 == 0) {
+                        log.info("⏳ Оброблено {} фізичних файлів", processed);
+                    }
                 }
             }
 
-            // 4. Видаляємо зайві книги
-            if (options.isDeleteOrphans() && !cancelFlag.get()) {
-                deleted = deleteOrphanedBooks(existingBooks.values(), options);
-                log.info("🗑 Видалено {} зайвих книг", deleted);
+            if (effective.isDeleteOrphans() && !cancelFlag.get()) {
+                FileResult orphanResult = deleteMissingPhysicalFiles(root);
+                counters.add(orphanResult);
+                indexDirty |= orphanResult.indexDirty();
             }
 
-            // 5. Оновлюємо індекс
-            if (added > 0 || updated > 0) {
+            if (indexDirty) {
                 searchIndexer.commit();
-                log.info("✅ Індекс оновлено");
+                log.info("✅ Пошуковий індекс синхронізації зафіксовано");
             }
-
         } catch (IOException e) {
-            log.error("❌ Помилка сканування папки: {}", directory, e);
-            errors++;
-            errorMessages.add("Помилка сканування: " + e.getMessage());
+            counters.errors++;
+            errorMessages.add("Помилка сканування: " + safeMessage(e));
+            log.error("❌ Помилка сканування папки {}", root, e);
         } finally {
             isSyncing.set(false);
             cancelFlag.set(false);
         }
 
         SyncResult result = SyncResult.builder()
-                .added(added)
-                .updated(updated)
-                .deleted(deleted)
-                .skipped(skipped)
-                .errors(errors)
+                .added(counters.added)
+                .updated(counters.updated)
+                .deleted(counters.deleted)
+                .skipped(counters.skipped)
+                .errors(counters.errors)
                 .errorMessages(errorMessages)
                 .startTime(startTime)
                 .endTime(LocalDateTime.now())
@@ -161,102 +155,368 @@ public class FolderSyncService implements FolderSyncPort {
         cancelFlag.set(true);
     }
 
-    // ==================== ПРИВАТНІ МЕТОДИ ====================
+    private FileResult processPhysicalFile(Path file, Path root, SyncOptions options) throws Exception {
+        String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
 
-    private Map<String, Book> buildBookIndex() {
-        Map<String, Book> index = new HashMap<>();
-        try {
-            List<Book> books = bookQueryRepository.findAll();
-            for (Book book : books) {
-                String key = buildBookKey(book);
-                index.put(key, book);
+        if (isInpx(lower)) {
+            long count = inpxImportPipeline.importFile(file, 1000, root, cancelFlag);
+            if (count > 0) {
+                // INPX writes directly to the database, so incremental Lucene callbacks are bypassed.
+                searchIndexer.rebuildIndex();
+                return new FileResult((int) Math.min(Integer.MAX_VALUE, count), 0, 0, 0, false);
             }
-        } catch (Exception e) {
-            log.warn("Помилка побудови індексу книг: {}", e.getMessage());
+            return FileResult.skipped();
         }
-        return index;
+
+        if (isArchive(lower)) {
+            if (!options.isProcessArchives()) return FileResult.skipped();
+            String relativeArchive = normalizeRelative(root.relativize(file));
+            List<Book> existing = bookQueryRepository.findByArchiveContainer(
+                    root.toString(), relativeArchive, normalizePath(file.toString()));
+
+            if (existing.isEmpty()) {
+                return importNewFile(file, root);
+            }
+            if (!options.isUpdateChanged() || !archiveChanged(file, existing)) {
+                return FileResult.skipped();
+            }
+            return reconcileArchive(file, root, existing, options.isDeleteOrphans());
+        }
+
+        String folder = relativeFolder(root, file);
+        Optional<Book> existing = findExistingLoose(root, folder, file);
+        if (existing.isEmpty()) {
+            return importNewFile(file, root);
+        }
+        if (!options.isUpdateChanged() || !fileChanged(file, existing.get())) {
+            return FileResult.skipped();
+        }
+        return updateLooseBook(file, root, existing.get());
     }
 
-    private Map<String, Path> buildFileIndex(List<Path> files, Path root) {
-        Map<String, Path> index = new HashMap<>();
-        for (Path file : files) {
-            try {
-                Path relative = root.relativize(file);
-                String key = relative.toString().toLowerCase();
-                index.put(key, file);
-            } catch (Exception e) {
-                log.warn("Помилка додавання файлу до індексу: {}", file, e);
-            }
-        }
-        return index;
+    private Optional<Book> findExistingLoose(Path root, String relativeFolder, Path file) {
+        String name = file.getFileName().toString();
+        Optional<Book> found = bookQueryRepository.findByStorage(root.toString(), relativeFolder, name, "");
+        if (found.isPresent()) return found;
+
+        String absoluteFolder = file.getParent() == null ? "" : file.getParent().toAbsolutePath().normalize().toString();
+        found = bookQueryRepository.findByStorage(root.toString(), absoluteFolder, name, "");
+        if (found.isPresent()) return found;
+
+        // Compatibility with early snapshots that imported loose files before collection_root was populated.
+        return bookQueryRepository.findByStorage("", absoluteFolder, name, "");
     }
 
-    private String buildBookKey(Book book) {
-        String folder = book.getFolder();
-        String fileName = book.getFileName();
-        if (folder != null && !folder.isEmpty()) {
-            return Path.of(folder).resolve(fileName).toString().toLowerCase();
+    private FileResult importNewFile(Path file, Path root) throws Exception {
+        BookImporterPort importer = importerRegistry.findImporter(file);
+        int added = 0;
+        try (Stream<Book> books = importer.importBooks(file)) {
+            var iterator = books.iterator();
+            while (iterator.hasNext()) {
+                if (cancelFlag.get()) break;
+                Book parsed = iterator.next();
+                if (parsed == null) continue;
+                Book normalized = normalizeStorage(parsed, file, root, parsed.getArchiveEntry());
+                bookCommandRepository.save(normalized);
+                searchIndexer.indexBook(normalized);
+                added++;
+            }
         }
-        return fileName != null ? fileName.toLowerCase() : "";
+        return added > 0 ? new FileResult(added, 0, 0, 0, true) : FileResult.skipped();
+    }
+
+    /**
+     * Re-reads metadata for a changed FB2/EPUB/TXT/generic file while keeping the
+     * existing book id. User state stored on the row (rate/progress/review/LibID)
+     * and state in related tables (groups/bookmarks/reader positions) therefore survives.
+     */
+    private FileResult updateLooseBook(Path file, Path root, Book existing) throws Exception {
+        BookImporterPort importer = importerRegistry.findImporter(file);
+        Book parsed;
+        try (Stream<Book> books = importer.importBooks(file)) {
+            parsed = books.findFirst().orElseThrow(() -> new IOException("Імпортер не повернув книгу: " + file));
+        }
+        Book normalized = normalizeStorage(parsed, file, root, "");
+        Book merged = mergePreservingUserState(existing, normalized, file);
+        bookCommandRepository.save(merged);
+        searchIndexer.indexBook(merged);
+        log.debug("🔄 Оновлено метадані зміненого файлу: {}", file);
+        return new FileResult(0, 1, 0, 0, true);
+    }
+
+    private FileResult reconcileArchive(Path file, Path root, List<Book> existing, boolean deleteRemoved) throws Exception {
+        BookImporterPort importer = importerRegistry.findImporter(file);
+        Map<String, Book> byEntry = new HashMap<>();
+        Map<String, Book> byLibId = new HashMap<>();
+        for (Book old : existing) {
+            byEntry.putIfAbsent(normalizeEntry(old.getArchiveEntry()), old);
+            if (old.getLibId() != null && !old.getLibId().isBlank()) byLibId.putIfAbsent(old.getLibId(), old);
+        }
+
+        Set<String> matchedIds = new HashSet<>();
+        int added = 0;
+        int updated = 0;
+        try (Stream<Book> books = importer.importBooks(file)) {
+            var iterator = books.iterator();
+            while (iterator.hasNext()) {
+                if (cancelFlag.get()) break;
+                Book parsed = iterator.next();
+                if (parsed == null) continue;
+                Book normalized = normalizeStorage(parsed, file, root, parsed.getArchiveEntry());
+                Book old = byEntry.get(normalizeEntry(normalized.getArchiveEntry()));
+                if (old == null && normalized.getLibId() != null && !normalized.getLibId().isBlank()) {
+                    old = byLibId.get(normalized.getLibId());
+                }
+
+                if (old != null) {
+                    Book merged = mergePreservingUserState(old, normalized, file);
+                    bookCommandRepository.save(merged);
+                    searchIndexer.indexBook(merged);
+                    matchedIds.add(old.getId().asString());
+                    updated++;
+                } else {
+                    bookCommandRepository.save(normalized);
+                    searchIndexer.indexBook(normalized);
+                    added++;
+                }
+            }
+        }
+
+        int deleted = 0;
+        if (deleteRemoved && !cancelFlag.get()) {
+            for (Book old : existing) {
+                if (matchedIds.contains(old.getId().asString())) continue;
+                bookCommandRepository.deleteById(old.getId());
+                searchIndexer.deleteBook(old.getId());
+                deleted++;
+            }
+        }
+        return new FileResult(added, updated, deleted, 0, added + updated + deleted > 0);
+    }
+
+    private FileResult deleteMissingPhysicalFiles(Path root) {
+        int deleted = 0;
+        int errors = 0;
+        try (Stream<Book> books = bookQueryRepository.streamAll()) {
+            var iterator = books.iterator();
+            while (iterator.hasNext()) {
+                if (cancelFlag.get()) break;
+                Book book = iterator.next();
+                if (book == null || !book.isLocal()) continue;
+                Path physical = physicalPath(book, root);
+                if (physical == null || !physical.startsWith(root)) continue;
+                if (Files.isRegularFile(physical)) continue;
+                try {
+                    bookCommandRepository.deleteById(book.getId());
+                    searchIndexer.deleteBook(book.getId());
+                    deleted++;
+                } catch (Exception e) {
+                    errors++;
+                    log.error("Не вдалося видалити orphan {}", book.getId(), e);
+                }
+            }
+        }
+        return new FileResult(0, 0, deleted, errors, deleted > 0);
+    }
+
+    private Book normalizeStorage(Book parsed, Path physicalFile, Path root, String archiveEntry) throws IOException {
+        boolean archived = archiveEntry != null && !archiveEntry.isBlank();
+        String folder;
+        String fileName;
+        long size;
+        String entry;
+
+        if (archived) {
+            folder = normalizeRelative(root.relativize(physicalFile));
+            entry = archiveEntry.replace('\\', '/');
+            fileName = parsed.getFileName();
+            if (fileName == null || fileName.isBlank()) {
+                try { fileName = Path.of(entry).getFileName().toString(); }
+                catch (Exception ignored) { fileName = entry; }
+            }
+            size = parsed.getFileSize();
+        } else {
+            folder = relativeFolder(root, physicalFile);
+            entry = "";
+            fileName = physicalFile.getFileName().toString();
+            size = Files.size(physicalFile);
+        }
+
+        BookFile newFile = new BookFile(fileName, folder, entry, size, root.toString());
+        return Book.builder()
+                .id(parsed.getId())
+                .title(parsed.getTitle())
+                .authors(new ArrayList<>(parsed.getAuthors()))
+                .genres(new ArrayList<>(parsed.getGenres()))
+                .series(parsed.getSeries())
+                .sequenceNumber(parsed.getSequenceNumber())
+                .metadata(parsed.getMetadata())
+                .file(newFile)
+                .cover(parsed.getCover())
+                .updateDate(fileTimestamp(physicalFile))
+                .createdAt(parsed.getCreatedAt())
+                .deleted(parsed.isDeleted())
+                .local(true)
+                .build();
+    }
+
+    private Book mergePreservingUserState(Book existing, Book parsed, Path physicalFile) {
+        BookMetadata pm = parsed.getMetadata();
+        BookMetadata em = existing.getMetadata();
+        BookMetadata mergedMetadata = BookMetadata.builder()
+                .annotation(preferParsed(pm != null ? pm.getAnnotation() : null, em != null ? em.getAnnotation() : null))
+                .keywords(preferParsed(pm != null ? pm.getKeywords() : null, em != null ? em.getKeywords() : null))
+                .language(pm != null && pm.getLanguage() != null ? pm.getLanguage() : existing.getLanguage())
+                .isbn(pm != null && pm.getIsbn() != null ? pm.getIsbn() : existing.getIsbn())
+                .review(existing.getReview())
+                .year(pm != null && pm.getYear() != null ? pm.getYear() : existing.getYear())
+                .publisher(preferParsed(pm != null ? pm.getPublisher() : null, existing.getPublisher()))
+                .libId(existing.getLibId() != null && !existing.getLibId().isBlank()
+                        ? existing.getLibId() : (pm != null ? pm.getLibId() : ""))
+                .libraryRate(pm != null && pm.getLibraryRate() != 0 ? pm.getLibraryRate() : existing.getLibraryRate())
+                .translators(preferParsed(pm != null ? pm.getTranslators() : null, existing.getTranslators()))
+                .city(preferParsed(pm != null ? pm.getCity() : null, existing.getCity()))
+                .sourceUrl(preferParsed(pm != null ? pm.getSourceUrl() : null, existing.getSourceUrl()))
+                .rate(existing.getRate())
+                .progress(existing.getProgress())
+                .build();
+
+        return Book.builder()
+                .id(existing.getId())
+                .title(parsed.getTitle() == null || parsed.getTitle().isBlank() ? existing.getTitle() : parsed.getTitle())
+                .authors(parsed.getAuthors() == null || parsed.getAuthors().isEmpty()
+                        ? new ArrayList<>(existing.getAuthors()) : new ArrayList<>(parsed.getAuthors()))
+                .genres(parsed.getGenres() == null ? new ArrayList<>(existing.getGenres()) : new ArrayList<>(parsed.getGenres()))
+                .series(parsed.getSeries())
+                .sequenceNumber(parsed.getSequenceNumber())
+                .metadata(mergedMetadata)
+                .file(parsed.getFile())
+                .cover(parsed.getCover() != null ? parsed.getCover() : existing.getCover())
+                .updateDate(fileTimestamp(physicalFile))
+                .createdAt(existing.getCreatedAt())
+                .deleted(existing.isDeleted())
+                .local(true)
+                .build();
     }
 
     private boolean fileChanged(Path file, Book existing) {
         try {
-            long fileSize = Files.size(file);
-            long lastModified = Files.getLastModifiedTime(file).toMillis();
-            long bookModified = existing.getUpdateDate() != null
-                    ? existing.getUpdateDate().toEpochSecond(java.time.ZoneOffset.UTC) * 1000
-                    : 0;
-            return fileSize != existing.getFileSize() || lastModified > bookModified;
+            if (Files.size(file) != existing.getFileSize()) return true;
+            return Files.getLastModifiedTime(file).toMillis() > toEpochMillis(existing.getUpdateDate());
         } catch (IOException e) {
-            log.warn("Помилка перевірки змін файлу: {}", file, e);
+            log.warn("Помилка перевірки змін файлу {}: {}", file, e.getMessage());
             return true;
         }
     }
 
-    private boolean importFile(Path file) {
+    private boolean archiveChanged(Path file, List<Book> existing) {
         try {
-            log.debug("📥 Імпорт нового файлу: {}", file);
-            long count = inpxImportPipeline.importFile(file, 1000, file.getParent());
-            return count > 0;
-        } catch (Exception e) {
-            log.error("Помилка імпорту файлу: {}", file, e);
-            return false;
+            long modified = Files.getLastModifiedTime(file).toMillis();
+            long newestCatalogTimestamp = existing.stream()
+                    .map(Book::getUpdateDate)
+                    .filter(java.util.Objects::nonNull)
+                    .mapToLong(this::toEpochMillis)
+                    .max().orElse(0L);
+            return modified > newestCatalogTimestamp;
+        } catch (IOException e) {
+            return true;
         }
     }
 
-    private boolean updateBook(Path file, Book existing) {
+    private Path physicalPath(Book book, Path syncRoot) {
         try {
-            log.debug("🔄 Оновлення книги: {}", existing.getTitle());
-            String fileName = file.getFileName().toString().toLowerCase();
-            if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
-                bookCommandRepository.deleteById(existing.getId());
-                long count = inpxImportPipeline.importFile(file, 1000, file.getParent());
-                return count > 0;
+            String rootText = book.getCollectionRoot();
+            Path collectionRoot = rootText == null || rootText.isBlank()
+                    ? syncRoot : Path.of(rootText).toAbsolutePath().normalize();
+            String folderText = book.getFolder() == null ? "" : book.getFolder();
+            Path folder = folderText.isBlank() ? Path.of("") : Path.of(folderText);
+
+            if (book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank()) {
+                Path archive = folder.isAbsolute() ? folder : collectionRoot.resolve(folder);
+                return archive.toAbsolutePath().normalize();
             }
-            return false;
+
+            Path parent = folder.isAbsolute() ? folder : collectionRoot.resolve(folder);
+            return parent.resolve(book.getFileName()).toAbsolutePath().normalize();
         } catch (Exception e) {
-            log.error("Помилка оновлення книги: {}", existing.getId(), e);
-            return false;
+            log.debug("Не вдалося визначити фізичний шлях книги {}: {}", book.getId(), e.getMessage());
+            return null;
         }
     }
 
-    private int deleteOrphanedBooks(Iterable<Book> orphanedBooks, SyncOptions options) {
-        int deleted = 0;
-        for (Book book : orphanedBooks) {
-            if (cancelFlag.get()) {
-                break;
-            }
-            try {
-                log.debug("🗑 Видалення зайвої книги: {}", book.getTitle());
-                bookCommandRepository.deleteById(book.getId());
-                searchIndexer.deleteBook(book.getId());
-                deleted++;
-            } catch (Exception e) {
-                log.error("Помилка видалення книги: {}", book.getId(), e);
-            }
+    private LocalDateTime fileTimestamp(Path file) {
+        try {
+            return LocalDateTime.ofInstant(Files.getLastModifiedTime(file).toInstant(), ZoneId.systemDefault());
+        } catch (IOException e) {
+            return LocalDateTime.now();
         }
-        searchIndexer.commit();
-        return deleted;
+    }
+
+    private long toEpochMillis(LocalDateTime value) {
+        if (value == null) return 0;
+        return value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
+    }
+
+    private String relativeFolder(Path root, Path file) {
+        Path parent = file.getParent();
+        if (parent == null || parent.equals(root)) return "";
+        return normalizeRelative(root.relativize(parent));
+    }
+
+    private static String normalizeRelative(Path path) {
+        String value = path == null ? "" : path.toString().replace('\\', '/');
+        return ".".equals(value) ? "" : value;
+    }
+
+    private static String normalizePath(String value) {
+        return value == null ? "" : value.replace('\\', '/');
+    }
+
+    private static String normalizeEntry(String value) {
+        String v = normalizePath(value).trim();
+        while (v.startsWith("/")) v = v.substring(1);
+        return v.toLowerCase(Locale.ROOT);
+    }
+
+    private static String preferParsed(String parsed, String existing) {
+        return parsed != null && !parsed.isBlank() ? parsed : (existing == null ? "" : existing);
+    }
+
+    private static boolean isInpx(String name) {
+        return name.endsWith(".inpx") || name.endsWith(".inp");
+    }
+
+    private static boolean isArchive(String name) {
+        return name.endsWith(".zip") || name.endsWith(".fb2zip") || name.endsWith(".fb2.zip")
+                || name.endsWith(".cbz") || name.endsWith(".jar") || name.endsWith(".7z")
+                || name.endsWith(".rar") || name.endsWith(".cbr") || name.endsWith(".tar")
+                || name.endsWith(".tar.gz") || name.endsWith(".tgz") || name.endsWith(".tar.bz2")
+                || name.endsWith(".tbz2") || name.endsWith(".tar.xz") || name.endsWith(".txz")
+                || name.endsWith(".cpio");
+    }
+
+    private static String safeMessage(Throwable error) {
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+
+    private record FileResult(int added, int updated, int deleted, int errors, boolean indexDirty) {
+        static FileResult skipped() { return new FileResult(0, 0, 0, 0, false); }
+    }
+
+    private static final class Counters {
+        int added;
+        int updated;
+        int deleted;
+        int skipped;
+        int errors;
+
+        void add(FileResult result) {
+            added += result.added();
+            updated += result.updated();
+            deleted += result.deleted();
+            errors += result.errors();
+            if (result.added() == 0 && result.updated() == 0 && result.deleted() == 0 && result.errors() == 0) skipped++;
+        }
     }
 }

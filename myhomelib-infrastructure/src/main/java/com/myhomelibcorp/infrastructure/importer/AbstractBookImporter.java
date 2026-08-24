@@ -52,6 +52,7 @@ public abstract class AbstractBookImporter implements BookImporterPort {
                 .metadata(metadata != null ? metadata : BookMetadata.empty())
                 .file(file != null ? file : BookFile.empty())
                 .updateDate(updateDate != null ? updateDate : LocalDateTime.now())
+                .local(true)
                 .build();
     }
 

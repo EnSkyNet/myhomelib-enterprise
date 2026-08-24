@@ -33,9 +33,12 @@ public class SearchIndexConfig {
     @Bean
     @Primary
     public QueryParser queryParser(Analyzer analyzer) {
-        return new MultiFieldQueryParser(
-                new String[]{"title", "authors", "series", "genres", "keywords", "annotation"},
+        MultiFieldQueryParser parser = new MultiFieldQueryParser(
+                new String[]{"title", "authors", "series", "genres", "keywords", "annotation", "file_name", "publisher"},
                 analyzer
         );
+        // Classic MyHomeLib-style %text% maps to leading/trailing wildcards.
+        parser.setAllowLeadingWildcard(true);
+        return parser;
     }
 }

@@ -76,6 +76,9 @@ public interface BookResourcePort {
      */
     Optional<InputStream> findFirstArchiveEntry(Path archivePath, java.util.function.Predicate<String> filter);
 
+    /** Deletes one physical downloaded file/archive without touching catalog metadata. */
+    boolean deletePhysicalFile(Path path) throws java.io.IOException;
+
     /**
      * Будує повний шлях до файлу з компонентів.
      */

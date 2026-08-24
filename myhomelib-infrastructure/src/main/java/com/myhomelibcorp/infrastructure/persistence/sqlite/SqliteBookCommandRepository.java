@@ -42,17 +42,19 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
 
     public void setPragmaForBulkInsert() {
         JdbcTemplate jt = getJdbcTemplate();
-        jt.execute("PRAGMA synchronous = OFF");
-        jt.execute("PRAGMA journal_mode = MEMORY");
-        jt.execute("PRAGMA temp_store = MEMORY");
-        jt.execute("PRAGMA cache_size = -500000");
+        jt.execute("PRAGMA journal_mode = WAL");
+        jt.execute("PRAGMA synchronous = NORMAL");
+        jt.execute("PRAGMA temp_store = FILE");
+        jt.execute("PRAGMA cache_size = -32768");
         log.debug("PRAGMA встановлено для швидкого імпорту");
     }
 
     public void resetPragma() {
         JdbcTemplate jt = getJdbcTemplate();
         jt.execute("PRAGMA synchronous = NORMAL");
-        jt.execute("PRAGMA journal_mode = DELETE");
+        jt.execute("PRAGMA journal_mode = WAL");
+        jt.execute("PRAGMA temp_store = FILE");
+        jt.execute("PRAGMA cache_size = -32768");
         log.debug("PRAGMA відновлено до стандартних");
     }
 
@@ -89,15 +91,22 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                     : LocalDateTime.now().format(DATE_FORMATTER);
             ps.setString(idx++, formattedCreated);
             ps.setString(idx++, book.getCollectionRoot() != null ? book.getCollectionRoot() : "");
+            if (book.getYear() != null) ps.setInt(idx++, book.getYear()); else ps.setNull(idx++, java.sql.Types.INTEGER);
+            ps.setString(idx++, book.getPublisher() != null ? book.getPublisher() : "");
+            ps.setString(idx++, book.getLibId() != null ? book.getLibId() : "");
+            ps.setInt(idx++, book.getLibraryRate());
+            ps.setString(idx++, book.getTranslators() != null ? book.getTranslators() : "");
+            ps.setString(idx++, book.getCity() != null ? book.getCity() : "");
+            ps.setString(idx++, book.getSourceUrl() != null ? book.getSourceUrl() : "");
             return ps;
         });
 
-        if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
-            bookAuthorHelper.saveAuthors(book.getId(), book.getAuthors());
-        }
-        if (book.getGenres() != null && !book.getGenres().isEmpty()) {
-            bookGenreHelper.saveGenres(book.getId(), book.getGenres());
-        }
+        // Always replace relationship links. An empty parsed list means stale links
+        // from a previous version of the file must be removed.
+        bookAuthorHelper.saveAuthors(book.getId(),
+                book.getAuthors() == null ? java.util.List.of() : book.getAuthors());
+        bookGenreHelper.saveGenres(book.getId(),
+                book.getGenres() == null ? java.util.List.of() : book.getGenres());
 
         bookCache.evict(book.getId());
 
@@ -110,12 +119,10 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         if (books == null || books.isEmpty()) return;
         batchWriter.batchInsert(books);
         for (Book book : books) {
-            if (book.getAuthors() != null && !book.getAuthors().isEmpty()) {
-                bookAuthorHelper.saveAuthors(book.getId(), book.getAuthors());
-            }
-            if (book.getGenres() != null && !book.getGenres().isEmpty()) {
-                bookGenreHelper.saveGenres(book.getId(), book.getGenres());
-            }
+            bookAuthorHelper.saveAuthors(book.getId(),
+                    book.getAuthors() == null ? java.util.List.of() : book.getAuthors());
+            bookGenreHelper.saveGenres(book.getId(),
+                    book.getGenres() == null ? java.util.List.of() : book.getGenres());
             bookCache.evict(book.getId());
         }
         log.debug("Batch збережено {} книг", books.size());
@@ -165,6 +172,22 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         } else {
             log.warn("❌ Не вдалося оновити прогрес для книги {} (книгу не знайдено)", bookId);
         }
+    }
+
+
+    @Override
+    public void updateStorage(BookId bookId, String collectionRoot, String folder, String fileName, String archiveEntry, boolean local) {
+        if (bookId == null) return;
+        getJdbcTemplate().update("""
+                UPDATE books SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?, update_date = ?
+                WHERE id = ?
+                """,
+                collectionRoot == null ? "" : collectionRoot,
+                folder == null ? "" : folder,
+                fileName == null ? "" : fileName,
+                archiveEntry == null ? "" : archiveEntry,
+                local ? 1 : 0, LocalDateTime.now().format(DATE_FORMATTER), bookId.asString());
+        bookCache.evict(bookId);
     }
 
     // ==================== НОВІ БАТЧ-МЕТОДИ ====================

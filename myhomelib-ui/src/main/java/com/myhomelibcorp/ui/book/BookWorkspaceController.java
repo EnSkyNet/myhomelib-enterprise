@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.book;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
 import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
@@ -36,6 +37,7 @@ public class BookWorkspaceController {
     private final BookViewModelMapper bookViewModelMapper;
     private final SessionService sessionService;
     private final DialogService dialogService;
+    private final BookSaver bookSaver;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -173,8 +175,20 @@ public class BookWorkspaceController {
 
     @FXML
     private void onDeleteBook() {
-        if (currentBook != null) {
-            dialogService.showInfo("Інформація", "Функція видалення книги в розробці.");
+        if (currentBook == null) return;
+        boolean confirmed = dialogService.showConfirmation(
+                "Видалення книги",
+                "Видалити книгу з каталогу?",
+                "Файл на диску не видаляється. Книга: " + currentBook.getTitle());
+        if (!confirmed) return;
+        try {
+            bookSaver.deleteBook(BookId.fromString(currentBook.getId()));
+            dialogService.showInfo("Готово", "Книгу видалено з каталогу.");
+            currentBook = null;
+            navigationService.navigateToAuthor(null);
+        } catch (Exception e) {
+            log.error("Помилка видалення книги", e);
+            dialogService.showError("Помилка", "Не вдалося видалити книгу: " + e.getMessage());
         }
     }
 

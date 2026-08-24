@@ -6,13 +6,18 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
-        <version>1.0.0-SNAPSHOT</version>
+        <version>1.0.0</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
     <artifactId>myhomelib-infrastructure</artifactId>
 
     <dependencies>
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-shared</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
         <!-- Існуючі залежності -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
@@ -58,6 +63,16 @@
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>
+        </dependency>
+
+        <!-- ZIP/7z/RAR archive support -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>com.github.junrar</groupId>
+            <artifactId>junrar</artifactId>
         </dependency>
 
         <dependency>

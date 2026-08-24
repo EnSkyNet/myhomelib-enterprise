@@ -11,6 +11,7 @@ public interface BookCommandRepository {
     void deleteById(BookId id);
     void updateRate(BookId bookId, int rate);
     void updateProgress(BookId bookId, int progress);
+    void updateStorage(BookId bookId, String collectionRoot, String folder, String fileName, String archiveEntry, boolean local);
 
     // НОВІ БАТЧ-МЕТОДИ
     void updateRateBatch(List<BookId> bookIds, int rate);

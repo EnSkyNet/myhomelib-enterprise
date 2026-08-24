@@ -17,8 +17,8 @@ public class DataSourceConfig {
         HikariConfig config = new HikariConfig();
         config.setDriverClassName("org.sqlite.JDBC");
         config.setJdbcUrl("jdbc:sqlite::memory:");
-        config.setMaximumPoolSize(10);
-        config.setMinimumIdle(2);
+        config.setMaximumPoolSize(4);
+        config.setMinimumIdle(1);
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);
         config.setConnectionTimeout(30000);
@@ -28,7 +28,8 @@ public class DataSourceConfig {
                 "PRAGMA journal_mode=WAL; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +
-                        "PRAGMA cache_size=-500000;"
+                        "PRAGMA cache_size=-32768; " +
+                        "PRAGMA mmap_size=67108864;"
         );
 
         config.setPoolName("HikariPool-MyHomeLib");
@@ -48,8 +49,8 @@ public class DataSourceConfig {
         HikariConfig config = new HikariConfig();
         config.setJdbcUrl("jdbc:sqlite:" + dbPath);
         config.setDriverClassName("org.sqlite.JDBC");
-        config.setMaximumPoolSize(10);
-        config.setMinimumIdle(2);
+        config.setMaximumPoolSize(4);
+        config.setMinimumIdle(1);
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);
         config.setConnectionTimeout(30000);
@@ -59,7 +60,8 @@ public class DataSourceConfig {
                 "PRAGMA journal_mode=WAL; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +
-                        "PRAGMA cache_size=-500000;"
+                        "PRAGMA cache_size=-32768; " +
+                        "PRAGMA mmap_size=67108864;"
         );
 
         String poolName = "HikariPool-" + System.currentTimeMillis() + "-" +

@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.reader;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapperHelper;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
+import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -12,15 +13,12 @@ import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.FileBookSource;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderSettings;
-import com.myhomelibcorp.reader.core.registry.DefaultBookFormatRegistry;
-import com.myhomelibcorp.reader.format.fb2.Fb2Format;
-import com.myhomelibcorp.reader.format.zip.ZipFormat;
 import com.myhomelibcorp.reader.render.javafx.ReaderView;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import javafx.animation.AnimationTimer;
-import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -30,7 +28,6 @@ import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
-import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
@@ -38,7 +35,12 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 import java.util.Optional;
 
 @Component
@@ -54,6 +56,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final SessionService sessionService;
     private final DialogService dialogService;
     private final NewReaderPersistenceService persistenceService;
+    private final ReaderPreferencesPort readerPreferencesPort;
     private final ApplicationContext springContext;
 
     @FXML
@@ -62,6 +65,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private ReaderView readerView;
     private BookDto currentBook;
     private BookId currentBookId;
+    private Path materializedBookFile;
     private boolean isDisposed = false;
 
     // Таймер для автоматичного збереження позиції
@@ -123,6 +127,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             openBook(currentBook);
         } catch (Exception e) {
+            cleanupMaterializedBookFile();
             log.error("❌ Помилка відкриття книги", e);
             dialogService.showError("Помилка", "Не вдалося відкрити книгу: " + e.getMessage());
         }
@@ -131,18 +136,17 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private void openBook(BookDto bookDto) throws Exception {
         Book book = bookMapperHelper.toDomain(bookDto);
 
+        cleanupMaterializedBookFile();
         Path filePath = bookResourcePort.locateBookFile(book)
-                .orElseThrow(() -> new java.io.IOException("Файл книги не знайдено: " + book.getFileName()));
+                .orElseThrow(() -> new IOException("Файл книги не знайдено: " + book.getFileName()));
 
-        BookSource source = new FileBookSource(filePath, book.getId().asString());
+        Path readerPath = materializeReaderEntryIfNeeded(book, filePath);
+        BookSource source = new FileBookSource(readerPath, book.getId().asString());
 
         if (readerView == null) {
             readerView = new ReaderView();
 
-            DefaultBookFormatRegistry registry = (DefaultBookFormatRegistry) readerView.getFormatRegistry();
-            registry.register(new Fb2Format());
-            registry.register(new ZipFormat());
-
+            // Формати FB2/FBD, EPUB, TXT/MD та legacy ZIP реєструються самим ReaderView.
             // Налаштовуємо колбеки
             readerView.setOnBackClick(this::onBack);
             readerView.setOnSettingsClick(this::showSettings);
@@ -157,6 +161,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 }
             });
         }
+
+        // Завантажуємо збережені налаштування до першого layout книги.
+        ReaderSettings savedSettings = ReaderSettingsMapper.fromDomain(readerPreferencesPort.loadPreferences());
+        readerView.applySettings(savedSettings);
 
         // Відкриваємо книгу
         readerView.openBook(source);
@@ -181,6 +189,78 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         });
 
         log.info("✅ Книгу відкрито в новому Reader: {}", book.getTitle());
+    }
+
+    /**
+     * The catalog path of an archived book points to the physical container.
+     * Reader formats, however, must receive the actual FB2/EPUB/TXT payload.
+     * Materialize only one bounded entry and delete it when the workspace closes.
+     */
+    private Path materializeReaderEntryIfNeeded(Book book, Path physicalPath) throws IOException {
+        String archiveEntry = book.getArchiveEntry();
+        boolean physicalArchive = bookResourcePort.isArchive(physicalPath.toString());
+        if ((archiveEntry == null || archiveEntry.isBlank()) && !physicalArchive) return physicalPath;
+
+        String selectedEntry = archiveEntry;
+        if ((selectedEntry == null || selectedEntry.isBlank()) && physicalArchive) {
+            selectedEntry = bookResourcePort.listArchiveEntries(physicalPath).stream()
+                    .filter(this::isReaderEntry)
+                    .findFirst()
+                    .orElse(null);
+        }
+        if (selectedEntry == null || selectedEntry.isBlank() || !isReaderEntry(selectedEntry)) {
+            // Let Reader's ZIP fallback handle legacy FB2 ZIPs; unsupported containers
+            // will produce the normal "unsupported format" error instead of guessing.
+            return physicalPath;
+        }
+
+        Optional<InputStream> stream = physicalArchive
+                ? bookResourcePort.readArchiveEntry(physicalPath, selectedEntry)
+                : bookResourcePort.readBookData(book);
+        if (stream.isEmpty()) throw new IOException("Не вдалося прочитати запис архіву: " + selectedEntry);
+
+        String suffix = readerSuffix(selectedEntry);
+        Path temp = Files.createTempFile("myhomelib-reader-book-", suffix);
+        boolean success = false;
+        try (InputStream in = stream.get(); OutputStream out = Files.newOutputStream(temp)) {
+            byte[] buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                if (read == 0) continue;
+                total += read;
+                if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES)
+                    throw new IOException("Книга в архіві перевищує безпечний ліміт Reader");
+                out.write(buffer, 0, read);
+            }
+            success = true;
+        } finally {
+            if (!success) Files.deleteIfExists(temp);
+        }
+        materializedBookFile = temp;
+        return temp;
+    }
+
+    private boolean isReaderEntry(String name) {
+        String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".fb2") || lower.endsWith(".fbd") || lower.endsWith(".epub")
+                || lower.endsWith(".txt") || lower.endsWith(".text") || lower.endsWith(".md");
+    }
+
+    private String readerSuffix(String name) {
+        if (name == null) return ".book";
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        int dot = name.lastIndexOf('.');
+        return dot > slash ? name.substring(dot) : ".book";
+    }
+
+    private void cleanupMaterializedBookFile() {
+        Path temp = materializedBookFile;
+        materializedBookFile = null;
+        if (temp != null) {
+            try { Files.deleteIfExists(temp); }
+            catch (IOException e) { log.debug("Не вдалося видалити тимчасову книгу {}: {}", temp, e.getMessage()); }
+        }
     }
 
     // Замість 4-х спроб, використовуємо одну з правильною перевіркою
@@ -229,6 +309,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         if (readerView != null && readerView.isBookOpen()) {
             readerView.closeBook();
         }
+        cleanupMaterializedBookFile();
 
         if (saveTimer != null) {
             saveTimer.stop();
@@ -238,10 +319,18 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void showSettings(ReaderSettings settings) {
-        if (isDisposed) {
+        if (isDisposed || readerView == null) {
             return;
         }
-        dialogService.showInfo("Налаштування", "Функція налаштувань в розробці");
+        javafx.stage.Window owner = readerContainer != null && readerContainer.getScene() != null
+                ? readerContainer.getScene().getWindow()
+                : null;
+
+        ReaderSettingsDialog.show(owner, settings).ifPresent(updated -> {
+            readerView.applySettings(updated);
+            var previous = readerPreferencesPort.loadPreferences();
+            readerPreferencesPort.savePreferences(ReaderSettingsMapper.toDomain(updated, previous));
+        });
     }
 
     private void addBookmark() {
@@ -377,6 +466,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             readerView.dispose();
             readerView = null;
         }
+        cleanupMaterializedBookFile();
 
         if (readerContainer != null) {
             Platform.runLater(() -> readerContainer.getChildren().clear());

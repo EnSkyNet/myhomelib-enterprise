@@ -9,6 +9,7 @@ import com.myhomelibcorp.reader.model.PageLayout;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+/** Невеликий LRU-кеш лише найближчих сторінок. */
 public class PageCache {
 
     private final int maxSize;
@@ -24,7 +25,7 @@ public class PageCache {
         };
     }
 
-    public PageLayout getOrCompute(
+    public synchronized PageLayout getOrCompute(
             ReaderDocument document,
             ReaderPosition position,
             PageDimensions dimensions,
@@ -43,25 +44,25 @@ public class PageCache {
         return layout;
     }
 
-    public PageLayout get(String key) {
+    public synchronized PageLayout get(String key) {
         return cache.get(key);
     }
 
-    public void put(String key, PageLayout layout) {
+    public synchronized void put(String key, PageLayout layout) {
         if (layout != null) {
             cache.put(key, layout);
         }
     }
 
-    public void clear() {
+    public synchronized void clear() {
         cache.clear();
     }
 
-    public void evict(String key) {
+    public synchronized void evict(String key) {
         cache.remove(key);
     }
 
-    public int size() {
+    public synchronized int size() {
         return cache.size();
     }
 
@@ -69,14 +70,21 @@ public class PageCache {
         return maxSize;
     }
 
-    private String buildKey(ReaderDocument document, ReaderPosition position, PageDimensions dimensions) {
-        return document.metadata().id() + ":" +
-                position.textOffset() + ":" +
-                dimensions.width() + "x" + dimensions.height();
+    private String buildKey(ReaderDocument document, ReaderPosition position, PageDimensions d) {
+        String documentId = document.metadata() != null && document.metadata().id() != null
+                ? document.metadata().id()
+                : "document";
+        return documentId + ':' + position.textOffset() + ':' +
+                d.width() + 'x' + d.height() + ':' +
+                d.leftMargin() + ':' + d.rightMargin() + ':' +
+                d.topMargin() + ':' + d.bottomMargin();
     }
 
-    public void evictForDocument(ReaderDocument document) {
-        String prefix = document.metadata().id() + ":";
+    public synchronized void evictForDocument(ReaderDocument document) {
+        String documentId = document.metadata() != null && document.metadata().id() != null
+                ? document.metadata().id()
+                : "document";
+        String prefix = documentId + ':';
         cache.keySet().removeIf(key -> key.startsWith(prefix));
     }
 }

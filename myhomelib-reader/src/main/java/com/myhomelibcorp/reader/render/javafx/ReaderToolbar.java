@@ -77,7 +77,7 @@ public class ReaderToolbar extends HBox {
         nextChapterButton = createButton("⇥", "Наступний розділ (↓)");
 
         // ===== РЕЖИМИ =====
-        pageModeButton = createButton("📄", "Сторінковий режим (P)");
+        pageModeButton = createButton("📄", "Показувати номер сторінки (P)");
         autoScrollButton = createButton("▶▶", "Автопрокрутка (A)");
 
         // ===== ЗУМ =====
@@ -110,6 +110,8 @@ public class ReaderToolbar extends HBox {
         pageInfoLabel.setMinWidth(60);
 
         // ===== ЗБИРАЄМО =====
+        Region spacer = new Region();
+
         getChildren().addAll(
                 backButton,
                 new Separator(),
@@ -134,13 +136,13 @@ public class ReaderToolbar extends HBox {
                 searchButton,
                 new Separator(),
                 chapterLabel,
-                new Region(),
+                spacer,
                 pageInfoLabel,
                 progressBar,
                 progressLabel
         );
 
-        setHgrow(new Region(), Priority.ALWAYS);
+        HBox.setHgrow(spacer, Priority.ALWAYS);
 
         setupActions();
         updateState();
@@ -158,11 +160,12 @@ public class ReaderToolbar extends HBox {
     private void setupActions() {
         // Навігація
         backButton.setOnAction(e -> {
-            if (canvas.isBookOpen()) {
-                canvas.closeBook();
-            }
+            // Власник workspace має спочатку зберегти позицію, а вже потім
+            // закрити книгу. Раніше книга закривалась тут до savePosition().
             if (onBackClick != null) {
                 onBackClick.run();
+            } else if (canvas.isBookOpen()) {
+                canvas.closeBook();
             }
         });
 
@@ -222,8 +225,7 @@ public class ReaderToolbar extends HBox {
     }
 
     private void toggleFullscreen() {
-        javafx.stage.Stage stage = (javafx.stage.Stage) getScene().getWindow();
-        if (stage != null) {
+        if (getScene() != null && getScene().getWindow() instanceof javafx.stage.Stage stage) {
             stage.setFullScreen(!stage.isFullScreen());
         }
     }

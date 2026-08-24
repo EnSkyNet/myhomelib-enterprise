@@ -26,7 +26,7 @@ public class BookResourceResolver implements BookResourcePort {
 
     private final ZipArchiveReader archiveReader;
 
-    private static final List<String> ARCHIVE_EXTENSIONS = List.of(".zip", ".fb2zip", ".fbd");
+    private static final List<String> ARCHIVE_EXTENSIONS = List.of(".zip", ".fb2zip", ".fb2.zip", ".cbz", ".jar", ".7z", ".rar", ".cbr", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".cpio");
 
     // ==================== Пошук файлів ====================
 
@@ -143,7 +143,7 @@ public class BookResourceResolver implements BookResourcePort {
                 // Шукаємо перший FB2 в архіві
                 log.debug("Пошук FB2 в архіві: {}", archivePath);
                 return archiveReader.findFirstEntry(archivePath,
-                        e -> e.toLowerCase().endsWith(".fb2") || e.toLowerCase().endsWith(".fbd"));
+                        e -> { String n = e.toLowerCase(); return n.endsWith(".fb2") || n.endsWith(".fbd") || n.endsWith(".epub") || n.endsWith(".txt") || n.endsWith(".text"); });
             }
 
             // 3. Звичайний файл
@@ -186,6 +186,14 @@ public class BookResourceResolver implements BookResourcePort {
     @Override
     public Optional<InputStream> findFirstArchiveEntry(Path archivePath, Predicate<String> filter) {
         return archiveReader.findFirstEntry(archivePath, filter);
+    }
+
+    @Override
+    public boolean deletePhysicalFile(Path path) throws java.io.IOException {
+        if (path == null) return false;
+        Path normalized = path.toAbsolutePath().normalize();
+        if (!Files.isRegularFile(normalized)) return false;
+        return Files.deleteIfExists(normalized);
     }
 
     // ==================== Побудова шляхів ====================

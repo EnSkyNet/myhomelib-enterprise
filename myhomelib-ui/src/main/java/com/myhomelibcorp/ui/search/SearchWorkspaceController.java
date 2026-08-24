@@ -7,12 +7,15 @@ import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
 import com.myhomelibcorp.application.search.SearchService;
+import com.myhomelibcorp.application.query.search.SearchRequest;
+import com.myhomelibcorp.application.query.search.SearchMode;
 import com.myhomelibcorp.application.usecase.search.DeleteSavedSearchUseCase;
 import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.ui.controller.SavedSearchesController;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
@@ -24,10 +27,7 @@ import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ListView;
-import javafx.scene.control.TextField;
+import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -37,6 +37,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
+import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -80,6 +82,22 @@ public class SearchWorkspaceController {
 
     @FXML private Button saveSearchButton;
     @FXML private Button savedSearchesButton;
+
+    @FXML private TextField titleFilter;
+    @FXML private TextField authorFilter;
+    @FXML private TextField seriesFilter;
+    @FXML private TextField genreFilter;
+    @FXML private TextField keywordFilter;
+    @FXML private TextField annotationFilter;
+    @FXML private TextField fileFilter;
+    @FXML private TextField languageFilter;
+    @FXML private TextField ratingFromFilter;
+    @FXML private TextField ratingToFilter;
+    @FXML private TextField yearFromFilter;
+    @FXML private TextField yearToFilter;
+    @FXML private DatePicker addedFromPicker;
+    @FXML private DatePicker addedToPicker;
+    @FXML private CheckBox localOnlyCheck;
 
     private String lastQuery = "";
 
@@ -175,26 +193,131 @@ public class SearchWorkspaceController {
      * ВИПРАВЛЕНО: використовує Executor замість new Thread()
      */
     public void performSearch(String query) {
-        this.lastQuery = query;
-        if (query == null || query.isBlank()) {
+        this.lastQuery = query == null ? "" : query;
+        if ((query == null || query.isBlank()) && !hasAdvancedFilters()) {
             clearResults();
-            statusLabel.setText("Введіть запит для пошуку");
+            statusLabel.setText("Введіть запит або задайте фільтри");
             return;
         }
 
         statusLabel.setText("Пошук...");
+        if (!hasAdvancedFilters()) {
+            executor.submit(() -> {
+                try {
+                    Map<String, Object> results = searchService.searchAll(query);
+                    UiExecutor.runOnUiThread(() -> updateResults(results));
+                    return null;
+                } catch (Exception e) {
+                    log.error("Search failed", e);
+                    UiExecutor.runOnUiThread(() -> statusLabel.setText("Помилка пошуку: " + e.getMessage()));
+                    return null;
+                }
+            });
+            return;
+        }
 
+        SearchRequest request = buildAdvancedRequest(query);
         executor.submit(() -> {
             try {
-                Map<String, Object> results = searchService.searchAll(query);
-                UiExecutor.runOnUiThread(() -> updateResults(results));
+                List<BookDto> books = searchService.search(request);
+                UiExecutor.runOnUiThread(() -> {
+                    setResults(books);
+                    statusLabel.setText("Розширений пошук: знайдено " + books.size() + " книг");
+                });
                 return null;
             } catch (Exception e) {
-                log.error("Search failed", e);
+                log.error("Advanced search failed", e);
                 UiExecutor.runOnUiThread(() -> statusLabel.setText("Помилка пошуку: " + e.getMessage()));
                 return null;
             }
         });
+    }
+
+    private SearchRequest buildAdvancedRequest(String freeText) {
+        SearchRequest.Builder b = SearchRequest.builder()
+                .text(buildTextQuery(freeText))
+                .ratingFrom(parseInt(ratingFromFilter, null))
+                .ratingTo(parseInt(ratingToFilter, null))
+                .yearFrom(parseInt(yearFromFilter, null))
+                .yearTo(parseInt(yearToFilter, null))
+                .addedFrom(addedFromPicker == null ? null : addedFromPicker.getValue())
+                .addedTo(addedToPicker == null ? null : addedToPicker.getValue())
+                .localOnly(localOnlyCheck != null && localOnlyCheck.isSelected() ? Boolean.TRUE : null)
+                .limit(1000)
+                .mode(SearchMode.PHRASE);
+        String lang = text(languageFilter);
+        if (!lang.isBlank()) {
+            try { b.language(LanguageCode.of(lang)); } catch (Exception ignored) { }
+        }
+        return b.build();
+    }
+
+    private String buildTextQuery(String freeText) {
+        List<String> clauses = new ArrayList<>();
+        if (freeText != null && !freeText.isBlank()) clauses.add(freeText.trim());
+        addFieldClause(clauses, "title", text(titleFilter));
+        addFieldClause(clauses, "authors", text(authorFilter));
+        addFieldClause(clauses, "series", text(seriesFilter));
+        addFieldClause(clauses, "genres", text(genreFilter));
+        addFieldClause(clauses, "keywords", text(keywordFilter));
+        addFieldClause(clauses, "annotation", text(annotationFilter));
+        addFieldClause(clauses, "file_name", text(fileFilter));
+        return String.join(" AND ", clauses);
+    }
+
+    /** Canonical Lucene query so a saved advanced search is self-contained. */
+    private String buildSavedQuery(String freeText) {
+        List<String> clauses = new ArrayList<>();
+        String textual = buildTextQuery(freeText);
+        if (!textual.isBlank()) clauses.add(textual);
+        String lang = text(languageFilter);
+        if (!lang.isBlank()) clauses.add("language:" + quote(lang));
+        Integer rf = parseInt(ratingFromFilter, null), rt = parseInt(ratingToFilter, null);
+        if (rf != null || rt != null) clauses.add("rate:[" + (rf == null ? "0" : rf) + " TO " + (rt == null ? "9" : rt) + "]");
+        Integer yf = parseInt(yearFromFilter, null), yt = parseInt(yearToFilter, null);
+        if (yf != null || yt != null) clauses.add("year:[" + padYear(yf == null ? 0 : yf) + " TO " + padYear(yt == null ? 9999 : yt) + "]");
+        LocalDate af = addedFromPicker == null ? null : addedFromPicker.getValue();
+        LocalDate at = addedToPicker == null ? null : addedToPicker.getValue();
+        if (af != null || at != null) clauses.add("created:[" + formatDate(af, "00000000") + " TO " + formatDate(at, "99999999") + "]");
+        if (localOnlyCheck != null && localOnlyCheck.isSelected()) clauses.add("local:1");
+        return String.join(" AND ", clauses);
+    }
+
+    private void addFieldClause(List<String> clauses, String field, String value) {
+        if (value == null || value.isBlank()) return;
+        String v = value.trim();
+        if (v.startsWith("%") && v.endsWith("%") && v.length() > 2) {
+            clauses.add(field + ":*" + escape(v.substring(1, v.length() - 1)) + "*");
+        } else if (v.startsWith("=\"") && v.endsWith("\"") && v.length() >= 3) {
+            clauses.add(field + ":" + v.substring(1));
+        } else if (v.contains(" OR ")) {
+            String[] parts = v.split("(?i)\\s+OR\\s+");
+            List<String> ors = new ArrayList<>();
+            for (String part : parts) ors.add(field + ":" + quote(part));
+            clauses.add("(" + String.join(" OR ", ors) + ")");
+        } else {
+            clauses.add(field + ":" + quote(v));
+        }
+    }
+
+    private String text(TextField field) { return field == null || field.getText() == null ? "" : field.getText().trim(); }
+    private Integer parseInt(TextField field, Integer def) {
+        String v = text(field); if (v.isBlank()) return def;
+        try { return Integer.parseInt(v); } catch (Exception ignored) { return def; }
+    }
+    private String quote(String value) { return "\"" + escape(value) + "\""; }
+    private String escape(String value) { return value.replace("\\", "\\\\").replace("\"", "\\\""); }
+    private String padYear(int year) { return String.format(java.util.Locale.ROOT, "%04d", Math.max(0, Math.min(9999, year))); }
+    private String formatDate(LocalDate date, String fallback) { return date == null ? fallback : date.format(java.time.format.DateTimeFormatter.BASIC_ISO_DATE); }
+
+    private boolean hasAdvancedFilters() {
+        return !text(titleFilter).isBlank() || !text(authorFilter).isBlank() || !text(seriesFilter).isBlank()
+                || !text(genreFilter).isBlank() || !text(keywordFilter).isBlank() || !text(annotationFilter).isBlank()
+                || !text(fileFilter).isBlank() || !text(languageFilter).isBlank() || !text(ratingFromFilter).isBlank()
+                || !text(ratingToFilter).isBlank() || !text(yearFromFilter).isBlank() || !text(yearToFilter).isBlank()
+                || (addedFromPicker != null && addedFromPicker.getValue() != null)
+                || (addedToPicker != null && addedToPicker.getValue() != null)
+                || (localOnlyCheck != null && localOnlyCheck.isSelected());
     }
 
     @SuppressWarnings("unchecked")
@@ -283,9 +406,9 @@ public class SearchWorkspaceController {
 
     @FXML
     private void onSaveSearch() {
-        String query = searchField.getText();
+        String query = buildSavedQuery(searchField.getText());
         if (query == null || query.isBlank()) {
-            dialogService.showWarning("Увага", "Введіть запит для збереження");
+            dialogService.showWarning("Увага", "Введіть запит або задайте фільтри для збереження");
             return;
         }
 
@@ -338,13 +461,19 @@ public class SearchWorkspaceController {
 
     @FXML
     public void onSearch() {
-        String q = searchField.getText();
-        if (q != null && !q.isBlank()) performSearch(q);
+        performSearch(searchField.getText());
     }
 
     @FXML
     public void onClear() {
         searchField.clear();
+        for (TextField f : List.of(titleFilter, authorFilter, seriesFilter, genreFilter, keywordFilter,
+                annotationFilter, fileFilter, languageFilter, ratingFromFilter, ratingToFilter, yearFromFilter, yearToFilter)) {
+            if (f != null) f.clear();
+        }
+        if (addedFromPicker != null) addedFromPicker.setValue(null);
+        if (addedToPicker != null) addedToPicker.setValue(null);
+        if (localOnlyCheck != null) localOnlyCheck.setSelected(false);
         clearResults();
         searchField.requestFocus();
     }

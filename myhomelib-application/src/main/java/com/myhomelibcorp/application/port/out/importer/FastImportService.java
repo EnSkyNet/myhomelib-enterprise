@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.port.out.importer;
 
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Порт для швидкого імпорту великих файлів (INPX).
@@ -17,4 +18,8 @@ public interface FastImportService {
      * @return кількість імпортованих книг
      */
     long importInpx(Path file, int batchSize, Path rootDirectory);
+
+    default long importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag) {
+        return importInpx(file, batchSize, rootDirectory);
+    }
 }

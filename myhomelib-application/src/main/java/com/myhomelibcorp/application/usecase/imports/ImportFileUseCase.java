@@ -73,7 +73,7 @@ public class ImportFileUseCase {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         Path rootDirectory = context.getRootDirectory();
 
-        long count = fastImportService.importInpx(context.getFile(), batchSize, rootDirectory);
+        long count = fastImportService.importInpx(context.getFile(), batchSize, rootDirectory, context.getCancelFlag());
 
         if (count > 0) {
             cacheRefresherPort.refreshCachesAsync();
@@ -91,6 +91,7 @@ public class ImportFileUseCase {
     private ImportResult executeLegacy(ImportContext context) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         boolean indexAfterSave = context.isIndexAfterSave();
+        boolean rebuildIndexAfterImport = false;
 
         long estimatedCount = -1;
         try {
@@ -98,6 +99,7 @@ public class ImportFileUseCase {
             estimatedCount = importer.countBooks(context.getFile());
             if (estimatedCount > INDEX_DISABLE_THRESHOLD) {
                 indexAfterSave = false;
+                rebuildIndexAfterImport = true;
                 log.info("Файл містить {} книг (поріг {}), індексацію вимкнено для прискорення",
                         estimatedCount, INDEX_DISABLE_THRESHOLD);
             }
@@ -112,28 +114,35 @@ public class ImportFileUseCase {
             bulkImportOptimizer.enableBulkInsertMode();
         }
 
-        List<Book> allBooks = new ArrayList<>();
-
         try {
             var importer = importerRegistry.findImporter(context.getFile());
+            DuplicatePolicy policy = DuplicatePolicy.SKIP;
+            List<Book> batch = new ArrayList<>(batchSize);
             try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
-                Stream<Book> enrichedStream = enrichWithCollectionRoot(bookStream, context.getRootDirectory());
-
-                // Збираємо всі книги в список для однієї транзакції
-                enrichedStream.forEach(book -> {
-                    if (book != null) {
-                        allBooks.add(book);
+                var iterator = enrichWithCollectionRoot(bookStream, context.getRootDirectory()).iterator();
+                while (iterator.hasNext()) {
+                    if (context.getCancelFlag() != null && context.getCancelFlag().get()) {
+                        log.info("Імпорт файлу скасовано користувачем");
+                        break;
                     }
-                });
+                    Book book = iterator.next();
+                    if (book == null) continue;
+                    batch.add(book);
+                    if (batch.size() >= batchSize) {
+                        int attempted = batch.size();
+                        int saved = importTransaction.saveAllInTransaction(batch, indexAfterSave, policy);
+                        stats.incrementImported(saved);
+                        stats.getSkipped().addAndGet(attempted - saved);
+                        batch.clear();
+                    }
+                }
             }
-
-            if (!allBooks.isEmpty()) {
-                // ОДНА транзакція на весь файл
-                DuplicatePolicy policy = DuplicatePolicy.SKIP;
-                int totalSaved = importTransaction.saveAllInTransaction(allBooks, indexAfterSave, policy);
-                stats.incrementImported(totalSaved);
-                stats.getSkipped().addAndGet(allBooks.size() - totalSaved);
-                log.info("Збережено {} книг з {} (одна транзакція)", totalSaved, allBooks.size());
+            if (!batch.isEmpty()) {
+                int attempted = batch.size();
+                int saved = importTransaction.saveAllInTransaction(batch, indexAfterSave, policy);
+                stats.incrementImported(saved);
+                stats.getSkipped().addAndGet(attempted - saved);
+                batch.clear();
             }
 
         } catch (Exception e) {
@@ -152,8 +161,8 @@ public class ImportFileUseCase {
         ImportResult result = ImportResult.fromStatistics(stats);
         log.info("Імпорт файлу завершено: {}", result);
 
-        if (!indexAfterSave && stats.getImported().get() > 0) {
-            log.info("Перебудова індексу після імпорту (був вимкнений)");
+        if (rebuildIndexAfterImport && stats.getImported().get() > 0) {
+            log.info("Перебудова індексу після великого імпорту (індексацію тимчасово вимкнено)");
             indexRebuilder.rebuildIndex();
         }
 

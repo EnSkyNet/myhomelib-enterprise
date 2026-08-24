@@ -50,6 +50,9 @@ public class ReaderPreferences {
     boolean fullScreen = false;
 
     @Builder.Default
+    boolean pageMode = false;
+
+    @Builder.Default
     boolean autoScroll = false;
 
     @Builder.Default

@@ -1,5 +1,8 @@
 package com.myhomelibcorp.infrastructure.importer.zip;
 
+import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -19,6 +22,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.LinkedList;
 import java.util.Queue;
+import java.util.NoSuchElementException;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
@@ -35,10 +39,6 @@ public class ZipImporter implements BookImporterPort {
     private ImporterRegistry importerRegistry;
 
     private static final int MAX_UNPACK_DEPTH = 5;
-    private static final long MAX_ENTRY_SIZE = 50 * 1024 * 1024; // 50 MB
-    private static final long MAX_TOTAL_SIZE = 1 * 1024 * 1024 * 1024L; // 1 GB
-    private static final int MAX_ENTRY_COUNT = 50_000;
-    private static final long MAX_COMPRESSION_RATIO = 100; // 100:1
 
     private static final Charset[] ZIP_CHARSETS = {
             Charset.forName("CP866"),
@@ -51,7 +51,7 @@ public class ZipImporter implements BookImporterPort {
     @Override
     public boolean supports(Path file) {
         String name = file.getFileName().toString().toLowerCase();
-        return name.endsWith(".zip") || name.endsWith(".fb2zip") || name.endsWith(".fb2.zip");
+        return name.endsWith(".zip") || name.endsWith(".fb2zip") || name.endsWith(".fb2.zip") || name.endsWith(".cbz") || name.endsWith(".jar");
     }
 
     @Override
@@ -129,21 +129,29 @@ public class ZipImporter implements BookImporterPort {
             this.zipFolder = zipFolder;
             this.charset = charset;
             this.collectionRoot = collectionRoot;
-            processNextEntry();
         }
 
         @Override
         public boolean hasNext() {
-            return !bookQueue.isEmpty() || (!finished && processNextEntry());
+            while (bookQueue.isEmpty() && !finished) {
+                processNextEntry();
+            }
+            return !bookQueue.isEmpty();
         }
 
         @Override
         public Book next() {
-            return bookQueue.poll();
+            if (!hasNext()) throw new NoSuchElementException();
+            return bookQueue.remove();
         }
 
         private boolean processNextEntry() {
             if (finished) return false;
+            if (Thread.currentThread().isInterrupted()) {
+                finished = true;
+                try { zis.close(); } catch (IOException ignored) { }
+                return false;
+            }
 
             try {
                 ZipEntry entry = zis.getNextEntry();
@@ -157,8 +165,8 @@ public class ZipImporter implements BookImporterPort {
                 entryCount++;
 
                 // Перевірка лімітів безпеки
-                if (entryCount > MAX_ENTRY_COUNT) {
-                    log.warn("Перевищено максимальну кількість записів у ZIP: {}", MAX_ENTRY_COUNT);
+                if (entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                    log.warn("Перевищено максимальну кількість записів у ZIP: {}", ArchiveSafetyLimits.MAX_ENTRY_COUNT);
                     finished = true;
                     zis.close();
                     return false;
@@ -168,10 +176,15 @@ public class ZipImporter implements BookImporterPort {
                 if (!isSafeEntry(entry)) {
                     log.warn("Підозрілий запис (Zip Slip): {}", entry.getName());
                     zis.closeEntry();
-                    return processNextEntry();
+                    return true;
                 }
 
                 String rawEntryName = entry.getName();
+                if (ArchiveImportSupport.isNestedArchive(rawEntryName)) {
+                    log.debug("Skipping nested archive (single archive layer is supported): {}", rawEntryName);
+                    zis.closeEntry();
+                    return true;
+                }
                 String bestDecoded = decodeEntryName(rawEntryName);
                 String displayFileName = Path.of(bestDecoded).getFileName().toString();
 
@@ -184,15 +197,23 @@ public class ZipImporter implements BookImporterPort {
 
                 if (entry.isDirectory()) {
                     zis.closeEntry();
-                    return processNextEntry();
+                    return true;
                 }
 
-                // Отримуємо розмір entry (може бути -1)
+                // Declared sizes may be -1 for streaming ZIPs. Never trust them alone.
                 long entrySize = entry.getSize();
+                long compressedSize = entry.getCompressedSize();
+                if (ArchiveSafetyLimits.declaredEntryTooLarge(entrySize)) {
+                    log.warn("Пропущено ZIP entry, що перевищує ліміт: {} ({} bytes)", rawEntryName, entrySize);
+                    zis.closeEntry();
+                    return true;
+                }
 
                 Path tempFile = Files.createTempFile("zip_import_", "_" + displayFileName);
-                try (LimitedInputStream limitedIn = new LimitedInputStream(zis, MAX_ENTRY_SIZE)) {
-                    // Копіюємо з обмеженням розміру
+                try {
+                    // Do NOT close this wrapper: FilterInputStream.close() would close the whole
+                    // ZipInputStream and truncate multi-entry imports after the first book.
+                    LimitedInputStream limitedIn = new LimitedInputStream(zis, ArchiveSafetyLimits.MAX_ENTRY_BYTES);
                     Files.copy(limitedIn, tempFile);
 
                     // Перевіряємо фактичний розмір
@@ -200,22 +221,23 @@ public class ZipImporter implements BookImporterPort {
                     totalDecompressedSize += actualSize;
 
                     // Перевірка загального розміру
-                    if (totalDecompressedSize > MAX_TOTAL_SIZE) {
+                    if (totalDecompressedSize > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
                         log.warn("Перевищено загальний розмір розпакованих даних: {} > {}",
-                                totalDecompressedSize, MAX_TOTAL_SIZE);
+                                totalDecompressedSize, ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
                         finished = true;
                         zis.close();
                         return false;
                     }
 
-                    // Перевірка compression ratio (якщо відомий оригінальний розмір)
-                    if (entrySize > 0 && actualSize > 0) {
-                        long ratio = actualSize / Math.max(1, entrySize);
-                        if (ratio > MAX_COMPRESSION_RATIO) {
-                            log.warn("Підозрілий compression ratio: {} (оригінал: {}, фактичний: {})",
-                                    ratio, entrySize, actualSize);
+                    // Compression-ratio guard uses compressed size, not the declared
+                    // uncompressed size (which would make the ratio almost always 1).
+                    if (compressedSize > 0 && actualSize > 0) {
+                        long ratio = actualSize / Math.max(1, compressedSize);
+                        if (ratio > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+                            log.warn("Підозрілий compression ratio: {} (compressed: {}, unpacked: {})",
+                                    ratio, compressedSize, actualSize);
                             zis.closeEntry();
-                            return processNextEntry();
+                            return true;
                         }
                     }
 
@@ -232,13 +254,13 @@ public class ZipImporter implements BookImporterPort {
                             importer = importerRegistry.findImporter(altPath);
                         } catch (IllegalArgumentException e2) {
                             log.warn("Немає імпортера для запису: {}", bestDecoded);
-                            return processNextEntry();
+                            return true;
                         }
                     }
 
                     if (importer == null) {
                         log.warn("Імпортер не знайдено для запису: {}", rawEntryName);
-                        return processNextEntry();
+                        return true;
                     }
 
                     // Обробка вкладених ZIP або звичайних файлів

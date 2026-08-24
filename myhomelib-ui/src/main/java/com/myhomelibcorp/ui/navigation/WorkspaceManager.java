@@ -6,10 +6,9 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-// import com.myhomelibcorp.reader.service.ReaderFacade; // Тимчасово закоментовано
-// import com.myhomelibcorp.reader.session.ReaderSessionManager; // Тимчасово закоментовано
 import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import lombok.RequiredArgsConstructor;
@@ -26,8 +25,7 @@ import java.util.List;
 public class WorkspaceManager {
 
     private final FxmlLoaderFactory fxmlLoaderFactory;
-    // private final ReaderFacade readerFacade; // Тимчасово закоментовано
-    // private final ReaderSessionManager readerSessionManager; // Тимчасово закоментовано
+    private final LocalizationService localizationService;
 
     private MainController mainController;
     private StackPane workspaceStackPane;
@@ -61,14 +59,6 @@ public class WorkspaceManager {
     }
 
     public void setWorkspace(Pane workspace, String type) {
-        // Тимчасово закоментовано
-        /*
-        if (!"reader".equals(type) && !"new-reader".equals(type) && readerFacade.isBookOpen()) {
-            readerFacade.saveCurrentPosition();
-            readerFacade.closeBook();
-        }
-        */
-
         disposeCurrentWorkspace();
 
         if (workspaceStackPane == null) {
@@ -77,6 +67,7 @@ public class WorkspaceManager {
         }
 
         currentWorkspace = workspace;
+        localizationService.apply(workspace);
         workspace.setMaxHeight(Double.MAX_VALUE);
         workspace.setMaxWidth(Double.MAX_VALUE);
         workspaceStackPane.getChildren().add(workspace);
@@ -155,17 +146,9 @@ public class WorkspaceManager {
         push("groups", group != null ? group.getId().toString() : "");
     }
 
-    /**
-     * Старий Reader (WebView) - тимчасово закоментовано.
-     */
+    /** Compatibility alias retained for old navigation entries. */
     public void showReaderWorkspace(BookId bookId) {
-        // Тимчасово показуємо новий Reader замість старого
         showNewReaderWorkspace(bookId);
-        /*
-        Pane workspace = fxmlLoaderFactory.loadReaderWorkspace(bookId);
-        setWorkspace(workspace, "reader");
-        push("reader", bookId != null ? bookId.asString() : "");
-        */
     }
 
     /**
@@ -181,6 +164,18 @@ public class WorkspaceManager {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/import-workspace.fxml");
         setWorkspace(workspace, "import");
         push("import", "");
+    }
+
+    /** Dispose the active workspace, including Reader position/resources. */
+    public void disposeCurrent() {
+        disposeCurrentWorkspace();
+    }
+
+    /** Used by MainController before navigation; avoids disposing non-reader screens unnecessarily. */
+    public void disposeCurrentReaderIfActive() {
+        if (currentEntry != null && ("reader".equals(currentEntry.type) || "new-reader".equals(currentEntry.type))) {
+            disposeCurrentWorkspace();
+        }
     }
 
     // ==================== Навігація ====================
@@ -206,13 +201,6 @@ public class WorkspaceManager {
     }
 
     private void restoreWorkspace(WorkspaceEntry entry) {
-        /*
-        if (!"reader".equals(entry.type) && !"new-reader".equals(entry.type) && readerFacade.isBookOpen()) {
-            readerFacade.saveCurrentPosition();
-            readerFacade.closeBook();
-        }
-        */
-
         switch (entry.type) {
             case "dashboard" -> showDashboard();
             case "author" -> showAuthorWorkspace(AuthorId.fromString(entry.id));
@@ -230,6 +218,18 @@ public class WorkspaceManager {
         if (mainController != null) {
             mainController.updateNavigationButtons();
         }
+    }
+
+
+    public String currentHelpTopic() {
+        if (currentEntry == null) return "index";
+        return switch (currentEntry.type) {
+            case "search", "series", "genre", "author" -> "search";
+            case "new-reader", "reader", "book" -> "reader";
+            case "import" -> "import";
+            case "collection" -> "collections";
+            default -> "index";
+        };
     }
 
     public boolean canGoBack() {

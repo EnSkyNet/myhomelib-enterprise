@@ -5,9 +5,11 @@ import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.Pagination;
+import com.myhomelibcorp.application.usecase.book.MarkAsReadBatchUseCase;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
+import com.myhomelibcorp.ui.controller.ExportController;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
@@ -37,6 +39,8 @@ public class TreeBookTableController {
     private final BookMapper bookMapper;
     private final ApplicationState appState;
     private final NavigationService navigationService;
+    private final ExportController exportController;
+    private final MarkAsReadBatchUseCase markAsReadBatchUseCase;
 
     @FXML private TreeTableView<BookViewModel> treeTableView;
     @FXML private TreeTableColumn<BookViewModel, String> titleColumn;
@@ -298,7 +302,7 @@ public class TreeBookTableController {
 
     private void collectSelectedBooks(TreeItem<BookViewModel> item, List<BookViewModel> selected) {
         BookViewModel book = item.getValue();
-        if (book != null && book.isSelected()) {
+        if (book != null && book.getId() != null && !book.getId().isBlank() && book.isSelected()) {
             selected.add(book);
             log.debug("✅ Додано вибрану книгу: {}", book.getTitle());
         }
@@ -326,7 +330,7 @@ public class TreeBookTableController {
 
     private void selectAllRecursive(TreeItem<BookViewModel> item, boolean selected) {
         BookViewModel book = item.getValue();
-        if (book != null) {
+        if (book != null && book.getId() != null && !book.getId().isBlank()) {
             book.setSelected(selected);
         }
         for (TreeItem<BookViewModel> child : item.getChildren()) {
@@ -351,52 +355,36 @@ public class TreeBookTableController {
     @FXML
     public void exportSelected() {
         List<BookViewModel> selected = getSelectedBooks();
-
-        log.info("📤 Експорт: отримано {} вибраних книг", selected.size());
-
         if (selected.isEmpty()) {
-            log.warn("⚠️ Спроба експорту без вибраних книг");
-            showAlert("Немає вибраних книг",
-                    "Будь ласка, виберіть книги за допомогою чекбоксів.\n" +
-                            "У режимі дерева вибирайте книги на рівні книг (не авторів або серій).\n\n" +
-                            "💡 Порада: натисніть 'Вибрати всі' для вибору всіх книг.");
+            showAlert("Немає вибраних книг", "Виберіть книги за допомогою чекбоксів.");
             return;
         }
-
-        // Показуємо список вибраних книг
-        StringBuilder bookList = new StringBuilder();
-        for (int i = 0; i < Math.min(selected.size(), 10); i++) {
-            bookList.append("  • ").append(selected.get(i).getTitle()).append("\n");
-        }
-        if (selected.size() > 10) {
-            bookList.append("  ... та ще ").append(selected.size() - 10).append(" книг");
-        }
-
-        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Підтвердження експорту");
-        confirm.setHeaderText("Експорт " + selected.size() + " вибраних книг");
-        confirm.setContentText("Вибрано книги:\n" + bookList.toString());
-
-        ButtonType exportButton = new ButtonType("Експортувати");
-        ButtonType cancelButton = new ButtonType("Скасувати", ButtonBar.ButtonData.CANCEL_CLOSE);
-        confirm.getButtonTypes().setAll(exportButton, cancelButton);
-
-        if (confirm.showAndWait().orElse(cancelButton) == exportButton) {
-            log.info("📤 Початок експорту {} книг", selected.size());
-            showAlert("Експорт", "📤 Експорт " + selected.size() + " вибраних книг розпочато!");
-        }
+        exportController.showExportDialog(treeTableView.getScene().getWindow(), selected);
     }
 
     @FXML
     public void markSelectedAsRead() {
         List<BookViewModel> selected = getSelectedBooks();
         if (selected.isEmpty()) {
-            showAlert("Немає вибраних книг",
-                    "Будь ласка, виберіть книги за допомогою чекбоксів.");
+            showAlert("Немає вибраних книг", "Виберіть книги за допомогою чекбоксів.");
             return;
         }
-        showAlert("Позначення прочитаними", "📖 Позначення " + selected.size() + " книг як прочитаних");
-        log.info("📖 Позначення {} книг як прочитаних", selected.size());
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
+        confirm.setTitle("Позначити прочитаними");
+        confirm.setHeaderText("Позначити " + selected.size() + " книг як прочитані?");
+        confirm.setContentText("Прогрес буде встановлено на 100%.");
+        if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        try {
+            List<BookId> ids = selected.stream().map(BookViewModel::getId).map(BookId::fromString).toList();
+            markAsReadBatchUseCase.execute(ids);
+            selected.forEach(book -> { book.setProgress(100); book.setSelected(false); });
+            treeTableView.refresh();
+            showAlert("Готово", selected.size() + " книг позначено як прочитані.");
+        } catch (Exception e) {
+            log.error("Не вдалося позначити книги як прочитані", e);
+            Alert error = new Alert(Alert.AlertType.ERROR);
+            error.setTitle("Помилка"); error.setHeaderText(null); error.setContentText(e.getMessage()); error.showAndWait();
+        }
     }
 
     private void showAlert(String title, String message) {

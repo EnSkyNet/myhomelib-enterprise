@@ -56,6 +56,13 @@ public class Book {
     public LanguageCode getLanguage() { return metadata != null ? metadata.getLanguage() : LanguageCode.of("uk"); }
     public Isbn getIsbn() { return metadata != null ? metadata.getIsbn() : null; }
     public String getReview() { return metadata != null ? metadata.getReview() : ""; }
+    public Integer getYear() { return metadata != null ? metadata.getYear() : null; }
+    public String getPublisher() { return metadata != null ? metadata.getPublisher() : ""; }
+    public String getLibId() { return metadata != null ? metadata.getLibId() : ""; }
+    public int getLibraryRate() { return metadata != null ? metadata.getLibraryRate() : 0; }
+    public String getTranslators() { return metadata != null ? metadata.getTranslators() : ""; }
+    public String getCity() { return metadata != null ? metadata.getCity() : ""; }
+    public String getSourceUrl() { return metadata != null ? metadata.getSourceUrl() : ""; }
     public int getRate() { return metadata != null ? metadata.getRate() : 0; }
     public int getProgress() { return metadata != null ? metadata.getProgress() : 0; }
 

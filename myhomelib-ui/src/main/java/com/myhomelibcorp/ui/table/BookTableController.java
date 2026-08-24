@@ -8,6 +8,7 @@ import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.CheckBoxTableCell;
+import javafx.scene.layout.VBox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,7 @@ public class BookTableController {
 
     private final ApplicationState appState;
     private final NavigationService navigationService;
+    private final com.myhomelibcorp.ui.service.BookLoaderService bookLoaderService;
 
     @FXML private TableView<BookViewModel> bookTableView;
     @FXML private TableColumn<BookViewModel, String> titleColumn;
@@ -111,11 +113,11 @@ public class BookTableController {
         pageSizeComboBox.setValue(vm.getPageSize());
         pageSizeComboBox.setOnAction(e -> {
             int size = pageSizeComboBox.getValue();
-            vm.setPageSize(size);
+            bookLoaderService.setPageSize(size);
         });
 
-        prevPageButton.setOnAction(e -> {});
-        nextPageButton.setOnAction(e -> {});
+        prevPageButton.setOnAction(e -> bookLoaderService.previousPage());
+        nextPageButton.setOnAction(e -> bookLoaderService.nextPage());
         vm.currentPageProperty().addListener((obs, old, page) -> updatePaginationState(vm));
         vm.totalPagesProperty().addListener((obs, old, pages) -> updatePaginationState(vm));
         updatePaginationState(vm);
@@ -127,6 +129,24 @@ public class BookTableController {
         prevPageButton.setDisable(currentPage <= 0);
         nextPageButton.setDisable(currentPage >= totalPages - 1);
         pageInfoLabel.setText(String.format("Сторінка %d з %d", currentPage + 1, Math.max(1, totalPages)));
+    }
+
+    public void showColumnChooser() {
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Колонки таблиці");
+        dialog.setHeaderText("Виберіть колонки для відображення");
+        VBox box = new VBox(8); box.setPadding(new javafx.geometry.Insets(12));
+        java.util.List<TableColumn<BookViewModel, ?>> columns = new java.util.ArrayList<>();
+        for (TableColumn<BookViewModel, ?> c : bookTableView.getColumns()) {
+            if (c.getText() == null || "☑".equals(c.getText())) continue;
+            columns.add(c);
+            CheckBox cb = new CheckBox(c.getText()); cb.setSelected(c.isVisible());
+            cb.selectedProperty().addListener((o,a,b) -> c.setVisible(b));
+            box.getChildren().add(cb);
+        }
+        dialog.getDialogPane().setContent(box);
+        dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        dialog.showAndWait();
     }
 
     public void refresh() { bookTableView.refresh(); }

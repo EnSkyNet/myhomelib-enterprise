@@ -2,22 +2,25 @@ package com.myhomelibcorp.reader.layout;
 
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.api.TextStyle;
-import lombok.extern.slf4j.Slf4j;
 
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-@Slf4j
+/**
+ * Легка реалізація метрик без залежності core-layout від JavaFX.
+ *
+ * Навмисно не кешує цілі рядки: для великих книг такий кеш дуже швидко
+ * перетворювався на другу копію значної частини тексту книги.
+ */
 public class FontMetricsProviderImpl implements FontMetricsProvider {
 
     private final ReaderSettings settings;
     private final Map<String, Float> charWidthCache = new HashMap<>();
-    private final Map<String, Float> stringWidthCache = new HashMap<>();
 
-    private static final float AVERAGE_CHAR_WIDTH_RATIO = 0.5f;
-    private static final float LINE_HEIGHT_RATIO = 1.2f;
-    private static final float SPACE_WIDTH_RATIO = 0.3f;
+    private static final float AVERAGE_CHAR_WIDTH_RATIO = 0.52f;
+    private static final float LINE_HEIGHT_RATIO = 1.18f;
+    private static final float SPACE_WIDTH_RATIO = 0.33f;
 
     public FontMetricsProviderImpl(ReaderSettings settings) {
         this.settings = settings;
@@ -25,11 +28,21 @@ public class FontMetricsProviderImpl implements FontMetricsProvider {
 
     @Override
     public float getCharWidth(char c, TextStyle style, float fontSize) {
-        String key = style + "_" + fontSize + "_" + c;
+        String key = style + "_" + Math.round(fontSize * 10f) + "_" + c;
         return charWidthCache.computeIfAbsent(key, k -> {
+            if (Character.isWhitespace(c)) {
+                return fontSize * SPACE_WIDTH_RATIO;
+            }
             float base = fontSize * AVERAGE_CHAR_WIDTH_RATIO;
-            if (style == TextStyle.BOLD || style == TextStyle.BOLD_ITALIC) {
+            if (style == TextStyle.BOLD || style == TextStyle.BOLD_ITALIC || style == TextStyle.STRONG) {
                 base *= 1.05f;
+            }
+            // Широкі символи (CJK, деякі emoji) грубо оцінюємо як повний em.
+            if (Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN ||
+                    Character.UnicodeScript.of(c) == Character.UnicodeScript.HANGUL ||
+                    Character.UnicodeScript.of(c) == Character.UnicodeScript.HIRAGANA ||
+                    Character.UnicodeScript.of(c) == Character.UnicodeScript.KATAKANA) {
+                base = fontSize;
             }
             return base;
         });
@@ -40,34 +53,22 @@ public class FontMetricsProviderImpl implements FontMetricsProvider {
         if (text == null || text.isEmpty()) {
             return 0;
         }
-        String key = style + "_" + fontSize + "_" + text;
-        return stringWidthCache.computeIfAbsent(key, k -> {
-            float total = 0;
-            for (char c : text.toCharArray()) {
-                total += getCharWidth(c, style, fontSize);
-            }
-            return total;
-        });
+        float total = 0;
+        for (int i = 0; i < text.length(); i++) {
+            total += getCharWidth(text.charAt(i), style, fontSize);
+        }
+        return total;
     }
 
     @Override
     public float getLineHeight(TextStyle style, float fontSize, float lineSpacing) {
-        return getFontHeight(style, fontSize) * lineSpacing;
+        return getFontHeight(style, fontSize) * Math.max(0.8f, lineSpacing);
     }
 
     @Override
     public float getFontHeight(TextStyle style, float fontSize) {
-        float base = fontSize * LINE_HEIGHT_RATIO;
-        if (style == TextStyle.HEADING_1) {
-            base *= 1.8f;
-        } else if (style == TextStyle.HEADING_2) {
-            base *= 1.5f;
-        } else if (style == TextStyle.HEADING_3) {
-            base *= 1.3f;
-        } else if (style == TextStyle.HEADING_4) {
-            base *= 1.1f;
-        }
-        return base;
+        // Розмір заголовка визначає TextLayoutEngine. Тут не масштабуємо вдруге.
+        return fontSize * LINE_HEIGHT_RATIO;
     }
 
     @Override
@@ -82,7 +83,7 @@ public class FontMetricsProviderImpl implements FontMetricsProvider {
 
     @Override
     public boolean isFontSupported(String fontFamily) {
-        return true;
+        return fontFamily != null && !fontFamily.isBlank();
     }
 
     @Override
@@ -96,16 +97,14 @@ public class FontMetricsProviderImpl implements FontMetricsProvider {
 
     @Override
     public FontMetricsProvider withSettings(ReaderSettings newSettings) {
-        return new FontMetricsProviderImpl(newSettings);
+        return new FontMetricsProviderImpl(newSettings != null ? newSettings : settings);
     }
 
     public void clearCache() {
         charWidthCache.clear();
-        stringWidthCache.clear();
     }
 
     public String getCacheStats() {
-        return "CharWidth: " + charWidthCache.size() +
-                ", StringWidth: " + stringWidthCache.size();
+        return "CharWidth: " + charWidthCache.size();
     }
 }

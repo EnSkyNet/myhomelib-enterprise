@@ -28,7 +28,10 @@ public class TxtBookConverter implements BookConverter {
 
     @Override
     public boolean supports(Book book) {
-        return book.getFileName().toLowerCase().endsWith(".fb2");
+        String name = book.getArchiveEntry();
+        if (name == null || name.isBlank()) name = book.getFileName();
+        name = name == null ? "" : name.toLowerCase();
+        return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".txt") || name.endsWith(".text");
     }
 
     @Override
@@ -43,6 +46,13 @@ public class TxtBookConverter implements BookConverter {
 
     @Override
     public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
+        String sourceName = book.getArchiveEntry();
+        if (sourceName == null || sourceName.isBlank()) sourceName = book.getFileName();
+        sourceName = sourceName == null ? "" : sourceName.toLowerCase();
+        if (sourceName.endsWith(".txt") || sourceName.endsWith(".text")) {
+            Files.copy(sourceStream, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            return;
+        }
         log.debug("Конвертація FB2 -> TXT: {}", book.getTitle());
 
         try (OutputStream outputStream = Files.newOutputStream(targetFile)) {

@@ -35,8 +35,9 @@ public class BookImportPresenter {
 
     public void importFb2() {
         Stage stage = new Stage();
-        File file = fileChooserService.chooseFile(stage, "Виберіть FB2 файл",
-                List.of(new javafx.stage.FileChooser.ExtensionFilter("FB2 файли", "*.fb2", "*.fbd")));
+        File file = fileChooserService.chooseFile(stage, "Виберіть книгу або архів",
+                List.of(new javafx.stage.FileChooser.ExtensionFilter("Книги й архіви",
+                        "*.fb2", "*.fbd", "*.epub", "*.txt", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz")));
         if (file != null) {
             importFile(file.toPath());
         }

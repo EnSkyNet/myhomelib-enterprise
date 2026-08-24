@@ -7,7 +7,7 @@
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.ExportController"
       spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
-      prefWidth="550" prefHeight="420">
+      prefWidth="570" prefHeight="450">
 
     <Label text="📤 Експорт книг" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
 
@@ -33,10 +33,12 @@
             <promptText><![CDATA[%a - %t (автор - назва)]]></promptText>
         </TextField>
 
-        <!-- Опції -->
-        <Label text="Опції:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
-        <VBox GridPane.columnIndex="1" GridPane.rowIndex="3" spacing="5">
-            <CheckBox fx:id="overwriteCheckBox" text="Перезаписувати існуючі файли"/>
+        <!-- Конфлікти і опції -->
+        <Label text="Якщо файл існує:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+        <ComboBox fx:id="collisionPolicyComboBox" GridPane.columnIndex="1" GridPane.rowIndex="3" prefWidth="260"/>
+
+        <Label text="Опції:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
+        <VBox GridPane.columnIndex="1" GridPane.rowIndex="4" spacing="5">
             <CheckBox fx:id="extractOnlyCheckBox" text="Витягти з архіву без конвертації"/>
         </VBox>
     </GridPane>

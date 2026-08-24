@@ -9,16 +9,22 @@ public class Author {
     private String firstName;
     private String middleName;
     private String lastName;
+    private String annotation;
 
     public Author(AuthorId id, String firstName, String middleName, String lastName) {
+        this(id, firstName, middleName, lastName, "");
+    }
+
+    public Author(AuthorId id, String firstName, String middleName, String lastName, String annotation) {
         this.id = id;
         this.firstName = firstName;
         this.middleName = middleName;
         this.lastName = lastName;
+        this.annotation = annotation == null ? "" : annotation;
     }
 
     public Author(String firstName, String middleName, String lastName) {
-        this(AuthorId.generate(), firstName, middleName, lastName);
+        this(AuthorId.generate(), firstName, middleName, lastName, "");
     }
 
     public String getFullName() {
@@ -52,6 +58,10 @@ public class Author {
         this.firstName = firstName;
         this.middleName = middleName;
         this.lastName = lastName;
+    }
+
+    public void updateAnnotation(String annotation) {
+        this.annotation = annotation == null ? "" : annotation;
     }
 
     @Override

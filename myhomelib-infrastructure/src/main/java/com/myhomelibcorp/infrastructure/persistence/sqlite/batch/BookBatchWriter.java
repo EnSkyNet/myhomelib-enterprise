@@ -33,7 +33,7 @@ public class BookBatchWriter {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[20];
+            Object[] args = new Object[27];
             int idx = 0;
             args[idx++] = book.getId().asString();
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
@@ -61,6 +61,13 @@ public class BookBatchWriter {
                     : LocalDateTime.now().format(DATE_FORMATTER);
             args[idx++] = formattedCreated;
             args[idx++] = book.getCollectionRoot() != null ? book.getCollectionRoot() : "";
+            args[idx++] = book.getYear();
+            args[idx++] = book.getPublisher() != null ? book.getPublisher() : "";
+            args[idx++] = book.getLibId() != null ? book.getLibId() : "";
+            args[idx++] = book.getLibraryRate();
+            args[idx++] = book.getTranslators() != null ? book.getTranslators() : "";
+            args[idx++] = book.getCity() != null ? book.getCity() : "";
+            args[idx++] = book.getSourceUrl() != null ? book.getSourceUrl() : "";
             batchArgs.add(args);
         }
 
@@ -74,7 +81,7 @@ public class BookBatchWriter {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[20];
+            Object[] args = new Object[28];
             int idx = 0;
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
             args[idx++] = book.getSeries();
@@ -101,6 +108,13 @@ public class BookBatchWriter {
                     : LocalDateTime.now().format(DATE_FORMATTER);
             args[idx++] = formattedCreated;
             args[idx++] = book.getCollectionRoot() != null ? book.getCollectionRoot() : "";
+            args[idx++] = book.getYear();
+            args[idx++] = book.getPublisher() != null ? book.getPublisher() : "";
+            args[idx++] = book.getLibId() != null ? book.getLibId() : "";
+            args[idx++] = book.getLibraryRate();
+            args[idx++] = book.getTranslators() != null ? book.getTranslators() : "";
+            args[idx++] = book.getCity() != null ? book.getCity() : "";
+            args[idx++] = book.getSourceUrl() != null ? book.getSourceUrl() : "";
             args[idx++] = book.getId().asString(); // WHERE id = ?
             batchArgs.add(args);
         }

@@ -88,26 +88,26 @@ public class SqliteAuthorRepository implements AuthorRepository {
     public Author save(Author author) {
         if (author.getId() == null) {
             author = new Author(AuthorId.generate(),
-                    author.getFirstName(),
-                    author.getMiddleName(),
-                    author.getLastName());
+                    author.getFirstName(), author.getMiddleName(), author.getLastName(), author.getAnnotation());
         }
         String searchName = buildSearchName(author);
         String sql = """
-            INSERT INTO authors (id, first_name, middle_name, last_name, search_name)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO authors (id, first_name, middle_name, last_name, search_name, annotation)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 first_name = excluded.first_name,
                 middle_name = excluded.middle_name,
                 last_name = excluded.last_name,
-                search_name = excluded.search_name
+                search_name = excluded.search_name,
+                annotation = excluded.annotation
             """;
         getJdbcTemplate().update(sql,
                 author.getId().asString(),
                 author.getFirstName(),
                 author.getMiddleName(),
                 author.getLastName(),
-                searchName);
+                searchName,
+                author.getAnnotation());
         log.debug("Автора збережено: id={}, name={}", author.getId().asString(), author.getFullName());
         return author;
     }
@@ -144,15 +144,17 @@ public class SqliteAuthorRepository implements AuthorRepository {
     }
     @Override
     public List<Author> findFavorites(int limit) {
-        // Проста реалізація: повертає авторів з найбільшою кількістю книг
         String sql = """
-        SELECT a.* FROM authors a
-        JOIN book_authors ba ON a.id = ba.author_id
-        GROUP BY a.id
-        ORDER BY COUNT(ba.book_id) DESC
-        LIMIT ?
-        """;
-        return getJdbcTemplate().query(sql, authorRowMapper, limit);
+            SELECT a.* FROM authors a
+            JOIN book_authors ba ON a.id = ba.author_id
+            JOIN book_groups bg ON bg.book_id = ba.book_id
+            JOIN groups g ON g.id = bg.group_id
+            WHERE LOWER(TRIM(g.name)) IN ('favorites','обране','избрани','улюблене')
+            GROUP BY a.id
+            ORDER BY COUNT(DISTINCT ba.book_id) DESC, a.last_name COLLATE NOCASE, a.first_name COLLATE NOCASE
+            LIMIT ?
+            """;
+        return getJdbcTemplate().query(sql, authorRowMapper, Math.max(1, limit));
     }
     @Override
     public long countOrphanedAuthors() {
