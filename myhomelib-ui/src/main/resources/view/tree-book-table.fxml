@@ -35,6 +35,7 @@
             <TreeTableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
             <TreeTableColumn fx:id="seriesColumn" text="Серія" prefWidth="120"/>
             <TreeTableColumn fx:id="genresColumn" text="Жанри" prefWidth="100"/>
+            <TreeTableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
             <TreeTableColumn fx:id="rateColumn" text="Оцінка" prefWidth="80"/>
             <TreeTableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
             <TreeTableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>

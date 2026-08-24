@@ -325,7 +325,7 @@ public class ReaderEngine {
         }
 
         PageLayout page = getCurrentPage(currentDimensions);
-        ReaderTheme theme = ReaderTheme.fromName(settings.themeName());
+        ReaderTheme theme = ReaderTheme.fromSettings(settings);
         if (page != null && !page.isEmpty()) {
             renderer.renderPage(page, null, theme);
         } else {

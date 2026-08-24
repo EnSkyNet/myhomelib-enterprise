@@ -56,4 +56,28 @@ public record ReaderTheme(
             default -> light();
         };
     }
+
+    /** Builds a base theme and optionally overrides reader foreground/background from custom CSS variables. */
+    public static ReaderTheme fromSettings(ReaderSettings settings) {
+        ReaderSettings effective = settings != null ? settings : ReaderSettings.defaultSettings();
+        ReaderTheme base = fromName(effective.themeName());
+        String css = effective.customCss();
+        if (css == null || css.isBlank()) return base;
+
+        String background = cssVariable(css, "--reader-background", base.background());
+        String foreground = cssVariable(css, "--reader-foreground", base.foreground());
+        if (background.equals(base.background()) && foreground.equals(base.foreground())) return base;
+        return new ReaderTheme(
+                base.name(), base.displayName(), background, foreground,
+                base.secondaryText(), base.linkColor(), base.selectionColor(),
+                base.quoteBackground(), base.quoteBorder(), base.codeBackground()
+        );
+    }
+
+    private static String cssVariable(String css, String variable, String fallback) {
+        java.util.regex.Matcher matcher = java.util.regex.Pattern
+                .compile(java.util.regex.Pattern.quote(variable) + "\\s*:\\s*(#[0-9a-fA-F]{6,8})\\s*;?")
+                .matcher(css);
+        return matcher.find() ? matcher.group(1) : fallback;
+    }
 }

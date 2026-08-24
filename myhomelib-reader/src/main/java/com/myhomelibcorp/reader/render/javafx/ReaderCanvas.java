@@ -273,6 +273,7 @@ public class ReaderCanvas extends StackPane {
 
     public void togglePageMode() {
         pageModeEnabled = !pageModeEnabled;
+        engine.applySettings(engine.getSettings().withPageMode(pageModeEnabled));
     }
 
     public boolean isPageModeEnabled() {
@@ -319,6 +320,7 @@ public class ReaderCanvas extends StackPane {
 
     public void toggleAutoScroll() {
         autoScrollController.toggle();
+        engine.applySettings(engine.getSettings().withAutoScroll(autoScrollController.isRunning()));
     }
 
     public boolean isAutoScrollRunning() {

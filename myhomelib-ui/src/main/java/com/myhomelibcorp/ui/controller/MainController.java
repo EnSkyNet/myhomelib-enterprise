@@ -1,11 +1,16 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
+import com.myhomelibcorp.application.navigation.NavigationMode;
+import com.myhomelibcorp.application.service.ReadingHistoryService;
+import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
@@ -22,7 +27,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.Button;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.control.RadioMenuItem;
+import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.Pane;
@@ -35,6 +41,7 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Component
@@ -62,6 +69,7 @@ public class MainController {
     private final NavigationPanelController navigationPanelController;
     private final com.myhomelibcorp.ui.service.ApplicationSettingsDialog applicationSettingsDialog;
     private final com.myhomelibcorp.ui.service.ClassicLibraryActionsService classicActions;
+    private final ReadingHistoryService readingHistoryService;
     private final com.myhomelibcorp.ui.service.UserDataUiService userDataUiService;
     private final com.myhomelibcorp.ui.service.BookListExportService bookListExportService;
     private final com.myhomelibcorp.ui.service.ExternalBookLauncher externalBookLauncher;
@@ -80,6 +88,7 @@ public class MainController {
     @FXML private Button forwardButton;
     @FXML private StackPane workspaceStackPane;
     @FXML private Menu languageMenu;
+    @FXML private Menu recentBooksMenu;
 
     @FXML
     public void initialize() {
@@ -95,10 +104,14 @@ public class MainController {
         showDashboard();
         updateNavigationButtons();
         localizationService.apply(mainPane);
-        populateExternalLanguages();
+        populateLanguages();
+        if (languageMenu != null) languageMenu.setOnShowing(event -> populateLanguages());
+        if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> populateRecentBooksMenu());
         mainPane.sceneProperty().addListener((obs, oldScene, scene) -> {
             if (scene != null) scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
                 if (e.getCode() == javafx.scene.input.KeyCode.F1) { handleHelp(); e.consume(); }
+                else if (e.isAltDown() && e.getCode() == javafx.scene.input.KeyCode.LEFT) { handleBack(); e.consume(); }
+                else if (e.isAltDown() && e.getCode() == javafx.scene.input.KeyCode.RIGHT) { handleForward(); e.consume(); }
             });
         });
 
@@ -106,18 +119,23 @@ public class MainController {
     }
 
 
-    private void populateExternalLanguages() {
+    private void populateLanguages() {
         if (languageMenu == null) return;
-        var extras = localizationService.availableLanguages().entrySet().stream()
-                .filter(e -> !java.util.Set.of("uk", "en", "bg").contains(e.getKey()))
-                .toList();
-        if (extras.isEmpty()) return;
-        languageMenu.getItems().add(new SeparatorMenuItem());
-        for (var entry : extras) {
-            MenuItem item = new MenuItem(entry.getValue());
+        var languages = localizationService.availableLanguages();
+        var selectedLanguage = localizationService.language();
+        var toggleGroup = new ToggleGroup();
+        languageMenu.getItems().clear();
+
+        for (var entry : languages.entrySet()) {
+            RadioMenuItem item = new RadioMenuItem(entry.getValue());
+            item.setToggleGroup(toggleGroup);
+            item.setSelected(entry.getKey().equals(selectedLanguage));
             item.setOnAction(e -> {
                 localizationService.setLanguage(entry.getKey());
-                dialogService.showInfo("Мова / Language", entry.getValue() + " — перезапустіть MyHomeLib, щоб застосувати мову до всіх вікон.");
+                dialogService.showInfo(
+                        "Мова / Language",
+                        entry.getValue() + " — перезапустіть MyHomeLib, щоб застосувати мову до всіх вікон."
+                );
             });
             languageMenu.getItems().add(item);
         }
@@ -143,6 +161,42 @@ public class MainController {
 
     public void showGenreWorkspace(GenreId genreId) {
         workspaceManager.showGenreWorkspace(genreId);
+    }
+
+    public void showYearWorkspace(int year) {
+        workspaceManager.showYearWorkspace(year);
+    }
+
+    public void showLanguageWorkspace(String languageCode) {
+        workspaceManager.showLanguageWorkspace(languageCode);
+    }
+
+    public void showArchiveWorkspace(ArchiveNavigationKey archive) {
+        workspaceManager.showArchiveWorkspace(archive);
+    }
+
+    public void showKeywordWorkspace(String keyword) {
+        workspaceManager.showKeywordWorkspace(keyword);
+    }
+
+    public void showGroupBooksWorkspace(GroupId groupId) {
+        workspaceManager.showGroupBooksWorkspace(groupId);
+    }
+
+    public void showReviewsWorkspace(ReviewNavigationFilter filter) {
+        workspaceManager.showReviewsWorkspace(filter);
+    }
+
+    public void showAllBooksWorkspace() {
+        workspaceManager.showAllBooksWorkspace();
+    }
+
+    public void showAlreadyReadWorkspace() {
+        workspaceManager.showAlreadyReadWorkspace();
+    }
+
+    public void showHistoryWorkspace() {
+        workspaceManager.showHistoryWorkspace();
     }
 
     public void showSearchResults(String query) {
@@ -280,6 +334,12 @@ public class MainController {
     }
 
     @FXML
+    public void onAllBooks() {
+        cleanupReader();
+        navigationPanelController.onAllBooks();
+    }
+
+    @FXML
     public void onCollections() {
         cleanupReader();
         showCollectionWorkspace();
@@ -303,9 +363,56 @@ public class MainController {
     }
 
     @FXML
+    public void onAlreadyRead() {
+        cleanupReader();
+        navigationPanelController.revealNode(NavigationMode.ALREADY_READ, "already-read");
+        showAlreadyReadWorkspace();
+    }
+
+    @FXML
     public void onHistory() {
         cleanupReader();
-        showSearchResults(classicActions.readingHistory(500));
+        navigationPanelController.revealNode(NavigationMode.HISTORY, "history");
+        showHistoryWorkspace();
+    }
+
+    @FXML
+    public void onClearHistory() {
+        if (!dialogService.showConfirmation(
+                "Очистити історію читання?",
+                "Список недавніх книг та історію читання буде очищено.",
+                "Позиція читання, закладки та позначка «Прочитано» залишаться без змін.")) {
+            return;
+        }
+        readingHistoryService.clear();
+        navigationPanelController.refreshAll();
+        populateRecentBooksMenu();
+        if (navigationPanelController.getCurrentMode() == NavigationMode.HISTORY) {
+            showHistoryWorkspace();
+        }
+    }
+
+    private void populateRecentBooksMenu() {
+        if (recentBooksMenu == null) return;
+        recentBooksMenu.getItems().clear();
+        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
+        var recent = readingHistoryService.recent(12);
+        if (recent.isEmpty()) {
+            MenuItem empty = new MenuItem(localizationService.tr("Історія порожня"));
+            empty.setDisable(true);
+            recentBooksMenu.getItems().add(empty);
+            return;
+        }
+        for (var item : recent) {
+            String title = item.book().getTitle();
+            String timestamp = item.lastOpenedAt().format(formatter);
+            MenuItem menuItem = new MenuItem(title + " — " + timestamp);
+            menuItem.setOnAction(event -> {
+                cleanupReader();
+                showNewReaderWorkspace(BookId.fromString(item.book().getId()));
+            });
+            recentBooksMenu.getItems().add(menuItem);
+        }
     }
 
     @FXML
@@ -593,20 +700,6 @@ public class MainController {
     }
 
 
-    @FXML public void handleLanguageUkrainian() {
-        localizationService.setLanguage("uk");
-        dialogService.showInfo("Мова / Language", "Українську мову вибрано. Перезапустіть MyHomeLib.");
-    }
-
-    @FXML public void handleLanguageEnglish() {
-        localizationService.setLanguage("en");
-        dialogService.showInfo("Language / Мова", "English selected. Restart MyHomeLib to apply it to every window.");
-    }
-
-    @FXML public void handleLanguageBulgarian() {
-        localizationService.setLanguage("bg");
-        dialogService.showInfo("Език / Мова", "Българският език е избран. Рестартирайте MyHomeLib.");
-    }
     @FXML public void handleHelp() { helpService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager.currentHelpTopic()); }
     @FXML public void handleInpxHelp() { helpService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), "inpx"); }
 

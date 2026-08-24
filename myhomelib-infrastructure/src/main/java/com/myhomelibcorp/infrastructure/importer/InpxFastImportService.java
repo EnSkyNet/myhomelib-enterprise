@@ -26,4 +26,12 @@ public class InpxFastImportService implements FastImportService {
         log.info("Fast import INPX with cancellation: {} (root: {})", file, rootDirectory);
         return pipeline.importFile(file, batchSize, rootDirectory, cancelFlag);
     }
+
+    @Override
+    public long importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag,
+                           String catalogSourceKey, String catalogSourceLocation) {
+        log.info("Fast import INPX with catalog source: {} (root: {}, sourceKey: {})",
+                file, rootDirectory, catalogSourceKey);
+        return pipeline.importFile(file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation);
+    }
 }

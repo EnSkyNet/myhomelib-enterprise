@@ -22,4 +22,12 @@ public interface FastImportService {
     default long importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag) {
         return importInpx(file, batchSize, rootDirectory);
     }
+
+    /**
+     * Stage 6 overload carrying a stable logical catalog source through a downloaded temp file.
+     */
+    default long importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag,
+                            String catalogSourceKey, String catalogSourceLocation) {
+        return importInpx(file, batchSize, rootDirectory, cancelFlag);
+    }
 }

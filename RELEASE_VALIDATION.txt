@@ -40,3 +40,20 @@ EXPLICITLY SKIPPED IN THIS ENVIRONMENT (per user instruction)
 - Release code signing with a real publisher certificate/private signing key.
 
 This file records what was actually verified locally. Skipped external gates are not claimed as passed.
+
+LOCALIZATION ADDENDUM — 2026-08-24
+----------------------------------
+- File-based UI catalogues: Lang/uk.json, Lang/en.json, Lang/bg.json.
+- Shipped catalogues: 141 translation keys each; root and bundled first-run copies are byte-identical.
+- Dynamic discovery: LanguageCatalogService scans *.json and synchronizes config/available-languages.txt.
+- Main language menu and Application Settings language selector both use the same dynamic catalogue list.
+- MainView.fxml no longer contains hard-coded language MenuItems/handlers.
+- tools/validate-language-catalogs.py: PASS.
+- tools/static_release_check.py after localization changes: PASS.
+  XML (POM + FXML): 36; errors: 0.
+  FXML workspaces: 24; handler references: 139; missing: 0.
+  SQLite migrations: 29; errors: 0; integrity: ok.
+  Root shell scripts: 7; static issues: 0.
+  Java sources: 489; Java test sources: 23.
+- LanguageCatalogService and LocalizationService received additional stub-classpath javac syntax/type-flow checks: PASS.
+- Full Maven compile/test remains unavailable in this container because repo.maven.apache.org cannot be resolved.

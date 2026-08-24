@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
@@ -40,6 +41,9 @@ class InpxImportPipelineTest {
     @Mock
     private DictionaryCache dictionaryCache;
 
+    @Mock
+    private CatalogUpdateTrackingPort catalogUpdateTrackingPort;
+
     private InpxImportPipeline pipeline;
 
     @BeforeEach
@@ -54,7 +58,8 @@ class InpxImportPipelineTest {
                 collectionManager,
                 authorRepository,
                 genreRepository,
-                dictionaryCache
+                dictionaryCache,
+                catalogUpdateTrackingPort
         );
     }
 

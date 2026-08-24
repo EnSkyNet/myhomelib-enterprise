@@ -1,2723 +1,631 @@
-# ARCHITECTURE.md
+# MyHomeLib Enterprise — Architecture
 
-# MyHomeLib Enterprise — архітектура поточного проекту
-
-**Стан документа:** 19.08.2026  
-**Версія проекту:** `1.0.0`  
+**Architecture baseline:** Stage 1, 24.08.2026  
+**Project version:** `1.0.0`  
 **Java:** 21  
-**UI:** JavaFX 21.0.2 + JavaFX WebView  
-**Backend/Application runtime:** Spring Boot 3.5.0  
-**Модульна модель:** Maven multi-module, модульний моноліт  
-**Основна БД:** SQLite  
-**Міграції:** Flyway  
-**Пошук:** Apache Lucene  
-**Кеш:** Caffeine  
-**FB2:** власний parser/renderer на Jsoup + HTML у JavaFX WebView
+**Desktop UI:** JavaFX 21.0.2  
+**Runtime container:** Spring Boot 3.5.x  
+**Storage:** SQLite + Flyway  
+**Search:** Apache Lucene 9.x  
+**Reader rendering:** JavaFX Canvas (not WebView)
+
+This document describes the code that exists in the repository now. It is an
+architecture contract, not an aspirational design document. Rules that are
+already enforceable are marked **hard rule**. Known deviations that still exist
+are listed explicitly as architecture debt and are protected by a ratchet so
+new violations cannot be added accidentally.
 
 ---
 
-## 1. Призначення проекту
+## 1. System shape
 
-MyHomeLib Enterprise — сучасний Java-порт проекту MyHomeLib, початково реалізованого на Delphi/Pascal.
+MyHomeLib Enterprise is a **desktop modular monolith** with a separate MCP
+sidecar. The desktop application follows Ports & Adapters / Hexagonal ideas,
+but is not yet a perfectly isolated hexagon.
 
-Поточна реалізація є настільним застосунком для керування локальною електронною бібліотекою з такими основними підсистемами:
+```text
+                                 desktop runtime
 
-- бібліотека книг;
-- автори;
-- жанри;
-- серії;
-- групи;
-- колекції;
-- пошук;
-- імпорт FB2/INPX/ZIP;
-- експорт;
-- синхронізація каталогів;
-- обкладинки;
-- кешування;
-- перевірка цілісності;
-- статистика;
-- закладки;
-- збереження прогресу читання;
-- повноцінний FB2 Reader;
-- налаштування шрифту, розміру, теми, масштабу та режиму читання;
-- зміст книги;
-- автоскрол;
-- нотатки/footnotes;
-- внутрішні та зовнішні посилання.
+                         ┌────────────────────────┐
+                         │ myhomelib-bootstrap    │
+                         │ composition root       │
+                         │ JavaFX + Spring Boot   │
+                         └───────┬────────┬───────┘
+                                 │        │
+                                 ▼        ▼
+                       ┌──────────────┐  ┌────────────────────┐
+                       │ myhomelib-ui │  │ infrastructure      │
+                       │ JavaFX       │  │ SQLite/Lucene/etc.  │
+                       └──────┬───────┘  └──────────┬─────────┘
+                              │                     │ implements
+                              │                     ▼
+                              │              application ports
+                              ▼                     ▲
+                     ┌──────────────────────────────┴─┐
+                     │ myhomelib-application          │
+                     │ use cases / DTO / ports/query  │
+                     └──────────────┬─────────────────┘
+                                    ▼
+                         ┌─────────────────────┐
+                         │ myhomelib-domain    │
+                         │ model / events / VO │
+                         └──────────┬──────────┘
+                                    ▼
+                         ┌─────────────────────┐
+                         │ myhomelib-shared    │
+                         │ small primitives    │
+                         └─────────────────────┘
 
-Проект не є класичним web backend. Spring Boot використовується як контейнер залежностей, конфігураційна та сервісна платформа для desktop-застосунку, а JavaFX є основним UI runtime.
+                     ┌─────────────────────────┐
+                     │ myhomelib-reader        │
+                     │ parser/layout/Canvas UI │
+                     │ depends on shared only  │
+                     └─────────────────────────┘
+                              ▲
+                              │ embedded by UI
+                              │
+
+separate process             │
+┌─────────────────────────┐  │
+│ myhomelib-mcp           │  │
+│ MCP + direct DB/archive │  │
+│ depends on shared only  │  │
+└─────────────────────────┘  │
+```
+
+The bootstrap module is the only desktop composition root. It is allowed to
+know concrete infrastructure and UI classes because its job is wiring,
+startup, shutdown and health monitoring.
 
 ---
 
-# 2. Загальна архітектурна модель
+## 2. Maven modules
 
-Поточна система є **модульним монолітом із принципами Hexagonal / Ports & Adapters Architecture**.
+Root `pom.xml` contains **11 modules**.
 
-Верхньорівнева схема:
+### Product/runtime modules
 
-```text
-                         ┌──────────────────────────┐
-                         │      Bootstrap           │
-                         │   MyHomeLibApp.java      │
-                         │   Spring Boot runtime    │
-                         └────────────┬─────────────┘
-                                      │
-                                      ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                              UI                                     │
-│                        myhomelib-ui                                 │
-│                                                                     │
-│ JavaFX Controllers / ViewModels / Presenters / Reader / WebView    │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          Application                                │
-│                    myhomelib-application                            │
-│                                                                     │
-│ Use Cases / Application Services / DTO / Queries / Ports           │
-└──────────────────────────────┬──────────────────────────────────────┘
-                               │
-                               ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                            Domain                                   │
-│                       myhomelib-domain                              │
-│                                                                     │
-│ Entities / Value Objects / Domain Events                            │
-└─────────────────────────────────────────────────────────────────────┘
-                               ▲
-                               │
-                               │ implements ports
-                               │
-┌──────────────────────────────┴──────────────────────────────────────┐
-│                        Infrastructure                               │
-│                   myhomelib-infrastructure                          │
-│                                                                     │
-│ SQLite / Flyway / Lucene / Cache / Import / Export / Files / etc.  │
-└─────────────────────────────────────────────────────────────────────┘
+| Module | Responsibility |
+|---|---|
+| `myhomelib-shared` | Minimal cross-cutting primitives, archive safety limits, app paths, common events/exceptions |
+| `myhomelib-domain` | Domain entities, value objects, reader preferences, saved searches, sync model, domain events |
+| `myhomelib-application` | Use cases, queries, DTOs, mappers, application services and output ports |
+| `myhomelib-infrastructure` | SQLite/Flyway, Lucene, cache, importers, exporters, filesystem/network adapters, settings |
+| `myhomelib-reader` | Independent reading engine, format parsers, layout, caches and JavaFX Canvas renderer |
+| `myhomelib-ui` | JavaFX controllers, workspaces, presenters, tables, dialogs, localization, reader integration |
+| `myhomelib-bootstrap` | Desktop application composition root, Spring Boot/JavaFX lifecycle and health checks |
+| `myhomelib-mcp` | Separate MCP executable/sidecar with direct SQLite/archive access |
 
-                         Shared
-                           │
-                           ▼
-                 cross-cutting primitives
-```
+### Verification/tooling modules
 
-Це **не чиста багатошарова архітектура** і не повністю ізольована Hexagonal Architecture. Це практичний гібрид:
-
-```text
-Domain
-   ↑
-Application
-   ↑
-Infrastructure
-
-UI
-   ↓
-Application
-   ↓
-Domain
-
-UI також має пряму runtime-залежність від Infrastructure
-через поточну Maven-модель.
-```
-
-Тому при подальшій розробці потрібно розрізняти:
-
-1. архітектурні принципи, які вже реально виконуються;
-2. архітектурні правила, які контролюються ArchUnit;
-3. поточні Maven-залежності, які ще не доведені до ідеальної ізоляції.
+| Module | Responsibility |
+|---|---|
+| `myhomelib-architecture-tests` | ArchUnit architecture boundary tests |
+| `myhomelib-e2e-tests` | End-to-end test shell |
+| `myhomelib-benchmark` | Import/performance benchmark code |
 
 ---
 
-# 3. Maven-модулі
+## 3. Direct production module dependencies
 
-Root `pom.xml` містить дев'ять модулів:
-
-```text
-myhomelib-shared
-myhomelib-domain
-myhomelib-application
-myhomelib-infrastructure
-myhomelib-ui
-myhomelib-bootstrap
-myhomelib-architecture-tests
-myhomelib-e2e-tests
-myhomelib-benchmark
-```
-
-## 3.1. myhomelib-shared
-
-Призначення — мінімальні cross-cutting компоненти.
-
-Поточний вміст:
+Stage 1 makes direct POM dependencies match direct source usage instead of
+relying on accidental transitive dependencies.
 
 ```text
-shared/
-├── event/
-│   ├── BaseDomainEvent
-│   ├── DomainEvent
-│   └── DomainEventPublisher
-├── exception/
-│   ├── BusinessException
-│   └── ErrorCode
-└── util/
-    └── EncryptionUtil
+shared          -> -
+domain          -> shared
+application     -> shared, domain
+reader          -> shared
+infrastructure  -> shared, domain, application
+ui              -> shared, domain, application, reader
+bootstrap       -> shared, domain, application, infrastructure, ui
+mcp             -> shared
 ```
 
-Модуль не повинен перетворюватися на загальну папку для будь-якого коду.
+The graph must stay acyclic.
 
-Його роль — лише базові примітиви, які справді використовуються кількома внутрішніми модулями.
+### Why UI still depends on Domain
+
+The long-term preference is for UI to consume application DTOs and input/use
+case APIs. Today the UI still uses domain IDs/value objects and a bounded set of
+non-value domain model types. Removing all those references would be a broad UI
+refactor, not an architecture-baseline task.
+
+Therefore Stage 1 does two things:
+
+1. makes the dependency explicit in Maven so the build graph is honest;
+2. freezes the current non-value-model usage with a debt ratchet so it cannot
+   grow silently.
 
 ---
 
-# 4. Domain
+## 4. Hard architecture rules
 
-Модуль:
+The following rules are enforced both by ArchUnit where bytecode is available
+and by `tools/architecture-check.py` at source/POM level.
 
-```text
-myhomelib-domain
-```
+### 4.1 Shared
 
-містить бізнес-модель системи.
+**Hard rule:** `myhomelib-shared` must not depend on product modules or desktop
+frameworks.
 
-Поточна модель включає:
+Allowed role: genuinely reusable low-level primitives only.
 
-```text
-Author
-Book
-BookSnapshot
-Bookmark
-Collection
-CollectionType
-Genre
-Group
-Publisher
-ReaderPreferences
-SavedSearch
-Series
-SyncState
-```
+Do not place feature services, repositories, controllers or business entities
+in `shared` simply to avoid a dependency decision.
 
-Також присутні Value Objects:
+### 4.2 Domain
 
-```text
-BookId
-AuthorId
-CollectionId
-GroupId
-GenreId
-PublisherId
-SeriesId
-...
-```
+**Hard rule:** Domain does not depend on:
 
-та domain events:
-
-```text
-BookAddedEvent
-BookDeletedEvent
-BookUpdatedEvent
-CollectionOpenedEvent
-```
-
-## 4.1. Правило Domain
-
-Domain не повинен знати про:
-
+- application;
+- infrastructure;
+- UI;
+- reader;
+- MCP;
 - Spring;
 - JavaFX;
-- SQLite;
-- JDBC;
+- JDBC/SQL;
+- Lucene.
+
+Domain may depend on `shared` and the Java standard library.
+
+### 4.3 Application
+
+**Hard rule:** Application does not depend on concrete adapters/storage/UI:
+
+- no infrastructure package;
+- no UI package;
+- no reader module;
+- no MCP module;
+- no JavaFX;
+- no JDBC/`java.sql`/`javax.sql`;
+- no Lucene.
+
+Spring Core/transaction annotations are currently allowed because the existing
+application services use them. This is framework coupling, but it is not a
+storage-adapter coupling.
+
+All classes in `application.port.out` must be interfaces.
+
+### 4.4 Infrastructure
+
+Infrastructure implements application output ports and owns technology-specific
+code:
+
+- SQLite/JDBC;
+- Flyway;
 - Lucene;
-- UI;
-- Infrastructure;
-- файлову систему.
+- Caffeine;
+- network/filesystem adapters;
+- archive importers;
+- persistence mappings;
+- export and synchronization adapters.
 
-Поточний ArchUnit-тест це явно контролює.
+**Hard rule:** Infrastructure must not depend on UI, Reader or JavaFX.
 
-Основний принцип:
+### 4.5 UI
 
-```text
-Domain = бізнес-модель, незалежна від способу зберігання та UI.
-```
+UI owns JavaFX presentation and interaction.
 
----
+**Hard rule:** UI must not depend directly on:
 
-# 5. Application
+- `myhomelib-infrastructure`;
+- JDBC/SQL;
+- Spring JDBC;
+- Lucene.
 
-Модуль:
+Stage 1 removed the unused Maven dependency `UI -> Infrastructure`; there were
+no Java source imports requiring it.
 
-```text
-myhomelib-application
-```
+UI currently has two debt categories tracked by a ratchet:
 
-є центром application logic.
+- direct use of `application.port.out` from 18 baseline classes;
+- use of non-value domain model types from 28 baseline classes.
 
-Він містить:
+A future refactor should move those interactions behind application input/use
+case services. Until then, adding a new violating class fails the offline
+architecture guard.
 
-```text
-DTO
-Use Cases
-Application Services
-Queries
-Ports
-Mappers
-Import orchestration
-Search contracts
-Statistics contracts
-Session services
-```
+### 4.6 Reader
 
-Основні групи use case:
+`myhomelib-reader` is intentionally independent from the library application.
+It depends on `shared` only.
 
-```text
-author
-book
-collection
-dashboard
-export
-group
-imports
-integrity
-navigation
-search
-series
-sync
-```
+**Hard rule:** Reader does not depend on Domain, Application, Infrastructure,
+UI, Spring, JDBC or Lucene.
 
-## 5.1. Book use cases
-
-Поточна система має окремі use cases для:
+The module currently contains both portable engine code and JavaFX rendering.
+The portable packages are:
 
 ```text
-LoadBookByIdUseCase
-LoadBooksByAuthorUseCase
-LoadBooksUseCase
-MarkAsReadBatchUseCase
-UpdateProgressBatchUseCase
-UpdateRateBatchUseCase
+reader.api
+reader.core
+reader.format
+reader.layout
+reader.model
+reader.service
+reader.render.api
 ```
 
-## 5.2. Collection use cases
+**Hard rule:** those packages must not import JavaFX.
+
+JavaFX is confined to:
 
 ```text
-AddBookToCollectionUseCase
-CreateCollectionUseCase
-DeleteCollectionUseCase
-IsBookInCollectionUseCase
-LoadCollectionBooksUseCase
-LoadCollectionsUseCase
-RemoveBookFromCollectionUseCase
-RenameCollectionUseCase
-SwitchCollectionUseCase
+reader.render.javafx
 ```
 
-## 5.3. Group use cases
+This boundary makes a future physical split into `reader-core` and
+`reader-javafx` possible without first untangling the engine.
 
-Є окремі use cases для створення, видалення, перейменування, завантаження та batch-операцій.
+### 4.7 MCP
 
-## 5.4. Search
+`myhomelib-mcp` is a separate sidecar/runtime, not a desktop UI adapter.
+Currently it deliberately uses SQLite/archive technologies directly and shares
+only low-level primitives with the desktop code.
 
-Application визначає абстракції:
+**Hard rule:** MCP must not depend on Domain, Application, Infrastructure, UI,
+Reader, Spring or JavaFX.
 
-```text
-SearchQueryService
-SearchIndexer
-IndexRebuilder
-SearchService
-SearchRequest
-SearchResult
-SearchMode
-```
+If MCP later needs the same business rules as desktop, that should be an
+intentional architecture change rather than importing desktop adapters ad hoc.
 
-Application не повинен знати, що фактична реалізація використовує Lucene.
+### 4.8 Bootstrap
+
+Bootstrap is the composition root. It may depend on UI, Infrastructure,
+Application, Domain and Shared to wire the runtime.
+
+Implementation-specific health checks should still prefer application ports
+when possible. Stage 1 changed the search health probe from Lucene `Directory`
+to the `SearchIndexer` application port, preventing Lucene from leaking into
+bootstrap monitoring.
 
 ---
 
-# 6. Application Ports
+## 5. Reader architecture
 
-Ports розташовані переважно в:
-
-```text
-com.myhomelibcorp.application.port.out
-```
-
-Поточні категорії:
+The current reader is Canvas-based.
 
 ```text
-backup
-cache
-cover
-event
-executor
-exporter
-importer
-infrastructure
-integrity
-reader
-repository
-resource
-search
-statistics
-validation
+BookSource
+   │
+   ▼
+BookFormatRegistry
+   │
+   ├─ FB2/FBD parser
+   ├─ EPUB parser
+   ├─ TXT parser
+   └─ ZIP wrapper
+   │
+   ▼
+ReaderDocument / TextStorage / TOC
+   │
+   ▼
+TextLayoutEngine
+   │
+   ▼
+PageLayout / LineLayout / TextRunLayout
+   │
+   ▼
+JavaFxReaderRenderer / ReaderCanvas
 ```
 
-Це є основним механізмом інверсії залежностей.
+It does **not** use JavaFX WebView, HTML rendering or Jsoup as the primary
+reader pipeline.
 
-Наприклад:
+Important boundaries:
 
-```text
-Application:
-    ReadingProgressRepository
-              │
-              │ implements
-              ▼
-Infrastructure:
-    SqliteReadingProgressRepository
-```
+- parsing does not know JavaFX;
+- layout uses `FontMetricsProvider` abstraction;
+- JavaFX-specific font metrics live in the JavaFX render adapter;
+- position/search/bookmark services do not know library persistence;
+- library-specific persistence is performed from UI/application adapters.
 
-Аналогічно:
-
-```text
-ReaderBookResourcePort
-        │
-        ▼
-ReaderBookResourceAdapter
-```
+The reader module remains one Maven module for now, but its package boundary is
+designed so it can later be split safely.
 
 ---
 
-# 7. Infrastructure
+## 6. Library data and persistence
 
-Модуль:
+The production desktop database is SQLite. Flyway owns schema evolution.
 
-```text
-myhomelib-infrastructure
-```
+Infrastructure persistence contains repositories/adapters for:
 
-містить конкретні технічні реалізації.
+- books;
+- authors;
+- series;
+- genres;
+- groups;
+- collections;
+- bookmarks/progress/preferences;
+- saved searches and related user data.
 
-Основні підсистеми:
+Rules:
 
-```text
-adapter
-cache
-cleanup
-collection
-config
-cover
-event
-executor
-exporter
-image
-importengine
-importer
-initializer
-integrity
-monitoring
-parser
-persistence
-profiling
-reader
-resource
-search
-service
-sync
-util
-warmup
-```
+1. schema changes require a new Flyway migration; do not edit an already
+   released migration in place;
+2. UI must never issue SQL;
+3. application must never depend on JDBC;
+4. infrastructure maps DB rows to domain/application types;
+5. collection switching and resource lifecycle stay in infrastructure/bootstrap,
+   not domain.
+
+A PostgreSQL package exists in infrastructure but SQLite is the release storage
+target unless a future stage explicitly promotes another backend.
 
 ---
 
-# 8. Persistence
-
-Основне постійне сховище — SQLite.
-
-Реалізації репозиторіїв:
-
-```text
-SqliteAuthorRepository
-SqliteBookCommandRepository
-SqliteBookQueryRepository
-SqliteBookmarkRepository
-SqliteCollectionRepository
-SqliteDuplicateBookLookup
-SqliteGroupRepository
-SqlitePublisherRepository
-SqliteReadingProgressRepository
-SqliteReadingStatisticsRepository
-SqliteSavedSearchRepository
-SqliteSeriesRepository
-SqliteSessionRepository
-SqliteStatisticsRepository
-```
-
-Також присутні PostgreSQL-реалізації:
-
-```text
-PostgresAuthorRepository
-PostgresBookRepository
-```
-
-але поточний desktop runtime орієнтований на SQLite.
-
----
-
-# 9. SQLite
-
-SQLite використовується як основна локальна БД.
-
-Технічний стек:
-
-```text
-Xerial SQLite JDBC
-Flyway
-JDBC
-```
-
-Для складніших запитів присутні:
-
-```text
-QueryExecutor
-BookQueryBuilder
-BookQueries
-RowMappers
-Batch writers
-```
-
-Це дозволяє не змішувати SQL безпосередньо з UI.
-
----
-
-# 10. Flyway
-
-Міграції знаходяться:
-
-```text
-myhomelib-infrastructure/src/main/resources/db/migration
-```
-
-Поточна історія містить:
-
-```text
-V1 ... V26
-```
-
-Серед них:
-
-```text
-V1__init.sql
-V8__migrate_covers_to_fs.sql
-V9__create_telemetry_table.sql
-V10__add_library_format_version.sql
-V11__create_series_table.sql
-V13__create_session_table.sql
-V16__create_reading_progress.sql
-V23__create_bookmarks_table.sql
-V24__create_reading_stats.sql
-V25__update_reading_progress.sql
-V26__recreate_reading_progress.sql
-```
-
-Також існує окремий `migration_meta`.
-
-## 10.1. Важливе правило
-
-Вже виконані Flyway migration не редагуються.
-
-Будь-яка зміна схеми повинна створювати нову migration:
-
-```text
-V27__...
-V28__...
-```
-
-і так далі.
-
----
-
-# 11. Поточна модель reading_progress
-
-Поточна таблиця після V26 має поля:
-
-```text
-book_id
-paragraph_id
-char_offset
-percent
-chapter_title
-chapter_id
-updated_at
-reading_time_seconds
-```
-
-Основний ключ:
-
-```text
-book_id
-```
-
-Поточна реалізація зберігає позицію як:
-
-```text
-paragraph_id / XPath
-+
-char_offset
-+
-percent
-```
-
-Це працююча, але ще не повністю стабільна модель locator.
-
-У поточній реалізації `paragraph_id` може використовуватися як XPath або як стабільний ID, що видно з логіки `ReaderPositionService`.
-
----
-
-# 12. Cache
-
-Кешування реалізовано через Caffeine.
-
-Основні компоненти:
-
-```text
-BookCache
-BookCacheEvictor
-CacheFactory
-CaffeineCache
-CaffeineAuthorCache
-CaffeineGenreCache
-CaffeineSeriesCache
-CaffeineSearchCache
-CaffeineCoverCache
-DictionaryCache
-```
-
-Також є cached repositories:
-
-```text
-CachedAuthorRepository
-CachedBookQueryRepository
-CachedGenreRepository
-CachedSeriesRepository
-```
-
-Архітектурний принцип:
-
-```text
-Repository
-    ↓
-Cache adapter / cached repository
-    ↓
-actual persistence
-```
-
-Кеш не повинен ставати джерелом істини.
-
----
-
-# 13. Search
-
-Пошук реалізований на Apache Lucene.
-
-Основні компоненти:
-
-```text
-LuceneSearchService
-SearchIndexConfig
-SearchIndexEventHandler
-```
-
-Application працює через:
-
-```text
-SearchQueryService
-SearchIndexer
-IndexRebuilder
-```
-
-Таким чином Lucene залишається infrastructure detail.
-
-Пошук підтримується через окремі application query objects:
-
-```text
-SearchRequest
-SearchResult
-SearchMode
-```
-
----
-
-# 14. Import subsystem
-
-Імпорт є однією з найбільших підсистем.
-
-Підтримуються:
-
-```text
-FB2
-INPX
-ZIP
-```
-
-Основні infrastructure-компоненти:
-
-```text
-InpxImportPipeline
-InpxReader
-JdbcBatchWriter
-
-AbstractBookImporter
-DefaultImporterRegistry
-
-Fb2Importer
-InpxImporter
-InpxFastImportService
-
-Fb2ImportReader
-InpxImportReader
-
-ZipImporter
-```
-
-Application orchestration використовує:
-
-```text
-ImportDirectoryUseCase
-ImportFileUseCase
-```
-
-і відповідні ports.
-
----
-
-# 15. FB2
-
-FB2 має два різні шляхи в поточній архітектурі.
-
-## 15.1. Library import path
-
-Для імпорту FB2 використовується:
-
-```text
-infrastructure.importer.fb2.Fb2Importer
-```
-
-та пов'язані importer/readers.
-
-## 15.2. Reader path
-
-Для безпосереднього читання книги використовується окрема Reader-підсистема:
-
-```text
-reader.parser.JsoupFb2Parser
-reader.renderer.DocumentToHtmlConverter
-```
-
-Це важливе розділення.
-
-Import відповідає за внесення книги в бібліотеку.
-
-Reader відповідає за підготовку книги до інтерактивного читання.
-
----
-
-# 16. Reader
-
-Reader знаходиться переважно в:
-
-```text
-myhomelib-ui/src/main/java/com/myhomelibcorp/reader
-```
-
-Це свідомо окрема підсистема всередині UI-модуля.
-
-Поточна структура:
-
-```text
-reader/
-├── core/
-│   └── ReaderSettings
-├── model/
-│   ├── BookDocument
-│   ├── BookMetadata
-│   ├── Chapter
-│   ├── ImageData
-│   ├── ReaderBookContent
-│   ├── ReaderPosition
-│   ├── ReaderReadingStats
-│   └── ReaderTheme
-├── parser/
-│   └── JsoupFb2Parser
-├── renderer/
-│   └── DocumentToHtmlConverter
-├── service/
-│   ├── AutoScrollService
-│   ├── ImageCacheService
-│   ├── ReaderBookmarkService
-│   ├── ReaderContentService
-│   ├── ReaderFacade
-│   ├── ReaderJsBridge
-│   ├── ReaderPositionService
-│   ├── ReaderScheduler
-│   ├── ReaderSettingsService
-│   ├── ReaderStatsService
-│   └── ReaderTocService
-└── session/
-    ├── ReaderSession
-    └── ReaderSessionManager
-```
-
----
-
-# 17. Reader — модель даних
-
-`BookDocument` є проміжною моделлю між FB2 XML та HTML.
-
-Схема:
-
-```text
-FB2
- ↓
-JsoupFb2Parser
- ↓
-BookDocument
- ├── BookMetadata
- ├── Chapter[]
- └── ImageData[]
- ↓
-DocumentToHtmlConverter
- ↓
-HTML
- ↓
-JavaFX WebView
-```
-
-Це правильне концептуальне розділення.
-
-Parser не повинен напряму керувати WebView.
-
-Renderer не повинен читати SQLite.
-
----
-
-# 18. JsoupFb2Parser
-
-Поточний parser:
-
-```text
-JsoupFb2Parser
-```
-
-використовує Jsoup XML parser.
-
-Він:
-
-1. читає FB2;
-2. визначає кодування;
-3. знаходить `FictionBook`;
-4. читає metadata;
-5. читає authors;
-6. читає images;
-7. читає footnotes;
-8. будує chapters;
-9. будує paragraphs;
-10. повертає `BookDocument`.
-
-У parser також присутня поточна логіка генерації paragraph identifiers та XPath-related metadata.
-
-Це місце є важливим для подальшої стабілізації reading position.
-
----
-
-# 19. DocumentToHtmlConverter
-
-`DocumentToHtmlConverter` перетворює:
-
-```text
-BookDocument
-```
-
-у:
-
-```text
-HTML document
-```
-
-HTML містить:
-
-```text
-DOCTYPE
-html
-head
-meta charset
-viewport
-CSS
-body
-book metadata
-chapters
-paragraphs
-images
-footnotes
-links
-```
-
-Для санітизації використовується Jsoup `Safelist`.
-
-Підтримуються HTML-теги для:
-
-```text
-b
-i
-strong
-em
-u
-s
-sub
-sup
-code
-pre
-blockquote
-q
-ul
-ol
-li
-hr
-img
-a
-```
-
-та відповідні структурні `div`, `span`, `p`, heading тощо.
-
----
-
-# 20. Reader WebView
-
-Поточний Reader використовує:
-
-```text
-JavaFX WebView
-JavaFX WebEngine
-```
-
-WebView створюється програмно в:
-
-```text
-ReaderWorkspaceController.createWebView()
-```
-
-Він:
-
-- вбудований у `StackPane`;
-- отримує HTML через `WebEngine`;
-- має JavaScript enabled;
-- використовується для layout тексту;
-- використовується для scroll;
-- використовується для page mode;
-- використовується для пошуку;
-- використовується для внутрішньої навігації.
-
-Це означає, що Reader є гібридним:
-
-```text
-Java:
-  lifecycle
-  state
-  persistence
-  settings
-  services
-
-JavaScript:
-  DOM
-  layout
-  scroll
-  viewport
-  text coordinates
-```
-
----
-
-# 21. ReaderFacade
-
-`ReaderFacade` є головним orchestration service Reader.
-
-Він координує:
-
-```text
-LoadBookByIdUseCase
-SessionService
-ReaderSessionManager
-ReaderContentService
-ReaderPositionService
-ReaderBookmarkService
-ReaderTocService
-ReaderSettingsService
-ReaderStatsService
-ReaderScheduler
-```
-
-Основні операції:
-
-```text
-openBook()
-closeBook()
-loadBookContent()
-saveCurrentPosition()
-schedulePositionSave()
-savePositionNow()
-restorePositionAfterLoad()
-getCurrentPosition()
-addBookmark()
-removeBookmark()
-getBookmarks()
-goToBookmark()
-getToc()
-navigateToChapter()
-getCurrentChapterTitle()
-settings
-zoom
-cache
-statistics
-```
-
-Facade є правильною точкою orchestration, щоб `ReaderWorkspaceController` не керував усіма Reader-сервісами безпосередньо.
-
----
-
-# 22. ReaderSession
-
-`ReaderSession` представляє активне читання конкретної книги.
-
-Вона зберігає runtime state:
-
-```text
-book
-bookId
-sessionId
-WebView
-WebEngine
-progress
-zoom
-restore position
-UI references
-active/closed state
-```
-
-`ReaderSessionManager` керує поточною Reader session.
-
-Поточна модель орієнтована на одну активну книгу одночасно.
-
----
-
-# 23. Reader position
-
-Основні компоненти:
-
-```text
-ReaderPosition
-ReaderPositionService
-SqliteReadingProgressRepository
-```
-
-Поточний flow:
-
-```text
-WebView
- ↓
-ReaderPositionService.getCurrentPosition()
- ↓
-ReaderPosition
- ↓
-ReadingProgressDto
- ↓
-ReadingProgressRepository
- ↓
-SQLite
-```
-
-При повторному відкритті:
-
-```text
-SQLite
- ↓
-ReadingProgressDto
- ↓
-ReaderPosition
- ↓
-ReaderSession.restorePosition
- ↓
-ReaderPositionService.restorePosition()
- ↓
-JavaScript
- ↓
-WebView scroll
-```
-
----
-
-# 24. Поточний механізм визначення позиції
-
-Поточний `ReaderPositionService` визначає позицію на основі DOM viewport.
-
-Він аналізує:
-
-```text
-scrollTop
-window.innerHeight
-document height
-paragraph rects
-visible paragraph
-paragraphId
-xpath
-paragraphIndex
-charOffset
-percent
-chapterTitle
-```
-
-Однак `charOffset` наразі обчислюється приблизно через співвідношення видимої висоти paragraph до його повної висоти.
-
-Це не є точним текстовим locator.
-
----
-
-# 25. Поточний механізм відновлення позиції
-
-Поточний restore працює так:
-
-```text
-saved xpath / paragraphId
-        ↓
-querySelector()
-        ↓
-paragraph
-        ↓
-scrollIntoView({ block: 'start' })
-        ↓
-за наявності charOffset
-створюється DOM Range
-        ↓
-Range встановлюється як Selection
-```
-
-Якщо paragraph не знайдено:
-
-```text
-percent
- ↓
-scrollTo()
-```
-
-Таким чином зараз існує три рівні locator:
-
-```text
-XPath
-paragraphId
-percent
-```
-
-а `charOffset` використовується після пошуку paragraph.
-
----
-
-# 26. Поточна проблема reading position
-
-У поточній версії є технічні проблеми, які потрібно враховувати при подальшій розробці.
-
-## 26.1. Selection використовується як частина position logic
-
-JavaScript position tracking має код, який працює з:
-
-```text
-window.getSelection()
-```
-
-При цьому restore також створює Selection.
-
-Selection семантично є виділенням тексту, а не reading cursor.
-
-Це створює ризик, що відновлення та подальше збереження позиції можуть взаємно впливати одне на одного.
-
-## 26.2. Restore не використовує charOffset для точного scroll
-
-Поточний restore спочатку:
-
-```text
-paragraph.scrollIntoView()
-```
-
-а потім створює Range на `charOffset`.
-
-Сам Range не використовується для корекції фактичного scroll.
-
-Отже позиція може відновитися на початку paragraph, а не на точному місці всередині нього.
-
-## 26.3. `data-xpath` не входить до Safelist для paragraph
-
-`DocumentToHtmlConverter` дозволяє:
-
-```text
-data-paragraph-id
-```
-
-але поточний Safelist для `p` не містить:
-
-```text
-data-xpath
-```
-
-При проходженні через `Jsoup.clean()` цей атрибут може бути видалений.
-
-Водночас `ReaderPositionService` очікує:
-
-```text
-p[data-xpath="..."]
-```
-
-Це створює невідповідність між генерацією HTML і restore logic.
-
-## 26.4. `paragraphId` генерується порядково
-
-Поточний parser має:
-
-```text
-paragraphCounter
-```
-
-і генерує paragraph IDs залежно від порядку обробки.
-
-Такий ID не є повністю стабільною ідентичністю текстового вузла.
-
-## 26.5. `savePositionNow()` фактично асинхронний
-
-Метод запускає отримання позиції через FX scheduler.
-
-Тому його назва створює хибне очікування, що після повернення методу позиція вже гарантовано записана.
-
-Це особливо важливо при закритті session.
-
----
-
-# 27. Reader settings
-
-Reader підтримує:
-
-```text
-ReaderSettings
-ReaderSettingsService
-ReaderTheme
-```
-
-Поточна функціональність включає:
-
-```text
-font family
-font size
-theme
-zoom
-page mode
-auto-scroll
-scroll speed
-```
-
-Налаштування застосовуються через `ReaderContentService`.
-
----
-
-# 28. Bookmarks
-
-Закладки реалізовані окремою підсистемою:
-
-```text
-ReaderBookmarkService
-BookmarksController
-BookmarkRepository
-```
-
-Закладка є persistent даними, а Reader service відповідає за navigation до неї.
-
----
-
-# 29. TOC
-
-Зміст книги обробляється:
-
-```text
-ReaderTocService
-TOCController
-Chapter
-```
-
-TOC формується з Reader document/chapter structure.
-
-Навігація:
-
-```text
-TOCController
- ↓
-ReaderFacade
- ↓
-ReaderTocService
- ↓
-WebView
-```
-
----
-
-# 30. Auto-scroll
-
-Автоскрол реалізований:
-
-```text
-AutoScrollService
-```
-
-та керується через:
-
-```text
-ReaderWorkspaceController
-ReaderSettings
-```
-
-Автоскрол є runtime функцією WebView Reader і не повинен містити persistence logic.
-
----
-
-# 31. Reading statistics
-
-Статистика читання розділена від reading position.
-
-Є:
-
-```text
-ReaderReadingStats
-ReaderStatsService
-ReadingStatisticsDto
-ReadingStatisticsPort
-SqliteReadingStatisticsRepository
-```
-
-Це правильне розділення:
-
-```text
-reading_progress
-    = де користувач читає
-
-reading_stats
-    = скільки/коли користувач читає
-```
-
----
-
-# 32. UI
-
-Основний UI — JavaFX.
-
-Є:
-
-```text
-FXML
-Controllers
-ViewModels
-Presenters
-Navigation
-Workspace management
-Dialogs
-Services
-```
-
-Основні UI області:
-
-```text
-author
-book
-collection
-dashboard
-details
-group
-imports
-navigation
-reader
-search
-statusbar
-table
-```
-
----
-
-# 33. Navigation
-
-Основні компоненти:
-
-```text
-NavigationService
-DefaultNavigationService
-NavigationHistoryService
-NavigationPanelController
-WorkspaceManager
-WorkspaceLifecycle
-```
-
-Workspace lifecycle використовується для керування переходами між робочими областями.
-
----
-
-# 34. Author workspace
-
-Основна сторінка автора реалізована через:
-
-```text
-AuthorWorkspaceController
-author-workspace.fxml
-```
-
-Вона працює через application use cases/DTO і не повинна напряму звертатися до SQLite.
-
----
-
-# 35. Search UI
-
-Search UI:
-
-```text
-SearchWorkspaceController
-SearchViewModel
-BookSearchPresenter
-```
-
-Application layer визначає search contracts, infrastructure реалізує Lucene.
-
-Це відповідає загальній схемі:
-
-```text
-UI
- ↓
-Application search
- ↓
-Search port
- ↓
-Lucene infrastructure
-```
-
----
-
-# 36. Import UI
-
-Import UI:
-
-```text
-ImportWorkspaceController
-ImportController
-BookImportPresenter
-```
-
-Викликає application use cases, а actual file processing виконується infrastructure.
-
----
-
-# 37. Bootstrap
-
-`myhomelib-bootstrap` є executable module.
-
-Основний entry point:
-
-```text
-com.myhomelibcorp.MyHomeLibApp
-```
-
-Також є:
-
-```text
-LibraryHealthIndicator
-```
-
-Bootstrap підключає:
-
-```text
-Spring Boot
-JavaFX
-UI
-Infrastructure
-```
-
-і запускає desktop application.
-
----
-
-# 38. Spring Boot
-
-Spring використовується як DI/container framework.
-
-Основні ролі:
-
-```text
-@Service
-@Component
-@Configuration
-@Bean
-@Autowired через constructor injection
-```
-
-Spring не є частиною Domain model.
-
-Domain залишається plain Java.
-
----
-
-# 39. Spring Modulith
-
-У root dependencies присутній:
-
-```text
-spring-modulith 1.4.0
-```
-
-але поточний проект **не використовує явні `@ApplicationModule`, `@NamedInterface` або `ApplicationModules` architectural declarations**.
-
-Тому фактична модульність зараз визначається переважно:
-
-```text
-Maven modules
-package structure
-ArchUnit rules
-dependency direction
-```
-
-а не Spring Modulith module boundaries.
-
----
-
-# 40. Events
-
-Domain/shared events:
-
-```text
-DomainEvent
-DomainEventPublisher
-BaseDomainEvent
-```
-
-Infrastructure реалізує event publishing через:
-
-```text
-SpringDomainEventPublisher
-SimpleEventBus
-```
-
-Обробники включають:
-
-```text
-DomainBookEventHandler
-CacheEvictor
-SearchIndexEventHandler
-StatisticsEventHandler
-```
-
-Типовий flow:
-
-```text
-Book change
- ↓
-Domain event
- ↓
-Event publisher
- ├── cache invalidation
- ├── search indexing
- └── statistics
-```
-
-Це зменшує пряме зв'язування основного CRUD flow із secondary effects.
-
----
-
-# 41. Configuration
-
-Infrastructure configuration включає:
-
-```text
-ApplicationServiceConfig
-AsyncConfig
-CacheConfig
-CollectionTransactionConfig
-DatabaseCleanupConfig
-DataSourceConfig
-FlywayMetadataConfig
-MetadataDatabaseConfig
-ReaderResourceConfig
-```
-
-Це означає, що technical wiring переважно знаходиться поза UI.
-
----
-
-# 42. Async execution
-
-Поточна система має:
-
-```text
-BackgroundExecutor
-SpringExecutorAdapter
-ReaderScheduler
-UiBackgroundExecutor
-BackgroundTaskService
-UiExecutor
-```
-
-Є декілька execution abstractions через різні рівні системи.
-
-Особливо важливо не плутати:
-
-```text
-background worker thread
-JavaFX Application Thread
-WebEngine JavaScript execution
-```
-
-Reader WebView повинен працювати з FX/WebEngine контекстом.
-
----
-
-# 43. Threading model
-
-Ключові потоки:
-
-```text
-JavaFX Application Thread
-        │
-        ├── UI
-        ├── WebView
-        └── WebEngine JavaScript
-
-Background executors
-        │
-        ├── import
-        ├── database work
-        ├── indexing
-        ├── heavy processing
-        └── background tasks
-```
-
-Правило:
-
-```text
-JavaFX UI/WebView operations → FX thread
-heavy IO/import/indexing → background thread
-database operations → infrastructure
-```
-
-Порушення цього правила може призвести до нестабільності UI або WebEngine.
-
----
-
-# 44. Architecture tests
-
-Окремий Maven module:
-
-```text
-myhomelib-architecture-tests
-```
-
-містить:
-
-```text
-LayerArchitectureTest
-```
-
-Поточні правила контролюють:
-
-## Domain
-
-Не залежить від:
-
-```text
-application
-infrastructure
-ui
-Spring
-JavaFX
-java.sql
-```
-
-## Application
-
-Не залежить від:
-
-```text
-infrastructure
-ui
-JDBC
-Lucene
-JavaFX
-```
-
-## Infrastructure
-
-Не залежить від:
-
-```text
-ui
-```
-
-## UI
-
-Не залежить безпосередньо від:
-
-```text
-repository
-persistence
-jdbc
-sqlite
-application.port.out
-```
-
-Також контролюється відсутність прямої залежності UI від основних Domain models там, де існують DTO.
-
-## Reader
-
-Контролюється відсутність прямої залежності Reader від:
-
-```text
-infrastructure
-sqlite
-lucene
-```
-
-Окремо перевіряється:
-
-```text
-ReaderBookResourcePort
-```
-
-повинен мати infrastructure implementation.
-
----
-
-# 45. Важлива особливість Maven-залежностей
-
-Попри ArchUnit правила, поточний `myhomelib-ui/pom.xml` має dependency:
-
-```text
-myhomelib-infrastructure
-```
-
-Тобто на Maven-рівні UI та Infrastructure ще пов'язані.
-
-Це означає:
-
-```text
-архітектурна логічна ізоляція ≠ повна фізична ізоляція Maven-модулів
-```
-
-ArchUnit контролює Java class dependencies у визначених областях, але не замінює Maven dependency graph.
-
-На поточному етапі це слід вважати свідомим технічним станом, а не припускати, що UI вже повністю відокремлений від Infrastructure.
-
----
-
-# 46. Tests
-
-У поточному архіві є 8 Java test files.
-
-Основні області:
-
-```text
-Domain:
-LanguageCodeTest
-
-Infrastructure:
-InpxImportPipelineTest
-Fb2ImporterTest
-DatabaseTest
-SqliteBookQueryRepositoryTest
-TestCollectionManager
-PerformanceProfilerTest
-
-Architecture:
-LayerArchitectureTest
-```
-
-Окремого повного Reader test suite у поточному стані немає.
-
-Це важливий архітектурний gap, особливо для:
-
-```text
-reading position
-restore
-WebView integration
-reader settings
-bookmarks
-TOC
-```
-
----
-
-# 47. E2E tests
-
-Maven module:
-
-```text
-myhomelib-e2e-tests
-```
-
-присутній і має Testcontainers dependencies.
-
-Але в поточному архіві немає Java test classes у цьому модулі.
-
-Тобто E2E infrastructure підготовлена на рівні Maven, але фактичний E2E test suite наразі не сформований.
-
----
-
-# 48. Benchmark
-
-Є окремий модуль:
-
-```text
-myhomelib-benchmark
-```
-
-з:
-
-```text
-ImportBenchmark
-```
-
-Він призначений для вимірювання продуктивності import pipeline.
-
-Benchmark не є частиною runtime application.
-
----
-
-# 49. Resource organization
-
-UI resources:
-
-```text
-myhomelib-ui/src/main/resources/view/
-```
-
-містять 25 FXML views.
-
-Основні:
-
-```text
-MainView.fxml
-dashboard.fxml
-author-workspace.fxml
-book-workspace.fxml
-collection-workspace.fxml
-groups-workspace.fxml
-reader-workspace.fxml
-reader-settings.fxml
-search-workspace.fxml
-import-workspace.fxml
-details.fxml
-toc-dialog.fxml
-bookmark-dialog.fxml
-```
-
-Infrastructure resources містять:
-
-```text
-db/migration
-db/migration_meta
-genres_fb2.txt
-```
-
-Bootstrap resources:
-
-```text
-application.yml
-application-dev.yml
-application-prod.yml
-```
-
----
-
-# 50. Поточний dependency stack
-
-Основні версії:
-
-```text
-Java                         21
-Spring Boot                  3.5.0
-Spring Modulith              1.4.0
-JavaFX                       21.0.2
-SQLite JDBC                  3.47.0.0
-Flyway                       10.16.0
-MapStruct                    1.5.5.Final
-Lombok                       1.18.30
-Caffeine                     3.1.8
-Lucene                       9.9.1
-JUnit                        5.10.2
-Mockito                      5.10.0
-AssertJ                      3.25.3
-ArchUnit                     1.3.0
-Testcontainers               1.19.7
-```
-
----
-
-# 51. Поточна структура проекту
-
-```text
-myhomelib-enterprise/
-│
-├── pom.xml
-│
-├── myhomelib-shared/
-│   └── cross-cutting primitives
-│
-├── myhomelib-domain/
-│   └── business model
-│
-├── myhomelib-application/
-│   ├── dto
-│   ├── event
-│   ├── imports
-│   ├── mapper
-│   ├── port
-│   ├── query
-│   ├── search
-│   ├── service
-│   ├── session
-│   ├── statistics
-│   └── usecase
-│
-├── myhomelib-infrastructure/
-│   ├── adapter
-│   ├── cache
-│   ├── config
-│   ├── event
-│   ├── executor
-│   ├── exporter
-│   ├── importengine
-│   ├── importer
-│   ├── parser
-│   ├── persistence
-│   ├── reader
-│   ├── resource
-│   ├── search
-│   ├── sync
-│   └── ...
-│
-├── myhomelib-ui/
-│   ├── reader
-│   ├── ui
-│   └── resources/view
-│
-├── myhomelib-bootstrap/
-│   ├── MyHomeLibApp
-│   └── monitoring
-│
-├── myhomelib-architecture-tests/
-│   └── LayerArchitectureTest
-│
-├── myhomelib-e2e-tests/
-│
-└── myhomelib-benchmark/
-    └── ImportBenchmark
-```
-
----
-
-# 52. Основні runtime flows
-
-## 52.1. Відкриття книги в бібліотеці
-
-```text
-UI
- ↓
-LoadBookByIdUseCase
- ↓
-BookQueryRepository
- ↓
-SQLite
- ↓
-BookDto
- ↓
-UI
-```
-
----
-
-# 53. Відкриття книги в Reader
-
-```text
-ReaderWorkspaceController
-        ↓
-ReaderFacade.openBook()
-        ↓
-LoadBookByIdUseCase
-        ↓
-ReaderSessionManager.createSession()
-        ↓
-ReaderPositionService.loadPosition()
-        ↓
-SQLite
-        ↓
-ReaderSession.restorePosition
-        ↓
-ReaderFacade.loadBookContent()
-        ↓
-ReaderContentService
-        ↓
-FB2 resource
-        ↓
-JsoupFb2Parser
-        ↓
-BookDocument
-        ↓
-DocumentToHtmlConverter
-        ↓
-HTML
-        ↓
-WebEngine.loadContent()
-        ↓
-restorePosition()
-        ↓
-WebView
-```
-
----
-
-# 54. Збереження позиції
-
-Поточний flow:
-
-```text
-WebView
- ↓
-ReaderPositionService.getCurrentPosition()
- ↓
-ReaderPosition
- ↓
-debounce scheduler
- ↓
-ReadingProgressDto
- ↓
-ReadingProgressRepository
- ↓
-SqliteReadingProgressRepository
- ↓
-reading_progress
-```
-
-При закритті:
-
-```text
-ReaderWorkspaceController
-        ↓
-ReaderFacade.closeBook()
-        ↓
-savePositionNow()
-        ↓
-ReadingProgressRepository
-        ↓
-SQLite
-        ↓
-endReadingSession()
-        ↓
-close ReaderSession
-```
-
-У поточній реалізації Controller також викликає `savePositionNow()` перед `closeBook()`, що створює дублювання lifecycle logic.
-
----
-
-# 55. Library import flow
-
-```text
-UI
- ↓
-ImportFileUseCase / ImportDirectoryUseCase
- ↓
-ImporterRegistry
- ↓
-Fb2Importer / InpxImporter / ZipImporter
- ↓
-Parser / Reader
- ↓
-Book domain model / DTO
- ↓
-BookCommandRepository
- ↓
-SQLite
- ↓
-Domain events
- ├── cache invalidation
- ├── search index update
- └── statistics
-```
-
----
-
-# 56. Search flow
-
-```text
-Search UI
- ↓
-SearchWorkspaceController
- ↓
-Search application service
- ↓
-SearchQueryService
- ↓
-LuceneSearchService
- ↓
+## 7. Search
+
+Search contracts live in application (`SearchIndexer`, `SearchQueryService`,
+query/request/result types). Lucene lives in infrastructure.
+
+```text
+UI / Use Case
+     │
+     ▼
+application search contract
+     │
+     ▼
+LuceneSearchService (infrastructure)
+     │
+     ▼
 Lucene index
- ↓
-SearchResult
- ↓
-ViewModel / Presenter
- ↓
-JavaFX
 ```
+
+Stage 1 removes the unused Lucene dependency from `myhomelib-application`.
+This matches the architecture rule that application describes search intent,
+while infrastructure owns the search engine.
 
 ---
 
-# 57. Cache invalidation flow
+## 8. Import and archive processing
 
-```text
-Book mutation
- ↓
-Domain event
- ↓
-SpringDomainEventPublisher
- ↓
-CacheEvictor / SearchIndexEventHandler
- ↓
-Caffeine cache invalidation
- ↓
-Lucene index update
-```
+Import orchestration is split between application use cases/contracts and
+infrastructure format/archive adapters.
 
-Це дозволяє не вставляти cache invalidation вручну в кожен UI flow.
+Current supported paths include FB2/FBD, EPUB, TXT, ZIP-family archives, 7z,
+RAR and INPX catalogue import.
+
+Archive safety limits belong in `shared` because they are also used by the MCP
+sidecar. Concrete archive libraries remain in infrastructure/MCP, not domain or
+application.
+
+Nested archives are intentionally not recursively expanded by default.
 
 ---
 
-# 58. Основні архітектурні принципи проекту
+## 9. Localization architecture
 
-Поточний проект слід розвивати відповідно до таких правил:
-
-## 58.1. Domain не знає про framework
-
-Не додавати:
+Localization is file-based and externally extensible.
 
 ```text
-Spring annotations
-JavaFX classes
-JDBC
-SQLite
-Lucene
+Lang/<code>.json             translation catalogues
+config/language.txt          selected language
+config/available-languages.txt  generated discovered-language list
 ```
 
-у Domain.
+At startup and when the language menu is opened, the UI localization service
+rescans `Lang`. New valid language catalogues become available without Java or
+FXML changes.
 
-## 58.2. Application визначає контракти
+Localization is a UI concern. Domain values should store stable codes (for
+example a language or future genre code), not translated display labels.
 
-Якщо application потребує:
-
-```text
-database
-filesystem
-reader resource
-search
-cache
-executor
-```
-
-спочатку створюється port.
-
-## 58.3. Infrastructure реалізує ports
-
-Concrete technology повинна залишатися Infrastructure detail.
-
-## 58.4. UI працює через application/use cases
-
-UI не повинен виконувати SQL.
-
-## 58.5. Reader не працює напряму з persistence
-
-Reader використовує:
-
-```text
-ReaderFacade
-Application use cases
-Reader ports
-```
-
-а не SQLite repository напряму.
-
-## 58.6. WebView є rendering runtime, а не persistence layer
-
-JavaScript не повинен самостійно зберігати дані в SQLite.
+See `LANGUAGE_SYSTEM.md` for catalogue details.
 
 ---
 
-# 59. Поточні архітектурні слабкі місця
+## 10. Startup and shutdown
 
-## 59.1. UI → Infrastructure Maven dependency
+`MyHomeLibApp` in bootstrap owns the desktop lifecycle:
 
-`myhomelib-ui` залежить від `myhomelib-infrastructure`.
+1. start Spring context;
+2. show JavaFX splash;
+3. initialize active collection/database;
+4. synchronize dictionaries/series;
+5. initialize import/search components;
+6. warm caches;
+7. load `MainView.fxml`;
+8. on shutdown, dispose workspace/reader and close executors, Lucene,
+   collection resources and Spring context.
 
-Це робить фізичну модульну ізоляцію слабшою, ніж логічна.
-
-## 59.2. Reader знаходиться всередині UI module
-
-Reader містить значну кількість domain-independent logic:
-
-```text
-parser
-renderer
-position
-session
-content
-settings
-statistics
-```
-
-Тому з часом він може стати окремим application/UI boundary.
-
-Але на поточному етапі виділяти Reader в окремий Maven module не обов'язково.
-
-## 59.3. WebView JavaScript logic розподілена по сервісах
-
-Частина DOM logic знаходиться в:
-
-```text
-ReaderPositionService
-ReaderJsBridge
-ReaderWorkspaceController
-ReaderTocService
-AutoScrollService
-```
-
-Це збільшує ризик дублювання JavaScript.
-
-## 59.4. Reader position model ще не стабільна
-
-Поточна модель змішує:
-
-```text
-paragraphId
-xpath
-paragraphIndex
-charOffset
-percent
-```
-
-без одного чіткого canonical locator.
-
-## 59.5. Тестовий контур Reader недостатній
-
-Reader має критичну persistence/rendering поведінку, але окремих автоматичних тестів для reopen/restore немає.
+Bootstrap may reference concrete infrastructure components because it is the
+composition root. Feature logic should still move into use cases/services when
+it can be called independently of startup.
 
 ---
 
-# 60. Що в архітектурі вже добре
+## 11. Threading
 
-Поточна структура має кілька сильних сторін.
+General rule:
 
-### 1. Domain isolation
+- JavaFX scene graph operations -> JavaFX Application Thread;
+- blocking filesystem/network/database/index work -> background executor;
+- application/domain objects must not require the JavaFX thread;
+- long import/index loops should provide bounded batches and cancellation where
+  supported.
 
-Domain реально відокремлений від JavaFX/Spring/SQL.
-
-### 2. Application ports
-
-Repository/search/resource/cache contracts винесені в application.
-
-### 3. Infrastructure isolation
-
-SQLite, Lucene, Caffeine, Flyway та import/export реалізовані окремо.
-
-### 4. Reader facade
-
-Reader orchestration не повністю знаходиться у JavaFX Controller.
-
-### 5. Session model
-
-Reader має явну `ReaderSession`.
-
-### 6. Separate DTO layer
-
-UI не повинен безпосередньо працювати з більшістю Domain entities.
-
-### 7. Architecture tests
-
-Проект вже має ArchUnit-захист від основних dependency violations.
-
-### 8. Migration history
-
-Database schema управляється Flyway, а не ручним створенням таблиць.
-
-### 9. Event-driven secondary operations
-
-Cache/search/statistics можуть реагувати на domain events.
+Reader JavaFX renderer is UI-thread-bound; parser/layout/storage components are
+not JavaFX-bound by architecture.
 
 ---
 
-# 61. Архітектурні правила для подальшого розвитку
+## 12. Architecture verification
 
-Новий код потрібно розміщувати за такими правилами.
+### Fast offline guard
 
-## Новий бізнес-об'єкт
+Run from repository root:
 
-```text
-myhomelib-domain
+```bash
+python3 tools/architecture-check.py
 ```
 
-## Новий бізнес use case
+It requires no external libraries and checks:
 
-```text
-myhomelib-application/usecase
+- exact direct internal Maven dependency graph;
+- graph cycles;
+- source references without direct POM dependencies;
+- forbidden framework/layer references;
+- Reader portable-package JavaFX isolation;
+- Stage 1 dependency-cleanup invariants;
+- UI architecture-debt ratchets.
+
+This check is intended to run even before Maven can download dependencies.
+
+### ArchUnit
+
+When Maven dependencies are available:
+
+```bash
+./mvnw -pl myhomelib-architecture-tests -am test
 ```
 
-## Новий application contract
+ArchUnit checks the same hard package/layer boundaries against compiled
+bytecode and checks top-level package cycles.
 
-```text
-myhomelib-application/port
-```
-
-## SQLite implementation
-
-```text
-myhomelib-infrastructure/persistence/sqlite
-```
-
-## Lucene implementation
-
-```text
-myhomelib-infrastructure/search
-```
-
-## Cache implementation
-
-```text
-myhomelib-infrastructure/cache
-```
-
-## File/resource implementation
-
-```text
-myhomelib-infrastructure/resource
-```
-
-## Reader parser
-
-```text
-myhomelib-ui/reader/parser
-```
-
-## Reader rendering
-
-```text
-myhomelib-ui/reader/renderer
-```
-
-## Reader state/service
-
-```text
-myhomelib-ui/reader/service
-```
-
-## JavaFX Controller
-
-```text
-myhomelib-ui/ui
-```
-
-## FXML
-
-```text
-myhomelib-ui/src/main/resources/view
-```
+Both checks should pass before merging a feature stage.
 
 ---
 
-# 62. Правило для database changes
+## 13. Stage 1 dependency cleanup
 
-Не створювати SQL у:
+The baseline removes dependencies that were inconsistent with actual source
+usage or architecture:
 
-```text
-UI
-Reader
-Application use case
-Domain
-```
+- removed `myhomelib-ui -> myhomelib-infrastructure`;
+- removed Lucene from `myhomelib-application`;
+- removed unused Spring Modulith from application/root dependency management;
+- removed unused Spring Boot/autoconfigure/configuration-processor declarations
+  from application;
+- removed unused `jakarta.annotation-api` from application;
+- removed JavaFX from infrastructure;
+- removed unused SLF4J dependency from domain;
+- added explicit direct `shared/domain/application` dependencies where source
+  code already used those modules through transitive dependencies.
 
-SQL повинен знаходитися в Infrastructure.
-
-Schema changes:
-
-```text
-Flyway migration
-```
-
-Repository:
-
-```text
-Infrastructure
-```
-
-Port:
-
-```text
-Application
-```
-
-DTO:
-
-```text
-Application
-```
+No user-facing feature behavior is intentionally changed by this cleanup.
 
 ---
 
-# 63. Правило для Reader changes
+## 13.1 Navigation query boundary (Stage 2)
 
-Будь-яка нова Reader feature повинна спочатку визначити:
-
-```text
-runtime state
-persistent state
-UI state
-```
-
-Наприклад, для bookmark:
+Desktop catalogue navigation now has one application-level query boundary:
 
 ```text
-persistent:
-BookmarkRepository
-
-application:
-Bookmark contract/use case
-
-reader:
-ReaderBookmarkService
-
-UI:
-BookmarksController
+JavaFX NavigationPanelController
+        |
+        v
+NavigationQueryService
+        |
+        +--> AuthorRepository
+        +--> SeriesRepository
+        +--> GenreRepository
+        +--> BookQueryRepository
+        +--> NavigationFacetRepository
+                 |
+                 v
+          SQL GROUP BY facets
+        |
+        v
+NavigationNodeDto
 ```
 
-Для reading position:
+`NavigationMode` belongs to the application layer and currently defines
+`AUTHORS`, `SERIES`, `GENRES`, `YEARS`, `LANGUAGES`, `ARCHIVES`, `KEYWORDS`,
+`GROUPS`, `REVIEWS`, `ALREADY_READ`, `HISTORY` and `ALL_BOOKS`. The JavaFX controller only renders/filters
+nodes and reports the selected `NavigationNodeDto`; it does not construct domain
+entities or generate catalogue IDs.
 
-```text
-persistent:
-ReadingProgressRepository
+Stage 3 adds `NavigationFacetRepository` for database-side aggregation of year,
+language and physical archive facets. Stage 4 extends the same port with keyword,
+group and rating/review facets. These modes never materialize the whole catalogue
+merely to build navigation. Selection is converted back to a normal paginated
+`BookQuery`; year/archive, exact keyword, group and rated/reviewed filters are
+first-class query state. Archive history uses the application-level
+`ArchiveNavigationKey`, while review subsets use stable `ReviewNavigationFilter`
+identifiers. Stage 5 adds synthetic `ALREADY_READ` and `HISTORY` nodes.
+`ALREADY_READ` reuses the existing `BookQuery.onlyRead` contract (`progress = 100`).
+`HISTORY` uses a dedicated `reading_history` table, so clearing the user-visible
+history does not delete `reading_progress`, bookmarks or read status. Reader opens
+are recorded only after the book has opened successfully, and history workspaces
+are ordered by `last_opened_at DESC`.
 
-application:
-ReadingProgressDto / port
+Series nodes use persisted `SeriesId` values from `SeriesRepository.findAll()`;
+the previous UI behavior that generated random IDs during navigation loading
+has been removed.
 
-reader:
-ReaderPositionService
+## 13.2 Online catalogue revision boundary (Stage 6)
 
-UI:
-ReaderWorkspaceController
-```
+Remote INPX updates carry a stable application-level source key based on the persisted
+collection ID instead of the temporary cache filename returned by the HTTP downloader.
+`InpxImportPipeline` fingerprints the source and each logical book; infrastructure
+implements `CatalogUpdateTrackingPort` with `catalog_sources`, `catalog_book_state`,
+`followed_authors` and `catalog_update_events` from Flyway V31.
+
+The per-book catalogue representation is deliberately separate from physical local
+storage. Remote INPX UPSERTs may refresh catalogue metadata but must preserve local
+file coordinates for an already downloaded row together with rating, progress, review,
+bookmarks and other user data. A successful download captures the current catalogue
+revision/fingerprint as the downloaded baseline. This lets the data layer distinguish
+`NEW_BY_FOLLOWED_AUTHOR` from `UPDATED_DOWNLOADED_BOOK` without treating a repeated
+identical sync as a new update.
+
+`CatalogUpdateService` is the application facade intended for the Stage 7 UI; JavaFX
+should not consume the SQLite adapter directly. See
+`docs/architecture/ONLINE_UPDATE_MODEL_STAGE6.md`.
+
+## 14. Known architecture debt
+
+The baseline intentionally does not hide existing violations by pretending the
+system is cleaner than it is.
+
+### UI -> output ports
+
+18 UI classes currently call application output ports directly. Adapters are
+normally supposed to be consumed by application services/use cases, not by the
+UI. This will be reduced incrementally when related features are refactored.
+
+### UI -> non-value domain model
+
+28 UI classes currently use domain entities/models directly. Domain IDs and
+small value objects are acceptable at the current boundary; larger entities
+should gradually be replaced with application DTO/view models.
+
+### Bootstrap orchestration size
+
+`MyHomeLibApp` currently performs substantial startup/index initialization and
+explicit shutdown orchestration. It is allowed to know adapters as composition
+root, but some orchestration can later move into lifecycle services.
+
+### Reader physical module split
+
+Reader portable and JavaFX code are package-separated but still packaged in one
+Maven module. A physical module split is optional future work, not required for
+current correctness.
+
+See `docs/architecture/ARCHITECTURE_DEBT.md` for the ratchet baseline and
+reduction policy.
 
 ---
 
-# 64. Поточний статус Reader
-
-Reader уже не є базовим FB2 viewer.
-
-Він має:
-
-```text
-FB2 parsing
-HTML rendering
-images
-footnotes
-links
-TOC
-bookmarks
-themes
-font settings
-font size
-zoom
-page mode
-auto-scroll
-reading progress
-reading statistics
-session management
-search
-```
-
-Тому Reader слід розглядати як **окрему функціональну підсистему**, навіть якщо фізично він поки знаходиться у `myhomelib-ui`.
-
----
-
-# 65. Що не слід робити при подальшій розробці
-
-Не потрібно:
-
-```text
-додавати SQL у Controller;
-додавати SQLite repository у Reader;
-додавати Lucene у UI;
-переносити бізнес-правила в FXML controller;
-створювати дублікати repository;
-створювати новий parser для кожної Reader feature;
-зберігати reading state через WebView localStorage;
-змішувати JavaFX state та persistent state;
-додавати ще один execution framework;
-створювати новий module без реальної потреби.
-```
-
----
-
-# 66. Принцип "один власник відповідальності"
-
-Для критичних областей:
-
-```text
-Database schema
-    → Flyway
-
-Database access
-    → Infrastructure repositories
-
-Business orchestration
-    → Application use cases/services
-
-Reader orchestration
-    → ReaderFacade
-
-Reader position
-    → ReaderPositionService
-
-Reader session
-    → ReaderSessionManager
-
-HTML generation
-    → DocumentToHtmlConverter
-
-FB2 parsing
-    → JsoupFb2Parser
-
-JavaFX lifecycle
-    → Controller / WorkspaceManager
-
-Navigation
-    → NavigationService / WorkspaceManager
-
-Search implementation
-    → LuceneSearchService
-
-Cache implementation
-    → Caffeine infrastructure
-```
-
-Не потрібно створювати другий компонент із тією самою відповідальністю.
-
----
-
-# 67. Архітектурна оцінка поточного стану
-
-Поточна система вже має основу, достатню для подальшої розробки без повного rewrite.
-
-Оцінка поточного стану:
-
-```text
-Domain isolation             — добре
-Application ports            — добре
-Persistence separation       — добре
-Import architecture           — добре
-Search separation             — добре
-Cache separation              — добре
-Event infrastructure         — добре
-Reader decomposition         — добре
-Reader rendering              — добре
-UI organization               — добре
-Maven modularity              — добре
-ArchUnit protection           — добре
-E2E coverage                  — слабко
-Reader test coverage          — слабко
-Reader position model         — потребує стабілізації
-UI/Infrastructure physical
-separation                    — неповна
-Spring Modulith enforcement   — фактично не використовується
-```
-
----
-
-# 68. Цільова еволюція без повного переписування
-
-Поточну архітектуру не потрібно ламати.
-
-Правильний напрямок:
-
-```text
-поточна структура
-      ↓
-стабілізація Reader position
-      ↓
-Reader tests
-      ↓
-зменшення дублювання UI lifecycle
-      ↓
-посилення application ports
-      ↓
-поступове зменшення UI → Infrastructure dependency
-```
-
-Не потрібно починати новий проект або переносити весь Reader в інший framework.
-
----
-
-# 69. Головна архітектурна межа
-
-Для подальшої роботи потрібно мислити проект такими блоками:
-
-```text
-                 BUSINESS
-                    │
-                    ▼
-                 DOMAIN
-                    │
-                    ▼
-               APPLICATION
-                    │
-          ┌─────────┴─────────┐
-          ▼                   ▼
-      UI / Reader        Infrastructure
-          │                   │
-          └────── runtime ────┘
-```
-
-При цьому:
-
-```text
-Domain
-```
-
-є найстабільнішим шаром.
-
-```text
-Application
-```
-
-визначає бізнесові сценарії та контракти.
-
-```text
-Infrastructure
-```
-
-можна змінювати без зміни бізнес-моделі.
-
-```text
-UI/Reader
-```
-
-можна розвивати незалежно від persistence implementation.
-
----
-
-# 70. Короткий architectural contract
-
-Перед внесенням будь-якої нової функції потрібно відповісти на п'ять питань:
-
-1. Це бізнес-правило чи UI-поведінка?
-2. Чи потрібні persistent дані?
-3. Хто є власником цього state?
-4. Через який port проходить доступ до зовнішнього ресурсу?
-5. Чи порушує новий код існуючі ArchUnit rules?
-
-Якщо відповідь на п'яте питання — так, спочатку потрібно змінити dependency boundary, а не обходити правило.
-
----
-
-# 71. Підсумкова схема
-
-Поточна архітектура проекту:
-
-```text
-┌──────────────────────────────────────────────────────────────┐
-│                        BOOTSTRAP                             │
-│                    Spring Boot + JavaFX                      │
-└──────────────────────────────┬───────────────────────────────┘
-                               │
-                               ▼
-┌──────────────────────────────────────────────────────────────┐
-│                            UI                                │
-│                                                              │
-│ Controllers / ViewModels / Presenters / Navigation           │
-│                                                              │
-│ ┌──────────────────────────────────────────────────────────┐ │
-│ │                         READER                           │ │
-│ │                                                          │ │
-│ │ Session → Content → Parser → Document → HTML → WebView │ │
-│ │          Position → Persistence                         │ │
-│ │          TOC / Bookmark / Settings / Stats              │ │
-│ └──────────────────────────────────────────────────────────┘ │
-└──────────────────────────────┬───────────────────────────────┘
-                               │
-                               ▼
-┌──────────────────────────────────────────────────────────────┐
-│                       APPLICATION                            │
-│                                                              │
-│ Use Cases / DTO / Queries / Ports / Services / Events        │
-└──────────────────────────────┬───────────────────────────────┘
-                               │
-                               ▼
-┌──────────────────────────────────────────────────────────────┐
-│                         DOMAIN                               │
-│                                                              │
-│ Book / Author / Genre / Series / Collection / Group / etc.  │
-│ Value Objects / Domain Events                                │
-└──────────────────────────────▲───────────────────────────────┘
-                               │
-                               │ implemented ports
-                               │
-┌──────────────────────────────┴───────────────────────────────┐
-│                     INFRASTRUCTURE                            │
-│                                                              │
-│ SQLite / Flyway / Lucene / Caffeine / Files / Import /      │
-│ Export / Sync / Events / Executors / Resources / Covers     │
-└──────────────────────────────────────────────────────────────┘
-```
-
----
-
-# 72. Висновок
-
-Поточний MyHomeLib Enterprise — це вже **модульний desktop application на Java 21 із Domain/Application/Infrastructure/UI розділенням**, а не набір контролерів і SQL-запитів.
-
-Найбільш сформовані частини:
-
-```text
-Domain
-Application ports
-SQLite persistence
-Import pipeline
-Lucene search
-Caffeine cache
-Events
-JavaFX navigation
-Reader decomposition
-```
-
-Найважливіші технічні області, які зараз потребують стабілізації:
-
-```text
-Reader reading-position locator
-Reader restore algorithm
-Reader save/close lifecycle
-Reader automated tests
-UI → Infrastructure physical dependency
-```
-
-Критично важливо: **ця документація описує фактичний стан архіву станом на 19.08.2026, а не бажану майбутню архітектуру**. Запропоновані майбутні зміни не повинні трактуватися як уже реалізовані.
-
-Для подальшої роботи базовою архітектурною одиницею залишається:
-
-```text
-Domain
-    ↓
-Application + Ports
-    ↓
-Infrastructure adapters
-    ↓
-UI / Reader
-```
-
-а Reader залишається окремою функціональною підсистемою всередині `myhomelib-ui`.
+## 15. Rules for future stages
+
+When implementing new functionality:
+
+1. prefer a new application use case/query over injecting a repository/output
+   port directly into a JavaFX controller;
+2. place technology-specific work in infrastructure;
+3. do not add `UI -> infrastructure` even for a "small" convenience call;
+4. do not add Lucene/JDBC/JavaFX to application/domain;
+5. keep Reader engine packages JavaFX-free;
+6. add direct Maven dependencies for modules referenced directly in source;
+7. update Flyway for schema changes;
+8. run the offline architecture guard before packaging;
+9. run ArchUnit when Maven dependencies are available;
+10. if a hard rule truly needs to change, update this document and tests in the
+    same change rather than bypassing the rule.
+
+This architecture baseline now covers navigation/history through Stage 5 and the online catalogue revision data boundary introduced in Stage 6.

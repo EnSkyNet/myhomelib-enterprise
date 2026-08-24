@@ -28,7 +28,11 @@ import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 @Component
@@ -59,6 +63,7 @@ public class AuthorWorkspaceController {
     @FXML private TableColumn<BookViewModel, Number> seqNumberColumn;
     @FXML private TableColumn<BookViewModel, String> yearColumn;
     @FXML private TableColumn<BookViewModel, String> formatColumn;
+    @FXML private TableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private TableColumn<BookViewModel, String> rateColumn;
     @FXML private TableColumn<BookViewModel, String> progressColumn;
     @FXML private TextField filterTextField;
@@ -78,11 +83,37 @@ public class AuthorWorkspaceController {
         // Використовуємо createdAtFormattedProperty, оскільки yearProperty відсутній
         yearColumn.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
         formatColumn.setCellValueFactory(cellData -> cellData.getValue().localStatusProperty());
+        fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         rateColumn.setCellValueFactory(cellData -> cellData.getValue().rateStarsProperty());
         progressColumn.setCellValueFactory(cellData -> cellData.getValue().progressFormattedProperty());
 
+        titleColumn.setCellFactory(col -> new javafx.scene.control.TableCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); return; }
+                BookViewModel vm = getTableRow() != null ? getTableRow().getItem() : null;
+                if (vm != null && vm.isGroupHeader()) setText(item);
+                else if (vm != null && vm.getSeries() != null && !vm.getSeries().isBlank()) setText("    " + item);
+                else setText(item);
+            }
+        });
+        booksTableView.setRowFactory(tv -> new javafx.scene.control.TableRow<>() {
+            @Override
+            protected void updateItem(BookViewModel item, boolean empty) {
+                super.updateItem(item, empty);
+                if (!empty && item != null && item.isGroupHeader()) {
+                    setStyle("-fx-font-weight: bold; -fx-background-color: -fx-control-inner-background-alt;");
+                    setMouseTransparent(true);
+                } else {
+                    setStyle("");
+                    setMouseTransparent(false);
+                }
+            }
+        });
+
         booksTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
-            if (selected != null) {
+            if (selected != null && !selected.isGroupHeader()) {
                 appState.getBookDetails().setCurrentBook(
                         bookViewModelMapper.toDto(selected)
                 );
@@ -92,7 +123,7 @@ public class AuthorWorkspaceController {
         booksTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
+                if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
                     navigationService.navigateToBook(BookId.fromString(selected.getId()));
                 }
             }
@@ -159,6 +190,7 @@ public class AuthorWorkspaceController {
         dto.setTitle(item.getTitle());
         dto.setAuthorsText(item.getAuthorsText());
         dto.setSeries(item.getSeries());
+        dto.setSequenceNumber(item.getSequenceNumber());
         dto.setGenresText(item.getGenresText());
         dto.setRate(item.getRate());
         dto.setProgress(item.getProgress());
@@ -181,10 +213,8 @@ public class AuthorWorkspaceController {
     private void updateBooksUI(List<BookDto> books) {
         if (booksTableView == null) return;
 
-        List<BookViewModel> vms = books.stream()
-                .map(bookViewModelMapper::toViewModel)
-                .collect(Collectors.toList());
-        booksTableView.getItems().setAll(vms);
+        List<BookViewModel> rows = buildSeriesRows(books);
+        booksTableView.getItems().setAll(rows);
 
         booksCountLabel.setText("Книг: " + books.size());
 
@@ -207,6 +237,35 @@ public class AuthorWorkspaceController {
                 .distinct()
                 .count();
         genresCountLabel.setText("Жанрів: " + genresCount);
+    }
+
+    private List<BookViewModel> buildSeriesRows(List<BookDto> books) {
+        Map<String, List<BookDto>> series = books.stream()
+                .filter(b -> b.getSeries() != null && !b.getSeries().isBlank())
+                .collect(Collectors.groupingBy(BookDto::getSeries, LinkedHashMap::new, Collectors.toList()));
+
+        List<BookViewModel> rows = new ArrayList<>();
+        series.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
+                .forEach(entry -> {
+                    BookViewModel header = new BookViewModel();
+                    header.setTitle("Серія: " + entry.getKey());
+                    header.setGroupHeader(true);
+                    rows.add(header);
+                    entry.getValue().stream()
+                            .sorted(Comparator
+                                    .comparing((BookDto b) -> b.getSequenceNumber() == null ? Integer.MAX_VALUE : b.getSequenceNumber())
+                                    .thenComparing(BookDto::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                            .map(bookViewModelMapper::toViewModel)
+                            .forEach(rows::add);
+                });
+
+        books.stream()
+                .filter(b -> b.getSeries() == null || b.getSeries().isBlank())
+                .sorted(Comparator.comparing(BookDto::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                .map(bookViewModelMapper::toViewModel)
+                .forEach(rows::add);
+        return rows;
     }
 
     private void filterBooks(String query) {
@@ -259,7 +318,7 @@ public class AuthorWorkspaceController {
     @FXML
     private void onOpenBook() {
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
-        if (selected != null) {
+        if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
             navigationService.navigateToBook(BookId.fromString(selected.getId()));
         }
     }
@@ -267,7 +326,7 @@ public class AuthorWorkspaceController {
     @FXML
     private void onReadBook() {
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
-        if (selected != null) {
+        if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
             BookDto book = new BookDto();
             book.setId(selected.getId());
             book.setTitle(selected.getTitle());

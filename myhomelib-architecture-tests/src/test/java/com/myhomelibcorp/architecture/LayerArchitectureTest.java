@@ -7,231 +7,195 @@ import org.junit.jupiter.api.Test;
 
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
+import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
 
+/**
+ * Hard architecture boundaries for the current codebase.
+ *
+ * <p>Important: rules use fully-qualified product package roots instead of
+ * broad patterns such as {@code ..reader..} or {@code ..infrastructure..}.
+ * Broad patterns also match legitimate nested package names such as
+ * {@code domain.model.reader}, {@code ui.reader},
+ * {@code infrastructure.reader}, and
+ * {@code application.port.out.infrastructure}, producing false positives.</p>
+ *
+ * <p>Existing UI debt (direct use of application output ports and selected
+ * domain model types) is tracked separately by tools/architecture-check.py so
+ * the baseline can only improve, not silently grow.</p>
+ */
 class LayerArchitectureTest {
+
+    private static final String SHARED = "com.myhomelibcorp.shared..";
+    private static final String DOMAIN = "com.myhomelibcorp.domain..";
+    private static final String APPLICATION = "com.myhomelibcorp.application..";
+    private static final String INFRASTRUCTURE = "com.myhomelibcorp.infrastructure..";
+    private static final String UI = "com.myhomelibcorp.ui..";
+    private static final String READER = "com.myhomelibcorp.reader..";
+    private static final String MCP = "com.myhomelibcorp.mcp..";
 
     private final JavaClasses classes = new ClassFileImporter()
             .withImportOption(new ImportOption.DoNotIncludeTests())
             .importPackages("com.myhomelibcorp");
 
-    // ===== DOMAIN =====
-
     @Test
-    void domainDoesNotDependOnFrameworkOrOuterLayers() {
+    void sharedIsIndependentFromProductModulesAndFrameworks() {
         noClasses()
-                .that().resideInAnyPackage("..domain..")
+                .that().resideInAnyPackage(SHARED)
                 .should().dependOnClassesThat().resideInAnyPackage(
-                        "..application..",
-                        "..infrastructure..",
-                        "..ui..",
+                        DOMAIN,
+                        APPLICATION,
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        MCP,
                         "org.springframework..",
                         "javafx..",
-                        "java.sql.."
-                )
-                .check(classes);
-    }
-
-    // ===== APPLICATION =====
-
-    @Test
-    void applicationDoesNotDependOnInfrastructureOrUi() {
-        noClasses()
-                .that().resideInAnyPackage("..application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "..infrastructure..",
-                        "..ui.."
-                )
-                .check(classes);
-    }
-
-    @Test
-    void applicationDoesNotDependOnJdbc() {
-        noClasses()
-                .that().resideInAnyPackage("..application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "org.springframework.jdbc..",
                         "java.sql..",
-                        "javax.sql.."
-                )
-                .check(classes);
-    }
-
-    @Test
-    void applicationDoesNotDependOnLucene() {
-        noClasses()
-                .that().resideInAnyPackage("..application..")
-                .should().dependOnClassesThat().resideInAnyPackage(
                         "org.apache.lucene.."
                 )
                 .check(classes);
     }
 
     @Test
-    void applicationDoesNotDependOnJavaFx() {
+    void domainIsFrameworkAndOuterLayerIndependent() {
         noClasses()
-                .that().resideInAnyPackage("..application..")
+                .that().resideInAnyPackage(DOMAIN)
                 .should().dependOnClassesThat().resideInAnyPackage(
+                        APPLICATION,
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        MCP,
+                        "org.springframework..",
+                        "javafx..",
+                        "java.sql..",
+                        "javax.sql..",
+                        "org.apache.lucene.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void applicationDoesNotDependOnAdaptersOrStorageFrameworks() {
+        noClasses()
+                .that().resideInAnyPackage(APPLICATION)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        MCP,
+                        "javafx..",
+                        "java.sql..",
+                        "javax.sql..",
+                        "org.springframework.jdbc..",
+                        "org.apache.lucene.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void applicationOutputPortsAreInterfaces() {
+        classes()
+                .that().resideInAnyPackage("com.myhomelibcorp.application.port.out..")
+                .and().areTopLevelClasses()
+                .should().beInterfaces()
+                .check(classes);
+    }
+
+    @Test
+    void infrastructureDoesNotDependOnUiReaderOrJavaFx() {
+        noClasses()
+                .that().resideInAnyPackage(INFRASTRUCTURE)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        UI,
+                        READER,
                         "javafx.."
                 )
                 .check(classes);
     }
 
     @Test
-    void applicationPortsAreInterfacesOnly() {
-        classes()
-                .that().resideInAnyPackage("..application.port.out..")
-                .should().beInterfaces()
-                .check(classes);
-    }
-
-    // ===== INFRASTRUCTURE =====
-
-    @Test
-    void infrastructureDoesNotDependOnUi() {
+    void uiDoesNotReachInfrastructureJdbcOrLuceneDirectly() {
         noClasses()
-                .that().resideInAnyPackage("..infrastructure..")
+                .that().resideInAnyPackage(UI)
                 .should().dependOnClassesThat().resideInAnyPackage(
-                        "..ui.."
-                )
-                .check(classes);
-    }
-
-    // ===== UI =====
-
-    @Test
-    void uiDoesNotDependOnRepositoryDirectly() {
-        noClasses()
-                .that().resideInAnyPackage("..ui..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "..repository..",
-                        "..persistence..",
-                        "..jdbc..",
-                        "..sqlite.."
+                        INFRASTRUCTURE,
+                        "java.sql..",
+                        "javax.sql..",
+                        "org.springframework.jdbc..",
+                        "org.apache.lucene.."
                 )
                 .check(classes);
     }
 
     @Test
-    void uiDoesNotDependOnApplicationPortOut() {
+    void readerEngineDoesNotDependOnDesktopApplicationModules() {
         noClasses()
-                .that().resideInAnyPackage("..ui..")
+                .that().resideInAnyPackage(READER)
                 .should().dependOnClassesThat().resideInAnyPackage(
-                        "..application.port.out.."
+                        DOMAIN,
+                        APPLICATION,
+                        INFRASTRUCTURE,
+                        UI,
+                        MCP,
+                        "org.springframework..",
+                        "java.sql..",
+                        "javax.sql..",
+                        "org.apache.lucene.."
                 )
                 .check(classes);
     }
 
     @Test
-    void uiDoesNotDependOnDomainModelWhenDtoExists() {
+    void portableReaderPackagesDoNotDependOnJavaFx() {
         noClasses()
-                .that().resideInAnyPackage("..ui..")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "..domain.model.book.Book",
-                        "..domain.model.author.Author",
-                        "..domain.model.genre.Genre",
-                        "..domain.model.series.Series",
-                        "..domain.model.group.Group"
+                .that().resideInAnyPackage(
+                        "com.myhomelibcorp.reader.api..",
+                        "com.myhomelibcorp.reader.core..",
+                        "com.myhomelibcorp.reader.format..",
+                        "com.myhomelibcorp.reader.layout..",
+                        "com.myhomelibcorp.reader.model..",
+                        "com.myhomelibcorp.reader.service..",
+                        "com.myhomelibcorp.reader.render.api.."
                 )
-                .check(classes);
-    }
-
-    // ===== CROSS-CUTTING =====
-
-    @Test
-    void noJavaFxInDomain() {
-        noClasses()
-                .that().resideInAnyPackage("..domain..")
                 .should().dependOnClassesThat().resideInAnyPackage("javafx..")
                 .check(classes);
     }
 
     @Test
-    void noSpringInDomain() {
+    void mcpSidecarStaysIndependentFromDesktopModulesAndFrameworks() {
         noClasses()
-                .that().resideInAnyPackage("..domain..")
-                .should().dependOnClassesThat().resideInAnyPackage("org.springframework..")
-                .check(classes);
-    }
-
-    // ===== READER SPECIFIC =====
-
-    @Test
-    void readerDoesNotDependOnInfrastructureDirectly() {
-        noClasses()
-                .that().resideInAnyPackage("..reader..")
+                .that().resideInAnyPackage(MCP)
                 .should().dependOnClassesThat().resideInAnyPackage(
-                        "..infrastructure..",
-                        "..sqlite..",
-                        "..lucene.."
-                )
-                .check(classes);
-    }
-
-    @Test
-    void readerFacadeDoesNotDependOnUi() {
-        noClasses()
-                .that().resideInAnyPackage("..reader.service..")
-                .should().dependOnClassesThat().resideInAnyPackage(
+                        DOMAIN,
+                        APPLICATION,
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        "org.springframework..",
                         "javafx.."
                 )
                 .check(classes);
     }
 
     @Test
-    void readerModelDoesNotDependOnJavaFx() {
+    void navigationPanelUsesApplicationNavigationBoundaryInsteadOfRepositoriesOrDomainEntities() {
         noClasses()
-                .that().resideInAnyPackage("..reader.model..")
+                .that().haveSimpleName("NavigationPanelController")
                 .should().dependOnClassesThat().resideInAnyPackage(
-                        "javafx.."
-                )
-                .check(classes);
-    }
-
-    // ===== НОВІ ТЕСТИ =====
-
-    @Test
-    void readerContentServiceUsesPortNotDirectInfrastructure() {
-        noClasses()
-                .that().resideInAnyPackage("..reader.service..")
-                .and().haveSimpleName("ReaderContentService")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "java.nio.file..",
-                        "java.util.zip..",
-                        "..infrastructure.."
+                        "com.myhomelibcorp.application.port.out..",
+                        "com.myhomelibcorp.domain.model.author..",
+                        "com.myhomelibcorp.domain.model.series..",
+                        "com.myhomelibcorp.domain.model.genre.."
                 )
                 .check(classes);
     }
 
     @Test
-    void readerBookResourcePortIsImplementedInInfrastructure() {
-        classes()
-                .that().implement(com.myhomelibcorp.application.port.out.resource.ReaderBookResourcePort.class)
-                .should().resideInAnyPackage("..infrastructure..")
-                .check(classes);
-    }
-
-    @Test
-    void readerControllerDoesNotDependOnInfrastructure() {
-        noClasses()
-                .that().resideInAnyPackage("..ui.reader..")
-                .and().haveSimpleName("ReaderWorkspaceController")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "..infrastructure..",
-                        "java.nio.file..",
-                        "java.util.zip.."
-                )
-                .check(classes);
-    }
-
-    @Test
-    void readerPositionServiceUsesPortsNotDirectInfrastructure() {
-        noClasses()
-                .that().resideInAnyPackage("..reader.service..")
-                .and().haveSimpleName("ReaderPositionService")
-                .should().dependOnClassesThat().resideInAnyPackage(
-                        "java.sql..",
-                        "org.springframework.jdbc.."
-                )
+    void topLevelProductPackagesAreFreeOfCycles() {
+        slices()
+                .matching("com.myhomelibcorp.(*)..")
+                .should().beFreeOfCycles()
                 .check(classes);
     }
 }

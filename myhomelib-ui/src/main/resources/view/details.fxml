@@ -23,6 +23,15 @@
     <Label fx:id="publisherLabel" text="Видавництво"/>
     <Label fx:id="isbnLabel" text="ISBN"/>
 
+    <Label text="Ключові слова" style="-fx-font-weight: bold;"/>
+    <FlowPane fx:id="keywordsLinksPane" hgap="6" vgap="4"/>
+
+    <Label text="Групи" style="-fx-font-weight: bold;"/>
+    <FlowPane fx:id="groupLinksPane" hgap="6" vgap="4"/>
+
+    <Label text="Відгуки" style="-fx-font-weight: bold;"/>
+    <FlowPane fx:id="reviewLinksPane" hgap="6" vgap="4"/>
+
     <Label text="Анотація:" style="-fx-font-weight: bold;"/>
     <TextArea fx:id="annotationArea" wrapText="true" prefHeight="100" editable="false"/>
 

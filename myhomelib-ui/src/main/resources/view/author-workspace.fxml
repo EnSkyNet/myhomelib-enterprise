@@ -53,6 +53,7 @@
             <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="40"/>
             <TableColumn fx:id="yearColumn" text="Рік" prefWidth="80"/>
             <TableColumn fx:id="formatColumn" text="Формат" prefWidth="80"/>
+            <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
             <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="100"/>
             <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
         </columns>

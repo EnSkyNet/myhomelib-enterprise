@@ -76,4 +76,13 @@ public record ReaderSettings(
                 scrollSpeed, showToolbar, customCss
         );
     }
+
+    public ReaderSettings withAutoScroll(boolean enabled) {
+        return new ReaderSettings(
+                themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing,
+                firstLineIndent, alignment, leftMargin, rightMargin,
+                topMargin, bottomMargin, hyphenation, pageMode, enabled,
+                scrollSpeed, showToolbar, customCss
+        );
+    }
 }

@@ -16,6 +16,7 @@ public class BookListItem {
     private String title;
     private String authorsText;
     private String series;
+    private Integer sequenceNumber;
     private String genresText;
     private int rate;
     private int progress;

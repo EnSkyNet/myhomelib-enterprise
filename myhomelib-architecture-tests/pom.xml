@@ -18,6 +18,12 @@
             <artifactId>myhomelib-bootstrap</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
+        <!-- MCP is a separate runtime module, so include it explicitly in ArchUnit scanning. -->
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-mcp</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>

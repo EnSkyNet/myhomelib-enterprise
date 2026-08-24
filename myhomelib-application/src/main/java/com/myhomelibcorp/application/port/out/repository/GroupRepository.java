@@ -15,4 +15,5 @@ public interface GroupRepository {
     void addBookToGroup(Long groupId, String bookId);
     void removeBookFromGroup(Long groupId, String bookId);
     List<String> findBookIdsByGroup(Long groupId);
+    List<Group> findByBookId(String bookId);
 }

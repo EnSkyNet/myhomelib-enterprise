@@ -21,7 +21,6 @@
         <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
 
         <spring-boot.version>3.5.0</spring-boot.version>
-        <spring-modulith.version>1.4.0</spring-modulith.version>
         <javafx.version>21.0.2</javafx.version>
         <sqlite.version>3.47.0.0</sqlite.version>
         <flyway.version>10.16.0</flyway.version>
@@ -65,15 +64,6 @@
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-dependencies</artifactId>
                 <version>${spring-boot.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-
-            <!-- Spring Modulith BOM -->
-            <dependency>
-                <groupId>org.springframework.modulith</groupId>
-                <artifactId>spring-modulith-bom</artifactId>
-                <version>${spring-modulith.version}</version>
                 <type>pom</type>
                 <scope>import</scope>
             </dependency>

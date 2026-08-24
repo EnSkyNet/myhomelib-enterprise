@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.download;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.download.OnlineBookDownloadPort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -17,14 +18,16 @@ import java.util.function.DoubleConsumer;
 public class DownloadBookUseCase {
     private final OnlineBookDownloadPort downloadPort;
     private final BookCommandRepository bookCommandRepository;
+    private final CatalogUpdateTrackingPort catalogUpdateTrackingPort;
 
     public Path execute(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress) throws Exception {
         if (book == null) throw new IllegalArgumentException("Book is required");
         if (collection == null) throw new IllegalStateException("Активну колекцію не вибрано");
         var result = downloadPort.download(book, collection, cancelFlag, progress == null ? v -> {} : progress);
+        BookId bookId = BookId.fromString(book.getId());
         bookCommandRepository.updateStorage(
-                BookId.fromString(book.getId()),
-                result.root().toString(), result.folder(), result.fileName(), result.archiveEntry(), true);
+                bookId, result.root().toString(), result.folder(), result.fileName(), result.archiveEntry(), true);
+        catalogUpdateTrackingPort.markDownloadedBaseline(bookId);
         return result.physicalPath();
     }
 }

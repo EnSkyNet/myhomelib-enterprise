@@ -54,6 +54,7 @@ public class ReaderToolbar extends HBox {
     @Getter private final Label pageInfoLabel;
 
     private Consumer<ReaderSettings> onSettingsClick;
+    private Consumer<ReaderSettings> onQuickSettingsChanged;
     private Runnable onBookmarkClick;
     private Runnable onTocClick;
     private Runnable onSearchClick;
@@ -178,11 +179,13 @@ public class ReaderToolbar extends HBox {
         pageModeButton.setOnAction(e -> {
             canvas.togglePageMode();
             updateState();
+            notifyQuickSettingsChanged();
         });
 
         autoScrollButton.setOnAction(e -> {
             canvas.toggleAutoScroll();
             updateState();
+            notifyQuickSettingsChanged();
         });
 
         // Зум
@@ -194,6 +197,7 @@ public class ReaderToolbar extends HBox {
         themeButton.setOnAction(e -> {
             canvas.cycleTheme();
             updateState();
+            notifyQuickSettingsChanged();
         });
 
         fullscreenButton.setOnAction(e -> toggleFullscreen());
@@ -288,4 +292,14 @@ public class ReaderToolbar extends HBox {
     public void refresh() {
         updateState();
     }
+    public void setOnQuickSettingsChanged(Consumer<ReaderSettings> listener) {
+        this.onQuickSettingsChanged = listener;
+    }
+
+    private void notifyQuickSettingsChanged() {
+        if (onQuickSettingsChanged != null) {
+            onQuickSettingsChanged.accept(canvas.getEngine().getSettings());
+        }
+    }
+
 }

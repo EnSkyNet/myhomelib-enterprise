@@ -18,7 +18,13 @@
             <artifactId>myhomelib-shared</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
-        <!-- Існуючі залежності -->
+
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-domain</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+        <!-- Application ports implemented by infrastructure -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-application</artifactId>
@@ -73,13 +79,6 @@
         <dependency>
             <groupId>com.github.junrar</groupId>
             <artifactId>junrar</artifactId>
-        </dependency>
-
-        <dependency>
-            <groupId>org.openjfx</groupId>
-            <artifactId>javafx-graphics</artifactId>
-            <version>${javafx.version}</version>
-            <scope>compile</scope>
         </dependency>
 
         <dependency>

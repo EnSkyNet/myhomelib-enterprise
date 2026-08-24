@@ -25,6 +25,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
@@ -47,6 +48,7 @@ public class TreeBookTableController {
     @FXML private TreeTableColumn<BookViewModel, String> authorColumn;
     @FXML private TreeTableColumn<BookViewModel, String> seriesColumn;
     @FXML private TreeTableColumn<BookViewModel, String> genresColumn;
+    @FXML private TreeTableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private TreeTableColumn<BookViewModel, String> rateColumn;
     @FXML private TreeTableColumn<BookViewModel, String> progressColumn;
     @FXML private TreeTableColumn<BookViewModel, String> dateColumn;
@@ -146,6 +148,10 @@ public class TreeBookTableController {
                 cellData.getValue().getValue().genresTextProperty());
         genresColumn.setPrefWidth(100);
 
+        fileSizeColumn.setCellValueFactory(cellData ->
+                cellData.getValue().getValue().fileSizeFormattedProperty());
+        fileSizeColumn.setPrefWidth(90);
+
         rateColumn.setCellValueFactory(cellData ->
                 cellData.getValue().getValue().rateStarsProperty());
         rateColumn.setPrefWidth(80);
@@ -230,29 +236,39 @@ public class TreeBookTableController {
                 authorItem.setValue(authorVm);
                 authorItem.setExpanded(true);
 
-                seriesMap.forEach((seriesName, bookList) -> {
-                    TreeItem<BookViewModel> seriesItem = new TreeItem<>(null);
-                    BookViewModel seriesVm = new BookViewModel();
-                    seriesVm.setTitle(seriesName);
-                    seriesItem.setValue(seriesVm);
-                    seriesItem.setExpanded(true);
+                seriesMap.entrySet().stream()
+                        .filter(entry -> !"Без серії".equals(entry.getKey()))
+                        .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
+                        .forEach(entry -> {
+                            TreeItem<BookViewModel> seriesItem = new TreeItem<>(null);
+                            BookViewModel seriesVm = new BookViewModel();
+                            seriesVm.setTitle(entry.getKey());
+                            seriesItem.setValue(seriesVm);
+                            seriesItem.setExpanded(true);
 
-                    bookList.stream()
-                            .sorted((b1, b2) -> {
-                                int n1 = b1.getSequenceNumber() != null ? b1.getSequenceNumber() : 0;
-                                int n2 = b2.getSequenceNumber() != null ? b2.getSequenceNumber() : 0;
-                                return Integer.compare(n1, n2);
-                            })
-                            .forEach(book -> {
-                                BookDto dto = bookMapper.toDto(book);
-                                BookViewModel vm = viewModelMapper.toViewModel(dto);
-                                vm.setSelected(false);
-                                TreeItem<BookViewModel> bookItem = new TreeItem<>(vm);
-                                seriesItem.getChildren().add(bookItem);
-                            });
+                            entry.getValue().stream()
+                                    .sorted(Comparator
+                                            .comparing((Book b) -> b.getSequenceNumber() == null ? Integer.MAX_VALUE : b.getSequenceNumber())
+                                            .thenComparing(Book::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                                    .forEach(book -> {
+                                        BookDto dto = bookMapper.toDto(book);
+                                        BookViewModel vm = viewModelMapper.toViewModel(dto);
+                                        vm.setSelected(false);
+                                        seriesItem.getChildren().add(new TreeItem<>(vm));
+                                    });
 
-                    authorItem.getChildren().add(seriesItem);
-                });
+                            authorItem.getChildren().add(seriesItem);
+                        });
+
+                // Як у flibrary: книги без серії лежать безпосередньо під автором.
+                seriesMap.getOrDefault("Без серії", List.of()).stream()
+                        .sorted(Comparator.comparing(Book::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                        .forEach(book -> {
+                            BookDto dto = bookMapper.toDto(book);
+                            BookViewModel vm = viewModelMapper.toViewModel(dto);
+                            vm.setSelected(false);
+                            authorItem.getChildren().add(new TreeItem<>(vm));
+                        });
 
                 root.getChildren().add(authorItem);
             });

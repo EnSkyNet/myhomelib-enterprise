@@ -14,6 +14,10 @@ public class ImportContext {
     Path rootDirectory;
     Path file;
     String archiveEntry;
+    /** Stable logical source key (for remote INPX use collection id, never the temp download path). */
+    String catalogSourceKey;
+    /** Optional diagnostic source location; credentials/query tokens are not persisted by the adapter. */
+    String catalogSourceLocation;
     @Builder.Default boolean updateExisting = false;
     @Builder.Default boolean indexAfterSave = true;
     DoubleConsumer progressListener;

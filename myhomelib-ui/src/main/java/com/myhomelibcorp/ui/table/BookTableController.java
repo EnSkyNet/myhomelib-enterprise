@@ -32,6 +32,7 @@ public class BookTableController {
     @FXML private TableColumn<BookViewModel, String> authorColumn;
     @FXML private TableColumn<BookViewModel, String> seriesColumn;
     @FXML private TableColumn<BookViewModel, String> genresColumn;
+    @FXML private TableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private TableColumn<BookViewModel, String> rateColumn;
     @FXML private TableColumn<BookViewModel, String> progressColumn;
     @FXML private TableColumn<BookViewModel, String> dateColumn;
@@ -61,9 +62,36 @@ public class BookTableController {
         bookTableView.setEditable(true);
 
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
+        titleColumn.setCellFactory(col -> new TableCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); return; }
+                BookViewModel row = getTableRow() != null ? getTableRow().getItem() : null;
+                if (row != null && !row.isGroupHeader() && row.getSeries() != null && !row.getSeries().isBlank()) {
+                    setText("    " + item);
+                } else {
+                    setText(item);
+                }
+            }
+        });
+        bookTableView.setRowFactory(tv -> new TableRow<>() {
+            @Override
+            protected void updateItem(BookViewModel item, boolean empty) {
+                super.updateItem(item, empty);
+                if (!empty && item != null && item.isGroupHeader()) {
+                    setStyle("-fx-font-weight: bold; -fx-background-color: -fx-control-inner-background-alt;");
+                    setMouseTransparent(true);
+                } else {
+                    setStyle("");
+                    setMouseTransparent(false);
+                }
+            }
+        });
         authorColumn.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
         genresColumn.setCellValueFactory(cellData -> cellData.getValue().genresTextProperty());
+        fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         rateColumn.setCellValueFactory(cellData -> cellData.getValue().rateStarsProperty());
         progressColumn.setCellValueFactory(cellData -> cellData.getValue().progressFormattedProperty());
         dateColumn.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
@@ -71,6 +99,7 @@ public class BookTableController {
         bookTableView.setItems(vm.getBooks());
 
         bookTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
+            if (selected != null && selected.isGroupHeader()) return;
             vm.setSelectedBook(selected);
             if (selected != null) {
                 appState.getBookDetails().setCurrentBook(
@@ -98,7 +127,7 @@ public class BookTableController {
         bookTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 BookViewModel selected = bookTableView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
+                if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
                     navigationService.navigateToBook(BookId.fromString(selected.getId()));
                 }
             }
@@ -169,8 +198,14 @@ public class BookTableController {
                 .filter(entry -> !entry.getKey().equals("Без серії"))
                 .sorted(Map.Entry.comparingByKey())
                 .forEach(entry -> {
+                    BookViewModel header = new BookViewModel();
+                    header.setTitle("Серія: " + entry.getKey());
+                    header.setGroupHeader(true);
+                    groupedBooks.add(header);
+
                     List<BookViewModel> seriesBooks = entry.getValue().stream()
-                            .sorted(Comparator.comparing(BookViewModel::getSequenceNumber, Comparator.nullsLast(Comparator.naturalOrder())))
+                            .sorted(Comparator.comparing(BookViewModel::getSequenceNumber, Comparator.nullsLast(Comparator.naturalOrder()))
+                                    .thenComparing(BookViewModel::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
                             .collect(Collectors.toList());
                     groupedBooks.addAll(seriesBooks);
                 });
@@ -180,12 +215,13 @@ public class BookTableController {
         }
 
         vm.setBooks(groupedBooks);
-        vm.setTotalElements(groupedBooks.size());
+        vm.setTotalElements(books.size());
         vm.setTotalPages(1);
         vm.setCurrentPage(0);
-        if (!groupedBooks.isEmpty()) {
-            vm.setSelectedBook(groupedBooks.get(0));
-        }
+        groupedBooks.stream()
+                .filter(book -> !book.isGroupHeader())
+                .findFirst()
+                .ifPresent(vm::setSelectedBook);
         log.info("Таблиця оновлена: {} книг (згруповано по серіях)", groupedBooks.size());
     }
 }

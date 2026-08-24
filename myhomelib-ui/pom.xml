@@ -14,7 +14,7 @@
     <artifactId>myhomelib-ui</artifactId>
 
     <dependencies>
-        <!-- Існуючі залежності -->
+        <!-- Internal modules used directly by UI -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-application</artifactId>
@@ -23,11 +23,17 @@
 
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
-            <artifactId>myhomelib-infrastructure</artifactId>
+            <artifactId>myhomelib-domain</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
 
-        <!-- НОВИЙ МОДУЛЬ READER -->
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-shared</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+
+        <!-- Embedded reader UI/engine -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-reader</artifactId>
@@ -53,7 +59,7 @@
             <version>${javafx.version}</version>
         </dependency>
 
-        <!-- External signed language catalogues -->
+        <!-- File-based external language catalogues -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>
             <artifactId>jackson-databind</artifactId>

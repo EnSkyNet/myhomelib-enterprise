@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.session.SessionService;
+import com.myhomelibcorp.application.service.ReadingHistoryService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.bookmark.Bookmark;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -54,6 +55,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final BookMapperHelper bookMapperHelper;
     private final NavigationService navigationService;
     private final SessionService sessionService;
+    private final ReadingHistoryService readingHistoryService;
     private final DialogService dialogService;
     private final NewReaderPersistenceService persistenceService;
     private final ReaderPreferencesPort readerPreferencesPort;
@@ -126,6 +128,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         try {
             openBook(currentBook);
+            readingHistoryService.recordOpened(bookId);
         } catch (Exception e) {
             cleanupMaterializedBookFile();
             log.error("❌ Помилка відкриття книги", e);
@@ -150,6 +153,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             // Налаштовуємо колбеки
             readerView.setOnBackClick(this::onBack);
             readerView.setOnSettingsClick(this::showSettings);
+            readerView.setOnSettingsChanged(this::persistReaderSettings);
             readerView.setOnBookmarkClick(this::addBookmark);
             readerView.setOnTocClick(this::showToc);
             readerView.setOnSearchClick(this::showSearch);
@@ -318,6 +322,12 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         navigationService.goBack();
     }
 
+    private void persistReaderSettings(ReaderSettings settings) {
+        if (settings == null) return;
+        var previous = readerPreferencesPort.loadPreferences();
+        readerPreferencesPort.savePreferences(ReaderSettingsMapper.toDomain(settings, previous));
+    }
+
     private void showSettings(ReaderSettings settings) {
         if (isDisposed || readerView == null) {
             return;
@@ -328,8 +338,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         ReaderSettingsDialog.show(owner, settings).ifPresent(updated -> {
             readerView.applySettings(updated);
-            var previous = readerPreferencesPort.loadPreferences();
-            readerPreferencesPort.savePreferences(ReaderSettingsMapper.toDomain(updated, previous));
+            persistReaderSettings(updated);
         });
     }
 
@@ -368,7 +377,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         try {
             var document = readerView.getEngine().getCurrentDocument();
-            if (document == null || document.chapters().isEmpty()) {
+            if (document == null || document.toc() == null || document.toc().isEmpty()) {
                 dialogService.showInfo("Зміст", "У книги немає розділів");
                 return;
             }
@@ -378,10 +387,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             Parent root = loader.load();
 
             TOCDialogController controller = loader.getController();
-            controller.setChapters(document.chapters(), chapter -> {
+            controller.setEntries(document.toc().entries(), entry -> {
                 ReaderPosition pos = new ReaderPosition(
-                        document.chapters().indexOf(chapter),
-                        chapter.startOffset(),
+                        Math.max(0, document.chapterIndexAt(entry.textOffset())),
+                        entry.textOffset(),
                         0,
                         0
                 );

@@ -214,7 +214,7 @@ public class ZipImporter implements BookImporterPort {
                     // Do NOT close this wrapper: FilterInputStream.close() would close the whole
                     // ZipInputStream and truncate multi-entry imports after the first book.
                     LimitedInputStream limitedIn = new LimitedInputStream(zis, ArchiveSafetyLimits.MAX_ENTRY_BYTES);
-                    Files.copy(limitedIn, tempFile);
+                    Files.copy(limitedIn, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
 
                     // Перевіряємо фактичний розмір
                     long actualSize = limitedIn.getTotalRead();

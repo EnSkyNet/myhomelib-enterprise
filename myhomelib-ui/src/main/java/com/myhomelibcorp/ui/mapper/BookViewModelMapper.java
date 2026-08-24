@@ -71,7 +71,7 @@ public class BookViewModelMapper {
             } catch (Exception ignored) {}
         }
 
-        vm.setSequenceNumber(0);
+        vm.setSequenceNumber(item.getSequenceNumber() != null ? item.getSequenceNumber() : 0);
         vm.setKeywords("");
         vm.setReview("");
         vm.setDeleted(false);

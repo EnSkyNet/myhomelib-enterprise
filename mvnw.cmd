@@ -26,10 +26,10 @@ if defined MAVEN_WRAPPER_HOME (
 )
 set "DIST_DIR=%WRAPPER_HOME%\apache-maven-%MVN_VERSION%"
 set "MVN_CMD=%DIST_DIR%\apache-maven-%MVN_VERSION%\bin\mvn.cmd"
+set "TMP_ZIP=%DIST_DIR%\apache-maven-%MVN_VERSION%-bin.zip.part"
 
 if not exist "%MVN_CMD%" (
   if not exist "%DIST_DIR%" mkdir "%DIST_DIR%"
-  set "TMP_ZIP=%DIST_DIR%\apache-maven-%MVN_VERSION%-bin.zip.part"
   if exist "%TMP_ZIP%" del /q "%TMP_ZIP%"
   echo Downloading Maven %MVN_VERSION%... 1>&2
   powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; Invoke-WebRequest -UseBasicParsing -Uri '%DIST_URL%' -OutFile '%TMP_ZIP%'; $dst='%DIST_DIR%'; $mvn=Join-Path $dst 'apache-maven-%MVN_VERSION%'; if(Test-Path $mvn){Remove-Item -Recurse -Force $mvn}; Expand-Archive -LiteralPath '%TMP_ZIP%' -DestinationPath $dst -Force; Remove-Item -Force '%TMP_ZIP%'" || exit /b 1

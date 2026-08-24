@@ -1,15 +1,17 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
+import com.myhomelibcorp.application.navigation.NavigationNodeDto;
+import com.myhomelibcorp.application.navigation.NavigationMode;
+import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.series.Series;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -28,7 +30,6 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 
 @Service
@@ -39,22 +40,34 @@ public class DefaultNavigationService implements NavigationService {
     private final SessionService sessionService;
     private final MainController mainController;
     private final WorkspaceManager workspaceManager;
-    private final BookLoaderService bookLoaderService;
     private final BookQueryRepository bookQueryRepository;
     private final BookMapper bookMapper;
-    private final DictionaryCachePort dictionaryCache;
     private final NavigationPanelController navigationPanelController;
     private final BookResourcePort bookResourcePort;
     private final BookDownloadCoordinator bookDownloadCoordinator;
 
     @PostConstruct
     public void init() {
-        navigationPanelController.setNavigationCallbacks(
-                this::navigateToAuthor,
-                this::navigateToSeries,
-                this::navigateToGenre
-        );
+        navigationPanelController.setOnNodeSelected(this::navigateToNode);
         log.info("Navigation callbacks встановлено");
+    }
+
+    private void navigateToNode(NavigationNodeDto node) {
+        if (node == null) return;
+        switch (node.mode()) {
+            case AUTHORS -> navigateToAuthor(AuthorId.fromString(node.id()));
+            case SERIES -> navigateToSeries(SeriesId.fromString(node.id()));
+            case GENRES -> navigateToGenre(GenreId.fromCode(node.id()));
+            case YEARS -> navigateToYear(parseYear(node.id()));
+            case LANGUAGES -> navigateToLanguage(node.id());
+            case ARCHIVES -> navigateToArchive(ArchiveNavigationKey.decode(node.id()));
+            case KEYWORDS -> navigateToKeyword(node.label());
+            case GROUPS -> navigateToGroup(GroupId.fromLong(Long.parseLong(node.id())));
+            case REVIEWS -> navigateToReviews(ReviewNavigationFilter.fromId(node.id()));
+            case ALREADY_READ -> navigateToAlreadyRead();
+            case HISTORY -> navigateToHistory();
+            case ALL_BOOKS -> navigateToAllBooks();
+        }
     }
 
     @Override
@@ -68,16 +81,10 @@ public class DefaultNavigationService implements NavigationService {
 
     @Override
     public void navigateToSeries(SeriesId seriesId) {
+        if (seriesId == null) return;
         log.info("Навігація до серії: {}", seriesId);
-        Optional<Series> seriesOpt = dictionaryCache.getSeries(seriesId);
-        if (seriesOpt.isEmpty()) {
-            log.warn("Серію з ID {} не знайдено в кеші", seriesId);
-            mainController.showSearchResults(List.of());
-            mainController.updateNavigationButtons();
-            return;
-        }
-        String seriesName = seriesOpt.get().getName();
-        navigateToSeriesByName(seriesName);
+        mainController.showSeriesWorkspace(seriesId);
+        mainController.updateNavigationButtons();
     }
 
     @Override
@@ -109,16 +116,82 @@ public class DefaultNavigationService implements NavigationService {
 
     @Override
     public void navigateToGenre(GenreId genreId) {
+        if (genreId == null) return;
         log.info("Навігація до жанру: {}", genreId);
-        BookQuery query = BookQuery.builder()
-                .genreId(genreId)
-                .pagination(Pagination.of(1000, 0))
-                .build();
-        List<Book> books = bookQueryRepository.find(query);
-        List<BookDto> dtos = books.stream()
-                .map(bookMapper::toDto)
-                .collect(Collectors.toList());
-        mainController.showSearchResults(dtos);
+        mainController.showGenreWorkspace(genreId);
+        mainController.updateNavigationButtons();
+    }
+
+
+    @Override
+    public void navigateToYear(int year) {
+        if (year <= 0) return;
+        log.info("Навігація до року: {}", year);
+        mainController.showYearWorkspace(year);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToLanguage(String languageCode) {
+        if (languageCode == null || languageCode.isBlank()) return;
+        log.info("Навігація до мови: {}", languageCode);
+        mainController.showLanguageWorkspace(languageCode);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToArchive(ArchiveNavigationKey archive) {
+        if (archive == null) return;
+        log.info("Навігація до архіву: {}", archive.archivePath());
+        mainController.showArchiveWorkspace(archive);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) return;
+        log.info("Навігація до ключового слова: {}", keyword);
+        navigationPanelController.revealNode(NavigationMode.KEYWORDS, keyword.toLowerCase(java.util.Locale.ROOT));
+        mainController.showKeywordWorkspace(keyword);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToGroup(GroupId groupId) {
+        if (groupId == null || groupId.asLong() == null) return;
+        log.info("Навігація до групи: {}", groupId.asLong());
+        navigationPanelController.revealNode(NavigationMode.GROUPS, groupId.toString());
+        mainController.showGroupBooksWorkspace(groupId);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToReviews(ReviewNavigationFilter filter) {
+        if (filter == null) return;
+        log.info("Навігація до review subset: {}", filter.id());
+        navigationPanelController.revealNode(NavigationMode.REVIEWS, filter.id());
+        mainController.showReviewsWorkspace(filter);
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToAlreadyRead() {
+        log.info("Навігація до прочитаних книг");
+        mainController.showAlreadyReadWorkspace();
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToHistory() {
+        log.info("Навігація до історії читання");
+        mainController.showHistoryWorkspace();
+        mainController.updateNavigationButtons();
+    }
+
+    @Override
+    public void navigateToAllBooks() {
+        log.info("Навігація до всіх книг");
+        mainController.showAllBooksWorkspace();
         mainController.updateNavigationButtons();
     }
 
@@ -285,6 +358,16 @@ public class DefaultNavigationService implements NavigationService {
     }
 
     // ==================== Допоміжні методи ====================
+
+    private int parseYear(String value) {
+        try {
+            int year = Integer.parseInt(value);
+            return year > 0 ? year : -1;
+        } catch (NumberFormatException e) {
+            log.warn("Некоректний рік у навігації: {}", value);
+            return -1;
+        }
+    }
 
     private String normalizeSeriesName(String name) {
         if (name == null) return "";

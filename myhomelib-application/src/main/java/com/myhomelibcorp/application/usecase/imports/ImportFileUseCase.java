@@ -73,7 +73,9 @@ public class ImportFileUseCase {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         Path rootDirectory = context.getRootDirectory();
 
-        long count = fastImportService.importInpx(context.getFile(), batchSize, rootDirectory, context.getCancelFlag());
+        long count = fastImportService.importInpx(
+                context.getFile(), batchSize, rootDirectory, context.getCancelFlag(),
+                context.getCatalogSourceKey(), context.getCatalogSourceLocation());
 
         if (count > 0) {
             cacheRefresherPort.refreshCachesAsync();

@@ -232,9 +232,9 @@ public class InpxReader {
         if (entry == null) return result;
         try (BufferedReader br = newDetectedReader(zip.getInputStream(entry))) {
             for (String line; (line = br.readLine()) != null;) {
-                String candidate = extractArchiveCandidate(line);
-                if (candidate == null) continue;
-                result.putIfAbsent(stem(candidate), candidate.replace('\\', '/'));
+                ArchiveMapping mapping = parseArchiveMapping(line);
+                if (mapping == null) continue;
+                result.putIfAbsent(mapping.inpStem(), mapping.archiveName());
             }
         } catch (Exception e) {
             log.warn("Cannot parse archives.info", e);
@@ -242,19 +242,44 @@ public class InpxReader {
         return result;
     }
 
-    private static String extractArchiveCandidate(String line) {
+    private static ArchiveMapping parseArchiveMapping(String line) {
         if (line == null) return null;
         String cleaned = line.replace("\uFEFF", "").trim();
         if (cleaned.isEmpty()) return null;
-        for (String token : cleaned.split("[\\u0004;|\\t]")) {
-            String v = token.trim().replace('\\', '/');
-            String lower = v.toLowerCase(Locale.ROOT);
-            for (String ext : ARCHIVE_EXTENSIONS) {
-                if (lower.endsWith(ext)) return v;
+
+        String[] tokens = cleaned.split("[\u0004;|\t]", -1);
+        String first = null;
+        String archive = null;
+        for (String token : tokens) {
+            String value = token.trim().replace('\\', '/');
+            if (value.isEmpty()) continue;
+            if (first == null) first = value;
+            if (isArchiveName(value)) {
+                archive = value;
+                break;
             }
         }
-        return null;
+        if (archive == null) return null;
+
+        String key;
+        if (first == null || first.equals(archive)) {
+            key = stem(archive);
+        } else {
+            String firstFile = Path.of(first).getFileName().toString();
+            key = stripExtension(firstFile).toLowerCase(Locale.ROOT);
+        }
+        return new ArchiveMapping(key, archive);
     }
+
+    private static boolean isArchiveName(String value) {
+        String lower = value.toLowerCase(Locale.ROOT);
+        for (String ext : ARCHIVE_EXTENSIONS) {
+            if (lower.endsWith(ext)) return true;
+        }
+        return false;
+    }
+
+    private record ArchiveMapping(String inpStem, String archiveName) { }
 
     private static String resolveArchiveName(String inpName, Map<String, String> archivesByStem) {
         String base = stripExtension(Path.of(inpName).getFileName().toString());

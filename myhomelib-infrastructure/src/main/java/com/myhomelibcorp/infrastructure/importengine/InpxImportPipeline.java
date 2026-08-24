@@ -1,5 +1,9 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
+import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
+import com.myhomelibcorp.application.catalog.CatalogSyncSession;
+import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
@@ -16,7 +20,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
 
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -36,6 +42,7 @@ public class InpxImportPipeline {
     private final AuthorRepository authorRepository;
     private final GenreRepository genreRepository;
     private final DictionaryCache dictionaryCache;
+    private final CatalogUpdateTrackingPort catalogUpdateTrackingPort;
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private Map<String, String> authorCache;
@@ -44,14 +51,30 @@ public class InpxImportPipeline {
     private JdbcTemplate getJdbcTemplate() { return collectionManager.getCurrentJdbcTemplate(); }
 
     public long importFile(Path file, int batchSize, Path rootDirectory) {
-        return importFile(file, batchSize, rootDirectory, null);
+        return importFile(file, batchSize, rootDirectory, null, null, null);
     }
 
     public long importFile(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag) {
+        return importFile(file, batchSize, rootDirectory, cancelFlag, null, null);
+    }
+
+    public long importFile(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag,
+                           String catalogSourceKey, String catalogSourceLocation) {
         int effectiveBatch = Math.max(50, Math.min(batchSize <= 0 ? 1000 : batchSize, 10_000));
         Path root = rootDirectory != null ? rootDirectory.toAbsolutePath().normalize()
                 : (file.getParent() != null ? file.getParent().toAbsolutePath().normalize() : Path.of(".").toAbsolutePath().normalize());
-        log.info("Starting INPX import: {} (root: {}, batch: {})", file, root, effectiveBatch);
+        String sourceKey = catalogSourceKey != null && !catalogSourceKey.isBlank()
+                ? catalogSourceKey.trim()
+                : CatalogSourceIdentity.localInpx(file, root);
+        String sourceLocation = catalogSourceLocation != null && !catalogSourceLocation.isBlank()
+                ? catalogSourceLocation.trim() : file.toAbsolutePath().normalize().toString();
+        String sourceFingerprint = sha256(file, cancelFlag);
+        if (sourceFingerprint == null) {
+            log.info("INPX fingerprinting cancelled before import: {}", file);
+            return 0L;
+        }
+
+        log.info("Starting INPX import: {} (root: {}, batch: {}, sourceKey: {})", file, root, effectiveBatch, sourceKey);
 
         this.authorCache = buildAuthorCache();
         this.genreCache = buildGenreCache();
@@ -66,7 +89,8 @@ public class InpxImportPipeline {
             if (dataSource != null) {
                 TransactionTemplate transaction = new TransactionTemplate(new DataSourceTransactionManager(dataSource));
                 Long result = transaction.execute(status -> {
-                    ImportOutcome outcome = importTransactional(file, effectiveBatch, root, cancelFlag);
+                    ImportOutcome outcome = importTransactional(
+                            file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation, sourceFingerprint);
                     if (outcome.cancelled()) {
                         status.setRollbackOnly();
                         log.info("INPX import cancelled; transaction rolled back after {} parsed books", outcome.count());
@@ -77,7 +101,8 @@ public class InpxImportPipeline {
                 imported = result == null ? 0L : result;
             } else {
                 // Unit tests and detached tooling can run without an active collection datasource.
-                ImportOutcome outcome = importTransactional(file, effectiveBatch, root, cancelFlag);
+                ImportOutcome outcome = importTransactional(
+                        file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation, sourceFingerprint);
                 imported = outcome.cancelled() ? 0L : outcome.count();
             }
         } finally {
@@ -95,19 +120,31 @@ public class InpxImportPipeline {
      * Any exception (or explicit cancellation) therefore restores the pre-import catalog,
      * including relation links and indexes.
      */
-    private ImportOutcome importTransactional(Path file, int effectiveBatch, Path root, AtomicBoolean cancelFlag) {
-        String sourceMarker = buildSourceMarker(file, root);
+    private ImportOutcome importTransactional(Path file, int effectiveBatch, Path root, AtomicBoolean cancelFlag,
+                                              String sourceKey, String sourceLocation, String sourceFingerprint) {
+        boolean tracked = collectionManager.hasActiveCollection();
+        CatalogSyncSession syncSession = tracked
+                ? catalogUpdateTrackingPort.beginSync(sourceKey, sourceLocation, sourceFingerprint)
+                : new CatalogSyncSession(
+                        CatalogSourceIdentity.stableId(sourceKey), sourceKey, 1L, sourceFingerprint, true, true);
+        if (tracked) catalogUpdateTrackingPort.markTrackedBooksMissing(syncSession);
+
+        // Preserve the legacy deterministic marker for local imports so existing book ids/user data survive Stage 6.
+        // Remote updates use the stable collection identity instead of the random cache download path.
+        String sourceMarker = sourceKey.startsWith("remote-collection:")
+                ? "catalog:" + syncSession.sourceId()
+                : buildSourceMarker(file, root);
+
         Map<String, Author> pendingAuthors = new LinkedHashMap<>();
         Map<String, Genre> pendingGenres = new LinkedHashMap<>();
         Map<String, Boolean> localCache = new HashMap<>();
         AtomicLong total = new AtomicLong();
-        List<Object[]> books = new ArrayList<>(effectiveBatch);
+        List<NormalizedBook> books = new ArrayList<>(effectiveBatch);
         boolean indexesDropped = false;
         boolean cancelled = false;
         try {
             dropIndexes();
             indexesDropped = true;
-            markPriorCatalogRowsDeleted(sourceMarker);
 
             Iterator<InpxRecord> iterator = reader.read(file);
             while (iterator.hasNext()) {
@@ -115,17 +152,17 @@ public class InpxImportPipeline {
                     cancelled = true;
                     break;
                 }
-                Object[] row = normalize(iterator.next(), pendingAuthors, pendingGenres, root, localCache, sourceMarker);
+                NormalizedBook row = normalize(iterator.next(), pendingAuthors, pendingGenres, root, localCache, sourceMarker);
                 if (row == null) continue;
                 books.add(row);
                 if (books.size() >= effectiveBatch) {
-                    flush(books, pendingAuthors, pendingGenres);
+                    flush(books, pendingAuthors, pendingGenres, syncSession, tracked);
                     total.addAndGet(books.size());
                     books.clear();
                 }
             }
             if (!cancelled && !books.isEmpty()) {
-                flush(books, pendingAuthors, pendingGenres);
+                flush(books, pendingAuthors, pendingGenres, syncSession, tracked);
                 total.addAndGet(books.size());
                 books.clear();
             }
@@ -137,7 +174,7 @@ public class InpxImportPipeline {
 
     private record ImportOutcome(long count, boolean cancelled) {}
 
-    public long importFile(Path file, int batchSize) { return importFile(file, batchSize, null, null); }
+    public long importFile(Path file, int batchSize) { return importFile(file, batchSize, null, null, null, null); }
 
     @Async("taskExecutor")
     public void refreshCachesAsync() {
@@ -149,9 +186,15 @@ public class InpxImportPipeline {
         }
     }
 
-    private void flush(List<Object[]> books, Map<String, Author> pendingAuthors, Map<String, Genre> pendingGenres) {
+    private void flush(List<NormalizedBook> books, Map<String, Author> pendingAuthors, Map<String, Genre> pendingGenres,
+                       CatalogSyncSession syncSession, boolean tracked) {
         flushPendingEntities(pendingAuthors, pendingGenres);
-        batchWriter.batchInsertFull(books, authorCache, genreCache);
+        List<Object[]> rows = books.stream().map(NormalizedBook::row).toList();
+        batchWriter.batchInsertFull(rows, authorCache, genreCache);
+        if (tracked) {
+            catalogUpdateTrackingPort.recordImportedBooks(
+                    syncSession, books.stream().map(NormalizedBook::catalogSnapshot).toList());
+        }
     }
 
     private void flushPendingEntities(Map<String, Author> pendingAuthors, Map<String, Genre> pendingGenres) {
@@ -185,7 +228,7 @@ public class InpxImportPipeline {
         return safe(a.getFirstName()) + "|" + safe(a.getMiddleName()) + "|" + safe(a.getLastName());
     }
 
-    private Object[] normalize(InpxRecord raw,
+    private NormalizedBook normalize(InpxRecord raw,
                                Map<String, Author> pendingAuthors,
                                Map<String, Genre> pendingGenres,
                                Path root,
@@ -274,7 +317,13 @@ public class InpxImportPipeline {
             row[i++] = translators;                    // 26
             row[i++] = city;                           // 27
             row[i] = sourceMarker;                    // 28 catalog source marker; survives update/reappearance
-            return row;
+
+            String sourceBookKey = !libId.isBlank() ? "libid:" + libId : archiveName + ":" + fileName;
+            CatalogBookSnapshot catalogSnapshot = new CatalogBookSnapshot(
+                    bookId, sourceBookKey, catalogFingerprint(raw, archiveName, explicitFolder, fileName),
+                    fileName, !archiveName.isBlank() ? archiveName : explicitFolder,
+                    !archiveName.isBlank() ? fileName : "", size);
+            return new NormalizedBook(row, catalogSnapshot);
         } catch (Exception e) {
             log.warn("Skipping malformed INPX record {} from {}", raw.field("FILE"), raw.inpName(), e);
             return null;
@@ -350,17 +399,50 @@ public class InpxImportPipeline {
         return "inpx:" + stablePath;
     }
 
-    /**
-     * Missing-record policy: keep the row and all user-owned relations/state, but mark it
-     * deleted/non-local. Reappearing records use the same deterministic id and are
-     * reactivated by the normal UPSERT in the same transaction.
-     */
-    private void markPriorCatalogRowsDeleted(String sourceMarker) {
-        if (!collectionManager.hasActiveCollection()) return;
-        getJdbcTemplate().update(
-                "UPDATE books SET deleted = 1, local = 0 WHERE source_url = ?",
-                sourceMarker);
+    private static String catalogFingerprint(InpxRecord raw, String archiveName, String explicitFolder, String resolvedFileName) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            raw.fields().entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> {
+                        updateDigest(digest, entry.getKey());
+                        updateDigest(digest, entry.getValue());
+                    });
+            updateDigest(digest, "ARCHIVE=" + safe(archiveName));
+            updateDigest(digest, "FOLDER=" + safe(explicitFolder));
+            updateDigest(digest, "RESOLVED_FILE=" + safe(resolvedFileName));
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (Exception e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
     }
+
+    private static String sha256(Path file, AtomicBoolean cancelFlag) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (InputStream in = Files.newInputStream(file)) {
+                byte[] buffer = new byte[128 * 1024];
+                for (int n; (n = in.read(buffer)) >= 0;) {
+                    if (cancelFlag != null && cancelFlag.get()) return null;
+                    if (n > 0) digest.update(buffer, 0, n);
+                }
+            }
+            return HexFormat.of().formatHex(digest.digest());
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot fingerprint INPX: " + file, e);
+        }
+    }
+
+    private static void updateDigest(MessageDigest digest, String value) {
+        byte[] bytes = safe(value).getBytes(StandardCharsets.UTF_8);
+        digest.update((byte) ((bytes.length >>> 24) & 0xff));
+        digest.update((byte) ((bytes.length >>> 16) & 0xff));
+        digest.update((byte) ((bytes.length >>> 8) & 0xff));
+        digest.update((byte) (bytes.length & 0xff));
+        digest.update(bytes);
+    }
+
+    private record NormalizedBook(Object[] row, CatalogBookSnapshot catalogSnapshot) { }
 
     private static String firstNonBlank(String... values) {
         for (String v : values) if (v != null && !v.isBlank()) return v.trim();

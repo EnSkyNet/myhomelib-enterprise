@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.download;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -19,6 +20,7 @@ public class RemoveLocalBookCopyUseCase {
     private final BookResourcePort resources;
     private final BookQueryRepository queries;
     private final BookCommandRepository commands;
+    private final CatalogUpdateTrackingPort catalogUpdateTrackingPort;
 
     /**
      * @return number of catalog rows switched to non-local. For a shared archive this
@@ -43,12 +45,15 @@ public class RemoveLocalBookCopyUseCase {
             for (Book row : affected) {
                 commands.updateStorage(row.getId(), row.getCollectionRoot(), row.getFolder(),
                         row.getFileName(), row.getArchiveEntry(), false);
+                catalogUpdateTrackingPort.clearDownloadedBaseline(row.getId());
             }
             return affected.size();
         }
 
-        commands.updateStorage(BookId.fromString(book.getId()),
+        BookId bookId = BookId.fromString(book.getId());
+        commands.updateStorage(bookId,
                 book.getCollectionRoot(), book.getFolder(), book.getFileName(), book.getArchiveEntry(), false);
+        catalogUpdateTrackingPort.clearDownloadedBaseline(bookId);
         return 1;
     }
 }

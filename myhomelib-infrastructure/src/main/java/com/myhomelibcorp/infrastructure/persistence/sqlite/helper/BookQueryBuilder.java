@@ -32,6 +32,9 @@ public class BookQueryBuilder {
         if (query.authorId() != null) {
             ctx.joins.add("JOIN book_authors ba ON b.id = ba.book_id");
         }
+        if (query.onlyInHistory()) {
+            ctx.joins.add("JOIN reading_history rh ON rh.book_id = b.id");
+        }
         if (query.onlyFavorites()) {
             ctx.conditions.add("EXISTS (SELECT 1 FROM book_groups bgf JOIN groups gf ON gf.id = bgf.group_id " +
                     "WHERE bgf.book_id = b.id AND LOWER(TRIM(gf.name)) IN ('favorites','обране','избрани','улюблене'))");
@@ -64,9 +67,27 @@ public class BookQueryBuilder {
             ctx.params.add(query.genreId().asString());
         }
 
+        // EXACT KEYWORD TOKEN (comma/semicolon/pipe separated metadata)
+        if (query.keyword() != null) {
+            ctx.conditions.add("""
+                    EXISTS (
+                        WITH RECURSIVE split(rest, token) AS (
+                            VALUES(REPLACE(REPLACE(COALESCE(b.keywords, ''), ';', ','), '|', ',') || ',', '')
+                            UNION ALL
+                            SELECT SUBSTR(rest, INSTR(rest, ',') + 1),
+                                   TRIM(SUBSTR(rest, 1, INSTR(rest, ',') - 1))
+                            FROM split
+                            WHERE rest <> ''
+                        )
+                        SELECT 1 FROM split WHERE LOWER(token) = LOWER(?) LIMIT 1
+                    )
+                    """);
+            ctx.params.add(query.keyword());
+        }
+
         // LANGUAGE
         if (query.language() != null) {
-            ctx.conditions.add("b.language = ?");
+            ctx.conditions.add("LOWER(TRIM(b.language)) = LOWER(?)");
             ctx.params.add(query.language().toString());
         }
 
@@ -74,6 +95,23 @@ public class BookQueryBuilder {
         if (query.format() != null) {
             ctx.conditions.add("b.format = ?");
             ctx.params.add(query.format().name());
+        }
+
+        // YEAR
+        if (query.year() != null) {
+            ctx.conditions.add("b.year = ?");
+            ctx.params.add(query.year());
+        }
+
+        // ARCHIVE CONTAINER
+        if (query.archivePath() != null) {
+            ctx.conditions.add("COALESCE(b.archive_entry, '') <> ''");
+            ctx.conditions.add("LOWER(REPLACE(COALESCE(b.folder, ''), '\\', '/')) = LOWER(?)");
+            ctx.params.add(normalizePath(query.archivePath()));
+            if (query.archiveCollectionRoot() != null) {
+                ctx.conditions.add("LOWER(REPLACE(COALESCE(b.collection_root, ''), '\\', '/')) = LOWER(?)");
+                ctx.params.add(normalizePath(query.archiveCollectionRoot()));
+            }
         }
 
         // TEXT SEARCH
@@ -88,6 +126,14 @@ public class BookQueryBuilder {
         // ONLY READ
         if (query.onlyRead()) {
             ctx.conditions.add("b.progress = 100");
+        }
+
+        // USER RATING / REVIEW SUBSETS
+        if (query.onlyRated()) {
+            ctx.conditions.add("COALESCE(b.rate, 0) > 0");
+        }
+        if (query.onlyReviewed()) {
+            ctx.conditions.add("b.review IS NOT NULL AND TRIM(b.review) <> ''");
         }
 
         // WITHOUT SERIES
@@ -116,7 +162,7 @@ public class BookQueryBuilder {
             sql.append(" WHERE ");
             sql.append(String.join(" AND ", ctx.conditions));
         }
-        sql.append(" ").append(buildOrderBy(query.sortBy(), query.direction()));
+        sql.append(" ").append(buildOrderBy(query));
         sql.append(" LIMIT ? OFFSET ?");
         ctx.params.add(query.pagination().limit());
         ctx.params.add(query.pagination().offset());
@@ -135,7 +181,12 @@ public class BookQueryBuilder {
         return sql.toString();
     }
 
-    private String buildOrderBy(SortBy sortBy, SortDirection direction) {
+    private String buildOrderBy(BookQuery query) {
+        if (query.onlyInHistory()) {
+            return "ORDER BY rh.last_opened_at DESC, b.id ASC";
+        }
+        SortBy sortBy = query.sortBy();
+        SortDirection direction = query.direction();
         String dir = (direction == SortDirection.DESC) ? "DESC" : "ASC";
         String column;
         switch (sortBy) {
@@ -151,6 +202,11 @@ public class BookQueryBuilder {
         }
         // Stable tie-break is required for offset paging and full Lucene rebuilds.
         return "ORDER BY " + column + " " + dir + ", b.id " + dir;
+    }
+
+
+    private static String normalizePath(String value) {
+        return value == null ? "" : value.replace('\\', '/');
     }
 
     private static class QueryContext {

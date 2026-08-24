@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
+import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.common.Pagination;
@@ -154,9 +156,72 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
+    public void loadBooksByYear(int year) {
+        BookQuery query = BookQuery.builder()
+                .year(year)
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksByArchive(ArchiveNavigationKey archive) {
+        if (archive == null) throw new IllegalArgumentException("archive cannot be null");
+        BookQuery query = BookQuery.builder()
+                .archive(archive.collectionRoot(), archive.archivePath())
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksByKeyword(String keyword) {
+        if (keyword == null || keyword.isBlank()) throw new IllegalArgumentException("keyword cannot be blank");
+        BookQuery query = BookQuery.builder()
+                .keyword(keyword)
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksByReviewSubset(ReviewNavigationFilter filter) {
+        if (filter == null) throw new IllegalArgumentException("filter cannot be null");
+        BookQuery query = BookQuery.builder()
+                .onlyRated(filter.onlyRated())
+                .onlyReviewed(filter.onlyReviewed())
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
     public void loadFavoriteBooks() {
         loadBooksByGroup(GroupId.fromLong(1L));
     }
+
+    public void loadAlreadyReadBooks() {
+        BookQuery query = BookQuery.builder()
+                .onlyRead(true)
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadReadingHistory() {
+        BookQuery query = BookQuery.builder()
+                .onlyInHistory(true)
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .build();
+        loadBooks(query);
+    }
+
 
     // ===== Dashboard =====
 
@@ -206,10 +271,13 @@ public class BookLoaderService {
         if (base == null) base = BookQuery.builder().build();
         return BookQuery.builder()
                 .authorId(base.authorId()).seriesId(base.seriesId()).genreId(base.genreId()).groupId(base.groupId())
-                .text(base.text()).language(base.language()).format(base.format())
+                .text(base.text()).keyword(base.keyword()).language(base.language()).format(base.format()).year(base.year())
+                .archive(base.archiveCollectionRoot(), base.archivePath())
                 .pagination(Pagination.of(pageSize, Math.max(0, page) * pageSize))
                 .sortBy(base.sortBy()).direction(base.direction())
                 .onlyRead(base.onlyRead()).onlyFavorites(base.onlyFavorites())
+                .onlyRated(base.onlyRated()).onlyReviewed(base.onlyReviewed())
+                .onlyInHistory(base.onlyInHistory())
                 .withoutSeries(base.withoutSeries()).withCover(base.withCover())
                 .build();
     }

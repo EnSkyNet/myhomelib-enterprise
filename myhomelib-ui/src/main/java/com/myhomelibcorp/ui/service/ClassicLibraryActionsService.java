@@ -2,7 +2,6 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.exchange.ReadingHistoryPort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
@@ -28,29 +27,18 @@ public class ClassicLibraryActionsService {
     private final BookCommandRepository commands;
     private final SearchIndexer indexer;
     private final BookMapper mapper;
-    private final ReadingHistoryPort history;
     private final ApplicationSettingsPort settings;
     private final DialogService dialogs;
 
     public ClassicLibraryActionsService(BookQueryRepository query, BookCommandRepository commands,
-                                        SearchIndexer indexer, BookMapper mapper, ReadingHistoryPort history,
+                                        SearchIndexer indexer, BookMapper mapper,
                                         ApplicationSettingsPort settings, DialogService dialogs) {
         this.query=query; this.commands=commands; this.indexer=indexer; this.mapper=mapper;
-        this.history=history; this.settings=settings; this.dialogs=dialogs;
+        this.settings=settings; this.dialogs=dialogs;
     }
 
     public List<BookDto> newBooks(int limit) {
         return query.findRecentlyAdded(limit).stream().map(mapper::toDto).toList();
-    }
-
-    public List<BookDto> readingHistory(int limit) {
-        List<BookId> ids = history.recent(limit);
-        if (ids.isEmpty()) return List.of();
-        java.util.Map<BookId, Integer> order = new java.util.HashMap<>();
-        for (int i = 0; i < ids.size(); i++) order.put(ids.get(i), i);
-        return query.findByIds(ids).stream()
-                .sorted(java.util.Comparator.comparingInt(b -> order.getOrDefault(b.getId(), Integer.MAX_VALUE)))
-                .map(mapper::toDto).toList();
     }
 
     public boolean editBook(Window owner, BookId id) {

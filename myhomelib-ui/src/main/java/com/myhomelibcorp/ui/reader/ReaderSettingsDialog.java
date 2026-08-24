@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.api.ReaderTheme;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
@@ -8,12 +9,14 @@ import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.ColorPicker;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.Spinner;
 import javafx.scene.control.SpinnerValueFactory;
 import javafx.scene.layout.GridPane;
 import javafx.scene.text.Font;
+import javafx.scene.paint.Color;
 import javafx.stage.Window;
 
 import java.util.List;
@@ -38,6 +41,15 @@ final class ReaderSettingsDialog {
 
         ComboBox<String> theme = new ComboBox<>(FXCollections.observableArrayList("light", "sepia", "dark", "amoled"));
         theme.setValue(s.themeName());
+
+        ReaderTheme effectiveTheme = ReaderTheme.fromSettings(s);
+        ColorPicker backgroundColor = new ColorPicker(Color.web(effectiveTheme.background()));
+        ColorPicker textColor = new ColorPicker(Color.web(effectiveTheme.foreground()));
+        theme.setOnAction(event -> {
+            ReaderTheme selectedTheme = ReaderTheme.fromName(theme.getValue());
+            backgroundColor.setValue(Color.web(selectedTheme.background()));
+            textColor.setValue(Color.web(selectedTheme.foreground()));
+        });
 
         List<String> families = Font.getFamilies();
         ComboBox<String> fontFamily = new ComboBox<>(FXCollections.observableArrayList(families));
@@ -74,6 +86,8 @@ final class ReaderSettingsDialog {
 
         int r = 0;
         row(grid, r++, "Тема", theme);
+        row(grid, r++, "Колір фону", backgroundColor);
+        row(grid, r++, "Колір тексту", textColor);
         row(grid, r++, "Шрифт", fontFamily);
         row(grid, r++, "Розмір", fontSize);
         row(grid, r++, "Міжрядковий інтервал", lineSpacing);
@@ -114,11 +128,38 @@ final class ReaderSettingsDialog {
                     autoScroll.isSelected(),
                     scrollSpeed.getValue(),
                     showToolbar.isSelected(),
-                    s.customCss()
+                    mergeReaderColors(s.customCss(), theme.getValue(), backgroundColor.getValue(), textColor.getValue())
             );
         });
 
         return dialog.showAndWait();
+    }
+
+
+    private static String mergeReaderColors(String css, String themeName, Color background, Color foreground) {
+        String result = css == null ? "" : css;
+        result = result.replaceAll("(?i)--reader-background\\s*:\\s*#[0-9a-f]{6,8}\\s*;?", "")
+                .replaceAll("(?i)--reader-foreground\\s*:\\s*#[0-9a-f]{6,8}\\s*;?", "")
+                .trim();
+
+        ReaderTheme base = ReaderTheme.fromName(themeName);
+        String bg = toHex(background);
+        String fg = toHex(foreground);
+        if (bg.equalsIgnoreCase(base.background()) && fg.equalsIgnoreCase(base.foreground())) {
+            return result;
+        }
+
+        String variables = "--reader-background: " + bg + "; "
+                + "--reader-foreground: " + fg + ";";
+        return result.isBlank() ? variables : result + System.lineSeparator() + variables;
+    }
+
+    private static String toHex(Color color) {
+        Color c = color != null ? color : Color.BLACK;
+        return String.format("#%02X%02X%02X",
+                Math.round(c.getRed() * 255),
+                Math.round(c.getGreen() * 255),
+                Math.round(c.getBlue() * 255));
     }
 
     private static Spinner<Double> doubleSpinner(double min, double max, double value, double step) {

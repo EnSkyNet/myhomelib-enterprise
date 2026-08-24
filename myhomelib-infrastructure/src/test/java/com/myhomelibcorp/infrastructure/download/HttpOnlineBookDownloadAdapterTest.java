@@ -23,6 +23,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
@@ -203,10 +204,12 @@ class HttpOnlineBookDownloadAdapterTest {
 
     private ApplicationSettingsPort settings() {
         ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
-        when(settings.get(anyString(), anyString())).thenAnswer(invocation -> {
+        when(settings.get(anyString(), anyString())).thenAnswer(invocation -> invocation.getArgument(1));
+        when(settings.getInt(anyString(), anyInt())).thenAnswer(invocation -> {
             String key = invocation.getArgument(0);
-            if ("online.retryBaseDelayMs".equals(key)) return "100";
-            return invocation.getArgument(1);
+            int defaultValue = invocation.getArgument(1);
+            if ("online.retryBaseDelayMs".equals(key)) return 100;
+            return defaultValue;
         });
         return settings;
     }

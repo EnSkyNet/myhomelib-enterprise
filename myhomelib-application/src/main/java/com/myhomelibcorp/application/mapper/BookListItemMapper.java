@@ -17,6 +17,7 @@ public interface BookListItemMapper {
     @Mapping(target = "title", source = "title")
     @Mapping(target = "authorsText", expression = "java(book.authorsText())")
     @Mapping(target = "series", source = "series")
+    @Mapping(target = "sequenceNumber", source = "sequenceNumber")
     @Mapping(target = "genresText", expression = "java(book.genresText())")
     @Mapping(target = "rate", source = "rate")
     @Mapping(target = "progress", source = "progress")

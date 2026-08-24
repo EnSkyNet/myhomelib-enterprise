@@ -72,7 +72,7 @@ class LuceneClassicSearchCompatibilityTest {
         var result = search.search(SearchRequest.builder()
                 .text("%оповідан%")
                 .language(com.myhomelibcorp.domain.model.valueobject.LanguageCode.of("en"))
-                .ratingFrom(3)
+                .ratingFrom(2)
                 .yearFrom(2023)
                 .build());
         assertThat(ids(result)).containsExactly(second);

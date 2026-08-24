@@ -7,6 +7,7 @@ import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.core.ReaderEngine;
 import com.myhomelibcorp.reader.core.ReaderEngineBuilder;
 import com.myhomelibcorp.reader.core.registry.DefaultBookFormatRegistry;
+import com.myhomelibcorp.reader.layout.TextLayoutEngine;
 import com.myhomelibcorp.reader.format.fb2.Fb2Format;
 import com.myhomelibcorp.reader.format.epub.EpubFormat;
 import com.myhomelibcorp.reader.format.txt.TxtFormat;
@@ -36,6 +37,7 @@ public class ReaderView extends BorderPane {
     private final JavaFxReaderRenderer renderer;
 
     private Consumer<ReaderSettings> onSettingsClick;
+    private Consumer<ReaderSettings> onSettingsChanged;
     private Runnable onBookmarkClick;
     private Runnable onTocClick;
     private Runnable onSearchClick;
@@ -50,10 +52,14 @@ public class ReaderView extends BorderPane {
 
         // Один Canvas на весь render pipeline.
         Canvas canvasNode = new Canvas();
-        renderer = new JavaFxReaderRenderer(canvasNode, new FontProvider("Georgia"));
+        ReaderSettings initialSettings = ReaderSettings.defaultSettings();
+        renderer = new JavaFxReaderRenderer(canvasNode, new FontProvider(initialSettings.fontFamily()));
         engine = new ReaderEngineBuilder()
                 .formatRegistry(formatRegistry)
+                .settings(initialSettings)
                 .renderer(renderer)
+                .withLayoutEngine(new TextLayoutEngine(
+                        new JavaFxFontMetricsProvider(initialSettings), initialSettings))
                 .build();
 
         canvas = new ReaderCanvas(engine, renderer);
@@ -78,6 +84,9 @@ public class ReaderView extends BorderPane {
 
         toolbar.setOnSettingsClick(settings -> {
             if (onSettingsClick != null) onSettingsClick.accept(settings);
+        });
+        toolbar.setOnQuickSettingsChanged(settings -> {
+            if (onSettingsChanged != null) onSettingsChanged.accept(settings);
         });
         toolbar.setOnBookmarkClick(() -> {
             if (onBookmarkClick != null) onBookmarkClick.run();
@@ -106,6 +115,11 @@ public class ReaderView extends BorderPane {
 
     public void setOnSettingsClick(Consumer<ReaderSettings> listener) {
         onSettingsClick = listener;
+    }
+
+    /** Called after toolbar shortcuts change persistent reader preferences. */
+    public void setOnSettingsChanged(Consumer<ReaderSettings> listener) {
+        onSettingsChanged = listener;
     }
 
     public void setOnBookmarkClick(Runnable listener) {

@@ -29,10 +29,14 @@ import java.util.concurrent.TimeUnit;
 public class ApplicationSettingsDialog {
     private final ApplicationSettingsPort settings;
     private final SupportBundleService supportBundleService;
+    private final LocalizationService localizationService;
 
-    public ApplicationSettingsDialog(ApplicationSettingsPort settings, SupportBundleService supportBundleService) {
+    public ApplicationSettingsDialog(ApplicationSettingsPort settings,
+                                     SupportBundleService supportBundleService,
+                                     LocalizationService localizationService) {
         this.settings = settings;
         this.supportBundleService = supportBundleService;
+        this.localizationService = localizationService;
     }
 
     public void show(Window owner) {
@@ -65,10 +69,18 @@ public class ApplicationSettingsDialog {
 
     private Node generalPane(Map<String, TextField> text, Map<String, CheckBox> bool) {
         VBox box = section();
-        ComboBox<String> lang = new ComboBox<>();
-        lang.getItems().addAll("uk", "en", "bg");
-        lang.setValue(settings.get("ui.language", "uk"));
-        lang.valueProperty().addListener((o,a,b) -> settings.put("ui.language", b));
+        ComboBox<LanguageOption> lang = new ComboBox<>();
+        var availableLanguages = localizationService.availableLanguages();
+        availableLanguages.forEach((code, name) -> lang.getItems().add(new LanguageOption(code, name)));
+        String selectedCode = localizationService.language();
+        lang.getItems().stream()
+                .filter(option -> option.code().equals(selectedCode))
+                .findFirst()
+                .ifPresent(lang::setValue);
+        if (lang.getValue() == null && !lang.getItems().isEmpty()) lang.setValue(lang.getItems().getFirst());
+        lang.valueProperty().addListener((o, a, b) -> {
+            if (b != null) localizationService.setLanguage(b.code());
+        });
         CheckBox confirmDelete = checkbox(bool, "ui.confirmDelete", "Підтверджувати видалення книг", true);
         CheckBox restoreSession = checkbox(bool, "ui.restoreSession", "Відновлювати останню сесію", true);
         CheckBox autoIndex = checkbox(bool, "search.autoIndex", "Оновлювати пошуковий індекс після змін", true);
@@ -199,6 +211,10 @@ public class ApplicationSettingsDialog {
         Alert alert = new Alert(type); alert.setTitle(title); alert.setHeaderText(null);
         TextArea area = new TextArea(content == null ? "" : content); area.setEditable(false); area.setWrapText(true);
         area.setPrefSize(720, 320); alert.getDialogPane().setContent(area); alert.showAndWait();
+    }
+
+    private record LanguageOption(String code, String name) {
+        @Override public String toString() { return name; }
     }
 
     private String samplePath(String name) { return AppPaths.cacheDir().resolve("command test").resolve(name).toAbsolutePath().toString(); }

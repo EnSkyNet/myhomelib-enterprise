@@ -33,6 +33,7 @@ public class BookViewModel {
 
     // Властивість для вибору
     private final BooleanProperty selected = new SimpleBooleanProperty(false);
+    private final BooleanProperty groupHeader = new SimpleBooleanProperty(false);
 
     // Форматовані властивості
     private final StringProperty fileSizeFormatted = new SimpleStringProperty();
@@ -68,6 +69,7 @@ public class BookViewModel {
 
     // Властивість вибору
     public BooleanProperty selectedProperty() { return selected; }
+    public BooleanProperty groupHeaderProperty() { return groupHeader; }
 
     public StringProperty fileSizeFormattedProperty() { return fileSizeFormatted; }
     public StringProperty rateStarsProperty() { return rateStars; }
@@ -164,6 +166,8 @@ public class BookViewModel {
     // Властивість вибору
     public boolean isSelected() { return selected.get(); }
     public void setSelected(boolean selected) { this.selected.set(selected); }
+    public boolean isGroupHeader() { return groupHeader.get(); }
+    public void setGroupHeader(boolean groupHeader) { this.groupHeader.set(groupHeader); }
 
     // ===== ФОРМАТОВАНІ ГЕТЕРИ =====
     public String getFileSizeFormatted() { return fileSizeFormatted.get(); }

@@ -384,30 +384,34 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
         // Classic MyHomeLib field aliases (English + Ukrainian).
         s = s.replaceAll("(?i)\\bauthor:", "authors:")
-                .replaceAll("(?iu)\\bавтор:", "authors:")
+                .replaceAll("(?iU)\\bавтор:", "authors:")
                 .replaceAll("(?i)\\bgenre:", "genres:")
-                .replaceAll("(?iu)\\bжанр:", "genres:")
+                .replaceAll("(?iU)\\bжанр:", "genres:")
                 .replaceAll("(?i)\\bfile(name)?:", "file_name:")
-                .replaceAll("(?iu)\\bфайл:", "file_name:")
+                .replaceAll("(?iU)\\bфайл:", "file_name:")
                 .replaceAll("(?i)\\blang(uage)?:", "language:")
-                .replaceAll("(?iu)\\bмова:", "language:")
-                .replaceAll("(?iu)\\bназва:", "title:")
-                .replaceAll("(?iu)\\bсерія:", "series:")
-                .replaceAll("(?iu)\\bанотація:", "annotation:")
-                .replaceAll("(?iu)\\bключові(?:слова)?:", "keywords:")
+                .replaceAll("(?iU)\\bмова:", "language:")
+                .replaceAll("(?iU)\\bназва:", "title:")
+                .replaceAll("(?iU)\\bсерія:", "series:")
+                .replaceAll("(?iU)\\bанотація:", "annotation:")
+                .replaceAll("(?iU)\\bключові(?:слова)?:", "keywords:")
                 .replaceAll("(?i)\\bpub(lisher)?:", "publisher:")
-                .replaceAll("(?iu)\\bвидавець:", "publisher:")
-                .replaceAll("(?iu)\\bвидавництво:", "publisher:")
+                .replaceAll("(?iU)\\bвидавець:", "publisher:")
+                .replaceAll("(?iU)\\bвидавництво:", "publisher:")
                 .replaceAll("(?i)\\blib(rate|raryrate):", "library_rate:")
-                .replaceAll("(?iu)\\bрейтингбібліотеки:", "library_rate:")
+                .replaceAll("(?iU)\\bрейтингбібліотеки:", "library_rate:")
                 .replaceAll("(?i)\\buser(rate|rating):", "rate:")
-                .replaceAll("(?iu)\\bмійрейтинг:", "rate:")
+                .replaceAll("(?iU)\\bмійрейтинг:", "rate:")
                 .replaceAll("(?i)\\blibid:", "lib_id:")
-                .replaceAll("(?iu)\\bперекладачі?:", "translators:")
-                .replaceAll("(?iu)\\bмісто:", "city:")
+                .replaceAll("(?iU)\\bперекладачі?:", "translators:")
+                .replaceAll("(?iU)\\bмісто:", "city:")
                 .replaceAll("(?i)\\badded:", "created:")
                 .replaceAll("(?i)\\bdateadded:", "created:")
-                .replaceAll("(?iu)\\bдодано:", "created:");
+                .replaceAll("(?iU)\\bдодано:", "created:");
+
+        // Comparison aliases must be normalized before the generic comparison parser.
+        s = s.replaceAll("(?i)\\b(?:added|dateadded)\\s*(<>|>=|<=|>|<|=)", "created$1")
+                .replaceAll("(?iU)\\bдодано\\s*(<>|>=|<=|>|<|=)", "created$1");
 
         // Accept comparisons both as year:>2020 and year>2020.
         s = s.replaceAll("(?i)\\b(year|created|library_rate|rate)\\s*(<>|>=|<=|>|<|=)\\s*([^\\s)]+)", "$1:$2$3");

@@ -57,13 +57,13 @@
                     <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Нові книги" onAction="#onNewBooks"/>
-                    <MenuItem text="Історія читання" onAction="#onHistory"/>
                     <SeparatorMenuItem/>
-                    <Menu fx:id="languageMenu" text="Мова / Language">
-                        <MenuItem text="Українська" onAction="#handleLanguageUkrainian"/>
-                        <MenuItem text="English" onAction="#handleLanguageEnglish"/>
-                        <MenuItem text="Български" onAction="#handleLanguageBulgarian"/>
-                    </Menu>
+                    <Menu fx:id="recentBooksMenu" text="Недавні книги"/>
+                    <MenuItem text="Прочитані" onAction="#onAlreadyRead"/>
+                    <MenuItem text="Історія читання" onAction="#onHistory"/>
+                    <MenuItem text="Очистити історію читання" onAction="#onClearHistory"/>
+                    <SeparatorMenuItem/>
+                    <Menu fx:id="languageMenu" text="Мова / Language"/>
                 </Menu>
                 <Menu text="Інструменти">
                     <MenuItem text="Імпорт книги/архіву..." onAction="#handleImportFb2"/>

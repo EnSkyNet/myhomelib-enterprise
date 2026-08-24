@@ -104,6 +104,20 @@ public class SqliteGroupRepository implements GroupRepository {
     }
 
     @Override
+    public List<Group> findByBookId(String bookId) {
+        if (bookId == null || bookId.isBlank()) return List.of();
+        String sql = """
+                SELECT g.*
+                FROM groups g
+                JOIN book_groups bg ON bg.group_id = g.id
+                JOIN books b ON b.id = bg.book_id
+                WHERE bg.book_id = ? AND b.deleted = 0
+                ORDER BY LOWER(g.name), g.id
+                """;
+        return getJdbcTemplate().query(sql, groupRowMapper, bookId);
+    }
+
+    @Override
     public List<String> findBookIdsByGroup(Long groupId) {
         String sql = "SELECT book_id FROM book_groups WHERE group_id = ?";
         return getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString("book_id"), groupId);

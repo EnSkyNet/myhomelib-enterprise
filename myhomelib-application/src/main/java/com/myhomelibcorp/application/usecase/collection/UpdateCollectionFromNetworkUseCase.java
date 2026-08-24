@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort;
@@ -31,6 +32,8 @@ public class UpdateCollectionFromNetworkUseCase {
             Path root = collection.getRootFolder() != null ? collection.getRootFolder() : downloaded.getParent();
             ImportResult result = importer.execute(ImportContext.builder()
                     .file(downloaded).rootDirectory(root).updateExisting(true).indexAfterSave(false)
+                    .catalogSourceKey(CatalogSourceIdentity.remoteCollection(collection.getId()))
+                    .catalogSourceLocation(inpxUrl)
                     .batchSize(1000).cancelFlag(flag).build());
             if (!flag.get()) lifecycle.rebuildSearchIndex();
             return result;

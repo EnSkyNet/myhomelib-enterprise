@@ -43,3 +43,13 @@ The final source pass also includes:
 - Maven Wrapper plus release/package/checksum scripts.
 
 External build/platform/corpus gates that cannot run in the packaging container are intentionally documented as skipped in `RELEASE_VALIDATION.txt`; they are not represented as passed.
+
+## Dynamic file-based localization
+
+- moved shipped Ukrainian/English/Bulgarian UI translation maps out of Java into standalone UTF-8 `Lang/*.json` catalogues;
+- added first-run materialization of the bundled default language files;
+- added auto-generated `config/available-languages.txt` synchronized with the catalogues currently present;
+- language catalogues are rescanned at startup and whenever the language menu/settings selector requests the list;
+- adding a valid new `<code>.json` catalogue adds that language without Java/FXML changes;
+- `config/language.txt` remains the selected-language file and is now updated consistently from both language-selection UIs;
+- added catalogue validation tooling and documentation in `LANGUAGE_SYSTEM.md` and `Lang/README.md`.
