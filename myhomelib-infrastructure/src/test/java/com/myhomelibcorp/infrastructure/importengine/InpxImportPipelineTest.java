@@ -14,6 +14,8 @@ import org.mockito.MockitoAnnotations;
 
 import java.nio.file.Path;
 import java.util.Collections;
+import java.util.ArrayList;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.*;
@@ -75,6 +77,7 @@ class InpxImportPipelineTest {
         assertThat(result).isZero();
         verify(bulkOptimizer).enableBulkInsertMode();
         verify(bulkOptimizer).disableBulkInsertMode();
+        verify(authorRepository, never()).findAll();
         // Перевіряємо, що методи dropIndexes/createIndexes не викликали JdbcTemplate (бо колекція не активна)
         verify(collectionManager, never()).getCurrentJdbcTemplate();
     }
@@ -88,4 +91,25 @@ class InpxImportPipelineTest {
 
         assertThat(result).isZero();
     }
+    @Test
+    void importWithResultReportsPreparationAndCompletionWithoutLoadingAllAuthors(@TempDir Path tempDir) throws Exception {
+        Path testFile = tempDir.resolve("progress.inpx");
+        java.nio.file.Files.createFile(testFile);
+        when(reader.count(eq(testFile), any())).thenReturn(0L);
+        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
+
+        List<Double> progress = new ArrayList<>();
+        List<String> statuses = new ArrayList<>();
+        var result = pipeline.importFileWithResult(
+                testFile, 100, tempDir, null, null, null, progress::add, statuses::add);
+
+        assertThat(result.imported()).isZero();
+        assertThat(progress).isNotEmpty();
+        assertThat(progress.getFirst()).isEqualTo(0.0);
+        assertThat(progress.getLast()).isEqualTo(1.0);
+        assertThat(statuses).anyMatch(s -> s.contains("Підготовка INPX"));
+        assertThat(statuses).anyMatch(s -> s.contains("Аналіз індексу"));
+        verify(authorRepository, never()).findAll();
+    }
+
 }

@@ -26,8 +26,8 @@ import java.util.Optional;
 public class BookSaver {
 
     private final BookCommandRepository bookCommandRepository;
-    private final BookQueryRepository bookQueryRepository; // <-- Додано
-    private final ApplicationEventPublisher eventPublisher; // <-- Додано
+    private final BookQueryRepository bookQueryRepository;
+    private final ApplicationEventPublisher eventPublisher;
     private final DuplicateDetector duplicateDetector;
     private final SearchIndexer searchIndexer;
 
@@ -135,6 +135,7 @@ public class BookSaver {
 
     /**
      * Видаляє книгу за ID та публікує подію BookDeletedEvent.
+     * Подія публікується в межах транзакції для узгодженості.
      */
     public void deleteBook(BookId bookId) {
         if (bookId == null) {
@@ -147,13 +148,14 @@ public class BookSaver {
             return;
         }
 
+        // Публікуємо подію всередині транзакції
         transactionTemplate.execute(status -> {
             bookCommandRepository.deleteById(bookId);
+            // Публікуємо подію в межах транзакції
+            eventPublisher.publishEvent(new BookDeletedEvent(bookId));
             return null;
         });
 
-        // Публікуємо подію видалення
-        eventPublisher.publishEvent(new BookDeletedEvent(bookId));
         log.debug("Книгу видалено: {}", bookId);
     }
 

@@ -6,9 +6,11 @@ import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.download.DownloadBookUseCase;
 import com.myhomelibcorp.application.usecase.download.RemoveLocalBookCopyUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
@@ -27,26 +29,39 @@ public class BookDownloadCoordinator {
     private final UiBackgroundExecutor executor;
     private final ApplicationState applicationState;
     private final DialogService dialogService;
+    private final ApplicationEventPublisher eventPublisher;
     private final Semaphore downloadSlots;
     private final Map<String, AtomicBoolean> active = new ConcurrentHashMap<>();
 
     public BookDownloadCoordinator(DownloadBookUseCase downloadBookUseCase, RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase,
                                    BookResourcePort bookResourcePort, UiBackgroundExecutor executor, ApplicationState applicationState,
-                                   DialogService dialogService, ApplicationSettingsPort settings) {
+                                   DialogService dialogService, ApplicationSettingsPort settings, ApplicationEventPublisher eventPublisher) {
         this.downloadBookUseCase = downloadBookUseCase;
         this.removeLocalBookCopyUseCase = removeLocalBookCopyUseCase;
         this.bookResourcePort = bookResourcePort;
         this.executor = executor;
         this.applicationState = applicationState;
         this.dialogService = dialogService;
+        this.eventPublisher = eventPublisher;
         int permits = Math.max(1, Math.min(16, settings.getInt("online.maxParallelDownloads", 2)));
         this.downloadSlots = new Semaphore(permits, true);
     }
 
     public CompletableFuture<Path> ensureLocal(BookDto book) {
+        return download(book, false);
+    }
+
+    /** Force a fresh online copy even when an older local file exists. */
+    public CompletableFuture<Path> downloadUpdate(BookDto book) {
+        return download(book, true);
+    }
+
+    private CompletableFuture<Path> download(BookDto book, boolean force) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
-        if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
+        if (!force) {
+            var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+            if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
+        }
 
         Collection collection = applicationState.getCurrentLibraryCollection();
         if (collection == null || collection.getUrl() == null || collection.getUrl().isBlank()) {
@@ -85,6 +100,7 @@ public class BookDownloadCoordinator {
                                     : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId()).toAbsolutePath().normalize();
                             book.setCollectionRoot(root.toString());
                             book.setLocal(true);
+                            eventPublisher.publishEvent(new NavigationRefreshEvent());
                         } else {
                             Throwable cause = unwrap(error);
                             applicationState.getStatusBar().setStatusText("Помилка завантаження");

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.URI;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
@@ -99,6 +100,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         }
     }
 
+    // Фрагмент з виправленням
     private void downloadPhysical(BookDto book,
                                   Collection collection,
                                   String baseUrl,
@@ -152,7 +154,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                         ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND}
                         : new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE};
                 try (InputStream in = response.body();
-                     var out = Files.newOutputStream(part, outputOptions)) {
+                     OutputStream out = Files.newOutputStream(part, outputOptions)) {
                     byte[] buffer = new byte[64 * 1024];
                     for (int n; (n = in.read(buffer)) >= 0;) {
                         checkCancelled(cancel);

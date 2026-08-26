@@ -86,9 +86,12 @@ public class ApplicationSettingsDialog {
         CheckBox autoIndex = checkbox(bool, "search.autoIndex", "Оновлювати пошуковий індекс після змін", true);
         Label paths = new Label("Каталог даних: " + AppPaths.dataDir() + "\nPortable mode: " + (AppPaths.portableMode() ? "увімкнено" : "вимкнено"));
         paths.setWrapText(true);
+        Button languageDiagnostics = new Button("Діагностика мов...");
+        languageDiagnostics.setOnAction(e -> showLanguageDiagnostics());
         Button diagnostics = new Button("Створити діагностичний ZIP...");
         diagnostics.setOnAction(e -> createSupportBundle(diagnostics.getScene() == null ? null : diagnostics.getScene().getWindow()));
-        box.getChildren().addAll(row("Мова інтерфейсу", lang), confirmDelete, restoreSession, autoIndex, new Separator(), paths, diagnostics);
+        HBox diagnosticActions = new HBox(8, languageDiagnostics, diagnostics);
+        box.getChildren().addAll(row("Мова інтерфейсу", lang), confirmDelete, restoreSession, autoIndex, new Separator(), paths, diagnosticActions);
         return scroll(box);
     }
 
@@ -155,6 +158,15 @@ public class ApplicationSettingsDialog {
         return row(label, controls);
     }
 
+
+    private void showLanguageDiagnostics() {
+        var messages = localizationService.languageDiagnostics();
+        String content = "Файл: " + localizationService.languageDiagnosticsFile() + "\n\n"
+                + String.join("\n", messages);
+        alert(messages.stream().anyMatch(line -> line.startsWith("ERROR"))
+                        ? Alert.AlertType.WARNING : Alert.AlertType.INFORMATION,
+                "Діагностика мовних каталогів", content);
+    }
 
     private void createSupportBundle(Window owner) {
         FileChooser chooser = new FileChooser();

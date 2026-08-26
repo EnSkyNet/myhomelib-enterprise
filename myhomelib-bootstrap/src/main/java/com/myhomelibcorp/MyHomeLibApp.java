@@ -1,8 +1,6 @@
 package com.myhomelibcorp;
 
-import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
@@ -17,6 +15,7 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepos
 import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
 import com.myhomelibcorp.infrastructure.warmup.BackgroundWarmup;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -120,9 +119,11 @@ public class MyHomeLibApp extends Application {
         DatabaseInitializer initializer = context.getBean(DatabaseInitializer.class);
         SwitchCollectionUseCase switchCollectionUseCase = context.getBean(SwitchCollectionUseCase.class);
         SyncSeriesUseCase syncSeriesUseCase = context.getBean(SyncSeriesUseCase.class);
-        // ReaderFacade readerFacade = context.getBean(ReaderFacade.class); // Тимчасово закоментовано
 
+        // ОТРИМУЄМО ВСІ КОЛЕКЦІЇ З МЕТА-БД
         List<Collection> collections = collectionRepository.findAll();
+        log.info("Знайдено {} колекцій при старті", collections.size());
+
         Collection active;
         if (collections.isEmpty()) {
             log.info("Колекцій не знайдено, створюємо стандартну...");
@@ -138,12 +139,22 @@ public class MyHomeLibApp extends Application {
                     null,
                     null
             ));
+            log.info("Створено стандартну колекцію: id={}, dbFile={}", active.getId(), active.getDbFile());
         } else {
+            // БЕРЕМО ПЕРШУ КОЛЕКЦІЮ ЯК АКТИВНУ (можна змінити на останню використану)
             active = collections.get(0);
+            log.info("Використовуємо першу колекцію: id={}, name={}, dbFile={}",
+                    active.getId(), active.getName(), active.getDbFile());
+
+            // Логуємо всі знайдені колекції
+            for (Collection c : collections) {
+                log.info("  - Колекція: {} (id={}, dbFile={})", c.getName(), c.getId(), c.getDbFile());
+            }
         }
 
         // 1. Переключаємо колекцію
         switchCollectionUseCase.execute(active);
+        context.getBean(ApplicationState.class).setCurrentLibraryCollection(active);
 
         // 2. Синхронізуємо серії
         syncSeriesUseCase.execute();
@@ -161,17 +172,13 @@ public class MyHomeLibApp extends Application {
 
         // 5. Завантажуємо кеші
         DictionaryCachePort dictCache = context.getBean(DictionaryCachePort.class);
-        AuthorRepository authorRepo = context.getBean(AuthorRepository.class);
         GenreRepository genreRepo = context.getBean(GenreRepository.class);
         SeriesRepository seriesRepo = context.getBean(SeriesRepository.class);
         GroupRepository groupRepo = context.getBean(GroupRepository.class);
 
-        dictCache.loadAuthors(authorRepo.findAll());
         dictCache.loadGenres(genreRepo.findAll());
         dictCache.loadSeries(seriesRepo.findAll());
         dictCache.loadGroups(groupRepo.findAll());
-
-        DuplicateDetector duplicateDetector = context.getBean(DuplicateDetector.class);
 
         InpxImporter inpxImporter = context.getBean(InpxImporter.class);
         inpxImporter.initialize();
@@ -181,27 +188,7 @@ public class MyHomeLibApp extends Application {
             log.info("Перебудова Lucene індексу...");
             var luceneService = context.getBean(LuceneSearchService.class);
             luceneService.rebuildIndex();
-
-            var bookRepository = context.getBean(com.myhomelibcorp.application.port.out.repository.BookQueryRepository.class);
-            int pageSize = 1000;
-            int offset = 0;
-            int totalIndexed = 0;
-
-            while (true) {
-                var query = com.myhomelibcorp.application.query.book.BookQuery.builder()
-                        .pagination(com.myhomelibcorp.application.query.common.Pagination.of(pageSize, offset))
-                        .build();
-                var books = bookRepository.find(query);
-                if (books.isEmpty()) {
-                    break;
-                }
-                luceneService.indexAll(books);
-                totalIndexed += books.size();
-                offset += pageSize;
-            }
-
-            luceneService.commit();
-            log.info("Lucene індекс перебудовано. Проіндексовано {} книг", totalIndexed);
+            log.info("Lucene індекс перебудовано. Проіндексовано {} книг", luceneService.getDocumentCount());
         } catch (Exception e) {
             log.error("Помилка перебудови Lucene індексу", e);
         }
@@ -326,6 +313,16 @@ public class MyHomeLibApp extends Application {
 
     public static void main(String[] args) {
         AppPaths.configureSystemProperties();
+        if (java.util.Arrays.asList(args).contains("--release-smoke")) {
+            try {
+                ReleaseSmokeCheck.run();
+                return;
+            } catch (Exception e) {
+                System.err.println("MYHOMELIB_RELEASE_SMOKE_FAILED: " + e.getMessage());
+                e.printStackTrace(System.err);
+                System.exit(2);
+            }
+        }
         launch(args);
     }
 }

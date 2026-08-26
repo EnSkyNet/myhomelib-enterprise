@@ -78,6 +78,32 @@ class EpubParserTest {
         assertThat(doc.toc().entries()).extracting(e -> e.title()).containsExactly("NCX chapter");
     }
 
+    @Test
+    void resolvesEpub3AndNcxFragmentsToExactTextOffsets() throws Exception {
+        Path epub = temp.resolve("anchors.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", """
+                    <package><metadata><title>Anchors</title><language>uk</language></metadata><manifest>
+                    <item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/>
+                    <item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>
+                    </manifest><spine><itemref idref="c"/></spine></package>""");
+            put(zip, "OPS/nav.xhtml", """
+                    <html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><body>
+                    <nav epub:type="toc"><ol><li><a href="chapter.xhtml#one">One</a></li>
+                    <li><a href="chapter.xhtml#two">Two</a></li></ol></nav></body></html>""");
+            put(zip, "OPS/chapter.xhtml", """
+                    <html xmlns="http://www.w3.org/1999/xhtml"><body>
+                    <h1 id="one">First</h1><p>FIRST_TEXT</p>
+                    <h2 id="two">Second</h2><p>SECOND_TEXT</p>
+                    </body></html>""");
+        }
+        ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
+        assertThat(doc.toc().entries()).hasSize(2);
+        assertThat(doc.toc().entries().get(0).textOffset()).isLessThan(doc.toc().entries().get(1).textOffset());
+        assertThat(doc.toc().entries().get(1).textOffset()).isGreaterThan(0);
+    }
+
     private void put(ZipOutputStream zip, String name, String content) throws Exception {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content.getBytes(StandardCharsets.UTF_8));

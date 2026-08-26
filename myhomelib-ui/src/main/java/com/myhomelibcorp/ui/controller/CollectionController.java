@@ -44,6 +44,7 @@ public class CollectionController {
         }
         log.info("Переключення на колекцію: {}", collection.getName());
         switchCollectionUseCase.execute(collection);
+        appState.setCurrentLibraryCollection(collection);
         statisticsService.refreshStatistics();
         appState.getStatusBar().setStatistics(statisticsService.getStatistics());
         appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());

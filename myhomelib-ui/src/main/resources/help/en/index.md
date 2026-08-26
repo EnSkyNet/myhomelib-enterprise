@@ -1,0 +1,5 @@
+# MyHomeLib 1.0.0 — Help
+
+MyHomeLib manages multiple local and online ebook collections. It imports FB2/FBD, EPUB, TXT and generic documents, scans ZIP/7z/RAR/TAR/CPIO archives, imports INPX catalogs, downloads books on demand, searches catalog metadata, stores groups/ratings/progress/reviews and includes a lightweight built-in Reader.
+
+Main topics: Collections, INPX/online libraries, Import, Search, Reader, Archives, Export/device, Settings, Portable mode, .hlc2 migration and MCP.

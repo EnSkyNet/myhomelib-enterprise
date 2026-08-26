@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;
@@ -29,7 +28,6 @@ public class CollectionLifecycleService {
     private final DatabaseMigrationPort databaseMigrationPort;
     private final CacheInvalidationPort cacheInvalidationPort;
     private final DictionaryCachePort dictionaryCachePort;
-    private final AuthorRepository authorRepository;
     private final GenreRepository genreRepository;
     private final SeriesRepository seriesRepository;
     private final GroupRepository groupRepository;
@@ -91,7 +89,7 @@ public class CollectionLifecycleService {
     private void loadDictionaries() {
         log.info("📚 Завантаження кешів словників");
         try {
-            dictionaryCachePort.loadAuthors(authorRepository.findAll());
+            // Authors are repository-backed and loaded per initial/search; never preload the full catalogue.
             dictionaryCachePort.loadGenres(genreRepository.findAll());
             dictionaryCachePort.loadSeries(seriesRepository.findAll());
             dictionaryCachePort.loadGroups(groupRepository.findAll());

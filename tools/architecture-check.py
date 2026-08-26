@@ -27,6 +27,7 @@ MODULES = {
     "myhomelib-ui": "ui",
     "myhomelib-bootstrap": "bootstrap",
     "myhomelib-mcp": "mcp",
+    "myhomelib-opds": "opds",
 }
 
 PACKAGE_TO_MODULE = {
@@ -37,6 +38,7 @@ PACKAGE_TO_MODULE = {
     "reader": "myhomelib-reader",
     "ui": "myhomelib-ui",
     "mcp": "myhomelib-mcp",
+    "opds": "myhomelib-opds",
 }
 
 # Direct production dependencies that are allowed and expected after Stage 1.
@@ -53,8 +55,10 @@ EXPECTED_INTERNAL_DEPS = {
         "myhomelib-application",
         "myhomelib-infrastructure",
         "myhomelib-ui",
+        "myhomelib-opds",
     },
     "myhomelib-mcp": {"myhomelib-shared"},
+    "myhomelib-opds": {"myhomelib-application"},
 }
 
 # Existing debt is a ceiling, not a requirement. Removing an item is always OK;
@@ -211,35 +215,40 @@ def check_forbidden_source_boundaries() -> None:
         "myhomelib-shared": (
             "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.",
             "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",
-            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.",
+            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
             "org.springframework.", "javafx.", "java.sql.", "org.apache.lucene.",
         ),
         "myhomelib-domain": (
             "com.myhomelibcorp.application.", "com.myhomelibcorp.infrastructure.",
-            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.",
+            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
             "org.springframework.", "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
         ),
         "myhomelib-application": (
             "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",
-            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.",
+            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
             "javafx.", "java.sql.", "javax.sql.", "org.springframework.jdbc.", "org.apache.lucene.",
         ),
         "myhomelib-infrastructure": (
-            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "javafx.",
+            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.opds.", "javafx.",
         ),
         "myhomelib-ui": (
-            "com.myhomelibcorp.infrastructure.", "java.sql.", "javax.sql.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.opds.", "java.sql.", "javax.sql.",
             "org.springframework.jdbc.", "org.apache.lucene.",
         ),
         "myhomelib-reader": (
             "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.",
-            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.mcp.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
             "org.springframework.", "java.sql.", "javax.sql.", "org.apache.lucene.",
         ),
         "myhomelib-mcp": (
             "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.",
-            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.opds.",
             "org.springframework.", "javafx.",
+        ),
+        "myhomelib-opds": (
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",
+            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "javafx.",
+            "java.sql.", "javax.sql.", "org.springframework.jdbc.", "org.apache.lucene.",
         ),
     }
 

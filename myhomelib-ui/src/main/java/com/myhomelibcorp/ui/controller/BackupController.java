@@ -136,15 +136,14 @@ public class BackupController {
             statusLabel.setText("Створення резервної копії...");
         });
 
+        BackupRestoreService.BackupOptions options = new BackupRestoreService.BackupOptions(
+                backupDir,
+                includeIndexCheckBox.isSelected(),
+                includeCoversCheckBox.isSelected(),
+                includeMetadataCheckBox.isSelected()
+        );
         new Thread(() -> {
             try {
-                BackupRestoreService.BackupOptions options = new BackupRestoreService.BackupOptions(
-                        backupDir,
-                        includeIndexCheckBox.isSelected(),
-                        includeCoversCheckBox.isSelected(),
-                        includeMetadataCheckBox.isSelected()
-                );
-
                 addLog("Початок резервного копіювання...");
                 addLog("Папка: " + backupDir);
 

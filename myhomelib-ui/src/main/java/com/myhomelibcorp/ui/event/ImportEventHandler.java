@@ -3,7 +3,7 @@ package com.myhomelibcorp.ui.event;
 import com.myhomelibcorp.application.event.ImportFinishedEvent;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
-import com.myhomelibcorp.ui.controller.MainController;
+import com.myhomelibcorp.application.usecase.collection.CollectionAutoUpdateUseCase;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -23,8 +23,8 @@ public class ImportEventHandler {
     private final StatisticsService statisticsService;
     private final SyncSeriesUseCase syncSeriesUseCase;
     private final BookLoaderService bookLoaderService;
-    private final MainController mainController;
     private final NavigationPanelController navigationPanelController;
+    private final CollectionAutoUpdateUseCase collectionAutoUpdateUseCase;
 
     @PostConstruct
     public void init() {
@@ -54,7 +54,7 @@ public class ImportEventHandler {
             appState.getStatusBar().setStatusText(status);
             appState.getStatusBar().setProgressVisible(false);
 
-            // 3. Синхронізуємо серії (ЄДИНЕ МІСЦЕ)
+            // 3. Синхронізуємо серії
             try {
                 syncSeriesUseCase.execute();
                 log.info("Серії синхронізовано після імпорту");
@@ -62,14 +62,31 @@ public class ImportEventHandler {
                 log.error("Помилка синхронізації серій після імпорту", e);
             }
 
-            // 4. Оновлюємо список книг
-            bookLoaderService.loadAllBooks();
+            // 4. Оновлюємо список книг (перезавантажуємо останній запит)
+            try {
+                bookLoaderService.reloadLastQuery();
+                log.info("Список книг оновлено після імпорту");
+            } catch (Exception e) {
+                log.error("Помилка оновлення списку книг", e);
+            }
 
             // 5. Оновлюємо навігацію
-            navigationPanelController.refreshAll();
+            try {
+                navigationPanelController.refreshAll();
+                log.info("Навігацію оновлено після імпорту");
+            } catch (Exception e) {
+                log.error("Помилка оновлення навігації", e);
+            }
 
-            // 6. Показуємо дашборд
-            mainController.showDashboard();
+            // 6. Successful import of a configured collection source becomes the new watcher baseline.
+            if (event.isSuccess() && event.source() != null && appState.getCurrentLibraryCollection() != null) {
+                collectionAutoUpdateUseCase.markApplied(
+                                appState.getCurrentLibraryCollection().getId(), event.source())
+                        .exceptionally(error -> {
+                            log.debug("Imported file is not the configured collection source: {}", error.getMessage());
+                            return null;
+                        });
+            }
 
             log.info("Оновлення UI після імпорту завершено");
         });

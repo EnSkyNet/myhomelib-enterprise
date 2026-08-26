@@ -43,15 +43,24 @@ public class SqliteAuthorRepository implements AuthorRepository {
     }
 
     public void updateSearchNamesForAllAuthors() {
-        List<Author> all = findAll();
-        int updated = 0;
-        for (Author author : all) {
-            String searchName = buildSearchName(author);
-            String sql = "UPDATE authors SET search_name = ? WHERE id = ?";
-            int rows = getJdbcTemplate().update(sql, searchName, author.getId().asString());
-            if (rows > 0) updated++;
-        }
-        log.info("Оновлено search_name для {} авторів", updated);
+        // Do this set-wise in SQLite. The previous implementation called findAll(),
+        // materializing the complete author table on every collection initialization.
+        String sql = """
+                UPDATE authors
+                SET search_name = TRIM(
+                    COALESCE(last_name, '') || ' ' ||
+                    COALESCE(first_name, '') || ' ' ||
+                    COALESCE(middle_name, '')
+                )
+                WHERE search_name IS NULL
+                   OR search_name <> TRIM(
+                        COALESCE(last_name, '') || ' ' ||
+                        COALESCE(first_name, '') || ' ' ||
+                        COALESCE(middle_name, '')
+                   )
+                """;
+        int updated = getJdbcTemplate().update(sql);
+        log.info("Оновлено search_name для {} авторів без повного завантаження таблиці", updated);
     }
 
     private String buildSearchName(Author author) {
@@ -156,6 +165,121 @@ public class SqliteAuthorRepository implements AuthorRepository {
             """;
         return getJdbcTemplate().query(sql, authorRowMapper, Math.max(1, limit));
     }
+
+    private static final String AUTHOR_DISPLAY_EXPR = """
+            CASE
+                WHEN TRIM(COALESCE(last_name, '')) <> '' THEN TRIM(last_name)
+                WHEN TRIM(COALESCE(first_name, '')) <> '' THEN TRIM(first_name)
+                ELSE TRIM(COALESCE(middle_name, ''))
+            END
+            """;
+
+    private static final String TOOLBAR_INITIALS =
+            "АБВГҐДЕЁЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯABCDEFGHIJKLMNOPQRSTUVWXYZ";
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Author> findByInitial(char initial) {
+        if (initial == '*') {
+            return findFirstInitial().map(this::findByInitial).orElseGet(List::of);
+        }
+
+        String initialExpr = "SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1)";
+        String where;
+        Object[] args;
+        if (initial == '#') {
+            String supported = TOOLBAR_INITIALS + TOOLBAR_INITIALS.toLowerCase(java.util.Locale.ROOT);
+            String placeholders = java.util.stream.IntStream.range(0, supported.length())
+                    .mapToObj(i -> "?")
+                    .collect(java.util.stream.Collectors.joining(","));
+            where = initialExpr + " NOT IN (" + placeholders + ") AND " + initialExpr + " <> ''";
+            args = supported.chars().mapToObj(c -> String.valueOf((char) c)).toArray();
+        } else {
+            String upper = String.valueOf(Character.toUpperCase(initial));
+            String lower = String.valueOf(Character.toLowerCase(initial));
+            where = initialExpr + " IN (?, ?)";
+            args = new Object[]{upper, lower};
+        }
+
+        String sql = """
+                SELECT *
+                FROM authors
+                WHERE %s
+                ORDER BY
+                    COALESCE(last_name, '') COLLATE NOCASE,
+                    COALESCE(first_name, '') COLLATE NOCASE,
+                    COALESCE(middle_name, '') COLLATE NOCASE,
+                    id
+                """.formatted(where);
+
+        return getJdbcTemplate().query(sql, authorRowMapper, args);
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public Optional<Character> findFirstInitial() {
+        for (char initial : TOOLBAR_INITIALS.toCharArray()) {
+            if (countByInitial(initial) > 0) {
+                return Optional.of(initial);
+            }
+        }
+        if (countByInitial('#') > 0) {
+            return Optional.of('#');
+        }
+        return Optional.empty();
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public long countByInitial(char initial) {
+        if (initial == '*') {
+            Long count = getJdbcTemplate().queryForObject("SELECT COUNT(*) FROM authors", Long.class);
+            return count == null ? 0L : count;
+        }
+
+        String initialExpr = "SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1)";
+        Long count;
+        if (initial == '#') {
+            String supported = TOOLBAR_INITIALS + TOOLBAR_INITIALS.toLowerCase(java.util.Locale.ROOT);
+            String placeholders = java.util.stream.IntStream.range(0, supported.length())
+                    .mapToObj(i -> "?")
+                    .collect(java.util.stream.Collectors.joining(","));
+            String sql = "SELECT COUNT(*) FROM authors WHERE " + initialExpr
+                    + " NOT IN (" + placeholders + ") AND " + initialExpr + " <> ''";
+            Object[] args = supported.chars().mapToObj(c -> String.valueOf((char) c)).toArray();
+            count = getJdbcTemplate().queryForObject(sql, Long.class, args);
+        } else {
+            String upper = String.valueOf(Character.toUpperCase(initial));
+            String lower = String.valueOf(Character.toLowerCase(initial));
+            String sql = "SELECT COUNT(*) FROM authors WHERE " + initialExpr + " IN (?, ?)";
+            count = getJdbcTemplate().queryForObject(sql, Long.class, upper, lower);
+        }
+        return count == null ? 0L : count;
+    }
+
+    @Override
+    @Transactional(readOnly = true)
+    public List<Author> searchByName(String query, int limit) {
+        if (query == null || query.isBlank()) {
+            return List.of();
+        }
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        String needle = "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
+        String sql = """
+                SELECT *
+                FROM authors
+                WHERE LOWER(COALESCE(search_name, '')) LIKE ?
+                   OR LOWER(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '') || ' ' || COALESCE(middle_name, '')) LIKE ?
+                ORDER BY
+                    COALESCE(last_name, '') COLLATE NOCASE,
+                    COALESCE(first_name, '') COLLATE NOCASE,
+                    COALESCE(middle_name, '') COLLATE NOCASE,
+                    id
+                LIMIT ?
+                """;
+        return getJdbcTemplate().query(sql, authorRowMapper, needle, needle, safeLimit);
+    }
+
     @Override
     public long countOrphanedAuthors() {
         try {

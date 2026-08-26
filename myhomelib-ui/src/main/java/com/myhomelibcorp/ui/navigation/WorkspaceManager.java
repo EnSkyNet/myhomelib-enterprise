@@ -9,10 +9,13 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
+import com.myhomelibcorp.ui.service.HelpTopicRegistry;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.table.BookTableController;
+import javafx.beans.property.ReadOnlyBooleanProperty;
+import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import lombok.RequiredArgsConstructor;
@@ -31,8 +34,10 @@ public class WorkspaceManager {
     private final FxmlLoaderFactory fxmlLoaderFactory;
     private final LocalizationService localizationService;
     private final BookLoaderService bookLoaderService;
+    private final HelpTopicRegistry helpTopicRegistry;
 
-    private MainController mainController;
+    private final ReadOnlyBooleanWrapper canGoBack = new ReadOnlyBooleanWrapper(false);
+    private final ReadOnlyBooleanWrapper canGoForward = new ReadOnlyBooleanWrapper(false);
     private StackPane workspaceStackPane;
     private Pane currentWorkspace;
     private WorkspaceLifecycle currentLifecycle;
@@ -40,10 +45,6 @@ public class WorkspaceManager {
     private final Deque<WorkspaceEntry> history = new ArrayDeque<>();
     private final Deque<WorkspaceEntry> forwardStack = new ArrayDeque<>();
     private WorkspaceEntry currentEntry;
-
-    public void setMainController(MainController mainController) {
-        this.mainController = mainController;
-    }
 
     public void init(StackPane stackPane) {
         this.workspaceStackPane = stackPane;
@@ -77,9 +78,7 @@ public class WorkspaceManager {
         workspace.setMaxWidth(Double.MAX_VALUE);
         workspaceStackPane.getChildren().add(workspace);
 
-        if (mainController != null) {
-            mainController.updateNavigationButtons();
-        }
+        refreshNavigationState();
     }
 
     public void push(String type, String id) {
@@ -90,12 +89,18 @@ public class WorkspaceManager {
         }
         currentEntry = entry;
         log.info("Перехід до воркспейсу: {} (id: {})", type, id);
-        if (mainController != null) {
-            mainController.updateNavigationButtons();
-        }
+        refreshNavigationState();
     }
 
     // ==================== Завантаження воркспейсів ====================
+
+    private Pane loadBookTableWorkspace(String profileKey) {
+        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        if (workspace.getUserData() instanceof BookTableController controller) {
+            controller.setProfileKey(profileKey);
+        }
+        return workspace;
+    }
 
     public void showDashboard() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/dashboard.fxml");
@@ -117,7 +122,7 @@ public class WorkspaceManager {
 
     public void showSeriesWorkspace(SeriesId seriesId) {
         if (seriesId == null) throw new IllegalArgumentException("SeriesId не може бути null");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("series");
         setWorkspace(workspace, "series");
         push("series", seriesId.asString());
         bookLoaderService.loadBooksBySeries(seriesId);
@@ -125,7 +130,7 @@ public class WorkspaceManager {
 
     public void showGenreWorkspace(GenreId genreId) {
         if (genreId == null) throw new IllegalArgumentException("GenreId не може бути null");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("genre");
         setWorkspace(workspace, "genre");
         push("genre", genreId.asString());
         bookLoaderService.loadBooksByGenre(genreId);
@@ -133,7 +138,7 @@ public class WorkspaceManager {
 
     public void showYearWorkspace(int year) {
         if (year <= 0) throw new IllegalArgumentException("year must be positive");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("year");
         setWorkspace(workspace, "year");
         push("year", Integer.toString(year));
         bookLoaderService.loadBooksByYear(year);
@@ -143,7 +148,7 @@ public class WorkspaceManager {
         if (languageCode == null || languageCode.isBlank()) {
             throw new IllegalArgumentException("languageCode cannot be blank");
         }
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("language");
         setWorkspace(workspace, "language");
         push("language", languageCode);
         bookLoaderService.loadBooksByLanguage(languageCode);
@@ -151,7 +156,7 @@ public class WorkspaceManager {
 
     public void showArchiveWorkspace(ArchiveNavigationKey archive) {
         if (archive == null) throw new IllegalArgumentException("archive cannot be null");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("archive");
         setWorkspace(workspace, "archive");
         push("archive", archive.encode());
         bookLoaderService.loadBooksByArchive(archive);
@@ -159,7 +164,7 @@ public class WorkspaceManager {
 
     public void showKeywordWorkspace(String keyword) {
         if (keyword == null || keyword.isBlank()) throw new IllegalArgumentException("keyword cannot be blank");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("keyword");
         setWorkspace(workspace, "keyword");
         push("keyword", keyword);
         bookLoaderService.loadBooksByKeyword(keyword);
@@ -167,7 +172,7 @@ public class WorkspaceManager {
 
     public void showGroupBooksWorkspace(GroupId groupId) {
         if (groupId == null || groupId.asLong() == null) throw new IllegalArgumentException("groupId cannot be null");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("group-nav");
         setWorkspace(workspace, "group-nav");
         push("group-nav", groupId.toString());
         bookLoaderService.loadBooksByGroup(groupId);
@@ -175,28 +180,34 @@ public class WorkspaceManager {
 
     public void showReviewsWorkspace(ReviewNavigationFilter filter) {
         if (filter == null) throw new IllegalArgumentException("filter cannot be null");
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("reviews");
         setWorkspace(workspace, "reviews");
         push("reviews", filter.id());
         bookLoaderService.loadBooksByReviewSubset(filter);
     }
 
     public void showAllBooksWorkspace() {
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("all-books");
         setWorkspace(workspace, "all-books");
         push("all-books", "");
         bookLoaderService.loadAllBooks();
     }
 
+    public void showUpdatesWorkspace() {
+        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/updates-workspace.fxml");
+        setWorkspace(workspace, "updates");
+        push("updates", "");
+    }
+
     public void showAlreadyReadWorkspace() {
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("already-read");
         setWorkspace(workspace, "already-read");
         push("already-read", "");
         bookLoaderService.loadAlreadyReadBooks();
     }
 
     public void showHistoryWorkspace() {
-        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/book-table.fxml");
+        Pane workspace = loadBookTableWorkspace("history");
         setWorkspace(workspace, "history");
         push("history", "");
         bookLoaderService.loadReadingHistory();
@@ -251,7 +262,7 @@ public class WorkspaceManager {
         disposeCurrentWorkspace();
     }
 
-    /** Used by MainController before navigation; avoids disposing non-reader screens unnecessarily. */
+    /** Disposes the active reader before a navigation action without touching non-reader workspaces. */
     public void disposeCurrentReaderIfActive() {
         if (currentEntry != null && ("reader".equals(currentEntry.type) || "new-reader".equals(currentEntry.type))) {
             disposeCurrentWorkspace();
@@ -268,6 +279,7 @@ public class WorkspaceManager {
         WorkspaceEntry previous = history.pop();
         currentEntry = previous;
         restoreWorkspace(previous);
+        refreshNavigationState();
     }
 
     public void goForward() {
@@ -278,6 +290,7 @@ public class WorkspaceManager {
         WorkspaceEntry next = forwardStack.pop();
         currentEntry = next;
         restoreWorkspace(next);
+        refreshNavigationState();
     }
 
     private void restoreWorkspace(WorkspaceEntry entry) {
@@ -292,6 +305,7 @@ public class WorkspaceManager {
             case "keyword" -> showKeywordWorkspace(entry.id);
             case "group-nav" -> showGroupBooksWorkspace(GroupId.fromLong(Long.parseLong(entry.id)));
             case "reviews" -> showReviewsWorkspace(ReviewNavigationFilter.fromId(entry.id));
+            case "updates" -> showUpdatesWorkspace();
             case "all-books" -> showAllBooksWorkspace();
             case "already-read" -> showAlreadyReadWorkspace();
             case "history" -> showHistoryWorkspace();
@@ -304,21 +318,26 @@ public class WorkspaceManager {
             case "import" -> showImportWorkspace();
             default -> showDashboard();
         }
-        if (mainController != null) {
-            mainController.updateNavigationButtons();
-        }
+        refreshNavigationState();
     }
 
 
     public String currentHelpTopic() {
-        if (currentEntry == null) return "index";
-        return switch (currentEntry.type) {
-            case "search", "series", "genre", "author", "year", "language", "archive", "keyword", "group-nav", "reviews", "already-read", "history", "all-books" -> "search";
-            case "new-reader", "reader", "book" -> "reader";
-            case "import" -> "import";
-            case "collection" -> "collections";
-            default -> "index";
-        };
+        return helpTopicRegistry.topicForWorkspace(currentEntry == null ? "dashboard" : currentEntry.type);
+    }
+
+
+    public ReadOnlyBooleanProperty canGoBackProperty() {
+        return canGoBack.getReadOnlyProperty();
+    }
+
+    public ReadOnlyBooleanProperty canGoForwardProperty() {
+        return canGoForward.getReadOnlyProperty();
+    }
+
+    private void refreshNavigationState() {
+        canGoBack.set(!history.isEmpty());
+        canGoForward.set(!forwardStack.isEmpty());
     }
 
     public boolean canGoBack() {

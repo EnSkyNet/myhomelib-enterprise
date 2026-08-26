@@ -49,6 +49,29 @@ class TextLayoutEngineTest {
         assertThat(second.getLines().getFirst().textOffset()).isGreaterThanOrEqualTo(first.getEndOffset());
     }
     @Test
+    void usesLanguageAwareHyphenationWithoutChangingSourceOffsets() {
+        TextStorageImpl text = new TextStorageImpl();
+        text.startParagraph(TextStyle.NORMAL);
+        text.append("бібліотека", TextStyle.NORMAL);
+        text.endParagraph();
+
+        var document = CompactReaderDocument.builder()
+                .metadata(new BookMetadata("hy", "Hyphen", List.of("Author"), "uk", null, null,
+                        List.of(), "", "", "", null, text.length()))
+                .chapters(List.of(new ChapterIndex("c1", "Chapter", 0, text.length(), 1)))
+                .resources(new SimpleResourceRepository()).text(text).toc(new DefaultTableOfContents())
+                .totalTextLength(text.length()).build();
+
+        ReaderSettings settings = ReaderSettings.defaultSettings();
+        TextLayoutEngine engine = new TextLayoutEngine(new FontMetricsProviderImpl(settings), settings);
+        var page = engine.layoutPage(document, 0, new PageDimensions(95, 240, 10, 10, 10, 10));
+
+        assertThat(page.getLines()).anySatisfy(line -> assertThat(line.text()).contains("‐"));
+        assertThat(page.getEndOffset()).isLessThanOrEqualTo(text.length());
+        assertThat(text.getFullText()).doesNotContain("‐");
+    }
+
+    @Test
     void keepsInlineStylesAsCompactRuns() {
         TextStorageImpl text = new TextStorageImpl();
         text.startParagraph(TextStyle.NORMAL);

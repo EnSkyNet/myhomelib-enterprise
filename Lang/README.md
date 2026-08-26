@@ -1,29 +1,34 @@
 # MyHomeLib language files
 
-UI translations are loaded from UTF-8 `*.json` files in this directory. The Java code does not contain English/Bulgarian translation maps anymore.
+UI and FB2 genre translations are loaded from standalone UTF-8 `*.json` files in this directory. No mandatory signing is required: a user can add or edit a language pack and refresh the language list.
 
-Each file has this structure:
+Current schema:
 
 ```json
 {
+  "schemaVersion": 2,
   "code": "pl",
   "name": "Polski",
   "translations": {
     "Колекція": "Kolekcja",
     "Книги": "Książki"
+  },
+  "genres": {
+    "sf": "Fantastyka naukowa",
+    "det_classic": "Klasyczny kryminał"
   }
 }
 ```
 
 Rules:
 
-- file encoding: UTF-8;
+- UTF-8 JSON;
+- `schemaVersion`: current version is `2`; v1 remains readable with diagnostics/fallback;
 - `code`: ISO-like language code (`pl`, `de`, `pt-br`, etc.);
-- `name`: the text shown in the language menu;
 - `translations`: source Ukrainian UI text -> translated UI text;
-- missing keys safely fall back to the original Ukrainian text;
-- invalid JSON/catalogues are ignored and reported to the log.
+- `genres`: stable FB2 genre code -> localized display name;
+- missing UI or genre keys safely fall back to source/catalog text;
+- invalid/newer unsupported catalogues are ignored and reported rather than crashing startup;
+- genre IDs stored in the database never change when UI language changes.
 
-On the first run MyHomeLib creates default `uk.json`, `en.json`, and `bg.json` if the language directory does not exist yet. On every language-menu refresh it scans all `*.json` files and synchronizes `config/available-languages.txt`. Adding a new valid JSON file is therefore enough to add a language; no Java/FXML changes are required.
-
-`config/language.txt` stores the currently selected language code. `config/available-languages.txt` is generated automatically and should not be edited manually.
+On every scan MyHomeLib writes `config/available-languages.txt` and `config/language-diagnostics.txt`. The latter reports schema issues and missing shipped keys so language-pack authors can find gaps. `config/language.txt` stores the selected language.

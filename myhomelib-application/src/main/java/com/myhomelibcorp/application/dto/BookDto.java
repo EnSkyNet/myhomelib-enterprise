@@ -7,6 +7,7 @@ import lombok.NoArgsConstructor;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Collections;
 import java.util.List;
 
 @Data
@@ -17,7 +18,9 @@ public class BookDto {
     private String id;
     private String title;
     private String authorsText;
+    private List<AuthorDto> authors;
     private List<String> genres;
+    private List<GenreDto> genreItems;
     private String series;
     private String genresText;
     private Integer sequenceNumber;
@@ -41,6 +44,35 @@ public class BookDto {
     private Integer year;
     private String publisher;
     private String isbn;
+    private String translators;
+    private String city;
+    private String sourceUrl;
+    private String libId;
+    private int libraryRate;
+
+    /**
+     * Безпечний гетер для списку авторів.
+     * Ніколи не повертає null.
+     */
+    public List<AuthorDto> getAuthors() {
+        return authors != null ? authors : Collections.emptyList();
+    }
+
+    /**
+     * Безпечний гетер для списку жанрів.
+     * Ніколи не повертає null.
+     */
+    public List<GenreDto> getGenreItems() {
+        return genreItems != null ? genreItems : Collections.emptyList();
+    }
+
+    /**
+     * Безпечний гетер для списку жанрів (рядки).
+     * Ніколи не повертає null.
+     */
+    public List<String> getGenres() {
+        return genres != null ? genres : Collections.emptyList();
+    }
 
     public String getFileSizeFormatted() {
         if (fileSize <= 0) return "";

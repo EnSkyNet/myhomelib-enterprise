@@ -67,7 +67,7 @@ public final class EpubParser implements BookParser {
                 int paragraphsBefore = text.getParagraphCount();
                 String detectedTitle;
                 try (InputStream in = bounded(zip.getInputStream(entry), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
-                    detectedTitle = parseXhtml(in, path, text, resources, effective);
+                    detectedTitle = parseXhtml(in, path, text, resources, effective, documentOffsets);
                 } catch (XMLStreamException e) {
                     throw new IOException("Invalid EPUB XHTML '" + path + "': " + e.getMessage(), e);
                 }
@@ -226,7 +226,8 @@ public final class EpubParser implements BookParser {
     }
 
     private String parseXhtml(InputStream input, String documentPath, TextStorageImpl text,
-                              HybridResourceRepository resources, ParseOptions options)
+                              HybridResourceRepository resources, ParseOptions options,
+                              Map<String, Long> navigationOffsets)
             throws XMLStreamException, IOException {
         XMLStreamReader r = xmlFactory.createXMLStreamReader(input);
         Deque<InlineSpan> inline = new ArrayDeque<>();
@@ -245,6 +246,10 @@ public final class EpubParser implements BookParser {
                         text.startParagraph(blockStyle);
                         if (blockStyle.isHeading()) { heading.setLength(0); headingDepth++; }
                         lastWhitespace = true;
+                    }
+                    String anchor = firstNonBlank(attr(r, "id"), attrByLocal(r, "id"), "a".equals(tag) ? attr(r, "name") : null);
+                    if (anchor != null && !anchor.isBlank()) {
+                        navigationOffsets.put(norm(documentPath) + "#" + decodeFragment(anchor), (long) text.length());
                     }
                     TextStyle inlineStyle = inlineStyle(tag);
                     if (inlineStyle != null) inline.push(new InlineSpan(tag, text.length(), inlineStyle));
@@ -328,7 +333,9 @@ public final class EpubParser implements BookParser {
             }
         }
         for (NavItem item : items) {
-            Long offset = offsets.get(norm(stripFragment(item.target())));
+            String target = norm(item.target());
+            Long offset = offsets.get(target);
+            if (offset == null) offset = offsets.get(norm(stripFragment(target)));
             if (offset != null && item.title() != null && !item.title().isBlank()) toc.addEntry(item.title(), offset, Math.max(1, item.level()));
         }
         if (toc.isEmpty()) for (ChapterIndex chapter : chapters) toc.addEntry(chapter.title(), chapter.startOffset(), 1);
@@ -362,7 +369,7 @@ public final class EpubParser implements BookParser {
                     if (inToc && "a".equals(tag) && inAnchor) {
                         String title = normalize(label.toString());
                         if (!title.isBlank() && href != null) out.add(new NavItem(Math.max(1, listDepth), title,
-                                resolveZipPath(parentZipPath(navPath), href)));
+                                resolveNavigationTarget(parentZipPath(navPath), href)));
                         inAnchor = false; href = null;
                     } else if (inToc && "ol".equals(tag)) listDepth = Math.max(0, listDepth - 1);
                     else if (inToc && "nav".equals(tag)) { if (--navDepth <= 0) inToc = false; }
@@ -394,7 +401,7 @@ public final class EpubParser implements BookParser {
                     else if ("navpoint".equals(tag) && !points.isEmpty()) {
                         NcxState state = points.pop();
                         if (state.target != null && state.title != null && !state.title.isBlank())
-                            out.add(new NavItem(state.level, state.title, resolveZipPath(parentZipPath(ncxPath), state.target)));
+                            out.add(new NavItem(state.level, state.title, resolveNavigationTarget(parentZipPath(ncxPath), state.target)));
                         depth = Math.max(0, depth - 1);
                     }
                 }
@@ -489,6 +496,20 @@ public final class EpubParser implements BookParser {
     private static Integer parseSequence(String value, Integer fallback) { try { return value == null || value.isBlank() ? fallback : (int) Math.round(Double.parseDouble(value)); } catch (NumberFormatException e) { return fallback; } }
     private static String fileTitle(String path) { if (path == null || path.isBlank()) return null; String n = Path.of(norm(stripFragment(path))).getFileName().toString(); int dot = n.lastIndexOf('.'); return dot > 0 ? n.substring(0, dot) : n; }
     private static String parentZipPath(String path) { String n = norm(path); int slash = n.lastIndexOf('/'); return slash < 0 ? "" : n.substring(0, slash); }
+    private static String resolveNavigationTarget(String base, String href) {
+        String raw = href == null ? "" : href;
+        int hash = raw.indexOf('#');
+        String fragment = hash >= 0 && hash + 1 < raw.length() ? decodeFragment(raw.substring(hash + 1)) : "";
+        String path = resolveZipPath(base, stripFragment(raw));
+        return fragment.isBlank() ? path : path + "#" + fragment;
+    }
+
+    private static String decodeFragment(String value) {
+        if (value == null || value.isBlank()) return "";
+        try { return URLDecoder.decode(value, StandardCharsets.UTF_8); }
+        catch (Exception ignored) { return value; }
+    }
+
     private static String stripFragment(String path) { if (path == null) return ""; int hash = path.indexOf('#'); return hash < 0 ? path : path.substring(0, hash); }
     private static String norm(String path) { return path == null ? "" : path.replace('\\', '/').replaceAll("^/+", ""); }
     private static String resolveZipPath(String base, String href) {

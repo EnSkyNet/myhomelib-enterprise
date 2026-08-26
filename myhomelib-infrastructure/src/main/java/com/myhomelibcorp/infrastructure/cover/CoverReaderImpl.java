@@ -3,16 +3,24 @@ package com.myhomelibcorp.infrastructure.cover;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.CoverLocator;
 import com.myhomelibcorp.application.port.out.cover.CoverReader;
+import com.myhomelibcorp.infrastructure.image.EpubCoverParser;
+import com.myhomelibcorp.infrastructure.image.FallbackCoverRenderer;
 import com.myhomelibcorp.infrastructure.image.Fb2CoverParser;
+import com.myhomelibcorp.infrastructure.image.MobiCoverParser;
+import com.myhomelibcorp.infrastructure.image.PdfCoverParser;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -22,112 +30,158 @@ public class CoverReaderImpl implements CoverReader {
     private final CoverLocator coverLocator;
     private final ZipArchiveReader archiveReader;
     private final Fb2CoverParser fb2CoverParser;
+    private final EpubCoverParser epubCoverParser;
+    private final MobiCoverParser mobiCoverParser;
+    private final PdfCoverParser pdfCoverParser;
+    private final FallbackCoverRenderer fallbackCoverRenderer;
 
     @Override
     public byte[] readCover(BookDto book) {
-        if (book == null) {
-            log.warn("book == null");
-            return null;
-        }
-
-        log.debug("readCover для книги: id={}, title={}", book.getId(), book.getTitle());
-
+        if (book == null) return null;
         try {
             Path filePath = coverLocator.locateCoverFile(book).orElse(null);
-            if (filePath == null || !Files.exists(filePath)) {
-                log.debug("Файл не знайдено: {}", filePath);
-                return null;
-            }
-
-            if (archiveReader.isArchive(filePath)) {
-                log.debug("Читаємо обкладинку з архіву: {}", filePath);
-                return extractFromArchive(filePath, book);
-            } else {
-                log.debug("Читаємо звичайний FB2 файл: {}", filePath);
-                try (InputStream is = Files.newInputStream(filePath)) {
-                    return fb2CoverParser.parseToBytes(is);
-                }
-            }
+            if (filePath == null || !Files.exists(filePath)) return null;
+            if (archiveReader.isArchive(filePath)) return extractFromArchive(filePath, book);
+            return extractFromDocument(filePath, extension(filePath.getFileName().toString()), book);
         } catch (Exception e) {
-            log.error("Помилка читання обкладинки для книги {}", book.getId(), e);
+            log.debug("Обкладинка недоступна для {}: {}", book.getId(), e.getMessage());
             return null;
         }
+    }
+
+    private byte[] extractFromDocument(Path path, String ext, BookDto book) throws IOException {
+        String normalized = ext.toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "fb2", "fbd" -> {
+                try (InputStream in = Files.newInputStream(path)) { yield fb2CoverParser.parseToBytes(in); }
+            }
+            case "epub" -> epubCoverParser.parse(path);
+            case "mobi", "azw", "azw3" -> fallbackIfEmpty(mobiCoverParser.parse(path), normalized, book);
+            case "pdf" -> fallbackIfEmpty(pdfCoverParser.parse(path), normalized, book);
+            case "djvu", "djv" -> fallbackCoverRenderer.render("DJVU", book.getTitle());
+            default -> null;
+        };
     }
 
     private byte[] extractFromArchive(Path archivePath, BookDto book) {
         List<String> entries = archiveReader.listEntries(archivePath);
-        if (entries.isEmpty()) {
-            log.warn("Архів порожній або не вдалося прочитати: {}", archivePath);
-            return null;
-        }
+        if (entries.isEmpty()) return null;
 
-        String archiveEntry = book.getArchiveEntry();
-        String fileName = book.getFileName();
-        String title = book.getTitle();
-
-        // Спроба знайти потрібний запис
-        String targetEntry = findBestEntry(entries, archiveEntry, fileName, title);
+        String targetEntry = findBestEntry(entries, book.getArchiveEntry(), book.getFileName(), book.getTitle());
         if (targetEntry != null) {
-            try (InputStream is = archiveReader.readEntry(archivePath, targetEntry).orElse(null)) {
-                if (is != null) {
-                    return fb2CoverParser.parseToBytes(is);
+            String ext = extension(targetEntry);
+            try (InputStream in = archiveReader.readEntry(archivePath, targetEntry).orElse(null)) {
+                if (in != null) {
+                    if (isImageExtension(ext)) return readBounded(in, 24 * 1024 * 1024);
+                    if (ext.equals("fb2") || ext.equals("fbd")) return fb2CoverParser.parseToBytes(in);
+                    if (isExtraDocument(ext)) {
+                        Path temp = materialize(in, ext);
+                        try { return extractFromDocument(temp, ext, book); }
+                        finally { Files.deleteIfExists(temp); }
+                    }
                 }
             } catch (Exception e) {
-                log.error("Помилка читання запису {} з архіву", targetEntry, e);
+                log.debug("Не вдалося витягти cover з {}!{}: {}", archivePath, targetEntry, e.getMessage());
             }
         }
 
-        // Якщо не знайшли FB2 — шукаємо будь-яке зображення
-        try (InputStream imageStream = archiveReader.findFirstEntry(archivePath,
-                e -> e.toLowerCase().matches(".*\\.(jpg|jpeg|png|gif)$")).orElse(null)) {
-            if (imageStream != null) {
-                ByteArrayOutputStream baos = new ByteArrayOutputStream();
-                imageStream.transferTo(baos);
-                return baos.toByteArray();
-            }
+        try (InputStream image = archiveReader.findFirstEntry(archivePath,
+                name -> isImageExtension(extension(name))).orElse(null)) {
+            return image == null ? null : readBounded(image, 24 * 1024 * 1024);
         } catch (Exception e) {
-            log.error("Помилка читання зображення з архіву", e);
+            return null;
         }
-
-        return null;
     }
 
     private String findBestEntry(List<String> entries, String archiveEntry, String fileName, String title) {
-        // 1. Точний збіг archiveEntry
         if (archiveEntry != null && !archiveEntry.isBlank()) {
-            for (String e : entries) {
-                if (e.equals(archiveEntry) || e.endsWith("/" + archiveEntry)) {
-                    return e;
-                }
-            }
+            for (String e : entries) if (sameEntry(e, archiveEntry)) return e;
         }
-
-        // 2. Збіг за fileName
-        if (fileName != null && !fileName.isBlank()) {
-            for (String e : entries) {
-                if (e.endsWith(fileName) || e.endsWith("/" + fileName)) {
-                    return e;
-                }
-            }
+        if (fileName != null && !fileName.isBlank() && !archiveReader.isArchiveName(fileName)) {
+            for (String e : entries) if (sameEntry(e, fileName) || e.endsWith("/" + fileName)) return e;
         }
-
-        // 3. За назвою книги (нечіткий пошук)
         if (title != null && !title.isBlank()) {
-            String normalizedTitle = title.toLowerCase().replaceAll("[\\s_\\-]+", "");
+            String normalizedTitle = title.toLowerCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
             for (String e : entries) {
-                String name = Path.of(e).getFileName().toString().toLowerCase().replaceAll("[\\s_\\-]+", "");
-                if (name.contains(normalizedTitle)) {
-                    return e;
-                }
+                String name = Path.of(e.replace('\\', '/')).getFileName().toString()
+                        .toLowerCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
+                if (name.contains(normalizedTitle) && isSupportedDocument(extension(e))) return e;
             }
         }
-
-        // 4. Перший FB2
-        for (String e : entries) {
-            if (e.toLowerCase().endsWith(".fb2")) {
-                return e;
-            }
-        }
+        for (String e : entries) if (isSupportedDocument(extension(e))) return e;
         return null;
+    }
+
+    private static boolean sameEntry(String left, String right) {
+        if (left == null || right == null) return false;
+        String a = left.replace('\\', '/');
+        String b = right.replace('\\', '/');
+        return a.equalsIgnoreCase(b) || a.endsWith("/" + b);
+    }
+
+    private byte[] fallbackIfEmpty(byte[] bytes, String format, BookDto book) {
+        return bytes != null && bytes.length > 0 ? bytes : fallbackCoverRenderer.render(format, book.getTitle());
+    }
+
+    private static boolean isSupportedDocument(String ext) {
+        return switch (ext) {
+            case "fb2", "fbd", "epub", "mobi", "azw", "azw3", "pdf", "djvu", "djv" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isExtraDocument(String ext) {
+        return switch (ext) {
+            case "epub", "mobi", "azw", "azw3", "pdf", "djvu", "djv" -> true;
+            default -> false;
+        };
+    }
+
+    private static boolean isImageExtension(String ext) {
+        return switch (ext) {
+            case "jpg", "jpeg", "png", "gif", "webp" -> true;
+            default -> false;
+        };
+    }
+
+    private static String extension(String name) {
+        if (name == null) return "";
+        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
+        int dot = name.lastIndexOf('.');
+        return dot > slash ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
+    }
+
+    private static Path materialize(InputStream in, String ext) throws IOException {
+        Path temp = Files.createTempFile("myhomelib-cover-", ext.isBlank() ? ".book" : "." + ext);
+        boolean success = false;
+        try (OutputStream out = Files.newOutputStream(temp)) {
+            byte[] buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                if (read == 0) continue;
+                total += read;
+                if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("Archive entry exceeds cover safety limit");
+                out.write(buffer, 0, read);
+            }
+            success = true;
+            return temp;
+        } finally {
+            if (!success) Files.deleteIfExists(temp);
+        }
+    }
+
+    private static byte[] readBounded(InputStream in, int max) throws IOException {
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.min(max, 64 * 1024));
+        byte[] buffer = new byte[32 * 1024];
+        int total = 0;
+        int read;
+        while ((read = in.read(buffer)) >= 0) {
+            if (read == 0) continue;
+            total += read;
+            if (total > max) throw new IOException("Cover exceeds safe image limit");
+            out.write(buffer, 0, read);
+        }
+        return out.toByteArray();
     }
 }

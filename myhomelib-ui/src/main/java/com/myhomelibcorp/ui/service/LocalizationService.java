@@ -61,6 +61,21 @@ public class LocalizationService {
                 .orElse(text);
     }
 
+    /** Localized display label for a stable FB2 genre code. */
+    public String genreName(String genreCode, String fallback) {
+        return languageCatalogs.genreName(language(), genreCode, fallback);
+    }
+
+    /** User-facing diagnostics generated while scanning Lang/*.json. */
+    public java.util.List<String> languageDiagnostics() {
+        languageCatalogs.refresh();
+        return languageCatalogs.diagnostics();
+    }
+
+    public Path languageDiagnosticsFile() {
+        return languageCatalogs.diagnosticsFile();
+    }
+
     private String readLanguageFile() {
         try {
             if (!Files.isRegularFile(languageFile)) return null;

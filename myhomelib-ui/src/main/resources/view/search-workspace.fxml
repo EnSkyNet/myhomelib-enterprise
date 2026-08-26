@@ -13,6 +13,8 @@
         <TextField fx:id="searchField" promptText="Назва, автор, серія, жанр..." HBox.hgrow="ALWAYS" onAction="#onSearch"/>
         <Button text="Шукати" onAction="#onSearch" defaultButton="true"/>
         <Button text="Очистити" onAction="#onClear"/>
+        <Button text="Фільтри…" onAction="#onGlobalFilters"/>
+        <Label fx:id="filterIndicatorLabel" text="Фільтр вимкнено"/>
         <Button fx:id="saveSearchButton" text="💾 Зберегти"/>
         <Button fx:id="savedSearchesButton" text="📂 Збережені"/>
     </HBox>

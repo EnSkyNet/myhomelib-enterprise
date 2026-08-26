@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.catalog;
 import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.catalog.CatalogSyncSession;
+import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
 import com.myhomelibcorp.application.catalog.CatalogUpdateRecord;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
@@ -291,6 +292,58 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                         rs.getString("source_id"),
                         rs.getLong("detected_revision"),
                         rs.getString("catalog_fingerprint"),
+                        rs.getString("detected_at")), safeLimit, safeOffset);
+    }
+
+
+    @Override
+    public List<CatalogUpdateItem> findPendingUpdateItems(int limit, int offset) {
+        int safeLimit = Math.max(1, Math.min(limit <= 0 ? 100 : limit, 10_000));
+        int safeOffset = Math.max(0, offset);
+        return jdbc().query("""
+                WITH ranked_authors AS (
+                    SELECT
+                        ba.book_id,
+                        a.id AS author_id,
+                        TRIM(
+                            COALESCE(NULLIF(a.last_name, ''), '') ||
+                            CASE WHEN COALESCE(NULLIF(a.first_name, ''), '') <> '' THEN
+                                CASE WHEN COALESCE(NULLIF(a.last_name, ''), '') <> '' THEN ' ' ELSE '' END || a.first_name
+                            ELSE '' END ||
+                            CASE WHEN COALESCE(NULLIF(a.middle_name, ''), '') <> '' THEN
+                                CASE WHEN COALESCE(NULLIF(a.last_name, ''), '') <> '' OR COALESCE(NULLIF(a.first_name, ''), '') <> '' THEN ' ' ELSE '' END || a.middle_name
+                            ELSE '' END
+                        ) AS author_name,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY ba.book_id
+                            ORDER BY CASE WHEN fa.author_id IS NOT NULL THEN 0 ELSE 1 END,
+                                     LOWER(COALESCE(a.last_name, '')),
+                                     LOWER(COALESCE(a.first_name, '')),
+                                     LOWER(COALESCE(a.middle_name, '')),
+                                     a.id
+                        ) AS rn
+                    FROM book_authors ba
+                    JOIN authors a ON a.id = ba.author_id
+                    LEFT JOIN followed_authors fa ON fa.author_id = a.id
+                )
+                SELECT
+                    e.book_id, e.update_type, e.detected_at,
+                    b.title, b.local,
+                    COALESCE(ra.author_id, '') AS author_id,
+                    COALESCE(NULLIF(ra.author_name, ''), 'Без автора') AS author_name
+                FROM catalog_update_events e
+                JOIN books b ON b.id = e.book_id
+                LEFT JOIN ranked_authors ra ON ra.book_id = e.book_id AND ra.rn = 1
+                WHERE e.acknowledged_at IS NULL
+                ORDER BY e.detected_at DESC, e.book_id ASC, e.update_type ASC
+                LIMIT ? OFFSET ?
+                """, (rs, rowNum) -> new CatalogUpdateItem(
+                        rs.getString("book_id"),
+                        rs.getString("title"),
+                        rs.getString("author_id"),
+                        rs.getString("author_name"),
+                        CatalogUpdateType.valueOf(rs.getString("update_type")),
+                        rs.getBoolean("local"),
                         rs.getString("detected_at")), safeLimit, safeOffset);
     }
 

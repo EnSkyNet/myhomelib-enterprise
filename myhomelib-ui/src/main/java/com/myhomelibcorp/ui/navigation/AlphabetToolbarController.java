@@ -18,13 +18,14 @@ import java.util.function.Consumer;
 @Slf4j
 public class AlphabetToolbarController {
 
-    private static final String CYRILLIC_ALPHABET = "АБВГДЕЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЬЮЯ";
+    private static final String CYRILLIC_ALPHABET = "АБВГҐДЕЁЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ";
     private static final String LATIN_ALPHABET = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
     @FXML private HBox alphabetToolbarContainer;
 
     private Consumer<Character> onLetterSelected;
     private Button selectedButton;
+    private Button allButton;
 
     @FXML
     public void initialize() {
@@ -53,6 +54,7 @@ public class AlphabetToolbarController {
 
         // Кнопка "Всі"
         Button allBtn = createLetterButton('*', "Всі", "#4CAF50");
+        this.allButton = allBtn;
         allBtn.setTooltip(new Tooltip("Всі"));
         row1.getChildren().add(allBtn);
 
@@ -262,4 +264,17 @@ public class AlphabetToolbarController {
             selectedButton = null;
         }
     }
+    /**
+     * AUTHORS intentionally has no "load everything" action for large catalogues.
+     */
+    public void setAllOptionEnabled(boolean enabled) {
+        if (allButton == null) return;
+        allButton.setDisable(!enabled);
+        allButton.setVisible(enabled);
+        allButton.setManaged(enabled);
+        if (!enabled && selectedButton == allButton) {
+            clearSelection();
+        }
+    }
+
 }

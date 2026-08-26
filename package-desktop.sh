@@ -3,7 +3,9 @@ set -euo pipefail
 cd "$(dirname "$0")"
 TYPE=${1:-app-image}
 shift || true
-./mvnw -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+if [[ "${MHL_SKIP_BUILD:-0}" != "1" ]]; then
+  ./mvnw -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+fi
 JAR="myhomelib-bootstrap/target/myhomelib-bootstrap-1.0.0.jar"
 [ -f "$JAR" ] || { echo "Missing $JAR" >&2; exit 1; }
 STAGE="myhomelib-bootstrap/target/jpackage-input"

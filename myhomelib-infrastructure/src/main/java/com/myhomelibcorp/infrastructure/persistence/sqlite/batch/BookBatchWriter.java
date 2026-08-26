@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite.batch;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -33,7 +34,7 @@ public class BookBatchWriter {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[27];
+            Object[] args = new Object[29];
             int idx = 0;
             args[idx++] = book.getId().asString();
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
@@ -68,6 +69,8 @@ public class BookBatchWriter {
             args[idx++] = book.getTranslators() != null ? book.getTranslators() : "";
             args[idx++] = book.getCity() != null ? book.getCity() : "";
             args[idx++] = book.getSourceUrl() != null ? book.getSourceUrl() : "";
+            args[idx++] = BookDenormalizedValues.format(book.getFileName());
+            args[idx++] = BookDenormalizedValues.authorSort(book);
             batchArgs.add(args);
         }
 
@@ -81,7 +84,7 @@ public class BookBatchWriter {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         List<Object[]> batchArgs = new ArrayList<>(books.size());
         for (Book book : books) {
-            Object[] args = new Object[28];
+            Object[] args = new Object[30];
             int idx = 0;
             args[idx++] = book.getTitle() != null ? book.getTitle() : "";
             args[idx++] = book.getSeries();
@@ -115,6 +118,8 @@ public class BookBatchWriter {
             args[idx++] = book.getTranslators() != null ? book.getTranslators() : "";
             args[idx++] = book.getCity() != null ? book.getCity() : "";
             args[idx++] = book.getSourceUrl() != null ? book.getSourceUrl() : "";
+            args[idx++] = BookDenormalizedValues.format(book.getFileName());
+            args[idx++] = BookDenormalizedValues.authorSort(book);
             args[idx++] = book.getId().asString(); // WHERE id = ?
             batchArgs.add(args);
         }

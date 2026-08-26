@@ -29,8 +29,9 @@ public final class BookQueries {
                 id, title, series, sequence_number, file_name, folder,
                 archive_entry, language, file_size, keywords, annotation,
                 rate, progress, update_date, isbn, deleted, local,
-                review, created_at, collection_root, year, publisher, lib_id, library_rate, translators, city, source_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                review, created_at, collection_root, year, publisher, lib_id, library_rate, translators, city, source_url,
+                format, author_sort
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 series = excluded.series,
@@ -57,7 +58,9 @@ public final class BookQueries {
                 library_rate = excluded.library_rate,
                 translators = excluded.translators,
                 city = excluded.city,
-                source_url = excluded.source_url
+                source_url = excluded.source_url,
+                format = excluded.format,
+                author_sort = excluded.author_sort
             """;
 
     public static final String DELETE_BY_ID = "DELETE FROM books WHERE id = ?";
@@ -90,7 +93,9 @@ public final class BookQueries {
                 library_rate = ?,
                 translators = ?,
                 city = ?,
-                source_url = ?
+                source_url = ?,
+                format = ?,
+                author_sort = ?
             WHERE id = ?
             """;
 }

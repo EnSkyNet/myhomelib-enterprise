@@ -1,7 +1,6 @@
 package com.myhomelibcorp.infrastructure.warmup;
 
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,7 +13,6 @@ import org.springframework.stereotype.Component;
 public class BackgroundWarmup {
 
     private final DictionaryCachePort dictionaryCache;
-    private final AuthorRepository authorRepository;
     private final GenreRepository genreRepository;
     private final SeriesRepository seriesRepository;
 
@@ -22,11 +20,11 @@ public class BackgroundWarmup {
         log.info("🔥 Starting background warmup...");
         try {
             // Завантажуємо кеші, якщо вони ще не завантажені
-            if (dictionaryCache.getAllAuthors().isEmpty()) {
-                dictionaryCache.loadAuthors(authorRepository.findAll());
+            if (dictionaryCache.getAllSeries().isEmpty()) {
+                // Authors are intentionally excluded from warmup to avoid O(N) heap spikes.
                 dictionaryCache.loadGenres(genreRepository.findAll());
                 dictionaryCache.loadSeries(seriesRepository.findAll());
-                log.info("Кеші завантажено під час warmup");
+                log.info("Кеші жанрів/серій завантажено під час warmup");
             }
 
             log.info("✅ Background warmup completed");

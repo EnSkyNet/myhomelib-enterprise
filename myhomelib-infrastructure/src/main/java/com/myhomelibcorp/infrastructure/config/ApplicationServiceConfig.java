@@ -34,7 +34,6 @@ public class ApplicationServiceConfig {
             DatabaseMigrationPort databaseMigrationPort,
             CacheInvalidationPort cacheInvalidationPort,
             DictionaryCachePort dictionaryCachePort,
-            AuthorRepository authorRepository,
             GenreRepository genreRepository,
             SeriesRepository seriesRepository,
             GroupRepository groupRepository,
@@ -46,7 +45,6 @@ public class ApplicationServiceConfig {
                 databaseMigrationPort,
                 cacheInvalidationPort,
                 dictionaryCachePort,
-                authorRepository,
                 genreRepository,
                 seriesRepository,
                 groupRepository,
@@ -90,8 +88,10 @@ public class ApplicationServiceConfig {
     }
 
     @Bean
-    public UpdateCollectionFromNetworkUseCase updateCollectionFromNetworkUseCase(RemoteCatalogDownloadPort downloader,
-            com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importer, CollectionLifecycleService lifecycle) {
+    public UpdateCollectionFromNetworkUseCase updateCollectionFromNetworkUseCase(
+            RemoteCatalogDownloadPort downloader,
+            com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importer,
+            CollectionLifecycleService lifecycle) {
         return new UpdateCollectionFromNetworkUseCase(downloader, importer, lifecycle);
     }
 
@@ -100,10 +100,10 @@ public class ApplicationServiceConfig {
         return new SyncFolderUseCase(folderSyncPort);
     }
 
-    // Додайте в кінець класу:
-
     @Bean
-    public UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase(AuthorRepository authors) { return new UpdateAuthorDescriptionUseCase(authors); }
+    public UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase(AuthorRepository authors) {
+        return new UpdateAuthorDescriptionUseCase(authors);
+    }
 
     @Bean
     public SaveSearchUseCase saveSearchUseCase(SavedSearchRepository savedSearchRepository) {
@@ -119,13 +119,14 @@ public class ApplicationServiceConfig {
     public DeleteSavedSearchUseCase deleteSavedSearchUseCase(SavedSearchRepository savedSearchRepository) {
         return new DeleteSavedSearchUseCase(savedSearchRepository);
     }
+
     @Bean
     public CopyBooksBetweenCollectionsUseCase copyBooksBetweenCollectionsUseCase(
-            BookQueryRepository books, CollectionRepository collections,
+            BookQueryRepository books,
+            CollectionRepository collections,
             com.myhomelibcorp.application.port.out.resource.BookResourcePort resources,
             CollectionLifecycleService lifecycle,
             com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importer) {
         return new CopyBooksBetweenCollectionsUseCase(books, collections, resources, lifecycle, importer);
     }
-
 }

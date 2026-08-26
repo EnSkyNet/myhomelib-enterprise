@@ -72,6 +72,26 @@ public class CachedAuthorRepository implements AuthorRepository {
     }
 
     @Override
+    public List<Author> findByInitial(char initial) {
+        return delegate.findByInitial(initial);
+    }
+
+    @Override
+    public Optional<Character> findFirstInitial() {
+        return delegate.findFirstInitial();
+    }
+
+    @Override
+    public long countByInitial(char initial) {
+        return delegate.countByInitial(initial);
+    }
+
+    @Override
+    public List<Author> searchByName(String query, int limit) {
+        return delegate.searchByName(query, limit);
+    }
+
+    @Override
     public long countOrphanedAuthors() {
         return delegate.countOrphanedAuthors();
     }

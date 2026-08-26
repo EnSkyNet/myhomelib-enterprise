@@ -16,8 +16,8 @@
             <VBox spacing="5" style="-fx-padding: 5;">
                 <HBox spacing="5">
                     <Button text="+" onAction="#onCreateCollection" prefWidth="30"/>
-                    <Button text="✏️" onAction="#onRenameCollection" prefWidth="30"/>
-                    <Button text="🗑" onAction="#onDeleteCollection" prefWidth="30"/>
+                    <Button fx:id="renameButton" text="✏️" onAction="#onRenameCollection" prefWidth="30"/>
+                    <Button fx:id="deleteButton" text="🗑" onAction="#onDeleteCollection" prefWidth="30"/>
                     <Button text="🔄" onAction="#onRefresh" prefWidth="30"/>
                     <Region HBox.hgrow="ALWAYS"/>
                 </HBox>
@@ -27,12 +27,49 @@
             <!-- Права панель: деталі колекції -->
             <VBox fx:id="collectionDetailsBox" spacing="10" style="-fx-padding: 10;">
                 <Label fx:id="collectionNameLabel" text="Колекція" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <Label fx:id="activeCollectionLabel" text="Активна колекція: ні"/>
+                <Label fx:id="rootFolderLabel" text="Папка: —" wrapText="true"/>
+                <Label fx:id="dbFileLabel" text="БД: —" wrapText="true"/>
+                <Label fx:id="collectionTypeLabel" text="Тип: —"/>
                 <Label fx:id="booksCountLabel" text="0 книг"/>
 
                 <HBox spacing="5">
                     <Button fx:id="addBookButton" text="Додати книгу" onAction="#onAddBookToCollection"/>
                     <Button fx:id="removeBookButton" text="Видалити з колекції" onAction="#onRemoveBookFromCollection"/>
                 </HBox>
+
+                <TitledPane text="Автооновлення локального INPX/ZIP" expanded="false">
+                    <content>
+                        <VBox spacing="7" style="-fx-padding: 8;">
+                            <Label text="Watcher стежить тільки за вказаним source-файлом; зміни обробляються після debounce." wrapText="true"/>
+                            <HBox spacing="6">
+                                <TextField fx:id="sourceFileField" promptText="Шлях до .inpx або .zip" HBox.hgrow="ALWAYS"/>
+                                <Button text="Огляд..." onAction="#onBrowseSource"/>
+                            </HBox>
+                            <HBox spacing="8" alignment="CENTER_LEFT">
+                                <CheckBox fx:id="autoUpdateEnabledCheckBox" text="Автоматично відстежувати зміни"/>
+                                <Button text="Зберегти" onAction="#onSaveSourceMonitor"/>
+                                <Button fx:id="sourceCheckButton" text="Перевірити зараз" onAction="#onCheckSourceNow"/>
+                            </HBox>
+                            <Label fx:id="sourceStatusLabel" text="Джерело автооновлення не налаштовано" wrapText="true"/>
+                        </VBox>
+                    </content>
+                </TitledPane>
+
+                <TitledPane text="Maintenance / Cleaner / Repair" expanded="false">
+                    <content>
+                        <VBox spacing="7" style="-fx-padding: 8;">
+                            <Label text="Безпечний workflow: Analyze → Preview → Dry run → Apply. Фізичні orphan-файли автоматично не видаляються." wrapText="true"/>
+                            <HBox spacing="6">
+                                <Button fx:id="maintenanceAnalyzeButton" text="Аналіз" onAction="#onAnalyzeMaintenance"/>
+                                <Button fx:id="maintenanceDryRunButton" text="Dry run" onAction="#onDryRunMaintenance" disable="true"/>
+                                <Button fx:id="maintenanceApplyButton" text="Застосувати repair..." onAction="#onApplyMaintenance" disable="true"/>
+                            </HBox>
+                            <Label fx:id="maintenanceStatusLabel" text="Аналіз ще не запускався" wrapText="true"/>
+                            <TextArea fx:id="maintenanceReportArea" editable="false" wrapText="false" prefRowCount="8"/>
+                        </VBox>
+                    </content>
+                </TitledPane>
 
                 <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
                     <columns>

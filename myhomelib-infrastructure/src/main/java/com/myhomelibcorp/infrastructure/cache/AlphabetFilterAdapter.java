@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.cache;
 
 import com.myhomelibcorp.application.port.out.cache.AlphabetFilterPort;
 import com.myhomelibcorp.domain.model.author.Author;
+import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.series.Series;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -9,6 +10,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 /**
@@ -21,48 +23,29 @@ import java.util.stream.Collectors;
 public class AlphabetFilterAdapter implements AlphabetFilterPort {
 
     private final DictionaryCache dictionaryCache;
+    private final AuthorRepository authorRepository;
 
     @Override
     public Collection<Author> getAuthorsByLetter(char letter) {
-        Collection<Author> allAuthors = dictionaryCache.getAllAuthors();
-        if (allAuthors == null || allAuthors.isEmpty()) {
-            log.debug("AlphabetFilterAdapter: no authors to filter");
-            return List.of();
+        char normalizedLetter = normalizeLetter(letter);
+        if (normalizedLetter == '*') {
+            return authorRepository.findFirstInitial()
+                    .map(authorRepository::findByInitial)
+                    .orElseGet(List::of);
         }
-
-        if (letter == '*') {
-            log.debug("AlphabetFilterAdapter: returning all {} authors", allAuthors.size());
-            return allAuthors;
-        }
-
-        Collection<Author> filtered = allAuthors.stream()
-                .filter(author -> {
-                    String lastName = author.getLastName();
-                    if (lastName == null || lastName.isEmpty()) {
-                        return letter == '#';
-                    }
-                    char first = Character.toUpperCase(lastName.charAt(0));
-                    if (letter == '#') {
-                        return !Character.isLetter(first);
-                    }
-                    return first == letter;
-                })
-                .collect(Collectors.toList());
-
-        log.debug("AlphabetFilterAdapter: filtered {} authors by letter '{}' (was {})",
-                filtered.size(), letter, allAuthors.size());
-        return filtered;
+        return authorRepository.findByInitial(normalizedLetter);
     }
 
     @Override
     public Collection<Series> getSeriesByLetter(char letter) {
+        char normalizedLetter = normalizeLetter(letter);
         Collection<Series> allSeries = dictionaryCache.getAllSeries();
         if (allSeries == null || allSeries.isEmpty()) {
             log.debug("AlphabetFilterAdapter: no series to filter");
             return List.of();
         }
 
-        if (letter == '*') {
+        if (normalizedLetter == '*') {
             log.debug("AlphabetFilterAdapter: returning all {} series", allSeries.size());
             return allSeries;
         }
@@ -71,18 +54,28 @@ public class AlphabetFilterAdapter implements AlphabetFilterPort {
                 .filter(series -> {
                     String name = series.getName();
                     if (name == null || name.isEmpty()) {
-                        return letter == '#';
+                        return normalizedLetter == '#';
                     }
                     char first = Character.toUpperCase(name.charAt(0));
-                    if (letter == '#') {
+                    if (normalizedLetter == '#') {
                         return !Character.isLetter(first);
                     }
-                    return first == letter;
+                    return first == normalizedLetter;
                 })
                 .collect(Collectors.toList());
 
         log.debug("AlphabetFilterAdapter: filtered {} series by letter '{}' (was {})",
-                filtered.size(), letter, allSeries.size());
+                filtered.size(), normalizedLetter, allSeries.size());
         return filtered;
+    }
+
+    /**
+     * Нормалізує літеру для фільтрації: переводить у верхній регістр.
+     */
+    private char normalizeLetter(char letter) {
+        if (letter == '*' || letter == '#') {
+            return letter;
+        }
+        return Character.toUpperCase(letter);
     }
 }

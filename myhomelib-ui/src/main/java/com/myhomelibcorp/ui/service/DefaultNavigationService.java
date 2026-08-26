@@ -17,7 +17,6 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
-import com.myhomelibcorp.ui.controller.MainController;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import jakarta.annotation.PostConstruct;
@@ -38,7 +37,6 @@ import java.util.stream.Collectors;
 public class DefaultNavigationService implements NavigationService {
 
     private final SessionService sessionService;
-    private final MainController mainController;
     private final WorkspaceManager workspaceManager;
     private final BookQueryRepository bookQueryRepository;
     private final BookMapper bookMapper;
@@ -64,6 +62,7 @@ public class DefaultNavigationService implements NavigationService {
             case KEYWORDS -> navigateToKeyword(node.label());
             case GROUPS -> navigateToGroup(GroupId.fromLong(Long.parseLong(node.id())));
             case REVIEWS -> navigateToReviews(ReviewNavigationFilter.fromId(node.id()));
+            case UPDATES -> navigateToUpdates();
             case ALREADY_READ -> navigateToAlreadyRead();
             case HISTORY -> navigateToHistory();
             case ALL_BOOKS -> navigateToAllBooks();
@@ -76,22 +75,20 @@ public class DefaultNavigationService implements NavigationService {
             sessionService.saveSelectedAuthorId(authorId.asString());
         }
         workspaceManager.showAuthorWorkspace(authorId);
-        mainController.updateNavigationButtons();
     }
 
     @Override
     public void navigateToSeries(SeriesId seriesId) {
         if (seriesId == null) return;
         log.info("Навігація до серії: {}", seriesId);
-        mainController.showSeriesWorkspace(seriesId);
-        mainController.updateNavigationButtons();
+        workspaceManager.showSeriesWorkspace(seriesId);
     }
 
     @Override
     public void navigateToSeriesByName(String seriesName) {
         log.info("Навігація до серії за назвою: {}", seriesName);
         if (seriesName == null || seriesName.isBlank()) {
-            mainController.showSearchResults(List.of());
+            workspaceManager.showSearchResults(List.of());
             return;
         }
         String normalized = normalizeSeriesName(seriesName);
@@ -110,16 +107,14 @@ public class DefaultNavigationService implements NavigationService {
         List<BookDto> dtos = filtered.stream()
                 .map(bookMapper::toDto)
                 .collect(Collectors.toList());
-        mainController.showSearchResults(dtos);
-        mainController.updateNavigationButtons();
+        workspaceManager.showSearchResults(dtos);
     }
 
     @Override
     public void navigateToGenre(GenreId genreId) {
         if (genreId == null) return;
         log.info("Навігація до жанру: {}", genreId);
-        mainController.showGenreWorkspace(genreId);
-        mainController.updateNavigationButtons();
+        workspaceManager.showGenreWorkspace(genreId);
     }
 
 
@@ -127,24 +122,21 @@ public class DefaultNavigationService implements NavigationService {
     public void navigateToYear(int year) {
         if (year <= 0) return;
         log.info("Навігація до року: {}", year);
-        mainController.showYearWorkspace(year);
-        mainController.updateNavigationButtons();
+        workspaceManager.showYearWorkspace(year);
     }
 
     @Override
     public void navigateToLanguage(String languageCode) {
         if (languageCode == null || languageCode.isBlank()) return;
         log.info("Навігація до мови: {}", languageCode);
-        mainController.showLanguageWorkspace(languageCode);
-        mainController.updateNavigationButtons();
+        workspaceManager.showLanguageWorkspace(languageCode);
     }
 
     @Override
     public void navigateToArchive(ArchiveNavigationKey archive) {
         if (archive == null) return;
         log.info("Навігація до архіву: {}", archive.archivePath());
-        mainController.showArchiveWorkspace(archive);
-        mainController.updateNavigationButtons();
+        workspaceManager.showArchiveWorkspace(archive);
     }
 
     @Override
@@ -152,8 +144,7 @@ public class DefaultNavigationService implements NavigationService {
         if (keyword == null || keyword.isBlank()) return;
         log.info("Навігація до ключового слова: {}", keyword);
         navigationPanelController.revealNode(NavigationMode.KEYWORDS, keyword.toLowerCase(java.util.Locale.ROOT));
-        mainController.showKeywordWorkspace(keyword);
-        mainController.updateNavigationButtons();
+        workspaceManager.showKeywordWorkspace(keyword);
     }
 
     @Override
@@ -161,8 +152,7 @@ public class DefaultNavigationService implements NavigationService {
         if (groupId == null || groupId.asLong() == null) return;
         log.info("Навігація до групи: {}", groupId.asLong());
         navigationPanelController.revealNode(NavigationMode.GROUPS, groupId.toString());
-        mainController.showGroupBooksWorkspace(groupId);
-        mainController.updateNavigationButtons();
+        workspaceManager.showGroupBooksWorkspace(groupId);
     }
 
     @Override
@@ -170,47 +160,47 @@ public class DefaultNavigationService implements NavigationService {
         if (filter == null) return;
         log.info("Навігація до review subset: {}", filter.id());
         navigationPanelController.revealNode(NavigationMode.REVIEWS, filter.id());
-        mainController.showReviewsWorkspace(filter);
-        mainController.updateNavigationButtons();
+        workspaceManager.showReviewsWorkspace(filter);
+    }
+
+    @Override
+    public void navigateToUpdates() {
+        log.info("Навігація до оновлень каталогу");
+        navigationPanelController.revealNode(NavigationMode.UPDATES, "updates");
+        workspaceManager.showUpdatesWorkspace();
     }
 
     @Override
     public void navigateToAlreadyRead() {
         log.info("Навігація до прочитаних книг");
-        mainController.showAlreadyReadWorkspace();
-        mainController.updateNavigationButtons();
+        workspaceManager.showAlreadyReadWorkspace();
     }
 
     @Override
     public void navigateToHistory() {
         log.info("Навігація до історії читання");
-        mainController.showHistoryWorkspace();
-        mainController.updateNavigationButtons();
+        workspaceManager.showHistoryWorkspace();
     }
 
     @Override
     public void navigateToAllBooks() {
         log.info("Навігація до всіх книг");
-        mainController.showAllBooksWorkspace();
-        mainController.updateNavigationButtons();
+        workspaceManager.showAllBooksWorkspace();
     }
 
     @Override
     public void navigateToBook(BookId bookId) {
-        mainController.showBookWorkspace(bookId);
-        mainController.updateNavigationButtons();
+        workspaceManager.showBookWorkspace(bookId);
     }
 
     @Override
     public void navigateToCollection(GroupId groupId) {
-        mainController.showCollectionWorkspace();
-        mainController.updateNavigationButtons();
+        workspaceManager.showCollectionWorkspace();
     }
 
     @Override
     public void showSearchResults(List<BookDto> results) {
-        mainController.showSearchResults(results);
-        mainController.updateNavigationButtons();
+        workspaceManager.showSearchResults(results);
     }
 
     @Override
@@ -306,9 +296,8 @@ public class DefaultNavigationService implements NavigationService {
             if (error != null) return;
             javafx.application.Platform.runLater(() -> {
                 sessionService.saveLastOpenedBookId(book.getId());
-                mainController.showReaderWorkspace(BookId.fromString(book.getId()));
-                mainController.updateNavigationButtons();
-                log.info("Відкрито книгу для читання: {}", book.getTitle());
+                workspaceManager.showNewReaderWorkspace(BookId.fromString(book.getId()));
+                        log.info("Відкрито книгу для читання: {}", book.getTitle());
             });
         });
     }
@@ -317,7 +306,7 @@ public class DefaultNavigationService implements NavigationService {
     public void navigateToPublisher(String publisherName) {
         log.info("Навігація до видавництва: {}", publisherName);
         if (publisherName == null || publisherName.isBlank()) {
-            mainController.showSearchResults(List.of());
+            workspaceManager.showSearchResults(List.of());
             return;
         }
         BookQuery query = BookQuery.builder()
@@ -331,8 +320,7 @@ public class DefaultNavigationService implements NavigationService {
         List<BookDto> filtered = dtos.stream()
                 .filter(b -> publisherName.equalsIgnoreCase(b.getPublisher()))
                 .collect(Collectors.toList());
-        mainController.showSearchResults(filtered);
-        mainController.updateNavigationButtons();
+        workspaceManager.showSearchResults(filtered);
     }
 
     @Override
@@ -348,13 +336,11 @@ public class DefaultNavigationService implements NavigationService {
     @Override
     public void goBack() {
         workspaceManager.goBack();
-        mainController.updateNavigationButtons();
     }
 
     @Override
     public void goForward() {
         workspaceManager.goForward();
-        mainController.updateNavigationButtons();
     }
 
     // ==================== Допоміжні методи ====================

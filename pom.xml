@@ -55,6 +55,7 @@
         <!-- ОДИН МОДУЛЬ READER (без дублікатів!) -->
         <module>myhomelib-reader</module>
         <module>myhomelib-mcp</module>
+        <module>myhomelib-opds</module>
     </modules>
 
     <dependencyManagement>
@@ -294,5 +295,29 @@
                 <spring.profiles.active>prod</spring.profiles.active>
             </properties>
         </profile>
-    </profiles>
+    
+        <profile>
+            <id>performance</id>
+            <properties>
+                <mhl.performance>true</mhl.performance>
+                <mhl.performance.sizes>100000,500000,1000000</mhl.performance.sizes>
+                <mhl.performance.readerMb>8</mhl.performance.readerMb>
+            </properties>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <systemPropertyVariables>
+                                <mhl.performance>${mhl.performance}</mhl.performance>
+                                <mhl.performance.sizes>${mhl.performance.sizes}</mhl.performance.sizes>
+                                <mhl.performance.readerMb>${mhl.performance.readerMb}</mhl.performance.readerMb>
+                            </systemPropertyVariables>
+                        </configuration>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+</profiles>
 </project>

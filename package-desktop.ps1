@@ -4,8 +4,10 @@ param(
 )
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
-& .\mvnw.cmd -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if ($env:MHL_SKIP_BUILD -ne "1") {
+    & .\mvnw.cmd -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
 $jar = "myhomelib-bootstrap\target\myhomelib-bootstrap-1.0.0.jar"
 if (-not (Test-Path $jar)) { throw "Missing $jar" }
 $stage = "myhomelib-bootstrap\target\jpackage-input"

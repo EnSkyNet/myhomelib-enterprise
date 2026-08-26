@@ -18,8 +18,6 @@ import javafx.scene.layout.StackPane;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
-import java.util.ArrayDeque;
-import java.util.Deque;
 import java.util.function.Consumer;
 
 /**
@@ -30,13 +28,12 @@ import java.util.function.Consumer;
 @Slf4j
 public class ReaderCanvas extends StackPane {
 
-    private static final int MAX_PAGE_HISTORY = 256;
-
     private final Canvas canvas;
     private final JavaFxReaderRenderer renderer;
     private final ReaderEngine engine;
     private final AutoScrollController autoScrollController;
-    private final Deque<ReaderPosition> pageHistory = new ArrayDeque<>();
+    private final ReaderPageHistory pageHistory = new ReaderPageHistory(256);
+    private final ReaderSelectionController selectionController;
 
     @Getter
     private double zoom = 1.0;
@@ -61,6 +58,7 @@ public class ReaderCanvas extends StackPane {
     private Runnable onCloseRequested;
     private Consumer<Integer> onPageNumberChanged;
     private Runnable onCenterTap;
+    private Runnable onToggleToolbarRequested;
     private Runnable onSearchRequested;
 
     public ReaderCanvas(ReaderEngine engine, ReaderRenderer renderer) {
@@ -77,6 +75,7 @@ public class ReaderCanvas extends StackPane {
         this.zoomBaseFontSize = engine.getSettings().fontSize();
         this.pageModeEnabled = engine.getSettings().pageMode();
         this.autoScrollController = new AutoScrollController(this::nextPage);
+        this.selectionController = new ReaderSelectionController(engine, fxRenderer);
 
         canvas.setFocusTraversable(true);
         getChildren().add(canvas);
@@ -145,6 +144,7 @@ public class ReaderCanvas extends StackPane {
 
             // Другий критичний fix: dimensions передаються engine ДО renderPage.
             engine.renderPage(currentDimensions);
+            renderSelectionOverlay(engine.getCurrentPage(currentDimensions));
             notifyPageChanged();
         } finally {
             rendering = false;
@@ -169,6 +169,7 @@ public class ReaderCanvas extends StackPane {
     // ==================== НАВІГАЦІЯ ====================
 
     public void nextPage() {
+        clearSelection(false);
         if (!engine.isOpen() || !ensureDimensions()) {
             return;
         }
@@ -176,7 +177,7 @@ public class ReaderCanvas extends StackPane {
         engine.nextPage(currentDimensions);
         ReaderPosition after = engine.getCurrentPosition();
         if (!sameOffset(before, after)) {
-            pushHistory(before);
+            pageHistory.push(before);
             render();
             notifyPositionChanged();
         } else if (autoScrollController.isRunning()) {
@@ -185,6 +186,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     public void previousPage() {
+        clearSelection(false);
         if (!engine.isOpen() || !ensureDimensions()) {
             return;
         }
@@ -202,6 +204,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     public void previousChapter() {
+        clearSelection(false);
         if (!engine.isOpen()) {
             return;
         }
@@ -215,6 +218,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     public void nextChapter() {
+        clearSelection(false);
         if (!engine.isOpen()) {
             return;
         }
@@ -228,6 +232,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     public void goToPercent(double percent) {
+        clearSelection(false);
         if (!engine.isOpen()) {
             return;
         }
@@ -238,6 +243,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     public void goToPosition(ReaderPosition position) {
+        clearSelection(false);
         if (!engine.isOpen() || position == null) {
             return;
         }
@@ -245,16 +251,6 @@ public class ReaderCanvas extends StackPane {
         engine.goToPosition(position);
         render();
         notifyPositionChanged();
-    }
-
-    private void pushHistory(ReaderPosition position) {
-        if (position == null) {
-            return;
-        }
-        if (pageHistory.size() >= MAX_PAGE_HISTORY) {
-            pageHistory.pollFirst();
-        }
-        pageHistory.addLast(position);
     }
 
     private boolean sameOffset(ReaderPosition a, ReaderPosition b) {
@@ -410,7 +406,10 @@ public class ReaderCanvas extends StackPane {
 
     private void onKeyPressed(KeyEvent event) {
         KeyCode code = event.getCode();
-        if (code == KeyCode.PAGE_DOWN || code == KeyCode.RIGHT || code == KeyCode.SPACE) {
+        if (code == KeyCode.C && event.isControlDown()) {
+            event.consume();
+            copySelection();
+        } else if (code == KeyCode.PAGE_DOWN || code == KeyCode.RIGHT || code == KeyCode.SPACE) {
             event.consume();
             if (event.isShiftDown()) previousPage(); else nextPage();
         } else if (code == KeyCode.PAGE_UP || code == KeyCode.LEFT) {
@@ -456,7 +455,9 @@ public class ReaderCanvas extends StackPane {
             toggleFullscreen();
         } else if (code == KeyCode.ESCAPE) {
             event.consume();
-            if (autoScrollController.isRunning()) {
+            if (hasSelection()) {
+                clearSelection(true);
+            } else if (autoScrollController.isRunning()) {
                 autoScrollController.stop();
             } else if (onCloseRequested != null) {
                 onCloseRequested.run();
@@ -491,6 +492,11 @@ public class ReaderCanvas extends StackPane {
 
     private void onMouseClicked(MouseEvent event) {
         if (!engine.isOpen()) return;
+        if (event.isShiftDown()) {
+            event.consume();
+            requestFocus();
+            return;
+        }
         if (swipeHandled) {
             swipeHandled = false;
             event.consume();
@@ -500,29 +506,58 @@ public class ReaderCanvas extends StackPane {
 
         double x = event.getX();
         double w = canvas.getWidth();
-        if (x < w / 3) {
-            previousPage();
-            event.consume();
-        } else if (x > w * 2 / 3) {
-            nextPage();
-            event.consume();
-        } else if (onCenterTap != null) {
-            onCenterTap.run();
-            event.consume();
-        }
+        ReaderSettings settings = engine.getSettings();
+        String action = x < w / 3
+                ? settings.tapLeftAction()
+                : (x > w * 2 / 3 ? settings.tapRightAction() : settings.tapCenterAction());
+        executeTapAction(action);
+        event.consume();
         requestFocus();
     }
 
-    private void onMousePressed(MouseEvent event) {
-        if (event.isPrimaryButtonDown()) {
-            dragging = true;
-            swipeHandled = false;
-            dragStartX = event.getX();
-            dragStartY = event.getY();
+
+    private void executeTapAction(String action) {
+        String normalized = action == null ? "none" : action.trim().toLowerCase(java.util.Locale.ROOT);
+        switch (normalized) {
+            case "previous-page" -> previousPage();
+            case "next-page" -> nextPage();
+            case "previous-chapter" -> previousChapter();
+            case "next-chapter" -> nextChapter();
+            case "toggle-toolbar" -> {
+                if (onToggleToolbarRequested != null) onToggleToolbarRequested.run();
+                else if (onCenterTap != null) onCenterTap.run();
+            }
+            case "search" -> { if (onSearchRequested != null) onSearchRequested.run(); }
+            case "none" -> { }
+            default -> {
+                if (onCenterTap != null) onCenterTap.run();
+            }
         }
     }
 
+    private void onMousePressed(MouseEvent event) {
+        if (!event.isPrimaryButtonDown()) return;
+        if (event.isShiftDown() && engine.isOpen() && ensureDimensions()) {
+            dragging = false;
+            selectionController.begin(event.getX(), event.getY(), currentDimensions);
+            render();
+            event.consume();
+            return;
+        }
+        dragging = true;
+        selectionController.clear();
+        swipeHandled = false;
+        dragStartX = event.getX();
+        dragStartY = event.getY();
+    }
+
     private void onMouseDragged(MouseEvent event) {
+        if (selectionController.isSelecting() && engine.isOpen()) {
+            selectionController.drag(event.getX(), event.getY(), currentDimensions);
+            render();
+            event.consume();
+            return;
+        }
         if (!dragging || !engine.isOpen() || swipeHandled) return;
         double dx = event.getX() - dragStartX;
         double dy = event.getY() - dragStartY;
@@ -536,6 +571,29 @@ public class ReaderCanvas extends StackPane {
 
     private void onMouseReleased(MouseEvent event) {
         dragging = false;
+        if (selectionController.isSelecting()) {
+            selectionController.finish(event.getX(), event.getY(), currentDimensions);
+            render();
+            event.consume();
+            requestFocus();
+        }
+    }
+
+    private boolean hasSelection() {
+        return selectionController.hasSelection();
+    }
+
+    private void clearSelection(boolean renderNow) {
+        selectionController.clear();
+        if (renderNow && engine.isOpen()) render();
+    }
+
+    private void renderSelectionOverlay(PageLayout page) {
+        selectionController.renderOverlay(page);
+    }
+
+    private void copySelection() {
+        selectionController.copyToClipboard();
     }
 
     private void onSwipeLeft(SwipeEvent event) {
@@ -569,6 +627,7 @@ public class ReaderCanvas extends StackPane {
         renderer.setResourceRepository(null);
         clear();
         pageHistory.clear();
+        clearSelection(false);
         sizeUpdated = false;
         if (onBookClosed != null) onBookClosed.run();
     }
@@ -609,6 +668,10 @@ public class ReaderCanvas extends StackPane {
 
     public void setOnCenterTap(Runnable listener) {
         this.onCenterTap = listener;
+    }
+
+    public void setOnToggleToolbarRequested(Runnable listener) {
+        this.onToggleToolbarRequested = listener;
     }
 
     public void setOnSearchRequested(Runnable listener) {

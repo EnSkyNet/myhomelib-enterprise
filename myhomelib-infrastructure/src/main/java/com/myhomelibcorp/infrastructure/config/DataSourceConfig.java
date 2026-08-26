@@ -25,6 +25,7 @@ public class DataSourceConfig {
         config.setLeakDetectionThreshold(10000);
 
         config.setConnectionInitSql(
+                "PRAGMA foreign_keys=ON; " +
                 "PRAGMA journal_mode=WAL; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +
@@ -57,6 +58,7 @@ public class DataSourceConfig {
         config.setLeakDetectionThreshold(10000);
 
         config.setConnectionInitSql(
+                "PRAGMA foreign_keys=ON; " +
                 "PRAGMA journal_mode=WAL; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +

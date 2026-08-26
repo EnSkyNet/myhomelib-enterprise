@@ -29,8 +29,9 @@
     <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 5;">
         <CheckBox fx:id="includeIndexCheckBox" text="🔍 Пошуковий індекс (Lucene)" selected="true"/>
         <CheckBox fx:id="includeCoversCheckBox" text="🖼️ Обкладинки книг" selected="true"/>
-        <CheckBox fx:id="includeMetadataCheckBox" text="📝 Метадані колекції" selected="true"/>
-        <Label text="📊 База даних (завжди включена)" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        <CheckBox fx:id="includeMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
+        <Label text="Portable user-data.json містить ratings/progress/reviews/bookmarks/groups/history/saved searches/filters/Reader settings і може бути накладений на свіжий каталог." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        <Label text="📊 Узгоджений SQLite snapshot (завжди включений)" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>

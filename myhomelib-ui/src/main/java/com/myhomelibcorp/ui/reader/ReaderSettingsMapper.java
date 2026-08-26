@@ -14,23 +14,13 @@ final class ReaderSettingsMapper {
             return ReaderSettings.defaultSettings();
         }
         return new ReaderSettings(
-                p.getTheme(),
-                p.getFontFamily(),
-                p.getFontSize(),
-                p.getLineSpacing(),
-                p.getParagraphSpacing(),
-                p.getFirstLineIndent(),
-                p.getAlignment(),
-                p.getMarginLeft(),
-                p.getMarginRight(),
-                p.getMarginTop(),
-                p.getMarginBottom(),
-                p.isHyphenation(),
-                p.isPageMode(),
-                p.isAutoScroll(),
-                p.getScrollSpeed(),
-                p.isShowToolbar(),
-                p.getCustomCss()
+                p.getTheme(), p.getFontFamily(), p.getFontSize(), p.getLineSpacing(),
+                p.getParagraphSpacing(), p.getFirstLineIndent(), p.getAlignment(),
+                p.getMarginLeft(), p.getMarginRight(), p.getMarginTop(), p.getMarginBottom(),
+                p.isHyphenation(), p.isPageMode(), p.isAutoScroll(), p.getScrollSpeed(),
+                p.isShowToolbar(), p.getCustomCss(), p.isShowStatusBar(),
+                p.isShowStatusProgress(), p.isShowStatusChapter(), p.isShowStatusPage(),
+                p.getTapLeftAction(), p.getTapCenterAction(), p.getTapRightAction()
         );
     }
 
@@ -58,6 +48,13 @@ final class ReaderSettingsMapper {
                 .showToolbar(s.showToolbar())
                 .customCss(s.customCss())
                 .widthMode(widthMode)
+                .showStatusBar(s.showStatusBar())
+                .showStatusProgress(s.showStatusProgress())
+                .showStatusChapter(s.showStatusChapter())
+                .showStatusPage(s.showStatusPage())
+                .tapLeftAction(s.tapLeftAction())
+                .tapCenterAction(s.tapCenterAction())
+                .tapRightAction(s.tapRightAction())
                 .build();
     }
 }

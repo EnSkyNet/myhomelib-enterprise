@@ -7,6 +7,9 @@ import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
 import com.myhomelibcorp.application.search.SearchService;
+import com.myhomelibcorp.application.filter.BookFilterStateService;
+import com.myhomelibcorp.ui.filter.BookFilterDialogService;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchMode;
 import com.myhomelibcorp.application.usecase.search.DeleteSavedSearchUseCase;
@@ -17,6 +20,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.ui.controller.SavedSearchesController;
+import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
@@ -59,10 +63,15 @@ public class SearchWorkspaceController {
     private final LoadSavedSearchesUseCase loadSavedSearchesUseCase;
     private final DeleteSavedSearchUseCase deleteSavedSearchUseCase;
     private final UiBackgroundExecutor executor;
+    private final BookFilterStateService filterStateService;
+    private final BookFilterDialogService filterDialogService;
+    private final LocalizationService i18n;
+    private final NavigationPanelController navigationPanelController;
 
     @FXML private TextField searchField;
     @FXML private VBox resultsContainer;
     @FXML private Label statusLabel;
+    @FXML private Label filterIndicatorLabel;
 
     @FXML private VBox authorsSection;
     @FXML private ListView<AuthorDto> authorsListView;
@@ -113,11 +122,30 @@ public class SearchWorkspaceController {
         setSectionVisible(seriesSection, false);
         setSectionVisible(genresSection, false);
         setSectionVisible(booksSection, false);
+        updateFilterIndicator();
     }
 
     private void setupButtons() {
         saveSearchButton.setOnAction(e -> onSaveSearch());
         savedSearchesButton.setOnAction(e -> onOpenSavedSearches());
+    }
+
+    @FXML
+    public void onGlobalFilters() {
+        filterDialogService.show(searchField.getScene() == null ? null : searchField.getScene().getWindow())
+                .ifPresent(spec -> {
+                    updateFilterIndicator();
+                    navigationPanelController.refreshForFilterChange();
+                    performSearch(searchField.getText());
+                });
+    }
+
+    private void updateFilterIndicator() {
+        if (filterIndicatorLabel == null) return;
+        var spec = filterStateService.current();
+        filterIndicatorLabel.setText(spec.isActive()
+                ? i18n.tr("Фільтр активний") + " (" + spec.activeCriteriaCount() + ")"
+                : i18n.tr("Фільтр вимкнено"));
     }
 
     // ==================== НАЛАШТУВАННЯ СПИСКІВ ====================
@@ -194,7 +222,7 @@ public class SearchWorkspaceController {
      */
     public void performSearch(String query) {
         this.lastQuery = query == null ? "" : query;
-        if ((query == null || query.isBlank()) && !hasAdvancedFilters()) {
+        if ((query == null || query.isBlank()) && !hasAdvancedFilters() && !filterStateService.current().isActive()) {
             clearResults();
             statusLabel.setText("Введіть запит або задайте фільтри");
             return;

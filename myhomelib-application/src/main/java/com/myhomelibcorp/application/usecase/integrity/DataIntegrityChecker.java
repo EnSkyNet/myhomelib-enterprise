@@ -27,11 +27,12 @@ public class DataIntegrityChecker {
     }
 
     /**
-     * Виправляє проблеми цілісності.
+     * Legacy destructive repair is intentionally disabled.
+     * Use CollectionMaintenanceUseCase: analyze -> dry-run -> backup -> explicit apply.
      */
+    @Deprecated(forRemoval = true)
     public void fixOrphanedBooks() {
-        log.info("🔧 Fixing orphaned data...");
-        dataIntegrityPort.fixOrphanedData();
-        log.info("✅ Fix completed");
+        throw new UnsupportedOperationException(
+                "Legacy repair disabled: use Collection Workspace -> Maintenance for preview, backup and safe apply");
     }
 }

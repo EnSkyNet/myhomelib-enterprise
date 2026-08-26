@@ -1,0 +1,3 @@
+# Архіви
+
+Каталог, Reader, обкладинки та експорт використовують спільний archive-resource layer. Підтримуються ZIP/FB2ZIP/CBZ/JAR, 7z, RAR/CBR, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, TAR.XZ/TXZ і CPIO. Конкретна книга зберігається як container + archiveEntry; для читання не потрібно вручну розпаковувати весь архів.

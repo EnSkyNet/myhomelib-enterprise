@@ -15,6 +15,8 @@ import com.myhomelibcorp.reader.core.resource.HybridResourceRepository;
 import com.myhomelibcorp.reader.core.text.TextStorageImpl;
 import lombok.extern.slf4j.Slf4j;
 
+import static com.myhomelibcorp.reader.format.fb2.Fb2ParseSupport.*;
+
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
@@ -567,146 +569,6 @@ public class Fb2StreamingParser implements BookParser {
         if (state == null || state.tocAdded || !options.buildToc()) return;
         toc.addEntry(state.title, state.startOffset, Math.max(0, state.level - 1));
         state.tocAdded = true;
-    }
-
-    private String safeElementText(XMLStreamReader reader) throws XMLStreamException {
-        String value = reader.getElementText();
-        return value != null ? value : "";
-    }
-
-    private String lower(String value) {
-        return value == null ? "" : value.toLowerCase(Locale.ROOT);
-    }
-
-    private boolean isParagraphTag(String tag) {
-        return switch (tag) {
-            case "p", "subtitle", "v", "text-author" -> true;
-            default -> false;
-        };
-    }
-
-    private TextStyle styleForParagraph(String tag, boolean inTitle, int sectionDepth) {
-        if (inTitle) {
-            return switch (Math.max(1, Math.min(6, sectionDepth))) {
-                case 1 -> TextStyle.HEADING_1;
-                case 2 -> TextStyle.HEADING_2;
-                case 3 -> TextStyle.HEADING_3;
-                case 4 -> TextStyle.HEADING_4;
-                case 5 -> TextStyle.HEADING_5;
-                default -> TextStyle.HEADING_6;
-            };
-        }
-        return switch (tag) {
-            case "subtitle" -> TextStyle.HEADING_2;
-            case "v" -> TextStyle.VERSE;
-            case "text-author" -> TextStyle.TEXT_AUTHOR;
-            default -> TextStyle.NORMAL;
-        };
-    }
-
-    private TextStyle inlineStyleFor(String tag) {
-        return switch (tag) {
-            case "strong", "b" -> TextStyle.BOLD;
-            case "emphasis", "i" -> TextStyle.ITALIC;
-            case "a" -> TextStyle.LINK;
-            case "code" -> TextStyle.CODE;
-            case "sup" -> TextStyle.SUPERSCRIPT;
-            case "sub" -> TextStyle.SUBSCRIPT;
-            case "strikethrough", "s" -> TextStyle.STRIKETHROUGH;
-            default -> null;
-        };
-    }
-
-    private TextStyle combineInlineStyles(TextStyle current, TextStyle incoming) {
-        TextStyle a = current != null ? current : TextStyle.NORMAL;
-        TextStyle b = incoming != null ? incoming : TextStyle.NORMAL;
-        if (a == TextStyle.NORMAL) return b;
-        if (b == TextStyle.NORMAL || a == b) return a;
-
-        boolean aBold = a == TextStyle.BOLD || a == TextStyle.STRONG || a == TextStyle.BOLD_ITALIC;
-        boolean aItalic = a == TextStyle.ITALIC || a == TextStyle.EMPHASIS || a == TextStyle.BOLD_ITALIC;
-        boolean bBold = b == TextStyle.BOLD || b == TextStyle.STRONG || b == TextStyle.BOLD_ITALIC;
-        boolean bItalic = b == TextStyle.ITALIC || b == TextStyle.EMPHASIS || b == TextStyle.BOLD_ITALIC;
-        if ((aBold && bItalic) || (aItalic && bBold)) {
-            return TextStyle.BOLD_ITALIC;
-        }
-        // Для LINK/CODE/SUP/SUB зберігаємо внутрішній стиль; складені span-маски
-        // можна додати пізніше без зміни TextStorage API.
-        return b;
-    }
-
-    /** Повертає стан останнього символу (space/not-space). */
-    private boolean appendNormalized(TextStorageImpl storage, String raw, TextStyle style, boolean lastWasSpace) {
-        if (raw == null || raw.isEmpty()) return lastWasSpace;
-        StringBuilder out = new StringBuilder(raw.length());
-        boolean space = lastWasSpace;
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (Character.isWhitespace(c)) {
-                if (!space) {
-                    out.append(' ');
-                    space = true;
-                }
-            } else {
-                out.append(c);
-                space = false;
-            }
-        }
-        if (!out.isEmpty()) storage.append(out.toString(), style);
-        return space;
-    }
-
-    private void appendPlainNormalized(StringBuilder target, String raw) {
-        if (raw == null || raw.isEmpty()) return;
-        boolean lastSpace = !target.isEmpty() && Character.isWhitespace(target.charAt(target.length() - 1));
-        for (int i = 0; i < raw.length(); i++) {
-            char c = raw.charAt(i);
-            if (Character.isWhitespace(c)) {
-                if (!lastSpace && !target.isEmpty()) {
-                    target.append(' ');
-                    lastSpace = true;
-                }
-            } else {
-                target.append(c);
-                lastSpace = false;
-            }
-        }
-    }
-
-    private String buildAuthor(String first, String middle, String last, String nick) {
-        StringBuilder result = new StringBuilder();
-        appendPart(result, first);
-        appendPart(result, middle);
-        appendPart(result, last);
-        if (result.isEmpty()) appendPart(result, nick);
-        return result.toString().trim();
-    }
-
-    private void appendPart(StringBuilder result, String value) {
-        if (value == null || value.isBlank()) return;
-        if (!result.isEmpty()) result.append(' ');
-        result.append(value.trim());
-    }
-
-    private String cleanTitle(String value) {
-        if (value == null) return "";
-        return value.trim().replaceAll("\\s+", " ");
-    }
-
-    private void closeQuietly(Writer writer) {
-        if (writer == null) return;
-        try {
-            writer.close();
-        } catch (IOException ignored) {
-        }
-    }
-
-    private void deleteQuietly(Path path) {
-        if (path == null) return;
-        try {
-            Files.deleteIfExists(path);
-        } catch (IOException ignored) {
-        }
     }
 
     private void logResult(ReaderDocument document, long started) {

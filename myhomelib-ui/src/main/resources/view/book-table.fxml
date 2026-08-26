@@ -1,6 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 
@@ -8,9 +7,21 @@
       fx:controller="com.myhomelibcorp.ui.table.BookTableController"
       spacing="5" style="-fx-padding: 10;">
 
+    <HBox spacing="7" alignment="CENTER_LEFT">
+        <Button text="Фільтри…" onAction="#openGlobalFilters"/>
+        <Label fx:id="filterIndicatorLabel" text="Фільтр вимкнено"/>
+        <Separator orientation="VERTICAL"/>
+        <Label text="Швидкий фільтр:"/>
+        <ComboBox fx:id="quickFilterColumnComboBox" prefWidth="125"/>
+        <TextField fx:id="quickFilterValueField" promptText="Введіть значення…" HBox.hgrow="ALWAYS"/>
+        <Button text="Застосувати" onAction="#applyQuickFilter"/>
+        <Button text="✕" onAction="#clearQuickFilter" tooltip="Очистити швидкий фільтр"/>
+        <Button text="Колонки…" onAction="#showColumnChooser"/>
+        <Button text="Скинути вигляд" onAction="#resetTableProfile"/>
+    </HBox>
+
     <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
         <columns>
-            <!-- Колонка з чекбоксами буде додана в коді -->
             <TableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
             <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
             <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
@@ -22,7 +33,6 @@
         </columns>
     </TableView>
 
-    <!-- Пагінація -->
     <HBox spacing="10" alignment="CENTER_RIGHT" style="-fx-padding: 5 0 0 0;">
         <Label text="Розмір сторінки:"/>
         <ComboBox fx:id="pageSizeComboBox" prefWidth="70"/>

@@ -37,9 +37,14 @@ public class InpxImporter implements BookImporterPort {
     @Autowired
     private GenreRepository genreRepository;
 
-    // Кеші для швидкого доступу
-    private final Map<String, AuthorId> authorIdCache = new HashMap<>();
-    private final Map<String, Author> authorObjectCache = new HashMap<>();
+    // Bounded per-import cache: do not mirror the complete authors table in heap.
+    private static final int AUTHOR_CACHE_LIMIT = 10_000;
+    private final Map<String, Author> authorObjectCache = new LinkedHashMap<>(1024, 0.75f, true) {
+        @Override
+        protected boolean removeEldestEntry(Map.Entry<String, Author> eldest) {
+            return size() > AUTHOR_CACHE_LIMIT;
+        }
+    };
     private final Map<String, GenreId> genreIdCache = new HashMap<>();
 
     private boolean initialized = false;
@@ -49,23 +54,10 @@ public class InpxImporter implements BookImporterPort {
      */
     public void initialize() {
         if (initialized) return;
-        loadAuthorCache();
+        // Authors are resolved lazily. Loading every author here makes startup/import
+        // proportional to catalogue size and causes large heap spikes.
         loadGenreCache();
         initialized = true;
-    }
-
-    private void loadAuthorCache() {
-        try {
-            List<Author> authors = authorRepository.findAll();
-            for (Author author : authors) {
-                String key = buildAuthorKey(author);
-                authorIdCache.put(key, author.getId());
-                authorObjectCache.put(key, author);
-            }
-            log.info("Завантажено {} авторів у кеш InpxImporter", authorIdCache.size());
-        } catch (Exception e) {
-            log.warn("Не вдалося завантажити авторів у кеш InpxImporter", e);
-        }
     }
 
     private void loadGenreCache() {
@@ -78,12 +70,6 @@ public class InpxImporter implements BookImporterPort {
         } catch (Exception e) {
             log.warn("Не вдалося завантажити жанри у кеш InpxImporter", e);
         }
-    }
-
-    private String buildAuthorKey(Author author) {
-        return (author.getFirstName() != null ? author.getFirstName() : "") + "|" +
-                (author.getMiddleName() != null ? author.getMiddleName() : "") + "|" +
-                (author.getLastName() != null ? author.getLastName() : "");
     }
 
     @Override
@@ -242,29 +228,13 @@ public class InpxImporter implements BookImporterPort {
                         if (lastName.isEmpty() && firstName.isEmpty() && middleName.isEmpty()) continue;
 
                         String key = firstName + "|" + middleName + "|" + lastName;
-                        Author author = authorObjectCache.get(key);
-                        if (author == null) {
-                            // Автора немає – створюємо нового і зберігаємо
-                            Author newAuthor = new Author(firstName, middleName, lastName);
-                            Author saved = authorRepository.save(newAuthor);
-                            authorObjectCache.put(key, saved);
-                            authorIdCache.put(key, saved.getId());
-                            author = saved;
-                        }
+                        Author author = resolveAuthor(key, firstName, middleName, lastName);
                         authors.add(author);
                     }
                 }
                 if (authors.isEmpty()) {
                     String key = "||Неведомий Автор";
-                    Author author = authorObjectCache.get(key);
-                    if (author == null) {
-                        Author newAuthor = new Author("", "", "Неведомий Автор");
-                        Author saved = authorRepository.save(newAuthor);
-                        authorObjectCache.put(key, saved);
-                        authorIdCache.put(key, saved.getId());
-                        author = saved;
-                    }
-                    authors.add(author);
+                    authors.add(resolveAuthor(key, "", "", "Неведомий Автор"));
                 }
 
                 // ---- Жанри ----
@@ -358,6 +328,20 @@ public class InpxImporter implements BookImporterPort {
                 log.warn("Помилка парсингу рядка: {}", line, e);
                 return null;
             }
+        }
+
+        private Author resolveAuthor(String key, String firstName, String middleName, String lastName) {
+            Author cached = authorObjectCache.get(key);
+            if (cached != null) {
+                return cached;
+            }
+
+            // Database schema historically identifies authors by first+last name.
+            // Reuse that persistent row on a cache miss instead of blindly inserting.
+            Author resolved = authorRepository.findByFullName(firstName, lastName)
+                    .orElseGet(() -> authorRepository.save(new Author(firstName, middleName, lastName)));
+            authorObjectCache.put(key, resolved);
+            return resolved;
         }
 
         /**

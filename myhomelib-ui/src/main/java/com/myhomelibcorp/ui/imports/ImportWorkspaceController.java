@@ -154,6 +154,7 @@ public class ImportWorkspaceController {
             cancelButton.setDisable(false);
         }
         updateStats(0, 0, 0);
+        appState.getStatusBar().setProgressVisible(true);
         setStatus("Імпорт розпочато...");
         setProgress(0);
 
@@ -163,9 +164,20 @@ public class ImportWorkspaceController {
                     if (cancelButton != null) {
                         cancelButton.setDisable(true);
                     }
-                    setStatus("Імпорт завершено. Додано " + result.imported() + " книг");
-                    updateStats(result.imported(), result.errors(), 0);
-                    appState.getStatusBar().setStatusText("Імпорт завершено: +" + result.imported() + " книг");
+                    appState.getStatusBar().setProgressVisible(false);
+                    if (cancelFlag.get()) {
+                        setStatus("Імпорт скасовано. Незавершені зміни не збережено.");
+                        setProgress(0);
+                    } else {
+                        long total = result.imported() + result.skipped() + result.duplicates() + result.errors();
+                        updateStats(result.imported(), result.errors(), total);
+                        setProgress(1.0);
+                        String summary = formatImportSummary(result, total);
+                        setStatus(summary);
+                        appState.getStatusBar().setStatusText(
+                                String.format("Імпорт завершено: %,d книг, помилок %,d",
+                                        result.imported(), result.errors()));
+                    }
 
                     // ВИДАЛЕНО: синхронізація серій — виконується в ImportEventHandler
                     // try {
@@ -181,6 +193,7 @@ public class ImportWorkspaceController {
                         if (cancelButton != null) {
                             cancelButton.setDisable(true);
                         }
+                        appState.getStatusBar().setProgressVisible(false);
                         if (cancelFlag.get()) {
                             setStatus("Імпорт скасовано");
                         } else {
@@ -227,22 +240,48 @@ public class ImportWorkspaceController {
     }
 
     private void setStatus(String text) {
-        UiExecutor.runOnUiThread(() -> statusLabel.setText(text));
+        UiExecutor.runOnUiThread(() -> {
+            statusLabel.setText(text);
+            appState.getStatusBar().setStatusText(text == null ? "" : text.replace('\n', ' '));
+        });
     }
 
     private void updateStatus(String text) {
-        UiExecutor.runOnUiThread(() -> statusLabel.setText(text));
+        setStatus(text);
     }
 
     private void setProgress(double value) {
         UiExecutor.runOnUiThread(() -> {
-            progressBar.setProgress(value);
-            progressLabel.setText(String.format("%.0f%%", value * 100));
+            double bounded = Math.max(0.0, Math.min(1.0, value));
+            progressBar.setProgress(bounded);
+            progressLabel.setText(String.format("%.0f%%", bounded * 100));
+            appState.getStatusBar().setProgress(bounded);
         });
     }
 
     private void updateProgress(double value) {
         setProgress(value);
+    }
+
+    private String formatImportSummary(ImportResult result, long total) {
+        return String.format(
+                "Імпорт завершено%n%nЗаписів: %,d%nІмпортовано: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
+                total,
+                result.imported(),
+                result.skipped(),
+                result.duplicates(),
+                result.errors(),
+                formatDuration(result.durationMs()));
+    }
+
+    private String formatDuration(long durationMs) {
+        long totalSeconds = Math.max(0L, durationMs) / 1000L;
+        long hours = totalSeconds / 3600L;
+        long minutes = (totalSeconds % 3600L) / 60L;
+        long seconds = totalSeconds % 60L;
+        return hours > 0
+                ? String.format("%02d:%02d:%02d", hours, minutes, seconds)
+                : String.format("%02d:%02d", minutes, seconds);
     }
 
     private void updateStats(long imported, long errors, long found) {

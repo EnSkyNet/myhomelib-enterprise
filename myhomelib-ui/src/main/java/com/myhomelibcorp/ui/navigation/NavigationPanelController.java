@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.navigation;
 import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.NavigationNodeDto;
 import com.myhomelibcorp.application.navigation.NavigationQueryService;
+import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.application.Platform;
@@ -13,6 +14,7 @@ import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -40,7 +42,7 @@ public class NavigationPanelController {
 
     private List<NavigationNodeDto> allNodes = List.of();
     private NavigationMode currentMode = NavigationMode.AUTHORS;
-    private char currentLetter = '*';
+    private Character currentLetter;
     private String currentQuery = "";
     private long loadGeneration;
     private NavigationMode pendingSelectionMode;
@@ -58,8 +60,13 @@ public class NavigationPanelController {
         });
 
         alphabetToolbarController.setOnLetterSelected(letter -> {
-            currentLetter = letter;
-            filterList();
+            if (currentMode == NavigationMode.AUTHORS) {
+                currentLetter = letter == '*' ? null : letter;
+                loadMode(NavigationMode.AUTHORS);
+            } else {
+                currentLetter = letter;
+                filterList();
+            }
         });
 
         navigationModeComboBox.setValue(NavigationMode.AUTHORS);
@@ -117,9 +124,37 @@ public class NavigationPanelController {
         this.onNodeSelected = callback;
     }
 
+    @EventListener
+    public void onNavigationRefresh(NavigationRefreshEvent event) {
+        refreshAll();
+    }
+
     public void refreshAll() {
         log.info("Оновлення навігаційної панелі: {}", currentMode);
         Platform.runLater(() -> loadMode(currentMode));
+    }
+
+    /** Re-evaluates filtered facets; AUTHORS must resolve the first available letter again. */
+    public void refreshForFilterChange() {
+        log.info("Оновлення навігації після зміни глобального фільтра: {}", currentMode);
+        Platform.runLater(() -> {
+            if (currentMode == NavigationMode.AUTHORS) {
+                currentLetter = null;
+                alphabetToolbarController.clearSelection();
+            }
+            loadMode(currentMode);
+        });
+    }
+
+    public void refreshAfterImport() {
+        log.info("Оновлення навігації після імпорту: {}", currentMode);
+        Platform.runLater(() -> {
+            if (currentMode == NavigationMode.AUTHORS) {
+                currentLetter = null;
+                alphabetToolbarController.clearSelection();
+            }
+            loadMode(currentMode);
+        });
     }
 
     public void loadMode(NavigationMode mode) {
@@ -128,8 +163,9 @@ public class NavigationPanelController {
         }
         boolean modeChanged = currentMode != mode;
         currentMode = mode;
+        alphabetToolbarController.setAllOptionEnabled(mode != NavigationMode.AUTHORS);
         if (modeChanged) {
-            currentLetter = '*';
+            currentLetter = mode == NavigationMode.AUTHORS ? null : '*';
             alphabetToolbarController.clearSelection();
             navigationListView.getSelectionModel().clearSelection();
         }
@@ -137,44 +173,87 @@ public class NavigationPanelController {
             navigationModeComboBox.setValue(mode);
         }
 
+        if (mode == NavigationMode.AUTHORS && currentLetter == null) {
+            resolveFirstAuthorInitialAndLoad();
+            return;
+        }
+        loadNodes(mode, mode == NavigationMode.AUTHORS ? currentLetter : null);
+    }
+
+    private void resolveFirstAuthorInitialAndLoad() {
         long generation = ++loadGeneration;
         navigationListView.setDisable(true);
-        navigationQueryService.load(mode).thenAccept(nodes -> UiExecutor.runOnUiThread(() -> {
-            if (generation != loadGeneration || currentMode != mode) {
-                return; // stale async response after a fast mode switch
+        navigationQueryService.findFirstAuthorInitial().thenAccept(initial -> UiExecutor.runOnUiThread(() -> {
+            if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS) {
+                return;
             }
-            allNodes = nodes == null ? List.of() : List.copyOf(nodes);
-            navigationListView.setDisable(false);
-            filterList();
-            log.info("Завантажено {} navigation nodes для {}", allNodes.size(), mode);
+            currentLetter = initial.orElse(null);
+            if (currentLetter != null) {
+                alphabetToolbarController.selectLetter(currentLetter);
+                loadNodes(NavigationMode.AUTHORS, currentLetter);
+            } else {
+                allNodes = List.of();
+                navigationListView.getItems().clear();
+                navigationListView.setDisable(false);
+            }
         })).exceptionally(ex -> {
-            UiExecutor.runOnUiThread(() -> {
-                if (generation == loadGeneration) {
-                    allNodes = List.of();
-                    navigationListView.getItems().clear();
-                    navigationListView.setDisable(false);
-                }
-            });
-            log.error("Помилка завантаження навігації для {}", mode, ex);
+            handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
             return null;
         });
     }
 
+    private void loadNodes(NavigationMode mode, Character initial) {
+        long generation = ++loadGeneration;
+        navigationListView.setDisable(true);
+        navigationQueryService.load(mode, initial).thenAccept(nodes -> UiExecutor.runOnUiThread(() -> {
+            if (generation != loadGeneration || currentMode != mode) {
+                return;
+            }
+            allNodes = nodes == null ? List.of() : List.copyOf(nodes);
+            navigationListView.setDisable(false);
+            filterList();
+            log.info("Завантажено {} navigation nodes для {}{}", allNodes.size(), mode,
+                    mode == NavigationMode.AUTHORS ? " / " + initial : "");
+        })).exceptionally(ex -> {
+            handleLoadFailure(generation, mode, ex);
+            return null;
+        });
+    }
+
+    private void handleLoadFailure(long generation, NavigationMode mode, Throwable ex) {
+        UiExecutor.runOnUiThread(() -> {
+            if (generation == loadGeneration) {
+                allNodes = List.of();
+                navigationListView.getItems().clear();
+                navigationListView.setDisable(false);
+            }
+        });
+        log.error("Помилка завантаження навігації для {}", mode, ex);
+    }
+
     private void filterList() {
-        char letter = currentLetter;
+        char letter = currentLetter == null ? '*' : currentLetter;
         String query = currentQuery == null ? "" : currentQuery.trim().toLowerCase(Locale.ROOT);
 
         List<NavigationNodeDto> filtered = allNodes.stream()
                 .filter(node -> currentMode == NavigationMode.ALL_BOOKS
                         || currentMode == NavigationMode.ALREADY_READ
                         || currentMode == NavigationMode.HISTORY
-                        || matchesFilter(displayLabel(node), letter, query))
+                        || currentMode == NavigationMode.UPDATES
+                        || (currentMode == NavigationMode.AUTHORS
+                            ? matchesQuery(displayLabel(node), query)
+                            : matchesFilter(displayLabel(node), letter, query)))
                 .toList();
 
         UiExecutor.runOnUiThread(() -> {
             navigationListView.getItems().setAll(filtered);
             applyPendingSelection();
         });
+    }
+
+    private boolean matchesQuery(String name, String query) {
+        if (name == null || name.isBlank()) return false;
+        return query == null || query.isEmpty() || name.toLowerCase(Locale.ROOT).contains(query);
     }
 
     private boolean matchesFilter(String name, char letter, String query) {
@@ -192,6 +271,7 @@ public class NavigationPanelController {
             case ALREADY_READ -> modeLabel(NavigationMode.ALREADY_READ);
             case HISTORY -> modeLabel(NavigationMode.HISTORY);
             case LANGUAGES -> languageLabel(node.id());
+            case GENRES -> localizationService.genreName(node.id(), node.label());
             case GROUPS -> groupLabel(node.label());
             case REVIEWS -> reviewLabel(node.id());
             default -> node.label();
@@ -221,6 +301,7 @@ public class NavigationPanelController {
             case KEYWORDS -> "Ключові слова";
             case GROUPS -> "Групи";
             case REVIEWS -> "Відгуки";
+            case UPDATES -> "Оновлення";
             case ALREADY_READ -> "Прочитані";
             case HISTORY -> "Історія читання";
             case ALL_BOOKS -> "Усі книги";
@@ -250,12 +331,32 @@ public class NavigationPanelController {
         if (mode == null || nodeId == null || nodeId.isBlank()) return;
         pendingSelectionMode = mode;
         pendingSelectionId = nodeId;
-        currentLetter = '*';
         currentQuery = "";
         alphabetToolbarController.clearSelection();
         if (listSearchField != null && !listSearchField.getText().isEmpty()) {
             listSearchField.clear();
         }
+
+        if (mode == NavigationMode.AUTHORS) {
+            long generation = ++loadGeneration;
+            currentMode = mode;
+            navigationModeComboBox.setValue(mode);
+            navigationListView.setDisable(true);
+            navigationQueryService.findAuthorInitial(nodeId).thenAccept(initial -> UiExecutor.runOnUiThread(() -> {
+                if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS) return;
+                currentLetter = initial.orElse(null);
+                if (currentLetter != null) {
+                    alphabetToolbarController.selectLetter(currentLetter);
+                }
+                loadMode(mode);
+            })).exceptionally(ex -> {
+                handleLoadFailure(generation, mode, ex);
+                return null;
+            });
+            return;
+        }
+
+        currentLetter = '*';
         loadMode(mode);
     }
 
@@ -282,9 +383,13 @@ public class NavigationPanelController {
     }
 
     public void selectLetter(char letter) {
-        this.currentLetter = letter;
+        this.currentLetter = letter == '*' && currentMode == NavigationMode.AUTHORS ? null : letter;
         alphabetToolbarController.selectLetter(letter);
-        filterList();
+        if (currentMode == NavigationMode.AUTHORS) {
+            loadMode(NavigationMode.AUTHORS);
+        } else {
+            filterList();
+        }
     }
 
     public void clearSelection() {
@@ -302,6 +407,7 @@ public class NavigationPanelController {
     public void loadKeywords() { loadMode(NavigationMode.KEYWORDS); }
     public void loadGroups() { loadMode(NavigationMode.GROUPS); }
     public void loadReviews() { loadMode(NavigationMode.REVIEWS); }
+    public void loadUpdates() { loadMode(NavigationMode.UPDATES); }
     public void loadAlreadyRead() { loadMode(NavigationMode.ALREADY_READ); }
     public void loadHistory() { loadMode(NavigationMode.HISTORY); }
     public void loadAllBooks() { loadMode(NavigationMode.ALL_BOOKS); }

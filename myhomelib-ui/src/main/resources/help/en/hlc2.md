@@ -1,0 +1,3 @@
+# Existing .hlc2 collections
+
+Modern Java SQLite collections can be attached directly. For a legacy Delphi .hlc2 database, MyHomeLib does not modify the source file: it creates a modern sidecar SQLite database and migrates the catalog, authors, genres, LibID and available user state. Keep a backup of the original file.

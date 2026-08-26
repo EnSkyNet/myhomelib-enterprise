@@ -1,0 +1,55 @@
+name: Performance baseline
+
+on:
+  workflow_dispatch:
+    inputs:
+      sizes:
+        description: "Synthetic catalogue sizes"
+        required: false
+        default: "100000,500000,1000000"
+  schedule:
+    - cron: '23 3 * * 0'
+
+permissions:
+  contents: read
+
+jobs:
+  performance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Make wrapper executable
+        run: chmod +x mvnw
+      - name: JVM/Lucene/reader performance suite
+        env:
+          PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,1000000' }}
+        run: >-
+          ./mvnw -B -ntp -pl myhomelib-benchmark -am test -Pperformance
+          -Dmhl.performance.sizes="$PERF_SIZES"
+          -Dmhl.performance.readerMb=8
+      - name: Offline SQLite scale baseline
+        env:
+          PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,1000000' }}
+        run: python3 tools/stage24-performance-baseline.py --sizes "$PERF_SIZES" --out target/performance-baseline-sqlite.json
+      - name: Stage 24 contract check
+        run: python3 tools/stage24-performance-check.py
+      - name: Upload benchmark reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: performance-baseline-${{ github.run_id }}
+          if-no-files-found: warn
+          path: |
+            myhomelib-benchmark/target/performance-baseline-jvm.json
+            target/performance-baseline-sqlite.json
+            docs/performance-baseline.json
+            docs/PERFORMANCE_BASELINE.md

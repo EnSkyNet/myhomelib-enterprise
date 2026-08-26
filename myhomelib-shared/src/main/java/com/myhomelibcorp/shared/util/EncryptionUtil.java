@@ -15,6 +15,9 @@ import java.util.Base64;
 /**
  * Безпечна утиліта для шифрування та дешифрування даних.
  * Використовує AES-GCM з випадковим nonce та versioned ciphertext.
+ *
+ * Якщо ключ не налаштовано, працює в режимі fallback (без шифрування)
+ * з попередженням у логах.
  */
 @Slf4j
 public final class EncryptionUtil {
@@ -31,6 +34,7 @@ public final class EncryptionUtil {
 
     private static SecretKey secretKey;
     private static boolean initialized = false;
+    private static boolean fallbackMode = false;
 
     static {
         initializeKey();
@@ -64,13 +68,12 @@ public final class EncryptionUtil {
             }
         }
 
-        // Якщо ключ не завантажено - програма не повинна запускатися
-        log.error("No valid encryption key found! Set environment variable {} or system property {}",
+        // Якщо ключ не знайдено - переходимо в fallback режим
+        log.warn("No encryption key found! Running in fallback mode (no encryption).");
+        log.warn("To enable encryption, set environment variable {} or system property {}",
                 MASTER_KEY_ENV, MASTER_KEY_PROPERTY);
-        throw new IllegalStateException(
-                "Encryption key is required. Please set environment variable: " + MASTER_KEY_ENV +
-                        " with a Base64-encoded 256-bit key."
-        );
+        fallbackMode = true;
+        initialized = true; // Позначаємо як ініціалізований для роботи в fallback-режимі
     }
 
     /**
@@ -105,6 +108,12 @@ public final class EncryptionUtil {
         if (!initialized) {
             log.error("Encryption not initialized");
             throw new IllegalStateException("Encryption not initialized");
+        }
+
+        // В fallback-режимі повертаємо текст без змін
+        if (fallbackMode) {
+            log.debug("Encryption in fallback mode: returning plain text");
+            return plainText;
         }
 
         try {
@@ -146,6 +155,12 @@ public final class EncryptionUtil {
         if (!initialized) {
             log.error("Encryption not initialized");
             throw new IllegalStateException("Encryption not initialized");
+        }
+
+        // В fallback-режимі повертаємо текст без змін
+        if (fallbackMode) {
+            log.debug("Decryption in fallback mode: returning plain text");
+            return encryptedText;
         }
 
         try {
@@ -193,6 +208,11 @@ public final class EncryptionUtil {
             return false;
         }
 
+        // В fallback-режимі нічого не зашифровано
+        if (fallbackMode) {
+            return false;
+        }
+
         try {
             byte[] data = Base64.getDecoder().decode(text);
             // Перевіряємо: довжина >= 1 + nonce + мінімальна довжина ciphertext
@@ -208,5 +228,9 @@ public final class EncryptionUtil {
 
     public static boolean isInitialized() {
         return initialized;
+    }
+
+    public static boolean isFallbackMode() {
+        return fallbackMode;
     }
 }

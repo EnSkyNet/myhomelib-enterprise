@@ -8,6 +8,7 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -98,6 +99,8 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             ps.setString(idx++, book.getTranslators() != null ? book.getTranslators() : "");
             ps.setString(idx++, book.getCity() != null ? book.getCity() : "");
             ps.setString(idx++, book.getSourceUrl() != null ? book.getSourceUrl() : "");
+            ps.setString(idx++, BookDenormalizedValues.format(book.getFileName()));
+            ps.setString(idx++, BookDenormalizedValues.authorSort(book));
             return ps;
         });
 
@@ -162,9 +165,9 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             return;
         }
 
-        String sql = "UPDATE books SET progress = ?, update_date = ? WHERE id = ?";
-        String now = LocalDateTime.now().format(DATE_FORMATTER);
-        int updated = getJdbcTemplate().update(sql, progress, now, bookId.asString());
+        // Використовуємо CURRENT_TIMESTAMP для узгодженості з іншими методами
+        String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+        int updated = getJdbcTemplate().update(sql, progress, bookId.asString());
 
         if (updated > 0) {
             log.info("✅ SQL оновлено прогрес для книги {}: {}%", bookId, progress);
@@ -174,19 +177,22 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         }
     }
 
-
     @Override
     public void updateStorage(BookId bookId, String collectionRoot, String folder, String fileName, String archiveEntry, boolean local) {
         if (bookId == null) return;
         getJdbcTemplate().update("""
-                UPDATE books SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?, update_date = ?
+                UPDATE books
+                SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?,
+                    format = ?, update_date = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 collectionRoot == null ? "" : collectionRoot,
                 folder == null ? "" : folder,
                 fileName == null ? "" : fileName,
                 archiveEntry == null ? "" : archiveEntry,
-                local ? 1 : 0, LocalDateTime.now().format(DATE_FORMATTER), bookId.asString());
+                local ? 1 : 0,
+                BookDenormalizedValues.format(fileName),
+                bookId.asString());
         bookCache.evict(bookId);
     }
 

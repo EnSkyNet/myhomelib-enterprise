@@ -15,7 +15,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Посторінковий reflow layout. Працює тільки з поточною сторінкою, тому не
@@ -29,10 +28,12 @@ public class TextLayoutEngine {
 
     private FontMetricsProvider fontMetrics;
     private ReaderSettings settings;
+    private final TextLineLayoutSupport lineSupport;
 
     public TextLayoutEngine(FontMetricsProvider fontMetrics, ReaderSettings settings) {
         this.fontMetrics = fontMetrics;
         this.settings = settings != null ? settings : ReaderSettings.defaultSettings();
+        this.lineSupport = new TextLineLayoutSupport(fontMetrics, this.settings);
     }
 
     public void updateSettings(ReaderSettings newSettings) {
@@ -41,6 +42,7 @@ public class TextLayoutEngine {
         }
         this.settings = newSettings;
         this.fontMetrics = this.fontMetrics.withSettings(newSettings);
+        this.lineSupport.update(this.fontMetrics, this.settings);
     }
 
     public PageLayout layoutPage(ReaderDocument document, long textOffset, PageDimensions dimensions) {
@@ -116,7 +118,8 @@ public class TextLayoutEngine {
                     currentY,
                     bottomY,
                     paragraphIndex,
-                    firstLineOfParagraph
+                    firstLineOfParagraph,
+                    document.metadata() != null ? document.metadata().language() : ""
             );
 
             if (fragment.isEmpty()) {
@@ -137,7 +140,7 @@ public class TextLayoutEngine {
                 break;
             }
 
-            currentY += paragraphGap(style);
+            currentY += lineSupport.paragraphGap(style);
             paragraphIndex++;
         }
 
@@ -160,7 +163,8 @@ public class TextLayoutEngine {
             float startY,
             float bottomY,
             int paragraphIndex,
-            boolean allowFirstLineIndent
+            boolean allowFirstLineIndent,
+            String language
     ) {
         List<LineLayout> lines = new ArrayList<>();
         if (text == null || text.isEmpty() || contentWidth <= 0) {
@@ -168,7 +172,7 @@ public class TextLayoutEngine {
                     baseX, startY, contentWidth);
         }
 
-        float baseFontSize = resolveFontSize(paragraphStyle);
+        float baseFontSize = lineSupport.resolveFontSize(paragraphStyle);
         float lineHeight = fontMetrics.getLineHeight(
                 paragraphStyle, baseFontSize, (float) settings.lineSpacing());
 
@@ -225,7 +229,7 @@ public class TextLayoutEngine {
         float y = startY;
 
         while (cursor < text.length()) {
-            cursor = skipLeadingLineWhitespace(text, cursor);
+            cursor = lineSupport.skipLeadingLineWhitespace(text, cursor);
             if (cursor >= text.length()) {
                 break;
             }
@@ -241,13 +245,16 @@ public class TextLayoutEngine {
 
             float lineIndent = lineIndex == 0 ? indent : 0f;
             float maxWidth = Math.max(1f, contentWidth - lineIndent);
-            int rawEnd = findLineEnd(text, cursor, maxWidth, paragraphStyle, baseFontSize, spans);
+            TextLineLayoutSupport.LineBreak lineBreak = lineSupport.findLineEnd(text, cursor, maxWidth, paragraphStyle, baseFontSize, spans, language);
+            int rawEnd = lineBreak.end();
+            boolean hyphenated = lineBreak.hyphenated();
             if (rawEnd <= cursor) {
                 rawEnd = Math.min(text.length(), cursor + 1);
+                hyphenated = false;
             }
 
             int nextCursor = rawEnd;
-            while (nextCursor < text.length() && isSoftWhitespace(text.charAt(nextCursor))) {
+            while (nextCursor < text.length() && lineSupport.isSoftWhitespace(text.charAt(nextCursor))) {
                 nextCursor++;
             }
 
@@ -256,25 +263,29 @@ public class TextLayoutEngine {
                 displayEnd--;
             }
 
-            String lineText = text.substring(cursor, displayEnd);
+            String lineText = text.substring(cursor, displayEnd) + (hyphenated ? "‐" : "");
             if (lineText.isEmpty() && rawEnd > cursor) {
                 cursor = Math.max(nextCursor, rawEnd);
                 continue;
             }
 
-            float naturalLineWidth = measureRange(text, cursor, displayEnd, paragraphStyle, baseFontSize, spans);
+            float naturalLineWidth = lineSupport.measureRange(text, cursor, displayEnd, paragraphStyle, baseFontSize, spans);
+            if (hyphenated) {
+                TextStyle hyphenStyle = lineSupport.styleAt(spans, Math.max(cursor, displayEnd - 1), paragraphStyle);
+                naturalLineWidth += fontMetrics.getCharWidth('‐', hyphenStyle, lineSupport.inlineFontSize(hyphenStyle, baseFontSize));
+            }
             int consumedChars = Math.max(1, Math.max(nextCursor, rawEnd) - cursor);
-            boolean justify = shouldJustifyLine(
+            boolean justify = !hyphenated && lineSupport.shouldJustifyLine(
                     text, cursor, displayEnd, rawEnd, maxWidth, naturalLineWidth, paragraphStyle);
-            int spaces = justify ? countSpaces(text, cursor, displayEnd) : 0;
+            int spaces = justify ? lineSupport.countSpaces(text, cursor, displayEnd) : 0;
             float extraPerSpace = spaces > 0
                     ? Math.max(0f, (maxWidth - naturalLineWidth) / spaces)
                     : 0f;
             float lineWidth = justify ? maxWidth : naturalLineWidth;
-            float lineX = resolveLineX(baseX, contentWidth, lineIndent, lineWidth);
-            List<TextRunLayout> runs = buildVisualRuns(
+            float lineX = lineSupport.resolveLineX(baseX, contentWidth, lineIndent, lineWidth);
+            List<TextRunLayout> runs = lineSupport.buildVisualRuns(
                     text, cursor, displayEnd, absoluteStartOffset,
-                    paragraphStyle, baseFontSize, spans, extraPerSpace
+                    paragraphStyle, baseFontSize, spans, extraPerSpace, hyphenated
             );
 
             LineLayout line = new LineLayout(
@@ -338,256 +349,6 @@ public class TextLayoutEngine {
                 .build();
     }
 
-    private int findLineEnd(
-            String text,
-            int start,
-            float maxWidth,
-            TextStyle paragraphStyle,
-            float baseFontSize,
-            List<StyleSpan> spans
-    ) {
-        float width = 0f;
-        int lastBreak = -1;
-
-        for (int i = start; i < text.length(); i++) {
-            char c = text.charAt(i);
-
-            if (c == '\n' || c == '\r') {
-                return i + 1;
-            }
-
-            TextStyle style = styleAt(spans, i, paragraphStyle);
-            float runFontSize = inlineFontSize(style, baseFontSize);
-            float charWidth = fontMetrics.getCharWidth(c, style, runFontSize);
-            if (width + charWidth > maxWidth) {
-                if (i == start) {
-                    return i + 1;
-                }
-                return lastBreak > start ? lastBreak : i;
-            }
-
-            width += charWidth;
-            if (Character.isWhitespace(c) || c == '-' || c == '\u2010' || c == '\u2013') {
-                lastBreak = i + 1;
-            }
-        }
-        return text.length();
-    }
-
-    private float measureRange(
-            String text,
-            int start,
-            int end,
-            TextStyle paragraphStyle,
-            float baseFontSize,
-            List<StyleSpan> spans
-    ) {
-        float width = 0f;
-        for (int i = start; i < end; i++) {
-            TextStyle style = styleAt(spans, i, paragraphStyle);
-            width += fontMetrics.getCharWidth(text.charAt(i), style, inlineFontSize(style, baseFontSize));
-        }
-        return width;
-    }
-
-    /**
-     * Створює runs тільки коли в рядку є inline-стиль, відмінний від стилю
-     * параграфа. Це тримає звичайні художні книги максимально компактними.
-     */
-    private List<TextRunLayout> buildVisualRuns(
-            String text,
-            int start,
-            int end,
-            int absoluteStartOffset,
-            TextStyle paragraphStyle,
-            float baseFontSize,
-            List<StyleSpan> spans,
-            float extraPerSpace
-    ) {
-        boolean styleRunsNeeded = spans != null && !spans.isEmpty() &&
-                hasDifferentStyle(spans, start, end, paragraphStyle);
-        boolean justifyRunsNeeded = extraPerSpace > 0.01f;
-        if (start >= end || (!styleRunsNeeded && !justifyRunsNeeded)) {
-            return List.of();
-        }
-
-        List<TextRunLayout> runs = new ArrayList<>();
-        int runStart = start;
-        TextStyle runStyle = styleAt(spans, start, paragraphStyle);
-        float x = 0f;
-
-        for (int i = start; i < end; i++) {
-            TextStyle style = styleAt(spans, i, paragraphStyle);
-            if (style != runStyle && i > runStart) {
-                x = addRun(runs, text, runStart, i, absoluteStartOffset, runStyle, baseFontSize, x);
-                runStart = i;
-                runStyle = style;
-            } else if (style != runStyle) {
-                runStyle = style;
-            }
-
-            if (justifyRunsNeeded && text.charAt(i) == ' ') {
-                x = addRun(runs, text, runStart, i + 1, absoluteStartOffset, runStyle, baseFontSize, x);
-                x += extraPerSpace;
-                runStart = i + 1;
-                if (runStart < end) {
-                    runStyle = styleAt(spans, runStart, paragraphStyle);
-                }
-            }
-        }
-
-        if (runStart < end) {
-            addRun(runs, text, runStart, end, absoluteStartOffset, runStyle, baseFontSize, x);
-        }
-        return List.copyOf(runs);
-    }
-
-    private float addRun(
-            List<TextRunLayout> runs,
-            String text,
-            int start,
-            int end,
-            int absoluteStartOffset,
-            TextStyle style,
-            float baseFontSize,
-            float x
-    ) {
-        if (start >= end) return x;
-        TextStyle effective = style != null ? style : TextStyle.NORMAL;
-        String runText = text.substring(start, end);
-        float runFontSize = inlineFontSize(effective, baseFontSize);
-        float runWidth = fontMetrics.getStringWidth(runText, effective, runFontSize);
-        runs.add(new TextRunLayout(
-                runText, x, runWidth, runFontSize, effective,
-                absoluteStartOffset + start, end - start
-        ));
-        return x + runWidth;
-    }
-
-    private boolean shouldJustifyLine(
-            String text,
-            int start,
-            int displayEnd,
-            int rawEnd,
-            float maxWidth,
-            float naturalWidth,
-            TextStyle paragraphStyle
-    ) {
-        String alignment = settings.alignment() == null
-                ? "left"
-                : settings.alignment().toLowerCase(Locale.ROOT);
-        if (!"justify".equals(alignment) || paragraphStyle.isHeading()) return false;
-        if (displayEnd <= start || rawEnd >= text.length()) return false;
-        char breakChar = rawEnd > 0 ? text.charAt(rawEnd - 1) : 0;
-        if (breakChar == '\n' || breakChar == '\r') return false;
-        if (naturalWidth < maxWidth * 0.65f) return false;
-        return countSpaces(text, start, displayEnd) > 0;
-    }
-
-    private int countSpaces(String text, int start, int end) {
-        int count = 0;
-        for (int i = start; i < end; i++) {
-            if (text.charAt(i) == ' ') count++;
-        }
-        return count;
-    }
-
-    private boolean hasDifferentStyle(List<StyleSpan> spans, int start, int end, TextStyle paragraphStyle) {
-        for (StyleSpan span : spans) {
-            if (span.end() <= start) continue;
-            if (span.start() >= end) break;
-            if (span.style() != null && span.style() != paragraphStyle) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /** spans відносні до початку paragraph fragment. */
-    private TextStyle styleAt(List<StyleSpan> spans, int offset, TextStyle fallback) {
-        if (spans == null || spans.isEmpty()) {
-            return fallback;
-        }
-
-        // Список відсортований за start (TextStorage додає spans послідовно).
-        int lo = 0;
-        int hi = spans.size() - 1;
-        int candidate = -1;
-        while (lo <= hi) {
-            int mid = (lo + hi) >>> 1;
-            StyleSpan span = spans.get(mid);
-            if (span.start() <= offset) {
-                candidate = mid;
-                lo = mid + 1;
-            } else {
-                hi = mid - 1;
-            }
-        }
-
-        if (candidate >= 0) {
-            StyleSpan span = spans.get(candidate);
-            if (offset < span.end() && span.style() != null) {
-                return span.style();
-            }
-        }
-        return fallback;
-    }
-
-    private float inlineFontSize(TextStyle style, float baseFontSize) {
-        if (style == TextStyle.SUPERSCRIPT || style == TextStyle.SUBSCRIPT) {
-            return baseFontSize * 0.76f;
-        }
-        return baseFontSize;
-    }
-
-    private int skipLeadingLineWhitespace(String text, int cursor) {
-        int i = cursor;
-        while (i < text.length()) {
-            char c = text.charAt(i);
-            if (c == '\n' || c == '\r' || c == '\t' || c == ' ') {
-                i++;
-            } else {
-                break;
-            }
-        }
-        return i;
-    }
-
-    private boolean isSoftWhitespace(char c) {
-        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
-    }
-
-    private float resolveLineX(float baseX, int contentWidth, float lineIndent, float lineWidth) {
-        String alignment = settings.alignment() == null
-                ? "left"
-                : settings.alignment().toLowerCase(Locale.ROOT);
-        return switch (alignment) {
-            case "center" -> baseX + Math.max(0f, (contentWidth - lineWidth) / 2f);
-            case "right" -> baseX + Math.max(0f, contentWidth - lineWidth);
-            default -> baseX + lineIndent; // justify додається renderer-ом окремо у майбутньому
-        };
-    }
-
-    private float resolveFontSize(TextStyle style) {
-        float base = (float) settings.fontSize();
-        if (style == null) {
-            return base;
-        }
-        return switch (style) {
-            case HEADING_1 -> base * 1.55f;
-            case HEADING_2 -> base * 1.35f;
-            case HEADING_3 -> base * 1.20f;
-            case HEADING_4, HEADING_5, HEADING_6 -> base * 1.10f;
-            case NOTE, FOOTNOTE -> base * 0.90f;
-            default -> base;
-        };
-    }
-
-    private float paragraphGap(TextStyle style) {
-        double multiplier = style != null && style.isHeading() ? 0.65 : 0.25;
-        return (float) Math.max(0, settings.paragraphSpacing() * settings.fontSize() * multiplier);
-    }
-
     public void clearCache() {
         if (fontMetrics instanceof FontMetricsProviderImpl impl) {
             impl.clearCache();
@@ -600,4 +361,6 @@ public class TextLayoutEngine {
         }
         return "TextLayoutEngine";
     }
+
+
 }

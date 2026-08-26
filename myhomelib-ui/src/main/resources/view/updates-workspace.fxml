@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.myhomelibcorp.ui.updates.UpdatesWorkspaceController">
+    <top>
+        <VBox spacing="8" BorderPane.alignment="CENTER">
+            <padding><Insets top="14" right="16" bottom="10" left="16"/></padding>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Оновлення каталогу" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <ProgressIndicator fx:id="progressIndicator" prefWidth="24" prefHeight="24" visible="false" managed="false"/>
+                <Button fx:id="refreshButton" text="Оновити" onAction="#refresh"/>
+            </HBox>
+            <Label fx:id="summaryLabel" text="Оновлення"/>
+            <Separator/>
+        </VBox>
+    </top>
+    <center>
+        <StackPane>
+            <padding><Insets right="16" bottom="10" left="16"/></padding>
+            <TreeView fx:id="updatesTree"/>
+            <Label fx:id="emptyLabel" text="Немає нових оновлень каталогу"
+                   visible="false" managed="false" style="-fx-font-size: 15px; -fx-opacity: 0.75;"/>
+        </StackPane>
+    </center>
+    <bottom>
+        <VBox spacing="8">
+            <padding><Insets top="8" right="16" bottom="14" left="16"/></padding>
+            <Label fx:id="detailLabel" text="Виберіть книгу для перегляду або завантаження." wrapText="true"/>
+            <HBox spacing="8">
+                <Button fx:id="openAuthorButton" text="Відкрити автора" onAction="#openAuthor"/>
+                <Button fx:id="openBookButton" text="Відкрити книгу" onAction="#openBook"/>
+                <Button fx:id="downloadButton" text="Завантажити / оновити" onAction="#downloadSelected"/>
+            </HBox>
+        </VBox>
+    </bottom>
+</BorderPane>

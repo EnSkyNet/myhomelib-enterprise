@@ -32,6 +32,7 @@ class LayerArchitectureTest {
     private static final String UI = "com.myhomelibcorp.ui..";
     private static final String READER = "com.myhomelibcorp.reader..";
     private static final String MCP = "com.myhomelibcorp.mcp..";
+    private static final String OPDS = "com.myhomelibcorp.opds..";
 
     private final JavaClasses classes = new ClassFileImporter()
             .withImportOption(new ImportOption.DoNotIncludeTests())
@@ -48,6 +49,7 @@ class LayerArchitectureTest {
                         UI,
                         READER,
                         MCP,
+                        OPDS,
                         "org.springframework..",
                         "javafx..",
                         "java.sql..",
@@ -66,6 +68,7 @@ class LayerArchitectureTest {
                         UI,
                         READER,
                         MCP,
+                        OPDS,
                         "org.springframework..",
                         "javafx..",
                         "java.sql..",
@@ -84,6 +87,7 @@ class LayerArchitectureTest {
                         UI,
                         READER,
                         MCP,
+                        OPDS,
                         "javafx..",
                         "java.sql..",
                         "javax.sql..",
@@ -109,6 +113,7 @@ class LayerArchitectureTest {
                 .should().dependOnClassesThat().resideInAnyPackage(
                         UI,
                         READER,
+                        OPDS,
                         "javafx.."
                 )
                 .check(classes);
@@ -120,6 +125,7 @@ class LayerArchitectureTest {
                 .that().resideInAnyPackage(UI)
                 .should().dependOnClassesThat().resideInAnyPackage(
                         INFRASTRUCTURE,
+                        OPDS,
                         "java.sql..",
                         "javax.sql..",
                         "org.springframework.jdbc..",
@@ -138,6 +144,7 @@ class LayerArchitectureTest {
                         INFRASTRUCTURE,
                         UI,
                         MCP,
+                        OPDS,
                         "org.springframework..",
                         "java.sql..",
                         "javax.sql..",
@@ -172,8 +179,27 @@ class LayerArchitectureTest {
                         INFRASTRUCTURE,
                         UI,
                         READER,
+                        OPDS,
                         "org.springframework..",
                         "javafx.."
+                )
+                .check(classes);
+    }
+
+    @Test
+    void opdsSidecarDependsOnApplicationApiButNotDesktopAdapters() {
+        noClasses()
+                .that().resideInAnyPackage(OPDS)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        MCP,
+                        "javafx..",
+                        "java.sql..",
+                        "javax.sql..",
+                        "org.springframework.jdbc..",
+                        "org.apache.lucene.."
                 )
                 .check(classes);
     }

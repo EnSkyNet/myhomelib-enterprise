@@ -28,10 +28,11 @@
     <Label text="📋 Що відновлювати:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
     <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 5;">
+        <CheckBox fx:id="restoreDatabaseCheckBox" text="📊 База даних каталогу (повне відновлення)" selected="true"/>
         <CheckBox fx:id="restoreIndexCheckBox" text="🔍 Пошуковий індекс" selected="true"/>
         <CheckBox fx:id="restoreCoversCheckBox" text="🖼️ Обкладинки книг" selected="true"/>
-        <CheckBox fx:id="restoreMetadataCheckBox" text="📝 Метадані колекції" selected="true"/>
-        <Label text="📊 База даних (відновлюється завжди)" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        <CheckBox fx:id="restoreMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
+        <Label text="Зніміть «База даних каталогу», щоб перенести лише ratings/progress/reviews/bookmarks/groups/history/filters/Reader settings на свіжий каталог за LibID." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>

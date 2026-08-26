@@ -18,6 +18,10 @@ public class ExportRequest {
     CollisionPolicy collisionPolicy;
     boolean extractOnly; // Для zip-архівів – витягти тільки один файл
     String customFileNameTemplate; // Шаблон імені файлу (опціонально)
+    String subfolderTemplate;      // Stage 16: profile-specific subfolder template
+    String profileId;
+    String profileName;
+    String postActionProfileId;    // Optional Stage-15 action executed for the exported target
 
     public CollisionPolicy effectiveCollisionPolicy() {
         if (collisionPolicy != null) return collisionPolicy;
@@ -25,7 +29,7 @@ public class ExportRequest {
     }
 
     public enum CollisionPolicy {
-        OVERWRITE, SKIP, RENAME
+        OVERWRITE, SKIP, RENAME, ASK
     }
 
     public enum ExportFormat {

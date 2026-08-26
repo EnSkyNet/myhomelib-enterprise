@@ -3,7 +3,7 @@ package com.myhomelibcorp.ui.reader;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapperHelper;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
-import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
+import com.myhomelibcorp.application.reader.ReaderSettingsStateService;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.application.service.ReadingHistoryService;
@@ -19,7 +19,6 @@ import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
-import javafx.animation.AnimationTimer;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -58,7 +57,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final ReadingHistoryService readingHistoryService;
     private final DialogService dialogService;
     private final NewReaderPersistenceService persistenceService;
-    private final ReaderPreferencesPort readerPreferencesPort;
+    private final ReaderSettingsStateService readerSettingsStateService;
     private final ApplicationContext springContext;
 
     @FXML
@@ -70,36 +69,15 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private Path materializedBookFile;
     private boolean isDisposed = false;
 
-    // Таймер для автоматичного збереження позиції
-    private AnimationTimer saveTimer;
-    private long lastSaveTime = 0;
-    private static final long SAVE_INTERVAL = 10_000_000_000L; // 10 секунд
-
-    // Прапорець для перевірки чи була зміна позиції
+    private ReaderPositionAutosaver positionAutosaver;
     private boolean positionChanged = false;
+    private boolean currentBookOverride = false;
 
     @FXML
     public void initialize() {
         log.info("📖 NewReaderWorkspaceController ініціалізовано");
 
-        // Таймер для автоматичного збереження позиції
-        saveTimer = new AnimationTimer() {
-            @Override
-            public void handle(long now) {
-                if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) {
-                    return;
-                }
-                if (now - lastSaveTime > SAVE_INTERVAL) {
-                    lastSaveTime = now;
-                    // Зберігаємо позицію тільки якщо вона змінилася
-                    if (positionChanged) {
-                        savePosition();
-                        positionChanged = false;
-                    }
-                }
-            }
-        };
-        saveTimer.start();
+        positionAutosaver = new ReaderPositionAutosaver(persistenceService);
     }
 
     public void setBookId(BookId bookId) {
@@ -167,8 +145,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
 
         // Завантажуємо збережені налаштування до першого layout книги.
-        ReaderSettings savedSettings = ReaderSettingsMapper.fromDomain(readerPreferencesPort.loadPreferences());
+        var settingsState = readerSettingsStateService.load(book.getId().asString());
+        currentBookOverride = settingsState.bookOverride();
+        ReaderSettings savedSettings = ReaderSettingsMapper.fromDomain(settingsState.preferences());
         readerView.applySettings(savedSettings);
+        positionAutosaver.start(book.getId().asString());
 
         // Відкриваємо книгу
         readerView.openBook(source);
@@ -190,6 +171,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         // Слухаємо зміну позиції через callback
         readerView.getCanvas().setOnPositionChanged(pos -> {
             positionChanged = true;
+            if (positionAutosaver != null) positionAutosaver.mark(pos);
         });
 
         log.info("✅ Книгу відкрито в новому Reader: {}", book.getTitle());
@@ -289,7 +271,12 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             ReaderPosition pos = readerView.getCurrentPosition();
             if (pos != null) {
-                persistenceService.savePosition(currentBookId.asString(), pos);
+                if (positionAutosaver != null) {
+                    positionAutosaver.mark(pos);
+                    positionAutosaver.flush();
+                } else {
+                    persistenceService.savePosition(currentBookId.asString(), pos);
+                }
             }
         } catch (Exception e) {
             log.warn("Не вдалося зберегти позицію: {}", e.getMessage());
@@ -315,17 +302,26 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
         cleanupMaterializedBookFile();
 
-        if (saveTimer != null) {
-            saveTimer.stop();
-        }
-
         navigationService.goBack();
     }
 
     private void persistReaderSettings(ReaderSettings settings) {
+        persistReaderSettings(settings, currentBookOverride);
+    }
+
+    private void persistReaderSettings(ReaderSettings settings, boolean perBook) {
         if (settings == null) return;
-        var previous = readerPreferencesPort.loadPreferences();
-        readerPreferencesPort.savePreferences(ReaderSettingsMapper.toDomain(settings, previous));
+        String bookId = currentBookId != null ? currentBookId.asString() : null;
+        if (perBook && bookId != null) {
+            var previous = readerSettingsStateService.load(bookId).preferences();
+            readerSettingsStateService.saveForBook(bookId, ReaderSettingsMapper.toDomain(settings, previous));
+            currentBookOverride = true;
+        } else {
+            var previous = readerSettingsStateService.loadGlobal();
+            readerSettingsStateService.saveGlobal(ReaderSettingsMapper.toDomain(settings, previous));
+            if (bookId != null) readerSettingsStateService.clearBookOverride(bookId);
+            currentBookOverride = false;
+        }
     }
 
     private void showSettings(ReaderSettings settings) {
@@ -336,10 +332,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 ? readerContainer.getScene().getWindow()
                 : null;
 
-        ReaderSettingsDialog.show(owner, settings).ifPresent(updated -> {
-            readerView.applySettings(updated);
-            persistReaderSettings(updated);
-        });
+        ReaderSettingsDialog.show(owner, settings, currentBookOverride, readerView::applySettings)
+                .ifPresent(result -> {
+                    readerView.applySettings(result.settings());
+                    persistReaderSettings(result.settings(), result.bookOverride());
+                });
     }
 
     private void addBookmark() {
@@ -454,18 +451,17 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         log.info("🧹 NewReaderWorkspaceController: початок очищення");
 
-        // Зупиняємо таймер
-        if (saveTimer != null) {
-            saveTimer.stop();
-            saveTimer = null;
-        }
-
         // Зберігаємо позицію
         if (positionChanged) {
             savePosition();
             positionChanged = false;
         } else {
             savePosition();
+        }
+
+        if (positionAutosaver != null) {
+            positionAutosaver.close();
+            positionAutosaver = null;
         }
 
         if (readerView != null) {

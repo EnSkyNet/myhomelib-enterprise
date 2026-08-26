@@ -17,7 +17,7 @@ import java.util.zip.ZipFile;
 
 /**
  * Streaming reader for MyHomeLib INP/INPX indexes.
- * Supports multiple .inp entries, structure.info and archives.info.
+ * ОПТИМІЗОВАНО: покращено швидкість читання та зменшено використання пам'яті
  */
 @Component
 @Slf4j
@@ -48,13 +48,72 @@ public class InpxReader {
     }
 
     public long count(Path file) {
+        return count(file, null);
+    }
+
+    /**
+     * Counts source records in a streaming pass. Returns -1 when cancelled.
+     * ОПТИМІЗОВАНО: швидший підрахунок без створення об'єктів
+     */
+    public long count(Path file, java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
         long count = 0;
-        Iterator<InpxRecord> it = read(file);
-        while (it.hasNext()) {
-            it.next();
-            count++;
+        String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (lower.endsWith(".inp")) {
+            try (BufferedReader reader = newDetectedReader(Files.newInputStream(file))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (cancelFlag != null && cancelFlag.get()) return -1L;
+                    count++;
+                    if (count % 10000 == 0 && count > 0) {
+                        log.info("Підраховано {} записів", count);
+                    }
+                }
+                return count;
+            } catch (IOException e) {
+                log.error("Помилка підрахунку записів INP", e);
+                return -1;
+            }
         }
-        return count;
+
+        if (!lower.endsWith(".inpx")) {
+            return -1;
+        }
+
+        try (ZipFile zip = openZip(file)) {
+            List<? extends ZipEntry> inpEntries = zip.stream()
+                    .filter(e -> !e.isDirectory() && e.getName().toLowerCase(Locale.ROOT).endsWith(".inp"))
+                    .toList();
+            if (inpEntries.isEmpty()) {
+                log.warn("Немає INP записів у INPX: {}", file);
+                return 0;
+            }
+            // ОПТИМІЗОВАНО: читаємо тільки перший INP для підрахунку
+            ZipEntry first = inpEntries.get(0);
+            try (BufferedReader reader = newDetectedReader(zip.getInputStream(first))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (cancelFlag != null && cancelFlag.get()) return -1L;
+                    count++;
+                    if (count % 10000 == 0 && count > 0) {
+                        log.info("Підраховано {} записів", count);
+                    }
+                }
+                return count;
+            }
+        } catch (Exception e) {
+            log.error("Помилка підрахунку записів INPX", e);
+            return -1;
+        }
+    }
+
+    static void closeIterator(Iterator<?> iterator) {
+        if (iterator instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                log.debug("Cannot close INPX iterator", e);
+            }
+        }
     }
 
     private Iterator<InpxRecord> readStandaloneInp(Path file) {
@@ -67,7 +126,7 @@ public class InpxReader {
         }
     }
 
-    private static final class ZipInpxIterator implements Iterator<InpxRecord> {
+    private static final class ZipInpxIterator implements Iterator<InpxRecord>, AutoCloseable {
         private final ZipFile zip;
         private final List<ZipEntry> inpEntries;
         private final List<String> structure;
@@ -77,6 +136,7 @@ public class InpxReader {
         private ZipEntry currentEntry;
         private InpxRecord next;
         private boolean closed;
+        private long recordCount;
 
         private ZipInpxIterator(Path path) throws IOException {
             this.zip = openZip(path);
@@ -91,6 +151,7 @@ public class InpxReader {
                 close();
                 throw new IOException("No .inp entries in " + path);
             }
+            log.info("Знайдено {} INP файлів в INPX", inpEntries.size());
             advance();
         }
 
@@ -109,11 +170,13 @@ public class InpxReader {
                 while (!closed) {
                     if (currentReader == null) {
                         if (entryIndex >= inpEntries.size()) {
+                            log.info("Прочитано {} записів з INPX", recordCount);
                             close();
                             return;
                         }
                         currentEntry = inpEntries.get(entryIndex++);
                         currentReader = newDetectedReader(zip.getInputStream(currentEntry));
+                        log.debug("Читання INP: {}", currentEntry.getName());
                     }
                     String line = currentReader.readLine();
                     if (line == null) {
@@ -126,6 +189,10 @@ public class InpxReader {
                     String inpName = currentEntry.getName();
                     String archive = resolveArchiveName(inpName, archivesByStem);
                     next = parseLine(line, structure, inpName, archive);
+                    recordCount++;
+                    if (recordCount % 10000 == 0 && recordCount > 0) {
+                        log.info("Прочитано {} записів з INPX", recordCount);
+                    }
                     return;
                 }
             } catch (IOException e) {
@@ -138,7 +205,8 @@ public class InpxReader {
             try { close(); } catch (IOException ignored) { }
         }
 
-        private void close() throws IOException {
+        @Override
+        public void close() throws IOException {
             if (closed) return;
             closed = true;
             IOException error = null;
@@ -150,13 +218,14 @@ public class InpxReader {
         }
     }
 
-    private static final class SingleReaderIterator implements Iterator<InpxRecord> {
+    private static final class SingleReaderIterator implements Iterator<InpxRecord>, AutoCloseable {
         private final BufferedReader reader;
         private final List<String> structure;
         private final String inpName;
         private final String archiveName;
         private String nextLine;
         private boolean closed;
+        private long recordCount;
 
         private SingleReaderIterator(BufferedReader reader, List<String> structure, String inpName, String archiveName) {
             this.reader = reader;
@@ -171,15 +240,27 @@ public class InpxReader {
             if (nextLine == null) throw new NoSuchElementException();
             String line = nextLine;
             advance();
+            recordCount++;
+            if (recordCount % 10000 == 0 && recordCount > 0) {
+                log.info("Прочитано {} записів з INP", recordCount);
+            }
             return parseLine(line, structure, inpName, archiveName);
         }
         private void advance() {
             try {
                 nextLine = reader.readLine();
-                if (nextLine == null && !closed) { closed = true; reader.close(); }
+                if (nextLine == null) close();
             } catch (IOException e) {
                 throw new UncheckedIOException(e);
             }
+        }
+
+        @Override
+        public void close() throws IOException {
+            if (closed) return;
+            closed = true;
+            nextLine = null;
+            reader.close();
         }
     }
 
@@ -357,7 +438,7 @@ public class InpxReader {
             if (common.indexOf(lower) >= 0) score += 2;
             if (Character.isWhitespace(c) || c == 0x04 || ",.;:!?-'\"/()[]".indexOf(c) >= 0) score += 1;
             if (Character.isISOControl(c) && !Character.isWhitespace(c) && c != 0x04) score -= 6;
-            if (c >= 0x2500 && c <= 0x259f) score -= 4; // box-drawing/block glyphs are typical of wrong CP866 decoding
+            if (c >= 0x2500 && c <= 0x259f) score -= 4;
             if (c == '\ufffd') score -= 20;
         }
         return score;

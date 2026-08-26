@@ -34,21 +34,29 @@ public class BookImportPresenter {
     private int defaultBatchSize;
 
     public void importFb2() {
+        importFb2(null);
+    }
+
+    public void importFb2(Runnable onComplete) {
         Stage stage = new Stage();
         File file = fileChooserService.chooseFile(stage, "Виберіть книгу або архів",
                 List.of(new javafx.stage.FileChooser.ExtensionFilter("Книги й архіви",
                         "*.fb2", "*.fbd", "*.epub", "*.txt", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz")));
         if (file != null) {
-            importFile(file.toPath());
+            importFile(file.toPath(), onComplete);
         }
     }
 
     public void importInpx() {
+        importInpx(null);
+    }
+
+    public void importInpx(Runnable onComplete) {
         Stage stage = new Stage();
         File file = fileChooserService.chooseFile(stage, "Виберіть INPX файл",
                 List.of(new javafx.stage.FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp")));
         if (file != null) {
-            importFile(file.toPath());
+            importFile(file.toPath(), onComplete);
         }
     }
 

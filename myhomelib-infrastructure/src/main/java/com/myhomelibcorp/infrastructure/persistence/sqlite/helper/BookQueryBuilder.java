@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
+import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
@@ -151,6 +152,15 @@ public class BookQueryBuilder {
             ctx.conditions.add("EXISTS (SELECT 1 FROM book_groups bg WHERE bg.book_id = b.id AND bg.group_id = ?)");
             ctx.params.add(query.groupId().asLong());
         }
+
+        addUnifiedFilter(ctx, query.filterSpec());
+    }
+
+    private void addUnifiedFilter(QueryContext ctx, BookFilterSpec filter) {
+        BookFilterSqlAdapter.FilterSql translated = BookFilterSqlAdapter.build(filter, "b");
+        if (translated.isEmpty()) return;
+        ctx.conditions.add(translated.clause());
+        ctx.params.addAll(translated.params());
     }
 
     private String buildSelectSql(QueryContext ctx, BookQuery query) {
@@ -194,6 +204,7 @@ public class BookQueryBuilder {
             case AUTHOR:   column = "b.author_sort"; break;
             case DATE:     column = "b.update_date"; break;
             case RATING:   column = "b.rate"; break;
+            case SERIES:   column = "LOWER(COALESCE(b.series, ''))"; break;
             case RANDOM:   column = "RANDOM()"; break;
             default:       column = "b.title";
         }

@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.filter.BookFilterSpec;
+import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.application.query.book.BookQuery;
@@ -36,6 +38,7 @@ public class BookLoaderService {
     private final BookViewModelMapper viewModelMapper;
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
+    private final BookFilterStateService filterStateService;
 
     private static final int DEFAULT_PAGE_SIZE = 50;
     private BookQuery lastQuery;
@@ -43,12 +46,18 @@ public class BookLoaderService {
     // ===== Завантаження книг =====
 
     public void loadBooks(BookQuery query) {
-        this.lastQuery = query;
+        BookQuery effectiveQuery = withFilter(query, filterStateService.current());
+        BookTableController activeController = appState.getBookTableController();
+        if (activeController != null && !effectiveQuery.onlyInHistory()) {
+            effectiveQuery = activeController.applyPreferredSort(effectiveQuery);
+        }
+        this.lastQuery = effectiveQuery;
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
+        BookQuery submittedQuery = effectiveQuery;
 
         executor.submit(() -> {
-            PageResult<BookDto> result = loadBooksUseCase.execute(query);
+            PageResult<BookDto> result = loadBooksUseCase.execute(submittedQuery);
             log.info("Завантажено {} книг з {}", result.content().size(), result.totalElements());
             return result;
         }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
@@ -279,6 +288,42 @@ public class BookLoaderService {
                 .onlyRated(base.onlyRated()).onlyReviewed(base.onlyReviewed())
                 .onlyInHistory(base.onlyInHistory())
                 .withoutSeries(base.withoutSeries()).withCover(base.withCover())
+                .filterSpec(base.filterSpec())
                 .build();
     }
+
+    private BookQuery withFilter(BookQuery base, BookFilterSpec filter) {
+        if (base == null) base = BookQuery.builder().build();
+        return BookQuery.builder()
+                .authorId(base.authorId()).seriesId(base.seriesId()).genreId(base.genreId()).groupId(base.groupId())
+                .text(base.text()).keyword(base.keyword()).language(base.language()).format(base.format()).year(base.year())
+                .archive(base.archiveCollectionRoot(), base.archivePath())
+                .pagination(base.pagination()).sortBy(base.sortBy()).direction(base.direction())
+                .onlyRead(base.onlyRead()).onlyFavorites(base.onlyFavorites())
+                .onlyRated(base.onlyRated()).onlyReviewed(base.onlyReviewed())
+                .onlyInHistory(base.onlyInHistory())
+                .withoutSeries(base.withoutSeries()).withCover(base.withCover())
+                .filterSpec(filter)
+                .build();
+    }
+
+    public void setSort(SortBy sortBy, SortDirection direction) {
+        if (lastQuery == null) return;
+        BookQuery sorted = BookQuery.builder()
+                .authorId(lastQuery.authorId()).seriesId(lastQuery.seriesId()).genreId(lastQuery.genreId()).groupId(lastQuery.groupId())
+                .text(lastQuery.text()).keyword(lastQuery.keyword()).language(lastQuery.language()).format(lastQuery.format()).year(lastQuery.year())
+                .archive(lastQuery.archiveCollectionRoot(), lastQuery.archivePath())
+                .pagination(Pagination.of(lastQuery.pagination().limit(), 0))
+                .sortBy(sortBy == null ? SortBy.TITLE : sortBy)
+                .direction(direction == null ? SortDirection.ASC : direction)
+                .onlyRead(lastQuery.onlyRead()).onlyFavorites(lastQuery.onlyFavorites())
+                .onlyRated(lastQuery.onlyRated()).onlyReviewed(lastQuery.onlyReviewed())
+                .onlyInHistory(lastQuery.onlyInHistory())
+                .withoutSeries(lastQuery.withoutSeries()).withCover(lastQuery.withCover())
+                .filterSpec(filterStateService.current())
+                .build();
+        loadBooks(sorted);
+    }
+
+    public BookQuery getLastQuery() { return lastQuery; }
 }

@@ -1,10 +1,9 @@
 package com.myhomelibcorp.application.service;
 
 import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
+import com.myhomelibcorp.application.port.out.backup.UserDataTransferPort;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
-import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
@@ -31,9 +30,9 @@ import java.util.function.Consumer;
 public class BackupRestoreService {
 
     private final CollectionBackupPort collectionBackupPort;
-    private final CollectionStorageManager storageManager;
+    private final UserDataTransferPort userDataTransferPort;
     private final DictionaryCachePort dictionaryCache;
-    private final AuthorRepository authorRepository;
+    private final DatabaseMigrationPort databaseMigrationPort;
     private final GenreRepository genreRepository;
     private final SeriesRepository seriesRepository;
     private final GroupRepository groupRepository;
@@ -48,67 +47,55 @@ public class BackupRestoreService {
      */
     public BackupResult backup(BackupOptions options) throws IOException {
         Collection collection = collectionBackupPort.getCurrentCollection();
-        if (collection == null) {
-            return new BackupResult(0, 1, "No active collection");
-        }
+        if (collection == null) return new BackupResult(0, 1, "No active collection");
 
         Path backupDir = options.backupDir();
+        Files.createDirectories(backupDir);
         log.info("Starting backup for collection: {} to {}", collection.getName(), backupDir);
 
-        List<BackupItem> items = new ArrayList<>();
-        long totalSize = 0;
-
-        // 1. База даних
-        String dbPath = collectionBackupPort.getDatabasePath(collection);
-        Path dbFile = Paths.get(dbPath);
-        if (Files.exists(dbFile)) {
-            items.add(new BackupItem(dbFile, backupDir.resolve(dbFile.getFileName().toString())));
-            totalSize += Files.size(dbFile);
-        }
-
-        // 2. Пошуковий індекс
-        if (options.includeIndex()) {
-            Path indexDir = findIndexPath(collection);
-            if (indexDir != null && Files.exists(indexDir)) {
-                items.add(new BackupItem(indexDir, backupDir.resolve("search-index")));
-                totalSize += getDirectorySize(indexDir);
-            }
-        }
-
-        // 3. Кеш обкладинок
-        if (options.includeCovers()) {
-            Path coversDir = findCoversPath(collection);
-            if (coversDir != null && Files.exists(coversDir)) {
-                items.add(new BackupItem(coversDir, backupDir.resolve("covers")));
-                totalSize += getDirectorySize(coversDir);
-            }
-        }
-
-        if (items.isEmpty()) {
-            return new BackupResult(0, 0, "No data found to backup");
-        }
-
-        // Копіюємо файли
-        long copiedBytes = 0;
         int copiedItems = 0;
         List<String> errors = new ArrayList<>();
 
-        for (BackupItem item : items) {
-            try {
-                if (Files.isDirectory(item.source)) {
-                    copyDirectory(item.source, item.target, null);
-                } else {
-                    Files.copy(item.source, item.target, StandardCopyOption.REPLACE_EXISTING);
-                    copiedBytes += Files.size(item.source);
-                }
-                copiedItems++;
-            } catch (IOException e) {
-                errors.add("Failed to copy " + item.source.getFileName() + ": " + e.getMessage());
-                log.error("Failed to copy: {}", item.source, e);
+        // Always create a consistent SQLite snapshot rather than copying a live WAL database file.
+        try {
+            Path dbSource = Paths.get(collectionBackupPort.getDatabasePath(collection));
+            String name = dbSource.getFileName() == null ? "library.db" : dbSource.getFileName().toString();
+            collectionBackupPort.createDatabaseSnapshot(collection, backupDir.resolve(name));
+            copiedItems++;
+        } catch (Exception e) {
+            errors.add("Database snapshot failed: " + e.getMessage());
+            log.error("Database snapshot failed", e);
+        }
+
+        if (options.includeIndex()) {
+            Path indexDir = findIndexPath(collection);
+            if (indexDir != null && Files.exists(indexDir)) {
+                try { copyDirectory(indexDir, backupDir.resolve("search-index"), null); copiedItems++; }
+                catch (Exception e) { errors.add("Search index: " + e.getMessage()); }
             }
         }
 
-        log.info("Backup completed: {} items, {} bytes", copiedItems, copiedBytes);
+        if (options.includeCovers()) {
+            Path coversDir = findCoversPath(collection);
+            if (coversDir != null && Files.exists(coversDir)) {
+                try { copyDirectory(coversDir, backupDir.resolve("covers"), null); copiedItems++; }
+                catch (Exception e) { errors.add("Covers: " + e.getMessage()); }
+            }
+        }
+
+        if (options.includeMetadata()) {
+            try {
+                var exported = userDataTransferPort.exportTo(backupDir.resolve(UserDataTransferPort.FILE_NAME));
+                copiedItems++;
+                log.info("Portable user data exported: schema={}, bookRecords={}, bookmarks={}, memberships={}",
+                        exported.schemaVersion(), exported.bookRecords(), exported.bookmarks(), exported.groupMemberships());
+            } catch (Exception e) {
+                errors.add("Portable user data: " + e.getMessage());
+                log.error("Portable user-data export failed", e);
+            }
+        }
+
+        log.info("Backup completed: {} items, {} errors", copiedItems, errors.size());
         return new BackupResult(copiedItems, errors.size(), errors.isEmpty() ? null : String.join("; ", errors));
     }
 
@@ -117,86 +104,104 @@ public class BackupRestoreService {
      */
     public RestoreResult restore(RestoreOptions options) throws Exception {
         Collection collection = collectionBackupPort.getCurrentCollection();
-        if (collection == null) {
-            return new RestoreResult(0, "No active collection");
-        }
+        if (collection == null) return new RestoreResult(0, "No active collection");
 
         Path backupDir = options.backupDir();
-        log.info("Starting restore for collection: {} from {}", collection.getName(), backupDir);
+        Path portable = backupDir.resolve(UserDataTransferPort.FILE_NAME);
+        log.info("Starting restore for collection: {} from {}, restoreDatabase={}",
+                collection.getName(), backupDir, options.restoreDatabase());
 
-        // Знаходимо файл бази даних у резервній копії
-        Path dbFile = findDbFile(backupDir);
-        if (dbFile == null) {
-            return new RestoreResult(0, "Database file not found in backup");
-        }
+        int restoredItems = 0;
+        if (options.restoreDatabase()) {
+            Path dbFile = findDbFile(backupDir);
+            if (dbFile == null) return new RestoreResult(0, "Database file not found in backup");
 
-        String targetDbPath = collectionBackupPort.getDatabasePath(collection);
-        Path targetDb = Paths.get(targetDbPath);
-        Files.createDirectories(targetDb.getParent());
+            Path targetDb = Paths.get(collectionBackupPort.getDatabasePath(collection));
+            Files.createDirectories(targetDb.toAbsolutePath().getParent());
 
-        // Відновлюємо базу даних з retry
-        boolean dbRestored = false;
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                Files.deleteIfExists(targetDb);
-                Files.copy(dbFile, targetDb, StandardCopyOption.REPLACE_EXISTING);
-                dbRestored = true;
-                break;
-            } catch (IOException e) {
-                if (attempt < MAX_RETRIES) {
+            // Stage the replacement while the current DB is still open. A failed/corrupt source
+            // copy therefore cannot delete the live catalogue. Only the final filesystem swap is
+            // performed after SQLite/WAL handles are released.
+            Path stagedDb = targetDb.resolveSibling(targetDb.getFileName() + ".restore.tmp");
+            Files.deleteIfExists(stagedDb);
+            boolean staged = false;
+            for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                try {
+                    Files.copy(dbFile, stagedDb, StandardCopyOption.REPLACE_EXISTING);
+                    if (Files.size(stagedDb) <= 0) throw new IOException("Staged database is empty");
+                    staged = true;
+                    break;
+                } catch (IOException e) {
+                    Files.deleteIfExists(stagedDb);
+                    if (attempt == MAX_RETRIES) throw e;
                     Thread.sleep(RETRY_DELAY_MS);
-                } else {
-                    throw e;
                 }
             }
-        }
+            if (!staged) return new RestoreResult(0, "Failed to stage database after " + MAX_RETRIES + " attempts");
 
-        if (!dbRestored) {
-            return new RestoreResult(0, "Failed to restore database after " + MAX_RETRIES + " attempts");
-        }
+            collectionBackupPort.closeCurrentCollection();
+            try {
+                try {
+                    Files.move(stagedDb, targetDb, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                } catch (AtomicMoveNotSupportedException unsupported) {
+                    Files.move(stagedDb, targetDb, StandardCopyOption.REPLACE_EXISTING);
+                }
+                restoredItems++;
 
-        // Закриваємо колекцію перед відновленням інших файлів
-        collectionBackupPort.closeCurrentCollection();
-
-        // Відновлюємо пошуковий індекс
-        if (options.restoreIndex()) {
-            Path backupIndex = backupDir.resolve("search-index");
-            if (Files.exists(backupIndex)) {
-                Path targetIndex = findIndexPath(collection);
-                if (targetIndex != null) {
-                    if (Files.exists(targetIndex)) {
-                        deleteDirectory(targetIndex);
+                if (options.restoreIndex()) {
+                    Path backupIndex = backupDir.resolve("search-index");
+                    if (Files.exists(backupIndex)) {
+                        Path targetIndex = findIndexPath(collection);
+                        if (targetIndex != null) {
+                            if (Files.exists(targetIndex)) deleteDirectory(targetIndex);
+                            copyDirectory(backupIndex, targetIndex, null);
+                            restoredItems++;
+                        }
                     }
-                    copyDirectory(backupIndex, targetIndex, null);
                 }
-            }
-        }
 
-        // Відновлюємо кеш обкладинок
-        if (options.restoreCovers()) {
-            Path backupCovers = backupDir.resolve("covers");
-            if (Files.exists(backupCovers)) {
-                Path targetCovers = findCoversPath(collection);
-                if (targetCovers != null) {
-                    if (Files.exists(targetCovers)) {
-                        deleteDirectory(targetCovers);
+                if (options.restoreCovers()) {
+                    Path backupCovers = backupDir.resolve("covers");
+                    if (Files.exists(backupCovers)) {
+                        Path targetCovers = findCoversPath(collection);
+                        if (targetCovers != null) {
+                            if (Files.exists(targetCovers)) deleteDirectory(targetCovers);
+                            copyDirectory(backupCovers, targetCovers, null);
+                            restoredItems++;
+                        }
                     }
-                    copyDirectory(backupCovers, targetCovers, null);
                 }
+            } finally {
+                try { Files.deleteIfExists(stagedDb); }
+                catch (IOException cleanupError) { log.warn("Cannot delete staged restore file {}", stagedDb, cleanupError); }
+                // Re-open even when an optional index/cover copy fails, so the desktop is not
+                // left with a permanently closed current collection, then apply the normal
+                // sequential Flyway chain to older database-only backups.
+                collectionBackupPort.openCollection(collection);
+                databaseMigrationPort.migrateCurrentCollection();
             }
         }
 
-        // Оновлюємо кеші та статистику
+        if (options.restoreMetadata()) {
+            if (Files.isRegularFile(portable)) {
+                var imported = userDataTransferPort.restoreFrom(portable);
+                restoredItems++;
+                log.info("Portable user data restored: sourceSchema={}, matched={}, unmatched={}, bookmarks={}, memberships={}",
+                        imported.sourceSchemaVersion(), imported.matchedBooks(), imported.unmatchedBooks(),
+                        imported.bookmarks(), imported.groupMemberships());
+            } else if (!options.restoreDatabase()) {
+                return new RestoreResult(restoredItems, "Portable user-data file not found: " + UserDataTransferPort.FILE_NAME);
+            } else {
+                log.info("Legacy database-only backup detected; portable user-data file is absent");
+            }
+        }
+
         refreshCaches();
         statisticsService.refreshStatistics();
+        if (options.rebuildIndex()) rebuildIndex();
 
-        // Перебудовуємо індекс якщо потрібно
-        if (options.rebuildIndex()) {
-            rebuildIndex();
-        }
-
-        log.info("Restore completed successfully");
-        return new RestoreResult(1, null);
+        log.info("Restore completed successfully: {} item(s)", restoredItems);
+        return new RestoreResult(restoredItems, null);
     }
 
     // ==================== Допоміжні методи ====================
@@ -306,7 +311,7 @@ public class BackupRestoreService {
 
     private void refreshCaches() {
         try {
-            dictionaryCache.loadAuthors(authorRepository.findAll());
+            // Do not materialize all authors after restore; navigation/search query authors lazily.
             dictionaryCache.loadGenres(genreRepository.findAll());
             dictionaryCache.loadSeries(seriesRepository.findAll());
             dictionaryCache.loadGroups(groupRepository.findAll());
@@ -359,10 +364,16 @@ public class BackupRestoreService {
             boolean restoreIndex,
             boolean restoreCovers,
             boolean restoreMetadata,
-            boolean rebuildIndex
+            boolean rebuildIndex,
+            boolean restoreDatabase
     ) {
         public static RestoreOptions defaults(Path backupDir) {
-            return new RestoreOptions(backupDir, true, true, true, true);
+            return new RestoreOptions(backupDir, true, true, true, true, true);
+        }
+
+        /** Portable transfer onto the currently imported catalogue, matched by LibID. */
+        public static RestoreOptions userDataOnly(Path backupDir) {
+            return new RestoreOptions(backupDir, false, false, true, true, false);
         }
     }
 

@@ -1,26 +1,36 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
+import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
+import com.myhomelibcorp.application.service.CollectionManagementService;
+import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
+import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
+import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.CollectionWizardViewModel;
+import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -31,6 +41,12 @@ public class CollectionWizardController {
     private final CollectionValidatorPort collectionValidator;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
+    private final CollectionManagementService collectionManagementService;
+    private final StatisticsService statisticsService;
+    private final SyncSeriesUseCase syncSeriesUseCase;
+    private final ApplicationEventPublisher eventPublisher;
+    private final ApplicationState appState;
+    private final CollectionRepository collectionRepository;
 
     private final CollectionWizardViewModel model = new CollectionWizardViewModel();
 
@@ -60,12 +76,27 @@ public class CollectionWizardController {
 
     private Stage stage;
     private Runnable onComplete;
+    private ObservableList<CollectionDto> collectionList;
 
     @FXML
     public void initialize() {
-        // Налаштування ComboBox
+        log.info("CollectionWizardController ініціалізовано");
+
+        // Налаштування ComboBox для типів колекцій
         typeComboBox.getItems().setAll(CollectionType.values());
         typeComboBox.setValue(CollectionType.FB2_LOCAL);
+
+        // Налаштування відображення типів колекцій
+        typeComboBox.setConverter(new javafx.util.StringConverter<CollectionType>() {
+            @Override
+            public String toString(CollectionType type) {
+                return type == null ? "" : type.getDisplayName();
+            }
+            @Override
+            public CollectionType fromString(String string) {
+                return CollectionType.FB2_LOCAL;
+            }
+        });
 
         // Прив'язка до ViewModel
         nameField.textProperty().bindBidirectional(model.nameProperty());
@@ -115,6 +146,10 @@ public class CollectionWizardController {
         this.onComplete = onComplete;
     }
 
+    public void setCollectionList(ObservableList<CollectionDto> collectionList) {
+        this.collectionList = collectionList;
+    }
+
     @FXML
     private void onNext() {
         int current = model.getCurrentStep();
@@ -152,26 +187,93 @@ public class CollectionWizardController {
 
         finishButton.setDisable(true);
         finishButton.setText("Створення...");
+        appState.getStatusBar().setStatusText("Створення колекції...");
+        appState.getStatusBar().setProgressVisible(true);
 
         new Thread(() -> {
             try {
+                log.info("Початок створення колекції: {}", request.getName());
+
+                // Створюємо колекцію
                 Collection collection = createCollectionUseCase.execute(request);
+                log.info("Колекцію створено: id={}, name={}, dbFile={}",
+                        collection.getId(), collection.getName(), collection.getDbFile());
+
+                // Перевіряємо, чи колекція збереглася в мета-БД
+                var saved = collectionRepository.findById(collection.getId());
+                if (saved.isEmpty()) {
+                    log.error("Колекцію не знайдено в мета-БД після збереження!");
+                    throw new RuntimeException("Не вдалося зберегти колекцію в мета-БД");
+                }
+                log.info("Колекцію підтверджено в мета-БД: {}", saved.get().getName());
+
+                // Оновлюємо статистику та серії
+                statisticsService.refreshStatistics();
+                syncSeriesUseCase.execute();
+
+                // Створюємо DTO для UI
+                CollectionDto dto = CollectionDto.builder()
+                        .id(collection.getId())
+                        .name(collection.getName())
+                        .active(false)
+                        .allowRename(true)
+                        .allowDelete(true)
+                        .rootFolder(collection.getRootFolder() != null ? collection.getRootFolder().toString() : null)
+                        .dbFile(collection.getDbFile())
+                        .type(collection.getType())
+                        .booksCount(-1L)
+                        .build();
+
                 UiExecutor.runOnUiThread(() -> {
-                    dialogService.showInfo("Успішно",
-                            "Колекцію '" + collection.getName() + "' створено!");
-                    finishButton.setDisable(false);
-                    finishButton.setText("✅ Створити");
-                    if (onComplete != null) {
-                        onComplete.run();
+                    try {
+                        // Додаємо до списку колекцій
+                        if (collectionList != null) {
+                            collectionList.add(dto);
+                            log.info("Колекцію додано до списку UI: {}", dto.getName());
+                        }
+
+                        // Перемикаємо на нову колекцію
+                        collectionManagementService.switchToCollection(collection);
+                        appState.setCurrentLibraryCollection(collection);
+
+                        // Оновлюємо статус
+                        appState.getStatusBar().setStatusText("Колекцію '" + collection.getName() + "' створено та активовано");
+                        appState.getStatusBar().setProgressVisible(false);
+
+                        // Публікуємо подію оновлення
+                        eventPublisher.publishEvent(new NavigationRefreshEvent());
+
+                        // Показуємо повідомлення
+                        dialogService.showInfo("Успішно",
+                                "Колекцію '" + collection.getName() + "' створено!\n\n" +
+                                        "ID: " + collection.getId() + "\n" +
+                                        "Шлях до БД: " + collection.getDbFile() + "\n" +
+                                        "Книг: " + dto.getBooksCount());
+
+                        finishButton.setDisable(false);
+                        finishButton.setText("✅ Створити");
+
+                        if (onComplete != null) {
+                            onComplete.run();
+                        }
+                        closeDialog();
+
+                    } catch (Exception e) {
+                        log.error("Помилка оновлення UI після створення колекції", e);
+                        dialogService.showError("Помилка", "Колекцію створено, але не вдалося оновити UI: " + e.getMessage());
+                        finishButton.setDisable(false);
+                        finishButton.setText("✅ Створити");
                     }
-                    closeDialog();
                 });
+
             } catch (Exception e) {
                 log.error("Помилка створення колекції", e);
                 UiExecutor.runOnUiThread(() -> {
                     showError("Помилка створення: " + e.getMessage());
                     finishButton.setDisable(false);
                     finishButton.setText("✅ Створити");
+                    appState.getStatusBar().setProgressVisible(false);
+                    appState.getStatusBar().setStatusText("Помилка створення колекції");
                 });
             }
         }).start();
@@ -243,6 +345,8 @@ public class CollectionWizardController {
     private void showError(String message) {
         errorLabel.setText("❌ " + message);
         errorLabel.setStyle("-fx-text-fill: red;");
+        errorLabel2.setText("❌ " + message);
+        errorLabel2.setStyle("-fx-text-fill: red;");
     }
 
     private CreateCollectionRequest buildRequest() {
@@ -274,5 +378,15 @@ public class CollectionWizardController {
         confirmSourcePath.setText(model.getSourcePath() != null ? model.getSourcePath() : "");
         confirmImportOnCreate.setText(model.isImportOnCreate() ? "Так" : "Ні");
         confirmCreateIndex.setText(model.isCreateIndex() ? "Так" : "Ні");
+    }
+
+    // ===== ГЕТЕРИ ДЛЯ ТЕСТІВ =====
+
+    public CollectionWizardViewModel getModel() {
+        return model;
+    }
+
+    public Stage getStage() {
+        return stage;
     }
 }

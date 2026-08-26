@@ -56,7 +56,7 @@ public class IntegrityCheckController {
                     statusLabel.setText("✅ Перевірку завершено");
 
                     boolean hasIssues = report.hasIssues();
-                    fixButton.setDisable(!hasIssues);
+                    fixButton.setDisable(true);
 
                     if (!hasIssues) {
                         issuesSummaryLabel.setText("✅ ПРОБЛЕМ НЕ ВИЯВЛЕНО");
@@ -80,44 +80,10 @@ public class IntegrityCheckController {
 
     @FXML
     public void onFixIssues() {
-        if (!dialogService.showConfirmation(
-                "Виправлення проблем",
-                "Ви впевнені, що хочете виправити знайдені проблеми?",
-                "Будуть видалені:\n" +
-                        "• Книги без авторів\n" +
-                        "• Книги без жанрів\n" +
-                        "• Автори без книг\n" +
-                        "• Жанри без книг\n" +
-                        "• Дублікати книг\n\n" +
-                        "⚠️ Цю дію не можна скасувати!")) {
-            return;
-        }
-
-        fixButton.setDisable(true);
-        statusLabel.setText("⏳ Виправлення проблем...");
-        progressIndicator.setVisible(true);
-
-        new Thread(() -> {
-            try {
-                integrityChecker.fixOrphanedBooks();
-                UiExecutor.runOnUiThread(() -> {
-                    statusLabel.setText("✅ Проблеми виправлено");
-                    progressIndicator.setVisible(false);
-                    fixButton.setDisable(true);
-                    dialogService.showInfo("Успішно", "✅ Проблеми цілісності виправлено.");
-                    // Повторно перевіряємо
-                    onCheckIntegrity();
-                });
-            } catch (Exception e) {
-                UiExecutor.runOnUiThread(() -> {
-                    statusLabel.setText("❌ Помилка виправлення: " + e.getMessage());
-                    progressIndicator.setVisible(false);
-                    fixButton.setDisable(false);
-                    dialogService.showError("Помилка", "Не вдалося виправити проблеми: " + e.getMessage());
-                });
-                log.error("Помилка виправлення проблем", e);
-            }
-        }).start();
+        dialogService.showInfo(
+                "Безпечне обслуговування",
+                "Автоматичне legacy-виправлення вимкнено. Відкрийте «Колекція → Керування колекціями...» "
+                        + "і використайте Maintenance: Analyze → Dry run → Apply. Перед Apply створюється backup.");
     }
 
     private void displayReport(IntegrityReport report) {
@@ -157,16 +123,16 @@ public class IntegrityCheckController {
                 sb.append("  • Додайте жанри до книг без жанрів\n");
             }
             if (report.orphanedAuthors() > 0) {
-                sb.append("  • Видаліть авторів без книг (автоматично при виправленні)\n");
+                sb.append("  • Перевірте авторів без книг у Collection Maintenance\n");
             }
             if (report.orphanedGenres() > 0) {
-                sb.append("  • Видаліть жанри без книг (автоматично при виправленні)\n");
+                sb.append("  • Перевірте жанри без книг у Collection Maintenance\n");
             }
             if (report.duplicateBooks() > 0) {
-                sb.append("  • Видаліть дублікати книг (автоматично при виправленні)\n");
+                sb.append("  • Перевірте детерміновані дублікати у Collection Maintenance\n");
             }
             sb.append("\n");
-            sb.append("🔧 Натисніть 'Виправити' для автоматичного виправлення проблем.");
+            sb.append("🔧 Для безпечного repair використайте Collection Workspace → Maintenance (з preview/dry-run/backup).");
         } else {
             sb.append("✅ ВСІ ПЕРЕВІРКИ ПРОЙДЕНО УСПІШНО\n");
             sb.append("  База даних не містить проблем цілісності.");

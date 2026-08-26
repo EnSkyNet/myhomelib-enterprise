@@ -20,6 +20,12 @@
             <version>${project.parent.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-reader</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+
         <!-- Spring Boot Starter для анотацій та контексту -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

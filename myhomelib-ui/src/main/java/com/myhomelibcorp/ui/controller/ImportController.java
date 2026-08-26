@@ -35,13 +35,11 @@ public class ImportController {
     private final ApplicationState appState;
 
     public void importFb2(Runnable onComplete) {
-        bookImportPresenter.importFb2();
-        if (onComplete != null) onComplete.run();
+        bookImportPresenter.importFb2(onComplete);
     }
 
     public void importInpx(Runnable onComplete) {
-        bookImportPresenter.importInpx();
-        if (onComplete != null) onComplete.run();
+        bookImportPresenter.importInpx(onComplete);
     }
 
     public void importDirectory(Runnable onComplete) {

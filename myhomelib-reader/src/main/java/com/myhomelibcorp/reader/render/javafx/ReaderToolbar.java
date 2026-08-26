@@ -135,12 +135,7 @@ public class ReaderToolbar extends HBox {
                 bookmarkButton,
                 tocButton,
                 searchButton,
-                new Separator(),
-                chapterLabel,
-                spacer,
-                pageInfoLabel,
-                progressBar,
-                progressLabel
+                spacer
         );
 
         HBox.setHgrow(spacer, Priority.ALWAYS);

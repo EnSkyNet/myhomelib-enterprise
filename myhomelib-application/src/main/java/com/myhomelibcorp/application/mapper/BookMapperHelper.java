@@ -46,6 +46,13 @@ public class BookMapperHelper {
                         ? Isbn.of(dto.getIsbn())
                         : null)
                 .review(dto.getReview() != null ? dto.getReview() : "")
+                .year(dto.getYear())
+                .publisher(dto.getPublisher() != null ? dto.getPublisher() : "")
+                .translators(dto.getTranslators() != null ? dto.getTranslators() : "")
+                .city(dto.getCity() != null ? dto.getCity() : "")
+                .sourceUrl(dto.getSourceUrl() != null ? dto.getSourceUrl() : "")
+                .libId(dto.getLibId() != null ? dto.getLibId() : "")
+                .libraryRate(dto.getLibraryRate())
                 .rate(dto.getRate())
                 .progress(dto.getProgress())
                 .build();

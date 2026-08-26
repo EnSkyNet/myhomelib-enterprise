@@ -76,37 +76,9 @@ public class DataIntegrityService implements DataIntegrityPort {
 
     @Override
     public void fixOrphanedData() {
-        log.info("🔧 Fixing orphaned data...");
-        JdbcTemplate jdbcTemplate = getJdbcTemplate();
-
-        // 1. Видаляємо книги без авторів
-        long deletedBooks = jdbcTemplate.update(
-                "DELETE FROM books WHERE id NOT IN (SELECT DISTINCT book_id FROM book_authors)"
-        );
-        log.info("Видалено {} книг без авторів", deletedBooks);
-
-        // 2. Видаляємо авторів без книг
-        long deletedAuthors = jdbcTemplate.update(
-                "DELETE FROM authors WHERE id NOT IN (SELECT DISTINCT author_id FROM book_authors)"
-        );
-        log.info("Видалено {} авторів без книг", deletedAuthors);
-
-        // 3. Видаляємо жанри без книг
-        long deletedGenres = jdbcTemplate.update(
-                "DELETE FROM genres WHERE code NOT IN (SELECT DISTINCT genre_code FROM book_genres)"
-        );
-        log.info("Видалено {} жанрів без книг", deletedGenres);
-
-        // 4. Видаляємо дублікати книг (залишаємо перший)
-        List<String> duplicateIds = findDuplicateBookIdStrings();
-        if (!duplicateIds.isEmpty()) {
-            String placeholders = duplicateIds.stream().map(id -> "?").collect(Collectors.joining(","));
-            String deleteSql = "DELETE FROM books WHERE id IN (" + placeholders + ")";
-            int deletedDuplicates = jdbcTemplate.update(deleteSql, duplicateIds.toArray());
-            log.info("Видалено {} дублікатів книг", deletedDuplicates);
-        }
-
-        log.info("🔧 Fix orphaned data completed");
+        throw new UnsupportedOperationException(
+                "Legacy destructive integrity repair is disabled. Use CollectionMaintenanceUseCase "
+                        + "for analyze -> dry-run -> mandatory backup -> explicit apply.");
     }
 
     // ==================== ПРИВАТНІ МЕТОДИ ====================

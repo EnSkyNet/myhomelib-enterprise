@@ -50,7 +50,17 @@ public class SqliteCollectionRepository implements CollectionRepository {
     @Override
     public List<Collection> findAll() {
         String sql = "SELECT * FROM collections ORDER BY name";
-        return metadataJdbcTemplate.query(sql, collectionRowMapper);
+        try {
+            List<Collection> collections = metadataJdbcTemplate.query(sql, collectionRowMapper);
+            log.info("Завантажено {} колекцій з мета-БД", collections.size());
+            for (Collection c : collections) {
+                log.info("  - Колекція: id={}, name={}, dbFile={}", c.getId(), c.getName(), c.getDbFile());
+            }
+            return collections;
+        } catch (Exception e) {
+            log.error("Помилка завантаження колекцій з мета-БД", e);
+            return List.of();
+        }
     }
 
     @Override
@@ -60,6 +70,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
             Collection collection = metadataJdbcTemplate.queryForObject(sql, collectionRowMapper, id);
             return Optional.of(collection);
         } catch (Exception e) {
+            log.warn("Колекцію з ID {} не знайдено", id);
             return Optional.empty();
         }
     }
@@ -91,7 +102,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
                 INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
-            metadataJdbcTemplate.update(sql,
+            int updated = metadataJdbcTemplate.update(sql,
                     id,
                     collection.getName(),
                     collection.getRootFolder() != null ? collection.getRootFolder().toString() : null,
@@ -102,7 +113,18 @@ public class SqliteCollectionRepository implements CollectionRepository {
                     collection.getUrl(),
                     collection.getNotes()
             );
-            return findById(id).orElseThrow(() -> new RuntimeException("Не вдалося створити колекцію"));
+            log.info("Колекцію створено: id={}, name={}, dbFile={}, rowsUpdated={}",
+                    id, collection.getName(), collection.getDbFile(), updated);
+
+            // Перевіряємо, чи збереглося
+            Optional<Collection> saved = findById(id);
+            if (saved.isPresent()) {
+                log.info("Колекцію успішно збережено: {}", saved.get().getName());
+                return saved.get();
+            } else {
+                log.error("Не вдалося знайти щойно створену колекцію: {}", id);
+                throw new RuntimeException("Не вдалося створити колекцію");
+            }
         } else {
             // Оновлення існуючої колекції
             String sql = """
@@ -111,7 +133,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
                     user = ?, password = ?, url = ?, notes = ?
                 WHERE id = ?
                 """;
-            metadataJdbcTemplate.update(sql,
+            int updated = metadataJdbcTemplate.update(sql,
                     collection.getName(),
                     collection.getRootFolder() != null ? collection.getRootFolder().toString() : null,
                     collection.getDbFile(),
@@ -122,6 +144,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
                     collection.getNotes(),
                     collection.getId()
             );
+            log.info("Колекцію оновлено: id={}, name={}, rowsUpdated={}",
+                    collection.getId(), collection.getName(), updated);
             return collection;
         }
     }

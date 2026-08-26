@@ -14,10 +14,10 @@ public interface AuthorRepository {
     Optional<Author> findByFullName(String firstName, String lastName);
     List<Author> findFavorites(int limit);
 
-    // ----- НОВИЙ МЕТОД ДЛЯ DATA INTEGRITY -----
+    List<Author> findByInitial(char initial);
+    Optional<Character> findFirstInitial();
+    long countByInitial(char initial);
+    List<Author> searchByName(String query, int limit);
 
-    /**
-     * Повертає кількість авторів, які не прив'язані до жодної книги.
-     */
     long countOrphanedAuthors();
 }

@@ -1,7 +1,6 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.service.BackupRestoreService;
-import com.myhomelibcorp.application.service.CollectionManagementService;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
@@ -23,7 +22,6 @@ import java.nio.file.Paths;
 public class RestoreController {
 
     private final BackupRestoreService backupRestoreService;
-    private final CollectionManagementService collectionManagementService;
     private final DialogService dialogService;
 
     @FXML private TextField backupPathField;
@@ -38,6 +36,7 @@ public class RestoreController {
     @FXML private CheckBox restoreIndexCheckBox;
     @FXML private CheckBox restoreCoversCheckBox;
     @FXML private CheckBox restoreMetadataCheckBox;
+    @FXML private CheckBox restoreDatabaseCheckBox;
 
     private volatile boolean cancelled = false;
     private Stage stage;
@@ -48,6 +47,12 @@ public class RestoreController {
         restoreIndexCheckBox.setSelected(true);
         restoreCoversCheckBox.setSelected(true);
         restoreMetadataCheckBox.setSelected(true);
+        restoreDatabaseCheckBox.setSelected(true);
+        restoreDatabaseCheckBox.selectedProperty().addListener((obs, oldValue, fullRestore) -> {
+            restoreIndexCheckBox.setDisable(!fullRestore);
+            restoreCoversCheckBox.setDisable(!fullRestore);
+            if (!fullRestore) { restoreIndexCheckBox.setSelected(false); restoreCoversCheckBox.setSelected(false); restoreMetadataCheckBox.setSelected(true); }
+        });
 
         progressBar.setProgress(0);
         progressBar.setVisible(false);
@@ -83,6 +88,7 @@ public class RestoreController {
         boolean hasDb = false;
         boolean hasIndex = false;
         boolean hasCovers = false;
+        boolean hasPortableUserData = false;
 
         try (var stream = Files.list(backupPath)) {
             var list = stream.toList();
@@ -97,6 +103,9 @@ public class RestoreController {
                 } else if (name.equals("covers") && Files.isDirectory(path)) {
                     hasCovers = true;
                     addLog("  ✅ Обкладинки");
+                } else if (name.equals("user-data.json") && Files.isRegularFile(path)) {
+                    hasPortableUserData = true;
+                    addLog("  ✅ Versioned user data: user-data.json");
                 }
             }
         } catch (Exception e) {
@@ -108,8 +117,12 @@ public class RestoreController {
             addLog("⚠️ Увага: Базу даних не знайдено!");
         }
 
-        restoreButton.setDisable(!hasDb);
-        statusLabel.setText(hasDb ? "✅ Резервна копія готова до відновлення" : "❌ Не знайдено базу даних");
+        restoreButton.setDisable(!hasDb && !hasPortableUserData);
+        if (hasDb) restoreDatabaseCheckBox.setSelected(true);
+        else if (hasPortableUserData) restoreDatabaseCheckBox.setSelected(false);
+        statusLabel.setText(hasDb || hasPortableUserData
+                ? "✅ Резервна копія готова до відновлення"
+                : "❌ Не знайдено базу даних або user-data.json");
     }
 
     @FXML
@@ -127,25 +140,34 @@ public class RestoreController {
             return;
         }
 
+        boolean restoreDatabase = restoreDatabaseCheckBox.isSelected();
         Path dbFile = findDbFile(backupDir);
-        if (dbFile == null) {
-            dialogService.showError("Помилка",
-                    "Не знайдено файл бази даних (.db) у резервній копії.\n\n" +
-                            "Переконайтеся, що вибрано правильну папку з резервною копією.");
+        boolean hasPortable = Files.isRegularFile(backupDir.resolve("user-data.json"));
+        if (restoreDatabase && dbFile == null) {
+            dialogService.showError("Помилка", "Для повного відновлення не знайдено файл бази даних (.db).");
+            return;
+        }
+        if (!restoreDatabase && !hasPortable) {
+            dialogService.showError("Помилка", "Для перенесення користувацьких даних не знайдено user-data.json.");
             return;
         }
 
-        if (!dialogService.showConfirmation(
-                "Відновлення з резервної копії",
-                "Відновити поточну колекцію з резервної копії?",
-                "Папка: " + backupPath + "\n" +
-                        "Файл бази даних: " + dbFile.getFileName() + "\n\n" +
-                        "⚠️ Увага! Поточні дані будуть замінені!\n" +
-                        "Рекомендується створити резервну копію перед відновленням.")) {
-            return;
-        }
+        String details = restoreDatabase
+                ? "Папка: " + backupPath + "\nФайл бази даних: " + dbFile.getFileName()
+                    + "\n\n⚠️ Поточна база каталогу буде замінена. Перед заміною SQLite handles закриваються, потім колекція відкривається знову."
+                : "Папка: " + backupPath + "\n\nБаза каталогу НЕ замінюється. Ratings/progress/reviews/bookmarks/groups/history/filters/Reader settings будуть зіставлені за LibID.";
+        if (!dialogService.showConfirmation("Відновлення з резервної копії",
+                restoreDatabase ? "Виконати повне відновлення?" : "Перенести лише користувацькі дані?", details)) return;
 
-        startRestore(backupPath, dbFile, backupDir);
+        BackupRestoreService.RestoreOptions options = new BackupRestoreService.RestoreOptions(
+                backupDir,
+                restoreIndexCheckBox.isSelected(),
+                restoreCoversCheckBox.isSelected(),
+                restoreMetadataCheckBox.isSelected(),
+                true,
+                restoreDatabase
+        );
+        startRestore(backupPath, dbFile, options);
     }
 
     private Path findDbFile(Path backupDir) {
@@ -162,7 +184,7 @@ public class RestoreController {
         return null;
     }
 
-    private void startRestore(String backupPath, Path dbFile, Path backupDir) {
+    private void startRestore(String backupPath, Path dbFile, BackupRestoreService.RestoreOptions options) {
         cancelled = false;
         restoreCompleted = false;
         restoreButton.setDisable(true);
@@ -182,21 +204,8 @@ public class RestoreController {
             try {
                 addLog("=== Початок відновлення ===");
                 addLog("Джерело: " + backupPath);
-                addLog("Файл бази даних: " + dbFile.getFileName());
-
-                // Закриваємо поточну колекцію
-                addLog("Закриття поточної колекції...");
-                collectionManagementService.closeCurrentCollection();
-
-                Thread.sleep(1000);
-
-                BackupRestoreService.RestoreOptions options = new BackupRestoreService.RestoreOptions(
-                        backupDir,
-                        restoreIndexCheckBox.isSelected(),
-                        restoreCoversCheckBox.isSelected(),
-                        restoreMetadataCheckBox.isSelected(),
-                        true
-                );
+                addLog("Режим: " + (options.restoreDatabase() ? "повне відновлення БД" : "лише user data за LibID"));
+                if (dbFile != null) addLog("Файл бази даних: " + dbFile.getFileName());
 
                 addLog("Відновлення...");
                 BackupRestoreService.RestoreResult result = backupRestoreService.restore(options);

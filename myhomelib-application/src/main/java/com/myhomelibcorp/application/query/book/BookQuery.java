@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.query.book;
 
+import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
@@ -18,6 +19,7 @@ public record BookQuery(
         Integer year,
         String archiveCollectionRoot,
         String archivePath,
+        BookFilterSpec filterSpec,
 
         // Пагінація та сортування
         Pagination pagination,
@@ -46,6 +48,7 @@ public record BookQuery(
         if (archivePath == null) {
             archiveCollectionRoot = null;
         }
+        filterSpec = filterSpec == null ? BookFilterSpec.empty() : filterSpec;
     }
 
     private static String normalizeTextFilter(String value) {
@@ -75,6 +78,7 @@ public record BookQuery(
         private Integer year;
         private String archiveCollectionRoot;
         private String archivePath;
+        private BookFilterSpec filterSpec;
         private Pagination pagination;
         private SortBy sortBy;
         private SortDirection direction;
@@ -102,6 +106,7 @@ public record BookQuery(
         }
         public Builder archiveCollectionRoot(String archiveCollectionRoot) { this.archiveCollectionRoot = archiveCollectionRoot; return this; }
         public Builder archivePath(String archivePath) { this.archivePath = archivePath; return this; }
+        public Builder filterSpec(BookFilterSpec filterSpec) { this.filterSpec = filterSpec; return this; }
         public Builder pagination(Pagination pagination) { this.pagination = pagination; return this; }
         public Builder sortBy(SortBy sortBy) { this.sortBy = sortBy; return this; }
         public Builder direction(SortDirection direction) { this.direction = direction; return this; }
@@ -116,7 +121,7 @@ public record BookQuery(
         public BookQuery build() {
             return new BookQuery(
                     authorId, seriesId, genreId, groupId, text, keyword, language, format,
-                    year, archiveCollectionRoot, archivePath,
+                    year, archiveCollectionRoot, archivePath, filterSpec,
                     pagination, sortBy, direction,
                     onlyRead, onlyFavorites, onlyRated, onlyReviewed, onlyInHistory, withoutSeries, withCover
             );

@@ -30,6 +30,8 @@ public class ReaderView extends BorderPane {
     @Getter
     private final ReaderToolbar toolbar;
     @Getter
+    private final ReaderStatusBar statusBar;
+    @Getter
     private final ReaderEngine engine;
     @Getter
     private final DefaultBookFormatRegistry formatRegistry;
@@ -64,20 +66,23 @@ public class ReaderView extends BorderPane {
 
         canvas = new ReaderCanvas(engine, renderer);
         toolbar = new ReaderToolbar(canvas);
+        statusBar = new ReaderStatusBar(canvas);
 
         setTop(toolbar);
         setCenter(canvas);
+        setBottom(statusBar);
         setupCallbacks();
     }
 
     private void setupCallbacks() {
-        canvas.setOnPageChanged(toolbar::updateState);
-        canvas.setOnPageNumberChanged(page -> toolbar.updateState());
+        canvas.setOnPageChanged(() -> { toolbar.updateState(); statusBar.updateState(); });
+        canvas.setOnPageNumberChanged(page -> { toolbar.updateState(); statusBar.updateState(); });
         canvas.setOnCloseRequested(() -> {
             if (onBackClick != null) onBackClick.run();
             else closeBook();
         });
         canvas.setOnCenterTap(this::toggleToolbarVisibility);
+        canvas.setOnToggleToolbarRequested(this::toggleToolbarVisibility);
         canvas.setOnSearchRequested(() -> {
             if (onSearchClick != null) onSearchClick.run();
         });
@@ -86,6 +91,7 @@ public class ReaderView extends BorderPane {
             if (onSettingsClick != null) onSettingsClick.accept(settings);
         });
         toolbar.setOnQuickSettingsChanged(settings -> {
+            statusBar.applySettings(settings);
             if (onSettingsChanged != null) onSettingsChanged.accept(settings);
         });
         toolbar.setOnBookmarkClick(() -> {
@@ -146,6 +152,7 @@ public class ReaderView extends BorderPane {
         renderer.applySettings(engine.getSettings());
         toolbar.setVisible(engine.getSettings().showToolbar());
         toolbar.setManaged(engine.getSettings().showToolbar());
+        statusBar.applySettings(engine.getSettings());
         canvas.setAutoScrollSpeed(engine.getSettings().scrollSpeed());
         if (engine.getSettings().autoScroll() && !canvas.isAutoScrollRunning()) {
             canvas.toggleAutoScroll();
@@ -170,6 +177,7 @@ public class ReaderView extends BorderPane {
         canvas.applySettings(settings);
         toolbar.setVisible(settings.showToolbar());
         toolbar.setManaged(settings.showToolbar());
+        statusBar.applySettings(settings);
         canvas.setAutoScrollSpeed(settings.scrollSpeed());
         if (settings.autoScroll() && isBookOpen() && !canvas.isAutoScrollRunning()) {
             canvas.toggleAutoScroll();

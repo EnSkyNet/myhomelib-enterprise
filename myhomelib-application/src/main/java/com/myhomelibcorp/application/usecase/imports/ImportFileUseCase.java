@@ -73,19 +73,21 @@ public class ImportFileUseCase {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         Path rootDirectory = context.getRootDirectory();
 
-        long count = fastImportService.importInpx(
-                context.getFile(), batchSize, rootDirectory, context.getCancelFlag(),
-                context.getCatalogSourceKey(), context.getCatalogSourceLocation());
+        ImportResult result = fastImportService.importInpx(
+                context.getFile(),
+                batchSize,
+                rootDirectory,
+                context.getCancelFlag(),
+                context.getCatalogSourceKey(),
+                context.getCatalogSourceLocation(),
+                context.getProgressListener(),
+                context.getStatusConsumer());
 
-        if (count > 0) {
+        if (result.imported() > 0) {
             cacheRefresherPort.refreshCachesAsync();
-            log.info("Запущено асинхронне оновлення кешів словників для {} книг", count);
+            log.info("Запущено асинхронне оновлення малих словникових кешів після {} книг", result.imported());
         }
 
-        ImportStatistics stats = new ImportStatistics();
-        stats.incrementImported((int) count);
-
-        ImportResult result = ImportResult.fromStatistics(stats);
         eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(context.getFile(), result));
         return result;
     }

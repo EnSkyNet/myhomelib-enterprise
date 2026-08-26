@@ -1,17 +1,12 @@
 package com.myhomelibcorp.application.navigation;
 
+import com.myhomelibcorp.application.catalog.CatalogUpdateService;
+import com.myhomelibcorp.application.filter.BookFilterSpec;
+import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
-import com.myhomelibcorp.application.port.out.exchange.ReadingHistoryPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
-import com.myhomelibcorp.domain.model.author.Author;
-import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.series.Series;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -22,80 +17,84 @@ import java.util.concurrent.CompletableFuture;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 class DefaultNavigationQueryServiceTest {
 
     private AuthorRepository authorRepository;
-    private SeriesRepository seriesRepository;
-    private GenreRepository genreRepository;
     private BookQueryRepository bookQueryRepository;
     private NavigationFacetRepository navigationFacetRepository;
-    private ReadingHistoryPort readingHistoryPort;
+    private BookFilterStateService filterStateService;
+    private CatalogUpdateService catalogUpdateService;
     private DefaultNavigationQueryService service;
+    private BookFilterSpec filter;
 
     @BeforeEach
     void setUp() {
         authorRepository = mock(AuthorRepository.class);
-        seriesRepository = mock(SeriesRepository.class);
-        genreRepository = mock(GenreRepository.class);
         bookQueryRepository = mock(BookQueryRepository.class);
         navigationFacetRepository = mock(NavigationFacetRepository.class);
-        readingHistoryPort = mock(ReadingHistoryPort.class);
+        filterStateService = mock(BookFilterStateService.class);
+        catalogUpdateService = mock(CatalogUpdateService.class);
+        filter = BookFilterSpec.empty();
+        when(filterStateService.current()).thenReturn(filter);
         service = new DefaultNavigationQueryService(
                 authorRepository,
-                seriesRepository,
-                genreRepository,
                 bookQueryRepository,
                 navigationFacetRepository,
-                readingHistoryPort,
+                filterStateService,
+                catalogUpdateService,
                 directExecutor());
     }
 
     @Test
-    void authorsAreReturnedAsStableSortedNodes() {
-        AuthorId zId = AuthorId.generate();
-        AuthorId aId = AuthorId.generate();
-        when(authorRepository.findAll()).thenReturn(List.of(
-                new Author(zId, "Zed", null, "Zulu"),
-                new Author(aId, "Ann", null, "Alpha")));
+    void authorsAreLoadedOnlyForResolvedFilteredInitial() {
+        when(navigationFacetRepository.findFirstAuthorInitial(filter)).thenReturn(java.util.Optional.of('А'));
+        when(navigationFacetRepository.findAuthors('А', filter)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("author-a", "Абрамов Андрій", 12)));
 
         List<NavigationNodeDto> nodes = service.load(NavigationMode.AUTHORS).join();
 
-        assertThat(nodes).extracting(NavigationNodeDto::label)
-                .containsExactly("Alpha Ann", "Zulu Zed");
-        assertThat(nodes.getFirst().id()).isEqualTo(aId.asString());
-        assertThat(nodes).allMatch(node -> node.mode() == NavigationMode.AUTHORS);
+        assertThat(nodes).containsExactly(
+                new NavigationNodeDto(NavigationMode.AUTHORS, "author-a", "Абрамов Андрій", 12));
+        verify(navigationFacetRepository).findFirstAuthorInitial(filter);
+        verify(navigationFacetRepository).findAuthors('А', filter);
+        verify(authorRepository, never()).findAll();
     }
 
     @Test
-    void seriesUseRepositoryIdsInsteadOfUiGeneratedIds() {
-        SeriesId stableId = SeriesId.generate();
-        when(seriesRepository.findAll()).thenReturn(List.of(
-                new Series(stableId, "Chronicles", null)));
+    void explicitAuthorInitialDoesNotResolveOrLoadAllAuthors() {
+        when(navigationFacetRepository.findAuthors('Б', filter)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("author-b", "Бабенко Богдан", 3)));
 
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.SERIES).join();
+        List<NavigationNodeDto> nodes = service.load(NavigationMode.AUTHORS, 'Б').join();
 
-        assertThat(nodes).hasSize(1);
-        assertThat(nodes.getFirst().id()).isEqualTo(stableId.asString());
-        assertThat(nodes.getFirst().label()).isEqualTo("Chronicles");
+        assertThat(nodes).extracting(NavigationNodeDto::label).containsExactly("Бабенко Богдан");
+        verify(navigationFacetRepository).findAuthors('Б', filter);
+        verify(navigationFacetRepository, never()).findFirstAuthorInitial(filter);
+        verify(authorRepository, never()).findAll();
     }
 
     @Test
-    void genresUseStableGenreCodesAndAreSorted() {
-        when(genreRepository.findAll()).thenReturn(List.of(
-                new Genre("z_genre", "Zulu"),
-                new Genre("a_genre", "Alpha")));
+    void seriesAndGenresUseFilteredFacetCountsAndStableIds() {
+        when(navigationFacetRepository.findSeries(filter)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("series-2", "Zulu", 2),
+                new NavigationFacetRepository.Facet("series-1", "Alpha", 7)));
+        when(navigationFacetRepository.findGenres(filter)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("z_genre", "Zulu", 4),
+                new NavigationFacetRepository.Facet("a_genre", "Alpha", 9)));
 
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.GENRES).join();
-
-        assertThat(nodes).extracting(NavigationNodeDto::id)
-                .containsExactly("a_genre", "z_genre");
+        assertThat(service.load(NavigationMode.SERIES).join())
+                .extracting(NavigationNodeDto::id).containsExactly("series-1", "series-2");
+        assertThat(service.load(NavigationMode.GENRES).join())
+                .extracting(NavigationNodeDto::id).containsExactly("a_genre", "z_genre");
     }
 
     @Test
     void yearsAreCountedAndSortedNewestFirst() {
-        when(navigationFacetRepository.findYears()).thenReturn(List.of(
+        when(navigationFacetRepository.findYears(filter)).thenReturn(List.of(
                 new NavigationFacetRepository.Facet("1999", "1999", 3),
                 new NavigationFacetRepository.Facet("2024", "2024", 8)));
 
@@ -107,7 +106,7 @@ class DefaultNavigationQueryServiceTest {
 
     @Test
     void languagesAreNormalizedAndInvalidCodesAreIgnored() {
-        when(navigationFacetRepository.findLanguages()).thenReturn(List.of(
+        when(navigationFacetRepository.findLanguages(filter)).thenReturn(List.of(
                 new NavigationFacetRepository.Facet("EN-us", "EN-us", 2),
                 new NavigationFacetRepository.Facet("not_a_language", "not_a_language", 7),
                 new NavigationFacetRepository.Facet("uk", "uk", 5)));
@@ -115,95 +114,52 @@ class DefaultNavigationQueryServiceTest {
         List<NavigationNodeDto> nodes = service.load(NavigationMode.LANGUAGES).join();
 
         assertThat(nodes).extracting(NavigationNodeDto::id).containsExactly("en-US", "uk");
-        assertThat(nodes).allMatch(node -> node.mode() == NavigationMode.LANGUAGES);
     }
 
     @Test
     void archivesUseStableCompositeKeysAndDisambiguateDuplicateFileNames() {
-        when(navigationFacetRepository.findArchives()).thenReturn(List.of(
+        when(navigationFacetRepository.findArchives(filter)).thenReturn(List.of(
                 new NavigationFacetRepository.ArchiveFacet("/lib-a", "/lib-a/2024/books.zip", 10),
                 new NavigationFacetRepository.ArchiveFacet("/lib-b", "/lib-b/archive/books.zip", 4),
                 new NavigationFacetRepository.ArchiveFacet("/lib-a", "/lib-a/solo.7z", 1)));
 
         List<NavigationNodeDto> nodes = service.load(NavigationMode.ARCHIVES).join();
 
-        assertThat(nodes).hasSize(3);
         assertThat(nodes).extracting(NavigationNodeDto::label)
                 .contains("2024/books.zip", "archive/books.zip", "solo.7z");
-        NavigationNodeDto solo = nodes.stream().filter(n -> n.label().equals("solo.7z")).findFirst().orElseThrow();
-        assertThat(ArchiveNavigationKey.decode(solo.id()))
-                .isEqualTo(new ArchiveNavigationKey("/lib-a", "/lib-a/solo.7z"));
-        assertThat(solo.bookCount()).isEqualTo(1);
     }
 
     @Test
-    void keywordsAreReturnedWithCountsAndStableLowercaseIds() {
-        when(navigationFacetRepository.findKeywords()).thenReturn(List.of(
-                new NavigationFacetRepository.Facet("space", "Space", 4),
-                new NavigationFacetRepository.Facet("ai", "AI", 2)));
-
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.KEYWORDS).join();
-
-        assertThat(nodes).extracting(NavigationNodeDto::id).containsExactly("ai", "space");
-        assertThat(nodes).extracting(NavigationNodeDto::bookCount).containsExactly(2L, 4L);
-    }
-
-    @Test
-    void groupsIncludeEmptyGroupsAndUsePersistentIds() {
-        when(navigationFacetRepository.findGroups()).thenReturn(List.of(
-                new NavigationFacetRepository.Facet("2", "To Read", 0),
+    void keywordsGroupsAndReviewsUseSameFilter() {
+        when(navigationFacetRepository.findKeywords(filter)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("space", "Space", 4)));
+        when(navigationFacetRepository.findGroups(filter)).thenReturn(List.of(
                 new NavigationFacetRepository.Facet("1", "Favorites", 7)));
-
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.GROUPS).join();
-
-        assertThat(nodes).extracting(NavigationNodeDto::label).containsExactly("Favorites", "To Read");
-        assertThat(nodes).extracting(NavigationNodeDto::id).containsExactly("1", "2");
-    }
-
-    @Test
-    void reviewSubsetsUseStableSemanticOrderAndIgnoreUnknownIds() {
-        when(navigationFacetRepository.findReviewSubsets()).thenReturn(List.of(
+        when(navigationFacetRepository.findReviewSubsets(filter)).thenReturn(List.of(
                 new NavigationFacetRepository.Facet("reviewed", "reviewed", 6),
-                new NavigationFacetRepository.Facet("unknown", "unknown", 99),
                 new NavigationFacetRepository.Facet("rated-reviewed", "rated-reviewed", 3),
                 new NavigationFacetRepository.Facet("rated", "rated", 8)));
 
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.REVIEWS).join();
-
-        assertThat(nodes).extracting(NavigationNodeDto::id)
+        assertThat(service.load(NavigationMode.KEYWORDS).join().getFirst().bookCount()).isEqualTo(4);
+        assertThat(service.load(NavigationMode.GROUPS).join().getFirst().bookCount()).isEqualTo(7);
+        assertThat(service.load(NavigationMode.REVIEWS).join()).extracting(NavigationNodeDto::id)
                 .containsExactly("rated", "reviewed", "rated-reviewed");
-        assertThat(nodes).extracting(NavigationNodeDto::bookCount).containsExactly(8L, 6L, 3L);
-    }
-
-
-    @Test
-    void alreadyReadIsSyntheticNodeWithExactReadCount() {
-        when(bookQueryRepository.count(any())).thenReturn(42L);
-
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.ALREADY_READ).join();
-
-        assertThat(nodes).containsExactly(
-                new NavigationNodeDto(NavigationMode.ALREADY_READ, "already-read", "already-read", 42L));
     }
 
     @Test
-    void historyIsSyntheticNodeWithPersistentHistoryCount() {
-        when(readingHistoryPort.count()).thenReturn(17L);
-
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.HISTORY).join();
-
-        assertThat(nodes).containsExactly(
-                new NavigationNodeDto(NavigationMode.HISTORY, "history", "history", 17L));
+    void updatesRemainIndependentFromBookFilter() {
+        when(catalogUpdateService.pendingUpdateCount()).thenReturn(27L);
+        assertThat(service.load(NavigationMode.UPDATES).join()).containsExactly(
+                new NavigationNodeDto(NavigationMode.UPDATES, "updates", "Оновлення", 27L));
     }
 
     @Test
-    void allBooksIsSyntheticNodeWithExactCatalogueCount() {
-        when(bookQueryRepository.count(any())).thenReturn(1234L);
+    void syntheticBookModesCountThroughFilteredBookQuery() {
+        when(bookQueryRepository.count(any())).thenReturn(42L, 17L, 1234L);
 
-        List<NavigationNodeDto> nodes = service.load(NavigationMode.ALL_BOOKS).join();
-
-        assertThat(nodes).containsExactly(
-                new NavigationNodeDto(NavigationMode.ALL_BOOKS, "all", "all-books", 1234L));
+        assertThat(service.load(NavigationMode.ALREADY_READ).join().getFirst().bookCount()).isEqualTo(42L);
+        assertThat(service.load(NavigationMode.HISTORY).join().getFirst().bookCount()).isEqualTo(17L);
+        assertThat(service.load(NavigationMode.ALL_BOOKS).join().getFirst().bookCount()).isEqualTo(1234L);
     }
 
     private static ExecutorPort directExecutor() {

@@ -1,0 +1,3 @@
+# Settings
+
+Configure UI language, delete confirmation, session restore, search indexing, external readers, FB2 converters, device/export templates and online HTTP parameters. Reader-specific typography/theme settings are stored separately and persisted.

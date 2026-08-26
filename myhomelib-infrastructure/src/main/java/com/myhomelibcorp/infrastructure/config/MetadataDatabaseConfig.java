@@ -31,6 +31,7 @@ public class MetadataDatabaseConfig {
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);
         config.setConnectionTimeout(30000);
+        config.setConnectionInitSql("PRAGMA foreign_keys=ON;");
         config.setPoolName("HikariPool-MetaDB");
 
         return new HikariDataSource(config);

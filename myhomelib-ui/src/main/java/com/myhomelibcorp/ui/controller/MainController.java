@@ -3,7 +3,6 @@ package com.myhomelibcorp.ui.controller;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.NavigationMode;
-import com.myhomelibcorp.application.service.ReadingHistoryService;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
@@ -12,11 +11,17 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.ui.action.ActionCustomizationDialog;
+import com.myhomelibcorp.ui.action.ActionRegistry;
+import com.myhomelibcorp.ui.action.BookActionProfilesDialog;
+import com.myhomelibcorp.ui.action.CoreActions;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
+import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
+import com.myhomelibcorp.ui.opds.OpdsUiService;
 import com.myhomelibcorp.ui.service.DialogService;
-import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
+import com.myhomelibcorp.ui.service.MainBookCommandCoordinator;
 import com.myhomelibcorp.ui.service.NavigationHistoryService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
@@ -41,7 +46,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
-import java.time.format.DateTimeFormatter;
 import java.util.List;
 
 @Component
@@ -52,11 +56,16 @@ public class MainController {
     // ===== Залежності =====
     private final ApplicationState appState;
     private final DialogService dialogService;
-    private final BookDownloadCoordinator bookDownloadCoordinator;
+    private final MainBookCommandCoordinator bookCommandCoordinator;
+    private final MainNavigationCoordinator mainNavigationCoordinator;
     private final WorkspaceManager workspaceManager;
     private final NavigationHistoryService navigationHistory;
     private final ApplicationEventPublisher eventPublisher;
     private final ApplicationContext springContext;
+    private final ActionRegistry actionRegistry;
+    private final ActionCustomizationDialog actionCustomizationDialog;
+    private final BookActionProfilesDialog bookActionProfilesDialog;
+    private final OpdsUiService opdsUiService;
 
     // ===== Контролери =====
     private final CollectionController collectionController;
@@ -68,12 +77,8 @@ public class MainController {
     private final ImportController importController;
     private final NavigationPanelController navigationPanelController;
     private final com.myhomelibcorp.ui.service.ApplicationSettingsDialog applicationSettingsDialog;
-    private final com.myhomelibcorp.ui.service.ClassicLibraryActionsService classicActions;
-    private final ReadingHistoryService readingHistoryService;
     private final com.myhomelibcorp.ui.service.UserDataUiService userDataUiService;
     private final com.myhomelibcorp.ui.service.BookListExportService bookListExportService;
-    private final com.myhomelibcorp.ui.service.ExternalBookLauncher externalBookLauncher;
-    private final com.myhomelibcorp.ui.service.BookLoaderService bookLoaderService;
     private final com.myhomelibcorp.ui.service.HelpService helpService;
     private final com.myhomelibcorp.ui.service.CollectionCopyUiService collectionCopyUiService;
     private final com.myhomelibcorp.ui.service.CollectionAttachUiService collectionAttachUiService;
@@ -89,31 +94,42 @@ public class MainController {
     @FXML private StackPane workspaceStackPane;
     @FXML private Menu languageMenu;
     @FXML private Menu recentBooksMenu;
+    @FXML private MenuItem collectionsMenuItem;
+    @FXML private MenuItem openInternalMenuItem;
+    @FXML private MenuItem openExternalMenuItem;
+    @FXML private MenuItem refreshMenuItem;
+    @FXML private MenuItem importInpxMenuItem;
+    @FXML private MenuItem exportMenuItem;
+    @FXML private MenuItem settingsMenuItem;
+    @FXML private MenuItem helpMenuItem;
+    @FXML private MenuItem bookActionsMenuItem;
+    @FXML private MenuItem customizeActionsMenuItem;
+    @FXML private MenuItem opdsMenuItem;
 
     @FXML
     public void initialize() {
         log.info("MainController ініціалізовано");
 
         viewModeController.init(mainPane);
-        workspaceManager.setMainController(this);
         workspaceManager.init(workspaceStackPane);
-        navigationHistory.setMainController(this);
+        backButton.disableProperty().bind(workspaceManager.canGoBackProperty().not());
+        forwardButton.disableProperty().bind(workspaceManager.canGoForwardProperty().not());
+        workspaceManager.canGoBackProperty().addListener((obs, oldValue, newValue) -> actionRegistry.refreshContexts());
+        workspaceManager.canGoForwardProperty().addListener((obs, oldValue, newValue) -> actionRegistry.refreshContexts());
 
         searchField.setOnAction(event -> handleSearch());
 
         showDashboard();
-        updateNavigationButtons();
         localizationService.apply(mainPane);
         populateLanguages();
         if (languageMenu != null) languageMenu.setOnShowing(event -> populateLanguages());
-        if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> populateRecentBooksMenu());
-        mainPane.sceneProperty().addListener((obs, oldScene, scene) -> {
-            if (scene != null) scene.addEventFilter(javafx.scene.input.KeyEvent.KEY_PRESSED, e -> {
-                if (e.getCode() == javafx.scene.input.KeyCode.F1) { handleHelp(); e.consume(); }
-                else if (e.isAltDown() && e.getCode() == javafx.scene.input.KeyCode.LEFT) { handleBack(); e.consume(); }
-                else if (e.isAltDown() && e.getCode() == javafx.scene.input.KeyCode.RIGHT) { handleForward(); e.consume(); }
-            });
-        });
+        if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> mainNavigationCoordinator.populateRecentBooksMenu(recentBooksMenu));
+
+        configureActionRegistry();
+        updateNavigationButtons();
+        appState.getBookTable().selectedBookProperty().addListener((obs, oldBook, newBook) -> actionRegistry.refreshContexts());
+        mainPane.sceneProperty().addListener((obs, oldScene, scene) -> { if (scene != null) actionRegistry.attach(scene); });
+        if (mainPane.getScene() != null) actionRegistry.attach(mainPane.getScene());
 
         log.info("MainController готовий до роботи");
     }
@@ -191,6 +207,10 @@ public class MainController {
         workspaceManager.showAllBooksWorkspace();
     }
 
+    public void showUpdatesWorkspace() {
+        workspaceManager.showUpdatesWorkspace();
+    }
+
     public void showAlreadyReadWorkspace() {
         workspaceManager.showAlreadyReadWorkspace();
     }
@@ -234,9 +254,26 @@ public class MainController {
         workspaceManager.setWorkspace(workspace, "custom");
     }
 
+    /** Compatibility hook retained for older callers; button state is now property-bound. */
     public void updateNavigationButtons() {
-        backButton.setDisable(!navigationHistory.canGoBack());
-        forwardButton.setDisable(!navigationHistory.canGoForward());
+        actionRegistry.refreshContexts();
+    }
+
+    private void configureActionRegistry() {
+        actionRegistry.register(CoreActions.NAV_BACK, null, navigationHistory::canGoBack, this::handleBack);
+        actionRegistry.register(CoreActions.NAV_FORWARD, null, navigationHistory::canGoForward, this::handleForward);
+        actionRegistry.register(CoreActions.HELP_CONTEXT, helpMenuItem, () -> true, this::handleHelp);
+        actionRegistry.register(CoreActions.SEARCH_FOCUS, null, () -> true, () -> { searchField.requestFocus(); searchField.selectAll(); });
+        actionRegistry.register(CoreActions.VIEW_REFRESH, refreshMenuItem, () -> true, this::handleRefresh);
+        actionRegistry.register(CoreActions.BOOK_OPEN_INTERNAL, openInternalMenuItem, bookCommandCoordinator::hasSelectedBook, this::handleOpenNewReader);
+        actionRegistry.register(CoreActions.BOOK_OPEN_EXTERNAL, openExternalMenuItem, bookCommandCoordinator::hasSelectedBook, this::handleOpenExternalReader);
+        actionRegistry.register(CoreActions.COLLECTION_MANAGE, collectionsMenuItem, () -> true, this::onCollections);
+        actionRegistry.register(CoreActions.IMPORT_INPX, importInpxMenuItem, () -> true, this::handleImportInpx);
+        actionRegistry.register(CoreActions.EXPORT_BOOKS, exportMenuItem, () -> true, this::handleExport);
+        actionRegistry.register(CoreActions.SETTINGS, settingsMenuItem, () -> true, this::handleSettings);
+        actionRegistry.register(CoreActions.BOOK_ACTIONS, bookActionsMenuItem, () -> true, this::handleBookActions);
+        actionRegistry.register(CoreActions.ACTIONS_CUSTOMIZE, customizeActionsMenuItem, () -> true, this::handleCustomizeActions);
+        actionRegistry.register(CoreActions.OPDS_MANAGE, opdsMenuItem, () -> true, this::handleOpds);
     }
 
     public void switchToCollection(Collection collection) {
@@ -250,8 +287,7 @@ public class MainController {
     // ==================== Reader ====================
 
     public void cleanupReader() {
-        // WorkspaceManager owns the active Reader lifecycle and disposes it on navigation.
-        workspaceManager.disposeCurrentReaderIfActive();
+        mainNavigationCoordinator.cleanupReader();
     }
 
     // ==================== FXML дії ====================
@@ -259,10 +295,7 @@ public class MainController {
     @FXML
     public void handleSearch() {
         String query = searchField.getText();
-        if (query != null && !query.isBlank()) {
-            cleanupReader();
-            showSearchResults(query);
-        }
+        if (query != null && !query.isBlank()) mainNavigationCoordinator.search(query);
     }
 
     @FXML
@@ -303,6 +336,11 @@ public class MainController {
     }
 
     @FXML
+    public void handleOpds() {
+        opdsUiService.show(mainPane.getScene().getWindow());
+    }
+
+    @FXML
     public void handleSettings() {
         applicationSettingsDialog.show(mainPane.getScene().getWindow());
     }
@@ -316,121 +354,47 @@ public class MainController {
     // ==================== Навігаційні дії ====================
 
     @FXML
-    public void onAuthors() {
-        cleanupReader();
-        navigationPanelController.onAuthors();
-    }
+    public void onAuthors() { mainNavigationCoordinator.authors(); }
 
     @FXML
-    public void onSeries() {
-        cleanupReader();
-        navigationPanelController.onSeries();
-    }
+    public void onSeries() { mainNavigationCoordinator.series(); }
 
     @FXML
-    public void onGenres() {
-        cleanupReader();
-        navigationPanelController.onGenres();
-    }
+    public void onGenres() { mainNavigationCoordinator.genres(); }
 
     @FXML
-    public void onAllBooks() {
-        cleanupReader();
-        navigationPanelController.onAllBooks();
-    }
+    public void onAllBooks() { mainNavigationCoordinator.allBooks(); }
 
     @FXML
-    public void onCollections() {
-        cleanupReader();
-        showCollectionWorkspace();
-    }
+    public void onCollections() { mainNavigationCoordinator.collections(); }
 
     @FXML
     public void onGroups() {
         cleanupReader();
         Group currentGroup = appState.getCurrentGroup();
-        if (currentGroup != null) {
-            showGroupWorkspace(currentGroup);
-        } else {
-            showGroupWorkspace(null);
-        }
+        showGroupWorkspace(currentGroup);
     }
 
     @FXML
-    public void onNewBooks() {
-        cleanupReader();
-        showSearchResults(classicActions.newBooks(500));
-    }
+    public void onNewBooks() { mainNavigationCoordinator.newBooks(); }
 
     @FXML
-    public void onAlreadyRead() {
-        cleanupReader();
-        navigationPanelController.revealNode(NavigationMode.ALREADY_READ, "already-read");
-        showAlreadyReadWorkspace();
-    }
+    public void onUpdates() { mainNavigationCoordinator.updates(); }
 
     @FXML
-    public void onHistory() {
-        cleanupReader();
-        navigationPanelController.revealNode(NavigationMode.HISTORY, "history");
-        showHistoryWorkspace();
-    }
+    public void onAlreadyRead() { mainNavigationCoordinator.alreadyRead(); }
 
     @FXML
-    public void onClearHistory() {
-        if (!dialogService.showConfirmation(
-                "Очистити історію читання?",
-                "Список недавніх книг та історію читання буде очищено.",
-                "Позиція читання, закладки та позначка «Прочитано» залишаться без змін.")) {
-            return;
-        }
-        readingHistoryService.clear();
-        navigationPanelController.refreshAll();
-        populateRecentBooksMenu();
-        if (navigationPanelController.getCurrentMode() == NavigationMode.HISTORY) {
-            showHistoryWorkspace();
-        }
-    }
-
-    private void populateRecentBooksMenu() {
-        if (recentBooksMenu == null) return;
-        recentBooksMenu.getItems().clear();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
-        var recent = readingHistoryService.recent(12);
-        if (recent.isEmpty()) {
-            MenuItem empty = new MenuItem(localizationService.tr("Історія порожня"));
-            empty.setDisable(true);
-            recentBooksMenu.getItems().add(empty);
-            return;
-        }
-        for (var item : recent) {
-            String title = item.book().getTitle();
-            String timestamp = item.lastOpenedAt().format(formatter);
-            MenuItem menuItem = new MenuItem(title + " — " + timestamp);
-            menuItem.setOnAction(event -> {
-                cleanupReader();
-                showNewReaderWorkspace(BookId.fromString(item.book().getId()));
-            });
-            recentBooksMenu.getItems().add(menuItem);
-        }
-    }
+    public void onHistory() { mainNavigationCoordinator.history(); }
 
     @FXML
-    public void onSearch() {
-        cleanupReader();
-        String query = searchField.getText();
-        if (query != null && !query.isBlank()) {
-            showSearchResults(query);
-        } else {
-            showSearchResults("");
-        }
-    }
+    public void onClearHistory() { mainNavigationCoordinator.clearHistory(recentBooksMenu); }
 
     @FXML
-    public void onImport() {
-        cleanupReader();
-        showImportWorkspace();
-    }
+    public void onSearch() { mainNavigationCoordinator.search(searchField.getText()); }
+
+    @FXML
+    public void onImport() { mainNavigationCoordinator.importWorkspace(); }
 
     // ==================== Дії з колекціями ====================
 
@@ -442,12 +406,14 @@ public class MainController {
 
     @FXML
     public void handleRenameCollection() {
-        collectionController.handleRenameCollection(this::showDashboard);
+        cleanupReader();
+        showCollectionWorkspace();
     }
 
     @FXML
     public void handleDeleteCollection() {
-        collectionController.handleDeleteCollection(this::showDashboard);
+        cleanupReader();
+        showCollectionWorkspace();
     }
 
     @FXML
@@ -607,20 +573,10 @@ public class MainController {
     // ==================== Редагування книг ====================
 
     @FXML
-    public void handleEditMetadata() {
-        BookDto selected = appState.getBookDetails().getCurrentBook();
-        if (selected == null) { dialogService.showWarning("Немає книги", "Спочатку виберіть книгу."); return; }
-        if (classicActions.editBook(mainPane.getScene().getWindow(), BookId.fromString(selected.getId()))) handleRefresh();
-    }
+    public void handleEditMetadata() { bookCommandCoordinator.editMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
 
     @FXML
-    public void handleDeleteBook() {
-        BookDto selected = appState.getBookDetails().getCurrentBook();
-        if (selected == null) { dialogService.showWarning("Немає книги", "Спочатку виберіть книгу."); return; }
-        if (classicActions.deleteBook(mainPane.getScene().getWindow(), BookId.fromString(selected.getId()))) {
-            appState.getBookDetails().setCurrentBook(null); handleRefresh();
-        }
-    }
+    public void handleDeleteBook() { bookCommandCoordinator.deleteBook(mainPane.getScene().getWindow(), this::handleRefresh); }
 
     @FXML
     public void handleAddBook() {
@@ -630,52 +586,18 @@ public class MainController {
     // ==================== МЕТОДИ ДЛЯ РОБОТИ З READER ====================
 
     @FXML
-    public void handleOpenNewReader() {
-        BookDto selectedBook = appState.getBookDetails().getCurrentBook();
-        if (selectedBook == null) {
-            dialogService.showWarning("Немає книги", "Спочатку виберіть книгу в таблиці.");
-            return;
-        }
-        bookDownloadCoordinator.ensureLocal(selectedBook).whenComplete((path, error) -> {
-            if (error == null) Platform.runLater(() -> showNewReaderWorkspace(BookId.fromString(selectedBook.getId())));
-        });
-    }
+    public void handleOpenNewReader() { bookCommandCoordinator.openInternal(); }
 
     @FXML
-    public void handleDownloadBook() {
-        BookDto selectedBook = appState.getBookDetails().getCurrentBook();
-        if (selectedBook == null) {
-            dialogService.showWarning("Немає книги", "Спочатку виберіть книгу в таблиці.");
-            return;
-        }
-        bookDownloadCoordinator.ensureLocal(selectedBook);
-    }
+    public void handleDownloadBook() { bookCommandCoordinator.download(); }
 
     @FXML
-    public void handleRemoveLocalCopy() {
-        BookDto selectedBook = appState.getBookDetails().getCurrentBook();
-        if (selectedBook == null) {
-            dialogService.showWarning("Немає книги", "Спочатку виберіть книгу в таблиці.");
-            return;
-        }
-        bookDownloadCoordinator.removeLocalCopy(selectedBook).whenComplete((count, error) -> {
-            if (error == null) Platform.runLater(this::handleRefresh);
-        });
-    }
+    public void handleRemoveLocalCopy() { bookCommandCoordinator.removeLocalCopy(this::handleRefresh); }
 
     @FXML
-    public void handleCancelDownload() {
-        BookDto selectedBook = appState.getBookDetails().getCurrentBook();
-        if (selectedBook == null || !bookDownloadCoordinator.cancel(selectedBook)) {
-            dialogService.showInfo("Завантаження", "Для вибраної книги активного завантаження немає.");
-        }
-    }
+    public void handleCancelDownload() { bookCommandCoordinator.cancelDownload(); }
 
-    public void openInNewReader(BookId bookId) {
-        if (bookId != null) {
-            showNewReaderWorkspace(bookId);
-        }
-    }
+    public void openInNewReader(BookId bookId) { bookCommandCoordinator.openInNewReader(bookId); }
 
     @FXML
     public void handleCloseReader() {
@@ -689,16 +611,17 @@ public class MainController {
     @FXML public void handleExportListTxt() { bookListExportService.export(mainPane.getScene().getWindow(), "txt"); }
     @FXML public void handleExportListRtf() { bookListExportService.export(mainPane.getScene().getWindow(), "rtf"); }
 
-    @FXML public void handleOpenExternalReader() {
-        BookDto selected = appState.getBookDetails().getCurrentBook();
-        if (selected == null) { dialogService.showWarning("Немає книги", "Спочатку виберіть книгу."); return; }
-        bookDownloadCoordinator.ensureLocal(selected).whenComplete((p,e) -> {
-            if (e != null) return;
-            try { externalBookLauncher.open(selected); }
-            catch (Exception ex) { Platform.runLater(() -> dialogService.showError("Зовнішня читалка", ex.getMessage())); }
-        });
+    @FXML public void handleOpenExternalReader() { bookCommandCoordinator.openExternal(); }
+
+
+    @FXML public void handleCustomizeActions() {
+        actionCustomizationDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
     }
 
+    @FXML public void handleBookActions() {
+        bookActionProfilesDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+        if (appState.getBookTableController() != null) appState.getBookTableController().refreshRows();
+    }
 
     @FXML public void handleHelp() { helpService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager.currentHelpTopic()); }
     @FXML public void handleInpxHelp() { helpService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), "inpx"); }

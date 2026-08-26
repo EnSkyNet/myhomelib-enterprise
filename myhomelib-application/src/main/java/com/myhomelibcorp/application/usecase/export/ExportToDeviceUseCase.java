@@ -1,6 +1,13 @@
 package com.myhomelibcorp.application.usecase.export;
 
+import com.myhomelibcorp.application.action.BookActionExecutionService;
+import com.myhomelibcorp.application.action.BookActionProfile;
+import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
+import com.myhomelibcorp.application.export.ExportCollisionContext;
+import com.myhomelibcorp.application.export.ExportCollisionDecision;
+import com.myhomelibcorp.application.export.ExportCollisionResolver;
+import com.myhomelibcorp.application.export.ExportHistoryService;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -17,6 +24,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.EnumSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -33,6 +41,9 @@ public class ExportToDeviceUseCase {
     private final List<BookConverter> converters;
     private final BookResourcePort bookResourcePort;
     private final ApplicationSettingsPort settings;
+    private final BookActionProfileService actionProfileService;
+    private final BookActionExecutionService actionExecutionService;
+    private final ExportHistoryService historyService;
 
     private final Map<ExportRequest.ExportFormat, String> formatExtensions = Map.of(
             ExportRequest.ExportFormat.FB2, ".fb2",
@@ -46,9 +57,9 @@ public class ExportToDeviceUseCase {
 
     public record ExportProgress(int processed, int total, String title) { }
 
-    public record ExportResult(int exported, int skipped, int failed, boolean cancelled, List<String> errors) {
+    public record ExportResult(int exported, int skipped, int failed, boolean cancelled, long durationMs, List<String> errors) {
         public static ExportResult empty() {
-            return new ExportResult(0, 0, 0, false, new ArrayList<>());
+            return new ExportResult(0, 0, 0, false, 0L, List.of());
         }
     }
 
@@ -61,44 +72,52 @@ public class ExportToDeviceUseCase {
     }
 
     public ExportResult execute(ExportRequest request) {
-        return execute(request, new AtomicBoolean(false), progress -> { });
+        return execute(request, new AtomicBoolean(false), progress -> { }, context -> ExportCollisionDecision.SKIP);
+    }
+
+    public ExportResult execute(ExportRequest request, AtomicBoolean cancelFlag, Consumer<ExportProgress> progress) {
+        return execute(request, cancelFlag, progress, context -> ExportCollisionDecision.SKIP);
     }
 
     /**
-     * Batch export with cooperative cancellation between books and progress callbacks.
-     * A converter already processing one book is allowed to finish so that partial
-     * target files are not abandoned by forcibly interrupting third-party tools.
+     * Batch export with cooperative cancellation and optional per-conflict callback.
+     * Third-party conversion already in progress is allowed to finish, but no new book
+     * starts after cancellation.
      */
-    public ExportResult execute(ExportRequest request, AtomicBoolean cancelFlag, Consumer<ExportProgress> progress) {
+    public ExportResult execute(ExportRequest request, AtomicBoolean cancelFlag, Consumer<ExportProgress> progress,
+                                ExportCollisionResolver collisionResolver) {
+        long startedAt = System.nanoTime();
+        int requested = request == null || request.getBookIds() == null ? 0 : request.getBookIds().size();
         if (request == null || request.getBookIds() == null || request.getBookIds().isEmpty()) {
             log.warn("Немає книг для експорту");
             return ExportResult.empty();
         }
         AtomicBoolean cancel = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
         Consumer<ExportProgress> reporter = progress == null ? p -> { } : progress;
+        ExportCollisionResolver resolver = collisionResolver == null ? c -> ExportCollisionDecision.SKIP : collisionResolver;
 
-        log.info("Початок експорту {} книг у формат {}", request.getBookIds().size(), request.getFormat());
+        log.info("Початок експорту {} книг у формат {} profile={}", requested, request.getFormat(), request.getProfileName());
 
-        AtomicInteger exported = new AtomicInteger(0);
-        AtomicInteger skipped = new AtomicInteger(0);
-        AtomicInteger failed = new AtomicInteger(0);
+        AtomicInteger exported = new AtomicInteger();
+        AtomicInteger skipped = new AtomicInteger();
+        AtomicInteger failed = new AtomicInteger();
         List<String> errors = new ArrayList<>();
 
         Path destination = request.getDestinationFolder();
         if (destination == null) {
-            return new ExportResult(0, 0, request.getBookIds().size(), false, List.of("Не вказано папку призначення"));
+            return finish(request, requested, exported.get(), skipped.get(), requested, false, startedAt,
+                    List.of("Не вказано папку призначення"));
         }
-        if (!Files.exists(destination)) {
-            try {
-                Files.createDirectories(destination);
-            } catch (Exception e) {
-                log.error("Не вдалося створити папку: {}", destination, e);
-                return new ExportResult(0, 0, request.getBookIds().size(), false, List.of("Не вдалося створити папку: " + e.getMessage()));
-            }
+        try {
+            Files.createDirectories(destination);
+        } catch (Exception e) {
+            log.error("Не вдалося створити папку: {}", destination, e);
+            return finish(request, requested, 0, 0, requested, false, startedAt,
+                    List.of("Не вдалося створити папку: " + e.getMessage()));
         }
 
-        int total = request.getBookIds().size();
         int processed = 0;
+        int total = request.getBookIds().size();
         for (BookId bookId : request.getBookIds()) {
             if (cancel.get()) break;
             String progressTitle = bookId.asString();
@@ -106,40 +125,49 @@ public class ExportToDeviceUseCase {
                 Book book = bookQueryRepository.findById(bookId)
                         .orElseThrow(() -> new IllegalArgumentException("Книгу не знайдено: " + bookId));
                 progressTitle = book.getTitle() == null ? bookId.asString() : book.getTitle();
-                BookConverter converter = findConverter(request.getFormat(), book);
-                if (converter == null) {
-                    throw new IllegalArgumentException("Формат " + request.getFormat() +
-                            " не підтримується для джерела: " + sourceName(book) +
-                            " або зовнішній конвертер не налаштовано");
+                boolean extractRawArchiveEntry = request.isExtractOnly() && book.hasArchiveEntry();
+                BookConverter converter = extractRawArchiveEntry ? null : findConverter(request.getFormat(), book);
+                if (!extractRawArchiveEntry && converter == null) {
+                    throw new IllegalArgumentException("Формат " + request.getFormat()
+                            + " не підтримується для джерела: " + sourceName(book)
+                            + " або зовнішній конвертер не налаштовано");
                 }
 
-                log.debug("Експорт книги: {}", book.getTitle());
+                String targetExtension = extractRawArchiveEntry ? sourceExtension(sourceName(book)) : converter.getTargetExtension();
+                if (targetExtension.isBlank()) throw new IllegalArgumentException("Не вдалося визначити розширення запису архіву");
                 String fileName = generateFileName(book, request);
-                Path bookDestination = destination.resolve(generateSubfolder(book)).normalize();
                 Path normalizedDestination = destination.toAbsolutePath().normalize();
+                Path bookDestination = destination.resolve(generateSubfolder(book, request)).normalize();
                 if (!bookDestination.toAbsolutePath().normalize().startsWith(normalizedDestination)) {
                     throw new IllegalArgumentException("Шаблон підпапки виходить за межі папки експорту");
                 }
                 Files.createDirectories(bookDestination);
-                Path targetFile = bookDestination.resolve(fileName + converter.getTargetExtension());
+                Path targetFile = bookDestination.resolve(fileName + targetExtension).normalize();
+                if (!targetFile.toAbsolutePath().normalize().startsWith(normalizedDestination)) {
+                    throw new IllegalArgumentException("Шаблон імені виходить за межі папки експорту");
+                }
 
                 if (Files.exists(targetFile)) {
-                    switch (request.effectiveCollisionPolicy()) {
-                        case SKIP -> {
-                            skipped.incrementAndGet();
-                            continue;
-                        }
-                        case RENAME -> targetFile = nextAvailableName(bookDestination, fileName, converter.getTargetExtension());
-                        case OVERWRITE -> { /* converter replaces the target */ }
+                    ExportCollisionDecision decision = collisionDecision(request, resolver,
+                            new ExportCollisionContext(bookId, progressTitle, targetFile));
+                    switch (decision) {
+                        case SKIP -> { skipped.incrementAndGet(); continue; }
+                        case RENAME -> targetFile = nextAvailableName(bookDestination, fileName, targetExtension);
+                        case CANCEL -> { cancel.set(true); continue; }
+                        case OVERWRITE -> { /* converter owns atomic/replace semantics */ }
                     }
                 }
 
                 try (InputStream sourceStream = getBookStream(book)) {
-                    converter.convert(book, sourceStream, targetFile);
-                    runPostCommand(book, destination, targetFile);
-                    exported.incrementAndGet();
-                    log.info("Експортовано: {} -> {}", book.getTitle(), targetFile.getFileName());
+                    if (extractRawArchiveEntry) {
+                        Files.copy(sourceStream, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                    } else {
+                        converter.convert(book, sourceStream, targetFile);
+                    }
                 }
+                runPostAction(book, request, destination, targetFile, errors);
+                exported.incrementAndGet();
+                log.info("Експортовано: {} -> {}", book.getTitle(), targetFile.getFileName());
             } catch (Exception e) {
                 failed.incrementAndGet();
                 String error = String.format("Помилка експорту книги %s: %s", bookId, e.getMessage());
@@ -152,25 +180,48 @@ public class ExportToDeviceUseCase {
             }
         }
 
-        boolean cancelled = cancel.get();
-        log.info("Експорт завершено: експортовано {}, пропущено {}, помилок {}, cancelled={}",
-                exported.get(), skipped.get(), failed.get(), cancelled);
-        return new ExportResult(exported.get(), skipped.get(), failed.get(), cancelled, List.copyOf(errors));
+        ExportResult result = finish(request, requested, exported.get(), skipped.get(), failed.get(), cancel.get(), startedAt, errors);
+        log.info("Експорт завершено: exported={}, skipped={}, failed={}, cancelled={}, durationMs={}",
+                result.exported(), result.skipped(), result.failed(), result.cancelled(), result.durationMs());
+        return result;
+    }
+
+    private ExportCollisionDecision collisionDecision(ExportRequest request, ExportCollisionResolver resolver,
+                                                      ExportCollisionContext context) {
+        return switch (request.effectiveCollisionPolicy()) {
+            case OVERWRITE -> ExportCollisionDecision.OVERWRITE;
+            case SKIP -> ExportCollisionDecision.SKIP;
+            case RENAME -> ExportCollisionDecision.RENAME;
+            case ASK -> {
+                try {
+                    ExportCollisionDecision decision = resolver.resolve(context);
+                    yield decision == null ? ExportCollisionDecision.SKIP : decision;
+                } catch (RuntimeException e) {
+                    log.warn("Collision resolver failed for {}: {}", context.existingFile(), e.getMessage());
+                    yield ExportCollisionDecision.SKIP;
+                }
+            }
+        };
+    }
+
+    private ExportResult finish(ExportRequest request, int requested, int exported, int skipped, int failed,
+                                boolean cancelled, long startedAt, List<String> errors) {
+        long durationMs = Math.max(0L, (System.nanoTime() - startedAt) / 1_000_000L);
+        ExportResult result = new ExportResult(exported, skipped, failed, cancelled, durationMs,
+                errors == null ? List.of() : List.copyOf(errors));
+        try { historyService.record(request, requested, exported, skipped, failed, cancelled, durationMs); }
+        catch (RuntimeException e) { log.debug("Export history write failed", e); }
+        return result;
     }
 
     private Path nextAvailableName(Path folder, String baseName, String extension) {
         int counter = 1;
         Path candidate;
-        do {
-            candidate = folder.resolve(baseName + " (" + counter++ + ")" + extension);
-        } while (Files.exists(candidate));
+        do { candidate = folder.resolve(baseName + " (" + counter++ + ")" + extension); }
+        while (Files.exists(candidate));
         return candidate;
     }
 
-    /**
-     * Отримує InputStream для книги.
-     * Якщо книга є архівом – отримуємо перший FB2 з архіву.
-     */
     private InputStream getBookStream(Book book) throws Exception {
         return bookResourcePort.readBookData(book)
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -180,6 +231,15 @@ public class ExportToDeviceUseCase {
     private String sourceName(Book book) {
         if (book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank()) return book.getArchiveEntry();
         return book.getFileName() == null ? "" : book.getFileName();
+    }
+
+    private String sourceExtension(String name) {
+        String source = name == null ? "" : name;
+        int slash = Math.max(source.lastIndexOf('/'), source.lastIndexOf('\\'));
+        int dot = source.lastIndexOf('.');
+        if (dot <= slash || dot == source.length() - 1) return "";
+        String ext = source.substring(dot).toLowerCase(java.util.Locale.ROOT);
+        return ext.replaceAll("[^.a-z0-9]", "");
     }
 
     private BookConverter findAnyAvailableConverter(ExportRequest.ExportFormat format) {
@@ -206,31 +266,61 @@ public class ExportToDeviceUseCase {
         return null;
     }
 
-    private String generateSubfolder(Book book) {
-        String template = settings.get("export.subfolderTemplate", "").trim();
+    private String generateSubfolder(Book book, ExportRequest request) {
+        String template = text(request.getSubfolderTemplate());
+        if (template.isBlank()) template = settings.get("export.subfolderTemplate", "").trim();
         if (template.isEmpty()) return "";
         return applyTemplate(template, book).replace("..", "_");
     }
 
-    private void runPostCommand(Book book, Path destination, Path file) {
+    private void runPostAction(Book book, ExportRequest request, Path destination, Path file, List<String> errors) {
+        String profileId = text(request.getPostActionProfileId());
+        if (!profileId.isBlank()) {
+            BookActionProfile profile = actionProfileService.findById(profileId).orElse(null);
+            if (profile == null) {
+                errors.add("Post-action profile не знайдено: " + profileId);
+                return;
+            }
+            var result = actionExecutionService.execute(profile, postActionPlaceholders(book, destination, file));
+            if (!result.success()) errors.addAll(result.errors().stream().map(e -> "Post-action: " + e).toList());
+            return;
+        }
+        runLegacyPostCommand(book, destination, file);
+    }
+
+    private Map<String,String> postActionPlaceholders(Book book, Path destination, Path file) {
+        Map<String,String> values = new LinkedHashMap<>();
+        values.put("%DEST%", destination.toAbsolutePath().normalize().toString());
+        values.put("%TMP%", Path.of(System.getProperty("java.io.tmpdir", destination.toString())).toAbsolutePath().toString());
+        values.put("%FILE%", file.toAbsolutePath().normalize().toString());
+        values.put("%DESTFILE%", file.toAbsolutePath().normalize().toString());
+        values.put("%FILENAME%", file.getFileName().toString());
+        values.put("%DIR%", file.getParent() == null ? destination.toString() : file.getParent().toString());
+        values.put("%TITLE%", text(book.getTitle()));
+        values.put("%AUTHOR%", text(book.authorsText()));
+        values.put("%SERIES%", text(book.getSeries()));
+        values.put("%LANG%", book.getLanguage() == null ? "" : book.getLanguage().toString());
+        values.put("%YEAR%", book.getYear() == null ? "" : book.getYear().toString());
+        values.put("%ISBN%", book.getIsbn() == null ? "" : book.getIsbn().toString());
+        values.put("%PUBLISHER%", text(book.getPublisher()));
+        values.put("%EXT%", extensionOf(file.getFileName().toString()));
+        values.put("%BOOKID%", book.getId().asString());
+        values.put("%COLLECTION%", text(book.getCollectionRoot()));
+        return Map.copyOf(values);
+    }
+
+    /** Backward compatibility only; named Stage-15 action profiles are preferred. */
+    private void runLegacyPostCommand(Book book, Path destination, Path file) {
         if (!settings.getBoolean("export.runPostCommand", false)) return;
         String template = settings.get("export.postCommand", "").trim();
         if (template.isEmpty()) return;
         try {
-            List<String> args = CommandTemplate.expand(template, Map.ofEntries(
-                    Map.entry("%DEST%", destination.toAbsolutePath().toString()),
-                    Map.entry("%TMP%", Path.of(System.getProperty("java.io.tmpdir", destination.toString())).toAbsolutePath().toString()),
-                    Map.entry("%FILE%", file.toAbsolutePath().toString()),
-                    Map.entry("%DESTFILE%", file.toAbsolutePath().toString()),
-                    Map.entry("%FILENAME%", file.getFileName().toString()),
-                    Map.entry("%TITLE%", book.getTitle() == null ? "" : book.getTitle()),
-                    Map.entry("%AUTHOR%", book.authorsText() == null ? "" : book.authorsText()),
-                    Map.entry("%SERIES%", book.getSeries() == null ? "" : book.getSeries()),
-                    Map.entry("%EXT%", extensionOf(file.getFileName().toString())),
-                    Map.entry("%BOOKID%", book.getId().asString())));
-            if (!args.isEmpty()) new ProcessBuilder(args).start();
+            List<String> args = CommandTemplate.expand(template, postActionPlaceholders(book, destination, file));
+            if (!args.isEmpty()) new ProcessBuilder(args)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD).start();
         } catch (Exception e) {
-            log.warn("Post-send script failed for {}: {}", book.getTitle(), e.getMessage());
+            log.warn("Legacy post-send script failed for {}: {}", book.getTitle(), e.getMessage());
         }
     }
 
@@ -242,16 +332,20 @@ public class ExportToDeviceUseCase {
     private String generateFileName(Book book, ExportRequest request) {
         String template = request.getCustomFileNameTemplate();
         if (template == null || template.isBlank()) template = settings.get("export.filenameTemplate", "%a - %t");
-        return applyTemplate(template, book);
+        String result = applyTemplate(template, book);
+        return result.isBlank() ? sanitizeFileName(book.getId().asString()) : result;
     }
 
     private String applyTemplate(String template, Book book) {
-        String value = template
+        String value = text(template)
+                .replace("%id", book.getId().asString())
+                .replace("%lang", book.getLanguage() == null ? "" : sanitizeFileName(book.getLanguage().toString()))
+                .replace("%pub", sanitizeFileName(book.getPublisher()))
+                .replace("%y", book.getYear() == null ? "" : book.getYear().toString())
                 .replace("%t", sanitizeFileName(book.getTitle()))
                 .replace("%a", sanitizeFileName(book.authorsText()))
                 .replace("%s", book.getSeries() != null ? sanitizeFileName(book.getSeries()) : "")
-                .replace("%n", book.getSequenceNumber() != null ? String.valueOf(book.getSequenceNumber()) : "")
-                .replace("%id", book.getId().asString());
+                .replace("%n", book.getSequenceNumber() != null ? String.valueOf(book.getSequenceNumber()) : "");
         return sanitizePathTemplate(value);
     }
 
@@ -264,8 +358,10 @@ public class ExportToDeviceUseCase {
 
     private String sanitizeFileName(String name) {
         if (name == null) return "unknown";
-        return name.replaceAll("[<>:\"/\\|?*]", "_")
+        return name.replaceAll("[<>:\"/\\\\|?*]", "_")
                 .replaceAll("\\s+", " ")
                 .trim();
     }
+
+    private static String text(String value) { return value == null ? "" : value.trim(); }
 }

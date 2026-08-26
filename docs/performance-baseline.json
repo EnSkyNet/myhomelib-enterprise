@@ -1,0 +1,477 @@
+{
+  "schema": 1,
+  "kind": "stage24-performance-baseline",
+  "scope": {
+    "offline_sqlite": "executed",
+    "java_jvm_suite": "source-added; run with Maven performance profile",
+    "lucene": "JVM suite/profile",
+    "reader": "JVM suite/profile"
+  },
+  "environment": {
+    "python": "3.13.5",
+    "sqlite": "3.46.1",
+    "os": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "cpu_count": 5
+  },
+  "migration_count": 33,
+  "results": [
+    {
+      "books": 100000,
+      "migrations_ms": 12.981,
+      "fixture_generation": {
+        "authors": 33333,
+        "fixture_generation_ms": 1394.339,
+        "fixture_books_per_sec": 71718.6
+      },
+      "import_write_probe": {
+        "rows": 20000,
+        "elapsed_ms": 328.354,
+        "books_per_sec": 60909.8
+      },
+      "startup_like_open_count": {
+        "min_ms": 11.188,
+        "median_ms": 11.48,
+        "p95_ms": 15.624,
+        "max_ms": 15.624
+      },
+      "queries": {
+        "navigation_authors_A": {
+          "min_ms": 8.646,
+          "median_ms": 9.377,
+          "p95_ms": 10.702,
+          "max_ms": 10.702
+        },
+        "navigation_authors_A_filtered": {
+          "min_ms": 8.077,
+          "median_ms": 8.245,
+          "p95_ms": 9.861,
+          "max_ms": 9.861
+        },
+        "navigation_languages": {
+          "min_ms": 69.749,
+          "median_ms": 71.075,
+          "p95_ms": 76.227,
+          "max_ms": 76.227
+        },
+        "catalog_first_page": {
+          "min_ms": 0.098,
+          "median_ms": 0.101,
+          "p95_ms": 0.107,
+          "max_ms": 0.107
+        },
+        "catalog_deep_page_offset_50k": {
+          "min_ms": 18.278,
+          "median_ms": 18.695,
+          "p95_ms": 20.865,
+          "max_ms": 20.865
+        },
+        "catalog_filtered_page": {
+          "min_ms": 28.953,
+          "median_ms": 31.96,
+          "p95_ms": 38.562,
+          "max_ms": 38.562
+        },
+        "sql_text_fallback_search": {
+          "min_ms": 2.165,
+          "median_ms": 2.466,
+          "p95_ms": 3.563,
+          "max_ms": 3.563
+        },
+        "libid_lookup": {
+          "min_ms": 0.004,
+          "median_ms": 0.004,
+          "p95_ms": 0.006,
+          "max_ms": 0.006
+        }
+      },
+      "plans": {
+        "author_initial": [
+          "11 | 0 | 0 | SEARCH a USING INDEX idx_authors_navigation_initial (<expr>=?)",
+          "29 | 0 | 0 | SEARCH ba USING INDEX idx_book_authors_author_id (author_id=?)",
+          "35 | 0 | 0 | SEARCH b USING INDEX sqlite_autoindex_books_1 (id=?)",
+          "42 | 0 | 0 | USE TEMP B-TREE FOR GROUP BY"
+        ],
+        "title_page": [
+          "5 | 0 | 0 | SCAN books USING INDEX idx_books_title",
+          "28 | 0 | 0 | USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+        ],
+        "libid": [
+          "3 | 0 | 0 | SEARCH books USING INDEX idx_books_lib_id (lib_id=?)"
+        ]
+      },
+      "database": {
+        "bytes": 83759104,
+        "pages": 20449,
+        "page_size": 4096,
+        "integrity": "ok"
+      },
+      "process_peak_rss_kb": 192208
+    },
+    {
+      "books": 500000,
+      "migrations_ms": 12.136,
+      "fixture_generation": {
+        "authors": 166666,
+        "fixture_generation_ms": 7203.935,
+        "fixture_books_per_sec": 69406.5
+      },
+      "import_write_probe": {
+        "rows": 20000,
+        "elapsed_ms": 344.322,
+        "books_per_sec": 58085.1
+      },
+      "startup_like_open_count": {
+        "min_ms": 57.262,
+        "median_ms": 62.041,
+        "p95_ms": 68.585,
+        "max_ms": 68.585
+      },
+      "queries": {
+        "navigation_authors_A": {
+          "min_ms": 81.235,
+          "median_ms": 87.38,
+          "p95_ms": 94.128,
+          "max_ms": 94.128
+        },
+        "navigation_authors_A_filtered": {
+          "min_ms": 72.364,
+          "median_ms": 75.742,
+          "p95_ms": 81.128,
+          "max_ms": 81.128
+        },
+        "navigation_languages": {
+          "min_ms": 370.324,
+          "median_ms": 521.997,
+          "p95_ms": 570.201,
+          "max_ms": 570.201
+        },
+        "catalog_first_page": {
+          "min_ms": 0.098,
+          "median_ms": 0.104,
+          "p95_ms": 0.123,
+          "max_ms": 0.123
+        },
+        "catalog_deep_page_offset_50k": {
+          "min_ms": 18.933,
+          "median_ms": 21.539,
+          "p95_ms": 21.888,
+          "max_ms": 21.888
+        },
+        "catalog_filtered_page": {
+          "min_ms": 182.603,
+          "median_ms": 188.527,
+          "p95_ms": 223.56,
+          "max_ms": 223.56
+        },
+        "sql_text_fallback_search": {
+          "min_ms": 2.068,
+          "median_ms": 2.15,
+          "p95_ms": 2.658,
+          "max_ms": 2.658
+        },
+        "libid_lookup": {
+          "min_ms": 0.004,
+          "median_ms": 0.004,
+          "p95_ms": 0.006,
+          "max_ms": 0.006
+        }
+      },
+      "plans": {
+        "author_initial": [
+          "11 | 0 | 0 | SEARCH a USING INDEX idx_authors_navigation_initial (<expr>=?)",
+          "29 | 0 | 0 | SEARCH ba USING INDEX idx_book_authors_author_id (author_id=?)",
+          "35 | 0 | 0 | SEARCH b USING INDEX sqlite_autoindex_books_1 (id=?)",
+          "42 | 0 | 0 | USE TEMP B-TREE FOR GROUP BY"
+        ],
+        "title_page": [
+          "5 | 0 | 0 | SCAN books USING INDEX idx_books_title",
+          "28 | 0 | 0 | USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+        ],
+        "libid": [
+          "3 | 0 | 0 | SEARCH books USING INDEX idx_books_lib_id (lib_id=?)"
+        ]
+      },
+      "database": {
+        "bytes": 420806656,
+        "pages": 102736,
+        "page_size": 4096,
+        "integrity": "ok"
+      },
+      "process_peak_rss_kb": 206216
+    },
+    {
+      "books": 1000000,
+      "migrations_ms": 10.427,
+      "fixture_generation": {
+        "authors": 333333,
+        "fixture_generation_ms": 17516.879,
+        "fixture_books_per_sec": 57087.8
+      },
+      "import_write_probe": {
+        "rows": 20000,
+        "elapsed_ms": 357.505,
+        "books_per_sec": 55943.3
+      },
+      "startup_like_open_count": {
+        "min_ms": 136.368,
+        "median_ms": 176.362,
+        "p95_ms": 189.439,
+        "max_ms": 189.439
+      },
+      "queries": {
+        "navigation_authors_A": {
+          "min_ms": 171.473,
+          "median_ms": 177.12,
+          "p95_ms": 191.615,
+          "max_ms": 191.615
+        },
+        "navigation_authors_A_filtered": {
+          "min_ms": 167.027,
+          "median_ms": 178.381,
+          "p95_ms": 191.584,
+          "max_ms": 191.584
+        },
+        "navigation_languages": {
+          "min_ms": 915.893,
+          "median_ms": 928.697,
+          "p95_ms": 1063.857,
+          "max_ms": 1063.857
+        },
+        "catalog_first_page": {
+          "min_ms": 0.106,
+          "median_ms": 0.108,
+          "p95_ms": 0.119,
+          "max_ms": 0.119
+        },
+        "catalog_deep_page_offset_50k": {
+          "min_ms": 18.391,
+          "median_ms": 20.6,
+          "p95_ms": 21.004,
+          "max_ms": 21.004
+        },
+        "catalog_filtered_page": {
+          "min_ms": 372.952,
+          "median_ms": 381.34,
+          "p95_ms": 400.274,
+          "max_ms": 400.274
+        },
+        "sql_text_fallback_search": {
+          "min_ms": 2.015,
+          "median_ms": 2.03,
+          "p95_ms": 2.085,
+          "max_ms": 2.085
+        },
+        "libid_lookup": {
+          "min_ms": 0.004,
+          "median_ms": 0.004,
+          "p95_ms": 0.007,
+          "max_ms": 0.007
+        }
+      },
+      "plans": {
+        "author_initial": [
+          "11 | 0 | 0 | SEARCH a USING INDEX idx_authors_navigation_initial (<expr>=?)",
+          "29 | 0 | 0 | SEARCH ba USING INDEX idx_book_authors_author_id (author_id=?)",
+          "35 | 0 | 0 | SEARCH b USING INDEX sqlite_autoindex_books_1 (id=?)",
+          "42 | 0 | 0 | USE TEMP B-TREE FOR GROUP BY"
+        ],
+        "title_page": [
+          "5 | 0 | 0 | SCAN books USING INDEX idx_books_title",
+          "28 | 0 | 0 | USE TEMP B-TREE FOR LAST TERM OF ORDER BY"
+        ],
+        "libid": [
+          "3 | 0 | 0 | SEARCH books USING INDEX idx_books_lib_id (lib_id=?)"
+        ]
+      },
+      "database": {
+        "bytes": 841592832,
+        "pages": 205467,
+        "page_size": 4096,
+        "integrity": "verified-separately-stage22/migrations"
+      },
+      "process_peak_rss_kb": 230624
+    }
+  ],
+  "guardrails": {
+    "thresholds": {
+      "100000": {
+        "startup_p95_ms": 250,
+        "author_A_p95_ms": 500,
+        "languages_p95_ms": 750,
+        "first_page_p95_ms": 250,
+        "filtered_page_p95_ms": 750,
+        "libid_p95_ms": 50,
+        "min_import_books_s": 3000
+      },
+      "500000": {
+        "startup_p95_ms": 500,
+        "author_A_p95_ms": 1500,
+        "languages_p95_ms": 1500,
+        "first_page_p95_ms": 500,
+        "filtered_page_p95_ms": 1200,
+        "libid_p95_ms": 75,
+        "min_import_books_s": 2500
+      },
+      "1000000": {
+        "startup_p95_ms": 900,
+        "author_A_p95_ms": 3000,
+        "languages_p95_ms": 2000,
+        "first_page_p95_ms": 900,
+        "filtered_page_p95_ms": 1500,
+        "libid_p95_ms": 100,
+        "min_import_books_s": 2000
+      }
+    },
+    "checks": [
+      {
+        "books": 100000,
+        "metric": "startup_p95_ms",
+        "actual": 15.624,
+        "threshold": 250,
+        "pass": true
+      },
+      {
+        "books": 100000,
+        "metric": "author_A_p95_ms",
+        "actual": 10.702,
+        "threshold": 500,
+        "pass": true
+      },
+      {
+        "books": 100000,
+        "metric": "languages_p95_ms",
+        "actual": 76.227,
+        "threshold": 750,
+        "pass": true
+      },
+      {
+        "books": 100000,
+        "metric": "first_page_p95_ms",
+        "actual": 0.107,
+        "threshold": 250,
+        "pass": true
+      },
+      {
+        "books": 100000,
+        "metric": "filtered_page_p95_ms",
+        "actual": 38.562,
+        "threshold": 750,
+        "pass": true
+      },
+      {
+        "books": 100000,
+        "metric": "libid_p95_ms",
+        "actual": 0.006,
+        "threshold": 50,
+        "pass": true
+      },
+      {
+        "books": 100000,
+        "metric": "min_import_books_s",
+        "actual": 60909.8,
+        "threshold": 3000,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "startup_p95_ms",
+        "actual": 68.585,
+        "threshold": 500,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "author_A_p95_ms",
+        "actual": 94.128,
+        "threshold": 1500,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "languages_p95_ms",
+        "actual": 570.201,
+        "threshold": 1500,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "first_page_p95_ms",
+        "actual": 0.123,
+        "threshold": 500,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "filtered_page_p95_ms",
+        "actual": 223.56,
+        "threshold": 1200,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "libid_p95_ms",
+        "actual": 0.006,
+        "threshold": 75,
+        "pass": true
+      },
+      {
+        "books": 500000,
+        "metric": "min_import_books_s",
+        "actual": 58085.1,
+        "threshold": 2500,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "startup_p95_ms",
+        "actual": 189.439,
+        "threshold": 900,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "author_A_p95_ms",
+        "actual": 191.615,
+        "threshold": 3000,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "languages_p95_ms",
+        "actual": 1063.857,
+        "threshold": 2000,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "first_page_p95_ms",
+        "actual": 0.119,
+        "threshold": 900,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "filtered_page_p95_ms",
+        "actual": 400.274,
+        "threshold": 1500,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "libid_p95_ms",
+        "actual": 0.007,
+        "threshold": 100,
+        "pass": true
+      },
+      {
+        "books": 1000000,
+        "metric": "min_import_books_s",
+        "actual": 55943.3,
+        "threshold": 2000,
+        "pass": true
+      }
+    ],
+    "pass": true
+  }
+}

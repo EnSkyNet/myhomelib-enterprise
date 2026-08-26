@@ -1,0 +1,5 @@
+# Import
+
+Import individual files, directories or INPX catalogs. Supported reader/catalog formats include FB2, FBD, EPUB and TXT. Generic formats such as PDF, DJVU, MOBI/AZW, DOC/DOCX, ODT, RTF, HTML/HTM, MD and CHM can be cataloged and opened with an external application.
+
+Archives: ZIP/FB2ZIP/CBZ/JAR, 7z, RAR/CBR, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, TAR.XZ/TXZ and CPIO. Large imports are batched and directory traversal is streaming.

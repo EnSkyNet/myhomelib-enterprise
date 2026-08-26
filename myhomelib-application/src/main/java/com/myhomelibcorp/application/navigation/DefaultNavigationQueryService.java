@@ -1,12 +1,12 @@
 package com.myhomelibcorp.application.navigation;
 
+import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
-import com.myhomelibcorp.application.port.out.exchange.ReadingHistoryPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
+import com.myhomelibcorp.application.filter.BookFilterSpec;
+import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import org.springframework.stereotype.Service;
@@ -25,87 +25,107 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
             .thenComparing(NavigationNodeDto::id);
 
     private final AuthorRepository authorRepository;
-    private final SeriesRepository seriesRepository;
-    private final GenreRepository genreRepository;
     private final BookQueryRepository bookQueryRepository;
     private final NavigationFacetRepository navigationFacetRepository;
-    private final ReadingHistoryPort readingHistoryPort;
+    private final BookFilterStateService filterStateService;
+    private final CatalogUpdateService catalogUpdateService;
     private final ExecutorPort executorPort;
 
     public DefaultNavigationQueryService(
             AuthorRepository authorRepository,
-            SeriesRepository seriesRepository,
-            GenreRepository genreRepository,
             BookQueryRepository bookQueryRepository,
             NavigationFacetRepository navigationFacetRepository,
-            ReadingHistoryPort readingHistoryPort,
+            BookFilterStateService filterStateService,
+            CatalogUpdateService catalogUpdateService,
             ExecutorPort executorPort) {
         this.authorRepository = authorRepository;
-        this.seriesRepository = seriesRepository;
-        this.genreRepository = genreRepository;
         this.bookQueryRepository = bookQueryRepository;
         this.navigationFacetRepository = navigationFacetRepository;
-        this.readingHistoryPort = readingHistoryPort;
+        this.filterStateService = filterStateService;
+        this.catalogUpdateService = catalogUpdateService;
         this.executorPort = executorPort;
     }
 
     @Override
-    public java.util.concurrent.CompletableFuture<List<NavigationNodeDto>> load(NavigationMode mode) {
+    public java.util.concurrent.CompletableFuture<List<NavigationNodeDto>> load(NavigationMode mode, Character initial) {
         if (mode == null) {
             return java.util.concurrent.CompletableFuture.failedFuture(
                     new IllegalArgumentException("Navigation mode cannot be null"));
         }
-        return executorPort.submit(() -> switch (mode) {
-            case AUTHORS -> loadAuthors();
-            case SERIES -> loadSeries();
-            case GENRES -> loadGenres();
-            case YEARS -> loadYears();
-            case LANGUAGES -> loadLanguages();
-            case ARCHIVES -> loadArchives();
-            case KEYWORDS -> loadKeywords();
-            case GROUPS -> loadGroups();
-            case REVIEWS -> loadReviews();
-            case ALREADY_READ -> loadAlreadyRead();
-            case HISTORY -> loadHistory();
-            case ALL_BOOKS -> loadAllBooks();
+        return executorPort.submit(() -> {
+            BookFilterSpec filter = filterStateService.current();
+            return switch (mode) {
+                case AUTHORS -> loadAuthors(initial, filter);
+                case SERIES -> loadSeries(filter);
+                case GENRES -> loadGenres(filter);
+                case YEARS -> loadYears(filter);
+                case LANGUAGES -> loadLanguages(filter);
+                case ARCHIVES -> loadArchives(filter);
+                case KEYWORDS -> loadKeywords(filter);
+                case GROUPS -> loadGroups(filter);
+                case REVIEWS -> loadReviews(filter);
+                case UPDATES -> loadUpdates();
+                case ALREADY_READ -> loadAlreadyRead(filter);
+                case HISTORY -> loadHistory(filter);
+                case ALL_BOOKS -> loadAllBooks(filter);
+            };
         });
     }
 
-    private List<NavigationNodeDto> loadAuthors() {
-        return authorRepository.findAll().stream()
-                .map(author -> NavigationNodeDto.of(
-                        NavigationMode.AUTHORS,
-                        author.getId().asString(),
-                        author.getFullName()))
+    private List<NavigationNodeDto> loadAuthors(Character initial, BookFilterSpec filter) {
+        Character selected = initial;
+        if (selected == null || selected == '*') {
+            selected = navigationFacetRepository.findFirstAuthorInitial(filter).orElse(null);
+        }
+        if (selected == null) return List.of();
+
+        return navigationFacetRepository.findAuthors(selected, filter).stream()
+                .map(facet -> new NavigationNodeDto(
+                        NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
+                .filter(DefaultNavigationQueryService::hasLabel)
+                .toList();
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<java.util.Optional<Character>> findFirstAuthorInitial() {
+        return executorPort.submit(() -> navigationFacetRepository.findFirstAuthorInitial(filterStateService.current()));
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<java.util.Optional<Character>> findAuthorInitial(String authorId) {
+        if (authorId == null || authorId.isBlank()) {
+            return java.util.concurrent.CompletableFuture.completedFuture(java.util.Optional.empty());
+        }
+        return executorPort.submit(() -> authorRepository
+                .findById(com.myhomelibcorp.domain.model.valueobject.AuthorId.fromString(authorId))
+                .map(author -> {
+                    String label = author.getFullName();
+                    if (label == null || label.isBlank()) return '#';
+                    char first = label.trim().charAt(0);
+                    return Character.isLetter(first) ? Character.toUpperCase(first) : '#';
+                }));
+    }
+
+    private List<NavigationNodeDto> loadSeries(BookFilterSpec filter) {
+        return navigationFacetRepository.findSeries(filter).stream()
+                .map(facet -> new NavigationNodeDto(
+                        NavigationMode.SERIES, facet.id(), facet.label(), facet.bookCount()))
                 .filter(DefaultNavigationQueryService::hasLabel)
                 .sorted(LABEL_ORDER)
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadSeries() {
-        return seriesRepository.findAll().stream()
-                .map(series -> NavigationNodeDto.of(
-                        NavigationMode.SERIES,
-                        series.getId().asString(),
-                        series.getName()))
+    private List<NavigationNodeDto> loadGenres(BookFilterSpec filter) {
+        return navigationFacetRepository.findGenres(filter).stream()
+                .map(facet -> new NavigationNodeDto(
+                        NavigationMode.GENRES, facet.id(), facet.label(), facet.bookCount()))
                 .filter(DefaultNavigationQueryService::hasLabel)
                 .sorted(LABEL_ORDER)
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadGenres() {
-        return genreRepository.findAll().stream()
-                .map(genre -> NavigationNodeDto.of(
-                        NavigationMode.GENRES,
-                        genre.getId().asString(),
-                        genre.getName()))
-                .filter(DefaultNavigationQueryService::hasLabel)
-                .sorted(LABEL_ORDER)
-                .toList();
-    }
-
-    private List<NavigationNodeDto> loadYears() {
-        return navigationFacetRepository.findYears().stream()
+    private List<NavigationNodeDto> loadYears(BookFilterSpec filter) {
+        return navigationFacetRepository.findYears(filter).stream()
                 .map(facet -> new NavigationNodeDto(
                         NavigationMode.YEARS,
                         facet.id(),
@@ -117,16 +137,16 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadLanguages() {
-        return navigationFacetRepository.findLanguages().stream()
+    private List<NavigationNodeDto> loadLanguages(BookFilterSpec filter) {
+        return navigationFacetRepository.findLanguages(filter).stream()
                 .map(DefaultNavigationQueryService::normalizeLanguageFacet)
                 .filter(java.util.Objects::nonNull)
                 .sorted(LABEL_ORDER)
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadArchives() {
-        List<NavigationFacetRepository.ArchiveFacet> facets = navigationFacetRepository.findArchives();
+    private List<NavigationNodeDto> loadArchives(BookFilterSpec filter) {
+        List<NavigationFacetRepository.ArchiveFacet> facets = navigationFacetRepository.findArchives(filter);
         Map<String, Integer> baseNameCounts = new HashMap<>();
         for (var facet : facets) {
             baseNameCounts.merge(archiveBaseName(facet.archivePath()).toLowerCase(Locale.ROOT), 1, Integer::sum);
@@ -150,8 +170,8 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadKeywords() {
-        return navigationFacetRepository.findKeywords().stream()
+    private List<NavigationNodeDto> loadKeywords(BookFilterSpec filter) {
+        return navigationFacetRepository.findKeywords(filter).stream()
                 .map(facet -> new NavigationNodeDto(
                         NavigationMode.KEYWORDS, facet.id(), facet.label(), facet.bookCount()))
                 .filter(DefaultNavigationQueryService::hasLabel)
@@ -159,8 +179,8 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadGroups() {
-        return navigationFacetRepository.findGroups().stream()
+    private List<NavigationNodeDto> loadGroups(BookFilterSpec filter) {
+        return navigationFacetRepository.findGroups(filter).stream()
                 .map(facet -> new NavigationNodeDto(
                         NavigationMode.GROUPS, facet.id(), facet.label(), facet.bookCount()))
                 .filter(DefaultNavigationQueryService::hasLabel)
@@ -168,12 +188,12 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                 .toList();
     }
 
-    private List<NavigationNodeDto> loadReviews() {
+    private List<NavigationNodeDto> loadReviews(BookFilterSpec filter) {
         Map<String, Integer> order = Map.of(
                 ReviewNavigationFilter.RATED.id(), 0,
                 ReviewNavigationFilter.REVIEWED.id(), 1,
                 ReviewNavigationFilter.RATED_AND_REVIEWED.id(), 2);
-        return navigationFacetRepository.findReviewSubsets().stream()
+        return navigationFacetRepository.findReviewSubsets(filter).stream()
                 .map(facet -> new NavigationNodeDto(
                         NavigationMode.REVIEWS, facet.id(), facet.label(), facet.bookCount()))
                 .filter(node -> {
@@ -189,8 +209,17 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
     }
 
 
-    private List<NavigationNodeDto> loadAlreadyRead() {
-        long count = bookQueryRepository.count(BookQuery.builder().onlyRead(true).build());
+    private List<NavigationNodeDto> loadUpdates() {
+        long count = catalogUpdateService.pendingUpdateCount();
+        return List.of(new NavigationNodeDto(
+                NavigationMode.UPDATES,
+                "updates",
+                "Оновлення",
+                count));
+    }
+
+    private List<NavigationNodeDto> loadAlreadyRead(BookFilterSpec filter) {
+        long count = bookQueryRepository.count(BookQuery.builder().onlyRead(true).filterSpec(filter).build());
         return List.of(new NavigationNodeDto(
                 NavigationMode.ALREADY_READ,
                 "already-read",
@@ -198,16 +227,17 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                 count));
     }
 
-    private List<NavigationNodeDto> loadHistory() {
+    private List<NavigationNodeDto> loadHistory(BookFilterSpec filter) {
+        long count = bookQueryRepository.count(BookQuery.builder().onlyInHistory(true).filterSpec(filter).build());
         return List.of(new NavigationNodeDto(
                 NavigationMode.HISTORY,
                 "history",
                 "history",
-                readingHistoryPort.count()));
+                count));
     }
 
-    private List<NavigationNodeDto> loadAllBooks() {
-        long count = bookQueryRepository.count(BookQuery.builder().build());
+    private List<NavigationNodeDto> loadAllBooks(BookFilterSpec filter) {
+        long count = bookQueryRepository.count(BookQuery.builder().filterSpec(filter).build());
         return List.of(new NavigationNodeDto(
                 NavigationMode.ALL_BOOKS,
                 "all",

@@ -5,39 +5,82 @@
 <?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.*?>
 
-<VBox xmlns:fx="http://javafx.com/fxml/1"
-      fx:controller="com.myhomelibcorp.ui.details.BookDetailsController"
-      spacing="5" style="-fx-padding: 10; -fx-background-color: #fafafa;">
+<ScrollPane xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.myhomelibcorp.ui.details.BookDetailsController"
+            fitToWidth="true" hbarPolicy="NEVER" VBox.vgrow="ALWAYS"
+            style="-fx-background-color: transparent; -fx-background: #fafafa;">
+    <content>
+        <VBox spacing="7" style="-fx-padding: 10; -fx-background-color: #fafafa;">
+            <VBox alignment="CENTER" style="-fx-padding: 6;">
+                <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
+                           style="-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);"/>
+            </VBox>
 
-    <VBox alignment="CENTER" style="-fx-padding: 10;">
-        <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
-                   style="-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);"/>
-    </VBox>
+            <Label fx:id="titleLabel" text="Назва" wrapText="true"
+                   style="-fx-font-weight: bold; -fx-font-size: 15px;"/>
+            <Label fx:id="documentWarningLabel" wrapText="true" visible="false" managed="false"
+                   style="-fx-text-fill: #8a5a00; -fx-background-color: #fff3cd; -fx-padding: 6;"/>
 
-    <Label fx:id="titleLabel" text="Назва" wrapText="true" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
-    <Label fx:id="authorsLabel" text="Автори"/>
-    <Label fx:id="seriesLabel" text="Серія"/>
-    <Label fx:id="genresLabel" text="Жанр"/>
-    <Label fx:id="languageLabel" text="Мова"/>
-    <Label fx:id="yearLabel" text="Рік"/>
-    <Label fx:id="publisherLabel" text="Видавництво"/>
-    <Label fx:id="isbnLabel" text="ISBN"/>
+            <Separator/>
+            <Label text="Автори" style="-fx-font-weight: bold;"/>
+            <FlowPane fx:id="authorsLinksPane" hgap="6" vgap="3"/>
+            <Label text="Серія" style="-fx-font-weight: bold;"/>
+            <FlowPane fx:id="seriesLinksPane" hgap="6" vgap="3"/>
+            <Label text="Жанри" style="-fx-font-weight: bold;"/>
+            <FlowPane fx:id="genresLinksPane" hgap="6" vgap="3"/>
 
-    <Label text="Ключові слова" style="-fx-font-weight: bold;"/>
-    <FlowPane fx:id="keywordsLinksPane" hgap="6" vgap="4"/>
+            <Separator/>
+            <Label text="Видання" style="-fx-font-weight: bold; -fx-font-size: 13px;"/>
+            <Label fx:id="languageLabel" text="Мова: —" wrapText="true"/>
+            <Label fx:id="sourceLanguageLabel" text="Мова оригіналу: —" wrapText="true"/>
+            <Label fx:id="yearLabel" text="Рік: —"/>
+            <Hyperlink fx:id="publisherLink" text="Видавництво: —" wrapText="true"/>
+            <Label fx:id="isbnLabel" text="ISBN: —" wrapText="true"/>
+            <Label fx:id="translatorsLabel" text="Перекладачі: —" wrapText="true"/>
 
-    <Label text="Групи" style="-fx-font-weight: bold;"/>
-    <FlowPane fx:id="groupLinksPane" hgap="6" vgap="4"/>
+            <Separator/>
+            <Label text="Файл і текст" style="-fx-font-weight: bold; -fx-font-size: 13px;"/>
+            <Label fx:id="formatLabel" text="Формат: —"/>
+            <Label fx:id="fileSizeLabel" text="Розмір файла: —"/>
+            <Label fx:id="textStatsLabel" text="Текст: —" wrapText="true"/>
+            <Label fx:id="imagesCountLabel" text="Зображення: 0"/>
+            <Button fx:id="showImagesButton" text="Переглянути зображення" onAction="#onShowImages"
+                    visible="false" managed="false"/>
 
-    <Label text="Відгуки" style="-fx-font-weight: bold;"/>
-    <FlowPane fx:id="reviewLinksPane" hgap="6" vgap="4"/>
+            <Label text="Зміст" style="-fx-font-weight: bold;"/>
+            <VBox fx:id="tocPreviewBox" spacing="2"/>
 
-    <Label text="Анотація:" style="-fx-font-weight: bold;"/>
-    <TextArea fx:id="annotationArea" wrapText="true" prefHeight="100" editable="false"/>
+            <Separator/>
+            <Label text="Ключові слова" style="-fx-font-weight: bold;"/>
+            <FlowPane fx:id="keywordsLinksPane" hgap="6" vgap="4"/>
 
-    <HBox spacing="10">
-        <Button text="Читати" onAction="#onRead" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
-        <Button text="Редагувати" onAction="#onEdit" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
-        <Button text="Відкрити папку" onAction="#onOpenFolder"/>
-    </HBox>
-</VBox>
+            <Label text="Анотація" style="-fx-font-weight: bold;"/>
+            <TextArea fx:id="annotationArea" wrapText="true" prefHeight="150" editable="false"/>
+
+            <Separator/>
+            <Label text="Мої дані" style="-fx-font-weight: bold; -fx-font-size: 13px;"/>
+            <Label fx:id="localStatusLabel" text="Статус: —"/>
+            <Label fx:id="ratingLabel" text="Оцінка: —"/>
+            <Label fx:id="progressLabel" text="Прочитано: —"/>
+            <Label fx:id="libraryRateLabel" text="Рейтинг каталогу: —"/>
+            <Label text="Групи" style="-fx-font-weight: bold;"/>
+            <FlowPane fx:id="groupLinksPane" hgap="6" vgap="4"/>
+            <Label text="Швидкі переходи" style="-fx-font-weight: bold;"/>
+            <FlowPane fx:id="reviewLinksPane" hgap="6" vgap="4"/>
+            <Label text="Мій відгук" style="-fx-font-weight: bold;"/>
+            <TextArea fx:id="reviewArea" wrapText="true" prefHeight="90" editable="false"/>
+
+            <Separator/>
+            <Label text="Джерело" style="-fx-font-weight: bold;"/>
+            <Label fx:id="sourceUrlLabel" text="Джерело: —" wrapText="true"/>
+
+            <HBox spacing="8" style="-fx-padding: 8 0 6 0;">
+                <Button text="Читати" onAction="#onRead"
+                        style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+                <Button text="Редагувати" onAction="#onEdit"
+                        style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+                <Button text="Папка" onAction="#onOpenFolder"/>
+            </HBox>
+        </VBox>
+    </content>
+</ScrollPane>

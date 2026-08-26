@@ -15,7 +15,9 @@ public interface DataIntegrityPort {
     IntegrityReport checkIntegrity();
 
     /**
-     * Виправляє проблеми цілісності (видаляє сиріт, дублікати).
+     * Legacy destructive repair hook. Implementations must not perform unreviewed deletion;
+     * the supported workflow is CollectionMaintenanceUseCase.
      */
+    @Deprecated(forRemoval = true)
     void fixOrphanedData();
 }

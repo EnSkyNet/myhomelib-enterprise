@@ -42,6 +42,7 @@ public final class AppPaths {
     public static Path downloadsDir() { return dataDir().resolve("downloads"); }
     public static Path cacheDir() { return dataDir().resolve("cache"); }
     public static Path logsDir() { return dataDir().resolve("logs"); }
+    public static Path backupsDir() { return dataDir().resolve("backups"); }
     public static Path helpDir() { return launchDir().resolve("help"); }
 
     /** Set Spring-compatible system properties before the context is created. */
@@ -53,6 +54,7 @@ public final class AppPaths {
             Files.createDirectories(downloadsDir());
             Files.createDirectories(cacheDir());
             Files.createDirectories(logsDir());
+            Files.createDirectories(backupsDir());
         } catch (Exception e) {
             throw new IllegalStateException("Cannot create MyHomeLib data directories: " + dataDir(), e);
         }

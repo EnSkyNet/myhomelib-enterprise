@@ -19,8 +19,8 @@ new violations cannot be added accidentally.
 
 ## 1. System shape
 
-MyHomeLib Enterprise is a **desktop modular monolith** with a separate MCP
-sidecar. The desktop application follows Ports & Adapters / Hexagonal ideas,
+MyHomeLib Enterprise is a **desktop modular monolith** with separate MCP and OPDS
+sidecar modules. The desktop application follows Ports & Adapters / Hexagonal ideas,
 but is not yet a perfectly isolated hexagon.
 
 ```text
@@ -65,12 +65,12 @@ but is not yet a perfectly isolated hexagon.
                               │ embedded by UI
                               │
 
-separate process             │
-┌─────────────────────────┐  │
-│ myhomelib-mcp           │  │
-│ MCP + direct DB/archive │  │
-│ depends on shared only  │  │
-└─────────────────────────┘  │
+sidecar runtimes             │
+┌─────────────────────────┐  │   ┌─────────────────────────┐
+│ myhomelib-mcp           │  │   │ myhomelib-opds          │
+│ MCP + direct DB/archive │  │   │ JDK HTTP / OPDS feeds   │
+│ depends on shared only  │  │   │ depends on application  │
+└─────────────────────────┘  │   └─────────────────────────┘
 ```
 
 The bootstrap module is the only desktop composition root. It is allowed to
@@ -81,7 +81,7 @@ startup, shutdown and health monitoring.
 
 ## 2. Maven modules
 
-Root `pom.xml` contains **11 modules**.
+Root `pom.xml` contains **12 modules**.
 
 ### Product/runtime modules
 
@@ -95,6 +95,7 @@ Root `pom.xml` contains **11 modules**.
 | `myhomelib-ui` | JavaFX controllers, workspaces, presenters, tables, dialogs, localization, reader integration |
 | `myhomelib-bootstrap` | Desktop application composition root, Spring Boot/JavaFX lifecycle and health checks |
 | `myhomelib-mcp` | Separate MCP executable/sidecar with direct SQLite/archive access |
+| `myhomelib-opds` | Read-only OPDS HTTP delivery sidecar using application query/download APIs; no JavaFX or JDBC |
 
 ### Verification/tooling modules
 
@@ -118,8 +119,9 @@ application     -> shared, domain
 reader          -> shared
 infrastructure  -> shared, domain, application
 ui              -> shared, domain, application, reader
-bootstrap       -> shared, domain, application, infrastructure, ui
+bootstrap       -> shared, domain, application, infrastructure, ui, opds
 mcp             -> shared
+opds            -> application
 ```
 
 The graph must stay acyclic.
@@ -271,7 +273,13 @@ Reader, Spring or JavaFX.
 If MCP later needs the same business rules as desktop, that should be an
 intentional architecture change rather than importing desktop adapters ad hoc.
 
-### 4.8 Bootstrap
+### 4.8 OPDS
+
+`myhomelib-opds` is an HTTP delivery sidecar. It uses JDK `HttpServer` and depends only on the Application API. Catalogue SQL remains an Infrastructure adapter behind `OpdsCatalogQueryPort`; JavaFX lifecycle/settings UI talks only to `OpdsServerControl`. This keeps HTTP, SQL and desktop presentation independent.
+
+**Hard rule:** OPDS must not depend on Infrastructure, UI, Reader, MCP, JavaFX, JDBC/SQL or Lucene. All list endpoints are bounded/paginated, and book downloads are streamed rather than loaded completely into memory. The default bind address is loopback.
+
+### 4.9 Bootstrap
 
 Bootstrap is the composition root. It may depend on UI, Infrastructure,
 Application, Domain and Shared to wire the runtime.
@@ -320,6 +328,9 @@ Important boundaries:
 - layout uses `FontMetricsProvider` abstraction;
 - JavaFX-specific font metrics live in the JavaFX render adapter;
 - position/search/bookmark services do not know library persistence;
+- `ReaderSettingsStateService` resolves global defaults vs per-book overrides while the reader engine remains persistence-agnostic;
+- `TextLayoutEngine` receives document language and applies dictionary-aware visual hyphenation without changing source offsets;
+- `ReaderPositionAutosaver` bounds unexpected-process position loss with periodic background persistence, while normal close performs a final flush;
 - library-specific persistence is performed from UI/application adapters.
 
 The reader module remains one Maven module for now, but its package boundary is
@@ -402,17 +413,27 @@ Nested archives are intentionally not recursively expanded by default.
 Localization is file-based and externally extensible.
 
 ```text
-Lang/<code>.json             translation catalogues
-config/language.txt          selected language
+Lang/<code>.json                schema-versioned UI + genre catalogues
+config/language.txt             selected language
 config/available-languages.txt  generated discovered-language list
+config/language-diagnostics.txt schema/key coverage diagnostics
+help/<locale>/<topic>.md        bundled context help
 ```
 
 At startup and when the language menu is opened, the UI localization service
 rescans `Lang`. New valid language catalogues become available without Java or
-FXML changes.
+FXML changes. Schema v2 adds a `genres` map keyed by stable FB2 genre code.
+Legacy schema-v1 catalogues remain readable through fallback; catalogues that
+require a newer schema are ignored safely and reported in diagnostics. Signing
+is optional and is not a runtime requirement.
 
-Localization is a UI concern. Domain values should store stable codes (for
-example a language or future genre code), not translated display labels.
+`HelpTopicRegistry` is the only workspace/dialog -> help-topic mapping. F1 asks
+the registry for a topic and `HelpService` loads Markdown first, with TXT/HTML
+and Ukrainian fallbacks for compatibility. Controllers do not embed help file
+paths.
+
+Localization remains a UI concern. Domain/database relations store stable codes
+(language/genre IDs), never translated display labels.
 
 See `LANGUAGE_SYSTEM.md` for catalogue details.
 
@@ -576,6 +597,34 @@ identical sync as a new update.
 `CatalogUpdateService` is the application facade intended for the Stage 7 UI; JavaFX
 should not consume the SQLite adapter directly. See
 `docs/architecture/ONLINE_UPDATE_MODEL_STAGE6.md`.
+
+
+## 13.3 Versioned user-data backup boundary (Stage 22)
+
+Backup/restore is split at the application boundary. `BackupRestoreService` orchestrates `CollectionBackupPort` for collection lifecycle/snapshots and `UserDataTransferPort` for portable user state; JavaFX does not copy SQLite files or access JDBC. Infrastructure implements a WAL-safe database snapshot with SQLite `VACUUM INTO` and a streamed JSON manifest.
+
+```text
+Backup/Restore UI
+      |
+      v
+BackupRestoreService
+      |
+      +--> CollectionBackupPort --> active CollectionManager / VACUUM INTO
+      |
+      +--> UserDataTransferPort --> user-data.json schema v2
+                                  |
+                                  +--> stable LibID-first remap
+                                  +--> bounded identity cache
+                                  +--> transaction for DB user state
+                                  +--> atomic Reader/settings files
+```
+
+A full restore first copies the backup database to a sibling staging file while the live catalogue remains open, closes SQLite handles only for the final replacement, reopens the collection in `finally`, and then runs the normal sequential Flyway migration chain. Portable restore leaves catalogue metadata in place and applies ratings/progress/reviews, bookmarks, reading history/statistics, groups/favorites, saved searches, unified filters and Reader preferences by `LibID`. The old internal book ID is only a same-catalogue fallback. Manifest v1 is migrated sequentially to schema v2; future schema versions are rejected rather than guessed. Legacy database-only backups remain valid.
+
+
+## 13.4 Cross-platform release boundary (Stage 23)
+
+Release validation is separated from application runtime. GitHub Actions runs the same Maven reactor on Windows/Linux/macOS and only then invokes the platform JDK `jpackage` tool. Portable app-images contain their runtime and application dependencies; no dependency resolver is part of normal application startup. A dedicated `--release-smoke` branch executes before JavaFX launch and verifies packaged cross-module resources, allowing CI to validate native launchers on headless workers without introducing test-only dependencies into the UI or application layers. Tagged releases are assembled only after all matrix jobs succeed and are accompanied by SHA-256 checksums.
 
 ## 14. Known architecture debt
 

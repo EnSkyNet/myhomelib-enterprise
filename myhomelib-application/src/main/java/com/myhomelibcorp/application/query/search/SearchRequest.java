@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.query.search;
 
+import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -22,6 +23,7 @@ public record SearchRequest(
         LocalDate addedFrom,
         LocalDate addedTo,
         Boolean localOnly,
+        BookFilterSpec filterSpec,
         int limit,
         int offset,
         SortBy sortBy,
@@ -45,6 +47,7 @@ public record SearchRequest(
         private LocalDate addedFrom;
         private LocalDate addedTo;
         private Boolean localOnly;
+        private BookFilterSpec filterSpec;
         private int limit = 100;
         private int offset = 0;
         private SortBy sortBy = SortBy.TITLE;
@@ -63,6 +66,7 @@ public record SearchRequest(
         public Builder addedFrom(LocalDate addedFrom) { this.addedFrom = addedFrom; return this; }
         public Builder addedTo(LocalDate addedTo) { this.addedTo = addedTo; return this; }
         public Builder localOnly(Boolean localOnly) { this.localOnly = localOnly; return this; }
+        public Builder filterSpec(BookFilterSpec filterSpec) { this.filterSpec = filterSpec; return this; }
         public Builder limit(int limit) { this.limit = limit; return this; }
         public Builder offset(int offset) { this.offset = offset; return this; }
         public Builder sortBy(SortBy sortBy) { this.sortBy = sortBy; return this; }
@@ -72,7 +76,7 @@ public record SearchRequest(
         public SearchRequest build() {
             return new SearchRequest(
                     text, authorId, seriesId, genreId, language,
-                    ratingFrom, ratingTo, yearFrom, yearTo, addedFrom, addedTo, localOnly,
+                    ratingFrom, ratingTo, yearFrom, yearTo, addedFrom, addedTo, localOnly, filterSpec,
                     limit, offset, sortBy, direction, mode
             );
         }

@@ -111,6 +111,28 @@ class FolderSyncServiceTest {
         verifyNoInteractions(inpx);
     }
 
+
+    @Test
+    void scannerFailureIsCountedOnce() throws Exception {
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        BookCommandRepository commands = mock(BookCommandRepository.class);
+        SearchIndexer indexer = mock(SearchIndexer.class);
+        LibraryScanner scanner = mock(LibraryScanner.class);
+        ImporterRegistry registry = mock(ImporterRegistry.class);
+        InpxImportPipeline inpx = mock(InpxImportPipeline.class);
+
+        Path root = temp.toAbsolutePath().normalize();
+        when(scanner.streamSupportedFiles(eq(root), anyBoolean(), anyInt(), anyLong()))
+                .thenThrow(new java.io.IOException("scan failed"));
+
+        FolderSyncService service = new FolderSyncService(queries, commands, indexer, scanner, registry, inpx);
+        var result = service.syncFolder(temp, SyncOptions.builder().build());
+
+        assertThat(result.getErrors()).isEqualTo(1);
+        assertThat(result.getErrorMessages()).hasSize(1);
+        verifyNoInteractions(commands, indexer, registry, inpx);
+    }
+
     private Book book(BookId id, String title, BookMetadata metadata, BookFile file, LocalDateTime update) {
         return Book.builder()
                 .id(id).title(title)

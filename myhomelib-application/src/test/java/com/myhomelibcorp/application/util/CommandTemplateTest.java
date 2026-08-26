@@ -32,6 +32,20 @@ class CommandTemplateTest {
     }
 
     @Test
+    void formatArgumentsRoundTripsQuotesSpacesAndUncPaths() {
+        List<String> original = List.of(
+                "plain",
+                "two words",
+                "embedded \"quote\"",
+                "\\\\server\\share\\Book Folder\\book.fb2",
+                "C:\\Books\\A B\\book.epub",
+                "apostrophe's");
+
+        assertThat(CommandTemplate.parse(CommandTemplate.formatArguments(original)))
+                .containsExactlyElementsOf(original);
+    }
+
+    @Test
     void rejectsUnclosedQuotes() {
         assertThatThrownBy(() -> CommandTemplate.parse("tool \"broken"))
                 .isInstanceOf(IllegalArgumentException.class)

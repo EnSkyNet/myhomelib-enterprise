@@ -22,6 +22,7 @@ public interface NavigationService {
     void navigateToKeyword(String keyword);
     void navigateToGroup(GroupId groupId);
     void navigateToReviews(ReviewNavigationFilter filter);
+    void navigateToUpdates();
     void navigateToAlreadyRead();
     void navigateToHistory();
     void navigateToAllBooks();

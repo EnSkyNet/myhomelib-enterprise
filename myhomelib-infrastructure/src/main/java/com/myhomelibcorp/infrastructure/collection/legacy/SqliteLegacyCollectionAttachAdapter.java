@@ -98,6 +98,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
 
         migrateBookAuthors(src, jt, bookIds, authorIds);
         migrateBookGenres(src, jt, bookIds, genres);
+        refreshDenormalizedBookFields(jt);
         return new MigrationStats(books, authorIds.size(), genres.size());
     }
 
@@ -167,6 +168,28 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
             }
             jt.batchUpdate("INSERT OR IGNORE INTO book_genres(book_id,genre_code) VALUES (?,?)",batch);
         }catch(Exception e){ log.warn("Cannot migrate genre links",e); }
+    }
+
+    /** Stage 8/9 compatibility for HLC2 imported after V33 has already run. */
+    private void refreshDenormalizedBookFields(JdbcTemplate jt) {
+        jt.update("""
+                UPDATE books
+                SET format = CASE
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.fb2.zip' THEN 'FB2ZIP'
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.fb2' THEN 'FB2'
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.epub' THEN 'EPUB'
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.pdf' THEN 'PDF'
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.mobi' THEN 'MOBI'
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.inpx' THEN 'INPX'
+                    WHEN LOWER(COALESCE(NULLIF(archive_entry,''), file_name, '')) LIKE '%.zip' THEN 'ZIP'
+                    ELSE 'UNKNOWN'
+                END,
+                author_sort = COALESCE((
+                    SELECT MIN(LOWER(TRIM(COALESCE(a.last_name,'') || ' ' || COALESCE(a.first_name,'') || ' ' || COALESCE(a.middle_name,''))))
+                    FROM book_authors ba JOIN authors a ON a.id=ba.author_id
+                    WHERE ba.book_id=books.id
+                ), '')
+                """);
     }
 
     private void insertBooks(JdbcTemplate jt,List<Object[]> batch){

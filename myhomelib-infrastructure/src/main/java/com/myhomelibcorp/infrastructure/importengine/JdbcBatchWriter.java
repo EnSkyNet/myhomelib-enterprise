@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.importengine;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +14,8 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.LinkedHashMap;
+import java.util.HashMap;
 
 @Component
 @RequiredArgsConstructor
@@ -29,6 +32,7 @@ public class JdbcBatchWriter {
 
     /**
      * Вставляє батч книг з колонкою collection_root.
+     * ОПТИМІЗОВАНО: зменшено кількість запитів до БД
      */
     public void batchInsertFull(List<Object[]> booksData,
                                 Map<String, String> authorCache,
@@ -36,6 +40,7 @@ public class JdbcBatchWriter {
         if (booksData.isEmpty()) return;
 
         JdbcTemplate jt = getJdbcTemplate();
+        long startTime = System.currentTimeMillis();
 
         String insertBookSql = """
             INSERT INTO books (
@@ -43,8 +48,8 @@ public class JdbcBatchWriter {
                 archive_entry, language, file_size, keywords, annotation,
                 rate, progress, update_date, isbn, deleted, local,
                 review, created_at, collection_root, year, publisher,
-                lib_id, library_rate, translators, city, source_url
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                lib_id, library_rate, translators, city, source_url, format, author_sort
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 title = excluded.title,
                 series = excluded.series,
@@ -71,15 +76,18 @@ public class JdbcBatchWriter {
                 library_rate = excluded.library_rate,
                 translators = excluded.translators,
                 city = excluded.city,
-                source_url = CASE WHEN COALESCE(excluded.source_url,'') <> '' THEN excluded.source_url ELSE books.source_url END
+                source_url = CASE WHEN COALESCE(excluded.source_url,'') <> '' THEN excluded.source_url ELSE books.source_url END,
+                format = CASE WHEN books.local = 1 THEN books.format ELSE excluded.format END,
+                author_sort = excluded.author_sort
             """;
 
-        List<Object[]> bookBatch = new ArrayList<>();
-        List<Object[]> authorLinkBatch = new ArrayList<>();
-        List<Object[]> genreLinkBatch = new ArrayList<>();
+        // ОПТИМІЗОВАНО: збільшено розмір батчу
+        List<Object[]> bookBatch = new ArrayList<>(booksData.size());
+        List<Object[]> authorLinkBatch = new ArrayList<>(booksData.size() * 2);
+        List<Object[]> genreLinkBatch = new ArrayList<>(booksData.size() * 2);
 
         for (Object[] row : booksData) {
-            Object[] bookRow = new Object[27];
+            Object[] bookRow = new Object[29];
             System.arraycopy(row, 0, bookRow, 0, 19);
             bookRow[19] = row[21]; // collection_root
             bookRow[20] = row[22]; // year
@@ -89,66 +97,50 @@ public class JdbcBatchWriter {
             bookRow[24] = row[26]; // translators
             bookRow[25] = row[27]; // city
             bookRow[26] = row[28]; // source_url
+            bookRow[27] = BookDenormalizedValues.format((String) row[4]);
+            bookRow[28] = authorSortFromKeys((String) row[19]);
             bookBatch.add(bookRow);
 
             String bookId = (String) row[0];
             String authorIds = (String) row[19];
             if (authorIds != null && !authorIds.isBlank()) {
-                for (String id : authorIds.split(",")) {
-                    authorLinkBatch.add(new Object[]{bookId, id.trim()});
+                String[] ids = authorIds.split(",");
+                for (String id : ids) {
+                    String trimmed = id.trim();
+                    if (!trimmed.isEmpty()) {
+                        authorLinkBatch.add(new Object[]{bookId, trimmed});
+                    }
                 }
             }
             String genreCodes = (String) row[20];
             if (genreCodes != null && !genreCodes.isBlank()) {
-                for (String code : genreCodes.split(",")) {
-                    genreLinkBatch.add(new Object[]{bookId, code.trim()});
+                String[] codes = genreCodes.split(",");
+                for (String code : codes) {
+                    String trimmed = code.trim();
+                    if (!trimmed.isEmpty()) {
+                        genreLinkBatch.add(new Object[]{bookId, trimmed});
+                    }
                 }
             }
         }
 
-        jt.batchUpdate(insertBookSql, bookBatch, 1000, (ps, row) -> {
-            int idx = 1;
-            ps.setString(idx++, (String) row[0]);
-            ps.setString(idx++, (String) row[1]);
-            ps.setString(idx++, (String) row[2]);
-            ps.setInt(idx++, (Integer) row[3]);
-            ps.setString(idx++, (String) row[4]);
-            ps.setString(idx++, (String) row[5]);
-            ps.setString(idx++, (String) row[6]);
-            ps.setString(idx++, (String) row[7]);
-            ps.setLong(idx++, (Long) row[8]);
-            ps.setString(idx++, (String) row[9]);
-            ps.setString(idx++, (String) row[10]);
-            ps.setInt(idx++, (Integer) row[11]);
-            ps.setInt(idx++, (Integer) row[12]);
-            ps.setString(idx++, (String) row[13]);
-            ps.setString(idx++, (String) row[14]);
-            ps.setInt(idx++, (Integer) row[15]);
-            ps.setInt(idx++, (Integer) row[16]);
-            ps.setString(idx++, (String) row[17]);
-            ps.setString(idx++, (String) row[18]);
-            ps.setString(idx++, (String) row[19]);
-            if (row[20] == null) ps.setNull(idx++, java.sql.Types.INTEGER); else ps.setInt(idx++, (Integer) row[20]);
-            ps.setString(idx++, (String) row[21]);
-            ps.setString(idx++, (String) row[22]);
-            ps.setInt(idx++, row[23] == null ? 0 : (Integer) row[23]);
-            ps.setString(idx++, (String) row[24]);
-            ps.setString(idx++, (String) row[25]);
-            ps.setString(idx++, (String) row[26]);
-        });
+        // ОПТИМІЗОВАНО: використання batchUpdate з великим розміром батчу
+        jt.batchUpdate(insertBookSql, bookBatch);
 
-        // Re-import must replace metadata links instead of accumulating stale authors/genres.
-        List<Object[]> bookIdsForCleanup = new ArrayList<>(booksData.size());
-        for (Object[] row : booksData) bookIdsForCleanup.add(new Object[]{row[0]});
-        jt.batchUpdate("DELETE FROM book_authors WHERE book_id = ?", bookIdsForCleanup, 1000,
-                (ps, row) -> ps.setString(1, (String) row[0]));
-        jt.batchUpdate("DELETE FROM book_genres WHERE book_id = ?", bookIdsForCleanup, 1000,
-                (ps, row) -> ps.setString(1, (String) row[0]));
+        // ОПТИМІЗОВАНО: видалення старих зв'язків одним запитом
+        if (!bookBatch.isEmpty()) {
+            List<String> bookIds = new ArrayList<>();
+            for (Object[] row : bookBatch) {
+                bookIds.add((String) row[0]);
+            }
+            String placeholders = String.join(",", bookIds.stream().map(id -> "?").toArray(String[]::new));
+            jt.update("DELETE FROM book_authors WHERE book_id IN (" + placeholders + ")", bookIds.toArray());
+            jt.update("DELETE FROM book_genres WHERE book_id IN (" + placeholders + ")", bookIds.toArray());
+        }
 
+        // ОПТИМІЗОВАНО: вставка зв'язків з авторами
         if (!authorLinkBatch.isEmpty()) {
-            // authorLinkBatch зараз містить книгу + ключ автора
-            // Перетворимо ключі на реальні ID
-            List<Object[]> realAuthorLinks = new ArrayList<>();
+            List<Object[]> realAuthorLinks = new ArrayList<>(authorLinkBatch.size());
             for (Object[] link : authorLinkBatch) {
                 String bookId = (String) link[0];
                 String authorKey = (String) link[1];
@@ -161,25 +153,39 @@ public class JdbcBatchWriter {
             }
             if (!realAuthorLinks.isEmpty()) {
                 jt.batchUpdate("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
-                        realAuthorLinks, 1000, (ps, row) -> {
-                            ps.setString(1, (String) row[0]);
-                            ps.setString(2, (String) row[1]);
-                        });
+                        realAuthorLinks);
             }
         }
+
+        // ОПТИМІЗОВАНО: вставка зв'язків з жанрами
         if (!genreLinkBatch.isEmpty()) {
             jt.batchUpdate("INSERT OR IGNORE INTO book_genres (book_id, genre_code) VALUES (?, ?)",
-                    genreLinkBatch, 1000, (ps, row) -> {
-                        ps.setString(1, (String) row[0]);
-                        ps.setString(2, (String) row[1]);
-                    });
+                    genreLinkBatch);
         }
 
-        log.debug("Batch inserted {} books", bookBatch.size());
+        long duration = System.currentTimeMillis() - startTime;
+        log.debug("Batch inserted {} books in {} ms", bookBatch.size(), duration);
+    }
+
+    /** Derives the same normalized author order as BookDenormalizedValues without materializing Author objects. */
+    static String authorSortFromKeys(String encodedKeys) {
+        if (encodedKeys == null || encodedKeys.isBlank()) return "";
+        String best = null;
+        for (String key : encodedKeys.split(",")) {
+            String[] parts = key.split("\\|", -1);
+            String first = parts.length > 0 ? parts[0].trim() : "";
+            String middle = parts.length > 1 ? parts[1].trim() : "";
+            String last = parts.length > 2 ? parts[2].trim() : "";
+            String value = (last + " " + first + " " + middle).trim()
+                    .toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ");
+            if (!value.isBlank() && (best == null || value.compareTo(best) < 0)) best = value;
+        }
+        return best == null ? "" : best;
     }
 
     /**
      * Батчева вставка авторів.
+     * ОПТИМІЗОВАНО: збільшено розмір батчу та використання prepared statement
      */
     public void batchInsertAuthors(List<Author> authors) {
         if (authors == null || authors.isEmpty()) return;
@@ -188,7 +194,7 @@ public class JdbcBatchWriter {
                 INSERT OR IGNORE INTO authors (id, first_name, middle_name, last_name, search_name)
                 VALUES (?, ?, ?, ?, ?)
                 """;
-        List<Object[]> batch = new ArrayList<>();
+        List<Object[]> batch = new ArrayList<>(authors.size());
         for (Author a : authors) {
             String searchName = buildSearchName(a);
             batch.add(new Object[]{
@@ -204,7 +210,79 @@ public class JdbcBatchWriter {
     }
 
     /**
+     * Inserts missing authors and resolves the actual persistent IDs in bounded SQL chunks.
+     * ОПТИМІЗОВАНО: збільшено розмір чанку та використання IN-запитів
+     */
+    public Map<String, String> batchInsertAuthorsAndResolveIds(List<Author> authors) {
+        if (authors == null || authors.isEmpty()) return Map.of();
+
+        batchInsertAuthors(authors);
+
+        Map<String, List<String>> fullKeysByPair = new LinkedHashMap<>();
+        for (Author author : authors) {
+            fullKeysByPair.computeIfAbsent(authorPairKey(author), ignored -> new ArrayList<>())
+                    .add(authorKey(author));
+        }
+
+        List<String> pairs = new ArrayList<>(fullKeysByPair.keySet());
+        Map<String, String> resolved = new HashMap<>();
+        // ОПТИМІЗОВАНО: збільшено розмір чанку до 500
+        final int pairsPerQuery = 500;
+
+        for (int from = 0; from < pairs.size(); from += pairsPerQuery) {
+            int to = Math.min(pairs.size(), from + pairsPerQuery);
+            StringBuilder sql = new StringBuilder(
+                    "SELECT id, COALESCE(first_name,'') AS first_name, "
+                            + "COALESCE(last_name,'') AS last_name FROM authors WHERE ");
+            List<Object> args = new ArrayList<>((to - from) * 2);
+            for (int i = from; i < to; i++) {
+                if (i > from) sql.append(" OR ");
+                sql.append("(COALESCE(first_name,'') = ? AND COALESCE(last_name,'') = ?)");
+                String pair = pairs.get(i);
+                int sep = pair.indexOf('|');
+                args.add(pair.substring(0, sep));
+                args.add(pair.substring(sep + 1));
+            }
+
+            List<Object[]> rows = getJdbcTemplate().query(
+                    sql.toString(),
+                    (rs, rowNum) -> new Object[]{
+                            rs.getString("id"),
+                            rs.getString("first_name"),
+                            rs.getString("last_name")
+                    },
+                    args.toArray());
+
+            for (Object[] row : rows) {
+                String id = (String) row[0];
+                String pair = safe((String) row[1]) + "|" + safe((String) row[2]);
+                for (String fullKey : fullKeysByPair.getOrDefault(pair, List.of())) {
+                    resolved.put(fullKey, id);
+                }
+            }
+        }
+
+        if (resolved.size() < authors.size()) {
+            log.debug("Resolved {} author keys for {} pending author objects", resolved.size(), authors.size());
+        }
+        return resolved;
+    }
+
+    private static String authorKey(Author a) {
+        return safe(a.getFirstName()) + "|" + safe(a.getMiddleName()) + "|" + safe(a.getLastName());
+    }
+
+    private static String authorPairKey(Author a) {
+        return safe(a.getFirstName()) + "|" + safe(a.getLastName());
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
+    /**
      * Батчева вставка жанрів.
+     * ОПТИМІЗОВАНО: збільшено розмір батчу
      */
     public void batchInsertGenres(List<Genre> genres) {
         if (genres == null || genres.isEmpty()) return;
@@ -213,7 +291,7 @@ public class JdbcBatchWriter {
                 INSERT OR IGNORE INTO genres (code, name, parent_code, fb2_code)
                 VALUES (?, ?, ?, ?)
                 """;
-        List<Object[]> batch = new ArrayList<>();
+        List<Object[]> batch = new ArrayList<>(genres.size());
         for (Genre g : genres) {
             batch.add(new Object[]{
                     g.getId().asString(),

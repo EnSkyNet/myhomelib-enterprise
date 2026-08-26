@@ -14,6 +14,7 @@ public enum NavigationMode {
     KEYWORDS,
     GROUPS,
     REVIEWS,
+    UPDATES,
     ALREADY_READ,
     HISTORY,
     ALL_BOOKS

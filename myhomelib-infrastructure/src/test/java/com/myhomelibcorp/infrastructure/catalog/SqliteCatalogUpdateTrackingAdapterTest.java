@@ -95,6 +95,32 @@ class SqliteCatalogUpdateTrackingAdapterTest {
     }
 
     @Test
+    void pendingUpdateItemsPreferFollowedCoauthorAndExposeBookMetadataForUi() {
+        String followed = UUID.randomUUID().toString();
+        String other = UUID.randomUUID().toString();
+        String bookId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO authors(id, first_name, last_name) VALUES (?, 'Followed', 'Writer')", followed);
+        jdbc.update("INSERT INTO authors(id, first_name, last_name) VALUES (?, 'Other', 'Author')", other);
+
+        adapter.beginSync("remote-collection:c1", null, "source-a");
+        adapter.setAuthorFollowed(AuthorId.fromString(followed), true);
+        insertBook(bookId, false);
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?, ?)", bookId, other);
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?, ?)", bookId, followed);
+
+        var revision2 = adapter.beginSync("remote-collection:c1", null, "source-b");
+        adapter.recordImportedBooks(revision2, List.of(snapshot(bookId, "book-new")));
+
+        assertThat(adapter.findPendingUpdateItems(10, 0)).singleElement().satisfies(item -> {
+            assertThat(item.bookId()).isEqualTo(bookId);
+            assertThat(item.bookTitle()).isEqualTo("Title " + bookId);
+            assertThat(item.authorId()).isEqualTo(followed);
+            assertThat(item.authorName()).isEqualTo("Writer Followed");
+            assertThat(item.type()).isEqualTo(CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR);
+        });
+    }
+
+    @Test
     void successfulDownloadBaselineAcknowledgesPendingBookEvents() {
         String authorId = UUID.randomUUID().toString();
         String bookId = UUID.randomUUID().toString();
