@@ -95,7 +95,7 @@ public class DefaultNavigationService implements NavigationService {
         BookQuery allQuery = BookQuery.builder()
                 .pagination(Pagination.of(10000, 0))
                 .build();
-        List<Book> allBooks = bookQueryRepository.find(allQuery);
+        List<Book> allBooks = bookQueryRepository.findPage(allQuery).content();
         List<Book> filtered = allBooks.stream()
                 .filter(b -> {
                     String bs = b.getSeries();
@@ -313,7 +313,7 @@ public class DefaultNavigationService implements NavigationService {
                 .text(publisherName)
                 .pagination(Pagination.of(1000, 0))
                 .build();
-        List<Book> books = bookQueryRepository.find(query);
+        List<Book> books = bookQueryRepository.findPage(query).content();
         List<BookDto> dtos = books.stream()
                 .map(bookMapper::toDto)
                 .collect(Collectors.toList());

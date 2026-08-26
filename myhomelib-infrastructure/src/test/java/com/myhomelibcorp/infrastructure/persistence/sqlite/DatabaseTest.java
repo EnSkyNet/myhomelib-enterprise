@@ -131,7 +131,7 @@ public class DatabaseTest {
         BookQuery query = BookQuery.builder()
                 .pagination(Pagination.of(10, 0))
                 .build();
-        var books = bookQueryRepository.find(query);
+        var books = bookQueryRepository.findPage(query).content();
         assertThat(books).isNotNull();
         assertThat(books).isEmpty();
     }

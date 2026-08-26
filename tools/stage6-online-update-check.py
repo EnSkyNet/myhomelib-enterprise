@@ -191,7 +191,9 @@ def check_java_markers() -> None:
 
     update_uc = (ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/UpdateCollectionFromNetworkUseCase.java").read_text(encoding="utf-8")
     assert "CatalogSourceIdentity.remoteCollection(collection.getId())" in update_uc
-    assert ".catalogSourceLocation(inpxUrl)" in update_uc
+    assert ".catalogSourceLocation(pkg.sourceUrl())" in update_uc
+    assert ".catalogFullSnapshot(pkg.fullSnapshot())" in update_uc
+    assert "catalogVersion" in update_uc
 
     download_uc = (ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/DownloadBookUseCase.java").read_text(encoding="utf-8")
     assert "catalogUpdateTrackingPort.markDownloadedBaseline(bookId)" in download_uc

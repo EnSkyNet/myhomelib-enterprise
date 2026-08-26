@@ -9,7 +9,6 @@ import com.myhomelibcorp.reader.model.PageLayout;
 import com.myhomelibcorp.reader.model.TextRunLayout;
 import com.myhomelibcorp.reader.render.api.ReaderRenderer;
 import com.myhomelibcorp.reader.render.api.RenderMetrics;
-import com.myhomelibcorp.reader.render.api.RenderSurface;
 import javafx.geometry.VPos;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -57,7 +56,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
     }
 
     @Override
-    public void renderPage(PageLayout page, RenderSurface surface, ReaderTheme theme) {
+    public void renderPage(PageLayout page, ReaderTheme theme) {
         if (theme == null) {
             theme = ReaderTheme.fromName("light");
         }
@@ -214,21 +213,6 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
         return null;
     }
 
-    /** Залишено для сумісності з існуючим кодом. */
-    public void cacheImage(String id, byte[] data) {
-        if (id == null || data == null || data.length == 0) {
-            return;
-        }
-        try {
-            Image image = new Image(new java.io.ByteArrayInputStream(data));
-            if (!image.isError()) {
-                imageCache.put(id, image);
-            }
-        } catch (Exception e) {
-            log.debug("Image cache error {}: {}", id, e.getMessage());
-        }
-    }
-
     public void setResourceRepository(ResourceRepository resources) {
         this.resources = resources;
         clearImageCache();
@@ -268,8 +252,4 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
         return gc;
     }
 
-    @Override
-    public boolean isReady() {
-        return canvas.getWidth() > 0 && canvas.getHeight() > 0;
-    }
 }

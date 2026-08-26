@@ -18,7 +18,7 @@ public class SwitchCollectionUseCase {
     private final CollectionRepository collectionRepository;
     private final CollectionLifecycleService collectionLifecycleService;
 
-    public void execute(String collectionId) {
+    public Collection execute(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) {
             throw new IllegalArgumentException("ID колекції не може бути порожнім");
         }
@@ -29,24 +29,40 @@ public class SwitchCollectionUseCase {
         }
 
         Collection collection = collectionOpt.get();
-        execute(collection);
+        return execute(collection);
     }
 
-    public void execute(Collection collection) {
+    public Collection execute(Collection collection) {
+        return execute(collection, true);
+    }
+
+    public Collection execute(Collection collection, boolean rebuildIndex) {
         if (collection == null) {
             throw new IllegalArgumentException("Колекція не може бути null");
         }
 
-        log.info("🔄 Переключення на колекцію: {}", collection.getName());
+        // UI DTO та зовнішні виклики можуть містити лише частину metadata.
+        // Якщо ID відомий, завжди беремо авторитетний запис із metadata-БД,
+        // щоб не втратити URL/login/password/notes під час активації.
+        Collection target = collection;
+        if (collection.getId() != null && !collection.getId().isBlank()) {
+            target = collectionRepository.findById(collection.getId()).orElse(collection);
+        }
+
+        log.info("🔄 Переключення на колекцію: {}", target.getName());
 
         // Перевіряємо, чи це вже поточна колекція
         Collection current = collectionLifecycleService.getCurrentCollection();
-        if (current != null && current.getId().equals(collection.getId())) {
-            log.info("Колекція {} вже активна", collection.getName());
-            return;
+        if (current != null && current.getId() != null && current.getId().equals(target.getId())) {
+            // Репозиторій міг бути оновлений (rename/properties), тому освіжаємо
+            // descriptor без перестворення DataSource.
+            collectionLifecycleService.updateCurrentCollection(target);
+            log.info("Колекція {} вже активна; metadata синхронізовано", target.getName());
+            return target;
         }
 
         // Виконуємо повну ініціалізацію
-        collectionLifecycleService.initializeCollection(collection, true);
+        collectionLifecycleService.initializeCollection(target, rebuildIndex);
+        return target;
     }
 }

@@ -77,6 +77,20 @@ public class InpxImportPipeline {
             String catalogSourceLocation,
             DoubleConsumer progressListener,
             Consumer<String> statusConsumer) {
+        return importFileWithResult(file, batchSize, rootDirectory, cancelFlag, catalogSourceKey,
+                catalogSourceLocation, true, progressListener, statusConsumer);
+    }
+
+    public ImportResult importFileWithResult(
+            Path file,
+            int batchSize,
+            Path rootDirectory,
+            AtomicBoolean cancelFlag,
+            String catalogSourceKey,
+            String catalogSourceLocation,
+            boolean catalogFullSnapshot,
+            DoubleConsumer progressListener,
+            Consumer<String> statusConsumer) {
 
         long startedAt = System.currentTimeMillis();
         int effectiveBatch = Math.max(50, Math.min(batchSize <= 0 ? 1000 : batchSize, 10_000));
@@ -95,9 +109,12 @@ public class InpxImportPipeline {
         notifyProgress(progressListener, 0.0);
 
         long totalRecords = reader.count(file, cancelFlag);
-        if (totalRecords < 0 || isCancelled(cancelFlag)) {
+        if (isCancelled(cancelFlag)) {
             notifyStatus(statusConsumer, "Імпорт INPX скасовано під час аналізу індексу");
             return new ImportResult(0, 0, 0, 0, System.currentTimeMillis() - startedAt);
+        }
+        if (totalRecords < 0) {
+            throw new IllegalStateException("Не вдалося проаналізувати INPX: " + file);
         }
 
         notifyStatus(statusConsumer, String.format(Locale.ROOT,
@@ -131,7 +148,7 @@ public class InpxImportPipeline {
                 outcome = transaction.execute(status -> {
                     ImportOutcome current = importTransactional(
                             file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation,
-                            sourceFingerprint, totalRecords, progressListener, statusConsumer);
+                            sourceFingerprint, totalRecords, catalogFullSnapshot, progressListener, statusConsumer);
                     if (current.cancelled()) {
                         status.setRollbackOnly();
                         log.info("INPX import cancelled; transaction rolled back after {} parsed records",
@@ -145,7 +162,7 @@ public class InpxImportPipeline {
             } else {
                 outcome = importTransactional(
                         file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation,
-                        sourceFingerprint, totalRecords, progressListener, statusConsumer);
+                        sourceFingerprint, totalRecords, catalogFullSnapshot, progressListener, statusConsumer);
             }
         } finally {
             if (optimized) bulkOptimizer.disableBulkInsertMode();
@@ -182,6 +199,7 @@ public class InpxImportPipeline {
             String sourceLocation,
             String sourceFingerprint,
             long totalRecords,
+            boolean catalogFullSnapshot,
             DoubleConsumer progressListener,
             Consumer<String> statusConsumer) {
 
@@ -190,7 +208,9 @@ public class InpxImportPipeline {
                 ? catalogUpdateTrackingPort.beginSync(sourceKey, sourceLocation, sourceFingerprint)
                 : new CatalogSyncSession(
                         CatalogSourceIdentity.stableId(sourceKey), sourceKey, 1L, sourceFingerprint, true, true);
-        if (tracked) catalogUpdateTrackingPort.markTrackedBooksMissing(syncSession);
+        if (tracked && catalogFullSnapshot) {
+            catalogUpdateTrackingPort.markTrackedBooksMissing(syncSession);
+        }
 
         String sourceMarker = sourceKey.startsWith("remote-collection:")
                 ? "catalog:" + syncSession.sourceId()

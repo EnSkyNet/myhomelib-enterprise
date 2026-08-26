@@ -6,7 +6,6 @@ import com.myhomelibcorp.application.imports.error.ImportErrorHandler;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
-import com.myhomelibcorp.application.imports.transaction.ImportTransaction;
 import com.myhomelibcorp.application.port.out.cache.CacheRefresherPort;
 import com.myhomelibcorp.application.port.out.event.EventPublisher;
 import com.myhomelibcorp.application.port.out.importer.FastImportService;
@@ -32,7 +31,6 @@ public class ImportFileUseCase {
 
     private final ImporterRegistry importerRegistry;
     private final BookSaver bookSaver;
-    private final ImportTransaction importTransaction;
     private final ImportErrorHandler errorHandler;
     private final EventPublisher eventPublisher;
     private final IndexRebuilder indexRebuilder;
@@ -45,16 +43,6 @@ public class ImportFileUseCase {
 
     private static final long INDEX_DISABLE_THRESHOLD = 500_000;
 
-    @Deprecated
-    public int execute(Path file) {
-        ImportContext context = ImportContext.builder()
-                .file(file)
-                .batchSize(defaultBatchSize)
-                .indexAfterSave(true)
-                .build();
-        ImportResult result = execute(context);
-        return (int) result.imported();
-    }
 
     public ImportResult execute(ImportContext context) {
         if (context == null || context.getFile() == null) {
@@ -80,6 +68,7 @@ public class ImportFileUseCase {
                 context.getCancelFlag(),
                 context.getCatalogSourceKey(),
                 context.getCatalogSourceLocation(),
+                context.isCatalogFullSnapshot(),
                 context.getProgressListener(),
                 context.getStatusConsumer());
 
@@ -134,7 +123,7 @@ public class ImportFileUseCase {
                     batch.add(book);
                     if (batch.size() >= batchSize) {
                         int attempted = batch.size();
-                        int saved = importTransaction.saveAllInTransaction(batch, indexAfterSave, policy);
+                        int saved = bookSaver.saveBatch(batch, indexAfterSave, policy);
                         stats.incrementImported(saved);
                         stats.getSkipped().addAndGet(attempted - saved);
                         batch.clear();
@@ -143,7 +132,7 @@ public class ImportFileUseCase {
             }
             if (!batch.isEmpty()) {
                 int attempted = batch.size();
-                int saved = importTransaction.saveAllInTransaction(batch, indexAfterSave, policy);
+                int saved = bookSaver.saveBatch(batch, indexAfterSave, policy);
                 stats.incrementImported(saved);
                 stats.getSkipped().addAndGet(attempted - saved);
                 batch.clear();

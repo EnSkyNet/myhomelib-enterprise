@@ -238,7 +238,7 @@ public class ExportController {
         InpxExportRequest request = InpxExportRequest.builder()
                 .bookIds(bookIds).outputFile(file.toPath()).collectionName(collectionName)
                 .collectionVersion(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")))
-                .includeExtraData(true).build();
+                .build();
 
         dialogService.showInfo("Експорт", "Початок експорту в INPX...");
         Thread worker = new Thread(() -> {

@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.service;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionPropertiesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
@@ -32,7 +33,9 @@ public class CollectionPropertiesUiService {
         try { pass.setText(nvl(c.getDecryptedPassword())); } catch(Exception ignored) { }
         TextField baseUrl=new TextField(nvl(c.getUrl())); TextField inpxUrl=new TextField(settings.get("collection."+c.getId()+".inpxUrl",""));
         TextArea notes=new TextArea(nvl(c.getNotes())); notes.setPrefRowCount(3);
-        ComboBox<String> type=new ComboBox<>(); type.getItems().addAll("Локальна FB2/змішана", "INPX/архівна", "Віддалена/online"); type.getSelectionModel().select(Math.max(0,Math.min(2,c.getType())));
+        ComboBox<CollectionType> type=new ComboBox<>();
+        type.getItems().setAll(CollectionType.values());
+        type.setValue(CollectionType.fromCode(c.getType()));
         Button browse=new Button("Обрати..."); browse.setOnAction(e->{DirectoryChooser dc=new DirectoryChooser();dc.setTitle("Коренева папка колекції");try{Path p=Path.of(root.getText());if(java.nio.file.Files.isDirectory(p))dc.setInitialDirectory(p.toFile());}catch(Exception ignored){}var f=dc.showDialog(owner);if(f!=null)root.setText(f.toPath().toString());});
         GridPane g=new GridPane();g.setHgap(8);g.setVgap(8);g.setPadding(new Insets(12));int r=0;
         g.addRow(r++,new Label("Назва:"),name);g.addRow(r++,new Label("Тип:"),type);g.addRow(r++,new Label("Коренева папка:"),root,browse);
@@ -42,7 +45,8 @@ public class CollectionPropertiesUiService {
         if(d.showAndWait().orElse(ButtonType.CANCEL)!=ButtonType.OK)return null;
         try {
             Path rootPath=root.getText().isBlank()?c.getRootFolder():Path.of(root.getText());
-            Collection updated=updateUseCase.execute(c,name.getText(),rootPath,type.getSelectionModel().getSelectedIndex(),user.getText(),pass.getText(),baseUrl.getText(),notes.getText());
+            CollectionType selectedType = type.getValue() == null ? CollectionType.fromCode(c.getType()) : type.getValue();
+            Collection updated=updateUseCase.execute(c,name.getText(),rootPath,selectedType.getCode(),user.getText(),pass.getText(),baseUrl.getText(),notes.getText());
             settings.put("collection."+updated.getId()+".inpxUrl",inpxUrl.getText().trim()); state.setCurrentLibraryCollection(updated); return updated;
         } catch(Exception ex) { alert(owner,"Не вдалося зберегти властивості: "+ex.getMessage()); return null; }
     }

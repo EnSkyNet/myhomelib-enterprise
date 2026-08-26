@@ -3,19 +3,20 @@ package com.myhomelibcorp.application.usecase.export;
 import com.myhomelibcorp.application.dto.InpxExportRequest;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.List;
+import java.util.Iterator;
+import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -24,16 +25,24 @@ import java.util.zip.ZipOutputStream;
 @Slf4j
 public class ExportToInpxUseCase {
 
-    private final BookQueryRepository bookQueryRepository;
-
     private static final char FIELD_DELIMITER = 4;
     private static final String ITEM_DELIMITER = ":";
     private static final String SUBITEM_DELIMITER = ",";
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd");
+    private static final DateTimeFormatter VERSION_FORMATTER = DateTimeFormatter.ofPattern("yyyyMMdd");
+    private static final String STRUCTURE =
+            "AUTHOR;GENRE;TITLE;SERIES;SERNO;FILE;SIZE;LIBID;DEL;EXT;DATE;INSNO;FOLDER;LANG;KEYWORDS;";
+
+    private final BookQueryRepository bookQueryRepository;
 
     public record ExportResult(int exported, int failed, String error) {
         public static ExportResult success(int count) {
             return new ExportResult(count, 0, null);
+        }
+
+        public static ExportResult partial(int exported, int failed) {
+            return new ExportResult(exported, failed,
+                    "Експортовано " + exported + " книг; не вдалося експортувати " + failed + ".");
         }
 
         public static ExportResult failure(String error) {
@@ -41,141 +50,123 @@ public class ExportToInpxUseCase {
         }
     }
 
+    private record ExportCounts(int exported, int failed) { }
+
     public ExportResult execute(InpxExportRequest request) {
+        if (request == null) {
+            return ExportResult.failure("Параметри експорту не задано");
+        }
+        if (request.getOutputFile() == null) {
+            return ExportResult.failure("Не задано вихідний INPX-файл");
+        }
+
         log.info("Початок експорту в INPX: {}", request.getOutputFile());
 
-        try {
-            // Отримуємо книги
-            List<Book> books;
-            if (request.getBookIds() != null && !request.getBookIds().isEmpty()) {
-                books = bookQueryRepository.findByIds(request.getBookIds());
-            } else {
-                books = bookQueryRepository.findAll();
-            }
-
-            if (books.isEmpty()) {
+        try (Stream<Book> books = openBookStream(request)) {
+            Iterator<Book> iterator = books.iterator();
+            if (!iterator.hasNext()) {
                 log.warn("Немає книг для експорту");
                 return ExportResult.failure("Немає книг для експорту");
             }
 
-            log.info("Експортується {} книг", books.size());
-
-            // Створюємо INPX файл
             Path outputFile = request.getOutputFile();
-            Files.createDirectories(outputFile.getParent());
+            Path parent = outputFile.toAbsolutePath().normalize().getParent();
+            if (parent != null) {
+                Files.createDirectories(parent);
+            }
 
+            ExportCounts counts;
             try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(outputFile))) {
-                // 1. Основний файл books.inp
                 zos.putNextEntry(new ZipEntry("books.inp"));
-                exportBooks(books, zos, request.isIncludeExtraData());
+                counts = exportBooks(iterator, zos);
                 zos.closeEntry();
 
-                // 2. Файл версії
                 zos.putNextEntry(new ZipEntry("version.info"));
-                String version = request.getCollectionVersion() != null ?
-                        request.getCollectionVersion() :
-                        LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd"));
+                String version = request.getCollectionVersion() != null && !request.getCollectionVersion().isBlank()
+                        ? request.getCollectionVersion().trim()
+                        : LocalDateTime.now().format(VERSION_FORMATTER);
                 zos.write(version.getBytes(StandardCharsets.UTF_8));
                 zos.closeEntry();
 
-                // 3. Файл структури
                 zos.putNextEntry(new ZipEntry("structure.info"));
-                String structure = "AUTHOR;GENRE;TITLE;SERIES;SERNO;FILE;SIZE;LIBID;DEL;EXT;DATE;INSNO;FOLDER;LANG;KEYWORDS;";
-                zos.write(structure.getBytes(StandardCharsets.UTF_8));
+                zos.write(STRUCTURE.getBytes(StandardCharsets.UTF_8));
                 zos.closeEntry();
 
-                // 4. Файл інформації про колекцію
                 zos.putNextEntry(new ZipEntry("collection.info"));
-                String collectionInfo = buildCollectionInfo(request);
-                zos.write(collectionInfo.getBytes(StandardCharsets.UTF_8));
+                zos.write(buildCollectionInfo(request).getBytes(StandardCharsets.UTF_8));
                 zos.closeEntry();
             }
 
-            log.info("Експорт в INPX завершено: {}", outputFile);
-            return ExportResult.success(books.size());
-
+            log.info("Експорт в INPX завершено: {}, успішно={}, помилок={}",
+                    outputFile, counts.exported(), counts.failed());
+            return counts.failed() == 0
+                    ? ExportResult.success(counts.exported())
+                    : ExportResult.partial(counts.exported(), counts.failed());
         } catch (Exception e) {
             log.error("Помилка експорту в INPX", e);
-            return ExportResult.failure(e.getMessage());
+            String message = e.getMessage() == null || e.getMessage().isBlank()
+                    ? e.getClass().getSimpleName()
+                    : e.getMessage();
+            return ExportResult.failure(message);
         }
     }
 
-    private void exportBooks(List<Book> books, ZipOutputStream zos, boolean includeExtraData) throws IOException {
-        BufferedWriter writer = new BufferedWriter(new java.io.OutputStreamWriter(zos, StandardCharsets.UTF_8));
+    private Stream<Book> openBookStream(InpxExportRequest request) {
+        if (request.getBookIds() != null && !request.getBookIds().isEmpty()) {
+            return bookQueryRepository.findByIds(request.getBookIds()).stream();
+        }
+        // streamAll() traverses the entire catalog page-by-page and avoids the legacy 10,000-row cap.
+        return bookQueryRepository.streamAll();
+    }
 
-        for (Book book : books) {
+    private ExportCounts exportBooks(Iterator<Book> books, ZipOutputStream zos) throws IOException {
+        BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(zos, StandardCharsets.UTF_8));
+        int exported = 0;
+        int failed = 0;
+
+        while (books.hasNext()) {
+            Book book = books.next();
             try {
-                String line = buildBookLine(book, includeExtraData);
-                writer.write(line);
+                writer.write(buildBookLine(book));
                 writer.newLine();
+                exported++;
             } catch (Exception e) {
-                log.error("Помилка експорту книги: {}", book.getId(), e);
+                failed++;
+                log.error("Помилка експорту книги: {}", book != null ? book.getId() : null, e);
             }
         }
 
         writer.flush();
+        return new ExportCounts(exported, failed);
     }
 
-    private String buildBookLine(Book book, boolean includeExtraData) {
+    private String buildBookLine(Book book) {
         StringBuilder sb = new StringBuilder();
 
-        // AUTHOR
         sb.append(buildAuthors(book)).append(FIELD_DELIMITER);
-
-        // GENRE
         sb.append(buildGenres(book)).append(FIELD_DELIMITER);
-
-        // TITLE
         sb.append(escapeField(book.getTitle())).append(FIELD_DELIMITER);
-
-        // SERIES
         sb.append(book.getSeries() != null ? escapeField(book.getSeries()) : "").append(FIELD_DELIMITER);
-
-        // SERNO
         sb.append(book.getSequenceNumber() != null ? book.getSequenceNumber() : 0).append(FIELD_DELIMITER);
-
-        // FILE
         sb.append(escapeField(book.getFileName())).append(FIELD_DELIMITER);
-
-        // SIZE
         sb.append(book.getFileSize()).append(FIELD_DELIMITER);
-
-        // LIBID
         sb.append(book.getId().asString()).append(FIELD_DELIMITER);
-
-        // DEL
         sb.append(book.isDeleted() ? 1 : 0).append(FIELD_DELIMITER);
 
-        // EXT
-        String ext = book.getFileName() != null && book.getFileName().contains(".") ?
-                book.getFileName().substring(book.getFileName().lastIndexOf('.') + 1) : "";
+        String ext = book.getFileName() != null && book.getFileName().contains(".")
+                ? book.getFileName().substring(book.getFileName().lastIndexOf('.') + 1)
+                : "";
         sb.append(ext).append(FIELD_DELIMITER);
 
-        // DATE
-        String date = book.getUpdateDate() != null ?
-                book.getUpdateDate().format(DATE_FORMATTER) :
-                LocalDateTime.now().format(DATE_FORMATTER);
+        String date = book.getUpdateDate() != null
+                ? book.getUpdateDate().format(DATE_FORMATTER)
+                : LocalDateTime.now().format(DATE_FORMATTER);
         sb.append(date).append(FIELD_DELIMITER);
 
-        // INSNO
         sb.append(0).append(FIELD_DELIMITER);
-
-        // FOLDER
         sb.append(book.getFolder() != null ? escapeField(book.getFolder()) : "").append(FIELD_DELIMITER);
-
-        // LANG
         sb.append(book.getLanguage() != null ? book.getLanguage().toString() : "uk").append(FIELD_DELIMITER);
-
-        // KEYWORDS
         sb.append(book.getKeywords() != null ? escapeField(book.getKeywords()) : "");
-
-        // Додаткові дані (якщо потрібно)
-        if (includeExtraData) {
-            sb.append(FIELD_DELIMITER).append(book.getRate());
-            sb.append(FIELD_DELIMITER).append(book.getProgress());
-            sb.append(FIELD_DELIMITER).append(book.getReview() != null ? escapeField(book.getReview()) : "");
-        }
-
         return sb.toString();
     }
 
@@ -214,11 +205,11 @@ public class ExportToInpxUseCase {
     private String buildCollectionInfo(InpxExportRequest request) {
         StringBuilder sb = new StringBuilder();
         sb.append(request.getCollectionName() != null ? request.getCollectionName() : "MyHomeLib Collection").append("\n");
-        sb.append(request.getOutputFile().getFileName().toString()).append("\n");
-        sb.append("0\n"); // Тип колекції (0 – локальна FB2)
+        sb.append(request.getOutputFile().getFileName()).append("\n");
+        sb.append("0\n");
         sb.append("Експортовано з MyHomeLib Enterprise\n");
-        sb.append("\n"); // URL
-        sb.append("\n"); // Скрипт
+        sb.append("\n");
+        sb.append("\n");
         return sb.toString();
     }
 

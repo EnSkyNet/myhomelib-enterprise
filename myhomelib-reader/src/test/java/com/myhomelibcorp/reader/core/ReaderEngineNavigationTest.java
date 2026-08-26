@@ -12,7 +12,6 @@ import com.myhomelibcorp.reader.layout.FontMetricsProviderImpl;
 import com.myhomelibcorp.reader.layout.TextLayoutEngine;
 import com.myhomelibcorp.reader.render.api.ReaderRenderer;
 import com.myhomelibcorp.reader.render.api.RenderMetrics;
-import com.myhomelibcorp.reader.render.api.RenderSurface;
 import org.junit.jupiter.api.Test;
 
 import java.io.ByteArrayInputStream;
@@ -112,7 +111,7 @@ class ReaderEngineNavigationTest {
 
     private static final class NoopRenderer implements ReaderRenderer {
         @Override public void renderPage(com.myhomelibcorp.reader.model.PageLayout page,
-                                         RenderSurface surface, ReaderTheme theme) { }
+                                         ReaderTheme theme) { }
         @Override public RenderMetrics getMetrics() { return RenderMetrics.empty(); }
         @Override public void clear() { }
     }

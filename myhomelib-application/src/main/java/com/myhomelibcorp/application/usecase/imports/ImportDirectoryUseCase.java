@@ -16,9 +16,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.stream.Stream;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.DoubleConsumer;
 
 @Component
 @RequiredArgsConstructor
@@ -35,18 +33,6 @@ public class ImportDirectoryUseCase {
     private final BulkImportOptimizer bulkImportOptimizer;
     private final DatabaseInitializerPort databaseInitializerPort;
 
-    @Deprecated
-    public int execute(Path directory, DoubleConsumer progressConsumer, AtomicBoolean cancelFlag) {
-        ImportContext context = ImportContext.builder()
-                .rootDirectory(directory)
-                .batchSize(defaultBatchSize)
-                .indexAfterSave(true)
-                .progressListener(progressConsumer)
-                .cancelFlag(cancelFlag)
-                .build();
-        ImportResult result = execute(context);
-        return (int) result.imported();
-    }
 
     public ImportResult execute(ImportContext context) {
         // ЄДИНИЙ виклик ініціалізації на весь імпорт каталогу

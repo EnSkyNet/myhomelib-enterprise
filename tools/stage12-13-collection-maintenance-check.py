@@ -79,7 +79,11 @@ def maintenance_contract() -> None:
         require(ui, marker, "maintenance UI")
 
     legacy = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/integrity/DataIntegrityChecker.java")
-    require(legacy, "Legacy repair disabled", "legacy destructive bypass")
+    if "fixOrphanedBooks" in legacy:
+        raise AssertionError("legacy destructive repair method must be removed")
+    legacy_port = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/integrity/DataIntegrityPort.java")
+    if "fixOrphanedData" in legacy_port:
+        raise AssertionError("legacy destructive repair port must be removed")
     legacy_ui = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java")
     if "integrityChecker.fixOrphanedBooks()" in legacy_ui:
         raise AssertionError("legacy UI still invokes destructive fix")
@@ -90,7 +94,8 @@ def maintenance_contract() -> None:
     meta_ds = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/MetadataDatabaseConfig.java")
     require(meta_ds, "PRAGMA foreign_keys=ON", "metadata foreign keys")
     legacy_impl = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/integrity/DataIntegrityService.java")
-    require(legacy_impl, "Legacy destructive integrity repair is disabled", "legacy infrastructure bypass")
+    if "fixOrphanedData" in legacy_impl:
+        raise AssertionError("legacy destructive repair implementation must be removed")
     if "DELETE FROM books WHERE id NOT IN" in legacy_impl:
         raise AssertionError("legacy infrastructure still contains direct destructive repair SQL")
 

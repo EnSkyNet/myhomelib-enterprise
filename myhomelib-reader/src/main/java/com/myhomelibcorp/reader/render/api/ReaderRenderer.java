@@ -1,6 +1,5 @@
 package com.myhomelibcorp.reader.render.api;
 
-import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderTheme;
 import com.myhomelibcorp.reader.model.PageLayout;
 
@@ -10,39 +9,12 @@ import com.myhomelibcorp.reader.model.PageLayout;
  */
 public interface ReaderRenderer {
 
-    /**
-     * Рендерить сторінку на поверхні.
-     */
-    void renderPage(PageLayout page, RenderSurface surface, ReaderTheme theme);
+    /** Рендерить сторінку з поточною темою. */
+    void renderPage(PageLayout page, ReaderTheme theme);
 
-    /**
-     * Рендерить індикатор позиції на сторінці.
-     */
-    default void renderPosition(PageLayout page, ReaderPosition position, RenderSurface surface) {
-        // За замовчуванням нічого не робимо
-    }
-
-    /**
-     * Отримує метрики рендерингу.
-     */
+    /** Отримує метрики рендерингу. */
     RenderMetrics getMetrics();
 
-    /**
-     * Очищує поверхню.
-     */
+    /** Очищує поверхню рендерера. */
     void clear();
-
-    /**
-     * Перевіряє, чи рендерер готовий до роботи.
-     */
-    default boolean isReady() {
-        return true;
-    }
-
-    /**
-     * Отримує розмір поверхні.
-     */
-    default RenderSurface getSurface() {
-        return null;
-    }
 }

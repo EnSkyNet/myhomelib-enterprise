@@ -30,6 +30,11 @@ public class CollectionLifecycleAdapter implements CollectionLifecyclePort {
     }
 
     @Override
+    public void updateCurrentCollection(Collection collection) {
+        collectionManager.updateCurrentCollection(collection);
+    }
+
+    @Override
     public boolean hasActiveCollection() {
         return collectionManager.hasActiveCollection();
     }

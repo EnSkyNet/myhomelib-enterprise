@@ -14,7 +14,7 @@ public class AddToGroupBatchUseCase {
 
     private final GroupRepository groupRepository;
 
-    @Transactional
+    @Transactional(transactionManager = "collectionTransactionManager")
     public void execute(Long groupId, List<BookId> bookIds) {
         if (groupId == null || bookIds == null || bookIds.isEmpty()) {
             return;

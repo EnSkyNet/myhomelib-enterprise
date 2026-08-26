@@ -1,6 +1,5 @@
 package com.myhomelibcorp.application.imports.saver;
 
-import com.myhomelibcorp.application.event.BooksImportedBatchEvent;
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
@@ -55,7 +54,6 @@ public class BookSaver {
                     searchIndexer.indexBook(book);
                     searchIndexer.commit();
                 }
-                eventPublisher.publishEvent(new BooksImportedBatchEvent(List.of(book)));
                 return true;
             }
         }
@@ -73,7 +71,6 @@ public class BookSaver {
                     searchIndexer.indexBook(merged);
                     searchIndexer.commit();
                 }
-                eventPublisher.publishEvent(new BooksImportedBatchEvent(List.of(merged)));
                 return true;
             }
         }
@@ -87,7 +84,6 @@ public class BookSaver {
             searchIndexer.indexBook(book);
             searchIndexer.commit();
         }
-        eventPublisher.publishEvent(new BooksImportedBatchEvent(List.of(book)));
         log.debug("Книгу збережено: {}", book.getTitle());
         return true;
     }
@@ -126,8 +122,6 @@ public class BookSaver {
             searchIndexer.indexAll(booksToSave);
             searchIndexer.commit();
         }
-
-        eventPublisher.publishEvent(new BooksImportedBatchEvent(booksToSave));
 
         log.info("Збережено {} книг (батч)", booksToSave.size());
         return booksToSave.size();

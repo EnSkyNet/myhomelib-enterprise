@@ -33,4 +33,4 @@ Filesystem/result materialization is bounded: issue samples are limited to 500 p
 
 ## Legacy destructive path removed
 
-The old `IntegrityCheckController -> DataIntegrityChecker.fixOrphanedBooks() -> DataIntegrityService.fixOrphanedData()` destructive path is disabled at both application and infrastructure layers. The legacy integrity dialog remains useful as a report, but directs users to Collection Workspace Maintenance for repair.
+The old `IntegrityCheckController -> DataIntegrityChecker.fixOrphanedBooks() -> DataIntegrityService.fixOrphanedData()` destructive path has been removed from the application and infrastructure contracts. The legacy integrity dialog remains useful as a report, but directs users to Collection Workspace Maintenance for repair.

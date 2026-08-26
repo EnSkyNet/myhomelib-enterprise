@@ -43,13 +43,13 @@ public class CollectionController {
             return;
         }
         log.info("Переключення на колекцію: {}", collection.getName());
-        switchCollectionUseCase.execute(collection);
-        appState.setCurrentLibraryCollection(collection);
+        Collection activated = switchCollectionUseCase.execute(collection);
+        appState.setCurrentLibraryCollection(activated);
         statisticsService.refreshStatistics();
         appState.getStatusBar().setStatistics(statisticsService.getStatistics());
-        appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());
+        appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName());
         appState.getStatusBar().setProgressVisible(false);
-        eventPublisher.publishEvent(new CollectionChangedEvent(collection));
+        eventPublisher.publishEvent(new CollectionChangedEvent(activated));
         if (onComplete != null) {
             onComplete.run();
         }

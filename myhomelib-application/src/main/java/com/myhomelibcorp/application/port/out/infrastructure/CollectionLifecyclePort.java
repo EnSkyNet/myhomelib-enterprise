@@ -24,6 +24,12 @@ public interface CollectionLifecyclePort {
     Collection getCurrentCollection();
 
     /**
+     * Оновлює metadata-опис уже відкритої колекції без перестворення DataSource.
+     * Використовується після перейменування/зміни властивостей активної колекції.
+     */
+    void updateCurrentCollection(Collection collection);
+
+    /**
      * Перевіряє, чи є активна колекція.
      */
     boolean hasActiveCollection();

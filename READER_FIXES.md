@@ -60,7 +60,7 @@
 - `render/javafx/AutoScrollController.java`
 - `render/javafx/FontProvider.java`
 - `render/javafx/JavaFxReaderRenderer.java`
-- `render/javafx/PageModeController.java`
+- `render/javafx/ReaderCanvas page-mode flow.java`
 - `render/javafx/ReaderCanvas.java`
 - `render/javafx/ReaderToolbar.java`
 - `render/javafx/ReaderView.java`

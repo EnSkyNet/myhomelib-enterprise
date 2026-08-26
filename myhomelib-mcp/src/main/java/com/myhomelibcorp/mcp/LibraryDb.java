@@ -63,8 +63,9 @@ final class LibraryDb implements AutoCloseable {
     ArrayNode listSeries(String q, int limit) throws SQLException {
         String term=nvl(q).trim(), like="%"+escapeLike(term)+"%";
         try (PreparedStatement ps=connection.prepareStatement("""
-            SELECT series name,COUNT(*) books FROM books WHERE deleted=0 AND series<>'' AND (?='' OR series LIKE ? ESCAPE '\\')
-            GROUP BY series ORDER BY series COLLATE NOCASE LIMIT ?
+            SELECT MIN(TRIM(series)) name,COUNT(*) books FROM books
+            WHERE deleted=0 AND TRIM(COALESCE(series,''))<>'' AND (?='' OR series LIKE ? ESCAPE '\\')
+            GROUP BY LOWER(TRIM(series)) ORDER BY LOWER(TRIM(series)) LIMIT ?
             """)) {
             ps.setString(1,term);ps.setString(2,like);ps.setInt(3,clamp(limit,1,500)); return rowsGeneric(ps);
         }

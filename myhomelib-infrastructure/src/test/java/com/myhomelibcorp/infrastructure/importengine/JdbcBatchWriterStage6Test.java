@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
@@ -58,6 +59,34 @@ class JdbcBatchWriterStage6Test {
             assertThat(stored.get("collection_root")).isEqualTo("/downloads");
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM bookmarks WHERE book_id='book'", Integer.class))
                     .isEqualTo(1);
+        } finally {
+            ds.close();
+        }
+    }
+
+
+    @Test
+    void resolvesAuthorNamesContainingPipeWithoutLosingPersistentId() {
+        HikariDataSource ds = new HikariDataSource();
+        ds.setJdbcUrl("jdbc:sqlite:file:stage6-author-pipe-" + UUID.randomUUID() + "?mode=memory&cache=shared");
+        ds.setDriverClassName("org.sqlite.JDBC");
+        ds.setMaximumPoolSize(2);
+        try {
+            Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+            JdbcTemplate jdbc = new JdbcTemplate(ds);
+            CollectionManager manager = mock(CollectionManager.class);
+            when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+            JdbcBatchWriter writer = new JdbcBatchWriter(manager);
+
+            Author author = new Author("Дамский клуб LADY | переводы", "", "Группа");
+            var resolved = writer.batchInsertAuthorsAndResolveIds(List.of(author));
+
+            String key = "Дамский клуб LADY | переводы||Группа";
+            assertThat(resolved).containsKey(key);
+            assertThat(resolved.get(key)).isEqualTo(jdbc.queryForObject(
+                    "SELECT id FROM authors WHERE first_name=? AND last_name=?",
+                    String.class,
+                    "Дамский клуб LADY | переводы", "Группа"));
         } finally {
             ds.close();
         }

@@ -26,13 +26,4 @@ public class DataIntegrityChecker {
         return report;
     }
 
-    /**
-     * Legacy destructive repair is intentionally disabled.
-     * Use CollectionMaintenanceUseCase: analyze -> dry-run -> backup -> explicit apply.
-     */
-    @Deprecated(forRemoval = true)
-    public void fixOrphanedBooks() {
-        throw new UnsupportedOperationException(
-                "Legacy repair disabled: use Collection Workspace -> Maintenance for preview, backup and safe apply");
-    }
 }

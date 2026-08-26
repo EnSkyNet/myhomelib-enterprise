@@ -61,7 +61,7 @@ public class BookRowMapper implements RowMapper<Book> {
                 .annotation(annotation != null ? annotation : "")
                 .keywords(keywords != null ? keywords : "")
                 .language(language != null ? LanguageCode.of(language) : LanguageCode.of("uk"))
-                .isbn(isbn != null ? Isbn.of(isbn) : null)
+                .isbn(parseIsbn(isbn))
                 .review(review != null ? review : "")
                 .year(year)
                 .publisher(publisher != null ? publisher : "")
@@ -92,6 +92,15 @@ public class BookRowMapper implements RowMapper<Book> {
                 .deleted(deleted)
                 .local(local)
                 .build();
+    }
+
+    private Isbn parseIsbn(String value) {
+        if (value == null || value.isBlank()) return null;
+        try {
+            return Isbn.of(value);
+        } catch (IllegalArgumentException ignored) {
+            return null;
+        }
     }
 
     // ===== Безпечні геттери =====

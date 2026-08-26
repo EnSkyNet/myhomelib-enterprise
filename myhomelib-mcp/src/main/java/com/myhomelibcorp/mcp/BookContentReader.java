@@ -46,12 +46,28 @@ final class BookContentReader {
         }
     }
 
-    private Path resolve(LibraryDb.BookLocation l){
-        Path root=l.collectionRoot().isBlank()?Path.of(""):Path.of(l.collectionRoot());
-        if(!l.archiveEntry().isBlank()){
-            String f=!l.folder().isBlank()?l.folder():l.fileName(); return root.resolve(f).normalize();
+    private Path resolve(LibraryDb.BookLocation l) throws IOException {
+        String rootValue = l.collectionRoot() == null ? "" : l.collectionRoot().trim();
+        Path relative;
+        if (!l.archiveEntry().isBlank()) {
+            relative = Path.of(!l.folder().isBlank() ? l.folder() : l.fileName());
+        } else {
+            relative = l.folder().isBlank()
+                    ? Path.of(l.fileName())
+                    : Path.of(l.folder()).resolve(l.fileName());
         }
-        Path rel=l.folder().isBlank()?Path.of(l.fileName()):Path.of(l.folder()).resolve(l.fileName()); return root.resolve(rel).normalize();
+
+        if (rootValue.isBlank()) {
+            // Legacy records may contain an absolute folder and no collection_root.
+            return Path.of("").resolve(relative).normalize();
+        }
+
+        Path root = Path.of(rootValue).toAbsolutePath().normalize();
+        Path candidate = root.resolve(relative).toAbsolutePath().normalize();
+        if (!candidate.startsWith(root)) {
+            throw new IOException("Book path escapes collection root: " + candidate);
+        }
+        return candidate;
     }
 
     private InputStream openArchiveEntry(Path archive,String requested)throws Exception{
@@ -59,10 +75,77 @@ final class BookContentReader {
         if(n.endsWith(".7z")) return spool7z(archive,requested);
         if(n.endsWith(".rar")||n.endsWith(".cbr")) return spoolRar(archive,requested);
         if(isStreamArchive(n)) return spoolStreamArchive(archive, requested);
-        ZipFile z=new ZipFile(archive.toFile()); ZipEntry e=findZip(z,requested); if(e==null){z.close();throw new FileNotFoundException(requested);}
-        InputStream delegate=z.getInputStream(e); return new FilterInputStream(delegate){@Override public void close()throws IOException{try{super.close();}finally{z.close();}}};
+
+        ZipFile z = new ZipFile(archive.toFile());
+        try {
+            ZipEntry e = findZip(z, requested);
+            if (e == null || e.isDirectory()) throw new FileNotFoundException(requested);
+            InputStream delegate = openZipEntry(z, e);
+            return new FilterInputStream(delegate) {
+                @Override public void close() throws IOException {
+                    try { super.close(); } finally { z.close(); }
+                }
+            };
+        } catch (Exception ex) {
+            z.close();
+            throw ex;
+        }
     }
-    private ZipEntry findZip(ZipFile z,String n){ZipEntry e=z.getEntry(n);if(e!=null)return e;String x=norm(n);Enumeration<? extends ZipEntry> it=z.entries();while(it.hasMoreElements()){e=it.nextElement();if(norm(e.getName()).equalsIgnoreCase(x))return e;}return null;}
+
+    private ZipEntry findZip(ZipFile z,String n) throws IOException {
+        ZipEntry direct=z.getEntry(n);
+        if(direct!=null) return direct;
+        String x=norm(n);
+        Enumeration<? extends ZipEntry> it=z.entries();
+        int count=0;
+        while(it.hasMoreElements()){
+            if(++count>ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
+            ZipEntry e=it.nextElement();
+            if(norm(e.getName()).equalsIgnoreCase(x)) return e;
+        }
+        return null;
+    }
+
+    private InputStream openZipEntry(ZipFile zip, ZipEntry entry) throws IOException {
+        validateZipEntry(entry);
+        return bounded(zip.getInputStream(entry), ArchiveSafetyLimits.MAX_ENTRY_BYTES);
+    }
+
+    private void validateZipEntry(ZipEntry entry) throws IOException {
+        long size = entry.getSize();
+        long compressed = entry.getCompressedSize();
+        if (ArchiveSafetyLimits.declaredEntryTooLarge(size)) {
+            throw new IOException("Archive entry exceeds MCP safety limit");
+        }
+        if (size > 0 && compressed > 0
+                && (double) size / (double) compressed > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+            throw new IOException("Archive entry compression ratio exceeds MCP safety limit");
+        }
+    }
+
+    private InputStream bounded(InputStream delegate, long maxBytes) {
+        return new FilterInputStream(delegate) {
+            private long total;
+
+            private void account(int read) throws IOException {
+                if (read <= 0) return;
+                total += read;
+                if (total > maxBytes) throw new IOException("Archive entry exceeds MCP safety limit");
+            }
+
+            @Override public int read() throws IOException {
+                int value = super.read();
+                if (value >= 0) account(1);
+                return value;
+            }
+
+            @Override public int read(byte[] b, int off, int len) throws IOException {
+                int read = super.read(b, off, len);
+                account(read);
+                return read;
+            }
+        };
+    }
     private InputStream spool7z(Path p,String wanted)throws Exception{
         Path tmp=Files.createTempFile("mhl-mcp-",suffix(wanted));
         try(SevenZFile z=SevenZFile.builder().setFile(p.toFile()).setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB).get()){
@@ -134,11 +217,11 @@ final class BookContentReader {
     }
     private String readText(InputStream in)throws IOException{StringBuilder s=new StringBuilder();try(Reader r=new InputStreamReader(in,StandardCharsets.UTF_8)){char[]b=new char[8192];for(int n;(n=r.read(b))>=0&&s.length()<MAX_TEXT;)s.append(b,0,Math.min(n,MAX_TEXT-s.length()));}return s.toString();}
     private String fb2Text(InputStream in)throws Exception{
-        XMLInputFactory f=XMLInputFactory.newFactory();f.setProperty(XMLInputFactory.IS_COALESCING,false);StringBuilder out=new StringBuilder();XMLStreamReader r=f.createXMLStreamReader(in);
+        XMLInputFactory f=secureXmlFactory();f.setProperty(XMLInputFactory.IS_COALESCING,false);StringBuilder out=new StringBuilder();XMLStreamReader r=f.createXMLStreamReader(in);
         boolean inBody=false,skipBinary=false;while(r.hasNext()&&out.length()<MAX_TEXT){int e=r.next();if(e==XMLStreamConstants.START_ELEMENT){String n=r.getLocalName();if("body".equals(n))inBody=true;if("binary".equals(n))skipBinary=true;if(inBody&&(n.equals("p")||n.equals("title")||n.equals("subtitle")||n.equals("v")||n.equals("empty-line")))out.append('\n');}else if(e==XMLStreamConstants.CHARACTERS&&inBody&&!skipBinary){String t=r.getText();if(!t.isBlank())out.append(t);}else if(e==XMLStreamConstants.END_ELEMENT){String n=r.getLocalName();if("binary".equals(n))skipBinary=false;if("body".equals(n))inBody=false;}}r.close();return normalize(out.toString());
     }
     private List<TocItem> fb2Toc(InputStream in)throws Exception{
-        XMLInputFactory f=XMLInputFactory.newFactory();f.setProperty(XMLInputFactory.IS_COALESCING,false);XMLStreamReader r=f.createXMLStreamReader(in);List<TocItem> out=new ArrayList<>();int depth=0;boolean inTitle=false;StringBuilder t=new StringBuilder();long ord=0;
+        XMLInputFactory f=secureXmlFactory();f.setProperty(XMLInputFactory.IS_COALESCING,false);XMLStreamReader r=f.createXMLStreamReader(in);List<TocItem> out=new ArrayList<>();int depth=0;boolean inTitle=false;StringBuilder t=new StringBuilder();long ord=0;
         while(r.hasNext()){int e=r.next();if(e==XMLStreamConstants.START_ELEMENT){String n=r.getLocalName();if(n.equals("section"))depth++;if(n.equals("title")&&depth>0){inTitle=true;t.setLength(0);}}else if(e==XMLStreamConstants.CHARACTERS&&inTitle)t.append(r.getText());else if(e==XMLStreamConstants.END_ELEMENT){String n=r.getLocalName();if(n.equals("title")&&inTitle){String x=normalize(t.toString());if(!x.isBlank())out.add(new TocItem(depth,x,ord++));inTitle=false;}if(n.equals("section"))depth=Math.max(0,depth-1);}}r.close();return out;
     }
     private String epubText(InputStream in)throws Exception{
@@ -152,7 +235,7 @@ final class BookContentReader {
                 for(String path:documents){
                     ZipEntry entry=findZip(zip,path);
                     if(entry==null||entry.isDirectory()) continue;
-                    try(InputStream x=zip.getInputStream(entry)){
+                    try(InputStream x=openZipEntry(zip,entry)){
                         String part=stripMarkup(readText(x));
                         if(!part.isBlank()) out.append('\n').append(part);
                     }
@@ -173,14 +256,14 @@ final class BookContentReader {
                 EpubPackage pkg=readEpubPackage(zip);
                 if(pkg.navPath()!=null) {
                     ZipEntry nav=findZip(zip,pkg.navPath());
-                    if(nav!=null) try(InputStream x=zip.getInputStream(nav)) {
+                    if(nav!=null) try(InputStream x=openZipEntry(zip,nav)) {
                         List<TocItem> items=parseEpubNav(x);
                         if(!items.isEmpty()) return items;
                     }
                 }
                 if(pkg.ncxPath()!=null) {
                     ZipEntry ncx=findZip(zip,pkg.ncxPath());
-                    if(ncx!=null) try(InputStream x=zip.getInputStream(ncx)) {
+                    if(ncx!=null) try(InputStream x=openZipEntry(zip,ncx)) {
                         List<TocItem> items=parseNcx(x);
                         if(!items.isEmpty()) return items;
                     }
@@ -202,7 +285,7 @@ final class BookContentReader {
         List<String> spineIds=new ArrayList<>();
         String tocId=null;
         XMLInputFactory f=secureXmlFactory();
-        try(InputStream in=zip.getInputStream(opf)) {
+        try(InputStream in=openZipEntry(zip,opf)) {
             XMLStreamReader r=f.createXMLStreamReader(in);
             try {
                 while(r.hasNext()) {
@@ -253,7 +336,7 @@ final class BookContentReader {
         ZipEntry container=findZip(zip,"META-INF/container.xml");
         if(container==null) return null;
         XMLInputFactory f=secureXmlFactory();
-        try(InputStream in=zip.getInputStream(container)) {
+        try(InputStream in=openZipEntry(zip,container)) {
             XMLStreamReader r=f.createXMLStreamReader(in);
             try {
                 while(r.hasNext()) {
@@ -341,13 +424,24 @@ final class BookContentReader {
         return out;
     }
 
-    private List<String> fallbackHtmlEntries(ZipFile zip) {
-        return Collections.list(zip.entries()).stream()
-                .filter(e->!e.isDirectory())
-                .map(ZipEntry::getName)
-                .filter(n->{String x=n.toLowerCase(Locale.ROOT);return x.endsWith(".xhtml")||x.endsWith(".html")||x.endsWith(".htm");})
-                .sorted()
-                .toList();
+    private List<String> fallbackHtmlEntries(ZipFile zip) throws IOException {
+        List<String> out = new ArrayList<>();
+        Enumeration<? extends ZipEntry> entries = zip.entries();
+        int count = 0;
+        while (entries.hasMoreElements()) {
+            if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                throw new IOException("Archive contains too many entries");
+            }
+            ZipEntry entry = entries.nextElement();
+            if (entry.isDirectory()) continue;
+            String name = entry.getName();
+            String lower = name.toLowerCase(Locale.ROOT);
+            if (lower.endsWith(".xhtml") || lower.endsWith(".html") || lower.endsWith(".htm")) {
+                out.add(name);
+            }
+        }
+        out.sort(String::compareTo);
+        return List.copyOf(out);
     }
 
     private XMLInputFactory secureXmlFactory() {

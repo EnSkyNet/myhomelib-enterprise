@@ -3,9 +3,9 @@ package com.myhomelibcorp.ui.controller;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
-import com.myhomelibcorp.application.service.CollectionManagementService;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
+import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
@@ -39,7 +39,7 @@ public class CollectionWizardController {
     private final CollectionValidatorPort collectionValidator;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
-    private final CollectionManagementService collectionManagementService;
+    private final SwitchCollectionUseCase switchCollectionUseCase;
     private final StatisticsService statisticsService;
     private final SyncSeriesUseCase syncSeriesUseCase;
     private final ApplicationEventPublisher eventPublisher;
@@ -188,17 +188,21 @@ public class CollectionWizardController {
                 log.info("Колекцію створено: id={}, name={}, dbFile={}",
                         collection.getId(), collection.getName(), collection.getDbFile());
 
+                // Повна lifecycle-ініціалізація (DataSource + migrations + optional index)
+                // не повинна блокувати JavaFX thread.
+                Collection activated = switchCollectionUseCase.execute(collection, request.isCreateIndex());
+
                 UiExecutor.runOnUiThread(() -> {
                     try {
                         CollectionDto dto = CollectionDto.builder()
-                                .id(collection.getId())
-                                .name(collection.getName())
+                                .id(activated.getId())
+                                .name(activated.getName())
                                 .active(true)
                                 .allowRename(true)
                                 .allowDelete(true)
-                                .rootFolder(collection.getRootFolder() != null ? collection.getRootFolder().toString() : null)
-                                .dbFile(collection.getDbFile())
-                                .type(collection.getType())
+                                .rootFolder(activated.getRootFolder() != null ? activated.getRootFolder().toString() : null)
+                                .dbFile(activated.getDbFile())
+                                .type(activated.getType())
                                 .booksCount(-1L)
                                 .build();
 
@@ -207,16 +211,15 @@ public class CollectionWizardController {
                             log.info("Колекцію додано до списку UI: {}", dto.getName());
                         }
 
-                        collectionManagementService.switchToCollection(collection);
-                        appState.setCurrentLibraryCollection(collection);
+                        appState.setCurrentLibraryCollection(activated);
 
                         statisticsService.refreshStatistics();
                         syncSeriesUseCase.execute();
 
                         eventPublisher.publishEvent(new NavigationRefreshEvent());
 
-                        appState.getStatusBar().setStatusText("Колекцію '" + collection.getName() + "' створено");
-                        dialogService.showInfo("Успішно", "Колекцію '" + collection.getName() + "' створено!");
+                        appState.getStatusBar().setStatusText("Колекцію '" + activated.getName() + "' створено");
+                        dialogService.showInfo("Успішно", "Колекцію '" + activated.getName() + "' створено!");
 
                         finishButton.setDisable(false);
                         finishButton.setText("✅ Створити");

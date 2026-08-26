@@ -281,12 +281,6 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
     // ==================== SEARCH QUERY SERVICE ====================
 
-    @Override
-    public List<String> searchBookIds(String queryText, int limit) {
-        if (queryText == null || queryText.isBlank() || isClosed.get()) return List.of();
-        SearchResult result = search(SearchRequest.builder().text(queryText).limit(limit).build());
-        return result.bookIds().stream().map(BookId::asString).toList();
-    }
 
     @Override
     public SearchResult search(SearchRequest request) {

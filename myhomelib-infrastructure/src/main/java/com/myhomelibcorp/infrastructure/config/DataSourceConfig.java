@@ -8,6 +8,11 @@ import org.springframework.context.annotation.Configuration;
 @Configuration
 public class DataSourceConfig {
 
+    // Large INPX imports intentionally keep one SQLite transaction open for atomicity.
+    // Ten seconds reports every healthy import as an apparent leak, so keep leak detection
+    // useful for genuine leaks without flagging normal catalog imports.
+    private static final long LEAK_DETECTION_THRESHOLD_MS = 300_000L;
+
     /**
      * Створює базовий DataSource для мета-БД (колекції).
      * Використовується як fallback.
@@ -22,7 +27,7 @@ public class DataSourceConfig {
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);
         config.setConnectionTimeout(30000);
-        config.setLeakDetectionThreshold(10000);
+        config.setLeakDetectionThreshold(LEAK_DETECTION_THRESHOLD_MS);
 
         config.setConnectionInitSql(
                 "PRAGMA foreign_keys=ON; " +
@@ -55,7 +60,7 @@ public class DataSourceConfig {
         config.setIdleTimeout(300000);
         config.setMaxLifetime(600000);
         config.setConnectionTimeout(30000);
-        config.setLeakDetectionThreshold(10000);
+        config.setLeakDetectionThreshold(LEAK_DETECTION_THRESHOLD_MS);
 
         config.setConnectionInitSql(
                 "PRAGMA foreign_keys=ON; " +

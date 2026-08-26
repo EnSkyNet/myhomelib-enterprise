@@ -28,7 +28,7 @@ public class LoadBooksByAuthorUseCase {
                 .sortBy(SortBy.TITLE)
                 .direction(SortDirection.ASC)
                 .build();
-        return bookQueryRepository.find(query).stream()
+        return bookQueryRepository.findPage(query).content().stream()
                 .map(bookListItemMapper::toListItem)
                 .collect(Collectors.toList());
     }

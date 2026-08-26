@@ -141,6 +141,7 @@ public class JdbcBatchWriter {
         // ОПТИМІЗОВАНО: вставка зв'язків з авторами
         if (!authorLinkBatch.isEmpty()) {
             List<Object[]> realAuthorLinks = new ArrayList<>(authorLinkBatch.size());
+            java.util.LinkedHashSet<String> missingAuthorKeys = new java.util.LinkedHashSet<>();
             for (Object[] link : authorLinkBatch) {
                 String bookId = (String) link[0];
                 String authorKey = (String) link[1];
@@ -148,8 +149,13 @@ public class JdbcBatchWriter {
                 if (realId != null) {
                     realAuthorLinks.add(new Object[]{bookId, realId});
                 } else {
-                    log.warn("Author key not found in cache: {}", authorKey);
+                    missingAuthorKeys.add(authorKey);
                 }
+            }
+            if (!missingAuthorKeys.isEmpty()) {
+                log.warn("{} author key(s) were not resolved in current batch; first keys: {}",
+                        missingAuthorKeys.size(),
+                        missingAuthorKeys.stream().limit(5).toList());
             }
             if (!realAuthorLinks.isEmpty()) {
                 jt.batchUpdate("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
@@ -218,30 +224,31 @@ public class JdbcBatchWriter {
 
         batchInsertAuthors(authors);
 
-        Map<String, List<String>> fullKeysByPair = new LinkedHashMap<>();
+        Map<AuthorPair, List<String>> fullKeysByPair = new LinkedHashMap<>();
         for (Author author : authors) {
             fullKeysByPair.computeIfAbsent(authorPairKey(author), ignored -> new ArrayList<>())
                     .add(authorKey(author));
         }
 
-        List<String> pairs = new ArrayList<>(fullKeysByPair.keySet());
+        List<AuthorPair> pairs = new ArrayList<>(fullKeysByPair.keySet());
         Map<String, String> resolved = new HashMap<>();
-        // ОПТИМІЗОВАНО: збільшено розмір чанку до 500
         final int pairsPerQuery = 500;
 
         for (int from = 0; from < pairs.size(); from += pairsPerQuery) {
             int to = Math.min(pairs.size(), from + pairsPerQuery);
             StringBuilder sql = new StringBuilder(
-                    "SELECT id, COALESCE(first_name,'') AS first_name, "
-                            + "COALESCE(last_name,'') AS last_name FROM authors WHERE ");
+                    "SELECT id, first_name, last_name FROM authors WHERE ");
             List<Object> args = new ArrayList<>((to - from) * 2);
             for (int i = from; i < to; i++) {
                 if (i > from) sql.append(" OR ");
-                sql.append("(COALESCE(first_name,'') = ? AND COALESCE(last_name,'') = ?)");
-                String pair = pairs.get(i);
-                int sep = pair.indexOf('|');
-                args.add(pair.substring(0, sep));
-                args.add(pair.substring(sep + 1));
+                // Do not wrap indexed columns in COALESCE here.  idx_authors_unique_name
+                // is defined on (first_name, last_name); applying a function to the
+                // columns forces SQLite into table scans and makes large INPX imports
+                // progressively slower as the authors table grows.
+                sql.append("(first_name = ? AND last_name = ?)");
+                AuthorPair pair = pairs.get(i);
+                args.add(pair.firstName());
+                args.add(pair.lastName());
             }
 
             List<Object[]> rows = getJdbcTemplate().query(
@@ -255,7 +262,7 @@ public class JdbcBatchWriter {
 
             for (Object[] row : rows) {
                 String id = (String) row[0];
-                String pair = safe((String) row[1]) + "|" + safe((String) row[2]);
+                AuthorPair pair = new AuthorPair(safe((String) row[1]), safe((String) row[2]));
                 for (String fullKey : fullKeysByPair.getOrDefault(pair, List.of())) {
                     resolved.put(fullKey, id);
                 }
@@ -263,7 +270,7 @@ public class JdbcBatchWriter {
         }
 
         if (resolved.size() < authors.size()) {
-            log.debug("Resolved {} author keys for {} pending author objects", resolved.size(), authors.size());
+            log.warn("Resolved only {} author keys for {} pending author objects", resolved.size(), authors.size());
         }
         return resolved;
     }
@@ -272,9 +279,13 @@ public class JdbcBatchWriter {
         return safe(a.getFirstName()) + "|" + safe(a.getMiddleName()) + "|" + safe(a.getLastName());
     }
 
-    private static String authorPairKey(Author a) {
-        return safe(a.getFirstName()) + "|" + safe(a.getLastName());
+    private static AuthorPair authorPairKey(Author a) {
+        // Keep the pair structured. Author names can legally contain '|', so serializing
+        // first/last and splitting at the first delimiter loses information.
+        return new AuthorPair(safe(a.getFirstName()), safe(a.getLastName()));
     }
+
+    private record AuthorPair(String firstName, String lastName) { }
 
     private static String safe(String value) {
         return value == null ? "" : value;

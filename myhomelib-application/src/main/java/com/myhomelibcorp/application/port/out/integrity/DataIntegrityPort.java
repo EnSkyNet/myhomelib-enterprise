@@ -14,10 +14,4 @@ public interface DataIntegrityPort {
      */
     IntegrityReport checkIntegrity();
 
-    /**
-     * Legacy destructive repair hook. Implementations must not perform unreviewed deletion;
-     * the supported workflow is CollectionMaintenanceUseCase.
-     */
-    @Deprecated(forRemoval = true)
-    void fixOrphanedData();
 }

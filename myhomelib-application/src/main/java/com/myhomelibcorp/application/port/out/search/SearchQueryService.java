@@ -4,15 +4,8 @@ import com.myhomelibcorp.application.query.search.SearchMode;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchResult;
 
-import java.util.List;
-
 public interface SearchQueryService {
 
-    /**
-     * @deprecated Використовуйте {@link #search(SearchRequest)}
-     */
-    @Deprecated
-    List<String> searchBookIds(String query, int limit);
 
     /**
      * Новий структурований пошук.

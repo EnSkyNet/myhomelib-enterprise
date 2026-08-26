@@ -42,9 +42,12 @@ public class CollectionLifecycleService {
     public void initializeCollection(Collection collection, boolean rebuildIndex) {
         if (!isInitializing.compareAndSet(false, true)) {
             log.warn("Ініціалізація колекції вже виконується");
-            return;
+            throw new IllegalStateException("Інше переключення колекції вже виконується");
         }
 
+        Collection previous = collectionLifecyclePort.getCurrentCollection();
+        boolean changedCollection = previous == null || previous.getId() == null
+                || collection.getId() == null || !previous.getId().equals(collection.getId());
         try {
             log.info("🚀 Початок ініціалізації колекції: {}", collection.getName());
 
@@ -77,9 +80,31 @@ public class CollectionLifecycleService {
 
         } catch (Exception e) {
             log.error("❌ Помилка ініціалізації колекції: {}", e.getMessage(), e);
+            if (changedCollection) {
+                restorePreviousCollection(previous);
+            }
             throw new RuntimeException("Не вдалося ініціалізувати колекцію: " + e.getMessage(), e);
         } finally {
             isInitializing.set(false);
+        }
+    }
+
+    /** Best-effort rollback after a failed migration/cache/index initialization. */
+    private void restorePreviousCollection(Collection previous) {
+        try {
+            if (previous == null) {
+                collectionLifecyclePort.closeCurrentCollection();
+                cacheInvalidationPort.invalidateAll();
+                log.warn("Невдалу першу колекцію закрито після помилки ініціалізації");
+                return;
+            }
+            collectionLifecyclePort.switchToCollection(previous);
+            databaseMigrationPort.migrateCurrentCollection();
+            cacheInvalidationPort.invalidateAll();
+            loadDictionaries();
+            log.warn("Після помилки відновлено попередню колекцію: {}", previous.getName());
+        } catch (Exception rollbackError) {
+            log.error("❌ Не вдалося відновити попередню колекцію після помилки ініціалізації", rollbackError);
         }
     }
 
@@ -119,6 +144,11 @@ public class CollectionLifecycleService {
      */
     public Collection getCurrentCollection() {
         return collectionLifecyclePort.getCurrentCollection();
+    }
+
+    /** Оновлює metadata активної колекції без закриття/відкриття SQLite. */
+    public void updateCurrentCollection(Collection collection) {
+        collectionLifecyclePort.updateCurrentCollection(collection);
     }
 
     /**

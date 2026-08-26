@@ -7,9 +7,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 
-/**
- * Port for the high-throughput INPX import path.
- */
+/** Port for the high-throughput INPX import path. */
 public interface FastImportService {
 
     long importInpx(Path file, int batchSize, Path rootDirectory);
@@ -23,10 +21,6 @@ public interface FastImportService {
         return importInpx(file, batchSize, rootDirectory, cancelFlag);
     }
 
-    /**
-     * Rich INPX import contract used by the workspace: progress/status are propagated
-     * to infrastructure and full statistics are returned instead of only a book count.
-     */
     default ImportResult importInpx(
             Path file,
             int batchSize,
@@ -36,8 +30,25 @@ public interface FastImportService {
             String catalogSourceLocation,
             DoubleConsumer progressListener,
             Consumer<String> statusConsumer) {
-        long imported = importInpx(
-                file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation);
+        return importInpx(file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation,
+                true, progressListener, statusConsumer);
+    }
+
+    /**
+     * Rich INPX import contract. {@code catalogFullSnapshot=false} is critical for MyHomeLib
+     * extra/delta packages: books absent from a delta must not be marked deleted.
+     */
+    default ImportResult importInpx(
+            Path file,
+            int batchSize,
+            Path rootDirectory,
+            AtomicBoolean cancelFlag,
+            String catalogSourceKey,
+            String catalogSourceLocation,
+            boolean catalogFullSnapshot,
+            DoubleConsumer progressListener,
+            Consumer<String> statusConsumer) {
+        long imported = importInpx(file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation);
         return new ImportResult(imported, 0, 0, 0, 0);
     }
 }

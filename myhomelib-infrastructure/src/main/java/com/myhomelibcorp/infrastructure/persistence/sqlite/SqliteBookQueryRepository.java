@@ -30,7 +30,7 @@ import java.util.stream.StreamSupport;
 @Slf4j
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
-    private static final int MAX_ALL_FETCH = 10000;
+    private static final int STREAM_PAGE_SIZE = 10000;
     private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
@@ -216,60 +216,13 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return books;
     }
 
-    // ===== DataIntegrity =====
-
-    @Override
-    public long countBooksWithoutAuthor() {
-        String sql = """
-                SELECT COUNT(*) FROM books b
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM book_authors ba WHERE ba.book_id = b.id
-                )
-                """;
-        return getJdbcTemplate().queryForObject(sql, Long.class);
-    }
-
-    @Override
-    public long countBooksWithoutGenre() {
-        String sql = """
-                SELECT COUNT(*) FROM books b
-                WHERE NOT EXISTS (
-                    SELECT 1 FROM book_genres bg WHERE bg.book_id = b.id
-                )
-                """;
-        return getJdbcTemplate().queryForObject(sql, Long.class);
-    }
-
-    @Override
-    public List<BookId> findDuplicateBookIds() {
-        String sql = """
-                SELECT b.id
-                FROM books b
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM books b2
-                    JOIN book_authors ba2 ON b2.id = ba2.book_id
-                    JOIN authors a2 ON ba2.author_id = a2.id
-                    WHERE b2.id != b.id
-                      AND b2.title = b.title
-                      AND a2.last_name = (
-                          SELECT a.last_name
-                          FROM book_authors ba
-                          JOIN authors a ON ba.author_id = a.id
-                          WHERE ba.book_id = b.id
-                          LIMIT 1
-                      )
-                )
-                """;
-        return getJdbcTemplate().query(sql, (rs, rowNum) -> BookId.fromString(rs.getString("id")));
-    }
 
     // ===== Streaming =====
 
     public Stream<Book> findAllStreaming() {
         return StreamSupport.stream(
                 Spliterators.spliteratorUnknownSize(
-                        new StreamingBookIterator(MAX_ALL_FETCH),
+                        new StreamingBookIterator(STREAM_PAGE_SIZE),
                         Spliterator.ORDERED
                 ),
                 false
@@ -314,7 +267,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             BookQuery query = BookQuery.builder()
                     .pagination(Pagination.of(pageSize, offset))
                     .build();
-            currentPage = SqliteBookQueryRepository.this.find(query);
+            currentPage = SqliteBookQueryRepository.this.findPage(query).content();
             currentIndex = 0;
             offset += currentPage.size();
             endReached = currentPage.size() < pageSize;

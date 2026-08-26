@@ -119,32 +119,5 @@ public class CachedBookQueryRepository implements BookQueryRepository {
         return delegate.findFavoriteAuthors(limit);
     }
 
-    // ===== DataIntegrity =====
-    @Override
-    public long countBooksWithoutAuthor() {
-        return delegate.countBooksWithoutAuthor();
-    }
 
-    @Override
-    public long countBooksWithoutGenre() {
-        return delegate.countBooksWithoutGenre();
-    }
-
-    @Override
-    public List<BookId> findDuplicateBookIds() {
-        return delegate.findDuplicateBookIds();
-    }
-
-    // ===== @Deprecated методи =====
-    @Override
-    @Deprecated
-    public List<Book> find(BookQuery query) {
-        return delegate.find(query);
-    }
-
-    @Override
-    @Deprecated
-    public List<Book> findAll() {
-        return delegate.findAll();
-    }
 }

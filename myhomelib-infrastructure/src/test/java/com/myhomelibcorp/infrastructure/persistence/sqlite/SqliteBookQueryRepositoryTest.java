@@ -125,7 +125,7 @@ public class SqliteBookQueryRepositoryTest {
         BookQuery query = BookQuery.builder()
                 .pagination(Pagination.of(10, 0))
                 .build();
-        var books = repository.find(query);
+        var books = repository.findPage(query).content();
         assertThat(books).isNotNull();
         assertThat(books).isEmpty();
     }

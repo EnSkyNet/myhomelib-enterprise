@@ -327,7 +327,7 @@ public class ReaderEngine {
         PageLayout page = getCurrentPage(currentDimensions);
         ReaderTheme theme = ReaderTheme.fromSettings(settings);
         if (page != null && !page.isEmpty()) {
-            renderer.renderPage(page, null, theme);
+            renderer.renderPage(page, theme);
         } else {
             renderer.clear();
             log.warn("⚠️ Layout повернув порожню сторінку для offset={}", currentPosition.textOffset());

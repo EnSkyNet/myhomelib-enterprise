@@ -53,16 +53,12 @@ public class CollectionManager {
             return;
         }
 
+        HikariDataSource candidate = null;
         try {
             log.info("🔄 Початок переключення на колекцію: {}", collection.getName());
 
-            // 1. Закриваємо поточну колекцію
-            forceCloseCurrentCollection();
-
-            // 2. Встановлюємо нову колекцію
-            currentCollection.set(collection);
-
-            // 3. Створюємо новий DataSource
+            // Спочатку повністю відкриваємо і перевіряємо нову БД. Стару колекцію
+            // не закриваємо, доки не впевнимося, що переключення можливе.
             String dbPath = getDbPath(collection);
             Path path = Paths.get(dbPath);
 
@@ -71,10 +67,10 @@ public class CollectionManager {
                 java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());
             }
 
-            HikariDataSource dataSource = dataSourceConfig.createDataSourceForPath(path.toAbsolutePath().toString());
+            candidate = dataSourceConfig.createDataSourceForPath(path.toAbsolutePath().toString());
 
             // Перевіряємо з'єднання
-            try (var conn = dataSource.getConnection()) {
+            try (var conn = candidate.getConnection()) {
                 if (!conn.isValid(1)) {
                     throw new RuntimeException("Невалідне з'єднання з БД");
                 }
@@ -83,15 +79,31 @@ public class CollectionManager {
                 throw new RuntimeException("Помилка підключення до БД: " + e.getMessage(), e);
             }
 
-            currentHikariDataSource.set(dataSource);
-            currentDataSource.set(dataSource);
-            currentJdbcTemplate.set(new JdbcTemplate(dataSource));
+            HikariDataSource previous = currentHikariDataSource.getAndSet(candidate);
+            currentDataSource.set(candidate);
+            currentJdbcTemplate.set(new JdbcTemplate(candidate));
+            currentCollection.set(collection);
+            candidate = null; // ownership transferred to currentHikariDataSource
+
+            if (previous != null) {
+                try {
+                    previous.close();
+                } catch (Exception e) {
+                    log.warn("⚠️ Не вдалося коректно закрити попередній DataSource: {}", e.getMessage());
+                }
+            }
 
             log.info("✅ Переключено на колекцію: {} (БД: {})", collection.getName(), path);
 
         } catch (Exception e) {
             log.error("❌ Помилка переключення колекції: {}", e.getMessage(), e);
-            forceCloseCurrentCollection();
+            if (candidate != null) {
+                try {
+                    candidate.close();
+                } catch (Exception closeError) {
+                    log.debug("Не вдалося закрити невикористаний DataSource: {}", closeError.getMessage());
+                }
+            }
             throw new RuntimeException("Не вдалося переключити колекцію: " + e.getMessage(), e);
         } finally {
             isSwitching.set(false);
@@ -147,6 +159,21 @@ public class CollectionManager {
 
     public Collection getCurrentCollection() {
         return currentCollection.get();
+    }
+
+    /**
+     * Замінює лише metadata активної колекції, не чіпаючи вже відкриту БД.
+     */
+    public synchronized void updateCurrentCollection(Collection collection) {
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) {
+            throw new IllegalArgumentException("Колекція для оновлення не задана");
+        }
+        Collection current = currentCollection.get();
+        if (current == null || current.getId() == null || !current.getId().equals(collection.getId())) {
+            throw new IllegalStateException("Можна оновити metadata лише активної колекції");
+        }
+        currentCollection.set(collection);
+        log.debug("Metadata активної колекції оновлено: {}", collection.getName());
     }
 
     public JdbcTemplate getCurrentJdbcTemplate() {

@@ -64,45 +64,39 @@ public class InpxReader {
                 while ((line = reader.readLine()) != null) {
                     if (cancelFlag != null && cancelFlag.get()) return -1L;
                     count++;
-                    if (count % 10000 == 0 && count > 0) {
-                        log.info("Підраховано {} записів", count);
-                    }
+                    if (count % 10000 == 0) log.info("Підраховано {} записів", count);
                 }
                 return count;
             } catch (IOException e) {
-                log.error("Помилка підрахунку записів INP", e);
-                return -1;
+                throw new UncheckedIOException("Не вдалося прочитати INP: " + file, e);
             }
         }
 
         if (!lower.endsWith(".inpx")) {
-            return -1;
+            throw new IllegalArgumentException("Unsupported INPX source: " + file);
         }
 
         try (ZipFile zip = openZip(file)) {
             List<? extends ZipEntry> inpEntries = zip.stream()
                     .filter(e -> !e.isDirectory() && e.getName().toLowerCase(Locale.ROOT).endsWith(".inp"))
+                    .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
                     .toList();
             if (inpEntries.isEmpty()) {
-                log.warn("Немає INP записів у INPX: {}", file);
-                return 0;
+                throw new IOException("No .inp entries in " + file);
             }
-            // ОПТИМІЗОВАНО: читаємо тільки перший INP для підрахунку
-            ZipEntry first = inpEntries.get(0);
-            try (BufferedReader reader = newDetectedReader(zip.getInputStream(first))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (cancelFlag != null && cancelFlag.get()) return -1L;
-                    count++;
-                    if (count % 10000 == 0 && count > 0) {
-                        log.info("Підраховано {} записів", count);
+            for (ZipEntry entry : inpEntries) {
+                try (BufferedReader reader = newDetectedReader(zip.getInputStream(entry))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        if (cancelFlag != null && cancelFlag.get()) return -1L;
+                        count++;
+                        if (count % 10000 == 0) log.info("Підраховано {} записів", count);
                     }
                 }
-                return count;
             }
-        } catch (Exception e) {
-            log.error("Помилка підрахунку записів INPX", e);
-            return -1;
+            return count;
+        } catch (IOException e) {
+            throw new UncheckedIOException("Не вдалося прочитати INPX: " + file, e);
         }
     }
 

@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
 import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
+import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
@@ -35,6 +36,7 @@ public class CollectionPresenter {
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final CollectionManagementService collectionManagementService;
+    private final SwitchCollectionUseCase switchCollectionUseCase;
     private final DatabaseToolsService databaseToolsService;
     private final ApplicationState appState;
 
@@ -82,10 +84,10 @@ public class CollectionPresenter {
             collectionList.add(dto);
             appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
-            collectionManagementService.switchToCollection(collection);
-            appState.setCurrentLibraryCollection(collection);
+            Collection activated = switchCollectionUseCase.execute(collection);
+            appState.setCurrentLibraryCollection(activated);
 
-            appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());
+            appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName());
 
         } catch (Exception e) {
             dialogService.showError("Помилка", e.getMessage());
@@ -118,6 +120,9 @@ public class CollectionPresenter {
                     int index = collectionList.indexOf(collection);
                     if (index >= 0) {
                         collectionList.set(index, updated);
+                    }
+                    if (collection.isActive()) {
+                        appState.setCurrentLibraryCollection(renamed);
                     }
                     appState.getStatusBar().setStatusText("Колекцію перейменовано на '" + newName + "'");
                 } catch (Exception e) {

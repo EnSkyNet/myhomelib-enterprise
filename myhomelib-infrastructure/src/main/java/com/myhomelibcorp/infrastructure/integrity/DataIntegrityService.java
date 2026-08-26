@@ -1,10 +1,6 @@
 package com.myhomelibcorp.infrastructure.integrity;
 
 import com.myhomelibcorp.application.port.out.integrity.DataIntegrityPort;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.usecase.integrity.IntegrityReport;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -22,10 +18,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class DataIntegrityService implements DataIntegrityPort {
 
-    private final BookQueryRepository bookRepository;
-    private final AuthorRepository authorRepository;
-    private final GenreRepository genreRepository;
-    private final SeriesRepository seriesRepository;
     private final CollectionManager collectionManager;
 
     private JdbcTemplate getJdbcTemplate() {
@@ -74,12 +66,6 @@ public class DataIntegrityService implements DataIntegrityPort {
                 orphanedAuthors, orphanedGenres, duplicateBooks);
     }
 
-    @Override
-    public void fixOrphanedData() {
-        throw new UnsupportedOperationException(
-                "Legacy destructive integrity repair is disabled. Use CollectionMaintenanceUseCase "
-                        + "for analyze -> dry-run -> mandatory backup -> explicit apply.");
-    }
 
     // ==================== ПРИВАТНІ МЕТОДИ ====================
 

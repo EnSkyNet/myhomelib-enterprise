@@ -259,18 +259,9 @@ public class CollectionWorkspaceController {
         appState.getStatusBar().setProgressVisible(true);
 
         try {
-            // Отримуємо повну колекцію з репозиторію
-            Collection collection = new Collection(
-                    collectionDto.getId(),
-                    collectionDto.getName(),
-                    collectionDto.getRootFolder() != null ? Paths.get(collectionDto.getRootFolder()) : null,
-                    collectionDto.getDbFile(),
-                    collectionDto.getType(),
-                    null, null, null, null
-            );
-
-            // Переключаємо на вибрану колекцію
-            switchCollectionUseCase.execute(collection);
+            // Переключаємося за ID. Use case сам завантажує повний metadata-запис,
+            // включно з URL/login/password/notes, яких немає у CollectionDto.
+            Collection collection = switchCollectionUseCase.execute(collectionDto.getId());
 
             // Оновлюємо стан
             appState.setCurrentLibraryCollection(collection);
@@ -343,11 +334,8 @@ public class CollectionWorkspaceController {
             dbFileLabel.setText("БД: " + displayValue(collection.getDbFile()));
         }
         if (collectionTypeLabel != null) {
-            collectionTypeLabel.setText("Тип: " + switch (collection.getType()) {
-                case 1 -> "INPX / архівна";
-                case 2 -> "Віддалена / online";
-                default -> "Локальна";
-            });
+            collectionTypeLabel.setText("Тип: " + com.myhomelibcorp.domain.model.collection.CollectionType
+                    .fromCode(collection.getType()).getDisplayName());
         }
         if (renameButton != null) renameButton.setDisable(!collection.isAllowRename());
         if (deleteButton != null) deleteButton.setDisable(!collection.isAllowDelete());
@@ -497,6 +485,9 @@ public class CollectionWorkspaceController {
                     int index = collectionList.indexOf(selected);
                     if (index >= 0) {
                         collectionList.set(index, updated);
+                    }
+                    if (selected.isActive()) {
+                        appState.setCurrentLibraryCollection(renamed);
                     }
                     collectionsListView.getSelectionModel().select(updated);
                     dialogService.showInfo("Успішно", "Колекцію перейменовано на \"" + newName + "\"");

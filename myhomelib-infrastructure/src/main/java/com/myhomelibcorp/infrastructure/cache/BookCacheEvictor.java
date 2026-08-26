@@ -1,7 +1,6 @@
 package com.myhomelibcorp.infrastructure.cache;
 
 import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
-import com.myhomelibcorp.domain.event.book.BookUpdatedEvent;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -15,16 +14,6 @@ public class BookCacheEvictor {
 
     private final BookCache bookCache;
 
-    @Async
-    @EventListener
-    public void onBookUpdated(BookUpdatedEvent event) {
-        if (event.getBookId() != null) {
-            log.debug("Очищення кешу для оновленої книги: {}", event.getBookId());
-            bookCache.evict(event.getBookId());
-        } else {
-            log.warn("BookUpdatedEvent отримано без BookId");
-        }
-    }
 
     @Async
     @EventListener

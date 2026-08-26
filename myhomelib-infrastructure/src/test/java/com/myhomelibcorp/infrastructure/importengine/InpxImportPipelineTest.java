@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.application.catalog.CatalogSyncSession;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.MockitoAnnotations;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.file.Path;
 import java.util.Collections;
@@ -110,6 +112,52 @@ class InpxImportPipelineTest {
         assertThat(statuses).anyMatch(s -> s.contains("Підготовка INPX"));
         assertThat(statuses).anyMatch(s -> s.contains("Аналіз індексу"));
         verify(authorRepository, never()).findAll();
+    }
+
+    @Test
+    void deltaCatalogImportDoesNotMarkAllExistingBooksMissing(@TempDir Path tempDir) throws Exception {
+        Path testFile = tempDir.resolve("extra.inpx");
+        java.nio.file.Files.createFile(testFile);
+        when(reader.count(eq(testFile), any())).thenReturn(0L);
+        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
+        when(genreRepository.findAll()).thenReturn(List.of());
+        when(collectionManager.hasActiveCollection()).thenReturn(true);
+        when(collectionManager.getCurrentDataSource()).thenReturn(null);
+        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(mock(JdbcTemplate.class));
+        CatalogSyncSession session = new CatalogSyncSession(
+                "remote-42", "remote-collection:42", 2L, "fingerprint", false, true);
+        when(catalogUpdateTrackingPort.beginSync(eq("remote-collection:42"), anyString(), anyString()))
+                .thenReturn(session);
+
+        pipeline.importFileWithResult(
+                testFile, 5000, tempDir, null, "remote-collection:42",
+                "https://alex80.github.io/mhl/update/extra_flibusta_online_fb2.zip",
+                false, null, null);
+
+        verify(catalogUpdateTrackingPort, never()).markTrackedBooksMissing(any());
+    }
+
+    @Test
+    void fullCatalogImportMarksPreviouslyTrackedBooksMissing(@TempDir Path tempDir) throws Exception {
+        Path testFile = tempDir.resolve("full.inpx");
+        java.nio.file.Files.createFile(testFile);
+        when(reader.count(eq(testFile), any())).thenReturn(0L);
+        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
+        when(genreRepository.findAll()).thenReturn(List.of());
+        when(collectionManager.hasActiveCollection()).thenReturn(true);
+        when(collectionManager.getCurrentDataSource()).thenReturn(null);
+        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(mock(JdbcTemplate.class));
+        CatalogSyncSession session = new CatalogSyncSession(
+                "remote-42", "remote-collection:42", 3L, "fingerprint", false, true);
+        when(catalogUpdateTrackingPort.beginSync(eq("remote-collection:42"), anyString(), anyString()))
+                .thenReturn(session);
+
+        pipeline.importFileWithResult(
+                testFile, 5000, tempDir, null, "remote-collection:42",
+                "https://alex80.github.io/mhl/update/flibusta_online_fb2.zip",
+                true, null, null);
+
+        verify(catalogUpdateTrackingPort).markTrackedBooksMissing(session);
     }
 
 }

@@ -20,6 +20,8 @@ public class ImportContext {
     String catalogSourceLocation;
     @Builder.Default boolean updateExisting = false;
     @Builder.Default boolean indexAfterSave = true;
+    /** True when the catalog package is a complete snapshot; false for delta/extra updates. */
+    @Builder.Default boolean catalogFullSnapshot = true;
     DoubleConsumer progressListener;
     Consumer<String> statusConsumer; // додано
     AtomicBoolean cancelFlag;

@@ -71,21 +71,21 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
     public OpdsPage<OpdsFacetDto> series(int offset, int limit) {
         int safeLimit = clamp(limit);
         long total = scalar("""
-                SELECT COUNT(DISTINCT TRIM(series)) 
+                SELECT COUNT(DISTINCT LOWER(TRIM(series))) 
                 FROM books 
                 WHERE deleted = 0 
                   AND TRIM(COALESCE(series,'')) <> ''
                 """);
 
         String sql = """
-                SELECT TRIM(series) AS id, 
-                       TRIM(series) AS label, 
+                SELECT LOWER(TRIM(series)) AS id,
+                       MIN(TRIM(series)) AS label,
                        COUNT(*) AS book_count
                 FROM books
-                WHERE deleted = 0 
+                WHERE deleted = 0
                   AND TRIM(COALESCE(series,'')) <> ''
-                GROUP BY TRIM(series)
-                ORDER BY TRIM(series)
+                GROUP BY LOWER(TRIM(series))
+                ORDER BY LOWER(TRIM(series))
                 LIMIT ? OFFSET ?
                 """;
 
@@ -251,7 +251,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
         }
 
         if (!q.series().isBlank()) {
-            where.append(" AND TRIM(COALESCE(b.series,'')) = ?");
+            where.append(" AND LOWER(TRIM(COALESCE(b.series,''))) = LOWER(?)");
             params.add(q.series().trim());
         }
 

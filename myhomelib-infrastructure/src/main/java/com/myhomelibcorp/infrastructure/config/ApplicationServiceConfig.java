@@ -13,6 +13,7 @@ import com.myhomelibcorp.application.usecase.collection.AttachHlc2CollectionUseC
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetworkUseCase;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionPropertiesUseCase;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort;
+import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.port.out.collection.LegacyCollectionAttachPort;
 import com.myhomelibcorp.application.usecase.collection.CopyBooksBetweenCollectionsUseCase;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
@@ -78,8 +79,10 @@ public class ApplicationServiceConfig {
     }
 
     @Bean
-    public UpdateCollectionPropertiesUseCase updateCollectionPropertiesUseCase(CollectionRepository repository) {
-        return new UpdateCollectionPropertiesUseCase(repository);
+    public UpdateCollectionPropertiesUseCase updateCollectionPropertiesUseCase(
+            CollectionRepository repository,
+            CollectionLifecyclePort lifecyclePort) {
+        return new UpdateCollectionPropertiesUseCase(repository, lifecyclePort);
     }
 
     @Bean
@@ -91,8 +94,9 @@ public class ApplicationServiceConfig {
     public UpdateCollectionFromNetworkUseCase updateCollectionFromNetworkUseCase(
             RemoteCatalogDownloadPort downloader,
             com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importer,
-            CollectionLifecycleService lifecycle) {
-        return new UpdateCollectionFromNetworkUseCase(downloader, importer, lifecycle);
+            CollectionLifecycleService lifecycle,
+            ApplicationSettingsPort settings) {
+        return new UpdateCollectionFromNetworkUseCase(downloader, importer, lifecycle, settings);
     }
 
     @Bean

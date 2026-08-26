@@ -14,5 +14,4 @@ public class InpxExportRequest {
     Path outputFile;                // Шлях до вихідного .inpx файлу
     String collectionName;          // Назва колекції
     String collectionVersion;       // Версія колекції
-    boolean includeExtraData;       // Включити додаткові дані (прогрес, рейтинги)
 }

@@ -88,7 +88,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
     }
 
     @Override
-    @Transactional
+    @Transactional(transactionManager = "metadataTransactionManager")
     public Collection save(Collection collection) {
         log.info("Збереження колекції: name={}, id={}", collection.getName(), collection.getId());
 
@@ -187,7 +187,14 @@ public class SqliteCollectionRepository implements CollectionRepository {
                 );
 
                 log.info("UPDATE колекції: rowsUpdated={}, id={}, name={}", updated, collection.getId(), collection.getName());
-                return collection;
+                if (updated <= 0) {
+                    throw new RuntimeException("Не вдалося оновити колекцію: " + collection.getName());
+                }
+                // Повертаємо саме persisted representation. Це критично для password:
+                // локальна змінна вище вже зашифрована перед UPDATE, тоді як вхідний
+                // Collection може містити plain text із вікна властивостей.
+                return findById(collection.getId())
+                        .orElseThrow(() -> new RuntimeException("Не вдалося перечитати оновлену колекцію: " + collection.getId()));
             }
         }
     }

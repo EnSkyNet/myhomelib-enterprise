@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.importer;
 
-import com.myhomelibcorp.application.port.out.importer.FastImportService;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.port.out.importer.FastImportService;
 import com.myhomelibcorp.infrastructure.importengine.InpxImportPipeline;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +24,7 @@ public class InpxFastImportService implements FastImportService {
         log.info("Fast import INPX: {} (root: {})", file, rootDirectory);
         return pipeline.importFile(file, batchSize, rootDirectory);
     }
+
     @Override
     public long importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag) {
         log.info("Fast import INPX with cancellation: {} (root: {})", file, rootDirectory);
@@ -37,14 +38,24 @@ public class InpxFastImportService implements FastImportService {
                 file, rootDirectory, catalogSourceKey);
         return pipeline.importFile(file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation);
     }
+
     @Override
     public ImportResult importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag,
                                    String catalogSourceKey, String catalogSourceLocation,
                                    DoubleConsumer progressListener, Consumer<String> statusConsumer) {
-        log.info("Fast import INPX with progress: {} (root: {}, sourceKey: {})",
-                file, rootDirectory, catalogSourceKey);
+        return importInpx(file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation,
+                true, progressListener, statusConsumer);
+    }
+
+    @Override
+    public ImportResult importInpx(Path file, int batchSize, Path rootDirectory, AtomicBoolean cancelFlag,
+                                   String catalogSourceKey, String catalogSourceLocation,
+                                   boolean catalogFullSnapshot,
+                                   DoubleConsumer progressListener, Consumer<String> statusConsumer) {
+        log.info("Fast import INPX with progress: {} (root: {}, sourceKey: {}, fullSnapshot={})",
+                file, rootDirectory, catalogSourceKey, catalogFullSnapshot);
         return pipeline.importFileWithResult(
                 file, batchSize, rootDirectory, cancelFlag, catalogSourceKey, catalogSourceLocation,
-                progressListener, statusConsumer);
+                catalogFullSnapshot, progressListener, statusConsumer);
     }
 }

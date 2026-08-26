@@ -75,14 +75,14 @@ public class SqliteAuthorRepository implements AuthorRepository {
 
     // ---- ОСНОВНІ МЕТОДИ РЕПОЗИТОРІЮ ----
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public List<Author> findAll() {
         String sql = "SELECT * FROM authors";
         return getJdbcTemplate().query(sql, authorRowMapper);
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public Optional<Author> findById(AuthorId id) {
         String sql = "SELECT * FROM authors WHERE id = ?";
         try {
@@ -178,7 +178,7 @@ public class SqliteAuthorRepository implements AuthorRepository {
             "АБВГҐДЕЁЄЖЗИІЇЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯABCDEFGHIJKLMNOPQRSTUVWXYZ";
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public List<Author> findByInitial(char initial) {
         if (initial == '*') {
             return findFirstInitial().map(this::findByInitial).orElseGet(List::of);
@@ -216,7 +216,7 @@ public class SqliteAuthorRepository implements AuthorRepository {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public Optional<Character> findFirstInitial() {
         for (char initial : TOOLBAR_INITIALS.toCharArray()) {
             if (countByInitial(initial) > 0) {
@@ -230,7 +230,7 @@ public class SqliteAuthorRepository implements AuthorRepository {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public long countByInitial(char initial) {
         if (initial == '*') {
             Long count = getJdbcTemplate().queryForObject("SELECT COUNT(*) FROM authors", Long.class);
@@ -258,7 +258,7 @@ public class SqliteAuthorRepository implements AuthorRepository {
     }
 
     @Override
-    @Transactional(readOnly = true)
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public List<Author> searchByName(String query, int limit) {
         if (query == null || query.isBlank()) {
             return List.of();

@@ -14,12 +14,10 @@ import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.beans.property.SimpleBooleanProperty;
-import javafx.beans.value.ObservableValue;
 import javafx.fxml.FXML;
 import javafx.geometry.Pos;
 import javafx.scene.control.*;
 import javafx.scene.control.cell.TreeItemPropertyValueFactory;
-import javafx.util.Callback;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -203,7 +201,7 @@ public class TreeBookTableController {
                     .pagination(Pagination.of(10000, 0))
                     .build();
 
-            List<Book> books = bookQueryRepository.find(query);
+            List<Book> books = bookQueryRepository.findPage(query).content();
             log.info("📚 Завантажено {} книг для побудови дерева", books.size());
 
             if (books.isEmpty()) {

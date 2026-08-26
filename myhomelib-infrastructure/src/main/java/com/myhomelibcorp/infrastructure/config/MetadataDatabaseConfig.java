@@ -1,11 +1,15 @@
 package com.myhomelibcorp.infrastructure.config;
 
 import com.zaxxer.hikari.HikariDataSource;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.datasource.DataSourceTransactionManager;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
@@ -38,7 +42,30 @@ public class MetadataDatabaseConfig {
     }
 
     @Bean(name = "metadataJdbcTemplate")
-    public JdbcTemplate metadataJdbcTemplate(DataSource metadataDataSource) {
+    public JdbcTemplate metadataJdbcTemplate(@Qualifier("metadataDataSource") DataSource metadataDataSource) {
         return new JdbcTemplate(metadataDataSource);
+    }
+
+    /**
+     * Transaction manager for the metadata database (collections, collection metadata, etc.).
+     *
+     * This bean must exist explicitly because the application also defines
+     * collectionTransactionManager. Once any PlatformTransactionManager bean is present,
+     * Spring Boot no longer auto-creates the default DataSource transaction manager.
+     * Without this bean, an unqualified @Transactional on metadata repositories can be
+     * resolved to the collection-scoped transaction manager and fail before a collection
+     * has even been selected.
+     */
+    @Primary
+    @Bean(name = "metadataTransactionManager")
+    public PlatformTransactionManager metadataTransactionManager(
+            @Qualifier("metadataDataSource") DataSource metadataDataSource) {
+        return new DataSourceTransactionManager(metadataDataSource);
+    }
+
+    @Bean(name = "metadataTransactionTemplate")
+    public TransactionTemplate metadataTransactionTemplate(
+            @Qualifier("metadataTransactionManager") PlatformTransactionManager transactionManager) {
+        return new TransactionTemplate(transactionManager);
     }
 }

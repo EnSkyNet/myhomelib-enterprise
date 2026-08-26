@@ -34,8 +34,11 @@ public enum CollectionType {
     public boolean isFb2Collection() { return fb2Collection; }
     public boolean isExternal() { return external; }
 
-    /** Empty local collections do not require a source file. */
-    public boolean requiresSource() { return this == INPX_ARCHIVE || remote; }
+    /**
+     * Локальний source-файл обов'язковий лише для явно підключеної INPX-колекції.
+     * Online-колекції можуть стартувати лише з URL і отримати INPX пізніше з мережі.
+     */
+    public boolean requiresSource() { return this == INPX_ARCHIVE; }
     public boolean requiresUrl() { return remote; }
 
     public static CollectionType fromCode(int code) {

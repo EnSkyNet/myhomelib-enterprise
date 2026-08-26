@@ -66,7 +66,13 @@ public class SqliteSeriesRepository implements SeriesRepository {
 
     @Override
     public List<String> getAllSeriesNames() {
-        String sql = "SELECT DISTINCT TRIM(series) FROM books WHERE series IS NOT NULL AND TRIM(series) != '' ORDER BY TRIM(series)";
+        String sql = """
+                SELECT MIN(TRIM(series))
+                FROM books
+                WHERE series IS NOT NULL AND TRIM(series) <> ''
+                GROUP BY LOWER(TRIM(series))
+                ORDER BY LOWER(TRIM(series))
+                """;
         return getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString(1));
     }
 
@@ -87,12 +93,15 @@ public class SqliteSeriesRepository implements SeriesRepository {
                     lower(hex(randomblob(2))) || '-' || 
                     lower(hex(randomblob(2))) || '-' || 
                     lower(hex(randomblob(6))),
-                    TRIM(series)
+                    MIN(TRIM(series))
                 FROM books
                 WHERE series IS NOT NULL 
                   AND TRIM(series) != ''
-                  AND TRIM(series) NOT IN (SELECT name FROM series)
-                GROUP BY TRIM(series)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM series s
+                      WHERE LOWER(TRIM(s.name)) = LOWER(TRIM(books.series))
+                  )
+                GROUP BY LOWER(TRIM(series))
                 """;
             int inserted = jt.update(insertSql);
             if (inserted > 0) {
