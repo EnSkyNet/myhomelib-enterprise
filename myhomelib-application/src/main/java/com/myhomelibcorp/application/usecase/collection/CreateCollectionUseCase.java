@@ -6,17 +6,12 @@ import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.domain.model.collection.CollectionType;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.nio.file.Path;
-import java.util.UUID;
 import com.myhomelibcorp.shared.util.AppPaths;
 
-/**
- * Use Case: створення нової колекції.
- */
 @RequiredArgsConstructor
 @Slf4j
 public class CreateCollectionUseCase {
@@ -35,12 +30,11 @@ public class CreateCollectionUseCase {
 
         log.info("📚 Створення нової колекції: {}", request.getName());
 
-        // Визначаємо шлях до БД
         String dbPath = determineDbPath(request);
 
-        // Створюємо колекцію
+        // ID = null - репозиторій створить сам
         Collection collection = new Collection(
-                UUID.randomUUID().toString(),
+                null,
                 request.getName(),
                 request.getRootFolder(),
                 dbPath,
@@ -51,33 +45,11 @@ public class CreateCollectionUseCase {
                 request.getNotes()
         );
 
+        log.info("Шлях до БД: {}", dbPath);
+
         // Зберігаємо в мета-БД
         Collection saved = collectionRepository.save(collection);
-        log.info("✅ Колекцію створено: id={}, name={}", saved.getId(), saved.getName());
-
-        // Активуємо колекцію. Якщо задане джерело (INPX/INP/архів/книга), реально імпортуємо його.
-        if (request.isImportOnCreate()) {
-            try {
-                collectionLifecycleService.initializeCollection(saved, false);
-                if (request.getSourcePath() != null && !request.getSourcePath().isBlank()) {
-                    Path source = Path.of(request.getSourcePath()).toAbsolutePath().normalize();
-                    Path root = request.getRootFolder() != null ? request.getRootFolder().toAbsolutePath().normalize()
-                            : (source.getParent() != null ? source.getParent() : Path.of(".").toAbsolutePath().normalize());
-                    importFileUseCase.execute(ImportContext.builder()
-                            .file(source)
-                            .rootDirectory(root)
-                            .batchSize(1000)
-                            .indexAfterSave(false)
-                            .build());
-                    log.info("✅ Джерело колекції імпортовано: {}", source);
-                }
-                if (request.isCreateIndex()) collectionLifecycleService.rebuildSearchIndex();
-                log.info("✅ Колекцію активовано та проіндексовано");
-            } catch (Exception e) {
-                log.error("❌ Помилка створення/імпорту колекції", e);
-                throw new IllegalStateException("Колекцію створено, але не вдалося імпортувати джерело: " + e.getMessage(), e);
-            }
-        }
+        log.info("✅ Колекцію збережено: id={}, name={}", saved.getId(), saved.getName());
 
         return saved;
     }
@@ -86,9 +58,6 @@ public class CreateCollectionUseCase {
         if (request.getDbFile() != null) {
             return request.getDbFile().toString();
         }
-
-        // Стандартний шлях
-        String id = UUID.randomUUID().toString();
-        return AppPaths.librariesDir().resolve(id + ".db").toString();
+        return AppPaths.librariesDir().resolve(java.util.UUID.randomUUID() + ".db").toString();
     }
 }

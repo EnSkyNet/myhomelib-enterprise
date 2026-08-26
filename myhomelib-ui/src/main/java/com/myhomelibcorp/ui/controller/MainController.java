@@ -15,14 +15,14 @@ import com.myhomelibcorp.ui.action.ActionCustomizationDialog;
 import com.myhomelibcorp.ui.action.ActionRegistry;
 import com.myhomelibcorp.ui.action.BookActionProfilesDialog;
 import com.myhomelibcorp.ui.action.CoreActions;
+import com.myhomelibcorp.ui.collection.CollectionWorkspaceController;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.opds.OpdsUiService;
-import com.myhomelibcorp.ui.service.DialogService;
-import com.myhomelibcorp.ui.service.MainBookCommandCoordinator;
-import com.myhomelibcorp.ui.service.NavigationHistoryService;
+import com.myhomelibcorp.ui.presenter.CollectionPresenter;
+import com.myhomelibcorp.ui.service.*;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -76,6 +76,8 @@ public class MainController {
     private final DatabaseToolsController databaseToolsController;
     private final ImportController importController;
     private final NavigationPanelController navigationPanelController;
+    private final CollectionWorkspaceController collectionWorkspaceController;
+    private final CollectionPresenter collectionPresenter;
     private final com.myhomelibcorp.ui.service.ApplicationSettingsDialog applicationSettingsDialog;
     private final com.myhomelibcorp.ui.service.UserDataUiService userDataUiService;
     private final com.myhomelibcorp.ui.service.BookListExportService bookListExportService;
@@ -133,7 +135,6 @@ public class MainController {
 
         log.info("MainController готовий до роботи");
     }
-
 
     private void populateLanguages() {
         if (languageMenu == null) return;
@@ -239,9 +240,6 @@ public class MainController {
         workspaceManager.showReaderWorkspace(bookId);
     }
 
-    /**
-     * НОВИЙ МЕТОД: відкриває новий Reader (без WebView).
-     */
     public void showNewReaderWorkspace(BookId bookId) {
         workspaceManager.showNewReaderWorkspace(bookId);
     }
@@ -254,7 +252,6 @@ public class MainController {
         workspaceManager.setWorkspace(workspace, "custom");
     }
 
-    /** Compatibility hook retained for older callers; button state is now property-bound. */
     public void updateNavigationButtons() {
         actionRegistry.refreshContexts();
     }
@@ -429,6 +426,12 @@ public class MainController {
             Parent root = loader.load();
 
             CollectionWizardController controller = loader.getController();
+
+            // Передаємо список колекцій у візард
+            if (collectionWorkspaceController != null) {
+                controller.setCollectionList(collectionWorkspaceController.getCollectionList());
+            }
+
             Stage stage = new Stage();
             stage.setTitle("Майстер створення колекції");
             stage.setScene(new Scene(root, 620, 480));
@@ -605,6 +608,7 @@ public class MainController {
         showDashboard();
         dialogService.showInfo("Reader закрито", "Поточну книгу закрито.");
     }
+
     @FXML public void handleExportUserData() { userDataUiService.exportData(mainPane.getScene().getWindow()); }
     @FXML public void handleImportUserData() { userDataUiService.importData(mainPane.getScene().getWindow()); handleRefresh(); }
     @FXML public void handleExportListHtml() { bookListExportService.export(mainPane.getScene().getWindow(), "html"); }
@@ -612,7 +616,6 @@ public class MainController {
     @FXML public void handleExportListRtf() { bookListExportService.export(mainPane.getScene().getWindow(), "rtf"); }
 
     @FXML public void handleOpenExternalReader() { bookCommandCoordinator.openExternal(); }
-
 
     @FXML public void handleCustomizeActions() {
         actionCustomizationDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
@@ -630,7 +633,6 @@ public class MainController {
 
     @FXML public void handleCopyToCollection() { collectionCopyUiService.copySelected(mainPane.getScene().getWindow(), this::handleRefresh); }
 
-
     @FXML public void handleUpdateCollectionManual() { importController.importInpx(this::handleRefresh); }
     @FXML public void handleUpdateCollectionNetwork() { collectionUpdateUiService.updateFromNetwork(mainPane.getScene().getWindow(), this::handleRefresh); }
     @FXML public void handleCancelCollectionUpdate() { if(!collectionUpdateUiService.cancel()) dialogService.showInfo("Оновлення", "Активного оновлення колекції немає."); }
@@ -643,5 +645,9 @@ public class MainController {
             dialogService.showError("Підключення колекції", e.getMessage());
         }
     }
-
+    @FXML
+    public void handleResetNavigation() {
+        navigationPanelController.resetNavigation();
+        dialogService.showInfo("Навігація", "Навігаційну панель скинуто.");
+    }
 }

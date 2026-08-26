@@ -2,7 +2,6 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
-import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
 import com.myhomelibcorp.application.service.CollectionManagementService;
 import com.myhomelibcorp.application.statistics.StatisticsService;
@@ -30,7 +29,6 @@ import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
-import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -46,7 +44,6 @@ public class CollectionWizardController {
     private final SyncSeriesUseCase syncSeriesUseCase;
     private final ApplicationEventPublisher eventPublisher;
     private final ApplicationState appState;
-    private final CollectionRepository collectionRepository;
 
     private final CollectionWizardViewModel model = new CollectionWizardViewModel();
 
@@ -82,11 +79,9 @@ public class CollectionWizardController {
     public void initialize() {
         log.info("CollectionWizardController ініціалізовано");
 
-        // Налаштування ComboBox для типів колекцій
         typeComboBox.getItems().setAll(CollectionType.values());
         typeComboBox.setValue(CollectionType.FB2_LOCAL);
 
-        // Налаштування відображення типів колекцій
         typeComboBox.setConverter(new javafx.util.StringConverter<CollectionType>() {
             @Override
             public String toString(CollectionType type) {
@@ -98,7 +93,6 @@ public class CollectionWizardController {
             }
         });
 
-        // Прив'язка до ViewModel
         nameField.textProperty().bindBidirectional(model.nameProperty());
         rootFolderField.textProperty().bindBidirectional(
                 model.rootFolderProperty(),
@@ -126,14 +120,12 @@ public class CollectionWizardController {
         importOnCreateCheck.selectedProperty().bindBidirectional(model.importOnCreateProperty());
         createIndexCheck.selectedProperty().bindBidirectional(model.createIndexProperty());
 
-        // Валідація при зміні полів
         nameField.textProperty().addListener((obs, old, val) -> validate());
         rootFolderField.textProperty().addListener((obs, old, val) -> validate());
         dbPathField.textProperty().addListener((obs, old, val) -> validate());
         sourcePathField.textProperty().addListener((obs, old, val) -> validate());
         urlField.textProperty().addListener((obs, old, val) -> validate());
 
-        // Початкова валідація
         validate();
         updateStep(0);
     }
@@ -177,7 +169,6 @@ public class CollectionWizardController {
             return;
         }
 
-        // Валідація через порт
         CreateCollectionRequest request = buildRequest();
         List<String> errors = collectionValidator.validate(request);
         if (!errors.isEmpty()) {
@@ -188,67 +179,44 @@ public class CollectionWizardController {
         finishButton.setDisable(true);
         finishButton.setText("Створення...");
         appState.getStatusBar().setStatusText("Створення колекції...");
-        appState.getStatusBar().setProgressVisible(true);
 
         new Thread(() -> {
             try {
                 log.info("Початок створення колекції: {}", request.getName());
 
-                // Створюємо колекцію
                 Collection collection = createCollectionUseCase.execute(request);
                 log.info("Колекцію створено: id={}, name={}, dbFile={}",
                         collection.getId(), collection.getName(), collection.getDbFile());
 
-                // Перевіряємо, чи колекція збереглася в мета-БД
-                var saved = collectionRepository.findById(collection.getId());
-                if (saved.isEmpty()) {
-                    log.error("Колекцію не знайдено в мета-БД після збереження!");
-                    throw new RuntimeException("Не вдалося зберегти колекцію в мета-БД");
-                }
-                log.info("Колекцію підтверджено в мета-БД: {}", saved.get().getName());
-
-                // Оновлюємо статистику та серії
-                statisticsService.refreshStatistics();
-                syncSeriesUseCase.execute();
-
-                // Створюємо DTO для UI
-                CollectionDto dto = CollectionDto.builder()
-                        .id(collection.getId())
-                        .name(collection.getName())
-                        .active(false)
-                        .allowRename(true)
-                        .allowDelete(true)
-                        .rootFolder(collection.getRootFolder() != null ? collection.getRootFolder().toString() : null)
-                        .dbFile(collection.getDbFile())
-                        .type(collection.getType())
-                        .booksCount(-1L)
-                        .build();
-
                 UiExecutor.runOnUiThread(() -> {
                     try {
-                        // Додаємо до списку колекцій
+                        CollectionDto dto = CollectionDto.builder()
+                                .id(collection.getId())
+                                .name(collection.getName())
+                                .active(true)
+                                .allowRename(true)
+                                .allowDelete(true)
+                                .rootFolder(collection.getRootFolder() != null ? collection.getRootFolder().toString() : null)
+                                .dbFile(collection.getDbFile())
+                                .type(collection.getType())
+                                .booksCount(-1L)
+                                .build();
+
                         if (collectionList != null) {
                             collectionList.add(dto);
                             log.info("Колекцію додано до списку UI: {}", dto.getName());
                         }
 
-                        // Перемикаємо на нову колекцію
                         collectionManagementService.switchToCollection(collection);
                         appState.setCurrentLibraryCollection(collection);
 
-                        // Оновлюємо статус
-                        appState.getStatusBar().setStatusText("Колекцію '" + collection.getName() + "' створено та активовано");
-                        appState.getStatusBar().setProgressVisible(false);
+                        statisticsService.refreshStatistics();
+                        syncSeriesUseCase.execute();
 
-                        // Публікуємо подію оновлення
                         eventPublisher.publishEvent(new NavigationRefreshEvent());
 
-                        // Показуємо повідомлення
-                        dialogService.showInfo("Успішно",
-                                "Колекцію '" + collection.getName() + "' створено!\n\n" +
-                                        "ID: " + collection.getId() + "\n" +
-                                        "Шлях до БД: " + collection.getDbFile() + "\n" +
-                                        "Книг: " + dto.getBooksCount());
+                        appState.getStatusBar().setStatusText("Колекцію '" + collection.getName() + "' створено");
+                        dialogService.showInfo("Успішно", "Колекцію '" + collection.getName() + "' створено!");
 
                         finishButton.setDisable(false);
                         finishButton.setText("✅ Створити");
@@ -272,7 +240,6 @@ public class CollectionWizardController {
                     showError("Помилка створення: " + e.getMessage());
                     finishButton.setDisable(false);
                     finishButton.setText("✅ Створити");
-                    appState.getStatusBar().setProgressVisible(false);
                     appState.getStatusBar().setStatusText("Помилка створення колекції");
                 });
             }
@@ -329,7 +296,6 @@ public class CollectionWizardController {
             updateConfirmation();
         }
 
-        // Оновлення видимості кроків
         for (int i = 0; i < wizardContent.getChildren().size(); i++) {
             wizardContent.getChildren().get(i).setVisible(i == step);
         }
@@ -378,15 +344,5 @@ public class CollectionWizardController {
         confirmSourcePath.setText(model.getSourcePath() != null ? model.getSourcePath() : "");
         confirmImportOnCreate.setText(model.isImportOnCreate() ? "Так" : "Ні");
         confirmCreateIndex.setText(model.isCreateIndex() ? "Так" : "Ні");
-    }
-
-    // ===== ГЕТЕРИ ДЛЯ ТЕСТІВ =====
-
-    public CollectionWizardViewModel getModel() {
-        return model;
-    }
-
-    public Stage getStage() {
-        return stage;
     }
 }

@@ -21,10 +21,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.function.Consumer;
 
-/**
- * Thin JavaFX adapter for application navigation.
- * Catalogue access and node construction live in NavigationQueryService.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -131,10 +127,12 @@ public class NavigationPanelController {
 
     public void refreshAll() {
         log.info("Оновлення навігаційної панелі: {}", currentMode);
+        // Очищаємо кеш перед завантаженням
+        allNodes = List.of();
+        navigationListView.getItems().clear();
         Platform.runLater(() -> loadMode(currentMode));
     }
 
-    /** Re-evaluates filtered facets; AUTHORS must resolve the first available letter again. */
     public void refreshForFilterChange() {
         log.info("Оновлення навігації після зміни глобального фільтра: {}", currentMode);
         Platform.runLater(() -> {
@@ -142,6 +140,9 @@ public class NavigationPanelController {
                 currentLetter = null;
                 alphabetToolbarController.clearSelection();
             }
+            // Очищаємо кеш
+            allNodes = List.of();
+            navigationListView.getItems().clear();
             loadMode(currentMode);
         });
     }
@@ -153,7 +154,25 @@ public class NavigationPanelController {
                 currentLetter = null;
                 alphabetToolbarController.clearSelection();
             }
+            allNodes = List.of();
+            navigationListView.getItems().clear();
             loadMode(currentMode);
+        });
+    }
+
+    /**
+     * Повне скидання навігації - очищує всі кеші та перезавантажує
+     */
+    public void resetNavigation() {
+        log.info("Повне скидання навігації");
+        Platform.runLater(() -> {
+            allNodes = List.of();
+            navigationListView.getItems().clear();
+            currentLetter = null;
+            currentQuery = "";
+            alphabetToolbarController.clearSelection();
+            listSearchField.clear();
+            loadMode(NavigationMode.AUTHORS);
         });
     }
 
@@ -241,8 +260,8 @@ public class NavigationPanelController {
                         || currentMode == NavigationMode.HISTORY
                         || currentMode == NavigationMode.UPDATES
                         || (currentMode == NavigationMode.AUTHORS
-                            ? matchesQuery(displayLabel(node), query)
-                            : matchesFilter(displayLabel(node), letter, query)))
+                        ? matchesQuery(displayLabel(node), query)
+                        : matchesFilter(displayLabel(node), letter, query)))
                 .toList();
 
         UiExecutor.runOnUiThread(() -> {
@@ -326,7 +345,6 @@ public class NavigationPanelController {
         });
     }
 
-    /** Switches the sidebar to a mode and selects a stable node without firing navigation twice. */
     public void revealNode(NavigationMode mode, String nodeId) {
         if (mode == null || nodeId == null || nodeId.isBlank()) return;
         pendingSelectionMode = mode;
@@ -397,7 +415,7 @@ public class NavigationPanelController {
         navigationListView.getSelectionModel().clearSelection();
     }
 
-    // Compatibility entry points used by MainController and existing FXML actions.
+    // Compatibility entry points
     public void loadAuthors() { loadMode(NavigationMode.AUTHORS); }
     public void loadSeries() { loadMode(NavigationMode.SERIES); }
     public void loadGenres() { loadMode(NavigationMode.GENRES); }

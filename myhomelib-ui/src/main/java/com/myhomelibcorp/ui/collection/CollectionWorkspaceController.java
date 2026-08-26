@@ -7,6 +7,8 @@ import com.myhomelibcorp.application.collection.CollectionMaintenanceReport;
 import com.myhomelibcorp.application.collection.CollectionSourceState;
 import com.myhomelibcorp.application.collection.MaintenanceApplyResult;
 import com.myhomelibcorp.application.usecase.collection.*;
+import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -45,8 +47,10 @@ public class CollectionWorkspaceController {
     private final CreateCollectionUseCase createCollectionUseCase;
     private final RenameCollectionUseCase renameCollectionUseCase;
     private final DeleteCollectionUseCase deleteCollectionUseCase;
+    private final SwitchCollectionUseCase switchCollectionUseCase;
     private final CollectionAutoUpdateUseCase collectionAutoUpdateUseCase;
     private final CollectionMaintenanceUseCase collectionMaintenanceUseCase;
+    private final SyncSeriesUseCase syncSeriesUseCase;
     private final NavigationService navigationService;
     private final ApplicationState appState;
     private final DialogService dialogService;
@@ -68,6 +72,7 @@ public class CollectionWorkspaceController {
     @FXML private Button renameButton;
     @FXML private Button deleteButton;
     @FXML private Button createButton;
+    @FXML private Button activateButton;
     @FXML private VBox collectionDetailsBox;
     @FXML private TextField sourceFileField;
     @FXML private CheckBox autoUpdateEnabledCheckBox;
@@ -93,7 +98,6 @@ public class CollectionWorkspaceController {
 
         booksTableView.setItems(books);
 
-        // ===== НАЛАШТУВАННЯ LISTVIEW ДЛЯ ВІДОБРАЖЕННЯ НАЗВ КОЛЕКЦІЙ =====
         collectionsListView.setItems(collectionList);
         collectionsListView.setCellFactory(lv -> new ListCell<CollectionDto>() {
             @Override
@@ -101,14 +105,10 @@ public class CollectionWorkspaceController {
                 super.updateItem(item, empty);
                 if (empty || item == null) {
                     setText(null);
-                    setGraphic(null);
                     setStyle("");
                 } else {
-                    // Показуємо активну колекцію з позначкою
                     String prefix = item.isActive() ? "● " : "○ ";
                     setText(prefix + item.getName());
-
-                    // Стиль для активної колекції
                     if (item.isActive()) {
                         setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
                     } else {
@@ -118,17 +118,93 @@ public class CollectionWorkspaceController {
             }
         });
 
+        // ===== КОНТЕКСТНЕ МЕНЮ =====
+        ContextMenu contextMenu = new ContextMenu();
+
+        // Пункт "Активувати"
+        MenuItem activateItem = new MenuItem("▶ Активувати");
+        activateItem.setOnAction(e -> {
+            CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
+            if (selected != null && !selected.isActive()) {
+                activateCollection(selected);
+            }
+        });
+
+        // Пункт "Перейменувати"
+        MenuItem renameItem = new MenuItem("✏️ Перейменувати");
+        renameItem.setOnAction(e -> {
+            CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.isAllowRename()) {
+                onRenameCollection();
+            }
+        });
+
+        // Пункт "Видалити"
+        MenuItem deleteItem = new MenuItem("🗑 Видалити");
+        deleteItem.setOnAction(e -> {
+            CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
+            if (selected != null && selected.isAllowDelete() && !selected.isActive()) {
+                onDeleteCollection();
+            }
+        });
+
+        // Пункт "Оновити"
+        MenuItem refreshItem = new MenuItem("🔄 Оновити");
+        refreshItem.setOnAction(e -> loadCollections());
+
+        // Пункт "Копіювати ID"
+        MenuItem copyIdItem = new MenuItem("📋 Копіювати ID");
+        copyIdItem.setOnAction(e -> {
+            CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
+            if (selected != null) {
+                javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
+                content.putString(selected.getId());
+                javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
+                dialogService.showInfo("Копійовано", "ID колекції скопійовано в буфер обміну.");
+            }
+        });
+
+        // Роздільник
+        SeparatorMenuItem separator = new SeparatorMenuItem();
+
+        contextMenu.getItems().addAll(
+                activateItem,
+                renameItem,
+                deleteItem,
+                separator,
+                refreshItem,
+                copyIdItem
+        );
+        collectionsListView.setContextMenu(contextMenu);
+
+        // ===== ОНОВЛЕННЯ КОНТЕКСТНОГО МЕНЮ ПРИ ВИБОРІ =====
         collectionsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null) {
+                // Оновлюємо стан пунктів меню
+                activateItem.setDisable(selected.isActive());
+                renameItem.setDisable(!selected.isAllowRename());
+                deleteItem.setDisable(!selected.isAllowDelete() || selected.isActive());
+
                 selectedCollection = selected;
                 loadCollectionBooks(selected);
                 updateCollectionDetails(selected);
                 loadSourceState(selected);
                 resetMaintenanceView(selected);
                 collectionDetailsBox.setVisible(true);
+                updateActivateButton(selected);
                 log.info("Вибрано колекцію: {} (active={})", selected.getName(), selected.isActive());
             } else {
                 collectionDetailsBox.setVisible(false);
+            }
+        });
+
+        // Подвійний клік для активації
+        collectionsListView.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
+                if (selected != null && !selected.isActive()) {
+                    activateCollection(selected);
+                }
             }
         });
 
@@ -144,6 +220,86 @@ public class CollectionWorkspaceController {
         loadCollections();
     }
 
+    public ObservableList<CollectionDto> getCollectionList() {
+        return collectionList;
+    }
+
+    private void updateActivateButton(CollectionDto collection) {
+        if (activateButton != null) {
+            if (collection == null || collection.isActive()) {
+                activateButton.setDisable(true);
+                activateButton.setText("✅ Активна");
+            } else {
+                activateButton.setDisable(false);
+                activateButton.setText("▶ Активувати");
+            }
+        }
+    }
+
+    @FXML
+    private void onActivateCollection() {
+        if (selectedCollection != null && !selectedCollection.isActive()) {
+            activateCollection(selectedCollection);
+        }
+    }
+
+    private void activateCollection(CollectionDto collectionDto) {
+        if (collectionDto == null) {
+            dialogService.showWarning("Активація", "Виберіть колекцію для активації.");
+            return;
+        }
+
+        if (collectionDto.isActive()) {
+            dialogService.showInfo("Інформація", "Колекція \"" + collectionDto.getName() + "\" вже активна.");
+            return;
+        }
+
+        log.info("Активація колекції: {}", collectionDto.getName());
+        appState.getStatusBar().setStatusText("Активація колекції: " + collectionDto.getName());
+        appState.getStatusBar().setProgressVisible(true);
+
+        try {
+            // Отримуємо повну колекцію з репозиторію
+            Collection collection = new Collection(
+                    collectionDto.getId(),
+                    collectionDto.getName(),
+                    collectionDto.getRootFolder() != null ? Paths.get(collectionDto.getRootFolder()) : null,
+                    collectionDto.getDbFile(),
+                    collectionDto.getType(),
+                    null, null, null, null
+            );
+
+            // Переключаємо на вибрану колекцію
+            switchCollectionUseCase.execute(collection);
+
+            // Оновлюємо стан
+            appState.setCurrentLibraryCollection(collection);
+            syncSeriesUseCase.execute();
+
+            // Оновлюємо список
+            loadCollections();
+
+            // Вибираємо активовану колекцію в списку
+            for (CollectionDto dto : collectionList) {
+                if (dto.getId().equals(collectionDto.getId())) {
+                    collectionsListView.getSelectionModel().select(dto);
+                    break;
+                }
+            }
+
+            appState.getStatusBar().setStatusText("Активовано колекцію: " + collectionDto.getName());
+            appState.getStatusBar().setProgressVisible(false);
+
+            dialogService.showInfo("Успішно", "Колекцію \"" + collectionDto.getName() + "\" активовано.");
+
+        } catch (Exception e) {
+            log.error("Помилка активації колекції", e);
+            appState.getStatusBar().setProgressVisible(false);
+            appState.getStatusBar().setStatusText("Помилка активації колекції");
+            dialogService.showError("Помилка", "Не вдалося активувати колекцію: " + e.getMessage());
+        }
+    }
+
     public void loadCollections() {
         try {
             List<CollectionDto> collections = loadCollectionsUseCase.execute();
@@ -154,6 +310,7 @@ public class CollectionWorkspaceController {
             if (!collections.isEmpty()) {
                 CollectionDto toSelect = activeCollection != null ? activeCollection : collections.getFirst();
                 collectionsListView.getSelectionModel().select(toSelect);
+                updateActivateButton(toSelect);
             } else {
                 collectionDetailsBox.setVisible(false);
             }
@@ -198,6 +355,8 @@ public class CollectionWorkspaceController {
         if (maintenanceAnalyzeButton != null) maintenanceAnalyzeButton.setDisable(maintenanceDisabled);
         if (maintenanceDryRunButton != null) maintenanceDryRunButton.setDisable(true);
         if (maintenanceApplyButton != null) maintenanceApplyButton.setDisable(true);
+
+        updateActivateButton(collection);
     }
 
     private String displayValue(String value) {
@@ -358,6 +517,10 @@ public class CollectionWorkspaceController {
         }
         if (!selected.isAllowDelete()) {
             dialogService.showError("Помилка", "Системну колекцію не можна видалити");
+            return;
+        }
+        if (selected.isActive()) {
+            dialogService.showWarning("Увага", "Неможливо видалити активну колекцію. Спочатку активуйте іншу.");
             return;
         }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);

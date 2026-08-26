@@ -8,8 +8,6 @@ import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
 import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
-import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
-import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
@@ -25,10 +23,6 @@ import java.nio.file.Paths;
 import java.util.Optional;
 import java.util.UUID;
 
-/**
- * Презентер для роботи з колекціями.
- * Використовує Application сервіси замість прямих залежностей від Infrastructure.
- */
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -43,8 +37,6 @@ public class CollectionPresenter {
     private final CollectionManagementService collectionManagementService;
     private final DatabaseToolsService databaseToolsService;
     private final ApplicationState appState;
-    private final SyncSeriesUseCase syncSeriesUseCase;
-    private final StatisticsService statisticsService;
 
     public void showCreateCollectionDialog(ObservableList<CollectionDto> collectionList, Stage owner) {
         Optional<String> nameResult = dialogService.showTextInput("Створити колекцію",
@@ -90,12 +82,8 @@ public class CollectionPresenter {
             collectionList.add(dto);
             appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
-            // Використовуємо CollectionManagementService замість CollectionManager
             collectionManagementService.switchToCollection(collection);
-
-            // Оновлюємо статистику та серії після створення
-            statisticsService.refreshStatistics();
-            syncSeriesUseCase.execute();
+            appState.setCurrentLibraryCollection(collection);
 
             appState.getStatusBar().setStatusText("Переключено на колекцію: " + collection.getName());
 
@@ -169,14 +157,11 @@ public class CollectionPresenter {
         try {
             var collections = loadCollectionsUseCase.execute();
             collectionList.setAll(collections);
-            log.info("Завантажено {} колекцій", collections.size());
         } catch (Exception e) {
             log.error("Помилка завантаження колекцій", e);
             dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
         }
     }
-
-    // ===== Делеговані методи =====
 
     public boolean hasActiveCollection() {
         return collectionManagementService.hasActiveCollection();

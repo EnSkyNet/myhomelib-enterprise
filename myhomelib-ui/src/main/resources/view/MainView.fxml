@@ -27,6 +27,8 @@
                     <MenuItem text="Імпорт користувацьких даних..." onAction="#handleImportUserData"/>
                     <MenuItem text="Копіювати вибрані книги в іншу колекцію..." onAction="#handleCopyToCollection"/>
                     <SeparatorMenuItem/>
+                    <MenuItem text="Скинути навігацію" onAction="#handleResetNavigation"/>
+                    <SeparatorMenuItem/>
                     <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
                 <Menu text="Група">

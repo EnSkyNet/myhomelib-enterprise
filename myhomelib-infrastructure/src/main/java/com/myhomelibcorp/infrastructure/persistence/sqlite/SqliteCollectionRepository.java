@@ -9,6 +9,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -87,21 +88,23 @@ public class SqliteCollectionRepository implements CollectionRepository {
     }
 
     @Override
+    @Transactional
     public Collection save(Collection collection) {
-        // Перевіряємо, чи потрібно шифрувати пароль
+        log.info("Збереження колекції: name={}, id={}", collection.getName(), collection.getId());
+
         String password = collection.getPassword();
         if (password != null && !password.isEmpty() && !EncryptionUtil.isEncrypted(password)) {
             password = EncryptionUtil.encrypt(password);
-            log.info("Password encrypted for collection: {}", collection.getName());
         }
 
         if (collection.getId() == null) {
-            // Нова колекція
+            // Нова колекція - генеруємо ID
             String id = UUID.randomUUID().toString();
             String sql = """
                 INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
+
             int updated = metadataJdbcTemplate.update(sql,
                     id,
                     collection.getName(),
@@ -113,47 +116,86 @@ public class SqliteCollectionRepository implements CollectionRepository {
                     collection.getUrl(),
                     collection.getNotes()
             );
-            log.info("Колекцію створено: id={}, name={}, dbFile={}, rowsUpdated={}",
-                    id, collection.getName(), collection.getDbFile(), updated);
 
-            // Перевіряємо, чи збереглося
-            Optional<Collection> saved = findById(id);
-            if (saved.isPresent()) {
-                log.info("Колекцію успішно збережено: {}", saved.get().getName());
-                return saved.get();
-            } else {
-                log.error("Не вдалося знайти щойно створену колекцію: {}", id);
-                throw new RuntimeException("Не вдалося створити колекцію");
+            log.info("INSERT колекції: rowsUpdated={}, id={}, name={}", updated, id, collection.getName());
+
+            if (updated > 0) {
+                Optional<Collection> saved = findById(id);
+                if (saved.isPresent()) {
+                    log.info("✅ Колекцію успішно збережено: {}", saved.get().getName());
+                    return saved.get();
+                }
             }
+            throw new RuntimeException("Не вдалося створити колекцію: " + collection.getName());
         } else {
-            // Оновлення існуючої колекції
-            String sql = """
-                UPDATE collections SET
-                    name = ?, root_folder = ?, db_file = ?, type = ?,
-                    user = ?, password = ?, url = ?, notes = ?
-                WHERE id = ?
-                """;
-            int updated = metadataJdbcTemplate.update(sql,
-                    collection.getName(),
-                    collection.getRootFolder() != null ? collection.getRootFolder().toString() : null,
-                    collection.getDbFile(),
-                    collection.getType(),
-                    collection.getUser(),
-                    password,
-                    collection.getUrl(),
-                    collection.getNotes(),
-                    collection.getId()
-            );
-            log.info("Колекцію оновлено: id={}, name={}, rowsUpdated={}",
-                    collection.getId(), collection.getName(), updated);
-            return collection;
+            // Перевіряємо, чи існує колекція з таким ID
+            boolean exists = false;
+            try {
+                Integer count = metadataJdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM collections WHERE id = ?", Integer.class, collection.getId());
+                exists = count != null && count > 0;
+            } catch (Exception e) {
+                exists = false;
+            }
+
+            if (!exists) {
+                // ID передано, але запису немає - виконуємо INSERT
+                String sql = """
+                    INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """;
+
+                int updated = metadataJdbcTemplate.update(sql,
+                        collection.getId(),
+                        collection.getName(),
+                        collection.getRootFolder() != null ? collection.getRootFolder().toString() : null,
+                        collection.getDbFile(),
+                        collection.getType(),
+                        collection.getUser(),
+                        password,
+                        collection.getUrl(),
+                        collection.getNotes()
+                );
+
+                log.info("INSERT (з існуючим ID) колекції: rowsUpdated={}, id={}", updated, collection.getId());
+
+                if (updated > 0) {
+                    Optional<Collection> saved = findById(collection.getId());
+                    if (saved.isPresent()) {
+                        return saved.get();
+                    }
+                }
+                throw new RuntimeException("Не вдалося створити колекцію: " + collection.getName());
+            } else {
+                // Оновлення існуючої колекції
+                String sql = """
+                    UPDATE collections SET
+                        name = ?, root_folder = ?, db_file = ?, type = ?,
+                        user = ?, password = ?, url = ?, notes = ?
+                    WHERE id = ?
+                    """;
+                int updated = metadataJdbcTemplate.update(sql,
+                        collection.getName(),
+                        collection.getRootFolder() != null ? collection.getRootFolder().toString() : null,
+                        collection.getDbFile(),
+                        collection.getType(),
+                        collection.getUser(),
+                        password,
+                        collection.getUrl(),
+                        collection.getNotes(),
+                        collection.getId()
+                );
+
+                log.info("UPDATE колекції: rowsUpdated={}, id={}, name={}", updated, collection.getId(), collection.getName());
+                return collection;
+            }
         }
     }
 
     @Override
     public void deleteById(String id) {
-        metadataJdbcTemplate.update("DELETE FROM collections WHERE id = ?", id);
-        log.info("Колекцію з ID {} видалено", id);
+        int deleted = metadataJdbcTemplate.update("DELETE FROM collections WHERE id = ?", id);
+        log.info("Колекцію з ID {} видалено, rowsDeleted={}", id, deleted);
     }
 
     @Override
