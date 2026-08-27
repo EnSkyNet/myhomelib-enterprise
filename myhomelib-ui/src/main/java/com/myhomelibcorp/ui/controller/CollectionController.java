@@ -37,18 +37,28 @@ public class CollectionController {
     private final ApplicationEventPublisher eventPublisher;
     private final CollectionManagementService collectionManagementService;
 
+    /**
+     * Переключення на колекцію з асинхронною перебудовою індексу.
+     * Індекс будується у фоновому потоці, UI не блокується.
+     */
     public void switchToCollection(Collection collection, Runnable onComplete) {
         if (collection == null) {
             log.warn("Спроба переключитися на null колекцію");
             return;
         }
         log.info("Переключення на колекцію: {}", collection.getName());
-        Collection activated = switchCollectionUseCase.execute(collection);
+
+        // Переключаємося з rebuildIndex=false, щоб індекс будувався у фоні
+        Collection activated = switchCollectionUseCase.execute(collection, false);
         appState.setCurrentLibraryCollection(activated);
         statisticsService.refreshStatistics();
         appState.getStatusBar().setStatistics(statisticsService.getStatistics());
         appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName());
         appState.getStatusBar().setProgressVisible(false);
+
+        // Показуємо статус перебудови індексу
+        appState.getStatusBar().setStatusText("Індекс перебудовується у фоновому режимі...");
+
         eventPublisher.publishEvent(new CollectionChangedEvent(activated));
         if (onComplete != null) {
             onComplete.run();

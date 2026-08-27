@@ -33,6 +33,7 @@ import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
 import org.apache.lucene.store.LockObtainFailedException;
 import org.apache.lucene.store.FSDirectory;
+import org.apache.lucene.index.TieredMergePolicy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -62,6 +63,9 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
     private int indexedSinceLastCommit = 0;
 
+    // ⚡ ОПТИМІЗАЦІЯ: лічильник для періодичного commit під час перебудови
+    private static final int REBUILD_COMMIT_INTERVAL = 50_000;
+
     public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
                                BookQueryRepository bookQueryRepository) {
         this.directory = directory;
@@ -74,11 +78,27 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     public void init() {
         log.info("Ініціалізація LuceneSearchService...");
 
-        // The injected Directory already points at the portable/non-portable configured index path.
         IndexWriterConfig config = new IndexWriterConfig(analyzer);
         config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
-        config.setRAMBufferSizeMB(64.0);
-        config.setMaxBufferedDocs(1000);
+
+        // ⚡ ОПТИМІЗАЦІЯ 1: Збільшений RAM буфер для швидкої індексації
+        config.setRAMBufferSizeMB(512.0);              // Було 64 MB
+        config.setMaxBufferedDocs(10000);              // Було 1000
+
+        // ⚡ ОПТИМІЗАЦІЯ 2: Не комітити при закритті (commit в кінці)
+        config.setCommitOnClose(false);
+
+        // ⚡ ОПТИМІЗАЦІЯ 3: Вимкнути compound file для швидшого запису
+        config.setUseCompoundFile(false);
+
+        // ⚡ ОПТИМІЗАЦІЯ 4: Налаштування політики злиття для великих індексів
+        TieredMergePolicy mergePolicy = new TieredMergePolicy();
+        mergePolicy.setMaxMergeAtOnce(10);             // Більше сегментів за раз
+        mergePolicy.setSegmentsPerTier(10);            // Більше сегментів на рівень
+        mergePolicy.setMaxMergedSegmentMB(5120);       // Максимальний розмір сегмента 5GB
+        // У Lucene 9.x немає setMergeFactor, використовуємо setMaxMergeAtOnce та setSegmentsPerTier
+        mergePolicy.setNoCFSRatio(0.0);                // Вимкнути CFS для всіх сегментів
+        config.setMergePolicy(mergePolicy);
 
         int maxAttempts = 5;
         int attempt = 0;
@@ -112,8 +132,16 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
                     this.directory = FSDirectory.open(indexPath);
                     config = new IndexWriterConfig(analyzer);
                     config.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
-                    config.setRAMBufferSizeMB(64.0);
-                    config.setMaxBufferedDocs(1000);
+                    config.setRAMBufferSizeMB(512.0);
+                    config.setMaxBufferedDocs(10000);
+                    config.setCommitOnClose(false);
+                    config.setUseCompoundFile(false);
+                    TieredMergePolicy newPolicy = new TieredMergePolicy();
+                    newPolicy.setMaxMergeAtOnce(10);
+                    newPolicy.setSegmentsPerTier(10);
+                    newPolicy.setMaxMergedSegmentMB(5120);
+                    newPolicy.setNoCFSRatio(0.0);
+                    config.setMergePolicy(newPolicy);
                     this.indexWriter = new IndexWriter(this.directory, config);
                     log.info("✅ Несумісний індекс видалено та створено заново: {}", indexPath);
                     break;
@@ -140,7 +168,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             throw new RuntimeException("Не вдалося створити SearcherManager", e);
         }
 
-        log.info("LuceneSearchService ініціалізовано");
+        log.info("LuceneSearchService ініціалізовано з оптимізованими налаштуваннями");
     }
 
     private void deleteDirectory(Path path) throws IOException {
@@ -189,7 +217,8 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             for (Book book : books) {
                 if (book == null) continue;
                 BookSnapshot snapshot = BookSnapshot.fromBook(book);
-                indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), documentMapper.toDocument(snapshot));
+                indexWriter.updateDocument(new Term("id", snapshot.getId().asString()),
+                        documentMapper.toDocument(snapshot));
                 indexed++;
             }
             indexedSinceLastCommit += indexed;
@@ -215,6 +244,12 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         }
     }
 
+    /**
+     * ⚡ ОПТИМІЗОВАНА перебудова індексу:
+     * - Більші сторінки (5000 замість 2000)
+     * - Commit тільки кожні 50k документів або в кінці
+     * - Вимкнено проміжні commit-и
+     */
     @Override
     public synchronized void rebuildIndex() {
         if (isClosed.get()) return;
@@ -222,35 +257,146 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             log.warn("IndexWriter is null, cannot rebuild index");
             return;
         }
-        log.info("Початок повної перебудови індексу...");
-        final int pageSize = 2_000;
+        log.info("Початок повної перебудови індексу (оптимізовано)...");
+        final int pageSize = 5_000;  // ⚡ Збільшено з 2000 до 5000
         int offset = 0;
         long indexed = 0;
+        long startTime = System.currentTimeMillis();
+
         try {
+            // ⚡ Видаляємо всі документи без commit
             indexWriter.deleteAll();
             indexedSinceLastCommit = 0;
+
             while (true) {
                 var page = bookQueryRepository.findPage(BookQuery.builder()
                         .pagination(Pagination.of(pageSize, offset))
                         .build());
                 List<Book> books = page.content();
                 if (books == null || books.isEmpty()) break;
+
                 for (Book book : books) {
                     if (book == null || book.isDeleted()) continue;
                     BookSnapshot snapshot = BookSnapshot.fromBook(book);
-                    indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), documentMapper.toDocument(snapshot));
+                    indexWriter.updateDocument(new Term("id", snapshot.getId().asString()),
+                            documentMapper.toDocument(snapshot));
                     indexed++;
                 }
+
                 offset += books.size();
                 if (books.size() < pageSize) break;
-                if (indexed % 10_000 == 0) indexWriter.commit();
+
+                // ⚡ Commit тільки кожні 50k документів (замість 10k)
+                if (indexed % REBUILD_COMMIT_INTERVAL == 0) {
+                    indexWriter.commit();
+                    long elapsed = System.currentTimeMillis() - startTime;
+                    log.info("⏳ Проіндексовано {} книг за {} мс ({} книг/с)",
+                            indexed, elapsed, (indexed * 1000 / Math.max(1, elapsed)));
+                }
             }
+
+            // ✅ ОДИН фінальний commit
             indexWriter.commit();
             searcherManager.maybeRefreshBlocking();
             indexedSinceLastCommit = 0;
-            log.info("✅ Індекс перебудовано: {} документів", indexed);
+
+            long totalTime = System.currentTimeMillis() - startTime;
+            double booksPerSecond = indexed * 1000.0 / Math.max(1, totalTime);
+            log.info("✅ Індекс перебудовано: {} документів за {} мс ({} книг/с)",
+                    indexed, totalTime, String.format("%.1f", booksPerSecond));
+
         } catch (Exception e) {
             log.error("Помилка перебудови індексу", e);
+            throw new IllegalStateException("Не вдалося перебудувати пошуковий індекс", e);
+        }
+    }
+
+    /**
+     * ⚡ ПАРАЛЕЛЬНА перебудова індексу (експериментальна)
+     * Використовує багато потоків для швидшої індексації на багатоядерних системах
+     */
+    public synchronized void rebuildIndexParallel() {
+        if (isClosed.get()) return;
+        if (indexWriter == null) {
+            log.warn("IndexWriter is null, cannot rebuild index");
+            return;
+        }
+
+        log.info("Початок ПАРАЛЕЛЬНОЇ перебудови індексу...");
+        long startTime = System.currentTimeMillis();
+
+        int pageSize = 10_000;
+        long total = bookQueryRepository.count(BookQuery.builder().build());
+        int totalPages = (int) Math.ceil((double) total / pageSize);
+        int threads = Math.min(4, Runtime.getRuntime().availableProcessors());
+
+        log.info("📊 Всього книг: {}, сторінок: {}, потоків: {}", total, totalPages, threads);
+
+        try {
+            indexWriter.deleteAll();
+
+            java.util.concurrent.ExecutorService executor =
+                    java.util.concurrent.Executors.newFixedThreadPool(threads);
+            List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
+            java.util.concurrent.atomic.AtomicLong indexed = new java.util.concurrent.atomic.AtomicLong(0);
+
+            for (int page = 0; page < totalPages; page++) {
+                final int currentPage = page;
+                final int currentOffset = page * pageSize;
+
+                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
+                    try {
+                        var query = BookQuery.builder()
+                                .pagination(Pagination.of(pageSize, currentOffset))
+                                .build();
+                        var books = bookQueryRepository.findPage(query).content();
+
+                        for (Book book : books) {
+                            if (book == null || book.isDeleted()) continue;
+                            BookSnapshot snapshot = BookSnapshot.fromBook(book);
+                            synchronized (indexWriter) {
+                                indexWriter.updateDocument(
+                                        new Term("id", snapshot.getId().asString()),
+                                        documentMapper.toDocument(snapshot)
+                                );
+                            }
+                            indexed.incrementAndGet();
+                        }
+
+                        if (indexed.get() % 50_000 == 0) {
+                            synchronized (indexWriter) {
+                                indexWriter.commit();
+                            }
+                            log.info("⏳ Паралельно проіндексовано {} книг", indexed.get());
+                        }
+                    } catch (Exception e) {
+                        log.error("Помилка паралельної індексації сторінки {}", currentPage, e);
+                    }
+                }, executor));
+            }
+
+            java.util.concurrent.CompletableFuture.allOf(
+                    futures.toArray(new java.util.concurrent.CompletableFuture[0])
+            ).join();
+
+            executor.shutdown();
+            try {
+                executor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+
+            indexWriter.commit();
+            searcherManager.maybeRefreshBlocking();
+            indexedSinceLastCommit = 0;
+
+            long totalTime = System.currentTimeMillis() - startTime;
+            double booksPerSecond = indexed.get() * 1000.0 / Math.max(1, totalTime);
+            log.info("✅ Паралельний індекс перебудовано: {} документів за {} мс ({} книг/с)",
+                    indexed.get(), totalTime, String.format("%.1f", booksPerSecond));
+
+        } catch (Exception e) {
+            log.error("Помилка паралельної перебудови індексу", e);
             throw new IllegalStateException("Не вдалося перебудувати пошуковий індекс", e);
         }
     }
@@ -267,6 +413,11 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     }
 
     @Override
+    public int getIndexedDocumentCount() {
+        return getDocumentCount();
+    }
+
+    @Override
     public void commit() {
         if (isClosed.get() || indexWriter == null) return;
         try {
@@ -280,7 +431,6 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     }
 
     // ==================== SEARCH QUERY SERVICE ====================
-
 
     @Override
     public SearchResult search(SearchRequest request) {
@@ -349,11 +499,6 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             log.error("Помилка пошуку: {}", request.text(), e);
             return SearchResult.empty();
         }
-    }
-
-    @Override
-    public int getIndexedDocumentCount() {
-        return getDocumentCount();
     }
 
     public boolean isClosed() {

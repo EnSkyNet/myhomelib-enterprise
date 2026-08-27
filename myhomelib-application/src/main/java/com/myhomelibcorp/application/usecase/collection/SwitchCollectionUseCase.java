@@ -8,9 +8,6 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.util.Optional;
 
-/**
- * Use Case: переключення на іншу колекцію.
- */
 @RequiredArgsConstructor
 @Slf4j
 public class SwitchCollectionUseCase {
@@ -61,7 +58,7 @@ public class SwitchCollectionUseCase {
             return target;
         }
 
-        // Виконуємо повну ініціалізацію
+        // Виконуємо повну ініціалізацію з передачею прапорця перебудови індексу
         collectionLifecycleService.initializeCollection(target, rebuildIndex);
         return target;
     }

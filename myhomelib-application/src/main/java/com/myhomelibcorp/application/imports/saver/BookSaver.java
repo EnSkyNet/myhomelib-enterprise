@@ -8,7 +8,6 @@ import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.ApplicationEventPublisher;
@@ -20,7 +19,6 @@ import java.util.List;
 import java.util.Optional;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class BookSaver {
 
@@ -29,9 +27,22 @@ public class BookSaver {
     private final ApplicationEventPublisher eventPublisher;
     private final DuplicateDetector duplicateDetector;
     private final SearchIndexer searchIndexer;
-
-    @Qualifier("collectionTransactionTemplate")
     private final TransactionTemplate transactionTemplate;
+
+    public BookSaver(
+            BookCommandRepository bookCommandRepository,
+            BookQueryRepository bookQueryRepository,
+            ApplicationEventPublisher eventPublisher,
+            DuplicateDetector duplicateDetector,
+            SearchIndexer searchIndexer,
+            @Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate) {
+        this.bookCommandRepository = bookCommandRepository;
+        this.bookQueryRepository = bookQueryRepository;
+        this.eventPublisher = eventPublisher;
+        this.duplicateDetector = duplicateDetector;
+        this.searchIndexer = searchIndexer;
+        this.transactionTemplate = transactionTemplate;
+    }
 
     public boolean saveBook(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
         if (book == null) return false;

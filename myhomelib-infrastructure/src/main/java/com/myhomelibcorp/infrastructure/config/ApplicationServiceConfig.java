@@ -2,13 +2,14 @@ package com.myhomelibcorp.infrastructure.config;
 
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
+import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.application.port.out.infrastructure.FolderSyncPort;
 import com.myhomelibcorp.application.port.out.repository.*;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
-import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
+import com.myhomelibcorp.application.usecase.collection.*;
 import com.myhomelibcorp.application.usecase.collection.AttachHlc2CollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetworkUseCase;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionPropertiesUseCase;
@@ -39,7 +40,8 @@ public class ApplicationServiceConfig {
             SeriesRepository seriesRepository,
             GroupRepository groupRepository,
             IndexRebuilder indexRebuilder,
-            DomainEventPublisher eventPublisher
+            DomainEventPublisher eventPublisher,
+            ExecutorPort executorPort
     ) {
         return new CollectionLifecycleService(
                 collectionLifecyclePort,
@@ -50,7 +52,8 @@ public class ApplicationServiceConfig {
                 seriesRepository,
                 groupRepository,
                 indexRebuilder,
-                eventPublisher
+                eventPublisher,
+                executorPort
         );
     }
 

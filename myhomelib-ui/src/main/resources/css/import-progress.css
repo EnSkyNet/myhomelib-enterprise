@@ -1,0 +1,34 @@
+/* myhomelib-ui/src/main/resources/css/import-progress.css */
+
+.progress-bar {
+    -fx-accent: #4CAF50;
+    -fx-background-color: #e0e0e0;
+    -fx-background-radius: 10;
+    -fx-padding: 0;
+}
+
+.progress-bar .bar {
+    -fx-background-color: linear-gradient(to right, #4CAF50, #66BB6A);
+    -fx-background-radius: 10;
+}
+
+.progress-indicator {
+    -fx-progress-color: #4CAF50;
+}
+
+.label {
+    -fx-font-family: "Segoe UI", "System", sans-serif;
+}
+
+#statusLabel {
+    -fx-font-weight: bold;
+}
+
+#detailLabel {
+    -fx-font-size: 13px;
+}
+
+#speedLabel {
+    -fx-font-size: 12px;
+    -fx-text-fill: #888888;
+}

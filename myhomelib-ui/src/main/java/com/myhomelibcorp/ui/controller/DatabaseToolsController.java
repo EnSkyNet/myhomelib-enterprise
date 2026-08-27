@@ -1,7 +1,8 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.service.CollectionManagementService;
+import com.myhomelibcorp.application.service.DatabaseToolsService;
+import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -25,8 +26,9 @@ public class DatabaseToolsController {
     private final ApplicationContext springContext;
     private final ApplicationState appState;
     private final DialogService dialogService;
-    private final DatabaseToolsService databaseToolsService; // <-- Новий сервіс
+    private final DatabaseToolsService databaseToolsService;
     private final CollectionManagementService collectionManagementService;
+    private final CollectionLifecycleService collectionLifecycleService;
 
     @FXML
     public void handleCheckIntegrity(Stage owner) {
@@ -96,29 +98,23 @@ public class DatabaseToolsController {
             return;
         }
 
-        appState.getStatusBar().setStatusText("Перебудова індексу...");
+        appState.getStatusBar().setStatusText("Перебудова індексу (фоновий режим)...");
         appState.getStatusBar().setProgressVisible(true);
 
-        new Thread(() -> {
-            try {
-                databaseToolsService.rebuildIndex();
-                int count = databaseToolsService.getIndexedDocumentCount();
-
-                UiExecutor.runOnUiThread(() -> {
+        // Використовуємо асинхронний метод
+        collectionLifecycleService.rebuildSearchIndexAsync()
+                .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("Індекс перебудовано. Проіндексовано " + count + " книг.");
-                    dialogService.showInfo("Успішно",
-                            "Пошуковий індекс перебудовано.\nПроіндексовано " + count + " книг.");
-                });
-            } catch (Exception e) {
-                log.error("Помилка перебудови індексу", e);
-                UiExecutor.runOnUiThread(() -> {
-                    appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("Помилка перебудови індексу");
-                    dialogService.showError("Помилка", "Не вдалося перебудувати індекс: " + e.getMessage());
-                });
-            }
-        }).start();
+                    if (error != null) {
+                        appState.getStatusBar().setStatusText("Помилка перебудови індексу");
+                        dialogService.showError("Помилка", "Не вдалося перебудувати індекс: " + error.getMessage());
+                    } else {
+                        int count = databaseToolsService.getIndexedDocumentCount();
+                        appState.getStatusBar().setStatusText("Індекс перебудовано. Проіндексовано " + count + " книг.");
+                        dialogService.showInfo("Успішно",
+                                "Пошуковий індекс перебудовано.\nПроіндексовано " + count + " книг.");
+                    }
+                }));
     }
 
     @FXML

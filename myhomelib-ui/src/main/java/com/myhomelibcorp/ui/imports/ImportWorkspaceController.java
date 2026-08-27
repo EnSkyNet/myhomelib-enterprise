@@ -9,12 +9,9 @@ import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import javafx.application.Platform;
 import javafx.fxml.FXML;
-import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ProgressBar;
-import javafx.scene.control.TextField;
-import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.*;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
@@ -27,6 +24,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.prefs.Preferences;
 
 @Component
@@ -58,6 +56,9 @@ public class ImportWorkspaceController {
     private volatile boolean importRunning = false;
     private final Preferences preferences = Preferences.userNodeForPackage(ImportWorkspaceController.class);
     private int batchSize;
+
+    // Діалог прогресу
+    private ImportProgressDialog progressDialog;
 
     @FXML
     public void initialize() {
@@ -104,7 +105,41 @@ public class ImportWorkspaceController {
             dialogService.showError("Помилка", "Папка не існує");
             return;
         }
-        startImport(() -> importDirectoryUseCase.execute(createContext(dir)));
+
+        // Отримуємо кількість файлів для прогресу
+        long totalFiles = 0;
+        try (var stream = java.nio.file.Files.walk(dir)) {
+            totalFiles = stream.filter(java.nio.file.Files::isRegularFile)
+                    .filter(f -> {
+                        String name = f.getFileName().toString().toLowerCase();
+                        return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".epub") ||
+                                name.endsWith(".txt") || name.endsWith(".inpx") || name.endsWith(".inp") ||
+                                name.endsWith(".zip") || name.endsWith(".fb2zip");
+                    })
+                    .count();
+        } catch (Exception e) {
+            log.warn("Не вдалося підрахувати файли: {}", e.getMessage());
+        }
+
+        progressDialog = new ImportProgressDialog("Імпорт каталогу");
+        progressDialog.setTotal(totalFiles);
+        progressDialog.setOnCancel(() -> {
+            cancelFlag.set(true);
+            progressDialog.updateStatus("Скасування...");
+        });
+        progressDialog.show();
+
+        startImport(() -> {
+            ImportContext context = ImportContext.builder()
+                    .rootDirectory(dir)
+                    .batchSize(batchSize)
+                    .indexAfterSave(true)
+                    .cancelFlag(cancelFlag)
+                    .progressListener(this::updateProgress)
+                    .statusConsumer(this::updateStatus)
+                    .build();
+            return importDirectoryUseCase.execute(context);
+        });
     }
 
     @FXML
@@ -119,6 +154,15 @@ public class ImportWorkspaceController {
             dialogService.showError("Помилка", "Файл не існує");
             return;
         }
+
+        progressDialog = new ImportProgressDialog("Імпорт файлу");
+        progressDialog.setTotal(1);
+        progressDialog.setOnCancel(() -> {
+            cancelFlag.set(true);
+            progressDialog.updateStatus("Скасування...");
+        });
+        progressDialog.show();
+
         startImport(() -> {
             ImportContext context = ImportContext.builder()
                     .file(file)
@@ -146,6 +190,7 @@ public class ImportWorkspaceController {
     private void startImport(java.util.concurrent.Callable<ImportResult> task) {
         if (importRunning) {
             dialogService.showWarning("Увага", "Імпорт вже виконується", "Зачекайте завершення поточного імпорту");
+            if (progressDialog != null) progressDialog.show();
             return;
         }
         importRunning = true;
@@ -158,6 +203,9 @@ public class ImportWorkspaceController {
         setStatus("Імпорт розпочато...");
         setProgress(0);
 
+        long startTime = System.currentTimeMillis();
+        AtomicLong totalImported = new AtomicLong(0);
+
         executor.submit(task)
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     importRunning = false;
@@ -165,6 +213,25 @@ public class ImportWorkspaceController {
                         cancelButton.setDisable(true);
                     }
                     appState.getStatusBar().setProgressVisible(false);
+
+                    if (progressDialog != null) {
+                        if (cancelFlag.get()) {
+                            progressDialog.updateStatus("Імпорт скасовано");
+                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), "Скасовано");
+                        } else {
+                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), "Завершено!");
+                        }
+
+                        // Затримка перед закриттям, щоб користувач побачив результат
+                        try {
+                            Thread.sleep(1000);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                        }
+                        progressDialog.close();
+                        progressDialog = null;
+                    }
+
                     if (cancelFlag.get()) {
                         setStatus("Імпорт скасовано. Незавершені зміни не збережено.");
                         setProgress(0);
@@ -178,14 +245,6 @@ public class ImportWorkspaceController {
                                 String.format("Імпорт завершено: %,d книг, помилок %,d",
                                         result.imported(), result.errors()));
                     }
-
-                    // ВИДАЛЕНО: синхронізація серій — виконується в ImportEventHandler
-                    // try {
-                    //     syncSeriesUseCase.execute();
-                    //     log.info("Серії синхронізовано після імпорту");
-                    // } catch (Exception e) {
-                    //     log.error("Помилка синхронізації серій після імпорту", e);
-                    // }
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
@@ -194,6 +253,18 @@ public class ImportWorkspaceController {
                             cancelButton.setDisable(true);
                         }
                         appState.getStatusBar().setProgressVisible(false);
+
+                        if (progressDialog != null) {
+                            progressDialog.updateStatus("Помилка: " + ex.getMessage());
+                            try {
+                                Thread.sleep(1500);
+                            } catch (InterruptedException e) {
+                                Thread.currentThread().interrupt();
+                            }
+                            progressDialog.close();
+                            progressDialog = null;
+                        }
+
                         if (cancelFlag.get()) {
                             setStatus("Імпорт скасовано");
                         } else {
@@ -214,6 +285,11 @@ public class ImportWorkspaceController {
                 cancelButton.setDisable(true);
             }
             setStatus("Скасування...");
+
+            if (progressDialog != null) {
+                progressDialog.cancel();
+                progressDialog.updateStatus("Скасування...");
+            }
         }
     }
 
@@ -248,6 +324,9 @@ public class ImportWorkspaceController {
 
     private void updateStatus(String text) {
         setStatus(text);
+        if (progressDialog != null) {
+            progressDialog.updateStatus(text);
+        }
     }
 
     private void setProgress(double value) {
@@ -261,9 +340,14 @@ public class ImportWorkspaceController {
 
     private void updateProgress(double value) {
         setProgress(value);
+        if (progressDialog != null && value > 0) {
+            long processed = (long) (value * 1000);
+            progressDialog.updateProgress(processed, 1000, null);
+        }
     }
 
     private String formatImportSummary(ImportResult result, long total) {
+        long durationMs = System.currentTimeMillis() - 0; // треба передавати час
         return String.format(
                 "Імпорт завершено%n%nЗаписів: %,d%nІмпортовано: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
                 total,

@@ -2,11 +2,12 @@ package com.myhomelibcorp.application.service;
 
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
+import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.repository.GroupRepository;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -14,12 +15,9 @@ import com.myhomelibcorp.shared.event.DomainEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
-/**
- * Сервіс для управління життєвим циклом колекції.
- * Використовує порти для роботи з інфраструктурою.
- */
 @RequiredArgsConstructor
 @Slf4j
 public class CollectionLifecycleService {
@@ -33,11 +31,12 @@ public class CollectionLifecycleService {
     private final GroupRepository groupRepository;
     private final IndexRebuilder indexRebuilder;
     private final DomainEventPublisher eventPublisher;
+    private final ExecutorPort executorPort;
 
     private final AtomicBoolean isInitializing = new AtomicBoolean(false);
 
     /**
-     * Повна ініціалізація колекції: переключення, міграція, кеші, індекс.
+     * Повна ініціалізація колекції: переключення, міграція, кеші, індекс (асинхронно).
      */
     public void initializeCollection(Collection collection, boolean rebuildIndex) {
         if (!isInitializing.compareAndSet(false, true)) {
@@ -66,17 +65,15 @@ public class CollectionLifecycleService {
             // 4. Завантажуємо кеші словників
             loadDictionaries();
 
-            // 5. Перебудовуємо індекс (якщо потрібно)
+            // 5. Перебудовуємо індекс (АСИНХРОННО, якщо потрібно)
             if (rebuildIndex) {
-                indexRebuilder.rebuildIndex();
-                log.info("✅ Індекс перебудовано. Проіндексовано {} документів",
-                        indexRebuilder.getIndexedDocumentCount());
+                rebuildIndexAsync(collection);
             }
 
             // 6. Публікуємо доменну подію
             eventPublisher.publish(new CollectionOpenedEvent(collection));
 
-            log.info("✅ Ініціалізацію колекції {} завершено", collection.getName());
+            log.info("✅ Ініціалізацію колекції {} завершено (індекс перебудовується у фоні)", collection.getName());
 
         } catch (Exception e) {
             log.error("❌ Помилка ініціалізації колекції: {}", e.getMessage(), e);
@@ -89,7 +86,69 @@ public class CollectionLifecycleService {
         }
     }
 
-    /** Best-effort rollback after a failed migration/cache/index initialization. */
+    /**
+     * Перебудова індексу (синхронно). Використовується зовнішніми use cases.
+     */
+    public void rebuildSearchIndex() {
+        log.info("🔄 Перебудова індексу...");
+        long startTime = System.currentTimeMillis();
+        indexRebuilder.rebuildIndex();
+        long duration = System.currentTimeMillis() - startTime;
+        log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів",
+                duration, indexRebuilder.getIndexedDocumentCount());
+    }
+
+    /**
+     * Асинхронна перебудова індексу зі статусом у логах.
+     */
+    private void rebuildIndexAsync(Collection collection) {
+        log.info("🔄 Запуск фонової перебудови індексу для колекції: {}", collection.getName());
+
+        executorPort.execute(() -> {
+            try {
+                long startTime = System.currentTimeMillis();
+                log.info("🔄 Початок перебудови індексу (фоново)...");
+
+                indexRebuilder.rebuildIndex();
+
+                long duration = System.currentTimeMillis() - startTime;
+                int count = indexRebuilder.getIndexedDocumentCount();
+                log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів",
+                        duration, count);
+
+            } catch (Exception e) {
+                log.error("❌ Помилка фонової перебудови індексу для колекції {}",
+                        collection.getName(), e);
+            }
+        });
+    }
+
+    /**
+     * Асинхронна перебудова індексу з CompletableFuture.
+     */
+    public CompletableFuture<Void> rebuildSearchIndexAsync() {
+        log.info("🔄 Запуск асинхронної перебудови індексу...");
+
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        executorPort.execute(() -> {
+            try {
+                long startTime = System.currentTimeMillis();
+                indexRebuilder.rebuildIndex();
+                long duration = System.currentTimeMillis() - startTime;
+                log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів",
+                        duration, indexRebuilder.getIndexedDocumentCount());
+                future.complete(null);
+            } catch (Exception e) {
+                log.error("❌ Помилка асинхронної перебудови індексу", e);
+                future.completeExceptionally(e);
+            }
+        });
+        return future;
+    }
+
+    /**
+     * Best-effort rollback after a failed migration/cache/index initialization.
+     */
     private void restorePreviousCollection(Collection previous) {
         try {
             if (previous == null) {
@@ -114,7 +173,6 @@ public class CollectionLifecycleService {
     private void loadDictionaries() {
         log.info("📚 Завантаження кешів словників");
         try {
-            // Authors are repository-backed and loaded per initial/search; never preload the full catalogue.
             dictionaryCachePort.loadGenres(genreRepository.findAll());
             dictionaryCachePort.loadSeries(seriesRepository.findAll());
             dictionaryCachePort.loadGroups(groupRepository.findAll());
@@ -122,12 +180,6 @@ public class CollectionLifecycleService {
         } catch (Exception e) {
             log.error("❌ Помилка завантаження кешів словників", e);
         }
-    }
-
-    /** Rebuilds the search index for the currently active collection. */
-    public void rebuildSearchIndex() {
-        indexRebuilder.rebuildIndex();
-        log.info("✅ Індекс перебудовано. Проіндексовано {} документів", indexRebuilder.getIndexedDocumentCount());
     }
 
     /**
@@ -146,7 +198,9 @@ public class CollectionLifecycleService {
         return collectionLifecyclePort.getCurrentCollection();
     }
 
-    /** Оновлює metadata активної колекції без закриття/відкриття SQLite. */
+    /**
+     * Оновлює metadata активної колекції без закриття/відкриття SQLite.
+     */
     public void updateCurrentCollection(Collection collection) {
         collectionLifecyclePort.updateCurrentCollection(collection);
     }
