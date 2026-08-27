@@ -38,7 +38,6 @@ import java.util.function.Consumer;
  * freshly imported catalogue.
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
@@ -54,12 +53,20 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private final CollectionManager collectionManager;
     private final ApplicationSettingsPort settings;
-    private final ObjectMapper mapper = new ObjectMapper();
+    private final ObjectMapper mapper;
     private final JsonFactory jsonFactory = new JsonFactory();
     private final ReentrantReadWriteLock fileLock = new ReentrantReadWriteLock();
 
     private final Path readerPreferencesFile = AppPaths.configDir().resolve("reader-preferences.json");
     private final Path readerBookPreferencesFile = AppPaths.configDir().resolve("reader-book-preferences.json");
+
+    public VersionedUserDataTransferAdapter(CollectionManager collectionManager,
+                                            ApplicationSettingsPort settings,
+                                            ObjectMapper mapper) {
+        this.collectionManager = collectionManager;
+        this.settings = settings;
+        this.mapper = mapper;
+    }
 
     @Override
     public ExportResult exportTo(Path targetFile) throws IOException {
@@ -82,7 +89,6 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             g.writeStringField("format", "myhomelib-user-data");
             g.writeStringField("exportedAt", Instant.now().toString());
 
-            // Export each section with proper error handling
             exportBookState(g, bookRecords);
             exportReadingProgress(g, null);
             exportReadingHistory(g, history);
@@ -92,7 +98,14 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             exportGroupMemberships(g, groupMemberships);
             exportSavedSearches(g, savedSearches);
 
-            g.writeObjectField("filterSettings", settings.findByPrefix(FILTER_PREFIX));
+            // ⚡ ВИПРАВЛЕНО: ручна серіалізація filterSettings замість writeObjectField
+            g.writeFieldName("filterSettings");
+            g.writeStartObject();
+            Map<String, String> filterSettings = settings.findByPrefix(FILTER_PREFIX);
+            for (Map.Entry<String, String> entry : filterSettings.entrySet()) {
+                g.writeStringField(entry.getKey(), entry.getValue());
+            }
+            g.writeEndObject();
 
             g.writeObjectFieldStart("readerSettings");
             exportReaderSettings(g, readerOverrides);
@@ -172,7 +185,6 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             }
         }
 
-        // File-backed settings are applied only after the database transaction commits
         try {
             applyFilterSettings(migrated.path("filterSettings"));
             applyReaderSettings(migrated.path("readerSettings"), restoredReaderOverrides);
@@ -697,7 +709,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         if (root.has("schemaVersion")) {
             return root.path("schemaVersion").asInt(0);
         }
-        return root.path("version").asInt(1); // pre-versioned/v1 compatibility
+        return root.path("version").asInt(1);
     }
 
     private ObjectNode migrateSequentially(ObjectNode root, int version) throws IOException {
@@ -714,7 +726,6 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         return root;
     }
 
-    /** v1 used `ratings` and `reading` names and had no reader/filter sections. */
     private void migrateV1ToV2(ObjectNode root) {
         if (!root.has("bookState") && root.has("ratings")) {
             root.set("bookState", root.remove("ratings"));
@@ -802,14 +813,12 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         try {
             Files.move(from, to, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
         } catch (Exception unsupported) {
-            // Fallback to non-atomic move
             Files.move(from, to, StandardCopyOption.REPLACE_EXISTING);
         }
     }
 
     private void validatePath(Path path) throws IOException {
         if (path.isAbsolute()) {
-            // Ensure path is within allowed directories
             Path normalized = path.normalize();
             if (normalized.toString().contains("..")) {
                 throw new IOException("Invalid path contains parent directory references");
