@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.backup;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -20,8 +21,12 @@ import static org.mockito.Mockito.when;
 class VersionedUserDataTransferAdapterTest {
     @TempDir Path tempDir;
 
+    private final ObjectMapper mapper = new ObjectMapper();
+
     @AfterEach
-    void clean() { System.clearProperty("myhomelib.dataDir"); }
+    void clean() {
+        System.clearProperty("myhomelib.dataDir");
+    }
 
     @Test
     void portableV2RoundTripMapsBookScopedUserDataByLibId() throws Exception {
@@ -45,7 +50,7 @@ class VersionedUserDataTransferAdapterTest {
         Files.writeString(tempDir.resolve("appdata/config/reader-book-preferences.json"), "{\"old-1\":{\"fontFamily\":\"Mono\"}}");
 
         Path exported = tempDir.resolve("user-data.json");
-        var sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), sourceSettings);
+        VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), sourceSettings, mapper);
         var exportResult = sourceAdapter.exportTo(exported);
         assertThat(exportResult.schemaVersion()).isEqualTo(2);
         assertThat(Files.readString(exported)).contains("\"libId\" : \"L100\"").contains("\"schemaVersion\" : 2");
@@ -58,7 +63,7 @@ class VersionedUserDataTransferAdapterTest {
         Files.deleteIfExists(tempDir.resolve("appdata/config/reader-preferences.json"));
         Files.deleteIfExists(tempDir.resolve("appdata/config/reader-book-preferences.json"));
 
-        var targetAdapter = new VersionedUserDataTransferAdapter(manager(target), targetSettings);
+        VersionedUserDataTransferAdapter targetAdapter = new VersionedUserDataTransferAdapter(manager(target), targetSettings, mapper);
         var result = targetAdapter.restoreFrom(exported);
 
         assertThat(result.sourceSchemaVersion()).isEqualTo(2);
@@ -94,7 +99,7 @@ class VersionedUserDataTransferAdapterTest {
                   "reading": [{"libId":"LEGACY-9","paragraphId":"p","charOffset":2,"percent":13.0,"updatedAt":"2026-01-01T00:00:00Z"}]
                 }
                 """);
-        var adapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings());
+        VersionedUserDataTransferAdapter adapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
         var result = adapter.restoreFrom(file);
         assertThat(result.sourceSchemaVersion()).isEqualTo(1);
         assertThat(result.effectiveSchemaVersion()).isEqualTo(2);
@@ -111,7 +116,8 @@ class VersionedUserDataTransferAdapterTest {
     }
 
     private static Db db(Path file) {
-        SQLiteDataSource ds = new SQLiteDataSource(); ds.setUrl("jdbc:sqlite:" + file);
+        SQLiteDataSource ds = new SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + file.toAbsolutePath());
         return new Db(ds, new JdbcTemplate(ds));
     }
 
@@ -132,10 +138,12 @@ class VersionedUserDataTransferAdapterTest {
     private static final class MapSettings implements ApplicationSettingsPort {
         private final Map<String,String> values = new LinkedHashMap<>();
         @Override public String get(String key, String defaultValue) { return values.getOrDefault(key, defaultValue); }
-        @Override public void put(String key, String value) { if(value==null)values.remove(key);else values.put(key,value); }
+        @Override public void put(String key, String value) { if(value==null)values.remove(key); else values.put(key,value); }
         @Override public void remove(String key) { values.remove(key); }
         @Override public Map<String, String> findByPrefix(String prefix) {
-            Map<String,String> out=new LinkedHashMap<>(); values.forEach((k,v)->{if(k.startsWith(prefix))out.put(k,v);}); return out;
+            Map<String,String> out = new LinkedHashMap<>();
+            values.forEach((k, v) -> { if (k.startsWith(prefix)) out.put(k, v); });
+            return out;
         }
     }
 }
