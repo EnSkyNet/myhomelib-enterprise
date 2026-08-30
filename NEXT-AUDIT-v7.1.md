@@ -336,3 +336,14 @@ Online/open UX посилено: `WorkspaceManager.showNewReaderWorkspace(BookId
 - `tools/v71-standalone-java-smoke.py`: **PASS**.
 
 З user report залишаються runtime-specific Reader питання, які не можна оголосити fixed без конкретного failing book/runtime evidence: intermittent merged words та конкретний compilation/nested-TOC case. Quick-theme persistence, full Reader settings, file-size columns, text-file language config та downloaded-author update grouping присутні в current source і зафіксовані ratchet-check-ом.
+
+## Runtime checkpoint 2026-08-30 22:xx — fix-9
+
+За фактичним Windows/JavaFX runtime логом виправлено:
+- legacy MyHomeLib ConnectionScript: окремий bare HTTP/HTTPS URL рядок тепер сумісно ігнорується як upstream 2.5 `Code=-1`, інші невідомі команди лишаються validation error;
+- remote INPX більше не записує `cache/catalog-updates` як `collection_root`; використовується permanent collection root або `AppPaths.downloadsDir()/collectionId`;
+- Lucene reuse validation виконується до derived `syncSeriesFromBooks()`, тому non-search series normalization не повинна провокувати зайвий full rebuild; після normalization reusable marker reseal-иться;
+- Lucene activation тепер логує точну причину rebuild/reuse;
+- Windows JavaFX DirectoryChooser у Collection Properties має safe fallback без invalid initial folder.
+
+Після змін: 46/46 актуальних `tools/*check.py` PASS (запущені пакетами через timeout shell), `v71-standalone-java-smoke.py` PASS, окремий javac/runtime legacy ConnectionScript parser smoke PASS. Maven у sandbox не запускається через DNS до Maven Central; перевірити `mvnw.cmd clean verify -Pproduction` на connected Windows.

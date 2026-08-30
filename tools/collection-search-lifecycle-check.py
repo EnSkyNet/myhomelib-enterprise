@@ -23,9 +23,9 @@ assert 'collectionSearchIndexDir' in paths and 'collectionSearchIndexStateFile' 
 assert 'implements SearchIndexer, SearchQueryService, IndexRebuilder' in lucene
 assert 'LuceneCollectionIndexLifecycle implements SearchIndexLifecycle' in index_lifecycle
 assert 'FSDirectory.open(indexPath)' in index_lifecycle, 'collection activation must open a per-collection filesystem index'
-assert 'isCurrentIndexReusable()' in index_lifecycle and 'freshnessToken(' in index_lifecycle
+assert 'checkCurrentIndexReusable()' in index_lifecycle and 'freshnessToken(' in index_lifecycle
 assert 'activeBooks=' in index_lifecycle and 'appendWalState' in index_lifecycle, 'freshness marker must cover DB/WAL state and active-book count'
-assert 'if (!reusable && search.getDocumentCount() > 0)' in index_lifecycle and 'search.clearIndex();' in index_lifecycle, 'dirty target index must never stay searchable'
+assert 'if (!reusable)' in index_lifecycle and 'if (search.getDocumentCount() > 0) search.clearIndex();' in index_lifecycle, 'dirty target index must never stay searchable'
 assert 'setCommitObserver' in lucene and 'registerCommitObserver' in index_lifecycle, 'successful Lucene commits must refresh the collection freshness marker'
 assert 'activeIndexDirty' in index_lifecycle and 'lastClosedIndexDirty' in index_lifecycle, 'explicit dirty state must survive close/seal'
 assert 'persistDirtyMarker' in index_lifecycle and 'Files.writeString(tmp, "DIRTY"' in index_lifecycle, 'dirty proof must survive same-size/same-timestamp edge cases and process restart'
@@ -40,6 +40,8 @@ switch_pos = lifecycle.index('collectionLifecyclePort.switchToCollection(collect
 seal_pos = lifecycle.index('searchIndexLifecycle.sealClosedIndex(previous);')
 activate_pos = lifecycle.index('searchIndexLifecycle.activateCollectionIndex(collection);')
 assert close_pos < switch_pos < seal_pos < activate_pos, 'close/switch/WAL-seal/activate order is unsafe'
+assert 'seriesRepository.syncSeriesFromBooks();' not in lifecycle.split('public boolean initializeCollection',1)[1].split('private static',1)[0], 'startup must not scan/sync all series'
+assert 'bookCommandRepository.repairTransientRemoteStorageRoots' not in lifecycle.split('public boolean initializeCollection',1)[1].split('private static',1)[0], 'startup must not rewrite all remote book roots'
 assert 'boolean shouldRebuild = rebuildIndex && !reusableIndex;' in lifecycle
 assert 'if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();' in lifecycle
 

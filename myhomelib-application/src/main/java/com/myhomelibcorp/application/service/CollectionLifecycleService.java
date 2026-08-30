@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
@@ -23,7 +22,6 @@ public class CollectionLifecycleService {
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final DatabaseMigrationPort databaseMigrationPort;
     private final CacheInvalidationPort cacheInvalidationPort;
-    private final SeriesRepository seriesRepository;
     private final IndexRebuilder indexRebuilder;
     private final SearchIndexLifecycle searchIndexLifecycle;
     private final DomainEventPublisher eventPublisher;
@@ -63,11 +61,15 @@ public class CollectionLifecycleService {
             // 3. Очищуємо кеші
             cacheInvalidationPort.invalidateAll();
 
-            // 4. Синхронізуємо persisted series identities до завантаження кешу.
-            seriesRepository.syncSeriesFromBooks();
-
-            // 5. Відкриваємо per-collection Lucene і перебудовуємо лише dirty/absent index.
+            // 4. Validate Lucene freshness before derived series normalization.
+            // syncSeriesFromBooks() may write the SQLite file but does not change searchable book data,
+            // so it must not by itself force a 500k–1M full index rebuild on startup.
             boolean reusableIndex = searchIndexLifecycle.activateCollectionIndex(collection);
+
+            // 5. Do not run catalog-wide repair/series normalization on the startup critical path.
+            // Remote-root repair is handled lazily when a remote book is downloaded; series identities
+            // are synchronized after imports. Both operations can scan/write hundreds of thousands of rows
+            // and previously kept the splash screen blocked even when Lucene was already reusable.
             boolean shouldRebuild = rebuildIndex && !reusableIndex;
             if (shouldRebuild) rebuildIndexAsync(collection);
 
@@ -93,6 +95,7 @@ public class CollectionLifecycleService {
             isInitializing.set(false);
         }
     }
+
 
     /**
      * Перебудова індексу (синхронно). Використовується зовнішніми use cases.
@@ -171,7 +174,6 @@ public class CollectionLifecycleService {
             if (failed != null) searchIndexLifecycle.sealClosedIndex(failed);
             databaseMigrationPort.migrateCurrentCollection();
             cacheInvalidationPort.invalidateAll();
-            seriesRepository.syncSeriesFromBooks();
             if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();
             log.warn("Після помилки відновлено попередню колекцію та її пошуковий індекс: {}", previous.getName());
         } catch (Exception rollbackError) {

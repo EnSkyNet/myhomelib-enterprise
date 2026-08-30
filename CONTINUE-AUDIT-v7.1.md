@@ -410,3 +410,7 @@ Maven/CI/formal runtime acceptance не оголошувати green: connected 
 Деталі: `FUNCTIONAL-REGRESSION-AUDIT-v7.1.md`.
 
 Не оголошувати runtime Reader observations `merged words` / specific nested compilation TOC fixed без reproducer. Maven/CI formal green як і раніше потребує user/connected environment.
+
+## Checkpoint 2026-08-30 — Windows runtime fix-9
+
+Windows runtime виявив три defects, виправлені поверх testcompile-fix-8: legacy bare-URL ConnectionScript compatibility, transient catalog cache persisted as remote book root, та зайва Lucene invalidation від startup series normalization. Також виправлено JavaFX DirectoryChooser invalid initial folder. Наступний обов'язковий крок — connected Windows `mvnw.cmd clean verify -Pproduction` + повторний runtime: другий чистий restart повинен логувати `Per-collection Lucene ... is reusable`, а Flibusta ConnectionScript з першим URL-рядком не повинен падати як unknown command.

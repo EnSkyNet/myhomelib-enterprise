@@ -60,3 +60,5 @@ IDEA/JAVAC checkpoint 2026-08-30:
 - Added functional UI baseline + anti-regression check.
 - Current offline evidence: 46/46 tools checks PASS + standalone Java smoke PASS.
 - Reader merged-word / specific nested-TOC observations still require runtime reproducer.
+
+2026-08-30 fix-9: Windows runtime fixes applied: legacy URL-line ConnectionScript compatibility; permanent remote book root instead of catalog cache; Lucene reuse-before-series-sync + rebuild reason logging; DirectoryChooser fallback. Offline 46/46 + standalone Java smoke PASS. Maven connected acceptance pending.

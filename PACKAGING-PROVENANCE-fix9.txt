@@ -1,0 +1,10 @@
+MyHomeLib Enterprise v7.1 runtime-fix-9
+Base: idea-testcompile-fix-8
+Includes: functional-regression-fix-7, online-fix-6/5, compile-fix-3, and all prior audited WIP changes.
+Final fix-9 additions:
+- legacy bare HTTP/HTTPS ConnectionScript preamble compatibility;
+- permanent remote book storage root under downloads/<collectionId>;
+- repair of old remote collection_root values pointing to cache/catalog-updates;
+- Lucene freshness/reuse checked before non-searchable series normalization, with rebuild reason logging;
+- safe JavaFX DirectoryChooser initial-folder fallback.
+Validation before packaging: 46/46 tools/*check.py PASS; v71-standalone-java-smoke.py PASS.

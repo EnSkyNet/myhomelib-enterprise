@@ -47,6 +47,24 @@ checks={
 'Flibusta current protocol': (
  ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/CatalogSourceProfile.java',
  ['flibusta_online_fb2.info','flibusta_online_fb2.zip','extra_flibusta_online_fb2.info','extra_flibusta_online_fb2.zip']),
+'Legacy ConnectionScript URL preamble': (
+ ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/scenario/DownloadScenarioParser.java',
+ ['isLegacyUrlPreamble(raw)', 'scheme.equalsIgnoreCase("http")', 'scheme.equalsIgnoreCase("https")']),
+'Remote catalog uses permanent book root': (
+ ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/UpdateCollectionFromNetworkUseCase.java',
+ ['onlineBookStorageRoot(active)', 'AppPaths.downloadsDir().resolve(collection.getId())']),
+'Existing transient remote roots are repaired': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java',
+ ['normalizeLegacyRemoteRoot(book)', 'isTransientCatalogRoot', '.myhomelibcorp', 'downloads']),
+'Remote root repair is bounded SQL': (
+ ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookCommandRepository.java',
+ ['repairTransientRemoteStorageRoots(String permanentRoot)', "WHERE local = 0", "LIKE '%/.myhomelibcorp/cache/catalog-updates%'"]),
+'Lucene startup reuse without catalog-wide normalization': (
+ ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CollectionLifecycleService.java',
+ ['searchIndexLifecycle.activateCollectionIndex(collection)', 'boolean shouldRebuild = rebuildIndex && !reusableIndex']),
+'Collection folder chooser fallback': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/CollectionPropertiesUiService.java',
+ ['catch (IllegalArgumentException invalidInitialDirectory)', 'DirectoryChooser fallback=new DirectoryChooser()']),
 'Reader quick-setting persistence': (
  ROOT/'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderCanvas.java',
  ['cycleTheme()', 'notifySettingsChanged()', 'toggleTwoPageMode()', 'toggleAutoScroll()']),

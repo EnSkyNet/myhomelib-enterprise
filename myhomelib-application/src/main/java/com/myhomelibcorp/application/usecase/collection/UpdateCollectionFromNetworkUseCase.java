@@ -143,7 +143,10 @@ public class UpdateCollectionFromNetworkUseCase {
                         .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                                 skipped, duplicates, issues.size(), errors));
 
-                Path root = active.getRootFolder() != null ? active.getRootFolder() : pkg.file().getParent();
+                // Remote INPX packages live in cache/catalog-updates, but book storage metadata must
+                // point at the permanent collection/download root. Persisting pkg.file().getParent()
+                // made every remote book look for online.zip/extra.zip inside the temporary catalog cache.
+                Path root = onlineBookStorageRoot(active);
                 double importStart = 0.35 + 0.45 * packageIndex / plan.packages().size();
                 double importSpan = 0.45 / plan.packages().size();
                 ImportResult current = importer.execute(ImportContext.builder()
@@ -252,6 +255,16 @@ public class UpdateCollectionFromNetworkUseCase {
                 }
             }
         }
+    }
+
+    private static Path onlineBookStorageRoot(Collection collection) {
+        if (collection.getRootFolder() != null) {
+            return collection.getRootFolder().toAbsolutePath().normalize();
+        }
+        if (collection.getId() == null || collection.getId().isBlank()) {
+            throw new IllegalStateException("Online-колекція не має stable ID для download root");
+        }
+        return AppPaths.downloadsDir().resolve(collection.getId()).toAbsolutePath().normalize();
     }
 
     private static void emitDownloadProgress(Consumer<OperationProgress> telemetry, String operationId, RemoteDownloadProgress progress) {

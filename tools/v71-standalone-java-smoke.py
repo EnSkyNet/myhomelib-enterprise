@@ -130,9 +130,9 @@ public class V71StandaloneSmoke {
   }
 
   static void scenarioParser() throws Exception {
-    String script = "ADD login user\nPOST https://host/login\nCHECK\nREDIR\nPAUSE 1\nGET %RESURL%";
+    String script = "HTTPS://FLIBUSTA.IS/\nADD login user\nPOST https://host/login\nCHECK\nREDIR\nPAUSE 1\nGET %RESURL%";
     var commands = DownloadScenarioParser.parse(script);
-    check(commands.size()==6, "all ConnectionScript commands parsed");
+    check(commands.size()==6, "legacy bare URL preamble ignored and all ConnectionScript commands parsed");
     check(commands.get(0).type()==DownloadScenarioCommand.Type.ADD, "ADD parsed");
     boolean rejected=false;
     try { DownloadScenarioParser.parse("SHELL rm"); } catch (DownloadScenarioException expected) { rejected=true; }

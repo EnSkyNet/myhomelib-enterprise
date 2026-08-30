@@ -58,6 +58,7 @@ public class BookDownloadCoordinator {
      */
     public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        normalizeLegacyRemoteRoot(book);
         var existing = bookResourcePort.locateBookFile(
                 book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
         if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
@@ -89,6 +90,7 @@ public class BookDownloadCoordinator {
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        normalizeLegacyRemoteRoot(book);
         if (!force) {
             var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
             if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
@@ -146,6 +148,30 @@ public class BookDownloadCoordinator {
                         }
                     });
                 });
+    }
+
+    /**
+     * v7.1 briefly persisted the temporary catalog update cache as collection_root for remote books.
+     * Repair only the DTO being used instead of rewriting 700k+ rows during application startup.
+     * A successful download persists the correct root through DownloadBookUseCase.updateStorage().
+     */
+    private void normalizeLegacyRemoteRoot(BookDto book) {
+        if (book == null || !isTransientCatalogRoot(book.getCollectionRoot())) return;
+        Collection collection = applicationState.getCurrentLibraryCollection();
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) return;
+        Path root = collection.getRootFolder() != null
+                ? collection.getRootFolder().toAbsolutePath().normalize()
+                : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId())
+                    .toAbsolutePath().normalize();
+        book.setCollectionRoot(root.toString());
+        log.debug("Нормалізовано transient collection_root для remote-книги {} -> {}", book.getId(), root);
+    }
+
+    private static boolean isTransientCatalogRoot(String root) {
+        if (root == null || root.isBlank()) return false;
+        String normalized = root.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("/.myhomelibcorp/cache/catalog-updates")
+                || normalized.endsWith("/.myhomelibcorp/cache/catalog-updates");
     }
 
 

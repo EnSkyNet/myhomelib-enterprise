@@ -48,9 +48,14 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
             activeStateFile = AppPaths.collectionSearchIndexStateFile(collection.getId());
             search.switchDirectory(FSDirectory.open(indexPath));
 
-            boolean reusable = isCurrentIndexReusable();
-            if (!reusable && search.getDocumentCount() > 0) search.clearIndex();
-            log.info("Activated per-collection Lucene {} (reusable={})", indexPath, reusable);
+            ReuseCheck check = checkCurrentIndexReusable();
+            boolean reusable = check.reusable();
+            if (!reusable) {
+                log.info("Per-collection Lucene {} requires rebuild: {}", indexPath, check.reason());
+                if (search.getDocumentCount() > 0) search.clearIndex();
+            } else {
+                log.info("Per-collection Lucene {} is reusable: {} documents", indexPath, search.getDocumentCount());
+            }
             return reusable;
         } catch (IOException e) {
             clearActiveState();
@@ -109,18 +114,32 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
         }
     }
 
-    private boolean isCurrentIndexReusable() {
-        if (activeStateFile == null || !Files.isRegularFile(activeStateFile)) return false;
+    private ReuseCheck checkCurrentIndexReusable() {
+        if (activeStateFile == null || !Files.isRegularFile(activeStateFile)) {
+            return new ReuseCheck(false, "freshness marker is absent");
+        }
         try {
-            String expected = Files.readString(activeStateFile, StandardCharsets.UTF_8).trim();
+            String persisted = Files.readString(activeStateFile, StandardCharsets.UTF_8).trim();
+            if (persisted.equals("DIRTY")) {
+                return new ReuseCheck(false, "previous DB/search synchronization was not completed");
+            }
             long activeBooks = Math.max(0L, books.countAll());
-            return expected.equals(freshnessToken(activeDatabasePath, activeBooks))
-                    && activeBooks == search.getDocumentCount();
+            int indexedDocuments = search.getDocumentCount();
+            if (activeBooks != indexedDocuments) {
+                return new ReuseCheck(false, "book/document count mismatch: DB=" + activeBooks + ", Lucene=" + indexedDocuments);
+            }
+            String current = freshnessToken(activeDatabasePath, activeBooks);
+            if (!persisted.equals(current)) {
+                return new ReuseCheck(false, "SQLite/WAL freshness state changed since the last clean index seal");
+            }
+            return new ReuseCheck(true, "freshness marker and document count match");
         } catch (Exception e) {
             log.warn("Cannot validate Lucene freshness marker for {}: {}", activeCollectionId, e.toString());
-            return false;
+            return new ReuseCheck(false, "freshness validation failed: " + e.getClass().getSimpleName());
         }
     }
+
+    private record ReuseCheck(boolean reusable, String reason) { }
 
     private void persistDirtyMarker(Path stateFile) {
         try {

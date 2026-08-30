@@ -31,7 +31,7 @@ class SqliteCollectionRepositoryCredentialsV7Test {
         jdbc.execute("""
                 CREATE TABLE collections(
                     id TEXT PRIMARY KEY,name TEXT NOT NULL,root_folder TEXT,db_file TEXT,type INTEGER DEFAULT 0,
-                    user TEXT,password TEXT,url TEXT,notes TEXT,created TEXT)
+                    user TEXT,password TEXT,url TEXT,notes TEXT,connection_script TEXT,created TEXT)
                 """);
         jdbc.execute("CREATE TABLE collection_books(collection_id TEXT,book_id TEXT,PRIMARY KEY(collection_id,book_id))");
         repository = new SqliteCollectionRepository(jdbc);

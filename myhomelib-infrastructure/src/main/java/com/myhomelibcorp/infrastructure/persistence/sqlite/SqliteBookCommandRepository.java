@@ -176,6 +176,24 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         bookCache.evict(bookId);
     }
 
+    @Override
+    public int repairTransientRemoteStorageRoots(String permanentRoot) {
+        if (permanentRoot == null || permanentRoot.isBlank()) return 0;
+        int updated = getJdbcTemplate().update("""
+                UPDATE books
+                   SET collection_root = ?
+                 WHERE local = 0
+                   AND collection_root IS NOT NULL
+                   AND LOWER(REPLACE(collection_root, CHAR(92), '/'))
+                       LIKE '%/.myhomelibcorp/cache/catalog-updates%'
+                """, permanentRoot);
+        if (updated > 0) {
+            bookCache.clear();
+            log.info("Виправлено transient catalog root для {} remote книг", updated);
+        }
+        return updated;
+    }
+
     // ==================== НОВІ БАТЧ-МЕТОДИ ====================
 
     @Override

@@ -27,6 +27,23 @@ class DownloadScenarioParserTest {
     }
 
     @Test
+    void acceptsLegacyBareHttpUrlPreambleButStillParsesRealCommands() throws Exception {
+        var commands = DownloadScenarioParser.parse("""
+                https://flibusta.is/
+                ADD name %USER%
+                ADD password %PASS%
+                POST %URL%b/%LIBID%/get
+                GET %RESURL%
+                CHECK
+                """);
+
+        assertThat(commands).hasSize(5);
+        assertThat(commands.get(0).type()).isEqualTo(DownloadScenarioCommand.Type.ADD);
+        assertThat(commands.get(2).type()).isEqualTo(DownloadScenarioCommand.Type.POST);
+        assertThat(commands.get(4).type()).isEqualTo(DownloadScenarioCommand.Type.CHECK);
+    }
+
+    @Test
     void rejectsUnknownAndMalformedCommandsWithLineNumber() {
         assertThatThrownBy(() -> DownloadScenarioParser.parse("GET https://example.test\nEXEC rm -rf /"))
                 .isInstanceOf(DownloadScenarioException.class)

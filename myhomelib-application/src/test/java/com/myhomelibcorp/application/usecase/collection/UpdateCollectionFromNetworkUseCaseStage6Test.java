@@ -63,6 +63,31 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
     }
 
     @Test
+    void remoteCatalogWithoutExplicitRootUsesPermanentDownloadsDirectory(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        Collection collection = new Collection("c-download-root", "Online", null, null, 2, null, null,
+                "https://example.test/books", null);
+        Path downloaded = tempDir.resolve("catalog.inpx");
+        Files.write(downloaded, new byte[]{1});
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get("remote-collection:c-download-root"))
+                .thenReturn(CatalogSourceState.empty("remote-collection:c-download-root"));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(), any(), any(), any()))
+                .thenReturn(new RemoteCatalogUpdatePlan(
+                        List.of(new RemoteCatalogPackage(downloaded, "https://example.test/full.zip", "20260830", true)), "20260830"));
+        when(f.importer.execute(any())).thenReturn(new ImportResult(1, 0, 0, 0, 1,
+                ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+
+        f.useCase().execute(collection, "https://example.test/catalog", null, null);
+
+        ArgumentCaptor<ImportContext> context = ArgumentCaptor.forClass(ImportContext.class);
+        verify(f.importer).execute(context.capture());
+        assertThat(context.getValue().getRootDirectory())
+                .isEqualTo(com.myhomelibcorp.shared.util.AppPaths.downloadsDir().resolve("c-download-root").toAbsolutePath().normalize());
+        assertThat(context.getValue().getRootDirectory()).isNotEqualTo(downloaded.getParent());
+    }
+
+    @Test
     void doesNotImportOrRebuildWhenServerIsCurrent(@TempDir Path tempDir) throws Exception {
         Fixture f = new Fixture();
         Collection collection = collection("c1", tempDir);

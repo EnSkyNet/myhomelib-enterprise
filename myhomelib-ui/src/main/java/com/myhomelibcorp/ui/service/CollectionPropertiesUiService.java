@@ -38,7 +38,28 @@ public class CollectionPropertiesUiService {
         ComboBox<CollectionType> type=new ComboBox<>();
         type.getItems().setAll(CollectionType.values());
         type.setValue(CollectionType.fromCode(c.getType()));
-        Button browse=new Button("Обрати..."); browse.setOnAction(e->{DirectoryChooser dc=new DirectoryChooser();dc.setTitle("Коренева папка колекції");try{Path p=Path.of(root.getText());if(java.nio.file.Files.isDirectory(p))dc.setInitialDirectory(p.toFile());}catch(Exception ignored){}var f=dc.showDialog(owner);if(f!=null)root.setText(f.toPath().toString());});
+        Button browse=new Button("Обрати..."); browse.setOnAction(e->{
+            DirectoryChooser dc=new DirectoryChooser();
+            dc.setTitle("Коренева папка колекції");
+            try {
+                if (root.getText()!=null && !root.getText().isBlank()) {
+                    Path initial=Path.of(root.getText()).toAbsolutePath().normalize();
+                    if (java.nio.file.Files.isDirectory(initial) && java.nio.file.Files.isReadable(initial)) {
+                        dc.setInitialDirectory(initial.toFile());
+                    }
+                }
+            } catch (Exception ignored) { }
+            java.io.File f;
+            try {
+                f=dc.showDialog(owner);
+            } catch (IllegalArgumentException invalidInitialDirectory) {
+                // Native JavaFX chooser can reject a path that disappears or becomes unavailable.
+                DirectoryChooser fallback=new DirectoryChooser();
+                fallback.setTitle("Коренева папка колекції");
+                f=fallback.showDialog(owner);
+            }
+            if(f!=null)root.setText(f.toPath().toString());
+        });
         GridPane g=new GridPane();g.setHgap(8);g.setVgap(8);g.setPadding(new Insets(12));int r=0;
         g.addRow(r++,new Label("Назва:"),name);g.addRow(r++,new Label("Тип:"),type);g.addRow(r++,new Label("Коренева папка:"),root,browse);
         g.addRow(r++,new Label("Base URL книг/архівів:"),baseUrl);g.addRow(r++,new Label("URL INPX для оновлення:"),inpxUrl);

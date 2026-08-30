@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -51,6 +50,20 @@ class CollectionLifecycleServiceTest {
     }
 
     @Test
+    void remoteCollectionStartupDoesNotRunCatalogWideRepair() {
+        Fixture f = new Fixture();
+        Collection next = collection("remote", "Remote");
+        when(next.getType()).thenReturn(2);
+        when(f.lifecycle.getCurrentCollection()).thenReturn(null);
+        when(f.migrations.migrateCurrentCollection()).thenReturn(0);
+        when(f.searchLifecycle.activateCollectionIndex(next)).thenReturn(true);
+
+        f.service.initializeCollection(next, true);
+
+        verify(f.index, never()).rebuildIndex();
+    }
+
+    @Test
     void failedChangedCollectionRestoresPreviousCollectionAndIndex() {
         Fixture f = new Fixture();
         Collection oldCollection = collection("old", "Old");
@@ -77,17 +90,12 @@ class CollectionLifecycleServiceTest {
         final CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
         final DatabaseMigrationPort migrations = mock(DatabaseMigrationPort.class);
         final CacheInvalidationPort cacheInvalidation = mock(CacheInvalidationPort.class);
-        final SeriesRepository series = mock(SeriesRepository.class);
         final IndexRebuilder index = mock(IndexRebuilder.class);
         final SearchIndexLifecycle searchLifecycle = mock(SearchIndexLifecycle.class);
         final DomainEventPublisher events = mock(DomainEventPublisher.class);
         final ExecutorPort executor = mock(ExecutorPort.class);
         final CollectionLifecycleService service = new CollectionLifecycleService(
                 lifecycle, migrations, cacheInvalidation,
-                series, index, searchLifecycle, events, executor);
-
-        Fixture() {
-            when(series.findAll()).thenReturn(java.util.List.of());
-        }
+                index, searchLifecycle, events, executor);
     }
 }
