@@ -6,6 +6,7 @@ import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.core.ReaderEngine;
 import com.myhomelibcorp.reader.core.ReaderEngineBuilder;
+import com.myhomelibcorp.reader.core.ReaderEngine.PreparedBook;
 import com.myhomelibcorp.reader.core.registry.DefaultBookFormatRegistry;
 import com.myhomelibcorp.reader.layout.TextLayoutEngine;
 import com.myhomelibcorp.reader.format.fb2.Fb2Format;
@@ -41,6 +42,7 @@ public class ReaderView extends BorderPane {
     private Consumer<ReaderSettings> onSettingsClick;
     private Consumer<ReaderSettings> onSettingsChanged;
     private Runnable onBookmarkClick;
+    private Runnable onBookmarksClick;
     private Runnable onTocClick;
     private Runnable onSearchClick;
     private Runnable onBackClick;
@@ -90,12 +92,16 @@ public class ReaderView extends BorderPane {
         toolbar.setOnSettingsClick(settings -> {
             if (onSettingsClick != null) onSettingsClick.accept(settings);
         });
-        toolbar.setOnQuickSettingsChanged(settings -> {
+        canvas.setOnSettingsChanged(settings -> {
             statusBar.applySettings(settings);
+            toolbar.updateState();
             if (onSettingsChanged != null) onSettingsChanged.accept(settings);
         });
         toolbar.setOnBookmarkClick(() -> {
             if (onBookmarkClick != null) onBookmarkClick.run();
+        });
+        toolbar.setOnBookmarksClick(() -> {
+            if (onBookmarksClick != null) onBookmarksClick.run();
         });
         toolbar.setOnTocClick(() -> {
             if (onTocClick != null) onTocClick.run();
@@ -132,6 +138,10 @@ public class ReaderView extends BorderPane {
         onBookmarkClick = listener;
     }
 
+    public void setOnBookmarksClick(Runnable listener) {
+        onBookmarksClick = listener;
+    }
+
     public void setOnTocClick(Runnable listener) {
         onTocClick = listener;
     }
@@ -145,7 +155,15 @@ public class ReaderView extends BorderPane {
     }
 
     public void openBook(BookSource source) throws IOException {
-        engine.open(source);
+        openPrepared(engine.prepare(source), null);
+    }
+
+    /**
+     * Attaches a document that was parsed off the JavaFX thread. Initial position
+     * is applied before the first layout so large books are not paginated twice.
+     */
+    public void openPrepared(PreparedBook prepared, ReaderPosition initialPosition) throws IOException {
+        engine.openPrepared(prepared, initialPosition);
         if (engine.getCurrentDocument() != null) {
             renderer.setResourceRepository(engine.getCurrentDocument().resources());
         }
@@ -160,7 +178,7 @@ public class ReaderView extends BorderPane {
         canvas.updateSize();
         toolbar.updateState();
         Platform.runLater(canvas::requestFocus);
-        log.info("📖 ReaderView opened: {}", source.name());
+        log.info("📖 ReaderView opened: {}", prepared.sourceName());
     }
 
     public void closeBook() {
@@ -201,6 +219,7 @@ public class ReaderView extends BorderPane {
     }
 
     public void dispose() {
+        statusBar.dispose();
         canvas.dispose();
         renderer.setResourceRepository(null);
         log.info("🧹 ReaderView disposed");

@@ -23,18 +23,9 @@ app:
   metadata:
     db-path: ${user.home}/.myhomelibcorp/meta.db
   import:
-    batch-size: 5000
-    index-disable-threshold: 500000
+    batch-size: 1000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
-  features:
-    new-importer: true
-    new-navigation: true
-    virtual-table: true
-    lazy-search: true
-    async-cover-loading: true
-    use-fts5: false
-
 logging:
   level:
     com.myhomelibcorp: DEBUG

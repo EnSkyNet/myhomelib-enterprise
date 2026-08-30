@@ -7,7 +7,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.nio.file.Path;
 
 @Service
 @RequiredArgsConstructor
@@ -48,13 +47,4 @@ public class CollectionManagementService {
         log.info("Deleted physical files for collection: {}", collection.getName());
     }
 
-    public void vacuum(Collection collection) {
-        collectionStorageManager.vacuum(collection);
-        log.info("Vacuum completed for collection: {}", collection.getName());
-    }
-
-    public void closeCollection(Collection collection) {
-        collectionStorageManager.closeCollection(collection);
-        log.info("Closed collection: {}", collection.getName());
-    }
 }

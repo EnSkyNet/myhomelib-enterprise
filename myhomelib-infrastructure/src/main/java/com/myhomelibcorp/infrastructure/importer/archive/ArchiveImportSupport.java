@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.importer.archive;
 
+import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 
@@ -31,6 +32,17 @@ public final class ArchiveImportSupport {
                 || lower.endsWith(".7z") || lower.endsWith(".rar") || lower.endsWith(".cbr") || lower.endsWith(".inpx")
                 || lower.endsWith(".tar") || lower.endsWith(".tar.gz") || lower.endsWith(".tgz")
                 || lower.endsWith(".tar.bz2") || lower.endsWith(".tbz2") || lower.endsWith(".tar.xz") || lower.endsWith(".txz") || lower.endsWith(".cpio");
+    }
+
+
+    public static boolean isSupportedBookEntry(String name, ImporterRegistry importerRegistry) {
+        if (name == null || importerRegistry == null || isNestedArchive(name)) return false;
+        try {
+            importerRegistry.findImporter(Path.of(name));
+            return true;
+        } catch (RuntimeException e) {
+            return false;
+        }
     }
 
     public static String suffixFor(String entryName) {

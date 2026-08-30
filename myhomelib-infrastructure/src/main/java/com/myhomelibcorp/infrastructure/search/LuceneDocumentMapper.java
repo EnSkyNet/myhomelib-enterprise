@@ -16,18 +16,20 @@ final class LuceneDocumentMapper {
     Document toDocument(BookSnapshot snapshot) {
         Document doc = new Document();
         doc.add(new StringField("id", snapshot.getId().asString(), Field.Store.YES));
-        doc.add(new TextField("title", safe(snapshot.getTitle()), Field.Store.YES));
-        doc.add(new TextField("authors", safe(snapshot.getAuthorsText()), Field.Store.YES));
-        doc.add(new TextField("series", safe(snapshot.getSeries()), Field.Store.YES));
-        doc.add(new TextField("genres", safe(snapshot.getGenresText()), Field.Store.YES));
-        doc.add(new TextField("keywords", safe(snapshot.getKeywords()), Field.Store.YES));
-        doc.add(new TextField("annotation", safe(snapshot.getAnnotation()), Field.Store.YES));
-        doc.add(new TextField("file_name", safe(snapshot.getFileName()), Field.Store.YES));
-        doc.add(new TextField("publisher", safe(snapshot.getPublisher()), Field.Store.YES));
-        doc.add(new TextField("translators", safe(snapshot.getTranslators()), Field.Store.YES));
-        doc.add(new TextField("city", safe(snapshot.getCity()), Field.Store.YES));
-        doc.add(new StringField("lib_id", safe(snapshot.getLibId()), Field.Store.YES));
-        doc.add(new StringField("language", safe(snapshot.getLanguage()).toLowerCase(Locale.ROOT), Field.Store.YES));
+        doc.add(new TextField("title", safe(snapshot.getTitle()), Field.Store.NO));
+        doc.add(new TextField("authors", safe(snapshot.getAuthorsText()), Field.Store.NO));
+        doc.add(new TextField("series", safe(snapshot.getSeries()), Field.Store.NO));
+        doc.add(new TextField("genres", safe(snapshot.getGenresText()), Field.Store.NO));
+        doc.add(new TextField("keywords", safe(snapshot.getKeywords()), Field.Store.NO));
+        doc.add(new TextField("annotation", safe(snapshot.getAnnotation()), Field.Store.NO));
+        doc.add(new TextField("file_name", safe(snapshot.getFileName()), Field.Store.NO));
+        doc.add(new TextField("publisher", safe(snapshot.getPublisher()), Field.Store.NO));
+        doc.add(new TextField("translators", safe(snapshot.getTranslators()), Field.Store.NO));
+        doc.add(new TextField("city", safe(snapshot.getCity()), Field.Store.NO));
+        doc.add(new StringField("lib_id", safe(snapshot.getLibId()), Field.Store.NO));
+        doc.add(new TextField("isbn", safe(snapshot.getIsbn()), Field.Store.NO));
+        doc.add(new TextField("source", safe(snapshot.getSourceUrl()), Field.Store.NO));
+        doc.add(new StringField("language", safe(snapshot.getLanguage()).toLowerCase(Locale.ROOT), Field.Store.NO));
         for (String id : safe(snapshot.getAuthorIds()).split("\\s+")) if (!id.isBlank()) doc.add(new StringField("author_id", id, Field.Store.NO));
         for (String id : safe(snapshot.getGenreIds()).split("\\s+")) if (!id.isBlank()) doc.add(new StringField("genre_id", id, Field.Store.NO));
 

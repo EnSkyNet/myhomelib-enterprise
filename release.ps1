@@ -8,7 +8,7 @@ if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & .\smoke-desktop.ps1
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 New-Item -ItemType Directory -Force dist | Out-Null
-Copy-Item -Force "myhomelib-mcp\target\myhomelib-mcp-1.0.0.jar" dist
-Copy-Item -Force "myhomelib-bootstrap\target\myhomelib-bootstrap-1.0.0.jar" dist
+Copy-Item -Force "myhomelib-mcp\target\myhomelib-mcp-7.1.0.jar" dist
+Copy-Item -Force "myhomelib-bootstrap\target\myhomelib-bootstrap-7.1.0.jar" dist
 & .\checksums.ps1 -Directory dist
 Write-Host "Release candidate artifacts are in dist/. Verify SHA256SUMS and the clean-machine checklist before publishing."

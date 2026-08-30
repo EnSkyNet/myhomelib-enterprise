@@ -1,0 +1,20 @@
+MyHomeLib Enterprise v7.1 — WIP audit snapshot
+Captured: 2026-08-28
+Status: NOT FINAL RELEASE
+
+This snapshot contains the current working tree after the additional full-code/UI/performance/reader audit started.
+Resume instructions: CONTINUE-AUDIT-v7.1.md
+Detailed working-tree state: CURRENT-AUDIT-STATE-v7.1.txt
+
+Checks executed immediately before snapshot:
+- tools/build-check-v7.py: PASS
+  - Flyway V1-V40 + immutable V1-V36: PASS
+  - existing v7 DB -> v7.1 user-data upgrade: PASS
+  - metadata migrations: PASS
+  - XML/FXML: PASS
+  - v7.1 source invariants: PASS
+  - release tree cleanliness: PASS
+- tools/v71-standalone-java-smoke.py: PASS
+
+Known unfinished audit items are intentionally present and documented in CONTINUE-AUDIT-v7.1.md.
+Do not treat this snapshot as the final v7.1 release candidate.

@@ -17,10 +17,7 @@ public class Fb2ZipBookConverter implements BookConverter {
 
     @Override
     public boolean supports(Book book) {
-        String name = book.getArchiveEntry();
-        if (name == null || name.isBlank()) name = book.getFileName();
-        name = name == null ? "" : name.toLowerCase();
-        return name.endsWith(".fb2") || name.endsWith(".fbd");
+        return Fb2ConversionSupport.supports(book);
     }
 
     @Override

@@ -12,6 +12,14 @@ public interface AuthorRepository {
     Author save(Author author);
     void deleteById(AuthorId id);
     Optional<Author> findByFullName(String firstName, String lastName);
+
+    /** Exact structured name lookup used only when the source has no external person identity. */
+    default Optional<Author> findByName(String firstName, String middleName, String lastName) {
+        return findByFullName(firstName, lastName)
+                .filter(a -> java.util.Objects.equals(
+                        a.getMiddleName() == null ? "" : a.getMiddleName(),
+                        middleName == null ? "" : middleName));
+    }
     List<Author> findFavorites(int limit);
 
     List<Author> findByInitial(char initial);

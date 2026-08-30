@@ -2,7 +2,6 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.repository.SavedSearchRepository;
 import com.myhomelibcorp.domain.model.search.SavedSearch;
-import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.QueryExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -19,7 +18,6 @@ import java.util.Optional;
 public class SqliteSavedSearchRepository implements SavedSearchRepository {
 
     private final QueryExecutor queryExecutor;
-    private final CollectionManager collectionManager;
 
     private final RowMapper<SavedSearch> rowMapper = (rs, rowNum) -> {
         String id = rs.getString("id");
@@ -62,24 +60,16 @@ public class SqliteSavedSearchRepository implements SavedSearchRepository {
 
     @Override
     public Optional<SavedSearch> findById(String id) {
-        String sql = "SELECT * FROM saved_searches WHERE id = ?";
-        try {
-            SavedSearch search = queryExecutor.queryForObject(sql, rowMapper, id);
-            return Optional.of(search);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
+        if (id == null || id.isBlank()) return Optional.empty();
+        String sql = "SELECT * FROM saved_searches WHERE id = ? LIMIT 1";
+        return queryExecutor.query(sql, rowMapper, id).stream().findFirst();
     }
 
     @Override
     public Optional<SavedSearch> findByName(String name) {
-        String sql = "SELECT * FROM saved_searches WHERE name = ?";
-        try {
-            SavedSearch search = queryExecutor.queryForObject(sql, rowMapper, name);
-            return Optional.of(search);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
+        if (name == null || name.isBlank()) return Optional.empty();
+        String sql = "SELECT * FROM saved_searches WHERE name = ? LIMIT 1";
+        return queryExecutor.query(sql, rowMapper, name).stream().findFirst();
     }
 
     @Override
@@ -127,21 +117,6 @@ public class SqliteSavedSearchRepository implements SavedSearchRepository {
         queryExecutor.update(sql, id);
     }
 
-    @Override
-    public void deleteByName(String name) {
-        String sql = "DELETE FROM saved_searches WHERE name = ?";
-        queryExecutor.update(sql, name);
-    }
 
-    @Override
-    public List<SavedSearch> findRecent(int limit) {
-        String sql = "SELECT * FROM saved_searches ORDER BY last_used DESC LIMIT ?";
-        return queryExecutor.query(sql, rowMapper, limit);
-    }
 
-    @Override
-    public List<SavedSearch> findMostUsed(int limit) {
-        String sql = "SELECT * FROM saved_searches ORDER BY use_count DESC LIMIT ?";
-        return queryExecutor.query(sql, rowMapper, limit);
-    }
 }

@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.dto.ReadingProgressDto;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteDateTimeCodec;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -10,7 +11,6 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.Optional;
 
 @Repository
@@ -19,8 +19,6 @@ import java.util.Optional;
 public class SqliteReadingProgressRepository implements ReadingProgressRepository {
 
     private final CollectionManager collectionManager;
-    private static final DateTimeFormatter DATE_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -36,7 +34,7 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
                 .percent(rs.getDouble("percent"))
                 .chapterTitle(rs.getString("chapter_title"))
                 .chapterId(rs.getString("chapter_id"))
-                .updatedAt(parseDate(rs.getString("updated_at")))
+                .updatedAt(SqliteDateTimeCodec.parse(rs.getString("updated_at")))
                 .readingTimeSeconds(rs.getLong("reading_time_seconds"))
                 .build();
 
@@ -83,8 +81,8 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
         }
 
         String updatedAt = progress.getUpdatedAt() != null
-                ? progress.getUpdatedAt().format(DATE_FORMATTER)
-                : LocalDateTime.now().format(DATE_FORMATTER);
+                ? SqliteDateTimeCodec.format(progress.getUpdatedAt())
+                : SqliteDateTimeCodec.format(LocalDateTime.now());
 
         getJdbcTemplate().update(sql,
                 progress.getBookId(),
@@ -105,14 +103,9 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
 
     @Override
     public Optional<ReadingProgressDto> findByBookId(String bookId) {
-        String sql = "SELECT * FROM reading_progress WHERE book_id = ?";
-        try {
-            ReadingProgressDto dto = getJdbcTemplate().queryForObject(sql, rowMapper, bookId);
-            return Optional.of(dto);
-        } catch (Exception e) {
-            log.warn("No reading progress found for book {}: {}", bookId, e.getMessage());
-            return Optional.empty();
-        }
+        if (bookId == null || bookId.isBlank()) return Optional.empty();
+        String sql = "SELECT * FROM reading_progress WHERE book_id = ? LIMIT 1";
+        return getJdbcTemplate().query(sql, rowMapper, bookId).stream().findFirst();
     }
 
     @Override
@@ -121,19 +114,4 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
         log.debug("Deleted reading progress for book: {}", bookId);
     }
 
-    private LocalDateTime parseDate(String dateStr) {
-        if (dateStr == null || dateStr.isEmpty()) {
-            return null;
-        }
-        try {
-            return LocalDateTime.parse(dateStr, DATE_FORMATTER);
-        } catch (Exception e) {
-            try {
-                return LocalDateTime.parse(dateStr);
-            } catch (Exception ex) {
-                log.warn("Failed to parse date: {}", dateStr);
-                return null;
-            }
-        }
-    }
 }

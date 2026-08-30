@@ -2,7 +2,7 @@ param([string]$Version = "")
 $ErrorActionPreference = "Stop"
 Set-Location $PSScriptRoot
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = if ($env:MHL_VERSION) { $env:MHL_VERSION } else { "1.0.0" }
+    $Version = if ($env:MHL_VERSION) { $env:MHL_VERSION } else { "7.1.0" }
 }
 & .\package-desktop.ps1 -Type app-image
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }

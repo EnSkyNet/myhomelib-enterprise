@@ -1,6 +1,5 @@
 package com.myhomelibcorp.ui.service;
 
-import com.myhomelibcorp.domain.model.group.Group;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
@@ -84,17 +83,6 @@ public class DialogService {
     }
 
     // ---- Спеціалізований вибір групи ----
-    public Optional<Group> showGroupChoiceDialog(List<Group> groups, String bookTitle) {
-        if (groups == null || groups.isEmpty()) {
-            showWarning("Немає колекцій", "Створіть колекцію перед додаванням книги.");
-            return Optional.empty();
-        }
-        return showChoiceDialog(
-                groups,
-                groups.get(0),
-                "Додати до колекції",
-                "Виберіть колекцію для книги '" + bookTitle + "'",
-                "Колекція:"
-        );
-    }
+
+
 }

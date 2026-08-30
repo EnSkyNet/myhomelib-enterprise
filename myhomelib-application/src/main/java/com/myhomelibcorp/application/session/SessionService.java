@@ -3,6 +3,7 @@ package com.myhomelibcorp.application.session;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.SessionRepository;
+import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +19,12 @@ public class SessionService {
 
     private final SessionRepository sessionRepository;
     private final CollectionLifecyclePort collectionLifecyclePort;
+    private final ApplicationSettingsPort settings;
     private final Preferences prefs = Preferences.userNodeForPackage(SessionService.class);
+
+    private static final String LAST_COLLECTION_KEY = "lastCollectionId";
+    private static final String WORKSPACE_TYPE_PREFIX = "workspaceType_";
+    private static final String WORKSPACE_ID_PREFIX = "workspaceId_";
 
     private String currentCollectionId;
     private String currentBookId;
@@ -35,6 +41,7 @@ public class SessionService {
         log.info("Ініціалізація SessionService для колекції: {} (id: {})", collection.getName(), newCollectionId);
 
         this.currentCollectionId = newCollectionId;
+        prefs.put(LAST_COLLECTION_KEY, newCollectionId);
 
         String lastBookId = sessionRepository.getLastOpenedBookId(newCollectionId);
         if (lastBookId != null && !lastBookId.isEmpty()) {
@@ -96,26 +103,32 @@ public class SessionService {
         return currentCollectionId;
     }
 
-    public void saveSelectedAuthorId(String authorId) {
-        String collectionId = getCurrentCollectionId();
-        if (collectionId == null) {
-            log.warn("Спроба зберегти автора без активної колекції");
-            return;
-        }
-        prefs.put("selectedAuthorId_" + collectionId, authorId);
+    public boolean isRestoreEnabled() {
+        return settings.getBoolean("ui.restoreSession", true);
     }
 
-    public String getSelectedAuthorId() {
+    public String getLastCollectionId() {
+        return prefs.get(LAST_COLLECTION_KEY, null);
+    }
+
+    public void saveWorkspaceState(String type, String id) {
         String collectionId = getCurrentCollectionId();
-        if (collectionId == null) {
-            return null;
-        }
-        return prefs.get("selectedAuthorId_" + collectionId, null);
+        if (collectionId == null || type == null || type.isBlank()) return;
+        prefs.put(WORKSPACE_TYPE_PREFIX + collectionId, type);
+        prefs.put(WORKSPACE_ID_PREFIX + collectionId, id == null ? "" : id);
+    }
+
+    public WorkspaceState getWorkspaceState() {
+        String collectionId = getCurrentCollectionId();
+        if (collectionId == null || !isRestoreEnabled()) return null;
+        String type = prefs.get(WORKSPACE_TYPE_PREFIX + collectionId, "");
+        if (type.isBlank()) return null;
+        return new WorkspaceState(type, prefs.get(WORKSPACE_ID_PREFIX + collectionId, ""));
     }
 
     public void saveWindowState(double width, double height) {
-        prefs.putDouble("windowWidth", width);
-        prefs.putDouble("windowHeight", height);
+        if (width > 0) prefs.putDouble("windowWidth", width);
+        if (height > 0) prefs.putDouble("windowHeight", height);
     }
 
     public double[] getWindowState() {
@@ -125,21 +138,11 @@ public class SessionService {
         };
     }
 
-    public void saveSearchQuery(String query) {
-        String collectionId = getCurrentCollectionId();
-        if (collectionId == null) {
-            log.warn("Спроба зберегти пошук без активної колекції");
-            return;
+    public record WorkspaceState(String type, String id) {
+        public WorkspaceState {
+            type = type == null ? "" : type.trim();
+            id = id == null ? "" : id;
         }
-        prefs.put("lastSearchQuery_" + collectionId, query);
-    }
-
-    public String getLastSearchQuery() {
-        String collectionId = getCurrentCollectionId();
-        if (collectionId == null) {
-            return "";
-        }
-        return prefs.get("lastSearchQuery_" + collectionId, "");
     }
 
     public void clearCurrentSession() {
@@ -148,8 +151,7 @@ public class SessionService {
             return;
         }
         currentBookId = null;
-        String prefKey = "lastOpenedBookId_" + collectionId;
-        prefs.remove(prefKey);
+        sessionRepository.clearSession(collectionId);
         log.info("Очищено session для колекції {}", collectionId);
     }
 }

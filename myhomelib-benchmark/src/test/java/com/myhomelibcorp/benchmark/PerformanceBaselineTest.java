@@ -16,7 +16,7 @@ import org.apache.lucene.index.IndexWriterConfig;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.search.IndexSearcher;
 import org.apache.lucene.search.TermQuery;
-import org.apache.lucene.store.ByteBuffersDirectory;
+import org.apache.lucene.store.FSDirectory;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
@@ -62,11 +62,12 @@ class PerformanceBaselineTest {
     void performanceGuardrails() throws Exception {
         List<Integer> sizes = parseSizes(System.getProperty("mhl.performance.sizes", "100000"));
         List<Map<String, Object>> catalogues = new ArrayList<>();
+        List<Map<String, Object>> lucene = new ArrayList<>();
         for (int size : sizes) {
             catalogues.add(benchmarkCatalogue(size));
+            lucene.add(benchmarkLucene(size));
         }
         Map<String, Object> reader = benchmarkReader();
-        Map<String, Object> lucene = benchmarkLucene(Math.min(250_000, Math.max(100_000, sizes.getLast())));
 
         Map<String, Object> report = new LinkedHashMap<>();
         report.put("schema", 1);
@@ -91,7 +92,11 @@ class PerformanceBaselineTest {
         assertTrue((Double) reader.get("fb2ParseMs") < 15_000, "huge FB2 parse regression");
         assertTrue((Double) reader.get("epubParseMs") < 15_000, "huge EPUB parse regression");
         assertTrue((Long) reader.get("peakHeapDeltaBytes") < 768L * 1024 * 1024, "reader heap regression");
-        assertTrue((Double) lucene.get("queryMs") < 1_000, "Lucene query regression");
+        for (Map<String, Object> result : lucene) {
+            assertTrue((Double) result.get("queryMs") < 1_000, "Lucene query regression at " + result.get("documents"));
+            assertTrue((Double) result.get("fullDocsPerSec") > 0, "Lucene full throughput missing");
+            assertTrue((Double) result.get("selectiveDocsPerSec") > 0, "Lucene selective throughput missing");
+        }
     }
 
     private static Map<String, Object> benchmarkCatalogue(int books) throws Exception {
@@ -257,33 +262,81 @@ class PerformanceBaselineTest {
     }
 
     private static Map<String, Object> benchmarkLucene(int documents) throws Exception {
+        Path indexDir = Files.createTempDirectory("mhl-v71-lucene-" + documents + "-");
         PeakHeapSampler sampler = new PeakHeapSampler();
         sampler.start();
-        long indexStart = System.nanoTime();
-        double queryMs;
-        try (ByteBuffersDirectory directory = new ByteBuffersDirectory(); StandardAnalyzer analyzer = new StandardAnalyzer();
-             IndexWriter writer = new IndexWriter(directory, new IndexWriterConfig(analyzer))) {
-            for (int i = 0; i < documents; i++) {
-                Document d = new Document();
-                d.add(new StringField("id", "b" + i, Field.Store.YES));
-                d.add(new TextField("title", "benchmark title token" + (i % 997), Field.Store.NO));
-                d.add(new TextField("authors", "author" + (i % 10000), Field.Store.NO));
-                writer.addDocument(d);
+        long gcBefore = totalGcCount();
+        try (FSDirectory directory = FSDirectory.open(indexDir); StandardAnalyzer analyzer = new StandardAnalyzer()) {
+            IndexWriterConfig config = new IndexWriterConfig(analyzer);
+            config.setRAMBufferSizeMB(256.0);
+            config.setUseCompoundFile(false);
+            try (IndexWriter writer = new IndexWriter(directory, config)) {
+                long fullStarted = System.nanoTime();
+                for (int i = 0; i < documents; i++) writer.addDocument(luceneDocument(i));
+                writer.commit();
+                double fullMs = elapsedMs(fullStarted);
+
+                double queryMs;
+                int segmentCount;
+                try (DirectoryReader reader = DirectoryReader.open(writer)) {
+                    segmentCount = reader.leaves().size();
+                    IndexSearcher searcher = new IndexSearcher(reader);
+                    long q = System.nanoTime();
+                    searcher.search(new TermQuery(new Term("title", "token42")), 100);
+                    queryMs = elapsedMs(q);
+                }
+
+                int selectiveDocuments = Math.max(1, Math.min(10_000, documents / 100));
+                long selectiveStarted = System.nanoTime();
+                for (int i = 0; i < selectiveDocuments; i++) {
+                    int id = i * Math.max(1, documents / selectiveDocuments);
+                    writer.updateDocument(new Term("id", "b" + id), luceneDocument(id, " changed"));
+                }
+                writer.commit();
+                double selectiveMs = elapsedMs(selectiveStarted);
+
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("documents", documents);
+                out.put("fullIndexMs", fullMs);
+                out.put("fullDocsPerSec", documents / Math.max(0.001, fullMs / 1000.0));
+                out.put("selectiveDocuments", selectiveDocuments);
+                out.put("selectiveIndexMs", selectiveMs);
+                out.put("selectiveDocsPerSec", selectiveDocuments / Math.max(0.001, selectiveMs / 1000.0));
+                out.put("queryMs", queryMs);
+                out.put("peakHeapDeltaBytes", sampler.stopAndGetDelta());
+                out.put("gcCollectionsDelta", totalGcCount() - gcBefore);
+                out.put("indexSizeBytes", directorySize(indexDir));
+                out.put("segmentCount", segmentCount);
+                return out;
             }
-            writer.commit();
-            double indexMs = elapsedMs(indexStart);
-            try (DirectoryReader reader = DirectoryReader.open(writer)) {
-                IndexSearcher searcher = new IndexSearcher(reader);
-                long q = System.nanoTime();
-                searcher.search(new TermQuery(new Term("title", "token42")), 100);
-                queryMs = elapsedMs(q);
-            }
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("documents", documents);
-            out.put("indexMs", indexMs);
-            out.put("queryMs", queryMs);
-            out.put("peakHeapDeltaBytes", sampler.stopAndGetDelta());
-            return out;
+        } finally {
+            deleteRecursively(indexDir);
+        }
+    }
+
+    private static Document luceneDocument(int i) { return luceneDocument(i, ""); }
+
+    private static Document luceneDocument(int i, String suffix) {
+        Document d = new Document();
+        d.add(new StringField("id", "b" + i, Field.Store.YES));
+        d.add(new TextField("title", "benchmark title token" + (i % 997) + suffix, Field.Store.NO));
+        d.add(new TextField("authors", "author" + (i % 10000), Field.Store.NO));
+        d.add(new TextField("annotation", "synthetic annotation " + (i % 257), Field.Store.NO));
+        return d;
+    }
+
+    private static long directorySize(Path dir) throws IOException {
+        try (var files = Files.walk(dir)) {
+            return files.filter(Files::isRegularFile).mapToLong(path -> {
+                try { return Files.size(path); } catch (IOException e) { return 0L; }
+            }).sum();
+        }
+    }
+
+    private static void deleteRecursively(Path root) throws IOException {
+        if (root == null || !Files.exists(root)) return;
+        try (var paths = Files.walk(root)) {
+            for (Path path : paths.sorted(java.util.Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
         }
     }
 

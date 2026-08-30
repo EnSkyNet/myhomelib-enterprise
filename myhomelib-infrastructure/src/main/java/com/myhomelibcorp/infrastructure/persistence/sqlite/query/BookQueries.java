@@ -5,7 +5,6 @@ public final class BookQueries {
     private BookQueries() {}
 
     // ==================== SELECT ====================
-    public static final String FIND_ALL = "SELECT * FROM books LIMIT ? OFFSET ?";
     public static final String FIND_BY_ID = "SELECT * FROM books WHERE id = ?";
     public static final String FIND_BY_IDS = "SELECT * FROM books WHERE id IN (%s)";
     public static final String FIND_BY_TITLE_AND_AUTHOR = """

@@ -1,11 +1,11 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.shared.util.ExecutorShutdown;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.*;
-import java.util.function.Consumer;
 
 @Component
 @Slf4j
@@ -57,6 +57,11 @@ public class UiBackgroundExecutor {
         }, executor);
     }
 
+    /** Submit a task whose Future cancellation interrupts the worker thread. */
+    public <T> Future<T> submitCancellable(Callable<T> task) {
+        return executor.submit(task);
+    }
+
     public void execute(Runnable task) {
         executor.execute(task);
     }
@@ -71,14 +76,6 @@ public class UiBackgroundExecutor {
 
     @PreDestroy
     public void shutdown() {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        ExecutorShutdown.gracefully(executor, 5, TimeUnit.SECONDS);
     }
 }

@@ -16,6 +16,7 @@ presets=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/Reader
 prefs=text('myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/reader/ReaderPreferences.java')
 state=text('myhomelib-application/src/main/java/com/myhomelibcorp/application/reader/ReaderSettingsStateService.java')
 override=text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/reader/ReaderBookPreferencesService.java')
+atomic=text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AtomicFileSupport.java')
 dialog=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderSettingsDialog.java')
 workspace=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java')
 autosave=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderPositionAutosaver.java')
@@ -28,15 +29,24 @@ layout_support=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/lay
 hyphen=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/layout/HyphenationService.java')
 epub=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/format/epub/EpubParser.java')
 legacy=text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/reader/ReaderPreferencesService.java')
+codec=text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/reader/ReaderPreferencesJsonCodec.java')
 
 for marker in ('showStatusBar','showStatusProgress','tapLeftAction','tapCenterAction','tapRightAction'):
     if marker not in settings or marker not in prefs: fail(f'Reader settings/domain missing {marker}')
-for marker in ('comfortable','compact','night'):
+for marker in ('day','comfortable','compact','night'):
     if marker not in presets: fail(f'built-in preset missing: {marker}')
 for marker in ('saveForBook','clearBookOverride','loadGlobal'):
     if marker not in state: fail(f'per-book/global state service missing {marker}')
-if 'reader-book-preferences.json' not in override or 'ATOMIC_MOVE' not in override: fail('per-book settings persistence is not atomic JSON')
-if 'showStatusBar' not in legacy or '!node.has("showStatusBar")' not in legacy: fail('legacy Reader preferences missing Stage-19 field migration')
+v42=text('myhomelib-infrastructure/src/main/resources/db/migration/V42__reader_book_preferences.sql')
+if ('reader_book_preferences' not in override
+        or 'reader-book-preferences.json' not in override
+        or 'LEGACY_MIGRATION_BATCH = 400' not in override
+        or 'ON CONFLICT(book_id) DO UPDATE' not in override
+        or 'CREATE TABLE IF NOT EXISTS reader_book_preferences' not in v42):
+    fail('per-book settings are not collection-scoped SQLite with bounded legacy migration')
+if 'AtomicFileSupport.moveReplacing' not in legacy or 'StandardCopyOption.ATOMIC_MOVE' not in atomic:
+    fail('global Reader settings persistence is not atomic')
+if ('ReaderPreferences.builder().build()' not in codec or 'valueToTree' not in codec or 'merged.set' not in codec): fail('legacy Reader preferences are not merged over current defaults')
 
 for marker in ('Типографіка','Кольори','Макет','Навігація','Статус','Застосувати preset','Лише для цієї книги','livePreview','Скинути типографіку','Скинути навігацію','Скинути статус'):
     if marker not in dialog: fail(f'categorized/live settings dialog missing: {marker}')
@@ -75,6 +85,7 @@ def portable_smoke():
         td=Path(td); src=td/'src'; classes=td/'classes'; classes.mkdir()
         for rel in (
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSettings.java',
+          'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderInputSettings.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSettingsPreset.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSettingsPresets.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/layout/HyphenationService.java'):
@@ -84,7 +95,7 @@ def portable_smoke():
           import com.myhomelibcorp.reader.api.*; import com.myhomelibcorp.reader.layout.HyphenationService;
           public class Smoke { public static void main(String[] a) {
             var d=ReaderSettings.defaultSettings(); if(!d.showStatusBar()||!"previous-page".equals(d.tapLeftAction())) throw new AssertionError("defaults");
-            if(ReaderSettingsPresets.builtIns().size()!=4) throw new AssertionError("presets");
+            if(ReaderSettingsPresets.builtIns().size()!=5) throw new AssertionError("presets");
             var h=new HyphenationService(); var c=h.candidates("бібліотека","uk-UA"); if(c.isEmpty()||!c.contains(3)) throw new AssertionError("dictionary "+c);
             var u=h.candidates("електромагнітний","uk"); if(u.stream().anyMatch(x->x<2||x>14)) throw new AssertionError("safe candidates");
             System.out.println("READER PORTABLE SMOKE: PASS");

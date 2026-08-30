@@ -1,20 +1,18 @@
 package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseInitializerPort;
-import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
+import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+/** Compatibility adapter: directory imports only need the canonical migration lifecycle. */
 @Component
 @RequiredArgsConstructor
-@Slf4j
 public class DatabaseInitializerAdapter implements DatabaseInitializerPort {
-
-    private final DatabaseInitializer databaseInitializer;
+    private final DatabaseMigrationPort databaseMigrationPort;
 
     @Override
     public void initializeCurrentCollection() {
-        databaseInitializer.initializeCurrentCollection();
+        databaseMigrationPort.migrateCurrentCollection();
     }
 }

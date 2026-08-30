@@ -13,6 +13,7 @@ adapter = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrast
 query_builder = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookQueryBuilder.java')
 facets = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteNavigationFacetRepository.java')
 lucene = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchService.java')
+lucene_executor = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchExecutor.java')
 lucene_filter = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneUnifiedFilterBuilder.java')
 lucene_doc = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneDocumentMapper.java')
 table = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/table/BookTableController.java')
@@ -20,6 +21,9 @@ profiles = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/table/TableProf
 profile_state = text('myhomelib-application/src/main/java/com/myhomelibcorp/application/table/TableProfileStateService.java')
 workspace = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/WorkspaceManager.java')
 fast_writer = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java')
+fast_pipeline = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java')
+normalizer = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxBookNormalizer.java')
+denormalized = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookDenormalizedValues.java')
 legacy = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/legacy/SqliteLegacyCollectionAttachAdapter.java')
 
 for token in ['language', 'yearFrom', 'yearTo', 'format', 'local', 'read', 'ratingMin', 'ratingMax', 'hideUnrated', 'quickField', 'quickValue']:
@@ -27,7 +31,7 @@ for token in ['language', 'yearFrom', 'yearTo', 'format', 'local', 'read', 'rati
 require('filter.global.' in state and 'settings.put' in state, 'filter state is not persisted')
 require('BookFilterSqlAdapter.build(filter, "b")' in query_builder, 'book SQL does not use shared filter adapter')
 require(facets.count('BookFilterSqlAdapter.build(filter, "b")') >= 8, 'navigation facets do not share filter SQL')
-require('unifiedFilterBuilder.addTo' in lucene and 'BookFilterSpec' in lucene_filter, 'Lucene unified filter missing')
+require(('unifiedFilterBuilder.addTo' in lucene or 'filterBuilder.addTo' in lucene_executor) and 'BookFilterSpec' in lucene_filter, 'Lucene unified filter missing')
 for field in ['rate_num','year_num','format','local','read']:
     require(field in (lucene_filter + lucene_doc), f'Lucene index/filter missing {field}')
 require('escapeLike' in adapter and "ESCAPE '\\\\'" in adapter, 'SQL quick filter is not literal/escaped')
@@ -37,7 +41,9 @@ require('TableProfileStateService' in profiles and 'stateService.load' in profil
 require('table.profile.' in profile_state and 'column.' in profile_state and 'sort.column' in profile_state, 'table profiles not persisted')
 for profile in ['series','genre','year','language','archive','keyword','reviews','all-books','already-read','history']:
     require(f'loadBookTableWorkspace("{profile}")' in workspace, f'missing table profile {profile}')
-require('format, author_sort' in fast_writer and 'authorSortFromKeys' in fast_writer, 'fast INPX does not maintain denormalized sort/filter fields')
+require('format, author_sort' in fast_writer and 'BookDenormalizedValues.format' in fast_writer, 'fast INPX does not maintain denormalized format')
+require('BookDenormalizedValues.authorSort(parsedAuthors.keys())' in normalizer and 'Collection<AuthorNameKey>' in denormalized, 'fast INPX does not derive author_sort from structured author identities')
+require('authorSortFromKeys' not in fast_writer + fast_pipeline + normalizer, 'delimiter-serialized author identity helper was reintroduced')
 require('refreshDenormalizedBookFields' in legacy, 'legacy HLC2 import does not maintain denormalized fields')
 
 # All FXML must remain well-formed.

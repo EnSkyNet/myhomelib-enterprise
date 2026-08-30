@@ -23,7 +23,7 @@ public class BookMetadata {
 
     public static BookMetadata empty() {
         return BookMetadata.builder()
-                .language(LanguageCode.of("uk"))
+                .language(LanguageCode.of("und"))
                 .libraryRate(0)
                 .rate(0)
                 .progress(0)

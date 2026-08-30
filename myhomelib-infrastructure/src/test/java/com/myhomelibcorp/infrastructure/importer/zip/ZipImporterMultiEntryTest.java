@@ -41,6 +41,7 @@ class ZipImporterMultiEntryTest {
                 }
             }
             @Override public String getFormatName() { return "TXT-test"; }
+            @Override public long countBooks(Path file) { return 1; }
         };
         ImporterRegistry registry = new ImporterRegistry() {
             @Override public BookImporterPort findImporter(Path file) {
@@ -55,6 +56,8 @@ class ZipImporterMultiEntryTest {
         Field field = ZipImporter.class.getDeclaredField("importerRegistry");
         field.setAccessible(true);
         field.set(importer, registry);
+
+        assertThat(importer.countBooks(zip)).isEqualTo(2);
 
         List<Book> books;
         try (Stream<Book> stream = importer.importBooks(zip)) {

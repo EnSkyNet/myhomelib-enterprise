@@ -7,7 +7,7 @@
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.StatisticsController"
       spacing="15" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
-      prefWidth="500" prefHeight="400">
+      prefWidth="540" prefHeight="620">
 
     <Label text="📊 Статистика колекції" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
 
@@ -40,6 +40,21 @@
 
         <Label text="🖼️ Без обкладинок:" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
         <Label fx:id="missingCoversCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="8"/>
+
+        <Label text="💾 Локальних:" GridPane.columnIndex="0" GridPane.rowIndex="9" style="-fx-font-weight: bold;"/>
+        <Label fx:id="localBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="9"/>
+        <Label text="☁ Віддалених:" GridPane.columnIndex="0" GridPane.rowIndex="10" style="-fx-font-weight: bold;"/>
+        <Label fx:id="remoteBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="10"/>
+        <Label text="✅ Прочитаних:" GridPane.columnIndex="0" GridPane.rowIndex="11" style="-fx-font-weight: bold;"/>
+        <Label fx:id="readBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="11"/>
+        <Label text="📘 Непрочитаних:" GridPane.columnIndex="0" GridPane.rowIndex="12" style="-fx-font-weight: bold;"/>
+        <Label fx:id="unreadBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="12"/>
+        <Label text="★ Обраних:" GridPane.columnIndex="0" GridPane.rowIndex="13" style="-fx-font-weight: bold;"/>
+        <Label fx:id="favoritesCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="13"/>
+        <Label text="🗑 Видалених:" GridPane.columnIndex="0" GridPane.rowIndex="14" style="-fx-font-weight: bold;"/>
+        <Label fx:id="deletedBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="14"/>
+        <Label text="🔗 Джерел:" GridPane.columnIndex="0" GridPane.rowIndex="15" style="-fx-font-weight: bold;"/>
+        <Label fx:id="sourcesCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="15"/>
     </GridPane>
 
     <Separator/>

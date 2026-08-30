@@ -20,8 +20,8 @@ Observed on a Flibusta INPX import with 562,307 parsed records:
 4. **False Hikari leak warning during an intentional long transaction.**
    Leak detection was 10 seconds, while a large atomic SQLite import legitimately holds a connection longer. The threshold is now 300 seconds. Import atomicity is preserved.
 
-5. **Catalog creation/network update used only 1,000 rows per batch.**
-   Both catalog creation from a source and online catalog refresh now use 5,000-row batches, matching the proven normal INPX import path and reducing flush/tracking overhead substantially for very large catalogs.
+5. **Catalog creation/network update batch size (historical 2026-08-26 decision).**
+   This pass changed those paths from 1,000 to 5,000 rows based on the evidence available at the time. **Superseded on 2026-08-30:** the dedicated 500/1000/5000/10000 SQLite probe found 1,000 to be the best aggregate choice both with normal indexes and with import indexes suspended, so catalog creation/network refresh were aligned back to 1,000. See `PERFORMANCE-v7.1.md` and `docs/release/PERFORMANCE-v7.1-INPX-BATCH-RAW.json`.
 
 ## Regression coverage
 

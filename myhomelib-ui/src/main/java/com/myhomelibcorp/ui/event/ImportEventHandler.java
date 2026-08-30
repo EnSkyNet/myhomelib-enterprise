@@ -8,7 +8,6 @@ import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -25,11 +24,6 @@ public class ImportEventHandler {
     private final BookLoaderService bookLoaderService;
     private final NavigationPanelController navigationPanelController;
     private final CollectionAutoUpdateUseCase collectionAutoUpdateUseCase;
-
-    @PostConstruct
-    public void init() {
-        log.info("ImportEventHandler ініціалізовано");
-    }
 
     @EventListener
     public void onImportFinished(ImportFinishedEvent event) {

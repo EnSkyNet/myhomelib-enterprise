@@ -6,7 +6,6 @@ import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.catalog.CatalogUpdateSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -17,6 +16,7 @@ import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -118,7 +118,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
                     if (disposed) return;
                     setBusy(false);
                     if (error != null) {
-                        Throwable cause = unwrap(error);
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         detailLabel.setText(localizationService.tr("Помилка завантаження") + ": "
                                 + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
                         return;
@@ -146,7 +146,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
                     if (disposed || generation != loadGeneration) return;
                     setBusy(false);
                     if (error != null) {
-                        Throwable cause = unwrap(error);
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         updatesTree.setRoot(new TreeItem<>(UpdateTreeNode.root()));
                         summaryLabel.setText(localizationService.tr("Оновлення"));
                         detailLabel.setText(localizationService.tr("Не вдалося завантажити оновлення") + ": "
@@ -229,15 +229,6 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         return selected == null ? null : selected.getValue();
     }
 
-    private static Throwable unwrap(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null
-                && (current instanceof java.util.concurrent.CompletionException
-                || current instanceof java.util.concurrent.ExecutionException)) {
-            current = current.getCause();
-        }
-        return current;
-    }
 
     @Override
     public void dispose() {

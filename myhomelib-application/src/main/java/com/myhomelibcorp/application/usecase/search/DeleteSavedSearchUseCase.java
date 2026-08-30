@@ -18,11 +18,4 @@ public class DeleteSavedSearchUseCase {
         log.info("Видалено пошук з id: {}", id);
     }
 
-    public void executeByName(String name) {
-        if (name == null || name.isBlank()) {
-            throw new IllegalArgumentException("Назва пошуку не може бути порожньою");
-        }
-        savedSearchRepository.deleteByName(name);
-        log.info("Видалено пошук з назвою: {}", name);
-    }
 }

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.book;
 
+import com.myhomelibcorp.shared.util.FileNameSupport;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
@@ -11,7 +12,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 
@@ -70,18 +70,12 @@ public class ResolveBookContentUseCase {
     }
 
     private static boolean allowed(Set<String> allowed, String name) {
-        return allowed != null && allowed.contains(extension(name));
+        return allowed != null && allowed.contains(FileNameSupport.extension(name));
     }
 
-    private static String extension(String name) {
-        if (name == null) return "";
-        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-        int dot = name.lastIndexOf('.');
-        return dot > slash ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
-    }
 
     private static String suffix(String name) {
-        String ext = extension(name);
+        String ext = FileNameSupport.extension(name);
         return ext.isBlank() ? ".book" : "." + ext;
     }
 

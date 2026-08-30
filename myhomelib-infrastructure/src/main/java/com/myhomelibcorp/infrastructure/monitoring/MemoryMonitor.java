@@ -46,12 +46,4 @@ public class MemoryMonitor {
         }
     }
 
-    public void logMemoryUsage() {
-        MemoryUsage heap = memoryBean.getHeapMemoryUsage();
-        MemoryUsage nonHeap = memoryBean.getNonHeapMemoryUsage();
-        log.info("💾 Heap: used={} MB, max={} MB, committed={} MB",
-                heap.getUsed() / 1024 / 1024,
-                heap.getMax() / 1024 / 1024,
-                heap.getCommitted() / 1024 / 1024);
-    }
 }

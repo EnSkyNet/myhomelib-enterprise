@@ -14,6 +14,7 @@ public class CollectionWizardViewModel {
     private final StringProperty url = new SimpleStringProperty();
     private final StringProperty user = new SimpleStringProperty();
     private final StringProperty password = new SimpleStringProperty();
+    private final StringProperty connectionScript = new SimpleStringProperty();
     private final ObjectProperty<CollectionType> type = new SimpleObjectProperty<>(CollectionType.FB2_LOCAL);
     private final BooleanProperty importOnCreate = new SimpleBooleanProperty(true);
     private final BooleanProperty createIndex = new SimpleBooleanProperty(true);
@@ -28,6 +29,7 @@ public class CollectionWizardViewModel {
     public StringProperty urlProperty() { return url; }
     public StringProperty userProperty() { return user; }
     public StringProperty passwordProperty() { return password; }
+    public StringProperty connectionScriptProperty() { return connectionScript; }
     public ObjectProperty<CollectionType> typeProperty() { return type; }
     public BooleanProperty importOnCreateProperty() { return importOnCreate; }
     public BooleanProperty createIndexProperty() { return createIndex; }
@@ -52,6 +54,8 @@ public class CollectionWizardViewModel {
     public void setUser(String value) { user.set(value); }
     public String getPassword() { return password.get(); }
     public void setPassword(String value) { password.set(value); }
+    public String getConnectionScript() { return connectionScript.get(); }
+    public void setConnectionScript(String value) { connectionScript.set(value); }
 
     public CollectionType getType() { return type.get(); }
     public void setType(CollectionType type) { this.type.set(type); }
@@ -76,6 +80,7 @@ public class CollectionWizardViewModel {
         url.set("");
         user.set("");
         password.set("");
+        connectionScript.set("");
         type.set(CollectionType.FB2_LOCAL);
         importOnCreate.set(true);
         createIndex.set(true);

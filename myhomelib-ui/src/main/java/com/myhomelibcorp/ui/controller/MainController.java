@@ -2,8 +2,8 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
-import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -21,7 +21,6 @@ import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.opds.OpdsUiService;
-import com.myhomelibcorp.ui.presenter.CollectionPresenter;
 import com.myhomelibcorp.ui.service.*;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
@@ -59,7 +58,6 @@ public class MainController {
     private final MainBookCommandCoordinator bookCommandCoordinator;
     private final MainNavigationCoordinator mainNavigationCoordinator;
     private final WorkspaceManager workspaceManager;
-    private final NavigationHistoryService navigationHistory;
     private final ApplicationEventPublisher eventPublisher;
     private final ApplicationContext springContext;
     private final ActionRegistry actionRegistry;
@@ -77,7 +75,6 @@ public class MainController {
     private final ImportController importController;
     private final NavigationPanelController navigationPanelController;
     private final CollectionWorkspaceController collectionWorkspaceController;
-    private final CollectionPresenter collectionPresenter;
     private final com.myhomelibcorp.ui.service.ApplicationSettingsDialog applicationSettingsDialog;
     private final com.myhomelibcorp.ui.service.UserDataUiService userDataUiService;
     private final com.myhomelibcorp.ui.service.BookListExportService bookListExportService;
@@ -164,6 +161,10 @@ public class MainController {
         workspaceManager.showDashboard();
     }
 
+    public void restoreSessionWorkspace(SessionService.WorkspaceState state) {
+        if (state != null) workspaceManager.restoreSessionWorkspace(state);
+    }
+
     public void showAuthorWorkspace(AuthorId authorId) {
         workspaceManager.showAuthorWorkspace(authorId);
     }
@@ -236,9 +237,6 @@ public class MainController {
         workspaceManager.showGroupWorkspace(group);
     }
 
-    public void showReaderWorkspace(BookId bookId) {
-        workspaceManager.showReaderWorkspace(bookId);
-    }
 
     public void showNewReaderWorkspace(BookId bookId) {
         workspaceManager.showNewReaderWorkspace(bookId);
@@ -249,7 +247,7 @@ public class MainController {
     }
 
     public void setWorkspace(Pane workspace) {
-        workspaceManager.setWorkspace(workspace, "custom");
+        workspaceManager.setWorkspace(workspace);
     }
 
     public void updateNavigationButtons() {
@@ -257,8 +255,8 @@ public class MainController {
     }
 
     private void configureActionRegistry() {
-        actionRegistry.register(CoreActions.NAV_BACK, null, navigationHistory::canGoBack, this::handleBack);
-        actionRegistry.register(CoreActions.NAV_FORWARD, null, navigationHistory::canGoForward, this::handleForward);
+        actionRegistry.register(CoreActions.NAV_BACK, null, workspaceManager::canGoBack, this::handleBack);
+        actionRegistry.register(CoreActions.NAV_FORWARD, null, workspaceManager::canGoForward, this::handleForward);
         actionRegistry.register(CoreActions.HELP_CONTEXT, helpMenuItem, () -> true, this::handleHelp);
         actionRegistry.register(CoreActions.SEARCH_FOCUS, null, () -> true, () -> { searchField.requestFocus(); searchField.selectAll(); });
         actionRegistry.register(CoreActions.VIEW_REFRESH, refreshMenuItem, () -> true, this::handleRefresh);
@@ -304,13 +302,13 @@ public class MainController {
 
     @FXML
     public void handleBack() {
-        navigationHistory.goBack();
+        workspaceManager.goBack();
         updateNavigationButtons();
     }
 
     @FXML
     public void handleForward() {
-        navigationHistory.goForward();
+        workspaceManager.goForward();
         updateNavigationButtons();
     }
 
@@ -328,7 +326,7 @@ public class MainController {
     @FXML
     public void handleAbout() {
         dialogService.showInfo("Про програму", "MyHomeLib",
-                "Версія 1.0.0\nJava 21, Spring Boot 3.5, JavaFX 21\n\n" +
+                "Версія 7.1.0\nJava 21, Spring Boot 3.5, JavaFX 21\n\n" +
                         "Новий Reader на Canvas (без WebView)");
     }
 
@@ -401,17 +399,7 @@ public class MainController {
         collectionController.handleNewCollection(stage, this::showDashboard);
     }
 
-    @FXML
-    public void handleRenameCollection() {
-        cleanupReader();
-        showCollectionWorkspace();
-    }
 
-    @FXML
-    public void handleDeleteCollection() {
-        cleanupReader();
-        showCollectionWorkspace();
-    }
 
     @FXML
     public void handleSelectCollection() {
@@ -473,6 +461,11 @@ public class MainController {
     @FXML
     public void handleBatchRate() {
         batchOperationsController.handleBatchRate(this::handleRefresh);
+    }
+
+    @FXML
+    public void handleBatchProgress() {
+        batchOperationsController.handleBatchProgress(this::handleRefresh);
     }
 
     @FXML
@@ -579,7 +572,7 @@ public class MainController {
     public void handleEditMetadata() { bookCommandCoordinator.editMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
 
     @FXML
-    public void handleDeleteBook() { bookCommandCoordinator.deleteBook(mainPane.getScene().getWindow(), this::handleRefresh); }
+    public void handleDeleteBook() { bookCommandCoordinator.deleteBook(this::handleRefresh); }
 
     @FXML
     public void handleAddBook() {

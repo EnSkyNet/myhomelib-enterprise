@@ -1,6 +1,5 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.service.CollectionManagementService;
 import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -27,7 +26,6 @@ public class DatabaseToolsController {
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final DatabaseToolsService databaseToolsService;
-    private final CollectionManagementService collectionManagementService;
     private final CollectionLifecycleService collectionLifecycleService;
 
     @FXML
@@ -71,7 +69,7 @@ public class DatabaseToolsController {
 
         new Thread(() -> {
             try {
-                databaseToolsService.vacuum(collection);
+                databaseToolsService.vacuumCurrent();
 
                 UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);

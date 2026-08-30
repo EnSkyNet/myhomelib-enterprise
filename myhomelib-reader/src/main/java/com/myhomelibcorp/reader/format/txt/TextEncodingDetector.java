@@ -1,7 +1,7 @@
 package com.myhomelibcorp.reader.format.txt;
 
+import com.myhomelibcorp.shared.util.Utf8Validator;
 import java.io.*;
-import java.nio.ByteBuffer;
 import java.nio.charset.*;
 import java.util.List;
 
@@ -28,7 +28,7 @@ public final class TextEncodingDetector {
             try { return new Detected(Charset.forName(preferredEncoding.trim()), 0); }
             catch (IllegalCharsetNameException | UnsupportedCharsetException ignored) { }
         }
-        if (isValidUtf8(sample)) return new Detected(StandardCharsets.UTF_8, 0);
+        if (Utf8Validator.isValid(sample)) return new Detected(StandardCharsets.UTF_8, 0);
 
         List<Charset> legacy = List.of(Charset.forName("windows-1251"), Charset.forName("CP866"));
         Charset best = legacy.getFirst();
@@ -53,17 +53,6 @@ public final class TextEncodingDetector {
         return null;
     }
 
-    private static boolean isValidUtf8(byte[] sample) {
-        try {
-            StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(sample));
-            return true;
-        } catch (CharacterCodingException ignored) {
-            return false;
-        }
-    }
 
     private static int textScore(String text) {
         int score = 0;

@@ -14,6 +14,7 @@ public record BookQuery(
         GroupId groupId,
         String text,
         String keyword,
+        String publisher,
         LanguageCode language,
         BookFormat format,
         Integer year,
@@ -40,6 +41,7 @@ public record BookQuery(
         sortBy = sortBy != null ? sortBy : SortBy.TITLE;
         direction = direction != null ? direction : SortDirection.ASC;
         keyword = normalizeTextFilter(keyword);
+        publisher = normalizeTextFilter(publisher);
         archiveCollectionRoot = normalizePathFilter(archiveCollectionRoot);
         archivePath = normalizePathFilter(archivePath);
         if (year != null && year <= 0) {
@@ -73,6 +75,7 @@ public record BookQuery(
         private GroupId groupId;
         private String text;
         private String keyword;
+        private String publisher;
         private LanguageCode language;
         private BookFormat format;
         private Integer year;
@@ -96,6 +99,7 @@ public record BookQuery(
         public Builder groupId(GroupId groupId) { this.groupId = groupId; return this; }
         public Builder text(String text) { this.text = text; return this; }
         public Builder keyword(String keyword) { this.keyword = keyword; return this; }
+        public Builder publisher(String publisher) { this.publisher = publisher; return this; }
         public Builder language(LanguageCode language) { this.language = language; return this; }
         public Builder format(BookFormat format) { this.format = format; return this; }
         public Builder year(Integer year) { this.year = year; return this; }
@@ -120,7 +124,7 @@ public record BookQuery(
 
         public BookQuery build() {
             return new BookQuery(
-                    authorId, seriesId, genreId, groupId, text, keyword, language, format,
+                    authorId, seriesId, genreId, groupId, text, keyword, publisher, language, format,
                     year, archiveCollectionRoot, archivePath, filterSpec,
                     pagination, sortBy, direction,
                     onlyRead, onlyFavorites, onlyRated, onlyReviewed, onlyInHistory, withoutSeries, withCover

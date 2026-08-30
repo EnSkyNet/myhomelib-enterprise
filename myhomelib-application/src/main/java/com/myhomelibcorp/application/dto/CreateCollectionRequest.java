@@ -19,4 +19,5 @@ public class CreateCollectionRequest {
     String password;
     String url;
     String notes;
+    String connectionScript;
 }

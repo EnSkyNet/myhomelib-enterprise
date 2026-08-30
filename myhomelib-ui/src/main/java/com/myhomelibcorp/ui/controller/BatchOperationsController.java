@@ -11,8 +11,6 @@ import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
-import javafx.scene.Node;
-import javafx.scene.control.TableView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -58,6 +56,42 @@ public class BatchOperationsController {
                 dialogService.showError("Помилка", "Не вдалося оновити рейтинг: " + e.getMessage());
             }
         });
+    }
+
+    public void handleBatchProgress(Runnable onComplete) {
+        List<BookId> selected = getSelectedBookIds();
+        if (selected.isEmpty()) {
+            dialogService.showWarning("Немає вибраних книг", "Будь ласка, виберіть книги за допомогою чекбоксів.");
+            return;
+        }
+        Optional<String> entered = dialogService.showTextInput(
+                "Прогрес читання",
+                "Встановити прогрес для " + selected.size() + " книг",
+                "Прогрес, % (0–100):",
+                "50");
+        if (entered.isEmpty()) return;
+
+        final int progress;
+        try {
+            progress = Integer.parseInt(entered.get().trim());
+        } catch (NumberFormatException e) {
+            dialogService.showWarning("Некоректний прогрес", "Введіть ціле число від 0 до 100.");
+            return;
+        }
+        if (progress < 0 || progress > 100) {
+            dialogService.showWarning("Некоректний прогрес", "Прогрес має бути в межах від 0 до 100%.");
+            return;
+        }
+
+        try {
+            updateProgressBatchUseCase.execute(selected, progress);
+            dialogService.showInfo("Успішно", "Прогрес " + progress + "% встановлено для " + selected.size() + " книг.");
+            clearSelection();
+            if (onComplete != null) onComplete.run();
+        } catch (Exception e) {
+            log.error("Помилка масового оновлення прогресу", e);
+            dialogService.showError("Помилка", "Не вдалося оновити прогрес: " + e.getMessage());
+        }
     }
 
     public void handleBatchMarkRead(Runnable onComplete) {

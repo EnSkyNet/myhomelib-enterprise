@@ -62,7 +62,7 @@ public class RarImporter implements BookImporterPort {
             int entries = 0;
             for (FileHeader header : archive.getFileHeaders()) {
                 if (++entries > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return -1;
-                if (!header.isDirectory() && isBookEntry(header.getFileName())) count++;
+                if (!header.isDirectory() && ArchiveImportSupport.isSupportedBookEntry(header.getFileName(), importerRegistry)) count++;
             }
             return count;
         } catch (Exception e) {
@@ -70,11 +70,6 @@ public class RarImporter implements BookImporterPort {
         }
     }
 
-    private boolean isBookEntry(String name) {
-        if (name == null || ArchiveImportSupport.isNestedArchive(name)) return false;
-        try { importerRegistry.findImporter(Path.of(name)); return true; }
-        catch (Exception e) { return false; }
-    }
 
     private final class RarIterator implements Iterator<Book>, AutoCloseable {
         private final Path archivePath;

@@ -44,6 +44,9 @@ public class BookQueryBuilder {
         if (query.seriesId() != null) {
             ctx.joins.add("JOIN series s ON LOWER(TRIM(b.series)) = LOWER(TRIM(s.name))");
         }
+        if (query.groupId() != null) {
+            ctx.joins.add("JOIN book_groups qbg_group ON qbg_group.book_id = b.id");
+        }
     }
 
     private void addConditions(QueryContext ctx, BookQuery query) {
@@ -84,6 +87,12 @@ public class BookQueryBuilder {
                     )
                     """);
             ctx.params.add(query.keyword());
+        }
+
+        // PUBLISHER (exact logical navigation/filter; do not emulate it through title/annotation search)
+        if (query.publisher() != null) {
+            ctx.conditions.add("LOWER(TRIM(COALESCE(b.publisher, ''))) = LOWER(TRIM(?))");
+            ctx.params.add(query.publisher());
         }
 
         // LANGUAGE
@@ -147,9 +156,10 @@ public class BookQueryBuilder {
             ctx.conditions.add("b.cover_hash IS NOT NULL");
         }
 
-        // GROUP
+        // GROUP - joined through idx_book_groups_group_book so large groups do not
+        // require a full books scan merely to count/enumerate membership.
         if (query.groupId() != null) {
-            ctx.conditions.add("EXISTS (SELECT 1 FROM book_groups bg WHERE bg.book_id = b.id AND bg.group_id = ?)");
+            ctx.conditions.add("qbg_group.group_id = ?");
             ctx.params.add(query.groupId().asLong());
         }
 
@@ -204,12 +214,21 @@ public class BookQueryBuilder {
             case AUTHOR:   column = "b.author_sort"; break;
             case DATE:     column = "b.update_date"; break;
             case RATING:   column = "b.rate"; break;
+            case YEAR:     column = "COALESCE(b.year, 0)"; break;
             case SERIES:   column = "LOWER(COALESCE(b.series, ''))"; break;
             case RANDOM:   column = "RANDOM()"; break;
             default:       column = "b.title";
         }
         if (sortBy == SortBy.RANDOM) {
             return "ORDER BY RANDOM()";
+        }
+        if (sortBy == SortBy.SERIES) {
+            // Series view semantics: named series first, books in a series by their declared number,
+            // unnumbered entries at the end of the series, and books without a series last.
+            return "ORDER BY CASE WHEN TRIM(COALESCE(b.series, '')) = '' THEN 1 ELSE 0 END ASC, "
+                    + "LOWER(TRIM(COALESCE(b.series, ''))) " + dir + ", "
+                    + "CASE WHEN COALESCE(b.sequence_number, 0) > 0 THEN b.sequence_number ELSE 2147483647 END ASC, "
+                    + "LOWER(COALESCE(b.title, '')) ASC, b.id ASC";
         }
         // Stable tie-break is required for offset paging and full Lucene rebuilds.
         return "ORDER BY " + column + " " + dir + ", b.id " + dir;

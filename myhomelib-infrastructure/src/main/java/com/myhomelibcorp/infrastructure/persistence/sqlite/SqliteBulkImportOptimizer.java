@@ -7,12 +7,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class SqliteBulkImportOptimizer implements BulkImportOptimizer {
 
     private final CollectionManager collectionManager;
+
+    /** Supports properly nested enable/disable calls without losing the caller's original PRAGMA values. */
+    private final ThreadLocal<Deque<PragmaState>> previousStates = ThreadLocal.withInitial(ArrayDeque::new);
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -21,58 +27,81 @@ public class SqliteBulkImportOptimizer implements BulkImportOptimizer {
     @Override
     public void enableBulkInsertMode() {
         JdbcTemplate jt = getJdbcTemplate();
+        PragmaState previous;
         try {
-            jt.execute("PRAGMA synchronous = OFF");
+            previous = readState(jt);
+        } catch (RuntimeException e) {
+            log.warn("Не вдалося зчитати поточні SQLite PRAGMA; bulk-оптимізацію пропущено: {}", e.getMessage());
+            return;
+        }
+
+        try {
+            jt.execute("PRAGMA synchronous = NORMAL");
             jt.execute("PRAGMA temp_store = MEMORY");
-            jt.execute("PRAGMA cache_size = -500000");
+            jt.execute("PRAGMA cache_size = -262144");
             jt.execute("PRAGMA mmap_size = 2147483648");
-            log.debug("PRAGMA встановлено для швидкого імпорту");
-        } catch (Exception e) {
-            log.warn("Помилка при встановленні PRAGMA для імпорту: {}", e.getMessage());
+            previousStates.get().push(previous);
+            log.debug("PRAGMA встановлено для швидкого імпорту; попередній стан збережено");
+        } catch (RuntimeException e) {
+            restoreState(jt, previous, "після помилки ввімкнення bulk mode");
+            log.warn("Помилка при встановленні PRAGMA для імпорту; попередні значення відновлено: {}", e.getMessage());
         }
     }
 
     @Override
     public void disableBulkInsertMode() {
+        Deque<PragmaState> stack = previousStates.get();
+        if (stack.isEmpty()) {
+            previousStates.remove();
+            log.debug("Немає збереженого SQLite PRAGMA state для відновлення");
+            return;
+        }
+
         JdbcTemplate jt = getJdbcTemplate();
+        PragmaState previous = stack.pop();
         try {
-            jt.execute("PRAGMA synchronous = NORMAL");
-            // Commit/rollback is owned by the surrounding Spring transaction.
-            log.debug("PRAGMA відновлено до стандартних");
-        } catch (Exception e) {
-            log.warn("Помилка при відновленні PRAGMA: {}", e.getMessage());
+            restoreState(jt, previous, "після bulk import");
+            log.debug("SQLite PRAGMA відновлено до фактичних попередніх значень");
+        } finally {
+            if (stack.isEmpty()) previousStates.remove();
         }
     }
 
-    public void dropIndexes() {
-        JdbcTemplate jt = getJdbcTemplate();
-        try {
-            jt.execute("DROP INDEX IF EXISTS idx_books_title");
-            jt.execute("DROP INDEX IF EXISTS idx_books_series");
-            jt.execute("DROP INDEX IF EXISTS idx_books_language");
-            jt.execute("DROP INDEX IF EXISTS idx_authors_last_name");
-            jt.execute("DROP INDEX IF EXISTS idx_authors_search_name");
-            jt.execute("DROP INDEX IF EXISTS idx_book_authors_book_author");
-            jt.execute("DROP INDEX IF EXISTS idx_book_genres_book_genre");
-            log.info("Всі індекси видалено");
-        } catch (Exception e) {
-            log.warn("Помилка при видаленні індексів: {}", e.getMessage());
+    private static PragmaState readState(JdbcTemplate jt) {
+        return new PragmaState(
+                requireLong(jt, "PRAGMA synchronous"),
+                requireLong(jt, "PRAGMA temp_store"),
+                requireLong(jt, "PRAGMA cache_size"),
+                requireLong(jt, "PRAGMA mmap_size"));
+    }
+
+    private static long requireLong(JdbcTemplate jt, String sql) {
+        Long value = jt.queryForObject(sql, Long.class);
+        if (value == null) throw new IllegalStateException("SQLite returned NULL for " + sql);
+        return value;
+    }
+
+    private static void restoreState(JdbcTemplate jt, PragmaState state, String context) {
+        RuntimeException failure = null;
+        failure = restoreOne(jt, "PRAGMA synchronous = " + state.synchronous(), failure);
+        failure = restoreOne(jt, "PRAGMA temp_store = " + state.tempStore(), failure);
+        failure = restoreOne(jt, "PRAGMA cache_size = " + state.cacheSize(), failure);
+        failure = restoreOne(jt, "PRAGMA mmap_size = " + state.mmapSize(), failure);
+        if (failure != null) {
+            log.warn("Не всі SQLite PRAGMA вдалося відновити {}", context, failure);
         }
     }
 
-    public void createIndexes() {
-        JdbcTemplate jt = getJdbcTemplate();
+    private static RuntimeException restoreOne(JdbcTemplate jt, String sql, RuntimeException previousFailure) {
         try {
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)");
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_books_series ON books(series)");
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_books_language ON books(language)");
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_authors_last_name ON authors(last_name)");
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_authors_search_name ON authors(search_name)");
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_book_authors_book_author ON book_authors(book_id, author_id)");
-            jt.execute("CREATE INDEX IF NOT EXISTS idx_book_genres_book_genre ON book_genres(book_id, genre_code)");
-            log.info("Всі індекси створено");
-        } catch (Exception e) {
-            log.warn("Помилка при створенні індексів: {}", e.getMessage());
+            jt.execute(sql);
+            return previousFailure;
+        } catch (RuntimeException e) {
+            if (previousFailure == null) return e;
+            previousFailure.addSuppressed(e);
+            return previousFailure;
         }
     }
+
+    private record PragmaState(long synchronous, long tempStore, long cacheSize, long mmapSize) { }
 }

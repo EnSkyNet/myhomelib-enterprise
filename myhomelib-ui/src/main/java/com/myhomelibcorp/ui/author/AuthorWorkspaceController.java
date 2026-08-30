@@ -1,39 +1,36 @@
 package com.myhomelibcorp.ui.author;
 
+import com.myhomelibcorp.application.catalog.CatalogUpdateService;
+import com.myhomelibcorp.application.dto.AuthorBookStatistics;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.dto.BookListItem;
+import com.myhomelibcorp.application.query.common.PageResult;
+import com.myhomelibcorp.application.query.common.SortBy;
+import com.myhomelibcorp.application.query.common.SortDirection;
+import com.myhomelibcorp.application.usecase.author.LoadAuthorBookStatisticsUseCase;
 import com.myhomelibcorp.application.usecase.author.LoadAuthorByIdUseCase;
 import com.myhomelibcorp.application.usecase.author.UpdateAuthorDescriptionUseCase;
 import com.myhomelibcorp.application.usecase.book.LoadBooksByAuthorUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
-import com.myhomelibcorp.ui.presenter.CoverPresenter;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.table.SeriesGrouping;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
+import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
-import javafx.scene.control.Label;
-import javafx.scene.control.TableColumn;
-import javafx.scene.control.TableView;
-import javafx.scene.control.TextField;
-import javafx.scene.control.TextArea;
-import javafx.scene.image.ImageView;
+import javafx.scene.control.*;
+import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.Comparator;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -41,18 +38,20 @@ import java.util.stream.Collectors;
 @Slf4j
 public class AuthorWorkspaceController {
 
+    private static final int PAGE_SIZE = 100;
+
     private final LoadAuthorByIdUseCase loadAuthorByIdUseCase;
     private final UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase;
     private final LoadBooksByAuthorUseCase loadBooksByAuthorUseCase;
+    private final LoadAuthorBookStatisticsUseCase loadAuthorBookStatisticsUseCase;
+    private final CatalogUpdateService catalogUpdateService;
     private final NavigationService navigationService;
-    private final CoverPresenter coverPresenter;
     private final ApplicationState appState;
     private final BookViewModelMapper bookViewModelMapper;
     private final UiBackgroundExecutor executor;
 
     @FXML private Label authorNameLabel;
-    @FXML private Label authorFullNameLabel;
-    @FXML private ImageView authorPhotoImageView;
+    @FXML private Button followAuthorButton;
     @FXML private Label booksCountLabel;
     @FXML private Label seriesCountLabel;
     @FXML private Label genresCountLabel;
@@ -61,46 +60,49 @@ public class AuthorWorkspaceController {
     @FXML private TableColumn<BookViewModel, String> titleColumn;
     @FXML private TableColumn<BookViewModel, String> seriesColumn;
     @FXML private TableColumn<BookViewModel, Number> seqNumberColumn;
-    @FXML private TableColumn<BookViewModel, String> yearColumn;
+    @FXML private TableColumn<BookViewModel, Number> yearColumn;
     @FXML private TableColumn<BookViewModel, String> formatColumn;
     @FXML private TableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private TableColumn<BookViewModel, String> rateColumn;
     @FXML private TableColumn<BookViewModel, String> progressColumn;
     @FXML private TextField filterTextField;
-    @FXML private TextField searchField;
+    @FXML private Button previousPageButton;
+    @FXML private Button nextPageButton;
+    @FXML private Label pageLabel;
 
+    private final AtomicLong metadataGeneration = new AtomicLong();
+    private final AtomicLong pageGeneration = new AtomicLong();
+    private PauseTransition filterDebounce;
     private AuthorId currentAuthorId;
     private AuthorDto currentAuthor;
-    private List<BookDto> allBooks;
+    private AuthorBookStatistics authorStatistics = AuthorBookStatistics.empty();
+    private boolean currentAuthorFollowed;
+    private int currentPage;
+    private SortBy currentSort = SortBy.SERIES;
+    private SortDirection currentDirection = SortDirection.ASC;
 
     @FXML
     public void initialize() {
-        log.info("AuthorWorkspaceController.initialize() викликано");
-
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
+        titleColumn.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null) { setText(null); return; }
+                BookViewModel row = getTableRow() != null ? getTableRow().getItem() : null;
+                setText(row != null && !row.isGroupHeader() && row.getSeries() != null && !row.getSeries().isBlank()
+                        ? "    " + item : item);
+            }
+        });
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
         seqNumberColumn.setCellValueFactory(cellData -> cellData.getValue().sequenceNumberProperty());
-        // Використовуємо createdAtFormattedProperty, оскільки yearProperty відсутній
-        yearColumn.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
+        yearColumn.setCellValueFactory(cellData -> cellData.getValue().yearProperty());
         formatColumn.setCellValueFactory(cellData -> cellData.getValue().localStatusProperty());
         fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         rateColumn.setCellValueFactory(cellData -> cellData.getValue().rateStarsProperty());
         progressColumn.setCellValueFactory(cellData -> cellData.getValue().progressFormattedProperty());
 
-        titleColumn.setCellFactory(col -> new javafx.scene.control.TableCell<>() {
-            @Override
-            protected void updateItem(String item, boolean empty) {
-                super.updateItem(item, empty);
-                if (empty || item == null) { setText(null); return; }
-                BookViewModel vm = getTableRow() != null ? getTableRow().getItem() : null;
-                if (vm != null && vm.isGroupHeader()) setText(item);
-                else if (vm != null && vm.getSeries() != null && !vm.getSeries().isBlank()) setText("    " + item);
-                else setText(item);
-            }
-        });
-        booksTableView.setRowFactory(tv -> new javafx.scene.control.TableRow<>() {
-            @Override
-            protected void updateItem(BookViewModel item, boolean empty) {
+        booksTableView.setRowFactory(tv -> new TableRow<>() {
+            @Override protected void updateItem(BookViewModel item, boolean empty) {
                 super.updateItem(item, empty);
                 if (!empty && item != null && item.isGroupHeader()) {
                     setStyle("-fx-font-weight: bold; -fx-background-color: -fx-control-inner-background-alt;");
@@ -111,208 +113,198 @@ public class AuthorWorkspaceController {
                 }
             }
         });
-
         booksTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null && !selected.isGroupHeader()) {
-                appState.getBookDetails().setCurrentBook(
-                        bookViewModelMapper.toDto(selected)
-                );
+                appState.getBookDetails().setCurrentBook(bookViewModelMapper.toDto(selected));
             }
         });
-
         booksTableView.setOnMouseClicked(event -> {
-            if (event.getClickCount() == 2) {
-                BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
-                if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
-                    navigationService.navigateToBook(BookId.fromString(selected.getId()));
-                }
-            }
+            if (event.getClickCount() == 2) onOpenBook();
         });
 
-        filterTextField.textProperty().addListener((obs, old, query) -> {
-            filterBooks(query);
+        filterDebounce = new PauseTransition(Duration.millis(300));
+        filterDebounce.setOnFinished(event -> {
+            currentPage = 0;
+            reloadBooksPage();
         });
+        filterTextField.textProperty().addListener((obs, old, value) -> filterDebounce.playFromStart());
+        updatePageControls(PageResult.empty());
     }
 
     public void setAuthorId(AuthorId authorId) {
-        if (authorId == null) {
-            throw new IllegalArgumentException("AuthorId не може бути null");
-        }
-
-        this.currentAuthorId = authorId;
-        log.info("Встановлено автора для workspace: {}", authorId);
-
+        if (authorId == null) throw new IllegalArgumentException("AuthorId не може бути null");
+        currentAuthorId = authorId;
+        currentPage = 0;
+        currentSort = SortBy.SERIES;
+        currentDirection = SortDirection.ASC;
+        if (filterTextField != null) filterTextField.clear();
         loadAuthorData(authorId);
     }
 
     private void loadAuthorData(AuthorId authorId) {
-        log.info("Завантаження workspace автора: {}", authorId);
-
+        long generation = metadataGeneration.incrementAndGet();
         executor.submit(() -> {
             AuthorDto author = loadAuthorByIdUseCase.execute(authorId)
                     .orElseThrow(() -> new IllegalStateException("Автор не знайдений: " + authorId));
-
-            List<BookListItem> items = loadBooksByAuthorUseCase.execute(authorId, 1000, 0);
-            List<BookDto> books = items.stream()
-                    .map(this::toBookDto)
-                    .collect(Collectors.toList());
-
-            return new AuthorWorkspaceData(author, books);
-
-        }).thenAccept(data -> {
-            this.currentAuthor = data.author();
-            this.allBooks = data.books();
-
-            UiExecutor.runOnUiThread(() -> {
-                updateAuthorUI(data.author());
-                updateBooksUI(data.books());
-            });
-
-        }).exceptionally(ex -> {
+            AuthorBookStatistics statistics = loadAuthorBookStatisticsUseCase.execute(authorId);
+            boolean followed = catalogUpdateService.isAuthorFollowed(authorId);
+            return new AuthorWorkspaceMetadata(author, statistics, followed);
+        }).thenAccept(data -> UiExecutor.runOnUiThread(() -> {
+            if (generation != metadataGeneration.get() || !authorId.equals(currentAuthorId)) return;
+            currentAuthor = data.author();
+            authorStatistics = data.statistics();
+            currentAuthorFollowed = data.followed();
+            updateAuthorUI(data.author());
+            updateFollowButton();
+            updateStatisticsLabels();
+            reloadBooksPage();
+        })).exceptionally(ex -> {
             log.error("Помилка завантаження автора {}", authorId, ex);
-
             UiExecutor.runOnUiThread(() -> {
+                if (generation != metadataGeneration.get()) return;
                 booksTableView.getItems().clear();
-                booksCountLabel.setText("Книг: 0");
-                seriesCountLabel.setText("Серій: 0");
-                genresCountLabel.setText("Жанрів: 0");
+                authorStatistics = AuthorBookStatistics.empty();
+                updateStatisticsLabels();
+                updatePageControls(PageResult.empty());
             });
-
             return null;
         });
     }
 
-    private record AuthorWorkspaceData(AuthorDto author, List<BookDto> books) {}
+    private void reloadBooksPage() {
+        AuthorId authorId = currentAuthorId;
+        if (authorId == null) return;
+        int requestedPage = Math.max(0, currentPage);
+        int offset = requestedPage * PAGE_SIZE;
+        String filter = filterTextField == null ? "" : filterTextField.getText();
+        SortBy sort = currentSort;
+        SortDirection direction = currentDirection;
+        long generation = pageGeneration.incrementAndGet();
+        setPagingBusy(true);
 
-    private BookDto toBookDto(BookListItem item) {
-        BookDto dto = new BookDto();
-        dto.setId(item.getId());
-        dto.setTitle(item.getTitle());
-        dto.setAuthorsText(item.getAuthorsText());
-        dto.setSeries(item.getSeries());
-        dto.setSequenceNumber(item.getSequenceNumber());
-        dto.setGenresText(item.getGenresText());
-        dto.setRate(item.getRate());
-        dto.setProgress(item.getProgress());
-        dto.setFileSize(item.getFileSize());
-        dto.setLanguage(item.getLanguage());
-        dto.setFileName(item.getFileName());
-        dto.setFolder(item.getFolder());
-        dto.setCollectionRoot(item.getCollectionRoot());
-        dto.setAnnotation(item.getAnnotation());
-        dto.setYear(0); // Тимчасово
-        return dto;
+        executor.submit(() -> loadBooksByAuthorUseCase.execute(
+                authorId, filter, sort, direction, PAGE_SIZE, offset
+        )).thenAccept(page -> UiExecutor.runOnUiThread(() -> {
+            if (generation != pageGeneration.get() || !authorId.equals(currentAuthorId)) return;
+            if (page.content().isEmpty() && requestedPage > 0 && page.totalElements() > 0) {
+                currentPage = Math.max(0, page.totalPages() - 1);
+                reloadBooksPage();
+                return;
+            }
+            currentPage = page.currentPage();
+            var rows = page.content().stream().map(bookViewModelMapper::toViewModel).toList();
+            booksTableView.getItems().setAll(currentSort == SortBy.SERIES
+                    ? SeriesGrouping.groupPreservingOrder(rows)
+                    : rows);
+            updatePageControls(page);
+            setPagingBusy(false);
+        })).exceptionally(ex -> {
+            log.error("Помилка завантаження книг автора {}", authorId, ex);
+            UiExecutor.runOnUiThread(() -> {
+                if (generation == pageGeneration.get()) setPagingBusy(false);
+            });
+            return null;
+        });
     }
+
+    private void updateStatisticsLabels() {
+        booksCountLabel.setText("Книг: " + authorStatistics.books());
+        seriesCountLabel.setText("Серій: " + authorStatistics.series());
+        genresCountLabel.setText("Жанрів: " + authorStatistics.genres());
+    }
+
+    private void updatePageControls(PageResult<?> page) {
+        int totalPages = Math.max(1, page.totalPages());
+        int shownPage = page.totalElements() == 0 ? 0 : page.currentPage() + 1;
+        String suffix = page.totalElements() == authorStatistics.books()
+                ? ""
+                : " · знайдено " + page.totalElements();
+        pageLabel.setText("Сторінка " + shownPage + " / " + (page.totalElements() == 0 ? 0 : totalPages) + suffix);
+        previousPageButton.setDisable(!page.hasPrevious());
+        nextPageButton.setDisable(!page.hasNext());
+    }
+
+    private void setPagingBusy(boolean busy) {
+        if (previousPageButton != null) previousPageButton.setDisable(busy || currentPage <= 0);
+        if (nextPageButton != null && busy) nextPageButton.setDisable(true);
+    }
+
+    private record AuthorWorkspaceMetadata(AuthorDto author, AuthorBookStatistics statistics, boolean followed) {}
 
     private void updateAuthorUI(AuthorDto author) {
         authorNameLabel.setText(author.getFullName());
-        authorFullNameLabel.setText(author.getFullName());
         bioLabel.setText(author.getAnnotation() == null ? "" : author.getAnnotation());
     }
 
-    private void updateBooksUI(List<BookDto> books) {
-        if (booksTableView == null) return;
-
-        List<BookViewModel> rows = buildSeriesRows(books);
-        booksTableView.getItems().setAll(rows);
-
-        booksCountLabel.setText("Книг: " + books.size());
-
-        long seriesCount = books.stream()
-                .map(BookDto::getSeries)
-                .filter(series -> series != null && !series.isBlank())
-                .distinct()
-                .count();
-        seriesCountLabel.setText("Серій: " + seriesCount);
-
-        long genresCount = books.stream()
-                .flatMap(book -> {
-                    if (book.getGenresText() == null || book.getGenresText().isBlank()) {
-                        return java.util.stream.Stream.empty();
-                    }
-                    return java.util.Arrays.stream(book.getGenresText().split(","));
-                })
-                .map(String::trim)
-                .filter(value -> !value.isBlank())
-                .distinct()
-                .count();
-        genresCountLabel.setText("Жанрів: " + genresCount);
+    private void updateFollowButton() {
+        if (followAuthorButton == null) return;
+        followAuthorButton.setText(currentAuthorFollowed ? "Не стежити" : "Стежити за автором");
+        followAuthorButton.setDisable(currentAuthorId == null);
     }
 
-    private List<BookViewModel> buildSeriesRows(List<BookDto> books) {
-        Map<String, List<BookDto>> series = books.stream()
-                .filter(b -> b.getSeries() != null && !b.getSeries().isBlank())
-                .collect(Collectors.groupingBy(BookDto::getSeries, LinkedHashMap::new, Collectors.toList()));
-
-        List<BookViewModel> rows = new ArrayList<>();
-        series.entrySet().stream()
-                .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                .forEach(entry -> {
-                    BookViewModel header = new BookViewModel();
-                    header.setTitle("Серія: " + entry.getKey());
-                    header.setGroupHeader(true);
-                    rows.add(header);
-                    entry.getValue().stream()
-                            .sorted(Comparator
-                                    .comparing((BookDto b) -> b.getSequenceNumber() == null ? Integer.MAX_VALUE : b.getSequenceNumber())
-                                    .thenComparing(BookDto::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
-                            .map(bookViewModelMapper::toViewModel)
-                            .forEach(rows::add);
-                });
-
-        books.stream()
-                .filter(b -> b.getSeries() == null || b.getSeries().isBlank())
-                .sorted(Comparator.comparing(BookDto::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
-                .map(bookViewModelMapper::toViewModel)
-                .forEach(rows::add);
-        return rows;
+    @FXML
+    private void onToggleAuthorFollowed() {
+        AuthorId authorId = currentAuthorId;
+        if (authorId == null || followAuthorButton == null) return;
+        boolean target = !currentAuthorFollowed;
+        followAuthorButton.setDisable(true);
+        executor.submit(() -> {
+            catalogUpdateService.setAuthorFollowed(authorId, target);
+            return target;
+        }).thenAccept(followed -> UiExecutor.runOnUiThread(() -> {
+            if (!authorId.equals(currentAuthorId)) return;
+            currentAuthorFollowed = followed;
+            updateFollowButton();
+        })).exceptionally(ex -> {
+            log.error("Не вдалося змінити стеження за автором {}", authorId, ex);
+            UiExecutor.runOnUiThread(this::updateFollowButton);
+            return null;
+        });
     }
 
-    private void filterBooks(String query) {
-        if (query == null || query.isBlank()) {
-            if (allBooks != null) {
-                updateBooksUI(allBooks);
-            }
-            return;
-        }
-        String lowerQuery = query.toLowerCase();
-        List<BookDto> filtered = allBooks.stream()
-                .filter(book -> {
-                    String title = book.getTitle();
-                    String series = book.getSeries();
-                    return (title != null && title.toLowerCase().contains(lowerQuery)) ||
-                            (series != null && series.toLowerCase().contains(lowerQuery));
-                })
-                .collect(Collectors.toList());
-        updateBooksUI(filtered);
+    @FXML
+    private void onPreviousPage() {
+        if (currentPage <= 0) return;
+        currentPage--;
+        reloadBooksPage();
+    }
+
+    @FXML
+    private void onNextPage() {
+        currentPage++;
+        reloadBooksPage();
+    }
+
+    @FXML
+    private void onSortBySeries() {
+        currentSort = SortBy.SERIES;
+        currentDirection = SortDirection.ASC;
+        currentPage = 0;
+        reloadBooksPage();
     }
 
     @FXML
     private void onSortByTitle() {
-        if (allBooks != null) {
-            allBooks.sort((b1, b2) -> b1.getTitle().compareToIgnoreCase(b2.getTitle()));
-            updateBooksUI(allBooks);
-        }
+        currentSort = SortBy.TITLE;
+        currentDirection = SortDirection.ASC;
+        currentPage = 0;
+        reloadBooksPage();
     }
 
     @FXML
     private void onSortByYear() {
-        if (allBooks != null) {
-            allBooks.sort((b1, b2) -> {
-                int y1 = b1.getYear() != null ? b1.getYear() : 0;
-                int y2 = b2.getYear() != null ? b2.getYear() : 0;
-                return Integer.compare(y1, y2);
-            });
-            updateBooksUI(allBooks);
-        }
+        currentSort = SortBy.YEAR;
+        currentDirection = SortDirection.DESC;
+        currentPage = 0;
+        reloadBooksPage();
     }
 
     @FXML
     private void onSortByRating() {
-        if (allBooks != null) {
-            allBooks.sort((b1, b2) -> Integer.compare(b2.getRate(), b1.getRate()));
-            updateBooksUI(allBooks);
-        }
+        currentSort = SortBy.RATING;
+        currentDirection = SortDirection.DESC;
+        currentPage = 0;
+        reloadBooksPage();
     }
 
     @FXML
@@ -327,35 +319,26 @@ public class AuthorWorkspaceController {
     private void onReadBook() {
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
         if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
-            BookDto book = new BookDto();
-            book.setId(selected.getId());
-            book.setTitle(selected.getTitle());
-            book.setAuthorsText(selected.getAuthorsText());
-            book.setSeries(selected.getSeries());
-            book.setGenresText(selected.getGenresText());
-            book.setRate(selected.getRate());
-            book.setProgress(selected.getProgress());
-            book.setFileName(selected.getFileName());
-            book.setFolder(selected.getFolder());
-            book.setArchiveEntry(selected.getArchiveEntry());
-            book.setCollectionRoot(selected.getCollectionRoot());
-            book.setAnnotation(selected.getAnnotation());
-            book.setLanguage(selected.getLanguage());
+            BookDto book = bookViewModelMapper.toDto(selected);
             navigationService.readBook(book);
         }
     }
+
     @FXML
     private void onEditAuthorDescription() {
         if (currentAuthorId == null || currentAuthor == null) return;
         TextArea area = new TextArea(currentAuthor.getAnnotation() == null ? "" : currentAuthor.getAnnotation());
-        area.setWrapText(true); area.setPrefRowCount(14);
-        javafx.scene.control.Dialog<javafx.scene.control.ButtonType> d = new javafx.scene.control.Dialog<>();
-        d.setTitle("Опис автора"); d.setHeaderText(currentAuthor.getFullName());
-        d.getDialogPane().setContent(area); d.getDialogPane().getButtonTypes().addAll(javafx.scene.control.ButtonType.OK, javafx.scene.control.ButtonType.CANCEL);
-        if (d.showAndWait().orElse(javafx.scene.control.ButtonType.CANCEL) == javafx.scene.control.ButtonType.OK) {
+        area.setWrapText(true);
+        area.setPrefRowCount(14);
+        Dialog<ButtonType> dialog = new Dialog<>();
+        dialog.setTitle("Опис автора");
+        dialog.setHeaderText(currentAuthor.getFullName());
+        dialog.getDialogPane().setContent(area);
+        dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        if (dialog.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             updateAuthorDescriptionUseCase.execute(currentAuthorId, area.getText());
-            currentAuthor.setAnnotation(area.getText()); bioLabel.setText(area.getText());
+            currentAuthor.setAnnotation(area.getText());
+            bioLabel.setText(area.getText());
         }
     }
-
 }

@@ -15,7 +15,7 @@ class CatalogUpdateServiceTest {
     void groupsPendingItemsByAuthorAndTypeWithoutDuplicatingCounters() {
         CatalogUpdateTrackingPort tracking = mock(CatalogUpdateTrackingPort.class);
         when(tracking.countPendingUpdates()).thenReturn(3L);
-        when(tracking.findPendingUpdateItems(2000, 0)).thenReturn(List.of(
+        when(tracking.findPendingUpdateItems(2000, null)).thenReturn(List.of(
                 new CatalogUpdateItem("b2", "Zulu", "a1", "Author One", CatalogUpdateType.UPDATED_DOWNLOADED_BOOK, true, "2026-08-25"),
                 new CatalogUpdateItem("b1", "Alpha", "a1", "Author One", CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR, false, "2026-08-25"),
                 new CatalogUpdateItem("b3", "Beta", "a2", "Author Two", CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR, false, "2026-08-25")

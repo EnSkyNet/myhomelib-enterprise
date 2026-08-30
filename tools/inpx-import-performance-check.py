@@ -5,34 +5,37 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 writer = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java"
-migration = ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V7__add_unique_constraint_to_authors.sql"
+migration = ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V34__author_external_identity.sql"
 config = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/DataSourceConfig.java"
 network_update = ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/UpdateCollectionFromNetworkUseCase.java"
 create_collection = ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/CreateCollectionUseCase.java"
+catalog_import = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/catalog/importing/JdbcCatalogImportAdapter.java"
 
 w = writer.read_text(encoding="utf-8")
 m = migration.read_text(encoding="utf-8")
 c = config.read_text(encoding="utf-8")
 nu = network_update.read_text(encoding="utf-8")
 cc = create_collection.read_text(encoding="utf-8")
+ci = catalog_import.read_text(encoding="utf-8")
 
 checks = []
-checks.append(("author resolver uses raw indexed columns", "(first_name = ? AND last_name = ?)" in w))
+checks.append(("author resolver uses raw indexed columns", "(first_name = ? AND middle_name = ? AND last_name = ?)" in w))
 checks.append(("author resolver does not wrap lookup columns in COALESCE", "COALESCE(first_name,'') = ?" not in w and "COALESCE(last_name,'') = ?" not in w))
-checks.append(("author pair is structured (pipe-safe)", "private record AuthorPair" in w and "pair.indexOf('|')" not in w))
-checks.append(("unique author lookup index exists", "idx_authors_unique_name ON authors(first_name, last_name)" in m))
+checks.append(("author pair is structured (pipe-safe)", "private record AuthorName" in w and "indexOf('|')" not in w))
+checks.append(("indexed author lookup exists", "idx_authors_name_lookup" in m and "first_name, middle_name, last_name" in m))
 checks.append(("long import does not trigger 10s Hikari false-positive", "LEAK_DETECTION_THRESHOLD_MS = 300_000L" in c))
-checks.append(("online catalog update uses 5000-row batches", ".batchSize(5000)" in nu and ".batchSize(1000)" not in nu))
-checks.append(("create-with-source uses 5000-row batches", ".batchSize(5000)" in cc))
+checks.append(("online catalog update uses benchmark-selected 1000-row batches", ".batchSize(1000)" in nu and ".batchSize(5000)" not in nu))
+checks.append(("create-with-source uses benchmark-selected 1000-row batches", ".batchSize(1000)" in cc and ".batchSize(5000)" not in cc))
+checks.append(("generic catalog fallback batch is 1000", "DEFAULT_BATCH = 1_000" in ci and "DEFAULT_BATCH = 5_000" not in ci))
 
 # Verify SQLite's planner can use the exact project index for the new predicate.
 con = sqlite3.connect(":memory:")
 con.execute("CREATE TABLE authors(id TEXT PRIMARY KEY, first_name TEXT, middle_name TEXT, last_name TEXT)")
-con.execute("CREATE UNIQUE INDEX idx_authors_unique_name ON authors(first_name, last_name)")
+con.execute("CREATE INDEX idx_authors_name_lookup ON authors(first_name, middle_name, last_name)")
 plan = " ".join(str(row) for row in con.execute(
-    "EXPLAIN QUERY PLAN SELECT id FROM authors WHERE first_name=? AND last_name=?", ("A", "B")
+    "EXPLAIN QUERY PLAN SELECT id FROM authors WHERE first_name=? AND middle_name=? AND last_name=?", ("A", "", "B")
 ))
-checks.append(("SQLite query plan uses idx_authors_unique_name", "idx_authors_unique_name" in plan))
+checks.append(("SQLite query plan uses idx_authors_name_lookup", "idx_authors_name_lookup" in plan))
 
 failed = [name for name, ok in checks if not ok]
 print("INPX IMPORT HOT-PATH CHECK")

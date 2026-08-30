@@ -1,14 +1,7 @@
 package com.myhomelibcorp.ui.table;
 
-import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.query.book.BookQuery;
-import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.usecase.book.MarkAsReadBatchUseCase;
-import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.controller.ExportController;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -33,9 +26,6 @@ import java.util.stream.Collectors;
 @Slf4j
 public class TreeBookTableController {
 
-    private final BookQueryRepository bookQueryRepository;
-    private final BookViewModelMapper viewModelMapper;
-    private final BookMapper bookMapper;
     private final ApplicationState appState;
     private final NavigationService navigationService;
     private final ExportController exportController;
@@ -194,91 +184,69 @@ public class TreeBookTableController {
      * Завантажує книги та будує дерево
      */
     public void loadBooks() {
-        log.info("📚 Завантаження ієрархічного дерева книг");
+        // Tree mode is an alternate visualization of the already server-paged main table.
+        // Never run a second 10k/all-books query merely to switch view mode.
+        List<BookViewModel> page = List.copyOf(appState.getBookTable().getBooks());
+        log.info("📚 Побудова дерева для поточної сторінки: {} книг", page.size());
 
-        try {
-            BookQuery query = BookQuery.builder()
-                    .pagination(Pagination.of(10000, 0))
-                    .build();
-
-            List<Book> books = bookQueryRepository.findPage(query).content();
-            log.info("📚 Завантажено {} книг для побудови дерева", books.size());
-
-            if (books.isEmpty()) {
-                TreeItem<BookViewModel> emptyRoot = new TreeItem<>(null);
-                emptyRoot.setValue(null);
-                treeTableView.setRoot(emptyRoot);
-                treeTableView.setShowRoot(false);
-                return;
-            }
-
-            // Групуємо книги за автором та серією
-            Map<String, Map<String, List<Book>>> grouped = books.stream()
-                    .collect(Collectors.groupingBy(
-                            book -> book.getAuthors().isEmpty() ? "Невідомий Автор" :
-                                    book.getAuthors().get(0).getFullName(),
-                            Collectors.groupingBy(
-                                    book -> book.getSeries() != null && !book.getSeries().isBlank() ?
-                                            book.getSeries() : "Без серії"
-                            )
-                    ));
-
-            TreeItem<BookViewModel> root = new TreeItem<>(null);
-            root.setValue(null);
-            root.setExpanded(true);
-
-            grouped.forEach((authorName, seriesMap) -> {
-                TreeItem<BookViewModel> authorItem = new TreeItem<>(null);
-                BookViewModel authorVm = new BookViewModel();
-                authorVm.setTitle(authorName);
-                authorItem.setValue(authorVm);
-                authorItem.setExpanded(true);
-
-                seriesMap.entrySet().stream()
-                        .filter(entry -> !"Без серії".equals(entry.getKey()))
-                        .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
-                        .forEach(entry -> {
-                            TreeItem<BookViewModel> seriesItem = new TreeItem<>(null);
-                            BookViewModel seriesVm = new BookViewModel();
-                            seriesVm.setTitle(entry.getKey());
-                            seriesItem.setValue(seriesVm);
-                            seriesItem.setExpanded(true);
-
-                            entry.getValue().stream()
-                                    .sorted(Comparator
-                                            .comparing((Book b) -> b.getSequenceNumber() == null ? Integer.MAX_VALUE : b.getSequenceNumber())
-                                            .thenComparing(Book::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
-                                    .forEach(book -> {
-                                        BookDto dto = bookMapper.toDto(book);
-                                        BookViewModel vm = viewModelMapper.toViewModel(dto);
-                                        vm.setSelected(false);
-                                        seriesItem.getChildren().add(new TreeItem<>(vm));
-                                    });
-
-                            authorItem.getChildren().add(seriesItem);
-                        });
-
-                // Як у flibrary: книги без серії лежать безпосередньо під автором.
-                seriesMap.getOrDefault("Без серії", List.of()).stream()
-                        .sorted(Comparator.comparing(Book::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
-                        .forEach(book -> {
-                            BookDto dto = bookMapper.toDto(book);
-                            BookViewModel vm = viewModelMapper.toViewModel(dto);
-                            vm.setSelected(false);
-                            authorItem.getChildren().add(new TreeItem<>(vm));
-                        });
-
-                root.getChildren().add(authorItem);
-            });
-
-            treeTableView.setRoot(root);
+        if (page.isEmpty()) {
+            treeTableView.setRoot(new TreeItem<>(null));
             treeTableView.setShowRoot(false);
-
-            log.info("📚 Дерево побудовано: {} авторів", grouped.size());
-
-        } catch (Exception e) {
-            log.error("❌ Помилка завантаження дерева", e);
+            return;
         }
+
+        Map<String, Map<String, List<BookViewModel>>> grouped = page.stream()
+                .filter(book -> book != null && book.getId() != null && !book.getId().isBlank())
+                .collect(Collectors.groupingBy(
+                        book -> blankToDefault(book.getAuthorsText(), "Невідомий Автор"),
+                        java.util.LinkedHashMap::new,
+                        Collectors.groupingBy(
+                                book -> blankToDefault(book.getSeries(), "Без серії"),
+                                java.util.LinkedHashMap::new,
+                                Collectors.toList())));
+
+        TreeItem<BookViewModel> root = new TreeItem<>(null);
+        root.setExpanded(true);
+
+        grouped.entrySet().stream()
+                .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
+                .forEach(authorEntry -> {
+                    TreeItem<BookViewModel> authorItem = new TreeItem<>(header(authorEntry.getKey()));
+                    authorItem.setExpanded(true);
+
+                    authorEntry.getValue().entrySet().stream()
+                            .filter(entry -> !"Без серії".equals(entry.getKey()))
+                            .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
+                            .forEach(entry -> {
+                                TreeItem<BookViewModel> seriesItem = new TreeItem<>(header(entry.getKey()));
+                                seriesItem.setExpanded(true);
+                                entry.getValue().stream()
+                                        .sorted(Comparator
+                                                .comparingInt((BookViewModel b) -> b.getSequenceNumber() <= 0 ? Integer.MAX_VALUE : b.getSequenceNumber())
+                                                .thenComparing(BookViewModel::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                                        .forEach(book -> seriesItem.getChildren().add(new TreeItem<>(book)));
+                                authorItem.getChildren().add(seriesItem);
+                            });
+
+                    authorEntry.getValue().getOrDefault("Без серії", List.of()).stream()
+                            .sorted(Comparator.comparing(BookViewModel::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
+                            .forEach(book -> authorItem.getChildren().add(new TreeItem<>(book)));
+                    root.getChildren().add(authorItem);
+                });
+
+        treeTableView.setRoot(root);
+        treeTableView.setShowRoot(false);
+    }
+
+    private static BookViewModel header(String title) {
+        BookViewModel vm = new BookViewModel();
+        vm.setTitle(title);
+        vm.setGroupHeader(true);
+        return vm;
+    }
+
+    private static String blankToDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
     }
 
     public void refresh() {
@@ -323,14 +291,6 @@ public class TreeBookTableController {
         for (TreeItem<BookViewModel> child : item.getChildren()) {
             collectSelectedBooks(child, selected);
         }
-    }
-
-    public void selectAllBooks() {
-        selectAllBooks(true);
-    }
-
-    public void deselectAllBooks() {
-        selectAllBooks(false);
     }
 
     private void selectAllBooks(boolean selected) {
@@ -409,26 +369,4 @@ public class TreeBookTableController {
         alert.showAndWait();
     }
 
-    /**
-     * Діагностичний метод для перевірки стану вибору
-     */
-    public void debugSelectionState() {
-        log.info("=== ДІАГНОСТИКА ВИБОРУ ===");
-        TreeItem<BookViewModel> root = treeTableView.getRoot();
-        if (root != null) {
-            debugSelectionRecursive(root, 0);
-        }
-        log.info("==========================");
-    }
-
-    private void debugSelectionRecursive(TreeItem<BookViewModel> item, int depth) {
-        BookViewModel book = item.getValue();
-        String indent = "  ".repeat(depth);
-        if (book != null) {
-            log.info("{}📚 {} : selected={}", indent, book.getTitle(), book.isSelected());
-        }
-        for (TreeItem<BookViewModel> child : item.getChildren()) {
-            debugSelectionRecursive(child, depth + 1);
-        }
-    }
 }

@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 import java.util.stream.Stream;
 
 @Component
@@ -17,23 +16,6 @@ import java.util.stream.Stream;
 public class LibraryScanner {
 
     private final ImporterRegistry importerRegistry;
-
-    /**
-     * Compatibility API for callers that explicitly need a materialized list.
-     * Folder synchronization uses the streaming API below to remain bounded.
-     */
-    public List<Path> scan(Path directory) throws IOException {
-        try (Stream<Path> paths = streamSupportedFiles(directory)) {
-            return paths.toList();
-        }
-    }
-
-    public long countSupportedFiles(Path directory) throws IOException {
-        if (!Files.isDirectory(directory)) return 0;
-        try (Stream<Path> paths = streamSupportedFiles(directory)) {
-            return paths.count();
-        }
-    }
 
     /**
      * Streams supported files. The caller must close the stream.

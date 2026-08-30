@@ -4,9 +4,11 @@ import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.author.Author;
+import com.myhomelibcorp.domain.model.author.AuthorNameKey;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.*;
+import com.myhomelibcorp.domain.service.LanguageResolver;
 import com.myhomelibcorp.shared.exception.BusinessException;
 import com.myhomelibcorp.shared.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
@@ -39,9 +41,9 @@ public class InpxImporter implements BookImporterPort {
 
     // Bounded per-import cache: do not mirror the complete authors table in heap.
     private static final int AUTHOR_CACHE_LIMIT = 10_000;
-    private final Map<String, Author> authorObjectCache = new LinkedHashMap<>(1024, 0.75f, true) {
+    private final Map<AuthorNameKey, Author> authorObjectCache = new LinkedHashMap<>(1024, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Author> eldest) {
+        protected boolean removeEldestEntry(Map.Entry<AuthorNameKey, Author> eldest) {
             return size() > AUTHOR_CACHE_LIMIT;
         }
     };
@@ -143,9 +145,10 @@ public class InpxImporter implements BookImporterPort {
                 }
             }
         } catch (Exception e) {
-            log.warn("Не вдалося підрахувати кількість книг у INPX", e);
+            throw new BusinessException(ErrorCode.IMPORT_FAILED,
+                    "Не вдалося прочитати INPX для підрахунку: " + e.getMessage(), e);
         }
-        return -1;
+        throw new BusinessException(ErrorCode.IMPORT_FAILED, "INP файл не знайдено в архіві");
     }
 
     // ==================== ВНУТРІШНІЙ КЛАС ІТЕРАТОРА ====================
@@ -169,7 +172,8 @@ public class InpxImporter implements BookImporterPort {
                 }
             } catch (Exception e) {
                 this.finished = true;
-                log.error("Помилка ініціалізації читання INPX", e);
+                throw new BusinessException(ErrorCode.IMPORT_FAILED,
+                        "Помилка ініціалізації читання INPX: " + e.getMessage(), e);
             }
         }
 
@@ -193,7 +197,8 @@ public class InpxImporter implements BookImporterPort {
                 }
             } catch (Exception e) {
                 finished = true;
-                log.error("Помилка читання INPX", e);
+                throw new BusinessException(ErrorCode.IMPORT_FAILED,
+                        "Помилка читання INPX: " + e.getMessage(), e);
             }
             Book book = parseInpxLine(line);
             if (book != null) bookCount++;
@@ -227,14 +232,14 @@ public class InpxImporter implements BookImporterPort {
                         String middleName = nameParts.length > 2 ? nameParts[2].trim() : "";
                         if (lastName.isEmpty() && firstName.isEmpty() && middleName.isEmpty()) continue;
 
-                        String key = firstName + "|" + middleName + "|" + lastName;
+                        AuthorNameKey key = new AuthorNameKey(firstName, middleName, lastName);
                         Author author = resolveAuthor(key, firstName, middleName, lastName);
                         authors.add(author);
                     }
                 }
                 if (authors.isEmpty()) {
-                    String key = "||Неведомий Автор";
-                    authors.add(resolveAuthor(key, "", "", "Неведомий Автор"));
+                    AuthorNameKey key = new AuthorNameKey("", "", "Невідомий Автор");
+                    authors.add(resolveAuthor(key, "", "", "Невідомий Автор"));
                 }
 
                 // ---- Жанри ----
@@ -281,13 +286,8 @@ public class InpxImporter implements BookImporterPort {
                         Long.parseLong(parts[6].trim()) : 0;
 
                 // ---- Мова ----
-                String languageCode = parts.length > 8 && !parts[8].trim().isEmpty() ?
-                        parts[8].trim() : "uk";
-                try {
-                    LanguageCode.of(languageCode);
-                } catch (IllegalArgumentException e) {
-                    languageCode = "uk";
-                }
+                LanguageCode languageCode = LanguageResolver.resolve(
+                        parts.length > 8 ? parts[8] : null);
 
                 // ---- Ключові слова ----
                 String keywords = parts.length > 12 ? parts[12].trim() : "";
@@ -299,7 +299,7 @@ public class InpxImporter implements BookImporterPort {
                 BookMetadata metadata = BookMetadata.builder()
                         .annotation(annotation)
                         .keywords(keywords)
-                        .language(LanguageCode.of(languageCode))
+                        .language(languageCode)
                         .rate(0)
                         .progress(0)
                         .build();
@@ -330,15 +330,13 @@ public class InpxImporter implements BookImporterPort {
             }
         }
 
-        private Author resolveAuthor(String key, String firstName, String middleName, String lastName) {
+        private Author resolveAuthor(AuthorNameKey key, String firstName, String middleName, String lastName) {
             Author cached = authorObjectCache.get(key);
             if (cached != null) {
                 return cached;
             }
 
-            // Database schema historically identifies authors by first+last name.
-            // Reuse that persistent row on a cache miss instead of blindly inserting.
-            Author resolved = authorRepository.findByFullName(firstName, lastName)
+            Author resolved = authorRepository.findByName(firstName, middleName, lastName)
                     .orElseGet(() -> authorRepository.save(new Author(firstName, middleName, lastName)));
             authorObjectCache.put(key, resolved);
             return resolved;

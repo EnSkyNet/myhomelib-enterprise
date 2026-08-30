@@ -1,10 +1,10 @@
 package com.myhomelibcorp.application.mapper;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.*;
+import com.myhomelibcorp.domain.service.LanguageResolver;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
@@ -95,12 +95,8 @@ public interface BookMapper {
         BookMetadata metadata = BookMetadata.builder()
                 .annotation(dto.getAnnotation() != null ? dto.getAnnotation() : "")
                 .keywords(dto.getKeywords() != null ? dto.getKeywords() : "")
-                .language(dto.getLanguage() != null && !dto.getLanguage().isEmpty()
-                        ? LanguageCode.of(dto.getLanguage())
-                        : LanguageCode.of("uk"))
-                .isbn(dto.getIsbn() != null && !dto.getIsbn().isEmpty()
-                        ? Isbn.of(dto.getIsbn())
-                        : null)
+                .language(LanguageResolver.resolve(dto.getLanguage()))
+                .isbn(Isbn.tryParse(dto.getIsbn()).orElse(null))
                 .review(dto.getReview() != null ? dto.getReview() : "")
                 .year(dto.getYear())
                 .publisher(dto.getPublisher() != null ? dto.getPublisher() : "")

@@ -28,7 +28,7 @@ if baseline_path.exists():
         need('idx_authors_navigation_initial' in aplan, f"author initial plan missing index at {r['books']}")
 
 suite=text('myhomelib-benchmark/src/test/java/com/myhomelibcorp/benchmark/PerformanceBaselineTest.java')
-for marker in ['EnabledIfSystemProperty','MemoryMXBean','GarbageCollectorMXBean','Fb2StreamingParser','EpubParser','ByteBuffersDirectory','mhl.performance.sizes','importProbeBooksPerSec','peakHeapDeltaBytes']:
+for marker in ['EnabledIfSystemProperty','MemoryMXBean','GarbageCollectorMXBean','Fb2StreamingParser','EpubParser','FSDirectory','mhl.performance.sizes','importProbeBooksPerSec','peakHeapDeltaBytes','selectiveDocsPerSec','indexSizeBytes','segmentCount']:
     need(marker in suite,f'JVM performance suite missing {marker}')
 
 parent=text('pom.xml')
@@ -55,5 +55,5 @@ if errors:
     sys.exit(1)
 print('STAGE 24 PERFORMANCE CHECK: PASS')
 print(' - stored 100k/500k/1M SQL baseline + query-plan indexes: PASS')
-print(' - opt-in JVM heap/GC + Lucene + huge FB2/EPUB suite: PRESENT')
+print(' - opt-in JVM heap/GC + disk-backed Lucene full/selective + huge FB2/EPUB suite: PRESENT')
 print(' - Maven performance profile + scheduled/manual CI workflow: PRESENT')

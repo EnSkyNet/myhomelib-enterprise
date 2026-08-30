@@ -53,7 +53,7 @@ public class Book {
     public String getCollectionRoot() {return file != null ? file.getCollectionRoot() : "";    }
     public String getAnnotation() { return metadata != null ? metadata.getAnnotation() : ""; }
     public String getKeywords() { return metadata != null ? metadata.getKeywords() : ""; }
-    public LanguageCode getLanguage() { return metadata != null ? metadata.getLanguage() : LanguageCode.of("uk"); }
+    public LanguageCode getLanguage() { return metadata != null ? metadata.getLanguage() : LanguageCode.of("und"); }
     public Isbn getIsbn() { return metadata != null ? metadata.getIsbn() : null; }
     public String getReview() { return metadata != null ? metadata.getReview() : ""; }
     public Integer getYear() { return metadata != null ? metadata.getYear() : null; }

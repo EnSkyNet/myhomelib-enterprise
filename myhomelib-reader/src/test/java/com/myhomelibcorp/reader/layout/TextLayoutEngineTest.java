@@ -22,7 +22,6 @@ class TextLayoutEngineTest {
         TextStorageImpl text = new TextStorageImpl();
         text.startParagraph(TextStyle.NORMAL);
         text.append(("Це довгий абзац для тестування посторінкового переносу. ").repeat(120), TextStyle.NORMAL);
-        text.endParagraph();
 
         var document = CompactReaderDocument.builder()
                 .metadata(new BookMetadata("id", "Book", List.of("Author"), "uk", null, null,
@@ -53,7 +52,6 @@ class TextLayoutEngineTest {
         TextStorageImpl text = new TextStorageImpl();
         text.startParagraph(TextStyle.NORMAL);
         text.append("бібліотека", TextStyle.NORMAL);
-        text.endParagraph();
 
         var document = CompactReaderDocument.builder()
                 .metadata(new BookMetadata("hy", "Hyphen", List.of("Author"), "uk", null, null,
@@ -79,7 +77,6 @@ class TextLayoutEngineTest {
         text.append("жирний", TextStyle.BOLD);
         text.append(" та ", TextStyle.NORMAL);
         text.append("курсив", TextStyle.ITALIC);
-        text.endParagraph();
 
         var document = CompactReaderDocument.builder()
                 .metadata(new BookMetadata("id2", "Styled", List.of("Author"), "uk", null, null,

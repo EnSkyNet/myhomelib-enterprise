@@ -9,6 +9,6 @@ public interface BookImporterPort {
     boolean supports(Path file);
     Stream<Book> importBooks(Path file);
     String getFormatName();
-    default long countBooks(Path file) {
-        return -1;}
+    /** Returns the number of importable books, or -1 only when the count cannot be determined safely. */
+    long countBooks(Path file);
 }

@@ -31,7 +31,6 @@ import org.springframework.stereotype.Component;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -198,7 +197,13 @@ public class BookTableController {
         quickFilterColumnComboBox.getItems().setAll(BookQuickFilterField.values());
         quickFilterColumnComboBox.setConverter(new StringConverter<>() {
             @Override public String toString(BookQuickFilterField value) { return quickFieldLabel(value); }
-            @Override public BookQuickFilterField fromString(String value) { return BookQuickFilterField.ANY; }
+            @Override public BookQuickFilterField fromString(String value) {
+                if (value == null || value.isBlank()) return BookQuickFilterField.ANY;
+                for (BookQuickFilterField field : BookQuickFilterField.values()) {
+                    if (quickFieldLabel(field).equalsIgnoreCase(value.trim()) || field.name().equalsIgnoreCase(value.trim())) return field;
+                }
+                return BookQuickFilterField.ANY;
+            }
         });
         BookFilterSpec current = filterStateService.current();
         quickFilterColumnComboBox.setValue(current.quickField());

@@ -4,8 +4,6 @@ import com.myhomelibcorp.reader.api.ReaderSettings;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Button;
-import javafx.scene.control.Label;
-import javafx.scene.control.ProgressBar;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Tooltip;
 import javafx.scene.layout.HBox;
@@ -44,18 +42,13 @@ public class ReaderToolbar extends HBox {
 
     // Функції
     @Getter private final Button bookmarkButton;
+    @Getter private final Button bookmarksButton;
     @Getter private final Button tocButton;
     @Getter private final Button searchButton;
 
-    // Інформація
-    @Getter private final Label chapterLabel;
-    @Getter private final ProgressBar progressBar;
-    @Getter private final Label progressLabel;
-    @Getter private final Label pageInfoLabel;
-
     private Consumer<ReaderSettings> onSettingsClick;
-    private Consumer<ReaderSettings> onQuickSettingsChanged;
     private Runnable onBookmarkClick;
+    private Runnable onBookmarksClick;
     private Runnable onTocClick;
     private Runnable onSearchClick;
     private Runnable onBackClick;
@@ -78,7 +71,7 @@ public class ReaderToolbar extends HBox {
         nextChapterButton = createButton("⇥", "Наступний розділ (↓)");
 
         // ===== РЕЖИМИ =====
-        pageModeButton = createButton("📄", "Показувати номер сторінки (P)");
+        pageModeButton = createButton("▥", "Одна / дві сторінки (P)");
         autoScrollButton = createButton("▶▶", "Автопрокрутка (A)");
 
         // ===== ЗУМ =====
@@ -93,22 +86,9 @@ public class ReaderToolbar extends HBox {
 
         // ===== ФУНКЦІЇ =====
         bookmarkButton = createButton("⭐", "Додати закладку");
+        bookmarksButton = createButton("🔖", "Закладки");
         tocButton = createButton("📑", "Зміст");
         searchButton = createButton("🔍", "Пошук (Ctrl+F)");
-
-        // ===== ІНФОРМАЦІЯ =====
-        progressBar = new ProgressBar(0);
-        progressBar.setPrefWidth(120);
-        progressBar.setMinWidth(80);
-
-        progressLabel = new Label("0%");
-        progressLabel.setMinWidth(40);
-
-        chapterLabel = new Label("");
-        chapterLabel.setMinWidth(80);
-
-        pageInfoLabel = new Label("");
-        pageInfoLabel.setMinWidth(60);
 
         // ===== ЗБИРАЄМО =====
         Region spacer = new Region();
@@ -133,6 +113,7 @@ public class ReaderToolbar extends HBox {
                 fullscreenButton,
                 new Separator(),
                 bookmarkButton,
+                bookmarksButton,
                 tocButton,
                 searchButton,
                 spacer
@@ -172,15 +153,13 @@ public class ReaderToolbar extends HBox {
 
         // Режими
         pageModeButton.setOnAction(e -> {
-            canvas.togglePageMode();
+            canvas.toggleTwoPageMode();
             updateState();
-            notifyQuickSettingsChanged();
         });
 
         autoScrollButton.setOnAction(e -> {
             canvas.toggleAutoScroll();
             updateState();
-            notifyQuickSettingsChanged();
         });
 
         // Зум
@@ -192,7 +171,6 @@ public class ReaderToolbar extends HBox {
         themeButton.setOnAction(e -> {
             canvas.cycleTheme();
             updateState();
-            notifyQuickSettingsChanged();
         });
 
         fullscreenButton.setOnAction(e -> toggleFullscreen());
@@ -207,6 +185,12 @@ public class ReaderToolbar extends HBox {
         bookmarkButton.setOnAction(e -> {
             if (onBookmarkClick != null) {
                 onBookmarkClick.run();
+            }
+        });
+
+        bookmarksButton.setOnAction(e -> {
+            if (onBookmarksClick != null) {
+                onBookmarksClick.run();
             }
         });
 
@@ -230,36 +214,22 @@ public class ReaderToolbar extends HBox {
     }
 
     public void updateState() {
-        if (!canvas.isBookOpen()) {
-            progressBar.setProgress(0);
-            progressLabel.setText("0%");
-            chapterLabel.setText("");
-            pageInfoLabel.setText("");
-            return;
-        }
+        boolean open = canvas.isBookOpen();
+        prevPageButton.setDisable(!open);
+        nextPageButton.setDisable(!open);
+        prevChapterButton.setDisable(!open);
+        nextChapterButton.setDisable(!open);
+        bookmarkButton.setDisable(!open);
+        bookmarksButton.setDisable(!open);
+        tocButton.setDisable(!open);
+        searchButton.setDisable(!open);
 
-        double percent = canvas.getProgressPercent();
-        progressBar.setProgress(percent / 100.0);
-        progressLabel.setText(String.format("%.0f%%", percent));
-
-        String chapter = canvas.getCurrentChapterTitle();
-        chapterLabel.setText(chapter != null && !chapter.isEmpty() ? chapter : "Розділ 1");
-
-        // Оновлюємо стан кнопок
-        pageModeButton.setStyle(canvas.isPageModeEnabled() ?
+        pageModeButton.setStyle(canvas.isTwoPageModeEnabled() ?
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6; -fx-background-color: #4CAF50; -fx-text-fill: white;" :
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6;");
-
         autoScrollButton.setStyle(canvas.isAutoScrollRunning() ?
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6; -fx-background-color: #FF9800; -fx-text-fill: white;" :
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6;");
-
-        // Інформація про сторінку
-        if (canvas.isPageModeEnabled()) {
-            pageInfoLabel.setText(canvas.getCurrentPageNumber() + "/" + canvas.getTotalPages());
-        } else {
-            pageInfoLabel.setText("");
-        }
     }
 
     // ==================== КОЛБЕКИ ====================
@@ -270,6 +240,10 @@ public class ReaderToolbar extends HBox {
 
     public void setOnBookmarkClick(Runnable listener) {
         this.onBookmarkClick = listener;
+    }
+
+    public void setOnBookmarksClick(Runnable listener) {
+        this.onBookmarksClick = listener;
     }
 
     public void setOnTocClick(Runnable listener) {
@@ -286,15 +260,6 @@ public class ReaderToolbar extends HBox {
 
     public void refresh() {
         updateState();
-    }
-    public void setOnQuickSettingsChanged(Consumer<ReaderSettings> listener) {
-        this.onQuickSettingsChanged = listener;
-    }
-
-    private void notifyQuickSettingsChanged() {
-        if (onQuickSettingsChanged != null) {
-            onQuickSettingsChanged.accept(canvas.getEngine().getSettings());
-        }
     }
 
 }

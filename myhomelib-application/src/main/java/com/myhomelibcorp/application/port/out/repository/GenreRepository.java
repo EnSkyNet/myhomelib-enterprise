@@ -18,6 +18,7 @@ public interface GenreRepository {
     Map<String, String> getAllGenres();
     List<String> getAllGenreCodes();
     List<Genre> getAllGenresHierarchy();
+    List<Genre> searchByName(String query, int limit);
 
     // ----- НОВИЙ МЕТОД ДЛЯ DATA INTEGRITY -----
 

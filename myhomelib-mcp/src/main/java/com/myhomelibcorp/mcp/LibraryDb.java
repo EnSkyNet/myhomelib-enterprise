@@ -32,16 +32,29 @@ final class LibraryDb implements AutoCloseable {
         String sql = """
                 SELECT b.id,b.title,b.series,b.sequence_number,b.language,b.year,b.publisher,b.lib_id,
                        b.library_rate,b.rate,b.progress,b.file_name,b.folder,b.archive_entry,b.collection_root,b.local,
-                       COALESCE(GROUP_CONCAT(DISTINCT TRIM(a.last_name || ' ' || a.first_name || ' ' || a.middle_name)), '') authors,
-                       COALESCE(GROUP_CONCAT(DISTINCT g.name), '') genres
+                       COALESCE((
+                           SELECT GROUP_CONCAT(DISTINCT TRIM(a.last_name || ' ' || a.first_name || ' ' || a.middle_name))
+                           FROM book_authors ba JOIN authors a ON a.id=ba.author_id
+                           WHERE ba.book_id=b.id
+                       ), '') authors,
+                       COALESCE((
+                           SELECT GROUP_CONCAT(DISTINCT g.name)
+                           FROM book_genres bg JOIN genres g ON g.code=bg.genre_code
+                           WHERE bg.book_id=b.id
+                       ), '') genres
                 FROM books b
-                LEFT JOIN book_authors ba ON ba.book_id=b.id LEFT JOIN authors a ON a.id=ba.author_id
-                LEFT JOIN book_genres bg ON bg.book_id=b.id LEFT JOIN genres g ON g.code=bg.genre_code
                 WHERE b.deleted=0 AND (?='' OR b.title LIKE ? ESCAPE '\\' OR b.series LIKE ? ESCAPE '\\'
                       OR b.annotation LIKE ? ESCAPE '\\' OR b.keywords LIKE ? ESCAPE '\\'
                       OR b.file_name LIKE ? ESCAPE '\\' OR b.publisher LIKE ? ESCAPE '\\'
-                      OR a.last_name LIKE ? ESCAPE '\\' OR a.first_name LIKE ? ESCAPE '\\' OR g.name LIKE ? ESCAPE '\\')
-                GROUP BY b.id ORDER BY b.title COLLATE NOCASE LIMIT ? OFFSET ?
+                      OR EXISTS (
+                          SELECT 1 FROM book_authors ba JOIN authors a ON a.id=ba.author_id
+                          WHERE ba.book_id=b.id AND (a.last_name LIKE ? ESCAPE '\\' OR a.first_name LIKE ? ESCAPE '\\')
+                      )
+                      OR EXISTS (
+                          SELECT 1 FROM book_genres bg JOIN genres g ON g.code=bg.genre_code
+                          WHERE bg.book_id=b.id AND g.name LIKE ? ESCAPE '\\'
+                      ))
+                ORDER BY lower(b.title) LIMIT ? OFFSET ?
                 """;
         try (PreparedStatement ps = connection.prepareStatement(sql)) {
             ps.setString(1, term);

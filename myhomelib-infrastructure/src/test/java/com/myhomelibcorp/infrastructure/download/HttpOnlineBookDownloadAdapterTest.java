@@ -19,6 +19,7 @@ import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -97,22 +98,55 @@ class HttpOnlineBookDownloadAdapterTest {
 
 
     @Test
-    void resumesExistingPartialFileWithHttpRange() throws Exception {
-        Files.writeString(temp.resolve("a.txt.part"), "hello ", StandardCharsets.UTF_8);
+    void resumesPartialOnlyWithEntityValidatorAndIfRange() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = server(exchange -> {
-            requests.incrementAndGet();
+            int n = requests.incrementAndGet();
+            if (n == 1) {
+                assertThat(exchange.getRequestHeaders().getFirst("Range")).isNull();
+                exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
+                byte[] partial = "hello ".getBytes(StandardCharsets.UTF_8);
+                exchange.sendResponseHeaders(200, 11);
+                exchange.getResponseBody().write(partial);
+                // The handler closes early: the client keeps .part + validator metadata.
+                return;
+            }
             assertThat(exchange.getRequestHeaders().getFirst("Range")).isEqualTo("bytes=6-");
+            assertThat(exchange.getRequestHeaders().getFirst("If-Range")).isEqualTo("\"entity-v1\"");
+            exchange.getResponseHeaders().add("ETag", "\"entity-v1\"");
             exchange.getResponseHeaders().add("Content-Range", "bytes 6-10/11");
             respond(exchange, 206, "world");
         });
 
-        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 3)).thenReturn(0);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("a", "a.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+        assertThat(Files.readString(temp.resolve("a.txt.part"))).isEqualTo("hello ");
+        assertThat(temp.resolve("a.txt.part.meta")).exists();
+
         adapter.download(book("a", "a.txt", "", ""), onlineCollection(), null, null);
 
-        assertThat(requests.get()).isEqualTo(1);
+        assertThat(requests.get()).isEqualTo(2);
         assertThat(Files.readString(temp.resolve("a.txt"))).isEqualTo("hello world");
         assertThat(temp.resolve("a.txt.part")).doesNotExist();
+        assertThat(temp.resolve("a.txt.part.meta")).doesNotExist();
+    }
+
+    @Test
+    void stalePartialWithoutValidatorIsRestartedInsteadOfBlindlyAppended() throws Exception {
+        Files.writeString(temp.resolve("safe-resume.txt.part"), "old-partial", StandardCharsets.UTF_8);
+        server = server(exchange -> {
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isNull();
+            respond(exchange, 200, "new-complete");
+        });
+
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        adapter.download(book("s", "safe-resume.txt", "", ""), onlineCollection(), null, null);
+
+        assertThat(Files.readString(temp.resolve("safe-resume.txt"))).isEqualTo("new-complete");
     }
 
     @Test
@@ -173,6 +207,62 @@ class HttpOnlineBookDownloadAdapterTest {
 
         assertThat(temp.resolve("Архів книг.zip")).exists();
     }
+
+    @Test
+    void forceRefreshReplacesExistingCopyOnlyAfterSuccessfulValidation() throws Exception {
+        Files.writeString(temp.resolve("fresh.txt"), "old-copy", StandardCharsets.UTF_8);
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, "new-copy");
+        });
+
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        adapter.download(book("fresh", "fresh.txt", "", ""), onlineCollection(), null, null, true);
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(Files.readString(temp.resolve("fresh.txt"))).isEqualTo("new-copy");
+    }
+
+    @Test
+    void failedForceRefreshKeepsPreviousLocalCopy() throws Exception {
+        Files.writeString(temp.resolve("safe.txt"), "known-good", StandardCharsets.UTF_8);
+        server = server(exchange -> respond(exchange, 200, "<html>login required</html>"));
+
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        assertThatThrownBy(() -> adapter.download(book("safe", "safe.txt", "", ""), onlineCollection(), null, null, true))
+                .isInstanceOf(IOException.class);
+
+        assertThat(Files.readString(temp.resolve("safe.txt"))).isEqualTo("known-good");
+        assertThat(temp.resolve("safe.txt.part")).doesNotExist();
+    }
+
+    @Test
+    void cancellationKeepsResumablePartialFile() throws Exception {
+        Files.writeString(temp.resolve("resume.txt.part"), "partial", StandardCharsets.UTF_8);
+        server = server(exchange -> respond(exchange, 200, "ignored"));
+        AtomicBoolean cancelled = new AtomicBoolean(true);
+
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        assertThatThrownBy(() -> adapter.download(book("resume", "resume.txt", "", ""), onlineCollection(), cancelled, null))
+                .isInstanceOf(HttpOnlineBookDownloadAdapter.DownloadCancelledException.class);
+
+        assertThat(Files.readString(temp.resolve("resume.txt.part"))).isEqualTo("partial");
+    }
+
+    @Test
+    void redactsSensitiveQueryValuesFromHttpErrors() throws Exception {
+        server = server(exchange -> respond(exchange, 404, "missing"));
+        String template = baseUrl() + "download/{file}?token=very-secret-token";
+        Collection collection = onlineCollection(null, null, template);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("secret", "secret.txt", "", ""), collection, null, null))
+                .isInstanceOf(IOException.class)
+                .hasMessageNotContaining("very-secret-token")
+                .hasMessageContaining("redacted");
+    }
+
     @Test
     void rejectsArchiveWhenRequestedEntryIsMissing() throws Exception {
         server = server(exchange -> respond(exchange, 200, "archive-bytes"));

@@ -1,0 +1,62 @@
+MyHomeLib Enterprise v7.1 — CURRENT AUDIT STATE
+Captured: 2026-08-30 18:xx Europe/Kyiv
+Status: WIP, NOT FINAL RELEASE
+
+Current checkpoint:
+- directory-import cancellation/progress/selective-Lucene lifecycle completed and guarded;
+- copy-between-collections DB/user-state/file/Lucene post-commit lifecycle hardened;
+- per-collection Lucene dirty/freshness sealing hardened after failed sync;
+- MCP search_books full-catalog JOIN/GROUP BY removed; page-first enrichment + EXISTS predicates;
+- MCP blank catalog browse uses existing idx_books_title_lower (no new index).
+
+Latest verified offline gates:
+- all current tools/*check.py: 43/43 PASS;
+- tools/v71-standalone-java-smoke.py: PASS;
+- static release check: PASS (43 SQLite migrations, 25 FXML workspaces, 167 FXML handlers);
+- implementation completeness: PASS.
+
+Measured synthetic SQLite 1M evidence for current MCP query:
+- blank page offset 0, limit 50: median ~0.493 ms;
+- offset 50k: ~10.393 ms;
+- offset 500k: ~101.989 ms;
+- offset 900k: ~184.692 ms;
+- negative substring search across all searchable SQL fields: ~2.846 s median.
+Evidence file outside release tree: /mnt/data/mhl-audit/mcp-search-1m-after.json
+
+Known acceptance still open:
+1. Maven/JVM verify: NOT GREEN; dependency download is unavailable in this environment (repo.maven.apache.org DNS/network failure in latest attempted run).
+2. JVM/Lucene 100k/500k/700k/1M performance + heap/RSS/GC/index-size evidence.
+3. Copy-between-collections and per-collection Lucene true connected JVM/E2E acceptance (static/offline contracts currently PASS).
+4. JavaFX Reader runtime regression matrix.
+5. Local embedded HTTP adapter 10MB/100MB/1GB + resume/cancel/full TLS-server integration.
+   Standalone JDK acceptance now DOES execute OnlineHttpPolicy custom PKCS12 truststore loading, plaintext-secret rejection and real local HTTP proxy routing: PASS.
+6. Formal final release packaging/patch/clean extracted-tree parity only after the last code change.
+
+Rules unchanged:
+- user data integrity > correctness > performance > cleanup;
+- do not modify V1-V36;
+- do not add SQLite indexes without EXPLAIN + benchmark;
+- do not claim Maven/CI/final release PASS without a real green run.
+
+IDEA/JAVAC checkpoint 2026-08-30:
+- user-provided Maven compile reached myhomelib-infrastructure and exposed 34 javac errors that offline guards did not detect;
+- fixed missing author normalization helper usage/imports, Comparator import, JdbcTemplate query overload ambiguity, Metabib dataset/person mapping helpers, cover extension helper usage, HTTP resume/hash helpers, INPX genre preload, Lucene resource-close/API compatibility, and FolderSync record factory/accessor collision;
+- stale Metabib reader test fixture aligned with the strict structural validator;
+- after fixes: all 43 tools/*check.py PASS + v71-standalone-java-smoke.py PASS;
+- local Maven compile still cannot be executed in this sandbox because repo.maven.apache.org DNS is unavailable;
+- status remains WIP until the corrected tree is re-run with ./mvnw clean verify -Pproduction in the user's connected JDK 21 environment.
+
+2026-08-30 ONLINE SERVER COMPATIBILITY CHECKPOINT
+- canonical Alex80 INPX URL retained: https://alex80.github.io/mhl/download/inpx/
+- canonical flibusta_online_fb2.info / extra_flibusta_online_fb2.info markers are used for Alex80 updates
+- marker-unavailable server falls back to full flibusta_online_fb2.inpx + embedded version.info
+- 44/44 offline tools/*check.py PASS; standalone Java smoke PASS
+
+2026-08-30 FUNCTIONAL REGRESSION CHECKPOINT
+- Compared WIP 16:40/18:20/19:05 + older master user-facing feature surface.
+- No recent Java/FXML/action/id deletion found.
+- Real older Author-series grouping regression restored with server pagination.
+- Reader entry centrally guarded: missing physical book -> confirm -> download/persist -> open.
+- Added functional UI baseline + anti-regression check.
+- Current offline evidence: 46/46 tools checks PASS + standalone Java smoke PASS.
+- Reader merged-word / specific nested-TOC observations still require runtime reproducer.

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.api.ReaderInputSettings;
 import com.myhomelibcorp.reader.api.ReaderSettingsPreset;
 import com.myhomelibcorp.reader.api.ReaderSettingsPresets;
 import com.myhomelibcorp.reader.api.ReaderTheme;
@@ -17,7 +18,6 @@ import javafx.scene.paint.Color;
 import javafx.scene.text.Font;
 import javafx.stage.Window;
 
-import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
@@ -64,11 +64,11 @@ final class ReaderSettingsDialog {
         header.setPadding(new Insets(0, 0, 8, 0));
 
         TabPane tabs = new TabPane(
-                tab("Типографіка", typographyPane(c, original)),
-                tab("Кольори", colorsPane(c, original)),
-                tab("Макет", layoutPane(c, original)),
-                tab("Навігація", navigationPane(c, original)),
-                tab("Статус", statusPane(c, original))
+                tab("Типографіка", typographyPane(c)),
+                tab("Кольори", colorsPane(c)),
+                tab("Макет", layoutPane(c)),
+                tab("Навігація", navigationPane(c)),
+                tab("Статус", statusPane(c))
         );
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 
@@ -109,7 +109,7 @@ final class ReaderSettingsDialog {
         return tab;
     }
 
-    private static Node typographyPane(Controls c, ReaderSettings original) {
+    private static Node typographyPane(Controls c) {
         GridPane grid = grid();
         int r=0;
         row(grid,r++,"Шрифт",c.fontFamily);
@@ -125,7 +125,7 @@ final class ReaderSettingsDialog {
         return grid;
     }
 
-    private static Node colorsPane(Controls c, ReaderSettings original) {
+    private static Node colorsPane(Controls c) {
         GridPane grid=grid(); int r=0;
         row(grid,r++,"Тема",c.theme);
         row(grid,r++,"Колір фону",c.backgroundColor);
@@ -136,7 +136,7 @@ final class ReaderSettingsDialog {
         return grid;
     }
 
-    private static Node layoutPane(Controls c, ReaderSettings original) {
+    private static Node layoutPane(Controls c) {
         GridPane grid=grid(); int r=0;
         row(grid,r++,"Поле ліворуч",c.left);
         row(grid,r++,"Поле праворуч",c.right);
@@ -149,25 +149,52 @@ final class ReaderSettingsDialog {
         return grid;
     }
 
-    private static Node navigationPane(Controls c, ReaderSettings original) {
-        GridPane grid=grid(); int r=0;
-        grid.add(c.pageMode,0,r++,2,1);
-        grid.add(c.autoScroll,0,r++,2,1);
-        row(grid,r++,"Швидкість автопрокрутки",c.scrollSpeed);
-        row(grid,r++,"Ліва зона",c.tapLeft);
-        row(grid,r++,"Центральна зона",c.tapCenter);
-        row(grid,r++,"Права зона",c.tapRight);
-        Label hint=new Label("Зони натискання займають по 1/3 ширини Reader. Shift+drag використовується для виділення тексту.");
-        hint.setWrapText(true); hint.setStyle("-fx-text-fill: #666666;");
-        grid.add(hint,0,r++,2,1);
-        Button reset=new Button("Скинути навігацію");
+    private static Node navigationPane(Controls c) {
+        VBox box = new VBox(12);
+        box.setPadding(new Insets(12));
+        box.getChildren().addAll(c.twoPageMode, c.autoTwoPageLandscape, c.autoScroll,
+                labeled("Швидкість автопрокрутки", c.scrollSpeed), c.pinchZoom);
+
+        GridPane taps = inputGrid("Коротке натискання", c.tapControls());
+        GridPane longTaps = inputGrid("Довге натискання", c.longTapControls());
+        GridPane gestures = grid();
+        int r = 0;
+        row(gestures, r++, "Swipe ліворуч", c.swipeLeft);
+        row(gestures, r++, "Swipe праворуч", c.swipeRight);
+        row(gestures, r++, "Swipe вгору", c.swipeUp);
+        row(gestures, r++, "Swipe вниз", c.swipeDown);
+        box.getChildren().addAll(new Separator(), taps, new Separator(), longTaps, new Separator(), gestures);
+
+        Label hint = new Label("9 зон = 3×3 площі Reader. Довге натискання ≈0,52 с. Shift+drag залишено для виділення тексту.");
+        hint.setWrapText(true);
+        hint.setStyle("-fx-text-fill: #666666;");
+        Button reset = new Button("Скинути навігацію");
         reset.setOnAction(e -> c.resetNavigation(ReaderSettings.defaultSettings()));
-        grid.add(reset,0,r,2,1);
+        box.getChildren().addAll(hint, reset);
+        ScrollPane scroll = new ScrollPane(box);
+        scroll.setFitToWidth(true);
+        return scroll;
+    }
+
+    private static Node labeled(String text, Node control) {
+        return new HBox(8, new Label(text + ':'), control);
+    }
+
+    private static GridPane inputGrid(String title, ComboBox<String>[] controls) {
+        GridPane grid = grid();
+        grid.add(new Label(title), 0, 0, 4, 1);
+        String[] rows = {"Верх", "Середина", "Низ"};
+        String[] cols = {"Ліворуч", "Центр", "Праворуч"};
+        for (int c = 0; c < 3; c++) grid.add(new Label(cols[c]), c + 1, 1);
+        for (int r = 0; r < 3; r++) {
+            grid.add(new Label(rows[r]), 0, r + 2);
+            for (int c = 0; c < 3; c++) grid.add(controls[r * 3 + c], c + 1, r + 2);
+        }
         return grid;
     }
 
-    private static Node statusPane(Controls c, ReaderSettings original) {
-        VBox box=new VBox(8,c.showStatusBar,c.showStatusProgress,c.showStatusChapter,c.showStatusPage);
+    private static Node statusPane(Controls c) {
+        VBox box=new VBox(8,c.showStatusBar,c.showStatusProgress,c.showStatusChapter,c.showStatusPage,c.showStatusClock);
         box.setPadding(new Insets(12));
         Button reset=new Button("Скинути статус");
         reset.setOnAction(e -> c.resetStatus(ReaderSettings.defaultSettings()));
@@ -223,16 +250,26 @@ final class ReaderSettingsDialog {
         final ComboBox<String> alignment=new ComboBox<>(FXCollections.observableArrayList("left","justify","center"));
         final Spinner<Double> left=doubleSpinner(0,120,30,1),right=doubleSpinner(0,120,30,1),top=doubleSpinner(0,120,20,1),bottom=doubleSpinner(0,120,20,1);
         final CheckBox hyphenation=new CheckBox("Переноси слів");
-        final CheckBox pageMode=new CheckBox("Показувати номер сторінки");
+        final CheckBox twoPageMode=new CheckBox("Дві сторінки");
+        final CheckBox autoTwoPageLandscape=new CheckBox("Автоматично дві сторінки у широкому вікні");
         final CheckBox autoScroll=new CheckBox("Автопрокрутка");
         final Spinner<Integer> scrollSpeed=new Spinner<>(1,5,3);
+        final CheckBox pinchZoom=new CheckBox("Масштаб шрифту жестом pinch");
         final CheckBox showToolbar=new CheckBox("Показувати панель інструментів");
         final CheckBox showStatusBar=new CheckBox("Показувати нижній status bar");
         final CheckBox showStatusProgress=new CheckBox("Прогрес");
         final CheckBox showStatusChapter=new CheckBox("Назва розділу");
         final CheckBox showStatusPage=new CheckBox("Номер сторінки");
-        final ComboBox<String> tapLeft=actionBox(),tapCenter=actionBox(),tapRight=actionBox();
+        final CheckBox showStatusClock=new CheckBox("Годинник");
+        final ComboBox<String> tapTopLeft=actionBox(),tapTopCenter=actionBox(),tapTopRight=actionBox();
+        final ComboBox<String> tapMiddleLeft=actionBox(),tapMiddleCenter=actionBox(),tapMiddleRight=actionBox();
+        final ComboBox<String> tapBottomLeft=actionBox(),tapBottomCenter=actionBox(),tapBottomRight=actionBox();
+        final ComboBox<String> longTopLeft=actionBox(),longTopCenter=actionBox(),longTopRight=actionBox();
+        final ComboBox<String> longMiddleLeft=actionBox(),longMiddleCenter=actionBox(),longMiddleRight=actionBox();
+        final ComboBox<String> longBottomLeft=actionBox(),longBottomCenter=actionBox(),longBottomRight=actionBox();
+        final ComboBox<String> swipeLeft=actionBox(),swipeRight=actionBox(),swipeUp=actionBox(),swipeDown=actionBox();
         final CheckBox perBook=new CheckBox("Лише для цієї книги");
+        boolean legacyPageMode;
 
         Controls(ReaderSettings settings,boolean bookOverride){
             fontFamily.setEditable(true); fontFamily.setPrefWidth(230);
@@ -241,35 +278,66 @@ final class ReaderSettingsDialog {
         }
 
         static ComboBox<String> actionBox(){
-            return new ComboBox<>(FXCollections.observableArrayList("previous-page","next-page","previous-chapter","next-chapter","toggle-toolbar","search","none"));
+            ComboBox<String> box = new ComboBox<>(FXCollections.observableArrayList(
+                    "previous-page","next-page","previous-chapter","next-chapter","start","end",
+                    "toggle-toolbar","toggle-two-page","toggle-auto-scroll","search","zoom-in","zoom-out","theme","none"));
+            box.setPrefWidth(150);
+            return box;
         }
+
+        @SuppressWarnings("unchecked")
+        ComboBox<String>[] tapControls(){ return new ComboBox[]{tapTopLeft,tapTopCenter,tapTopRight,tapMiddleLeft,tapMiddleCenter,tapMiddleRight,tapBottomLeft,tapBottomCenter,tapBottomRight}; }
+        @SuppressWarnings("unchecked")
+        ComboBox<String>[] longTapControls(){ return new ComboBox[]{longTopLeft,longTopCenter,longTopRight,longMiddleLeft,longMiddleCenter,longMiddleRight,longBottomLeft,longBottomCenter,longBottomRight}; }
 
         ReaderSettings snapshot(String originalCss){
             String family=fontFamily.getEditor().getText(); if(family==null||family.isBlank()) family="Georgia";
+            ReaderInputSettings input = inputSettings();
             return new ReaderSettings(theme.getValue(),family,fontSize.getValue(),lineSpacing.getValue(),paragraphSpacing.getValue(),indent.getValue(),alignment.getValue(),
-                    left.getValue(),right.getValue(),top.getValue(),bottom.getValue(),hyphenation.isSelected(),pageMode.isSelected(),autoScroll.isSelected(),scrollSpeed.getValue(),showToolbar.isSelected(),
+                    left.getValue(),right.getValue(),top.getValue(),bottom.getValue(),hyphenation.isSelected(),legacyPageMode,autoScroll.isSelected(),scrollSpeed.getValue(),showToolbar.isSelected(),
                     mergeReaderColors(originalCss,theme.getValue(),backgroundColor.getValue(),textColor.getValue()),
-                    showStatusBar.isSelected(),showStatusProgress.isSelected(),showStatusChapter.isSelected(),showStatusPage.isSelected(),tapLeft.getValue(),tapCenter.getValue(),tapRight.getValue());
+                    showStatusBar.isSelected(),showStatusProgress.isSelected(),showStatusChapter.isSelected(),showStatusPage.isSelected(),
+                    input.middleLeft(),input.middleCenter(),input.middleRight(),twoPageMode.isSelected(),autoTwoPageLandscape.isSelected(),showStatusClock.isSelected(),input);
+        }
+
+        ReaderInputSettings inputSettings(){
+            return new ReaderInputSettings(
+                    tapTopLeft.getValue(),tapTopCenter.getValue(),tapTopRight.getValue(),
+                    tapMiddleLeft.getValue(),tapMiddleCenter.getValue(),tapMiddleRight.getValue(),
+                    tapBottomLeft.getValue(),tapBottomCenter.getValue(),tapBottomRight.getValue(),
+                    longTopLeft.getValue(),longTopCenter.getValue(),longTopRight.getValue(),
+                    longMiddleLeft.getValue(),longMiddleCenter.getValue(),longMiddleRight.getValue(),
+                    longBottomLeft.getValue(),longBottomCenter.getValue(),longBottomRight.getValue(),
+                    swipeLeft.getValue(),swipeRight.getValue(),swipeUp.getValue(),swipeDown.getValue(),pinchZoom.isSelected());
         }
 
         void setFrom(ReaderSettings s){
+            legacyPageMode=s.pageMode();
             theme.setValue(s.themeName()); ReaderTheme rt=ReaderTheme.fromSettings(s); backgroundColor.setValue(Color.web(rt.background())); textColor.setValue(Color.web(rt.foreground()));
             fontFamily.setValue(s.fontFamily()); fontFamily.getEditor().setText(s.fontFamily()); set(fontSize,s.fontSize()); set(lineSpacing,s.lineSpacing()); set(paragraphSpacing,s.paragraphSpacing()); set(indent,s.firstLineIndent()); alignment.setValue(s.alignment());
-            set(left,s.leftMargin());set(right,s.rightMargin());set(top,s.topMargin());set(bottom,s.bottomMargin());hyphenation.setSelected(s.hyphenation());pageMode.setSelected(s.pageMode());autoScroll.setSelected(s.autoScroll());scrollSpeed.getValueFactory().setValue(Math.max(1,Math.min(5,s.scrollSpeed())));showToolbar.setSelected(s.showToolbar());
-            showStatusBar.setSelected(s.showStatusBar());showStatusProgress.setSelected(s.showStatusProgress());showStatusChapter.setSelected(s.showStatusChapter());showStatusPage.setSelected(s.showStatusPage());tapLeft.setValue(s.tapLeftAction());tapCenter.setValue(s.tapCenterAction());tapRight.setValue(s.tapRightAction());
+            set(left,s.leftMargin());set(right,s.rightMargin());set(top,s.topMargin());set(bottom,s.bottomMargin());hyphenation.setSelected(s.hyphenation());twoPageMode.setSelected(s.twoPageMode());autoTwoPageLandscape.setSelected(s.autoTwoPageLandscape());autoScroll.setSelected(s.autoScroll());scrollSpeed.getValueFactory().setValue(Math.max(1,Math.min(5,s.scrollSpeed())));showToolbar.setSelected(s.showToolbar());
+            showStatusBar.setSelected(s.showStatusBar());showStatusProgress.setSelected(s.showStatusProgress());showStatusChapter.setSelected(s.showStatusChapter());showStatusPage.setSelected(s.showStatusPage());showStatusClock.setSelected(s.showStatusClock());
+            ReaderInputSettings i=s.input(); pinchZoom.setSelected(i.pinchZoom());
+            setActions(tapControls(), new String[]{i.topLeft(),i.topCenter(),i.topRight(),i.middleLeft(),i.middleCenter(),i.middleRight(),i.bottomLeft(),i.bottomCenter(),i.bottomRight()});
+            setActions(longTapControls(), new String[]{i.longTopLeft(),i.longTopCenter(),i.longTopRight(),i.longMiddleLeft(),i.longMiddleCenter(),i.longMiddleRight(),i.longBottomLeft(),i.longBottomCenter(),i.longBottomRight()});
+            swipeLeft.setValue(i.swipeLeft());swipeRight.setValue(i.swipeRight());swipeUp.setValue(i.swipeUp());swipeDown.setValue(i.swipeDown());
         }
 
+        static void setActions(ComboBox<String>[] boxes,String[] values){for(int i=0;i<boxes.length;i++)boxes[i].setValue(values[i]);}
         static void set(Spinner<Double> s,double v){ s.getValueFactory().setValue(v); }
         void resetTypography(ReaderSettings d){fontFamily.setValue(d.fontFamily());fontFamily.getEditor().setText(d.fontFamily());set(fontSize,d.fontSize());set(lineSpacing,d.lineSpacing());set(paragraphSpacing,d.paragraphSpacing());set(indent,d.firstLineIndent());alignment.setValue(d.alignment());hyphenation.setSelected(d.hyphenation());}
         void resetColors(ReaderSettings d){theme.setValue(d.themeName());ReaderTheme rt=ReaderTheme.fromName(d.themeName());backgroundColor.setValue(Color.web(rt.background()));textColor.setValue(Color.web(rt.foreground()));}
         void resetLayout(ReaderSettings d){set(left,d.leftMargin());set(right,d.rightMargin());set(top,d.topMargin());set(bottom,d.bottomMargin());showToolbar.setSelected(d.showToolbar());}
-        void resetNavigation(ReaderSettings d){pageMode.setSelected(d.pageMode());autoScroll.setSelected(d.autoScroll());scrollSpeed.getValueFactory().setValue(d.scrollSpeed());tapLeft.setValue(d.tapLeftAction());tapCenter.setValue(d.tapCenterAction());tapRight.setValue(d.tapRightAction());}
-        void resetStatus(ReaderSettings d){showStatusBar.setSelected(d.showStatusBar());showStatusProgress.setSelected(d.showStatusProgress());showStatusChapter.setSelected(d.showStatusChapter());showStatusPage.setSelected(d.showStatusPage());}
+        void resetNavigation(ReaderSettings d){twoPageMode.setSelected(d.twoPageMode());autoTwoPageLandscape.setSelected(d.autoTwoPageLandscape());autoScroll.setSelected(d.autoScroll());scrollSpeed.getValueFactory().setValue(d.scrollSpeed());setFromInput(d.input());}
+        void setFromInput(ReaderInputSettings i){pinchZoom.setSelected(i.pinchZoom());setActions(tapControls(),new String[]{i.topLeft(),i.topCenter(),i.topRight(),i.middleLeft(),i.middleCenter(),i.middleRight(),i.bottomLeft(),i.bottomCenter(),i.bottomRight()});setActions(longTapControls(),new String[]{i.longTopLeft(),i.longTopCenter(),i.longTopRight(),i.longMiddleLeft(),i.longMiddleCenter(),i.longMiddleRight(),i.longBottomLeft(),i.longBottomCenter(),i.longBottomRight()});swipeLeft.setValue(i.swipeLeft());swipeRight.setValue(i.swipeRight());swipeUp.setValue(i.swipeUp());swipeDown.setValue(i.swipeDown());}
+        void resetStatus(ReaderSettings d){showStatusBar.setSelected(d.showStatusBar());showStatusProgress.setSelected(d.showStatusProgress());showStatusChapter.setSelected(d.showStatusChapter());showStatusPage.setSelected(d.showStatusPage());showStatusClock.setSelected(d.showStatusClock());}
 
         void installPreview(InvalidationListener l){
             theme.valueProperty().addListener(l);backgroundColor.valueProperty().addListener(l);textColor.valueProperty().addListener(l);fontFamily.valueProperty().addListener(l);fontFamily.getEditor().textProperty().addListener(l);
             fontSize.valueProperty().addListener(l);lineSpacing.valueProperty().addListener(l);paragraphSpacing.valueProperty().addListener(l);indent.valueProperty().addListener(l);alignment.valueProperty().addListener(l);left.valueProperty().addListener(l);right.valueProperty().addListener(l);top.valueProperty().addListener(l);bottom.valueProperty().addListener(l);
-            hyphenation.selectedProperty().addListener(l);pageMode.selectedProperty().addListener(l);autoScroll.selectedProperty().addListener(l);scrollSpeed.valueProperty().addListener(l);showToolbar.selectedProperty().addListener(l);showStatusBar.selectedProperty().addListener(l);showStatusProgress.selectedProperty().addListener(l);showStatusChapter.selectedProperty().addListener(l);showStatusPage.selectedProperty().addListener(l);tapLeft.valueProperty().addListener(l);tapCenter.valueProperty().addListener(l);tapRight.valueProperty().addListener(l);
+            hyphenation.selectedProperty().addListener(l);twoPageMode.selectedProperty().addListener(l);autoTwoPageLandscape.selectedProperty().addListener(l);autoScroll.selectedProperty().addListener(l);scrollSpeed.valueProperty().addListener(l);pinchZoom.selectedProperty().addListener(l);showToolbar.selectedProperty().addListener(l);showStatusBar.selectedProperty().addListener(l);showStatusProgress.selectedProperty().addListener(l);showStatusChapter.selectedProperty().addListener(l);showStatusPage.selectedProperty().addListener(l);showStatusClock.selectedProperty().addListener(l);
+            for(ComboBox<String> b:tapControls())b.valueProperty().addListener(l);for(ComboBox<String> b:longTapControls())b.valueProperty().addListener(l);swipeLeft.valueProperty().addListener(l);swipeRight.valueProperty().addListener(l);swipeUp.valueProperty().addListener(l);swipeDown.valueProperty().addListener(l);
         }
     }
+
 }

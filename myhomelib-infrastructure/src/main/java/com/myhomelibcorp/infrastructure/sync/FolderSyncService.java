@@ -1,18 +1,22 @@
 package com.myhomelibcorp.infrastructure.sync;
 
+import com.myhomelibcorp.application.imports.saver.ImportBookMergePolicy;
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
+import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.infrastructure.FolderSyncPort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
+import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
 import com.myhomelibcorp.infrastructure.importengine.InpxImportPipeline;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -39,10 +43,14 @@ public class FolderSyncService implements FolderSyncPort {
     private final BookQueryRepository bookQueryRepository;
     private final BookCommandRepository bookCommandRepository;
     private final SearchIndexer searchIndexer;
+    private final SearchIndexSynchronizer searchIndexSynchronizer;
     private final LibraryScanner libraryScanner;
     private final ImporterRegistry importerRegistry;
     private final InpxImportPipeline inpxImportPipeline;
     private final FolderSyncBookSupport syncSupport = new FolderSyncBookSupport();
+
+    @Value("${app.import.change-tracking-limit:50000}")
+    private int changeTrackingLimit = ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT;
 
     private final AtomicBoolean isSyncing = new AtomicBoolean(false);
     private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
@@ -65,6 +73,8 @@ public class FolderSyncService implements FolderSyncPort {
         Counters counters = new Counters();
         List<String> errorMessages = new ArrayList<>();
         boolean indexDirty = false;
+        ImportChangeAccumulator inpxChanges = new ImportChangeAccumulator(
+                ImportChangeAccumulator.normalizeLimit(changeTrackingLimit));
 
         try {
             log.info("📂 Початок синхронізації папки: {}", root);
@@ -88,7 +98,7 @@ public class FolderSyncService implements FolderSyncPort {
                     Path file = iterator.next().toAbsolutePath().normalize();
                     processed++;
                     try {
-                        FileResult result = processPhysicalFile(file, root, effective);
+                        FileResult result = processPhysicalFile(file, root, effective, inpxChanges);
                         counters.add(result);
                         indexDirty |= result.indexDirty();
                     } catch (Exception e) {
@@ -108,6 +118,17 @@ public class FolderSyncService implements FolderSyncPort {
                 FileResult orphanResult = deleteMissingPhysicalFiles(root);
                 counters.add(orphanResult);
                 indexDirty |= orphanResult.indexDirty();
+            }
+
+            var inpxFinalization = FolderSyncInpxSupport.finalizeIndex(
+                    inpxChanges.snapshot(), searchIndexer, searchIndexSynchronizer);
+            if (inpxFinalization.performed()) {
+                // Selective synchronization/full rebuild commits earlier ordinary-file mutations too.
+                indexDirty = false;
+                if (!inpxFinalization.success()) {
+                    counters.errors++;
+                    errorMessages.add(inpxFinalization.errorMessage());
+                }
             }
 
             if (indexDirty) {
@@ -153,17 +174,13 @@ public class FolderSyncService implements FolderSyncPort {
         cancelFlag.set(true);
     }
 
-    private FileResult processPhysicalFile(Path file, Path root, SyncOptions options) throws Exception {
+    private FileResult processPhysicalFile(Path file, Path root, SyncOptions options, ImportChangeAccumulator inpxChanges) throws Exception {
         String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
 
         if (syncSupport.isInpx(lower)) {
-            long count = inpxImportPipeline.importFile(file, 1000, root, cancelFlag);
-            if (count > 0) {
-                // INPX writes directly to the database, so incremental Lucene callbacks are bypassed.
-                searchIndexer.rebuildIndex();
-                return new FileResult((int) Math.min(Integer.MAX_VALUE, count), 0, 0, 0, false);
-            }
-            return FileResult.skipped();
+            var changes = FolderSyncInpxSupport.importAndAccumulate(
+                    inpxImportPipeline, file, root, cancelFlag, inpxChanges);
+            return new FileResult(changes.added(), changes.updated(), changes.deleted(), changes.errors(), false);
         }
 
         if (syncSupport.isArchive(lower)) {
@@ -235,7 +252,7 @@ public class FolderSyncService implements FolderSyncPort {
             parsed = books.findFirst().orElseThrow(() -> new IOException("Імпортер не повернув книгу: " + file));
         }
         Book normalized = syncSupport.normalizeStorage(parsed, file, root, "");
-        Book merged = syncSupport.mergePreservingUserState(existing, normalized, file);
+        Book merged = ImportBookMergePolicy.mergePreservingUserState(existing, normalized);
         bookCommandRepository.save(merged);
         searchIndexer.indexBook(merged);
         log.debug("🔄 Оновлено метадані зміненого файлу: {}", file);
@@ -267,7 +284,7 @@ public class FolderSyncService implements FolderSyncPort {
                 }
 
                 if (old != null) {
-                    Book merged = syncSupport.mergePreservingUserState(old, normalized, file);
+                    Book merged = ImportBookMergePolicy.mergePreservingUserState(old, normalized);
                     bookCommandRepository.save(merged);
                     searchIndexer.indexBook(merged);
                     matchedIds.add(old.getId().asString());

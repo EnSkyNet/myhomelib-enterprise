@@ -32,13 +32,6 @@
                 <Label fx:id="rootFolderLabel" text="Папка: —" wrapText="true"/>
                 <Label fx:id="dbFileLabel" text="БД: —" wrapText="true"/>
                 <Label fx:id="collectionTypeLabel" text="Тип: —"/>
-                <Label fx:id="booksCountLabel" text="0 книг"/>
-
-                <HBox spacing="5">
-                    <Button fx:id="addBookButton" text="Додати книгу" onAction="#onAddBookToCollection"/>
-                    <Button fx:id="removeBookButton" text="Видалити з колекції" onAction="#onRemoveBookFromCollection"/>
-                </HBox>
-
                 <TitledPane text="Автооновлення локального INPX/ZIP" expanded="false">
                     <content>
                         <VBox spacing="7" style="-fx-padding: 8;">
@@ -72,13 +65,6 @@
                     </content>
                 </TitledPane>
 
-                <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
-                    <columns>
-                        <TableColumn fx:id="titleColumn" text="Назва" prefWidth="200"/>
-                        <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
-                        <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
-                    </columns>
-                </TableView>
             </VBox>
         </items>
     </SplitPane>

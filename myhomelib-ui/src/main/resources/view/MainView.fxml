@@ -116,6 +116,7 @@
                 <Button text="+Книга" onAction="#handleAddBook"/>
                 <Separator/>
                 <Button text="⭐ Оцінити" onAction="#handleBatchRate" style="-fx-background-color: #FFC107; -fx-text-fill: black;"/>
+                <Button text="📊 Прогрес" onAction="#handleBatchProgress" style="-fx-background-color: #00ACC1; -fx-text-fill: white;"/>
                 <Button text="📖 Прочитано" onAction="#handleBatchMarkRead" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
                 <Button text="📂 Додати до групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
                 <Button text="✖ Зняти вибір" onAction="#handleClearSelection" style="-fx-background-color: #9E9E9E; -fx-text-fill: white;"/>

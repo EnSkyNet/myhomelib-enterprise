@@ -11,7 +11,6 @@ import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.application.usecase.book.LoadBooksUseCase;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
@@ -106,15 +105,7 @@ public class BookLoaderService {
 
     // ===== Спеціалізовані методи =====
 
-    public void loadBooksByAuthor(AuthorId authorId) {
-        BookQuery query = BookQuery.builder()
-                .authorId(authorId)
-                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
-                .sortBy(SortBy.TITLE)
-                .direction(SortDirection.ASC)
-                .build();
-        loadBooks(query);
-    }
+
 
     public void loadBooksBySeries(SeriesId seriesId) {
         BookQuery query = BookQuery.builder()
@@ -158,6 +149,17 @@ public class BookLoaderService {
     public void loadBooksByLanguage(String languageCode) {
         BookQuery query = BookQuery.builder()
                 .language(LanguageCode.of(languageCode))
+                .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
+                .sortBy(SortBy.TITLE)
+                .direction(SortDirection.ASC)
+                .build();
+        loadBooks(query);
+    }
+
+    public void loadBooksByPublisher(String publisher) {
+        if (publisher == null || publisher.isBlank()) return;
+        BookQuery query = BookQuery.builder()
+                .publisher(publisher)
                 .pagination(Pagination.of(DEFAULT_PAGE_SIZE, 0))
                 .sortBy(SortBy.TITLE)
                 .direction(SortDirection.ASC)
@@ -209,9 +211,7 @@ public class BookLoaderService {
         loadBooks(query);
     }
 
-    public void loadFavoriteBooks() {
-        loadBooksByGroup(GroupId.fromLong(1L));
-    }
+
 
     public void loadAlreadyReadBooks() {
         BookQuery query = BookQuery.builder()
@@ -232,31 +232,6 @@ public class BookLoaderService {
     }
 
 
-    // ===== Dashboard =====
-
-    public List<BookViewModel> loadRecentBooks(int limit) {
-        BookQuery query = BookQuery.builder()
-                .pagination(Pagination.of(limit, 0))
-                .sortBy(SortBy.DATE)
-                .direction(SortDirection.DESC)
-                .build();
-        PageResult<BookDto> result = loadBooksUseCase.execute(query);
-        return result.content().stream()
-                .map(viewModelMapper::toViewModel)
-                .collect(Collectors.toList());
-    }
-
-    public List<BookViewModel> loadRecentlyAdded(int limit) {
-        BookQuery query = BookQuery.builder()
-                .pagination(Pagination.of(limit, 0))
-                .sortBy(SortBy.DATE)
-                .direction(SortDirection.DESC)
-                .build();
-        PageResult<BookDto> result = loadBooksUseCase.execute(query);
-        return result.content().stream()
-                .map(viewModelMapper::toViewModel)
-                .collect(Collectors.toList());
-    }
 
     // ===== Пагінація =====
 
@@ -280,7 +255,7 @@ public class BookLoaderService {
         if (base == null) base = BookQuery.builder().build();
         return BookQuery.builder()
                 .authorId(base.authorId()).seriesId(base.seriesId()).genreId(base.genreId()).groupId(base.groupId())
-                .text(base.text()).keyword(base.keyword()).language(base.language()).format(base.format()).year(base.year())
+                .text(base.text()).keyword(base.keyword()).publisher(base.publisher()).language(base.language()).format(base.format()).year(base.year())
                 .archive(base.archiveCollectionRoot(), base.archivePath())
                 .pagination(Pagination.of(pageSize, Math.max(0, page) * pageSize))
                 .sortBy(base.sortBy()).direction(base.direction())
@@ -296,7 +271,7 @@ public class BookLoaderService {
         if (base == null) base = BookQuery.builder().build();
         return BookQuery.builder()
                 .authorId(base.authorId()).seriesId(base.seriesId()).genreId(base.genreId()).groupId(base.groupId())
-                .text(base.text()).keyword(base.keyword()).language(base.language()).format(base.format()).year(base.year())
+                .text(base.text()).keyword(base.keyword()).publisher(base.publisher()).language(base.language()).format(base.format()).year(base.year())
                 .archive(base.archiveCollectionRoot(), base.archivePath())
                 .pagination(base.pagination()).sortBy(base.sortBy()).direction(base.direction())
                 .onlyRead(base.onlyRead()).onlyFavorites(base.onlyFavorites())
@@ -311,7 +286,7 @@ public class BookLoaderService {
         if (lastQuery == null) return;
         BookQuery sorted = BookQuery.builder()
                 .authorId(lastQuery.authorId()).seriesId(lastQuery.seriesId()).genreId(lastQuery.genreId()).groupId(lastQuery.groupId())
-                .text(lastQuery.text()).keyword(lastQuery.keyword()).language(lastQuery.language()).format(lastQuery.format()).year(lastQuery.year())
+                .text(lastQuery.text()).keyword(lastQuery.keyword()).publisher(lastQuery.publisher()).language(lastQuery.language()).format(lastQuery.format()).year(lastQuery.year())
                 .archive(lastQuery.archiveCollectionRoot(), lastQuery.archivePath())
                 .pagination(Pagination.of(lastQuery.pagination().limit(), 0))
                 .sortBy(sortBy == null ? SortBy.TITLE : sortBy)

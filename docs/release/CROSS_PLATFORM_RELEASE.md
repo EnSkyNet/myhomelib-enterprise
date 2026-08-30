@@ -19,9 +19,9 @@ The Linux job additionally runs the offline architecture, migration, large-libra
 Artifacts are named by platform and architecture, for example:
 
 ```text
-myhomelib-1.0.0-linux-x86_64.tar.gz
-myhomelib-1.0.0-macos-arm64.tar.gz
-myhomelib-1.0.0-windows-amd64.zip
+myhomelib-7.1.0-linux-x86_64.tar.gz
+myhomelib-7.1.0-macos-arm64.tar.gz
+myhomelib-7.1.0-windows-amd64.zip
 ```
 
 The release also retains the executable bootstrap JAR and the MCP JAR.

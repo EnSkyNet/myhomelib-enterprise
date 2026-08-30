@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-VERSION=${MHL_VERSION:-1.0.0}
+VERSION=${MHL_VERSION:-7.1.0}
 ./package-desktop.sh app-image
 
 case "$(uname -s)" in

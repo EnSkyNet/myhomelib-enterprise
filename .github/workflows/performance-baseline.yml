@@ -6,7 +6,7 @@ on:
       sizes:
         description: "Synthetic catalogue sizes"
         required: false
-        default: "100000,500000,1000000"
+        default: "100000,500000,700000,1000000"
   schedule:
     - cron: '23 3 * * 0'
 
@@ -31,14 +31,14 @@ jobs:
         run: chmod +x mvnw
       - name: JVM/Lucene/reader performance suite
         env:
-          PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,1000000' }}
+          PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,700000,1000000' }}
         run: >-
           ./mvnw -B -ntp -pl myhomelib-benchmark -am test -Pperformance
           -Dmhl.performance.sizes="$PERF_SIZES"
           -Dmhl.performance.readerMb=8
       - name: Offline SQLite scale baseline
         env:
-          PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,1000000' }}
+          PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,700000,1000000' }}
         run: python3 tools/stage24-performance-baseline.py --sizes "$PERF_SIZES" --out target/performance-baseline-sqlite.json
       - name: Stage 24 contract check
         run: python3 tools/stage24-performance-check.py

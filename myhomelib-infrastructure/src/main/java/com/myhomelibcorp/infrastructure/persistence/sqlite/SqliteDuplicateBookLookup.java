@@ -1,21 +1,24 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
+import com.myhomelibcorp.application.port.out.repository.DuplicateBookCandidate;
 import com.myhomelibcorp.application.port.out.repository.DuplicateBookLookup;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.sql.SQLException;
-import java.util.Optional;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
-@Slf4j
 public class SqliteDuplicateBookLookup implements DuplicateBookLookup {
+
+    /** 3 bind parameters per candidate; stays below conservative SQLite variable limits. */
+    private static final int CANDIDATES_PER_QUERY = 120;
 
     private final CollectionManager collectionManager;
 
@@ -24,75 +27,47 @@ public class SqliteDuplicateBookLookup implements DuplicateBookLookup {
     }
 
     @Override
-    public Optional<BookId> findDuplicateId(String title, String firstAuthorLastName) {
-        String sql = """
-                SELECT b.id FROM books b
-                WHERE b.title = ?
-                  AND EXISTS (
-                      SELECT 1 FROM book_authors ba
-                      JOIN authors a ON ba.author_id = a.id
-                      WHERE ba.book_id = b.id
-                        AND a.last_name = ?
-                  )
-                LIMIT 1
-                """;
+    public Map<DuplicateBookCandidate, BookId> findDuplicateIds(List<DuplicateBookCandidate> candidates) {
+        if (candidates == null || candidates.isEmpty()) return Map.of();
 
-        try {
-            String bookId = getJdbcTemplate().queryForObject(sql, String.class, title, firstAuthorLastName);
-            if (bookId != null) {
-                return Optional.of(BookId.fromString(bookId));
-            }
-        } catch (EmptyResultDataAccessException e) {
-            // немає результату
-        } catch (Exception e) {
-            if (isTableMissingError(e)) {
-                log.debug("Таблиця 'books' відсутня, вважаємо, що дублікат відсутній");
-            } else {
-                log.error("Помилка пошуку дубліката", e);
-            }
+        LinkedHashMap<DuplicateBookCandidate, BookId> result = new LinkedHashMap<>();
+        for (int from = 0; from < candidates.size(); from += CANDIDATES_PER_QUERY) {
+            int to = Math.min(candidates.size(), from + CANDIDATES_PER_QUERY);
+            resolveChunk(candidates.subList(from, to), result);
         }
-        return Optional.empty();
+        return result;
     }
 
-    @Override
-    public boolean existsDuplicate(String title, String firstAuthorLastName) {
+    private void resolveChunk(List<DuplicateBookCandidate> chunk,
+                              Map<DuplicateBookCandidate, BookId> target) {
+        StringBuilder values = new StringBuilder(chunk.size() * 10);
+        List<Object> params = new ArrayList<>(chunk.size() * 3);
+        for (int i = 0; i < chunk.size(); i++) {
+            if (i > 0) values.append(',');
+            values.append("(?,?,?)");
+            DuplicateBookCandidate candidate = chunk.get(i);
+            params.add(i);
+            params.add(candidate.title());
+            params.add(candidate.firstAuthorLastName());
+        }
+
         String sql = """
-                SELECT EXISTS (
-                    SELECT 1 FROM books b
-                    WHERE b.title = ?
-                      AND EXISTS (
-                          SELECT 1 FROM book_authors ba
-                          JOIN authors a ON ba.author_id = a.id
-                          WHERE ba.book_id = b.id
-                            AND a.last_name = ?
-                      )
-                )
-                """;
+                WITH candidates(ord, title, last_name) AS (VALUES %s)
+                SELECT c.ord, MIN(b.id) AS book_id
+                FROM candidates c
+                JOIN books b ON b.title = c.title
+                JOIN book_authors ba ON ba.book_id = b.id
+                JOIN authors a ON a.id = ba.author_id AND a.last_name = c.last_name
+                GROUP BY c.ord
+                ORDER BY c.ord
+                """.formatted(values);
 
-        try {
-            Boolean exists = getJdbcTemplate().queryForObject(sql, Boolean.class, title, firstAuthorLastName);
-            return Boolean.TRUE.equals(exists);
-        } catch (Exception e) {
-            if (isTableMissingError(e)) {
-                log.debug("Таблиця 'books' відсутня, вважаємо, що дублікат відсутній");
-            } else {
-                log.error("Помилка перевірки дубліката", e);
+        getJdbcTemplate().query(sql, rs -> {
+            int ordinal = rs.getInt("ord");
+            String rawId = rs.getString("book_id");
+            if (rawId != null && ordinal >= 0 && ordinal < chunk.size()) {
+                target.putIfAbsent(chunk.get(ordinal), BookId.fromString(rawId));
             }
-            return false;
-        }
-    }
-
-    private boolean isTableMissingError(Exception e) {
-        Throwable cause = e;
-        while (cause != null) {
-            if (cause instanceof SQLException sqlEx) {
-                String msg = sqlEx.getMessage();
-                if (msg != null && msg.contains("no such table")) {
-                    return true;
-                }
-            }
-            cause = cause.getCause();
-        }
-        return false;
+        }, params.toArray());
     }
 }

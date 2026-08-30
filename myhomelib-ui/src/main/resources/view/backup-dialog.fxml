@@ -27,11 +27,9 @@
     <Label text="📋 Вміст резервної копії:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
     <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 5;">
-        <CheckBox fx:id="includeIndexCheckBox" text="🔍 Пошуковий індекс (Lucene)" selected="true"/>
-        <CheckBox fx:id="includeCoversCheckBox" text="🖼️ Обкладинки книг" selected="true"/>
         <CheckBox fx:id="includeMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
         <Label text="Portable user-data.json містить ratings/progress/reviews/bookmarks/groups/history/saved searches/filters/Reader settings і може бути накладений на свіжий каталог." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
-        <Label text="📊 Узгоджений SQLite snapshot (завжди включений)" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        <Label text="📊 Узгоджений SQLite snapshot завжди включений. Пошуковий індекс і кеш обкладинок є похідними та не архівуються." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>
@@ -40,7 +38,6 @@
     <VBox spacing="5">
         <Label fx:id="statusLabel" text="Готово до резервного копіювання" style="-fx-text-fill: #7f8c8d;"/>
         <ProgressBar fx:id="progressBar" prefWidth="580" visible="false"/>
-        <Label fx:id="progressLabel" text="0%" visible="false" style="-fx-text-fill: #2c3e50;"/>
     </VBox>
 
     <!-- Лог -->
@@ -51,8 +48,6 @@
     <HBox spacing="10" alignment="CENTER_RIGHT">
         <Button fx:id="backupButton" text="💾 Створити копію" onAction="#onBackup"
                 style="-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 8 25;"/>
-        <Button fx:id="cancelButton" text="⏹ Скасувати" onAction="#onCancel" visible="false"
-                style="-fx-background-color: #e74c3c; -fx-text-fill: white;"/>
         <Button text="✕ Закрити" onAction="#onClose"
                 style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
     </HBox>

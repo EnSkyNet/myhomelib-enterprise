@@ -4,18 +4,18 @@ import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.LocalDateTime;
-import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
+import java.util.Collection;
 
 @Component
 @RequiredArgsConstructor
@@ -23,8 +23,6 @@ import java.util.HashMap;
 public class JdbcBatchWriter {
 
     private final CollectionManager collectionManager;
-    private static final DateTimeFormatter DATE_FORMATTER =
-            DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -35,8 +33,7 @@ public class JdbcBatchWriter {
      * ОПТИМІЗОВАНО: зменшено кількість запитів до БД
      */
     public void batchInsertFull(List<Object[]> booksData,
-                                Map<String, String> authorCache,
-                                Map<String, String> genreCache) {
+                                Map<String, String> authorCache) {
         if (booksData.isEmpty()) return;
 
         JdbcTemplate jt = getJdbcTemplate();
@@ -98,44 +95,24 @@ public class JdbcBatchWriter {
             bookRow[25] = row[27]; // city
             bookRow[26] = row[28]; // source_url
             bookRow[27] = BookDenormalizedValues.format((String) row[4]);
-            bookRow[28] = authorSortFromKeys((String) row[19]);
+            bookRow[28] = (String) row[29];
             bookBatch.add(bookRow);
 
             String bookId = (String) row[0];
-            String authorIds = (String) row[19];
-            if (authorIds != null && !authorIds.isBlank()) {
-                String[] ids = authorIds.split(",");
-                for (String id : ids) {
-                    String trimmed = id.trim();
-                    if (!trimmed.isEmpty()) {
-                        authorLinkBatch.add(new Object[]{bookId, trimmed});
-                    }
-                }
-            }
-            String genreCodes = (String) row[20];
-            if (genreCodes != null && !genreCodes.isBlank()) {
-                String[] codes = genreCodes.split(",");
-                for (String code : codes) {
-                    String trimmed = code.trim();
-                    if (!trimmed.isEmpty()) {
-                        genreLinkBatch.add(new Object[]{bookId, trimmed});
-                    }
-                }
-            }
+            appendLinks(authorLinkBatch, bookId, row[19]);
+            appendLinks(genreLinkBatch, bookId, row[20]);
         }
 
         // ОПТИМІЗОВАНО: використання batchUpdate з великим розміром батчу
         jt.batchUpdate(insertBookSql, bookBatch);
 
-        // ОПТИМІЗОВАНО: видалення старих зв'язків одним запитом
+        // SQLite builds commonly expose a much smaller bind-variable limit than our 10k import batch.
+        // Delete relationship rows in bounded chunks instead of producing one huge IN (?, ...).
         if (!bookBatch.isEmpty()) {
-            List<String> bookIds = new ArrayList<>();
-            for (Object[] row : bookBatch) {
-                bookIds.add((String) row[0]);
-            }
-            String placeholders = String.join(",", bookIds.stream().map(id -> "?").toArray(String[]::new));
-            jt.update("DELETE FROM book_authors WHERE book_id IN (" + placeholders + ")", bookIds.toArray());
-            jt.update("DELETE FROM book_genres WHERE book_id IN (" + placeholders + ")", bookIds.toArray());
+            List<String> bookIds = new ArrayList<>(bookBatch.size());
+            for (Object[] row : bookBatch) bookIds.add((String) row[0]);
+            deleteLinksByBookIds(jt, "book_authors", bookIds);
+            deleteLinksByBookIds(jt, "book_genres", bookIds);
         }
 
         // ОПТИМІЗОВАНО: вставка зв'язків з авторами
@@ -145,7 +122,7 @@ public class JdbcBatchWriter {
             for (Object[] link : authorLinkBatch) {
                 String bookId = (String) link[0];
                 String authorKey = (String) link[1];
-                String realId = authorCache.get(authorKey);
+                String realId = authorCache.getOrDefault(authorKey, authorKey);
                 if (realId != null) {
                     realAuthorLinks.add(new Object[]{bookId, realId});
                 } else {
@@ -173,20 +150,33 @@ public class JdbcBatchWriter {
         log.debug("Batch inserted {} books in {} ms", bookBatch.size(), duration);
     }
 
-    /** Derives the same normalized author order as BookDenormalizedValues without materializing Author objects. */
-    static String authorSortFromKeys(String encodedKeys) {
-        if (encodedKeys == null || encodedKeys.isBlank()) return "";
-        String best = null;
-        for (String key : encodedKeys.split(",")) {
-            String[] parts = key.split("\\|", -1);
-            String first = parts.length > 0 ? parts[0].trim() : "";
-            String middle = parts.length > 1 ? parts[1].trim() : "";
-            String last = parts.length > 2 ? parts[2].trim() : "";
-            String value = (last + " " + first + " " + middle).trim()
-                    .toLowerCase(java.util.Locale.ROOT).replaceAll("\\s+", " ");
-            if (!value.isBlank() && (best == null || value.compareTo(best) < 0)) best = value;
+    private static final int SQLITE_LINK_DELETE_CHUNK = 400;
+
+    private static void appendLinks(List<Object[]> target, String bookId, Object raw) {
+        if (raw == null) return;
+        if (raw instanceof Collection<?> values) {
+            for (Object value : values) appendLink(target, bookId, value == null ? "" : value.toString());
+            return;
         }
-        return best == null ? "" : best;
+        // Backward compatibility for older tests/import adapters that still pass CSV strings.
+        String text = raw.toString();
+        if (text.isBlank()) return;
+        for (String value : text.split(",")) appendLink(target, bookId, value);
+    }
+
+    private static void appendLink(List<Object[]> target, String bookId, String value) {
+        String normalized = value == null ? "" : value.trim();
+        if (!normalized.isEmpty()) target.add(new Object[]{bookId, normalized});
+    }
+
+    private static void deleteLinksByBookIds(JdbcTemplate jt, String table, List<String> bookIds) {
+        // Table is an internal constant controlled by this class, never user input.
+        for (int from = 0; from < bookIds.size(); from += SQLITE_LINK_DELETE_CHUNK) {
+            int to = Math.min(bookIds.size(), from + SQLITE_LINK_DELETE_CHUNK);
+            List<String> chunk = bookIds.subList(from, to);
+            String placeholders = String.join(",", java.util.Collections.nCopies(chunk.size(), "?"));
+            jt.update("DELETE FROM " + table + " WHERE book_id IN (" + placeholders + ")", chunk.toArray());
+        }
     }
 
     /**
@@ -216,76 +206,68 @@ public class JdbcBatchWriter {
     }
 
     /**
-     * Inserts missing authors and resolves the actual persistent IDs in bounded SQL chunks.
-     * ОПТИМІЗОВАНО: збільшено розмір чанку та використання IN-запитів
+     * Resolves candidate author IDs to persistent IDs using an exact indexed triple lookup.
+     * The returned map is candidate-id -> persistent-id; author names are never serialized.
      */
     public Map<String, String> batchInsertAuthorsAndResolveIds(List<Author> authors) {
         if (authors == null || authors.isEmpty()) return Map.of();
 
-        batchInsertAuthors(authors);
-
-        Map<AuthorPair, List<String>> fullKeysByPair = new LinkedHashMap<>();
+        Map<AuthorName, List<Author>> byName = new LinkedHashMap<>();
         for (Author author : authors) {
-            fullKeysByPair.computeIfAbsent(authorPairKey(author), ignored -> new ArrayList<>())
-                    .add(authorKey(author));
+            byName.computeIfAbsent(AuthorName.of(author), ignored -> new ArrayList<>()).add(author);
         }
 
-        List<AuthorPair> pairs = new ArrayList<>(fullKeysByPair.keySet());
+        Map<AuthorName, String> existing = findExistingAuthorIds(new ArrayList<>(byName.keySet()));
         Map<String, String> resolved = new HashMap<>();
-        final int pairsPerQuery = 500;
-
-        for (int from = 0; from < pairs.size(); from += pairsPerQuery) {
-            int to = Math.min(pairs.size(), from + pairsPerQuery);
-            StringBuilder sql = new StringBuilder(
-                    "SELECT id, first_name, last_name FROM authors WHERE ");
-            List<Object> args = new ArrayList<>((to - from) * 2);
-            for (int i = from; i < to; i++) {
-                if (i > from) sql.append(" OR ");
-                // Do not wrap indexed columns in COALESCE here.  idx_authors_unique_name
-                // is defined on (first_name, last_name); applying a function to the
-                // columns forces SQLite into table scans and makes large INPX imports
-                // progressively slower as the authors table grows.
-                sql.append("(first_name = ? AND last_name = ?)");
-                AuthorPair pair = pairs.get(i);
-                args.add(pair.firstName());
-                args.add(pair.lastName());
+        List<Author> missing = new ArrayList<>();
+        for (Map.Entry<AuthorName, List<Author>> entry : byName.entrySet()) {
+            String id = existing.get(entry.getKey());
+            if (id == null) {
+                Author first = entry.getValue().get(0);
+                missing.add(first);
+                id = first.getId().asString();
             }
-
-            List<Object[]> rows = getJdbcTemplate().query(
-                    sql.toString(),
-                    (rs, rowNum) -> new Object[]{
-                            rs.getString("id"),
-                            rs.getString("first_name"),
-                            rs.getString("last_name")
-                    },
-                    args.toArray());
-
-            for (Object[] row : rows) {
-                String id = (String) row[0];
-                AuthorPair pair = new AuthorPair(safe((String) row[1]), safe((String) row[2]));
-                for (String fullKey : fullKeysByPair.getOrDefault(pair, List.of())) {
-                    resolved.put(fullKey, id);
-                }
+            for (Author candidate : entry.getValue()) {
+                resolved.put(candidate.getId().asString(), id);
             }
         }
 
-        if (resolved.size() < authors.size()) {
-            log.warn("Resolved only {} author keys for {} pending author objects", resolved.size(), authors.size());
-        }
+        batchInsertAuthors(missing);
         return resolved;
     }
 
-    private static String authorKey(Author a) {
-        return safe(a.getFirstName()) + "|" + safe(a.getMiddleName()) + "|" + safe(a.getLastName());
+    private Map<AuthorName, String> findExistingAuthorIds(List<AuthorName> names) {
+        Map<AuthorName, String> result = new HashMap<>();
+        final int namesPerQuery = 250; // 3 bind variables each; safely below SQLite limits.
+        for (int from = 0; from < names.size(); from += namesPerQuery) {
+            int to = Math.min(names.size(), from + namesPerQuery);
+            StringBuilder sql = new StringBuilder(
+                    "SELECT id, first_name, middle_name, last_name FROM authors WHERE ");
+            List<Object> args = new ArrayList<>((to - from) * 3);
+            for (int i = from; i < to; i++) {
+                if (i > from) sql.append(" OR ");
+                sql.append("(first_name = ? AND middle_name = ? AND last_name = ?)");
+                AuthorName name = names.get(i);
+                args.add(name.firstName());
+                args.add(name.middleName());
+                args.add(name.lastName());
+            }
+            getJdbcTemplate().query(sql.toString(), rs -> {
+                AuthorName name = new AuthorName(
+                        safe(rs.getString("first_name")),
+                        safe(rs.getString("middle_name")),
+                        safe(rs.getString("last_name")));
+                result.putIfAbsent(name, rs.getString("id"));
+            }, args.toArray());
+        }
+        return result;
     }
 
-    private static AuthorPair authorPairKey(Author a) {
-        // Keep the pair structured. Author names can legally contain '|', so serializing
-        // first/last and splitting at the first delimiter loses information.
-        return new AuthorPair(safe(a.getFirstName()), safe(a.getLastName()));
+    private record AuthorName(String firstName, String middleName, String lastName) {
+        static AuthorName of(Author author) {
+            return new AuthorName(safe(author.getFirstName()), safe(author.getMiddleName()), safe(author.getLastName()));
+        }
     }
-
-    private record AuthorPair(String firstName, String lastName) { }
 
     private static String safe(String value) {
         return value == null ? "" : value;
@@ -316,8 +298,7 @@ public class JdbcBatchWriter {
     }
 
     private String buildSearchName(Author author) {
-        return (author.getLastName() != null ? author.getLastName() : "") + " " +
-                (author.getFirstName() != null ? author.getFirstName() : "") + " " +
-                (author.getMiddleName() != null ? author.getMiddleName() : "");
+        return AuthorSearchNameNormalizer.normalize(
+                author.getFirstName(), author.getMiddleName(), author.getLastName());
     }
 }

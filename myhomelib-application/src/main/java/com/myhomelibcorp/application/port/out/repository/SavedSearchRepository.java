@@ -17,9 +17,6 @@ public interface SavedSearchRepository {
 
     void deleteById(String id);
 
-    void deleteByName(String name);
 
-    List<SavedSearch> findRecent(int limit);
 
-    List<SavedSearch> findMostUsed(int limit);
 }

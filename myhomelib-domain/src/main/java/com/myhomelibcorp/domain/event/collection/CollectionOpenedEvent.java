@@ -3,7 +3,6 @@ package com.myhomelibcorp.domain.event.collection;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.event.BaseDomainEvent;
 
-import java.time.Instant;
 
 /**
  * Доменна подія, що виникає після відкриття колекції.

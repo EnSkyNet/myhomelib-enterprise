@@ -9,7 +9,6 @@ import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.stage.FileChooser;
@@ -39,7 +38,7 @@ public class ImportWorkspaceController {
     private final DialogService dialogService;
     private final ApplicationState appState;
 
-    @Value("${app.import.batch-size:500}")
+    @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
 
     @FXML private TextField directoryField;
@@ -174,17 +173,6 @@ public class ImportWorkspaceController {
                     .build();
             return importFileUseCase.execute(context);
         });
-    }
-
-    private ImportContext createContext(Path directory) {
-        return ImportContext.builder()
-                .rootDirectory(directory)
-                .batchSize(batchSize)
-                .indexAfterSave(true)
-                .cancelFlag(cancelFlag)
-                .progressListener(this::updateProgress)
-                .statusConsumer(this::updateStatus)
-                .build();
     }
 
     private void startImport(java.util.concurrent.Callable<ImportResult> task) {
@@ -331,6 +319,12 @@ public class ImportWorkspaceController {
 
     private void setProgress(double value) {
         UiExecutor.runOnUiThread(() -> {
+            if (value < 0) {
+                progressBar.setProgress(javafx.scene.control.ProgressIndicator.INDETERMINATE_PROGRESS);
+                progressLabel.setText("…");
+                appState.getStatusBar().setProgress(-1);
+                return;
+            }
             double bounded = Math.max(0.0, Math.min(1.0, value));
             progressBar.setProgress(bounded);
             progressLabel.setText(String.format("%.0f%%", bounded * 100));
@@ -340,9 +334,15 @@ public class ImportWorkspaceController {
 
     private void updateProgress(double value) {
         setProgress(value);
-        if (progressDialog != null && value > 0) {
-            long processed = (long) (value * 1000);
-            progressDialog.updateProgress(processed, 1000, null);
+        if (progressDialog == null) return;
+        if (value < 0) {
+            progressDialog.setIndeterminate(true);
+        } else {
+            progressDialog.setIndeterminate(false);
+            if (value > 0) {
+                long processed = (long) (value * 1000);
+                progressDialog.updateProgress(processed, 1000, null);
+            }
         }
     }
 

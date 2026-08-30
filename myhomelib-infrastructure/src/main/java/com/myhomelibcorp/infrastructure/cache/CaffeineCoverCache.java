@@ -15,7 +15,11 @@ public class CaffeineCoverCache implements CoverCache {
 
     public CaffeineCoverCache() {
         this.cache = Caffeine.newBuilder()
-                .maximumSize(10_000)
+                // Covers vary by orders of magnitude in size. Bound the cache by
+                // retained bytes instead of entry count so large covers cannot
+                // consume hundreds of MiB on million-book catalog browsing.
+                .maximumWeight(64 * 1024 * 1024)
+                .weigher((String key, byte[] data) -> Math.max(1, data.length))
                 .expireAfterWrite(30, TimeUnit.MINUTES)
                 .recordStats()
                 .build();
@@ -30,7 +34,9 @@ public class CaffeineCoverCache implements CoverCache {
     @Override
     public void put(String key, byte[] imageData) {
         if (key != null && imageData != null && imageData.length > 0) {
-            cache.put(key, imageData);
+            // Do not retain pathological single covers. They can still be served
+            // to the caller; they simply bypass the in-memory cache.
+            if (imageData.length <= 16 * 1024 * 1024) cache.put(key, imageData);
         }
     }
 

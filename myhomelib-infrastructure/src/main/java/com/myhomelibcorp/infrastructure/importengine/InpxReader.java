@@ -1,13 +1,11 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.shared.util.Utf8Validator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.*;
-import java.nio.ByteBuffer;
-import java.nio.charset.CharacterCodingException;
 import java.nio.charset.Charset;
-import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -32,6 +30,14 @@ public class InpxReader {
             ".tbz2", ".tgz", ".txz", ".zip", ".7z", ".rar", ".cbr", ".cbz", ".cpio", ".jar", ".tar");
 
     public Iterator<InpxRecord> read(Path file) {
+        return read(file, false);
+    }
+
+    /**
+     * MyHomeLib compatibility: extra.inp is an online-only member. A standalone .inp explicitly
+     * selected by the user remains readable; the policy applies only to members of an INPX archive.
+     */
+    public Iterator<InpxRecord> read(Path file, boolean onlineCollection) {
         Objects.requireNonNull(file, "file");
         String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
         if (lower.endsWith(".inp")) {
@@ -41,14 +47,14 @@ public class InpxReader {
             throw new IllegalArgumentException("Unsupported INPX source: " + file);
         }
         try {
-            return new ZipInpxIterator(file);
+            return new ZipInpxIterator(file, onlineCollection);
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read INPX: " + file, e);
         }
     }
 
     public long count(Path file) {
-        return count(file, null);
+        return count(file, null, false);
     }
 
     /**
@@ -56,17 +62,15 @@ public class InpxReader {
      * ОПТИМІЗОВАНО: швидший підрахунок без створення об'єктів
      */
     public long count(Path file, java.util.concurrent.atomic.AtomicBoolean cancelFlag) {
+        return count(file, cancelFlag, false);
+    }
+
+    public long count(Path file, java.util.concurrent.atomic.AtomicBoolean cancelFlag, boolean onlineCollection) {
         long count = 0;
         String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
         if (lower.endsWith(".inp")) {
-            try (BufferedReader reader = newDetectedReader(Files.newInputStream(file))) {
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    if (cancelFlag != null && cancelFlag.get()) return -1L;
-                    count++;
-                    if (count % 10000 == 0) log.info("Підраховано {} записів", count);
-                }
-                return count;
+            try (InputStream input = Files.newInputStream(file)) {
+                return countLines(input, cancelFlag);
             } catch (IOException e) {
                 throw new UncheckedIOException("Не вдалося прочитати INP: " + file, e);
             }
@@ -78,26 +82,34 @@ public class InpxReader {
 
         try (ZipFile zip = openZip(file)) {
             List<? extends ZipEntry> inpEntries = zip.stream()
-                    .filter(e -> !e.isDirectory() && e.getName().toLowerCase(Locale.ROOT).endsWith(".inp"))
+                    .filter(e -> isCatalogInpMember(e, onlineCollection))
                     .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
                     .toList();
             if (inpEntries.isEmpty()) {
                 throw new IOException("No .inp entries in " + file);
             }
             for (ZipEntry entry : inpEntries) {
-                try (BufferedReader reader = newDetectedReader(zip.getInputStream(entry))) {
-                    String line;
-                    while ((line = reader.readLine()) != null) {
-                        if (cancelFlag != null && cancelFlag.get()) return -1L;
-                        count++;
-                        if (count % 10000 == 0) log.info("Підраховано {} записів", count);
-                    }
+                try (InputStream input = zip.getInputStream(entry)) {
+                    long entryCount = countLines(input, cancelFlag);
+                    if (entryCount < 0) return -1L;
+                    count += entryCount;
                 }
             }
+            log.debug("Підраховано {} записів INPX без декодування рядків", count);
             return count;
         } catch (IOException e) {
             throw new UncheckedIOException("Не вдалося прочитати INPX: " + file, e);
         }
+    }
+
+    private static boolean isCatalogInpMember(ZipEntry entry, boolean onlineCollection) {
+        if (entry == null || entry.isDirectory()) return false;
+        String normalized = entry.getName().replace('\\', '/');
+        String lower = normalized.toLowerCase(Locale.ROOT);
+        if (!lower.endsWith(".inp")) return false;
+        int slash = lower.lastIndexOf('/');
+        String fileName = slash >= 0 ? lower.substring(slash + 1) : lower;
+        return onlineCollection || !fileName.equals("extra.inp");
     }
 
     static void closeIterator(Iterator<?> iterator) {
@@ -132,12 +144,12 @@ public class InpxReader {
         private boolean closed;
         private long recordCount;
 
-        private ZipInpxIterator(Path path) throws IOException {
+        private ZipInpxIterator(Path path, boolean onlineCollection) throws IOException {
             this.zip = openZip(path);
             this.structure = readStructure(zip);
             this.archivesByStem = readArchives(zip);
             this.inpEntries = zip.stream()
-                    .filter(e -> !e.isDirectory() && e.getName().toLowerCase(Locale.ROOT).endsWith(".inp"))
+                    .filter(e -> isCatalogInpMember(e, onlineCollection))
                     .map(e -> (ZipEntry) e)
                     .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
                     .toList();
@@ -184,7 +196,7 @@ public class InpxReader {
                     String archive = resolveArchiveName(inpName, archivesByStem);
                     next = parseLine(line, structure, inpName, archive);
                     recordCount++;
-                    if (recordCount % 10000 == 0 && recordCount > 0) {
+                    if (recordCount % 100_000 == 0 && recordCount > 0) {
                         log.info("Прочитано {} записів з INPX", recordCount);
                     }
                     return;
@@ -235,7 +247,7 @@ public class InpxReader {
             String line = nextLine;
             advance();
             recordCount++;
-            if (recordCount % 10000 == 0 && recordCount > 0) {
+            if (recordCount % 100_000 == 0 && recordCount > 0) {
                 log.info("Прочитано {} записів з INP", recordCount);
             }
             return parseLine(line, structure, inpName, archiveName);
@@ -259,26 +271,18 @@ public class InpxReader {
     }
 
     private static InpxRecord parseLine(String line, List<String> structure, String inpName, String archiveName) {
-        String[] values = split(line);
-        Map<String, String> fields = new LinkedHashMap<>();
-        for (int i = 0; i < structure.size(); i++) {
-            fields.put(structure.get(i), i < values.length ? values[i] : "");
-        }
-        return new InpxRecord(fields, inpName, archiveName);
-    }
-
-    private static String[] split(String line) {
         char delimiter = line.indexOf(FIELD_DELIMITER) >= 0 ? FIELD_DELIMITER : '|';
-        List<String> result = new ArrayList<>(16);
+        Map<String, String> fields = new LinkedHashMap<>(Math.max(16, structure.size() * 2));
+        int fieldIndex = 0;
         int start = 0;
-        for (int i = 0; i < line.length(); i++) {
-            if (line.charAt(i) == delimiter) {
-                result.add(line.substring(start, i));
+        for (int i = 0; i <= line.length() && fieldIndex < structure.size(); i++) {
+            if (i == line.length() || line.charAt(i) == delimiter) {
+                fields.put(structure.get(fieldIndex++), line.substring(start, i));
                 start = i + 1;
             }
         }
-        result.add(line.substring(start));
-        return result.toArray(String[]::new);
+        while (fieldIndex < structure.size()) fields.put(structure.get(fieldIndex++), "");
+        return new InpxRecord(fields, inpName, archiveName);
     }
 
     private static List<String> readStructure(ZipFile zip) {
@@ -381,6 +385,105 @@ public class InpxReader {
         return zip.stream().filter(e -> Path.of(e.getName()).getFileName().toString().equalsIgnoreCase(wanted)).findFirst().orElse(null);
     }
 
+    /**
+     * Counts logical text lines without decoding every record into a String. INPX files are frequently
+     * 500k-1M+ rows, so this removes an otherwise throw-away allocation pass before the real import.
+     */
+    private static long countLines(InputStream input, java.util.concurrent.atomic.AtomicBoolean cancelFlag) throws IOException {
+        final int sampleLimit = 16 * 1024;
+        try (BufferedInputStream in = new BufferedInputStream(input, 256 * 1024)) {
+            byte[] sample = in.readNBytes(sampleLimit);
+            DetectedEncoding detected = detectEncoding(sample);
+            FastLineCounter counter = new FastLineCounter(detected.charset());
+            int skip = Math.min(detected.bomBytes(), sample.length);
+            counter.accept(sample, skip, sample.length - skip);
+            byte[] buffer = new byte[256 * 1024];
+            for (int n; (n = in.read(buffer)) >= 0;) {
+                if (cancelFlag != null && cancelFlag.get()) return -1L;
+                if (n > 0) counter.accept(buffer, 0, n);
+            }
+            if (cancelFlag != null && cancelFlag.get()) return -1L;
+            return counter.finish();
+        }
+    }
+
+    private static final class FastLineCounter {
+        private final boolean utf16le;
+        private final boolean utf16be;
+        private long breaks;
+        private boolean hasContent;
+        private boolean lineTerminated;
+        private boolean pendingCr;
+        private int pendingByte = -1;
+
+        private FastLineCounter(Charset charset) {
+            String name = charset.name().toUpperCase(Locale.ROOT);
+            this.utf16le = name.equals("UTF-16LE");
+            this.utf16be = name.equals("UTF-16BE");
+        }
+
+        private void accept(byte[] bytes, int offset, int length) {
+            if (!utf16le && !utf16be) {
+                for (int i = offset, end = offset + length; i < end; i++) {
+                    acceptCharacter(bytes[i] & 0xff);
+                }
+                return;
+            }
+            int i = offset;
+            int end = offset + length;
+            if (pendingByte >= 0 && i < end) {
+                acceptCodeUnit(pendingByte, bytes[i++] & 0xff);
+                pendingByte = -1;
+            }
+            while (i + 1 < end) acceptCodeUnit(bytes[i++] & 0xff, bytes[i++] & 0xff);
+            if (i < end) pendingByte = bytes[i] & 0xff;
+        }
+
+        private void acceptCodeUnit(int first, int second) {
+            int codeUnit = utf16le ? (first | (second << 8)) : ((first << 8) | second);
+            acceptCharacter(codeUnit);
+        }
+
+        private void acceptCharacter(int value) {
+            hasContent = true;
+            if (pendingCr) {
+                if (value == 0x0A) {
+                    breaks++;
+                    pendingCr = false;
+                    lineTerminated = true;
+                    return;
+                }
+                breaks++;
+                pendingCr = false;
+                lineTerminated = true;
+            }
+            if (value == 0x0D) {
+                pendingCr = true;
+                lineTerminated = false;
+            } else if (value == 0x0A) {
+                breaks++;
+                lineTerminated = true;
+            } else {
+                lineTerminated = false;
+            }
+        }
+
+        private long finish() {
+            // A trailing odd UTF-16 byte is malformed input, but BufferedReader would still expose
+            // the preceding logical line. Leave semantic validation to the real decoding pass.
+            if (pendingByte >= 0) {
+                hasContent = true;
+                lineTerminated = false;
+            }
+            if (pendingCr) {
+                breaks++;
+                pendingCr = false;
+                lineTerminated = true;
+            }
+            return breaks + (hasContent && !lineTerminated ? 1 : 0);
+        }
+    }
+
     private static BufferedReader newDetectedReader(InputStream input) throws IOException {
         final int sampleLimit = 16 * 1024;
         PushbackInputStream in = new PushbackInputStream(new BufferedInputStream(input, 64 * 1024), sampleLimit);
@@ -398,7 +501,7 @@ public class InpxReader {
             return new DetectedEncoding(StandardCharsets.UTF_16LE, 2);
         if (sample.length >= 2 && (sample[0] & 0xff) == 0xfe && (sample[1] & 0xff) == 0xff)
             return new DetectedEncoding(StandardCharsets.UTF_16BE, 2);
-        if (isValidUtf8(sample)) return new DetectedEncoding(StandardCharsets.UTF_8, 0);
+        if (Utf8Validator.isValid(sample)) return new DetectedEncoding(StandardCharsets.UTF_8, 0);
 
         Charset cp1251 = Charset.forName("windows-1251");
         Charset cp866 = Charset.forName("CP866");
@@ -409,17 +512,6 @@ public class InpxReader {
                 : new DetectedEncoding(cp1251, 0);
     }
 
-    private static boolean isValidUtf8(byte[] sample) {
-        try {
-            StandardCharsets.UTF_8.newDecoder()
-                    .onMalformedInput(CodingErrorAction.REPORT)
-                    .onUnmappableCharacter(CodingErrorAction.REPORT)
-                    .decode(ByteBuffer.wrap(sample));
-            return true;
-        } catch (CharacterCodingException ignored) {
-            return false;
-        }
-    }
 
     private static int textScore(String text) {
         int score = 0;

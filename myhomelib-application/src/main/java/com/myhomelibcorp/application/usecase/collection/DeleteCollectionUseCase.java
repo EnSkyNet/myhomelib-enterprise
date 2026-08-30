@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
@@ -16,6 +17,7 @@ public class DeleteCollectionUseCase {
     private final CollectionRepository collectionRepository;
     private final CollectionStorageManager storageManager;
     private final CollectionLifecyclePort collectionLifecyclePort;
+    private final CollectionSourceMonitorPort sourceMonitorPort;
 
     public void execute(String id) {
         Collection collection = collectionRepository.findById(id)
@@ -29,8 +31,12 @@ public class DeleteCollectionUseCase {
             throw new IllegalStateException("Не можна видалити останню колекцію.");
         }
 
+        // Stop in-process source monitoring as part of the collection lifecycle, not as a UI side effect.
+        sourceMonitorPort.stopMonitoring(id);
         storageManager.closeCollection(collection);
-        storageManager.vacuum(collection);
+        // VACUUM must not run here: the collection being deleted is necessarily inactive,
+        // while the storage adapter's VACUUM operates on the active JdbcTemplate.
+        // Compacting a database immediately before deleting its file is unnecessary anyway.
         storageManager.deletePhysicalFiles(collection);
         collectionRepository.deleteById(id);
         log.info("Колекцію видалено: {}", id);

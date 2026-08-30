@@ -1,7 +1,5 @@
 package com.myhomelibcorp.reader.format.fb2;
 
-import com.myhomelibcorp.reader.api.BookDocumentMetadata;
-import com.myhomelibcorp.reader.api.BookDocumentMetadataSnapshot;
 import com.myhomelibcorp.reader.api.BookMetadata;
 import com.myhomelibcorp.reader.api.BookParser;
 import com.myhomelibcorp.reader.api.BookSource;
@@ -22,6 +20,7 @@ import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
 import java.io.IOException;
+import java.io.InterruptedIOException;
 import java.io.InputStream;
 import java.io.OutputStreamWriter;
 import java.io.Writer;
@@ -69,16 +68,6 @@ public class Fb2StreamingParser implements BookParser {
         }
     }
 
-    @Override
-    public BookDocumentMetadata readMetadata(BookSource source) throws IOException {
-        ReaderDocument document = parse(source, ParseOptions.minimal());
-        return new BookDocumentMetadataSnapshot(
-                document.metadata(),
-                document.totalTextLength(),
-                document.resources() != null && document.resources().count() > 0,
-                document.chapters().size()
-        );
-    }
 
     @Override
     public ReaderDocument parse(BookSource source, ParseOptions options) throws IOException {
@@ -133,12 +122,12 @@ public class Fb2StreamingParser implements BookParser {
     }
 
     private ReaderDocument readDocument(XMLStreamReader reader, BookSource source, ParseOptions options)
-            throws XMLStreamException {
+            throws XMLStreamException, IOException {
 
         String title = "Без назви";
         List<String> authors = new ArrayList<>();
         List<String> genres = new ArrayList<>();
-        String language = "uk";
+        String language = "und";
         String series = null;
         Integer sequenceNumber = null;
         String publisher = "";
@@ -187,7 +176,10 @@ public class Fb2StreamingParser implements BookParser {
                 ? options.maxImageSizeBytes() * 4L / 3L + 16_384L
                 : 0;
 
+        int parsedEvents = 0;
         while (reader.hasNext()) {
+            if (((++parsedEvents) & 0xFF) == 0 && Thread.currentThread().isInterrupted())
+                throw new InterruptedIOException("FB2 parsing cancelled");
             int event = reader.next();
 
             if (event == XMLStreamConstants.START_ELEMENT) {
@@ -357,7 +349,6 @@ public class Fb2StreamingParser implements BookParser {
                         } else {
                             textStorage.startParagraph(TextStyle.NORMAL);
                             textStorage.append("[IMAGE:" + href.substring(1) + "]", TextStyle.NORMAL);
-                            textStorage.endParagraph();
                         }
                     }
                     continue;
@@ -366,7 +357,6 @@ public class Fb2StreamingParser implements BookParser {
                 if ("empty-line".equals(name)) {
                     textStorage.startParagraph(TextStyle.NORMAL);
                     textStorage.append(" ", TextStyle.NORMAL);
-                    textStorage.endParagraph();
                 }
             }
 
@@ -473,7 +463,6 @@ public class Fb2StreamingParser implements BookParser {
                     }
 
                     if (inParagraph && name.equals(paragraphTag)) {
-                        textStorage.endParagraph();
                         inParagraph = false;
                         paragraphTag = null;
                         paragraphStyle = TextStyle.NORMAL;

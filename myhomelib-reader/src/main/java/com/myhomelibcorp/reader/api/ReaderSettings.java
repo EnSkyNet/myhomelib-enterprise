@@ -13,6 +13,7 @@ public record ReaderSettings(
         double topMargin,
         double bottomMargin,
         boolean hyphenation,
+        /** Legacy setting retained for backward-compatible JSON/domain mapping; page numbers are controlled by showStatusPage. */
         boolean pageMode,
         boolean autoScroll,
         int scrollSpeed,
@@ -24,7 +25,11 @@ public record ReaderSettings(
         boolean showStatusPage,
         String tapLeftAction,
         String tapCenterAction,
-        String tapRightAction
+        String tapRightAction,
+        boolean twoPageMode,
+        boolean autoTwoPageLandscape,
+        boolean showStatusClock,
+        ReaderInputSettings input
 ) {
     public ReaderSettings {
         themeName = blank(themeName) ? "light" : themeName;
@@ -34,64 +39,11 @@ public record ReaderSettings(
         tapLeftAction = blank(tapLeftAction) ? "previous-page" : tapLeftAction;
         tapCenterAction = blank(tapCenterAction) ? "toggle-toolbar" : tapCenterAction;
         tapRightAction = blank(tapRightAction) ? "next-page" : tapRightAction;
+        input = input == null ? ReaderInputSettings.fromLegacy(tapLeftAction, tapCenterAction, tapRightAction) : input;
     }
 
-    private static boolean blank(String value) {
-        return value == null || value.isBlank();
-    }
-
-    public static ReaderSettings defaultSettings() {
-        return new ReaderSettings(
-                "light", "Georgia", 18.0, 1.6, 1.5, 1.5, "justify",
-                30, 30, 20, 20, true, false, false, 3, true, "",
-                true, true, true, true,
-                "previous-page", "toggle-toolbar", "next-page"
-        );
-    }
-
-    public ReaderSettings withFontSize(double newSize) {
-        return copy(themeName, fontFamily, newSize, lineSpacing, paragraphSpacing, firstLineIndent,
-                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
-                autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
-                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction);
-    }
-
-    public ReaderSettings withTheme(String newTheme) {
-        return copy(newTheme, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
-                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
-                autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
-                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction);
-    }
-
-    public ReaderSettings withFontFamily(String newFamily) {
-        return copy(themeName, newFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
-                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
-                autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
-                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction);
-    }
-
-    public ReaderSettings withPageMode(boolean enabled) {
-        return copy(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
-                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, enabled,
-                autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
-                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction);
-    }
-
-    public ReaderSettings withAutoScroll(boolean enabled) {
-        return copy(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
-                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
-                enabled, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
-                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction);
-    }
-
-    public ReaderSettings withStatusBar(boolean enabled) {
-        return copy(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
-                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
-                autoScroll, scrollSpeed, showToolbar, customCss, enabled, showStatusProgress,
-                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction);
-    }
-
-    private static ReaderSettings copy(
+    /** Source-compatible constructor for v7/early-v7.1 callers and tests. */
+    public ReaderSettings(
             String themeName, String fontFamily, double fontSize, double lineSpacing,
             double paragraphSpacing, double firstLineIndent, String alignment,
             double leftMargin, double rightMargin, double topMargin, double bottomMargin,
@@ -99,10 +51,67 @@ public record ReaderSettings(
             boolean showToolbar, String customCss, boolean showStatusBar,
             boolean showStatusProgress, boolean showStatusChapter, boolean showStatusPage,
             String tapLeftAction, String tapCenterAction, String tapRightAction) {
-        return new ReaderSettings(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing,
-                firstLineIndent, alignment, leftMargin, rightMargin, topMargin, bottomMargin,
-                hyphenation, pageMode, autoScroll, scrollSpeed, showToolbar, customCss,
-                showStatusBar, showStatusProgress, showStatusChapter, showStatusPage,
-                tapLeftAction, tapCenterAction, tapRightAction);
+        this(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent, alignment,
+                leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode, autoScroll,
+                scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress, showStatusChapter,
+                showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
+                false, true, false, ReaderInputSettings.fromLegacy(tapLeftAction, tapCenterAction, tapRightAction));
+    }
+
+    private static boolean blank(String value) { return value == null || value.isBlank(); }
+
+    public static ReaderSettings defaultSettings() {
+        ReaderInputSettings input = ReaderInputSettings.defaults();
+        return new ReaderSettings(
+                "light", "Georgia", 18.0, 1.6, 1.5, 1.5, "justify",
+                30, 30, 20, 20, true, false, false, 3, true, "",
+                true, true, true, true,
+                input.middleLeft(), input.middleCenter(), input.middleRight(),
+                false, true, false, input);
+    }
+
+    public ReaderSettings withFontSize(double newSize) { return copy(themeName, fontFamily, newSize, input, twoPageMode); }
+    public ReaderSettings withTheme(String newTheme) { return copy(newTheme, fontFamily, fontSize, input, twoPageMode); }
+    public ReaderSettings withFontFamily(String newFamily) { return copy(themeName, newFamily, fontSize, input, twoPageMode); }
+    public ReaderSettings withPageMode(boolean enabled) {
+        return fullCopy(themeName, fontFamily, fontSize, input, twoPageMode, autoTwoPageLandscape,
+                showStatusClock, enabled, autoScroll);
+    }
+    public ReaderSettings withAutoScroll(boolean enabled) {
+        return fullCopy(themeName, fontFamily, fontSize, input, twoPageMode, autoTwoPageLandscape,
+                showStatusClock, pageMode, enabled);
+    }
+    public ReaderSettings withStatusBar(boolean enabled) {
+        return new ReaderSettings(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
+                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
+                autoScroll, scrollSpeed, showToolbar, customCss, enabled, showStatusProgress,
+                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
+                twoPageMode, autoTwoPageLandscape, showStatusClock, input);
+    }
+    public ReaderSettings withTwoPageMode(boolean enabled) {
+        return fullCopy(themeName, fontFamily, fontSize, input, enabled, autoTwoPageLandscape,
+                showStatusClock, pageMode, autoScroll);
+    }
+    public ReaderSettings withInput(ReaderInputSettings value) {
+        ReaderInputSettings effective = value == null ? ReaderInputSettings.defaults() : value;
+        return new ReaderSettings(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
+                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
+                autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
+                showStatusChapter, showStatusPage, effective.middleLeft(), effective.middleCenter(), effective.middleRight(),
+                twoPageMode, autoTwoPageLandscape, showStatusClock, effective);
+    }
+
+    private ReaderSettings copy(String theme, String family, double size, ReaderInputSettings inputs, boolean spread) {
+        return fullCopy(theme, family, size, inputs, spread, autoTwoPageLandscape, showStatusClock, pageMode, autoScroll);
+    }
+
+    private ReaderSettings fullCopy(String theme, String family, double size, ReaderInputSettings inputs,
+                                    boolean spread, boolean autoSpread, boolean clock,
+                                    boolean legacyPageMode, boolean autoScrollValue) {
+        return new ReaderSettings(theme, family, size, lineSpacing, paragraphSpacing, firstLineIndent,
+                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, legacyPageMode,
+                autoScrollValue, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
+                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
+                spread, autoSpread, clock, inputs);
     }
 }

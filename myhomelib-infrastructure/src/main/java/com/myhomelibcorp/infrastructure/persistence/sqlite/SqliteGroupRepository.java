@@ -95,6 +95,20 @@ public class SqliteGroupRepository implements GroupRepository {
     }
 
     @Override
+    public void addBooksToGroup(Long groupId, List<String> bookIds) {
+        if (groupId == null || bookIds == null || bookIds.isEmpty()) return;
+        getJdbcTemplate().batchUpdate(
+                "INSERT OR IGNORE INTO book_groups (book_id, group_id) VALUES (?, ?)",
+                bookIds,
+                400,
+                (ps, bookId) -> {
+                    ps.setString(1, bookId);
+                    ps.setLong(2, groupId);
+                });
+        log.debug("Пакетно додано до {} книг у групу {}", bookIds.size(), groupId);
+    }
+
+    @Override
     public void removeBookFromGroup(Long groupId, String bookId) {
         getJdbcTemplate().update(
                 "DELETE FROM book_groups WHERE book_id = ? AND group_id = ?",
@@ -118,8 +132,11 @@ public class SqliteGroupRepository implements GroupRepository {
     }
 
     @Override
-    public List<String> findBookIdsByGroup(Long groupId) {
-        String sql = "SELECT book_id FROM book_groups WHERE group_id = ?";
-        return getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString("book_id"), groupId);
+    public boolean containsBook(Long groupId, String bookId) {
+        Integer found = getJdbcTemplate().query(
+                "SELECT 1 FROM book_groups WHERE group_id = ? AND book_id = ? LIMIT 1",
+                rs -> rs.next() ? 1 : 0,
+                groupId, bookId);
+        return found != null && found == 1;
     }
 }

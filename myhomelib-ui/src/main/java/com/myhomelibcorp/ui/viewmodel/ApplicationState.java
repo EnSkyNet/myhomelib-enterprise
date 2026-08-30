@@ -13,7 +13,6 @@ import org.springframework.stereotype.Component;
 public class ApplicationState {
 
     private final DashboardViewModel dashboard = new DashboardViewModel();
-    private final SearchViewModel search = new SearchViewModel();
     private final BookTableViewModel bookTable = new BookTableViewModel();
     private final BookDetailsViewModel bookDetails = new BookDetailsViewModel();
     private final StatusBarViewModel statusBar = new StatusBarViewModel();
@@ -26,7 +25,6 @@ public class ApplicationState {
 
     // Гетери / сетери
     public DashboardViewModel getDashboard() { return dashboard; }
-    public SearchViewModel getSearch() { return search; }
     public BookTableViewModel getBookTable() { return bookTable; }
     public BookDetailsViewModel getBookDetails() { return bookDetails; }
     public StatusBarViewModel getStatusBar() { return statusBar; }

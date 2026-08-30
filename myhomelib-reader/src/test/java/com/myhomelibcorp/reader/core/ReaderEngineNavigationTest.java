@@ -32,7 +32,6 @@ class ReaderEngineNavigationTest {
             text.startParagraph(TextStyle.NORMAL);
             text.append(("Абзац " + i + " з текстом для перевірки правильної зворотної пагінації. ").repeat(5),
                     TextStyle.NORMAL);
-            text.endParagraph();
         }
 
         ReaderDocument document = CompactReaderDocument.builder()

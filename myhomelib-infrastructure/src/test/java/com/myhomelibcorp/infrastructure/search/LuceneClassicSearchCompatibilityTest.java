@@ -78,6 +78,27 @@ class LuceneClassicSearchCompatibilityTest {
         assertThat(ids(result)).containsExactly(second);
     }
 
+    @Test
+    void reportsExactTotalHitsAboveLuceneDefaultTrackingThreshold() {
+        int count = 1_500;
+        for (int i = 0; i < count; i++) {
+            BookId id = BookId.generate();
+            search.indexSnapshot(snapshot(id, "bulkmarker item " + i, "Bulk Author", "uk", 2026, 1, 1,
+                    LocalDateTime.of(2026, 1, 1, 12, 0)));
+        }
+        search.commit();
+
+        var result = search.search(SearchRequest.builder()
+                .text("bulkmarker")
+                .limit(25)
+                .offset(1_200)
+                .build());
+
+        assertThat(result.totalHits()).isEqualTo(count);
+        assertThat(result.bookIds()).hasSize(25);
+        assertThat(result.page()).isEqualTo(48);
+    }
+
     private void assertIds(String query, BookId... expected) {
         var result = search.search(SearchRequest.builder().text(query).build());
         assertThat(ids(result)).containsExactlyInAnyOrder(expected);

@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
+import com.myhomelibcorp.domain.service.LanguageResolver;
 import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -40,7 +41,7 @@ public class EpubImporter extends AbstractBookImporter {
         String title = stripExtension(file.getFileName().toString());
         List<Author> authors = new ArrayList<>();
         List<Genre> genres = new ArrayList<>();
-        String language = "uk";
+        String language = "und";
         String series = "";
         int sequence = 0;
 
@@ -75,7 +76,7 @@ public class EpubImporter extends AbstractBookImporter {
         BookMetadata metadata = BookMetadata.builder()
                 .annotation("")
                 .keywords("")
-                .language(LanguageCode.of(language))
+                .language(LanguageResolver.resolve(language))
                 .rate(0)
                 .progress(0)
                 .build();

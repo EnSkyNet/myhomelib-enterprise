@@ -11,8 +11,6 @@ import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -35,6 +33,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
         String password = rs.getString("password");
         String url = rs.getString("url");
         String notes = rs.getString("notes");
+        String connectionScript = rs.getString("connection_script");
         return new Collection(
                 id,
                 name,
@@ -44,7 +43,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
                 user,
                 password,
                 url,
-                notes
+                notes,
+                connectionScript
         );
     };
 
@@ -52,7 +52,9 @@ public class SqliteCollectionRepository implements CollectionRepository {
     public List<Collection> findAll() {
         String sql = "SELECT * FROM collections ORDER BY name";
         try {
-            List<Collection> collections = metadataJdbcTemplate.query(sql, collectionRowMapper);
+            List<Collection> collections = metadataJdbcTemplate.query(sql, collectionRowMapper).stream()
+                    .map(this::migrateLegacyCredential)
+                    .toList();
             log.info("Завантажено {} колекцій з мета-БД", collections.size());
             for (Collection c : collections) {
                 log.info("  - Колекція: id={}, name={}, dbFile={}", c.getId(), c.getName(), c.getDbFile());
@@ -66,25 +68,18 @@ public class SqliteCollectionRepository implements CollectionRepository {
 
     @Override
     public Optional<Collection> findById(String id) {
-        String sql = "SELECT * FROM collections WHERE id = ?";
-        try {
-            Collection collection = metadataJdbcTemplate.queryForObject(sql, collectionRowMapper, id);
-            return Optional.of(collection);
-        } catch (Exception e) {
-            log.warn("Колекцію з ID {} не знайдено", id);
-            return Optional.empty();
-        }
+        if (id == null || id.isBlank()) return Optional.empty();
+        String sql = "SELECT * FROM collections WHERE id = ? LIMIT 1";
+        return metadataJdbcTemplate.query(sql, collectionRowMapper, id).stream()
+                .findFirst().map(this::migrateLegacyCredential);
     }
 
     @Override
     public Optional<Collection> findByName(String name) {
-        String sql = "SELECT * FROM collections WHERE name = ?";
-        try {
-            Collection collection = metadataJdbcTemplate.queryForObject(sql, collectionRowMapper, name);
-            return Optional.of(collection);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
+        if (name == null || name.isBlank()) return Optional.empty();
+        String sql = "SELECT * FROM collections WHERE name = ? LIMIT 1";
+        return metadataJdbcTemplate.query(sql, collectionRowMapper, name).stream()
+                .findFirst().map(this::migrateLegacyCredential);
     }
 
     @Override
@@ -101,8 +96,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
             // Нова колекція - генеруємо ID
             String id = UUID.randomUUID().toString();
             String sql = """
-                INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes, connection_script)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
             int updated = metadataJdbcTemplate.update(sql,
@@ -114,7 +109,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
                     collection.getUser(),
                     password,
                     collection.getUrl(),
-                    collection.getNotes()
+                    collection.getNotes(),
+                    collection.getConnectionScript()
             );
 
             log.info("INSERT колекції: rowsUpdated={}, id={}, name={}", updated, id, collection.getName());
@@ -141,8 +137,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
             if (!exists) {
                 // ID передано, але запису немає - виконуємо INSERT
                 String sql = """
-                    INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    INSERT INTO collections (id, name, root_folder, db_file, type, user, password, url, notes, connection_script)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """;
 
                 int updated = metadataJdbcTemplate.update(sql,
@@ -154,7 +150,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
                         collection.getUser(),
                         password,
                         collection.getUrl(),
-                        collection.getNotes()
+                        collection.getNotes(),
+                        collection.getConnectionScript()
                 );
 
                 log.info("INSERT (з існуючим ID) колекції: rowsUpdated={}, id={}", updated, collection.getId());
@@ -171,7 +168,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
                 String sql = """
                     UPDATE collections SET
                         name = ?, root_folder = ?, db_file = ?, type = ?,
-                        user = ?, password = ?, url = ?, notes = ?
+                        user = ?, password = ?, url = ?, notes = ?, connection_script = ?
                     WHERE id = ?
                     """;
                 int updated = metadataJdbcTemplate.update(sql,
@@ -183,6 +180,7 @@ public class SqliteCollectionRepository implements CollectionRepository {
                         password,
                         collection.getUrl(),
                         collection.getNotes(),
+                        collection.getConnectionScript(),
                         collection.getId()
                 );
 
@@ -205,40 +203,15 @@ public class SqliteCollectionRepository implements CollectionRepository {
         log.info("Колекцію з ID {} видалено, rowsDeleted={}", id, deleted);
     }
 
-    @Override
-    public void addBookToCollection(String collectionId, String bookId) {
-        metadataJdbcTemplate.update(
-                "INSERT OR IGNORE INTO collection_books (collection_id, book_id) VALUES (?, ?)",
-                collectionId, bookId
-        );
-        log.debug("Книгу {} додано до колекції {}", bookId, collectionId);
-    }
-
-    @Override
-    public void removeBookFromCollection(String collectionId, String bookId) {
-        metadataJdbcTemplate.update(
-                "DELETE FROM collection_books WHERE collection_id = ? AND book_id = ?",
-                collectionId, bookId
-        );
-        log.debug("Книгу {} видалено з колекції {}", bookId, collectionId);
-    }
-
-    @Override
-    public List<String> findBookIdsByCollection(String collectionId) {
-        return metadataJdbcTemplate.query(
-                "SELECT book_id FROM collection_books WHERE collection_id = ?",
-                (rs, rowNum) -> rs.getString("book_id"),
-                collectionId
-        );
-    }
-
-    @Override
-    public boolean isBookInCollection(String collectionId, String bookId) {
-        Integer count = metadataJdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM collection_books WHERE collection_id = ? AND book_id = ?",
-                Integer.class,
-                collectionId, bookId
-        );
-        return count != null && count > 0;
+    /** Lazily upgrades legacy plaintext credentials without changing collection identity/metadata. */
+    private Collection migrateLegacyCredential(Collection collection) {
+        if (collection == null || collection.getPassword() == null || collection.getPassword().isEmpty()
+                || EncryptionUtil.isEncrypted(collection.getPassword())) {
+            return collection;
+        }
+        String encrypted = EncryptionUtil.encrypt(collection.getPassword());
+        metadataJdbcTemplate.update("UPDATE collections SET password = ? WHERE id = ?", encrypted, collection.getId());
+        return new Collection(collection.getId(), collection.getName(), collection.getRootFolder(), collection.getDbFile(),
+                collection.getType(), collection.getUser(), encrypted, collection.getUrl(), collection.getNotes(), collection.getConnectionScript());
     }
 }

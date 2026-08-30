@@ -30,6 +30,7 @@ public class BookSnapshot {
     String translators;
     String city;
     String sourceUrl;
+    String isbn;
     LocalDateTime createdAt;
     LocalDateTime updateDate;
     boolean deleted;
@@ -57,6 +58,7 @@ public class BookSnapshot {
                 .translators(book.getTranslators())
                 .city(book.getCity())
                 .sourceUrl(book.getSourceUrl())
+                .isbn(book.getIsbn() == null ? "" : book.getIsbn().value())
                 .createdAt(book.getCreatedAt())
                 .updateDate(book.getUpdateDate())
                 .deleted(book.isDeleted())

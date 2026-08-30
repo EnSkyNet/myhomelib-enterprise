@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetworkUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.stage.Window;
@@ -63,6 +64,12 @@ public class CollectionUpdateUiService {
 
         AtomicBoolean flag = new AtomicBoolean(false);
         active = flag;
+        CatalogUpdateProgressDialog progressDialog = new CatalogUpdateProgressDialog(owner);
+        progressDialog.setOnCancel(() -> {
+            flag.set(true);
+            state.getStatusBar().setStatusText("Скасування оновлення…");
+        });
+        progressDialog.show();
         state.getStatusBar().setProgressVisible(true);
         state.getStatusBar().setProgress(0.0);
         state.getStatusBar().setStatusText("Перевірка версії та завантаження каталогу…");
@@ -71,12 +78,19 @@ public class CollectionUpdateUiService {
                         collection,
                         source,
                         flag,
-                        p -> Platform.runLater(() -> state.getStatusBar().setProgress(p))))
+                        p -> Platform.runLater(() -> state.getStatusBar().setProgress(p)),
+                        progressDialog::update))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (active == flag) active = null;
                     state.getStatusBar().setProgressVisible(false);
+                    progressDialog.close();
                     if (error != null) {
-                        dialogs.showError("Оновлення колекції", unwrap(error).getMessage());
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        if (flag.get()) {
+                            state.getStatusBar().setStatusText("Оновлення скасовано");
+                            return;
+                        }
+                        dialogs.showError("Оновлення колекції", cause.getMessage());
                         return;
                     }
                     if (result.imported() == 0 && result.errors() == 0) {
@@ -84,7 +98,21 @@ public class CollectionUpdateUiService {
                         dialogs.showInfo("Оновлення", "Новіша версія каталогу на сервері відсутня.");
                     } else {
                         state.getStatusBar().setStatusText("Колекцію оновлено");
-                        dialogs.showInfo("Оновлення", "Імпортовано/оновлено: " + result.imported());
+                        var changes = result.changes();
+                        long processed = result.imported() + result.skipped() + result.duplicates() + result.errors();
+                        String issueSummary = issueCodeSummary(result);
+                        dialogs.showInfo("Оновлення",
+                                "Оброблено: " + processed
+                                        + "\nІмпортовано: " + result.imported()
+                                        + "\nДодано: " + changes.inserted().size()
+                                        + "\nОновлено: " + changes.updated().size()
+                                        + "\nВидалено: " + changes.deleted().size()
+                                        + "\nПропущено: " + result.skipped()
+                                        + "\nДублікати: " + result.duplicates()
+                                        + "\nПопередження: " + result.issues().size()
+                                        + "\nПомилки: " + result.errors()
+                                        + "\nТривалість: " + formatDuration(result.durationMs())
+                                        + issueSummary);
                         if (onDone != null) onDone.run();
                     }
                 }));
@@ -98,13 +126,33 @@ public class CollectionUpdateUiService {
         return true;
     }
 
-    private Throwable unwrap(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null
-                && (current instanceof java.util.concurrent.CompletionException
-                || current instanceof java.util.concurrent.ExecutionException)) {
-            current = current.getCause();
+    private static String issueCodeSummary(com.myhomelibcorp.application.imports.statistics.ImportResult result) {
+        if (result == null || result.issues() == null || result.issues().isEmpty()) return "";
+        java.util.Map<String, Long> counts = result.issues().stream()
+                .collect(java.util.stream.Collectors.groupingBy(
+                        issue -> issue.code() == null || issue.code().isBlank() ? "UNCLASSIFIED" : issue.code(),
+                        java.util.TreeMap::new,
+                        java.util.stream.Collectors.counting()));
+        StringBuilder out = new StringBuilder("\n\nКоди проблем:");
+        int shown = 0;
+        for (var entry : counts.entrySet()) {
+            if (shown++ >= 8) {
+                out.append("\n… ще ").append(counts.size() - 8).append(" груп");
+                break;
+            }
+            out.append("\n").append(entry.getKey()).append(": ").append(entry.getValue());
         }
-        return current;
+        return out.toString();
     }
+
+    private static String formatDuration(long millis) {
+        long totalSeconds = Math.max(0L, millis) / 1000L;
+        long minutes = totalSeconds / 60L;
+        long seconds = totalSeconds % 60L;
+        long remMillis = Math.max(0L, millis) % 1000L;
+        if (minutes > 0) return minutes + " хв " + seconds + " с";
+        if (totalSeconds > 0) return totalSeconds + "." + String.format(java.util.Locale.ROOT, "%03d", remMillis) + " с";
+        return Math.max(0L, millis) + " мс";
+    }
+
 }

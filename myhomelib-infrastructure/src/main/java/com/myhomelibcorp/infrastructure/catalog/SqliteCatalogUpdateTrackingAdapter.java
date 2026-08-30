@@ -4,8 +4,8 @@ import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.catalog.CatalogSyncSession;
 import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
-import com.myhomelibcorp.application.catalog.CatalogUpdateRecord;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
+import com.myhomelibcorp.application.catalog.CatalogUpdateCursor;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -25,7 +25,6 @@ import java.util.List;
 public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTrackingPort {
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UPDATED = CatalogUpdateType.UPDATED_DOWNLOADED_BOOK.name();
-    private static final String NEW_FOLLOWED = CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR.name();
 
     private final CollectionManager collectionManager;
 
@@ -277,30 +276,14 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     }
 
     @Override
-    public List<CatalogUpdateRecord> findPendingUpdates(int limit, int offset) {
+    public List<CatalogUpdateItem> findPendingUpdateItems(int limit, CatalogUpdateCursor after) {
         int safeLimit = Math.max(1, Math.min(limit <= 0 ? 100 : limit, 10_000));
-        int safeOffset = Math.max(0, offset);
-        return jdbc().query("""
-                SELECT book_id, update_type, source_id, detected_revision, catalog_fingerprint, detected_at
-                  FROM catalog_update_events
-                 WHERE acknowledged_at IS NULL
-                 ORDER BY detected_at DESC, book_id ASC, update_type ASC
-                 LIMIT ? OFFSET ?
-                """, (rs, rowNum) -> new CatalogUpdateRecord(
-                        rs.getString("book_id"),
-                        CatalogUpdateType.valueOf(rs.getString("update_type")),
-                        rs.getString("source_id"),
-                        rs.getLong("detected_revision"),
-                        rs.getString("catalog_fingerprint"),
-                        rs.getString("detected_at")), safeLimit, safeOffset);
-    }
-
-
-    @Override
-    public List<CatalogUpdateItem> findPendingUpdateItems(int limit, int offset) {
-        int safeLimit = Math.max(1, Math.min(limit <= 0 ? 100 : limit, 10_000));
-        int safeOffset = Math.max(0, offset);
-        return jdbc().query("""
+        String cursorPredicate = after == null ? "" : """
+                 AND (e.detected_at < ?
+                      OR (e.detected_at = ? AND e.book_id > ?)
+                      OR (e.detected_at = ? AND e.book_id = ? AND e.update_type > ?))
+                """;
+        String sql = """
                 WITH ranked_authors AS (
                     SELECT
                         ba.book_id,
@@ -335,16 +318,23 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                 JOIN books b ON b.id = e.book_id
                 LEFT JOIN ranked_authors ra ON ra.book_id = e.book_id AND ra.rn = 1
                 WHERE e.acknowledged_at IS NULL
+                """ + cursorPredicate + """
                 ORDER BY e.detected_at DESC, e.book_id ASC, e.update_type ASC
-                LIMIT ? OFFSET ?
-                """, (rs, rowNum) -> new CatalogUpdateItem(
-                        rs.getString("book_id"),
-                        rs.getString("title"),
-                        rs.getString("author_id"),
-                        rs.getString("author_name"),
-                        CatalogUpdateType.valueOf(rs.getString("update_type")),
-                        rs.getBoolean("local"),
-                        rs.getString("detected_at")), safeLimit, safeOffset);
+                LIMIT ?
+                """;
+
+        Object[] params = after == null
+                ? new Object[]{safeLimit}
+                : new Object[]{after.detectedAt(), after.detectedAt(), after.bookId(),
+                        after.detectedAt(), after.bookId(), after.type().name(), safeLimit};
+        return jdbc().query(sql, (rs, rowNum) -> new CatalogUpdateItem(
+                rs.getString("book_id"),
+                rs.getString("title"),
+                rs.getString("author_id"),
+                rs.getString("author_name"),
+                CatalogUpdateType.valueOf(rs.getString("update_type")),
+                rs.getBoolean("local"),
+                rs.getString("detected_at")), params);
     }
 
     @Override

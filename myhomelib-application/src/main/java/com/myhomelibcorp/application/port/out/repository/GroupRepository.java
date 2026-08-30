@@ -13,7 +13,8 @@ public interface GroupRepository {
     void deleteById(Long id);
     void deleteAllBooksFromGroup(Long groupId);
     void addBookToGroup(Long groupId, String bookId);
+    void addBooksToGroup(Long groupId, List<String> bookIds);
     void removeBookFromGroup(Long groupId, String bookId);
-    List<String> findBookIdsByGroup(Long groupId);
+    boolean containsBook(Long groupId, String bookId);
     List<Group> findByBookId(String bookId);
 }

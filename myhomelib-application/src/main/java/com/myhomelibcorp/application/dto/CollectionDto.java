@@ -18,15 +18,6 @@ public class CollectionDto {
     private String rootFolder;
     private String dbFile;
     private int type;
-    @Builder.Default
-    private long booksCount = -1L;
-
-    /**
-     * Compatibility constructor for older presenters.
-     */
-    public CollectionDto(String id, String name, boolean allowDelete) {
-        this(id, name, false, allowDelete, allowDelete, null, null, 0, -1L);
-    }
 
     @Override
     public String toString() {

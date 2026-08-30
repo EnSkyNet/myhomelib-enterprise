@@ -3,11 +3,8 @@ package com.myhomelibcorp.ui.presenter;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.service.CollectionManagementService;
-import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
-import com.myhomelibcorp.application.usecase.collection.DeleteCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
-import com.myhomelibcorp.application.usecase.collection.RenameCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -31,13 +28,10 @@ public class CollectionPresenter {
 
     private final LoadCollectionsUseCase loadCollectionsUseCase;
     private final CreateCollectionUseCase createCollectionUseCase;
-    private final RenameCollectionUseCase renameCollectionUseCase;
-    private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final CollectionManagementService collectionManagementService;
     private final SwitchCollectionUseCase switchCollectionUseCase;
-    private final DatabaseToolsService databaseToolsService;
     private final ApplicationState appState;
 
     public void showCreateCollectionDialog(ObservableList<CollectionDto> collectionList, Stage owner) {
@@ -70,22 +64,13 @@ public class CollectionPresenter {
 
             Collection collection = createCollectionUseCase.execute(request);
 
-            CollectionDto dto = CollectionDto.builder()
-                    .id(collection.getId())
-                    .name(collection.getName())
-                    .active(false)
-                    .allowRename(true)
-                    .allowDelete(true)
-                    .rootFolder(collection.getRootFolder() != null ? collection.getRootFolder().toString() : null)
-                    .dbFile(collection.getDbFile())
-                    .type(collection.getType())
-                    .booksCount(-1L)
-                    .build();
-            collectionList.add(dto);
             appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
 
             Collection activated = switchCollectionUseCase.execute(collection);
             appState.setCurrentLibraryCollection(activated);
+            if (collectionList != null) {
+                loadCollections(collectionList);
+            }
 
             appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName());
 
@@ -95,68 +80,7 @@ public class CollectionPresenter {
         }
     }
 
-    public void showRenameCollectionDialog(CollectionDto collection, ObservableList<CollectionDto> collectionList) {
-        if (collection == null) {
-            dialogService.showWarning("Помилка", "Не вибрано колекцію");
-            return;
-        }
-        Optional<String> result = dialogService.showTextInput("Перейменувати колекцію",
-                "Введіть нову назву колекції", "Назва:", collection.getName());
-        result.ifPresent(newName -> {
-            if (!newName.isBlank() && !newName.equals(collection.getName())) {
-                try {
-                    Collection renamed = renameCollectionUseCase.execute(collection.getId(), newName);
-                    CollectionDto updated = CollectionDto.builder()
-                            .id(renamed.getId())
-                            .name(renamed.getName())
-                            .active(collection.isActive())
-                            .allowRename(collection.isAllowRename())
-                            .allowDelete(collection.isAllowDelete())
-                            .rootFolder(renamed.getRootFolder() != null ? renamed.getRootFolder().toString() : null)
-                            .dbFile(renamed.getDbFile())
-                            .type(renamed.getType())
-                            .booksCount(-1L)
-                            .build();
-                    int index = collectionList.indexOf(collection);
-                    if (index >= 0) {
-                        collectionList.set(index, updated);
-                    }
-                    if (collection.isActive()) {
-                        appState.setCurrentLibraryCollection(renamed);
-                    }
-                    appState.getStatusBar().setStatusText("Колекцію перейменовано на '" + newName + "'");
-                } catch (Exception e) {
-                    dialogService.showError("Помилка", e.getMessage());
-                }
-            }
-        });
-    }
 
-    public void showDeleteCollectionDialog(CollectionDto collection, ObservableList<CollectionDto> collectionList) {
-        if (collection == null) {
-            dialogService.showWarning("Помилка", "Не вибрано колекцію");
-            return;
-        }
-
-        Collection current = collectionManagementService.getCurrentCollection();
-        if (current != null && current.getId().equals(collection.getId())) {
-            dialogService.showWarning("Увага", "Неможливо видалити поточну колекцію",
-                    "Спочатку виберіть іншу колекцію, а потім спробуйте видалити цю.");
-            return;
-        }
-
-        if (dialogService.showConfirmation("Підтвердження",
-                "Видалити колекцію '" + collection.getName() + "'?",
-                "Книги не будуть видалені, тільки колекція.")) {
-            try {
-                deleteCollectionUseCase.execute(collection.getId());
-                collectionList.remove(collection);
-                appState.getStatusBar().setStatusText("Колекцію видалено");
-            } catch (Exception e) {
-                dialogService.showError("Помилка", e.getMessage());
-            }
-        }
-    }
 
     public void loadCollections(ObservableList<CollectionDto> collectionList) {
         try {
@@ -188,10 +112,5 @@ public class CollectionPresenter {
         return collectionManagementService.getCurrentCollection();
     }
 
-    public void vacuumCurrentCollection() {
-        Collection current = getCurrentCollection();
-        if (current != null) {
-            collectionManagementService.vacuum(current);
-        }
-    }
+
 }

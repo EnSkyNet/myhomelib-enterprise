@@ -15,7 +15,8 @@ public interface CollectionStorageManager {
     void deletePhysicalFiles(Collection collection);
 
     /**
-     * Виконує VACUUM для колекції (оптимізація БД).
+     * Виконує VACUUM для активної колекції. Storage manager працює з current DataSource,
+     * тому API навмисно не приймає довільну Collection.
      */
-    void vacuum(Collection collection);
+    void vacuumCurrent();
 }

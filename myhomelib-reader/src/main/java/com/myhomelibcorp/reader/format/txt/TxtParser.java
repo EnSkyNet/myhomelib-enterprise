@@ -49,7 +49,6 @@ public final class TxtParser implements BookParser {
                 text.startParagraph(TextStyle.NORMAL);
                 text.append(line, TextStyle.NORMAL);
                 text.append("\n", TextStyle.NORMAL);
-                text.endParagraph();
             }
         }
 

@@ -47,7 +47,7 @@ class VersionedUserDataTransferAdapterTest {
         MapSettings sourceSettings = new MapSettings();
         sourceSettings.put("filter.global.language", "uk");
         Files.writeString(tempDir.resolve("appdata/config/reader-preferences.json"), "{\"fontFamily\":\"Serif\"}");
-        Files.writeString(tempDir.resolve("appdata/config/reader-book-preferences.json"), "{\"old-1\":{\"fontFamily\":\"Mono\"}}");
+        source.jdbc().update("INSERT INTO reader_book_preferences(book_id,preferences_json) VALUES(?,?)", "old-1", "{\"fontFamily\":\"Mono\"}");
 
         Path exported = tempDir.resolve("user-data.json");
         VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), sourceSettings, mapper);
@@ -61,7 +61,6 @@ class VersionedUserDataTransferAdapterTest {
         target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new-77','L100',0,0,NULL)");
         MapSettings targetSettings = new MapSettings();
         Files.deleteIfExists(tempDir.resolve("appdata/config/reader-preferences.json"));
-        Files.deleteIfExists(tempDir.resolve("appdata/config/reader-book-preferences.json"));
 
         VersionedUserDataTransferAdapter targetAdapter = new VersionedUserDataTransferAdapter(manager(target), targetSettings, mapper);
         var result = targetAdapter.restoreFrom(exported);
@@ -76,8 +75,9 @@ class VersionedUserDataTransferAdapterTest {
         assertThat(target.jdbc().queryForObject("SELECT query FROM saved_searches WHERE name='SciFi'", String.class)).isEqualTo("space");
         assertThat(targetSettings.get("filter.global.language", "")).isEqualTo("uk");
         assertThat(Files.readString(tempDir.resolve("appdata/config/reader-preferences.json"))).contains("Serif");
-        String perBook = Files.readString(tempDir.resolve("appdata/config/reader-book-preferences.json"));
-        assertThat(perBook).contains("new-77").contains("Mono").doesNotContain("old-1");
+        String perBook = target.jdbc().queryForObject(
+                "SELECT preferences_json FROM reader_book_preferences WHERE book_id='new-77'", String.class);
+        assertThat(perBook).contains("Mono");
 
         // Repeated restore is idempotent for singleton/membership/bookmark data.
         targetAdapter.restoreFrom(exported);
@@ -107,6 +107,43 @@ class VersionedUserDataTransferAdapterTest {
         assertThat(target.jdbc().queryForObject("SELECT paragraph_id FROM reading_progress WHERE book_id='new'", String.class)).isEqualTo("p");
     }
 
+    @Test
+    void ambiguousLibIdIsSkippedUnlessExportedInternalIdStillMatches() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-ambiguous").toString());
+        Db target = db(tempDir.resolve("target-ambiguous.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('11111111-1111-1111-1111-111111111111','DUP',0,0,NULL)");
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('22222222-2222-2222-2222-222222222222','DUP',0,0,NULL)");
+
+        Path ambiguous = tempDir.resolve("ambiguous.json");
+        Files.writeString(ambiguous, portableWithBookState(
+                "{\"libId\":\"DUP\",\"sourceBookId\":\"old-id\",\"rate\":9,\"progress\":0,\"review\":\"x\"}"));
+        VersionedUserDataTransferAdapter adapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+        var skipped = adapter.restoreFrom(ambiguous);
+        assertThat(skipped.unmatchedBooks()).isGreaterThan(0);
+        assertThat(target.jdbc().queryForObject("SELECT SUM(rate) FROM books WHERE lib_id='DUP'", Integer.class)).isZero();
+
+        Path exact = tempDir.resolve("ambiguous-exact.json");
+        Files.writeString(exact, portableWithBookState(
+                "{\"libId\":\"DUP\",\"sourceBookId\":\"22222222-2222-2222-2222-222222222222\",\"rate\":7,\"progress\":0,\"review\":\"ok\"}"));
+        adapter.restoreFrom(exact);
+        assertThat(target.jdbc().queryForObject(
+                "SELECT rate FROM books WHERE id='22222222-2222-2222-2222-222222222222'", Integer.class)).isEqualTo(7);
+        assertThat(target.jdbc().queryForObject(
+                "SELECT rate FROM books WHERE id='11111111-1111-1111-1111-111111111111'", Integer.class)).isZero();
+    }
+
+    private static String portableWithBookState(String row) {
+        return """
+                {
+                  "schemaVersion":2,"format":"myhomelib-user-data",
+                  "bookState":[%s],"readingProgress":[],"readingHistory":[],"readingStats":[],
+                  "bookmarks":[],"groups":[],"groupMemberships":[],"savedSearches":[],
+                  "filterSettings":{},"readerSettings":{"global":null,"perBook":[]}
+                }
+                """.formatted(row);
+    }
+
     private static CollectionManager manager(Db db) {
         CollectionManager manager = mock(CollectionManager.class);
         when(manager.hasActiveCollection()).thenReturn(true);
@@ -126,11 +163,13 @@ class VersionedUserDataTransferAdapterTest {
         j.execute("CREATE INDEX idx_books_lib_id ON books(lib_id)");
         j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0)");
         j.execute("CREATE TABLE reading_history(book_id TEXT PRIMARY KEY,last_opened_at TEXT NOT NULL,open_count INTEGER NOT NULL DEFAULT 1)");
-        j.execute("CREATE TABLE reading_stats(id INTEGER PRIMARY KEY AUTOINCREMENT,book_id TEXT NOT NULL,first_read_at TEXT NOT NULL,last_read_at TEXT NOT NULL,total_reading_seconds INTEGER DEFAULT 0,reading_sessions INTEGER DEFAULT 0,start_percent INTEGER DEFAULT 0,end_percent INTEGER DEFAULT 0,current_percent INTEGER DEFAULT 0,completed_at TEXT)");
+        j.execute("CREATE TABLE reading_stats(id INTEGER PRIMARY KEY AUTOINCREMENT,book_id TEXT NOT NULL UNIQUE,first_read_at TEXT NOT NULL,last_read_at TEXT NOT NULL,total_reading_seconds INTEGER DEFAULT 0,reading_sessions INTEGER DEFAULT 0,start_percent INTEGER DEFAULT 0,end_percent INTEGER DEFAULT 0,current_percent INTEGER DEFAULT 0,completed_at TEXT)");
         j.execute("CREATE TABLE bookmarks(id TEXT PRIMARY KEY,book_id TEXT NOT NULL,paragraph_id TEXT NOT NULL,char_offset INTEGER DEFAULT 0,position REAL DEFAULT 0,chapter_title TEXT,context TEXT,created_at TEXT NOT NULL)");
         j.execute("CREATE TABLE groups(id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,allow_delete INTEGER DEFAULT 1)");
         j.execute("CREATE TABLE book_groups(book_id TEXT NOT NULL,group_id INTEGER NOT NULL,PRIMARY KEY(book_id,group_id))");
         j.execute("CREATE TABLE saved_searches(id TEXT PRIMARY KEY,name TEXT NOT NULL UNIQUE,query TEXT NOT NULL,filters TEXT,created_at TEXT NOT NULL,last_used TEXT NOT NULL,use_count INTEGER DEFAULT 0)");
+        j.execute("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)");
+        j.execute("CREATE TABLE reader_book_preferences(book_id TEXT PRIMARY KEY,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
     }
 
     private record Db(SQLiteDataSource dataSource, JdbcTemplate jdbc) { }

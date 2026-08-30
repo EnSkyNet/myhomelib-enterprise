@@ -82,6 +82,31 @@ class InpxReaderCompatibilityTest {
         assertThat(iterator).isExhausted();
     }
 
+
+    @Test
+    void extraInpIsOnlineOnlyAndCountMatchesRead(@TempDir Path dir) throws Exception {
+        Path inpx = dir.resolve("extra-policy.inpx");
+        String main = String.join(String.valueOf(D),
+                "Doe,John,", "prose", "Main", "", "0", "main", "10", "main-1", "0", "fb2", "2026", "en", "") + "\n";
+        String extra = String.join(String.valueOf(D),
+                "Roe,Jane,", "prose", "Extra", "", "0", "extra", "10", "extra-1", "0", "fb2", "2026", "en", "") + "\n";
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(inpx), StandardCharsets.UTF_8)) {
+            put(out, "main.inp", main.getBytes(StandardCharsets.UTF_8));
+            put(out, "extra.inp", extra.getBytes(StandardCharsets.UTF_8));
+            put(out, "version.info", "20260828".getBytes(StandardCharsets.UTF_8));
+            put(out, "collection.info", "metadata".getBytes(StandardCharsets.UTF_8));
+            put(out, "unknown.txt", "not a book".getBytes(StandardCharsets.UTF_8));
+        }
+
+        List<InpxRecord> offline = collect(reader.read(inpx, false));
+        List<InpxRecord> online = collect(reader.read(inpx, true));
+
+        assertThat(offline).extracting(r -> r.field("TITLE")).containsExactly("Main");
+        assertThat(online).extracting(r -> r.field("TITLE")).containsExactly("Extra", "Main");
+        assertThat(reader.count(inpx, null, false)).isEqualTo(offline.size());
+        assertThat(reader.count(inpx, null, true)).isEqualTo(online.size());
+    }
+
     private void assertLegacyEncoding(Path dir, Charset charset, String title, String archive) throws IOException {
         Path inpx = dir.resolve("legacy-" + charset.name().replaceAll("[^A-Za-z0-9]", "") + ".inpx");
         String structure = "TITLE" + D + "FILE" + D + "EXT" + D + "LIBID\n";

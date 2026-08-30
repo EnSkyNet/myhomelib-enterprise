@@ -487,7 +487,7 @@ def check_navigation_stage5() -> None:
                 fail(f"Stage 5 MainView action missing: {marker}")
 
     reader = ROOT / "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"
-    if reader.exists() and "readingHistoryService.recordOpened(bookId)" not in reader.read_text(encoding="utf-8"):
+    if reader.exists() and "readingHistoryService.recordOpened(openedId)" not in reader.read_text(encoding="utf-8"):
         fail("Stage 5 Reader must record successful opens in reading history")
 
 

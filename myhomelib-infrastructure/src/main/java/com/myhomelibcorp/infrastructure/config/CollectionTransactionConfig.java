@@ -21,53 +21,57 @@ public class CollectionTransactionConfig {
     @Bean(name = "collectionDataSource")
     public DataSource collectionDataSource(CollectionManager collectionManager) {
         return new DataSource() {
+            private DataSource currentDataSource() throws SQLException {
+                DataSource current = collectionManager.getCurrentDataSource();
+                if (current == null) throw new SQLException("Поточна колекція не вибрана");
+                return current;
+            }
+
             @Override
             public Connection getConnection() throws SQLException {
-                DataSource currentDs = collectionManager.getCurrentDataSource();
-                if (currentDs == null) {
-                    throw new SQLException("Поточна колекція не вибрана");
-                }
-                return currentDs.getConnection();
+                return currentDataSource().getConnection();
             }
 
             @Override
             public Connection getConnection(String username, String password) throws SQLException {
-                return getConnection();
+                return currentDataSource().getConnection(username, password);
             }
 
             @Override
             public PrintWriter getLogWriter() throws SQLException {
-                return null;
+                return currentDataSource().getLogWriter();
             }
 
             @Override
             public void setLogWriter(PrintWriter out) throws SQLException {
-                // не потрібно
+                currentDataSource().setLogWriter(out);
             }
 
             @Override
             public void setLoginTimeout(int seconds) throws SQLException {
-                // не потрібно
+                currentDataSource().setLoginTimeout(seconds);
             }
 
             @Override
             public int getLoginTimeout() throws SQLException {
-                return 0;
+                return currentDataSource().getLoginTimeout();
             }
 
             @Override
             public Logger getParentLogger() throws SQLFeatureNotSupportedException {
-                throw new SQLFeatureNotSupportedException();
+                DataSource current = collectionManager.getCurrentDataSource();
+                if (current == null) throw new SQLFeatureNotSupportedException("Поточна колекція не вибрана");
+                return current.getParentLogger();
             }
 
             @Override
             public <T> T unwrap(Class<T> iface) throws SQLException {
-                throw new SQLException("Not a wrapper");
+                return currentDataSource().unwrap(iface);
             }
 
             @Override
             public boolean isWrapperFor(Class<?> iface) throws SQLException {
-                return false;
+                return currentDataSource().isWrapperFor(iface);
             }
         };
     }

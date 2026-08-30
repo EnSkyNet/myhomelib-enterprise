@@ -33,7 +33,7 @@ public abstract class ExternalCommandBookConverter implements BookConverter {
         return !settings.get(key, "").isBlank();
     }
 
-    @Override public boolean supports(Book book) { return isAvailable(); }
+    @Override public boolean supports(Book book) { return isAvailable() && Fb2ConversionSupport.supports(book); }
     @Override public String getTargetExtension() { return extension; }
     @Override public String getFormatName() { return name; }
 

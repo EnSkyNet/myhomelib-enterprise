@@ -27,9 +27,7 @@ public interface NavigationService {
     void navigateToHistory();
     void navigateToAllBooks();
     void navigateToBook(BookId bookId);
-    void navigateToCollection(GroupId groupId);
     void showSearchResults(List<BookDto> results);
-    void clearSearch();
     void openBookFile(BookDto book);
     void openBookFolder(BookDto book);
     void readBook(BookDto book);

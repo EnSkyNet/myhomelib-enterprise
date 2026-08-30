@@ -8,6 +8,7 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.shared.util.AppPaths;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -120,7 +121,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
             while(rs.next()){
                 long old=longValue(rs,c,"authorid",0); String id=stableId("author",Long.toString(old)); map.put(old,id);
                 String first=value(rs,c,"firstname"), middle=value(rs,c,"middlename"), last=value(rs,c,"lastname");
-                String search=(last+" "+first+" "+middle).trim().toLowerCase(Locale.ROOT);
+                String search=AuthorSearchNameNormalizer.normalize(first, middle, last);
                 batch.add(new Object[]{id,first,middle,last,search,value(rs,c,"annotation")});
             }
             jt.batchUpdate("""

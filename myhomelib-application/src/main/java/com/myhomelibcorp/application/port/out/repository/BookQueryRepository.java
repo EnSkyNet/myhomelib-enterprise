@@ -16,6 +16,9 @@ public interface BookQueryRepository {
 
     long count(BookQuery query);
 
+    /** Count the default visible catalog without materializing rows. */
+    default long countAll() { return count(BookQuery.builder().build()); }
+
     // ===== Пошук по ID =====
     Optional<Book> findById(BookId id);
 

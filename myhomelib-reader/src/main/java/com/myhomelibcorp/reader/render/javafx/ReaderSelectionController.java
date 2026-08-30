@@ -36,20 +36,35 @@ final class ReaderSelectionController {
     }
 
     void begin(double x, double y, PageDimensions dimensions) {
+        begin(x, y, engine.getCurrentPage(dimensions), 0.0);
+    }
+
+    void begin(double x, double y, PageLayout page, double xOffset) {
         selecting = true;
-        long offset = hitTestOffset(x, y, dimensions);
+        long offset = hitTestOffset(x, y, page, xOffset);
         anchorOffset = offset;
         focusOffset = offset;
     }
 
     void drag(double x, double y, PageDimensions dimensions) {
         if (!selecting) return;
-        focusOffset = hitTestOffset(x, y, dimensions);
+        focusOffset = hitTestOffset(x, y, engine.getCurrentPage(dimensions), 0.0);
+    }
+
+    void drag(double x, double y, PageLayout page, double xOffset) {
+        if (!selecting) return;
+        focusOffset = hitTestOffset(x, y, page, xOffset);
     }
 
     void finish(double x, double y, PageDimensions dimensions) {
         if (!selecting) return;
-        focusOffset = hitTestOffset(x, y, dimensions);
+        focusOffset = hitTestOffset(x, y, engine.getCurrentPage(dimensions), 0.0);
+        selecting = false;
+    }
+
+    void finish(double x, double y, PageLayout page, double xOffset) {
+        if (!selecting) return;
+        focusOffset = hitTestOffset(x, y, page, xOffset);
         selecting = false;
     }
 
@@ -59,7 +74,9 @@ final class ReaderSelectionController {
         selecting = false;
     }
 
-    void renderOverlay(PageLayout page) {
+    void renderOverlay(PageLayout page) { renderOverlay(page, 0.0); }
+
+    void renderOverlay(PageLayout page, double xOffset) {
         if (!hasSelection() || page == null || page.isEmpty()) return;
         long from = Math.min(anchorOffset, focusOffset);
         long to = Math.max(anchorOffset, focusOffset);
@@ -73,8 +90,8 @@ final class ReaderSelectionController {
             long b = Math.min(to, lineEnd);
             if (b <= a) continue;
             double length = Math.max(1, lineEnd - lineStart);
-            double x1 = line.x() + line.width() * ((a - lineStart) / length);
-            double x2 = line.x() + line.width() * ((b - lineStart) / length);
+            double x1 = xOffset + line.x() + line.width() * ((a - lineStart) / length);
+            double x2 = xOffset + line.x() + line.width() * ((b - lineStart) / length);
             gc.fillRect(x1, line.y(), Math.max(1, x2 - x1), Math.max(1, line.height()));
         }
     }
@@ -94,10 +111,10 @@ final class ReaderSelectionController {
         Clipboard.getSystemClipboard().setContent(content);
     }
 
-    private long hitTestOffset(double x, double y, PageDimensions dimensions) {
-        if (!engine.isOpen() || dimensions == null) return 0;
-        PageLayout page = engine.getCurrentPage(dimensions);
+    private long hitTestOffset(double x, double y, PageLayout page, double xOffset) {
+        if (!engine.isOpen()) return 0;
         if (page == null || page.getLines().isEmpty()) return engine.getCurrentPosition().textOffset();
+        double localX = x - xOffset;
         LineLayout nearest = page.getLines().getFirst();
         double best = Double.MAX_VALUE;
         for (LineLayout line : page.getLines()) {
@@ -113,7 +130,7 @@ final class ReaderSelectionController {
             }
         }
         int length = Math.max(1, nearest.charLength());
-        double ratio = nearest.width() <= 1 ? 0 : (x - nearest.x()) / nearest.width();
+        double ratio = nearest.width() <= 1 ? 0 : (localX - nearest.x()) / nearest.width();
         ratio = Math.max(0, Math.min(1, ratio));
         return nearest.textOffset() + Math.min(length, Math.max(0, (int) Math.round(ratio * length)));
     }

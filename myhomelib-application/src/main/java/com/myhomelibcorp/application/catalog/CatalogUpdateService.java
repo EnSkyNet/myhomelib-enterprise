@@ -19,20 +19,13 @@ public class CatalogUpdateService {
 
     private final CatalogUpdateTrackingPort tracking;
 
-    public void followAuthor(String authorId) {
-        tracking.setAuthorFollowed(AuthorId.fromString(authorId), true);
+    public void setAuthorFollowed(AuthorId authorId, boolean followed) {
+        if (authorId == null) throw new IllegalArgumentException("authorId cannot be null");
+        tracking.setAuthorFollowed(authorId, followed);
     }
 
-    public void unfollowAuthor(String authorId) {
-        tracking.setAuthorFollowed(AuthorId.fromString(authorId), false);
-    }
-
-    public boolean isAuthorFollowed(String authorId) {
-        return tracking.isAuthorFollowed(AuthorId.fromString(authorId));
-    }
-
-    public List<CatalogUpdateRecord> pendingUpdates(int limit, int offset) {
-        return tracking.findPendingUpdates(limit, offset);
+    public boolean isAuthorFollowed(AuthorId authorId) {
+        return authorId != null && tracking.isAuthorFollowed(authorId);
     }
 
     public long pendingUpdateCount() {
@@ -50,10 +43,10 @@ public class CatalogUpdateService {
         Map<AuthorKey, MutableGroup> groups = new LinkedHashMap<>();
         long newCount = 0;
         long updatedCount = 0;
-        int offset = 0;
+        CatalogUpdateCursor cursor = null;
 
-        while (offset < expected) {
-            List<CatalogUpdateItem> page = tracking.findPendingUpdateItems(PAGE_SIZE, offset);
+        while (newCount + updatedCount < expected) {
+            List<CatalogUpdateItem> page = tracking.findPendingUpdateItems(PAGE_SIZE, cursor);
             if (page.isEmpty()) break;
             for (CatalogUpdateItem item : page) {
                 AuthorKey key = new AuthorKey(item.authorId(), item.authorName());
@@ -66,7 +59,7 @@ public class CatalogUpdateService {
                     updatedCount++;
                 }
             }
-            offset += page.size();
+            cursor = CatalogUpdateCursor.after(page.getLast());
             if (page.size() < PAGE_SIZE) break;
         }
 

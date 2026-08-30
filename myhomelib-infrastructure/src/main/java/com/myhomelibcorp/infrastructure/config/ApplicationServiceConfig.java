@@ -1,20 +1,22 @@
 package com.myhomelibcorp.infrastructure.config;
 
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
-import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.application.port.out.infrastructure.FolderSyncPort;
 import com.myhomelibcorp.application.port.out.repository.*;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
+import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.collection.*;
 import com.myhomelibcorp.application.usecase.collection.AttachHlc2CollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetworkUseCase;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionPropertiesUseCase;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort;
-import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.port.out.catalog.CatalogSourceStatePort;
+import com.myhomelibcorp.application.port.out.collection.BookUserStateTransferPort;
+import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.port.out.collection.LegacyCollectionAttachPort;
 import com.myhomelibcorp.application.usecase.collection.CopyBooksBetweenCollectionsUseCase;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
@@ -24,6 +26,7 @@ import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
 import com.myhomelibcorp.application.usecase.sync.SyncFolderUseCase;
 import com.myhomelibcorp.application.usecase.author.UpdateAuthorDescriptionUseCase;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -35,11 +38,9 @@ public class ApplicationServiceConfig {
             CollectionLifecyclePort collectionLifecyclePort,
             DatabaseMigrationPort databaseMigrationPort,
             CacheInvalidationPort cacheInvalidationPort,
-            DictionaryCachePort dictionaryCachePort,
-            GenreRepository genreRepository,
             SeriesRepository seriesRepository,
-            GroupRepository groupRepository,
             IndexRebuilder indexRebuilder,
+            SearchIndexLifecycle searchIndexLifecycle,
             DomainEventPublisher eventPublisher,
             ExecutorPort executorPort
     ) {
@@ -47,11 +48,9 @@ public class ApplicationServiceConfig {
                 collectionLifecyclePort,
                 databaseMigrationPort,
                 cacheInvalidationPort,
-                dictionaryCachePort,
-                genreRepository,
                 seriesRepository,
-                groupRepository,
                 indexRebuilder,
+                searchIndexLifecycle,
                 eventPublisher,
                 executorPort
         );
@@ -72,12 +71,14 @@ public class ApplicationServiceConfig {
     public CreateCollectionUseCase createCollectionUseCase(
             CollectionRepository collectionRepository,
             CollectionLifecycleService collectionLifecycleService,
-            com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importFileUseCase
+            com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importFileUseCase,
+            com.myhomelibcorp.application.port.out.catalog.CollectionInfoPort collectionInfoPort
     ) {
         return new CreateCollectionUseCase(
                 collectionRepository,
                 collectionLifecycleService,
-                importFileUseCase
+                importFileUseCase,
+                collectionInfoPort
         );
     }
 
@@ -98,8 +99,12 @@ public class ApplicationServiceConfig {
             RemoteCatalogDownloadPort downloader,
             com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importer,
             CollectionLifecycleService lifecycle,
-            ApplicationSettingsPort settings) {
-        return new UpdateCollectionFromNetworkUseCase(downloader, importer, lifecycle, settings);
+            CatalogSourceStatePort sourceState,
+            SearchIndexer searchIndexer,
+            BookQueryRepository bookQueryRepository,
+            @Value("${app.import.change-tracking-limit:50000}") int changeTrackingLimit) {
+        return new UpdateCollectionFromNetworkUseCase(
+                downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, changeTrackingLimit);
     }
 
     @Bean
@@ -133,7 +138,10 @@ public class ApplicationServiceConfig {
             CollectionRepository collections,
             com.myhomelibcorp.application.port.out.resource.BookResourcePort resources,
             CollectionLifecycleService lifecycle,
-            com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importer) {
-        return new CopyBooksBetweenCollectionsUseCase(books, collections, resources, lifecycle, importer);
+            com.myhomelibcorp.application.imports.saver.BookSaver bookSaver,
+            BookUserStateTransferPort userStateTransfer,
+            com.myhomelibcorp.application.search.SearchIndexSynchronizer searchIndexSynchronizer) {
+        return new CopyBooksBetweenCollectionsUseCase(
+                books, collections, resources, lifecycle, bookSaver, userStateTransfer, searchIndexSynchronizer);
     }
 }

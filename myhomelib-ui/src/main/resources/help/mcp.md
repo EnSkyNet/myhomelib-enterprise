@@ -2,5 +2,5 @@
 
 myhomelib-mcp — окремий read-only сервер, який працює без JavaFX GUI. Він відкриває БД колекції в query-only режимі та надає tools: search_books, list_authors, list_series, list_genres, book_info, book_toc, book_text, search_inside_book.
 
-Запуск: java -jar myhomelib-mcp-1.0.0.jar --db /path/library.db
+Запуск: java -jar myhomelib-mcp-7.1.0.jar --db /path/library.db
 або --collection "Назва" при доступному meta.db. Також підтримується MYHOMELIB_DB.

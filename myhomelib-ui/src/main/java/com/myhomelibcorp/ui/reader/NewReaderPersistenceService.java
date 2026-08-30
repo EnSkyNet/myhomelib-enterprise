@@ -29,64 +29,31 @@ public class NewReaderPersistenceService {
 
     // ==================== ПОЗИЦІЯ ====================
 
-    /**
-     * Перевіряє, чи змінилася позиція з моменту останнього збереження.
-     */
+
+    /** Перевіряє, чи позиція істотно змінилася від останнього збереження. */
     private boolean isPositionChanged(String bookId, ReaderPosition newPos) {
-        if (newPos == null) {
-            return false;
-        }
-
+        if (newPos == null) return false;
         ReaderPosition lastSaved = lastSavedPositions.get(bookId);
-        if (lastSaved == null) {
-            return true;
-        }
-
-        // Перевіряємо зміну offset (головний критерій)
+        if (lastSaved == null) return true;
         boolean offsetChanged = Math.abs(lastSaved.textOffset() - newPos.textOffset()) > 5;
-
-        // Перевіряємо зміну chapter
         boolean chapterChanged = lastSaved.chapterIndex() != newPos.chapterIndex();
-
-        // Перевіряємо зміну percent (якщо offset не змінився)
-        boolean percentChanged = Math.abs(lastSaved.getPercent(1000) - newPos.getPercent(1000)) > 1.0;
-
-        boolean changed = offsetChanged || chapterChanged || percentChanged;
-
-        if (changed) {
-            log.trace("📊 Позиція змінилася: offset {} -> {}, chapter {} -> {}",
-                    lastSaved.textOffset(), newPos.textOffset(),
-                    lastSaved.chapterIndex(), newPos.chapterIndex());
-        }
-
-        return changed;
+        boolean paragraphChanged = lastSaved.paragraphIndex() != newPos.paragraphIndex();
+        return offsetChanged || chapterChanged || paragraphChanged;
     }
 
-    /**
-     * Зберігає позицію читання в БД (тільки якщо вона змінилася).
-     */
-    public void savePosition(String bookId, ReaderPosition position) {
-        if (bookId == null || position == null) {
-            return;
-        }
-
-        // Перевіряємо, чи змінилася позиція
-        if (!isPositionChanged(bookId, position)) {
-            log.trace("⏭️ Позиція не змінилася, пропускаємо збереження");
-            return;
-        }
-
+    /** Зберігає позицію читання, якщо вона змінилася. */
+    public void savePosition(String bookId, ReaderPosition position, long totalTextLength) {
+        if (bookId == null || position == null || !isPositionChanged(bookId, position)) return;
         try {
             Optional<ReadingProgressDto> existing = readingProgressRepository.findByBookId(bookId);
             ReadingProgressDto dto;
-
             if (existing.isPresent()) {
                 dto = existing.get();
                 dto.setAnchorId(position.serialize());
                 dto.setParagraphIndex(position.paragraphIndex());
                 dto.setParagraphId("p" + position.paragraphIndex());
                 dto.setCharOffset(position.charOffset());
-                dto.setPercent(position.getPercent(1000));
+                dto.setPercent(position.getPercent(totalTextLength));
                 dto.setUpdatedAt(LocalDateTime.now());
             } else {
                 dto = ReadingProgressDto.builder()
@@ -95,68 +62,32 @@ public class NewReaderPersistenceService {
                         .paragraphIndex(position.paragraphIndex())
                         .paragraphId("p" + position.paragraphIndex())
                         .charOffset(position.charOffset())
-                        .percent(position.getPercent(1000))
+                        .percent(position.getPercent(totalTextLength))
                         .updatedAt(LocalDateTime.now())
                         .readingTimeSeconds(0)
                         .build();
             }
-
             readingProgressRepository.save(dto);
-
-            // Оновлюємо кеш останньої збереженої позиції
             lastSavedPositions.put(bookId, position);
-
-            log.debug("💾 Позицію збережено в БД: book={}, offset={}, chapter={}, percent={}%",
-                    bookId, position.textOffset(), position.chapterIndex(),
-                    Math.round(position.getPercent(1000)));
-
         } catch (Exception e) {
             log.error("Помилка збереження позиції в БД: {}", e.getMessage());
         }
     }
 
-    /**
-     * Завантажує позицію читання з БД.
-     */
+    /** Завантажує позицію читання з БД. */
     public Optional<ReaderPosition> loadPosition(String bookId) {
-        if (bookId == null) {
-            return Optional.empty();
-        }
-
+        if (bookId == null) return Optional.empty();
         try {
             Optional<ReadingProgressDto> dto = readingProgressRepository.findByBookId(bookId);
             if (dto.isPresent()) {
-                ReadingProgressDto progress = dto.get();
-                ReaderPosition position = ReaderPosition.parse(progress.getAnchorId());
-
-                // Зберігаємо в кеш
+                ReaderPosition position = ReaderPosition.parse(dto.get().getAnchorId());
                 lastSavedPositions.put(bookId, position);
-
-                log.debug("📖 Позицію завантажено з БД: book={}, offset={}, chapter={}",
-                        bookId, position.textOffset(), position.chapterIndex());
                 return Optional.of(position);
             }
         } catch (Exception e) {
             log.error("Помилка завантаження позиції з БД: {}", e.getMessage());
         }
-
         return Optional.empty();
-    }
-
-    /**
-     * Видаляє позицію читання з БД.
-     */
-    public void deletePosition(String bookId) {
-        if (bookId == null) {
-            return;
-        }
-        try {
-            readingProgressRepository.deleteByBookId(bookId);
-            lastSavedPositions.remove(bookId);
-            log.debug("🗑️ Позицію видалено з БД: book={}", bookId);
-        } catch (Exception e) {
-            log.error("Помилка видалення позиції з БД: {}", e.getMessage());
-        }
     }
 
     /**
@@ -169,14 +100,14 @@ public class NewReaderPersistenceService {
 
     // ==================== ЗАКЛАДКИ ====================
 
-    public Bookmark saveBookmark(String bookId, ReaderPosition position, String title, String context) {
+    public Bookmark saveBookmark(String bookId, ReaderPosition position, long totalTextLength, String title, String context) {
         if (bookId == null || position == null) {
             return null;
         }
 
         try {
-            String paragraphId = "p" + position.paragraphIndex();
-            double posPercent = position.getPercent(1000) / 100.0;
+            String paragraphId = "rp:" + position.serialize();
+            double posPercent = position.getPercent(totalTextLength);
 
             Bookmark bookmark = Bookmark.builder()
                     .id(UUID.randomUUID().toString())
@@ -225,31 +156,6 @@ public class NewReaderPersistenceService {
         }
     }
 
-    public void deleteBookmarks(String bookId) {
-        if (bookId == null) {
-            return;
-        }
-
-        try {
-            bookmarkRepository.deleteByBookId(bookId);
-            log.debug("🗑️ Всі закладки видалено з БД для книги {}", bookId);
-        } catch (Exception e) {
-            log.error("Помилка видалення закладок з БД: {}", e.getMessage());
-        }
-    }
-
-    public boolean hasBookmarks(String bookId) {
-        if (bookId == null) {
-            return false;
-        }
-
-        try {
-            return bookmarkRepository.countByBookId(bookId) > 0;
-        } catch (Exception e) {
-            log.error("Помилка перевірки закладок: {}", e.getMessage());
-            return false;
-        }
-    }
 
     public int getBookmarkCount(String bookId) {
         if (bookId == null) {
@@ -264,28 +170,24 @@ public class NewReaderPersistenceService {
         }
     }
 
-    public ReaderPosition bookmarkToPosition(Bookmark bookmark) {
-        if (bookmark == null) {
-            return ReaderPosition.start();
+    public ReaderPosition bookmarkToPosition(Bookmark bookmark, long totalTextLength) {
+        if (bookmark == null) return ReaderPosition.start();
+        String paragraphId = bookmark.getParagraphId();
+        if (paragraphId != null && paragraphId.startsWith("rp:")) {
+            return ReaderPosition.parse(paragraphId.substring(3));
         }
 
+        // Legacy bookmarks stored only a paragraph id + percentage. Keep them navigable.
         int paragraphIndex = 0;
-        String paragraphId = bookmark.getParagraphId();
         if (paragraphId != null && paragraphId.startsWith("p")) {
             try {
                 paragraphIndex = Integer.parseInt(paragraphId.substring(1));
-            } catch (NumberFormatException e) {
-                // ignore
+            } catch (NumberFormatException ignored) {
+                paragraphIndex = 0;
             }
         }
-
-        long offset = (long) (bookmark.getPosition() * 1000);
-
-        return new ReaderPosition(
-                0,
-                offset,
-                paragraphIndex,
-                bookmark.getCharOffset()
-        );
+        double percent = Math.max(0.0, Math.min(100.0, bookmark.getPosition()));
+        long offset = totalTextLength <= 0 ? 0L : Math.round(totalTextLength * percent / 100.0);
+        return new ReaderPosition(0, offset, paragraphIndex, bookmark.getCharOffset());
     }
 }

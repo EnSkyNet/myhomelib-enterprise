@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.imports.context;
 
+import com.myhomelibcorp.application.progress.OperationProgress;
 import lombok.Builder;
 import lombok.Value;
 
@@ -20,18 +21,23 @@ public class ImportContext {
     String catalogSourceLocation;
     @Builder.Default boolean updateExisting = false;
     @Builder.Default boolean indexAfterSave = true;
+    /** Publish one public ImportFinishedEvent for this context. Composite operations disable child events. */
+    @Builder.Default boolean publishFinishedEvent = true;
     /** True when the catalog package is a complete snapshot; false for delta/extra updates. */
     @Builder.Default boolean catalogFullSnapshot = true;
     DoubleConsumer progressListener;
-    Consumer<String> statusConsumer; // додано
+    Consumer<String> statusConsumer;
+    /** Structured, JavaFX-independent telemetry used by v7.1 progress UI. */
+    Consumer<OperationProgress> operationProgressListener;
+    String operationId;
     AtomicBoolean cancelFlag;
-    @Builder.Default int batchSize = 5000;
+    @Builder.Default int batchSize = 1000;
 
     public static ImportContext defaultContext() {
         return ImportContext.builder()
                 .updateExisting(false)
                 .indexAfterSave(true)
-                .batchSize(500)
+                .batchSize(1000)
                 .build();
     }
 }

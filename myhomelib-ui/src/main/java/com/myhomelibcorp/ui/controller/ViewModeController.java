@@ -1,9 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.ui.table.TreeBookTableController;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Node;
-import javafx.scene.control.TableView;
 import javafx.scene.layout.BorderPane;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -40,8 +38,7 @@ public class ViewModeController {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/tree-book-table.fxml"));
             loader.setControllerFactory(springContext::getBean);
             Node treeView = loader.load();
-            TreeBookTableController controller = loader.getController();
-            controller.loadBooks();
+            // FXML initialize() builds the tree from the current server-paged table page.
             currentCenter = mainPane.getCenter();
             mainPane.setCenter(treeView);
             log.info("Переключено на режим дерева");

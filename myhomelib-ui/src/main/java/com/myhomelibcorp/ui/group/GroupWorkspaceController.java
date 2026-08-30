@@ -1,12 +1,16 @@
 package com.myhomelibcorp.ui.group;
 
-import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.dto.GroupDto;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.usecase.group.*;
+import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.collections.FXCollections;
@@ -21,12 +25,14 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.stream.Collectors;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class GroupWorkspaceController {
+
+    private static final int PAGE_SIZE = 100;
 
     private final LoadGroupsUseCase loadGroupsUseCase;
     private final LoadGroupBooksUseCase loadGroupBooksUseCase;
@@ -40,6 +46,7 @@ public class GroupWorkspaceController {
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final BookViewModelMapper bookViewModelMapper;
+    private final UiBackgroundExecutor executor;
 
     @FXML private ListView<GroupDto> groupsListView;
     @FXML private Label groupNameLabel;
@@ -48,47 +55,48 @@ public class GroupWorkspaceController {
     @FXML private TableColumn<BookViewModel, String> titleColumn;
     @FXML private TableColumn<BookViewModel, String> authorColumn;
     @FXML private TableColumn<BookViewModel, String> seriesColumn;
-    @FXML private Button addBookButton;
-    @FXML private Button removeBookButton;
-    @FXML private Button renameButton;
-    @FXML private Button deleteButton;
-    @FXML private Button createButton;
+    @FXML private Button previousPageButton;
+    @FXML private Button nextPageButton;
+    @FXML private Label pageLabel;
     @FXML private VBox groupDetailsBox;
 
-    private GroupDto currentGroup;
     private final ObservableList<GroupDto> groupList = FXCollections.observableArrayList();
     private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
+    private final AtomicLong pageGeneration = new AtomicLong();
+    private GroupDto currentGroup;
+    private int currentPage;
 
     @FXML
     public void initialize() {
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         authorColumn.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
-
         booksTableView.setItems(books);
         groupsListView.setItems(groupList);
 
         groupsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
+            currentPage = 0;
+            pageGeneration.incrementAndGet();
             if (selected != null) {
                 currentGroup = selected;
-                appState.setCurrentGroup(null); // поки немає GroupDto -> Group, але можна конвертувати
-                loadGroupBooks(selected);
+                appState.setCurrentGroup(new Group(GroupId.fromLong(selected.getId()), selected.getName(), selected.isAllowDelete()));
                 groupDetailsBox.setVisible(true);
-                log.info("Вибрано групу: {}", selected.getName());
+                loadGroupBooks(selected);
             } else {
+                currentGroup = null;
+                appState.setCurrentGroup(null);
+                books.clear();
                 groupDetailsBox.setVisible(false);
+                updatePageControls(PageResult.empty());
             }
         });
 
         booksTableView.setOnMouseClicked(event -> {
             if (event.getClickCount() == 2) {
                 BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
-                if (selected != null) {
-                    navigationService.navigateToBook(BookId.fromString(selected.getId()));
-                }
+                if (selected != null) navigationService.navigateToBook(BookId.fromString(selected.getId()));
             }
         });
-
         groupsListView.addEventHandler(ContextMenuEvent.CONTEXT_MENU_REQUESTED, event -> {
             GroupDto selected = groupsListView.getSelectionModel().getSelectedItem();
             if (selected != null) {
@@ -96,22 +104,18 @@ public class GroupWorkspaceController {
                 event.consume();
             }
         });
-
+        updatePageControls(PageResult.empty());
         loadGroups();
     }
 
     private void showContextMenu(GroupDto group, double x, double y) {
         ContextMenu menu = new ContextMenu();
-
         MenuItem selectItem = new MenuItem("Вибрати");
         selectItem.setOnAction(e -> groupsListView.getSelectionModel().select(group));
-
         MenuItem renameItem = new MenuItem("Перейменувати");
         renameItem.setOnAction(e -> renameGroup(group));
-
         MenuItem deleteItem = new MenuItem("Видалити");
         deleteItem.setOnAction(e -> deleteGroup(group));
-
         menu.getItems().addAll(selectItem, renameItem, deleteItem);
         menu.show(groupsListView, x, y);
     }
@@ -120,12 +124,8 @@ public class GroupWorkspaceController {
         try {
             List<GroupDto> groups = loadGroupsUseCase.execute();
             groupList.setAll(groups);
-            log.info("Завантажено {} груп", groups.size());
-            if (!groups.isEmpty()) {
-                groupsListView.getSelectionModel().selectFirst();
-            } else {
-                groupDetailsBox.setVisible(false);
-            }
+            if (!groups.isEmpty()) groupsListView.getSelectionModel().selectFirst();
+            else groupDetailsBox.setVisible(false);
         } catch (Exception e) {
             log.error("Помилка завантаження груп", e);
             dialogService.showError("Помилка", "Не вдалося завантажити групи: " + e.getMessage());
@@ -133,17 +133,60 @@ public class GroupWorkspaceController {
     }
 
     private void loadGroupBooks(GroupDto group) {
-        List<BookListItem> items = loadGroupBooksUseCase.execute(group.getId());
-        List<BookViewModel> vms = items.stream()
-                .map(bookViewModelMapper::toViewModel)
-                .collect(Collectors.toList());
-        books.setAll(vms);
-        groupNameLabel.setText(group.getName());
-        booksCountLabel.setText(vms.size() + " книг");
-        log.info("Завантажено {} книг для групи {}", vms.size(), group.getName());
+        if (group == null) return;
+        long generation = pageGeneration.incrementAndGet();
+        int requestedPage = Math.max(0, currentPage);
+        int offset = requestedPage * PAGE_SIZE;
+        setPagingBusy(true);
+        executor.submit(() -> loadGroupBooksUseCase.execute(group.getId(), PAGE_SIZE, offset))
+                .thenAccept(page -> UiExecutor.runOnUiThread(() -> {
+                    if (generation != pageGeneration.get() || currentGroup == null || !currentGroup.getId().equals(group.getId())) return;
+                    if (page.content().isEmpty() && requestedPage > 0 && page.totalElements() > 0) {
+                        currentPage = Math.max(0, page.totalPages() - 1);
+                        loadGroupBooks(group);
+                        return;
+                    }
+                    currentPage = page.currentPage();
+                    books.setAll(page.content().stream().map(bookViewModelMapper::toViewModel).toList());
+                    groupNameLabel.setText(group.getName());
+                    booksCountLabel.setText(page.totalElements() + " книг");
+                    updatePageControls(page);
+                    setPagingBusy(false);
+                })).exceptionally(ex -> {
+                    log.error("Помилка завантаження книг групи {}", group.getName(), ex);
+                    UiExecutor.runOnUiThread(() -> {
+                        if (generation == pageGeneration.get()) setPagingBusy(false);
+                    });
+                    return null;
+                });
     }
 
-    // ---- Дії з групами ----
+    private void updatePageControls(PageResult<?> page) {
+        int shownPage = page.totalElements() == 0 ? 0 : page.currentPage() + 1;
+        int totalPages = page.totalElements() == 0 ? 0 : Math.max(1, page.totalPages());
+        pageLabel.setText("Сторінка " + shownPage + " / " + totalPages);
+        previousPageButton.setDisable(!page.hasPrevious());
+        nextPageButton.setDisable(!page.hasNext());
+    }
+
+    private void setPagingBusy(boolean busy) {
+        if (previousPageButton != null) previousPageButton.setDisable(busy || currentPage <= 0);
+        if (nextPageButton != null && busy) nextPageButton.setDisable(true);
+    }
+
+    @FXML
+    private void onPreviousPage() {
+        if (currentGroup == null || currentPage <= 0) return;
+        currentPage--;
+        loadGroupBooks(currentGroup);
+    }
+
+    @FXML
+    private void onNextPage() {
+        if (currentGroup == null) return;
+        currentPage++;
+        loadGroupBooks(currentGroup);
+    }
 
     @FXML
     private void onAddBookToGroup() {
@@ -152,18 +195,14 @@ public class GroupWorkspaceController {
             dialogService.showWarning("Немає книги", "Будь ласка, виберіть книгу в головній таблиці.");
             return;
         }
-
         if (currentGroup == null) {
             dialogService.showWarning("Немає групи", "Будь ласка, виберіть групу зліва.");
             return;
         }
-
-        boolean inGroup = isBookInGroupUseCase.execute(currentGroup.getId(), selectedBook.getId());
-        if (inGroup) {
+        if (isBookInGroupUseCase.execute(currentGroup.getId(), selectedBook.getId())) {
             dialogService.showWarning("Вже є", "Ця книга вже в групі \"" + currentGroup.getName() + "\".");
             return;
         }
-
         try {
             addBookToGroupUseCase.execute(currentGroup.getId(), selectedBook.getId());
             loadGroupBooks(currentGroup);
@@ -185,7 +224,6 @@ public class GroupWorkspaceController {
             dialogService.showError("Помилка", "Виберіть книгу в таблиці");
             return;
         }
-
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Підтвердження");
         confirm.setHeaderText("Видалити книгу з групи \"" + currentGroup.getName() + "\"?");
@@ -193,8 +231,7 @@ public class GroupWorkspaceController {
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
                 removeBookFromGroupUseCase.execute(currentGroup.getId(), selected.getId());
-                books.remove(selected);
-                booksCountLabel.setText(books.size() + " книг");
+                loadGroupBooks(currentGroup);
                 dialogService.showInfo("Успішно", "Книгу видалено з групи");
             } catch (Exception e) {
                 log.error("Помилка видалення книги з групи", e);
@@ -205,25 +242,18 @@ public class GroupWorkspaceController {
 
     @FXML
     private void onCreateGroup() {
-        Optional<String> result = dialogService.showTextInput(
-                "Створити групу",
-                "Введіть назву нової групи",
-                "Назва:",
-                "");
+        Optional<String> result = dialogService.showTextInput("Створити групу", "Введіть назву нової групи", "Назва:", "");
         result.ifPresent(name -> {
-            if (!name.isBlank()) {
-                try {
-                    com.myhomelibcorp.domain.model.group.Group group = createGroupUseCase.execute(name);
-                    // Конвертуємо в DTO і додаємо до списку
-                    GroupDto dto = new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete());
-                    groupList.add(dto);
-                    groupsListView.getSelectionModel().select(dto);
-                    dialogService.showInfo("Успішно", "Групу \"" + name + "\" створено");
-                    log.info("Створено групу: id={}, name={}", group.getId(), group.getName());
-                } catch (Exception e) {
-                    log.error("Помилка створення групи", e);
-                    dialogService.showError("Помилка", "Не вдалося створити групу: " + e.getMessage());
-                }
+            if (name.isBlank()) return;
+            try {
+                Group group = createGroupUseCase.execute(name);
+                GroupDto dto = new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete());
+                groupList.add(dto);
+                groupsListView.getSelectionModel().select(dto);
+                dialogService.showInfo("Успішно", "Групу \"" + name + "\" створено");
+            } catch (Exception e) {
+                log.error("Помилка створення групи", e);
+                dialogService.showError("Помилка", "Не вдалося створити групу: " + e.getMessage());
             }
         });
     }
@@ -243,26 +273,20 @@ public class GroupWorkspaceController {
             dialogService.showError("Помилка", "Системну групу не можна перейменовувати");
             return;
         }
-        Optional<String> result = dialogService.showTextInput(
-                "Перейменувати групу",
-                "Введіть нову назву для \"" + group.getName() + "\"",
-                "Нова назва:",
-                group.getName());
+        Optional<String> result = dialogService.showTextInput("Перейменувати групу",
+                "Введіть нову назву для \"" + group.getName() + "\"", "Нова назва:", group.getName());
         result.ifPresent(newName -> {
-            if (!newName.isBlank() && !newName.equals(group.getName())) {
-                try {
-                    com.myhomelibcorp.domain.model.group.Group renamed = renameGroupUseCase.execute(group.getId(), newName);
-                    GroupDto updated = new GroupDto(renamed.getId().asLong(), renamed.getName(), renamed.isAllowDelete());
-                    int index = groupList.indexOf(group);
-                    if (index >= 0) {
-                        groupList.set(index, updated);
-                    }
-                    groupsListView.getSelectionModel().select(updated);
-                    dialogService.showInfo("Успішно", "Групу перейменовано на \"" + newName + "\"");
-                } catch (Exception e) {
-                    log.error("Помилка перейменування групи", e);
-                    dialogService.showError("Помилка", "Не вдалося перейменувати: " + e.getMessage());
-                }
+            if (newName.isBlank() || newName.equals(group.getName())) return;
+            try {
+                Group renamed = renameGroupUseCase.execute(group.getId(), newName);
+                GroupDto updated = new GroupDto(renamed.getId().asLong(), renamed.getName(), renamed.isAllowDelete());
+                int index = groupList.indexOf(group);
+                if (index >= 0) groupList.set(index, updated);
+                groupsListView.getSelectionModel().select(updated);
+                dialogService.showInfo("Успішно", "Групу перейменовано на \"" + newName + "\"");
+            } catch (Exception e) {
+                log.error("Помилка перейменування групи", e);
+                dialogService.showError("Помилка", "Не вдалося перейменувати: " + e.getMessage());
             }
         });
     }
@@ -302,23 +326,18 @@ public class GroupWorkspaceController {
     @FXML
     private void onRefresh() {
         loadGroups();
-        dialogService.showInfo("Оновлення", "Групи перезавантажено.");
     }
 
     public void refresh() {
         loadGroups();
     }
 
-    public void setGroup(com.myhomelibcorp.domain.model.group.Group group) {
-        if (group != null) {
-            // Конвертуємо в DTO та вибираємо
-            GroupDto dto = new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete());
-            // Пошук у списку і вибір
-            for (GroupDto g : groupList) {
-                if (g.getId().equals(dto.getId())) {
-                    groupsListView.getSelectionModel().select(g);
-                    break;
-                }
+    public void setGroup(Group group) {
+        if (group == null) return;
+        for (GroupDto candidate : groupList) {
+            if (candidate.getId().equals(group.getId().asLong())) {
+                groupsListView.getSelectionModel().select(candidate);
+                break;
             }
         }
     }

@@ -12,7 +12,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -67,20 +66,20 @@ public class BookGenreHelper {
     public void loadGenresForBooks(List<Book> books) {
         if (books.isEmpty()) return;
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
-        List<String> bookIds = books.stream().map(b -> b.getId().asString()).collect(Collectors.toList());
-        String placeholders = String.join(",", bookIds.stream().map(id -> "?").toArray(String[]::new));
-        String sql = """
-            SELECT bg.book_id, g.code, g.name, g.parent_code, g.fb2_code
-            FROM book_genres bg
-            JOIN genres g ON bg.genre_code = g.code
-            WHERE bg.book_id IN (""" + placeholders + ")";
-
+        List<String> bookIds = books.stream().map(b -> b.getId().asString()).toList();
         Map<String, List<Genre>> genreMap = new HashMap<>();
-        jdbcTemplate.query(sql, (rs) -> {
-            String bookId = rs.getString("book_id");
-            Genre genre = genreRowMapper.mapRow(rs, 0);
-            genreMap.computeIfAbsent(bookId, k -> new ArrayList<>()).add(genre);
-        }, bookIds.toArray());
+        SqliteInClauseSupport.forEachChunk(bookIds, part -> {
+            String sql = """
+                    SELECT bg.book_id, g.code, g.name, g.parent_code, g.fb2_code
+                    FROM book_genres bg
+                    JOIN genres g ON bg.genre_code = g.code
+                    WHERE bg.book_id IN (""" + SqliteInClauseSupport.placeholders(part.size()) + ")";
+            jdbcTemplate.query(sql, rs -> {
+                String bookId = rs.getString("book_id");
+                Genre genre = genreRowMapper.mapRow(rs, 0);
+                genreMap.computeIfAbsent(bookId, k -> new ArrayList<>()).add(genre);
+            }, part.toArray());
+        });
 
         for (Book book : books) {
             List<Genre> genres = genreMap.getOrDefault(book.getId().asString(), List.of());

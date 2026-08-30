@@ -41,7 +41,7 @@ class JdbcBatchWriterStage6Test {
                     """);
 
             Object[] row = stage6Row();
-            writer.batchInsertFull(List.<Object[]>of(row), new HashMap<>(), new HashMap<>());
+            writer.batchInsertFull(List.<Object[]>of(row), new HashMap<>());
 
             var stored = jdbc.queryForMap("""
                     SELECT title,file_name,folder,archive_entry,file_size,rate,progress,review,local,collection_root
@@ -81,9 +81,9 @@ class JdbcBatchWriterStage6Test {
             Author author = new Author("Дамский клуб LADY | переводы", "", "Группа");
             var resolved = writer.batchInsertAuthorsAndResolveIds(List.of(author));
 
-            String key = "Дамский клуб LADY | переводы||Группа";
-            assertThat(resolved).containsKey(key);
-            assertThat(resolved.get(key)).isEqualTo(jdbc.queryForObject(
+            String candidateId = author.getId().asString();
+            assertThat(resolved).containsKey(candidateId);
+            assertThat(resolved.get(candidateId)).isEqualTo(jdbc.queryForObject(
                     "SELECT id FROM authors WHERE first_name=? AND last_name=?",
                     String.class,
                     "Дамский клуб LADY | переводы", "Группа"));

@@ -3,6 +3,9 @@ package com.myhomelibcorp.ui.navigation;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.usecase.group.LoadGroupUseCase;
+import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
+import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -10,10 +13,12 @@ import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.service.BookLoaderService;
+import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.ui.service.HelpTopicRegistry;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.table.BookTableController;
+import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyBooleanProperty;
 import javafx.beans.property.ReadOnlyBooleanWrapper;
 import javafx.scene.layout.Pane;
@@ -34,7 +39,11 @@ public class WorkspaceManager {
     private final FxmlLoaderFactory fxmlLoaderFactory;
     private final LocalizationService localizationService;
     private final BookLoaderService bookLoaderService;
+    private final BookDownloadCoordinator bookDownloadCoordinator;
+    private final LoadBookByIdUseCase loadBookByIdUseCase;
     private final HelpTopicRegistry helpTopicRegistry;
+    private final LoadGroupUseCase loadGroupUseCase;
+    private final SessionService sessionService;
 
     private final ReadOnlyBooleanWrapper canGoBack = new ReadOnlyBooleanWrapper(false);
     private final ReadOnlyBooleanWrapper canGoForward = new ReadOnlyBooleanWrapper(false);
@@ -64,7 +73,7 @@ public class WorkspaceManager {
         }
     }
 
-    public void setWorkspace(Pane workspace, String type) {
+    public void setWorkspace(Pane workspace) {
         disposeCurrentWorkspace();
 
         if (workspaceStackPane == null) {
@@ -82,13 +91,19 @@ public class WorkspaceManager {
     }
 
     public void push(String type, String id) {
-        WorkspaceEntry entry = new WorkspaceEntry(type, id);
-        if (currentEntry != null && !currentEntry.equals(entry)) {
+        push(new WorkspaceEntry(type, id, null), true);
+    }
+
+    private void push(WorkspaceEntry entry, boolean persist) {
+        if (currentEntry != null && !currentEntry.sameLocation(entry)) {
             history.push(currentEntry);
             forwardStack.clear();
         }
         currentEntry = entry;
-        log.info("Перехід до воркспейсу: {} (id: {})", type, id);
+        if (persist && entry.isPersistable()) {
+            sessionService.saveWorkspaceState(entry.type, entry.id);
+        }
+        log.info("Перехід до воркспейсу: {} (id: {})", entry.type, entry.id);
         refreshNavigationState();
     }
 
@@ -104,26 +119,26 @@ public class WorkspaceManager {
 
     public void showDashboard() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/dashboard.fxml");
-        setWorkspace(workspace, "dashboard");
+        setWorkspace(workspace);
         push("dashboard", "");
     }
 
     public void showAuthorWorkspace(AuthorId authorId) {
         Pane workspace = fxmlLoaderFactory.loadAuthorWorkspace(authorId);
-        setWorkspace(workspace, "author");
+        setWorkspace(workspace);
         push("author", authorId != null ? authorId.asString() : "");
     }
 
     public void showBookWorkspace(BookId bookId) {
         Pane workspace = fxmlLoaderFactory.loadBookWorkspace(bookId);
-        setWorkspace(workspace, "book");
+        setWorkspace(workspace);
         push("book", bookId != null ? bookId.asString() : "");
     }
 
     public void showSeriesWorkspace(SeriesId seriesId) {
         if (seriesId == null) throw new IllegalArgumentException("SeriesId не може бути null");
         Pane workspace = loadBookTableWorkspace("series");
-        setWorkspace(workspace, "series");
+        setWorkspace(workspace);
         push("series", seriesId.asString());
         bookLoaderService.loadBooksBySeries(seriesId);
     }
@@ -131,7 +146,7 @@ public class WorkspaceManager {
     public void showGenreWorkspace(GenreId genreId) {
         if (genreId == null) throw new IllegalArgumentException("GenreId не може бути null");
         Pane workspace = loadBookTableWorkspace("genre");
-        setWorkspace(workspace, "genre");
+        setWorkspace(workspace);
         push("genre", genreId.asString());
         bookLoaderService.loadBooksByGenre(genreId);
     }
@@ -139,7 +154,7 @@ public class WorkspaceManager {
     public void showYearWorkspace(int year) {
         if (year <= 0) throw new IllegalArgumentException("year must be positive");
         Pane workspace = loadBookTableWorkspace("year");
-        setWorkspace(workspace, "year");
+        setWorkspace(workspace);
         push("year", Integer.toString(year));
         bookLoaderService.loadBooksByYear(year);
     }
@@ -149,15 +164,23 @@ public class WorkspaceManager {
             throw new IllegalArgumentException("languageCode cannot be blank");
         }
         Pane workspace = loadBookTableWorkspace("language");
-        setWorkspace(workspace, "language");
+        setWorkspace(workspace);
         push("language", languageCode);
         bookLoaderService.loadBooksByLanguage(languageCode);
+    }
+
+    public void showPublisherWorkspace(String publisher) {
+        if (publisher == null || publisher.isBlank()) throw new IllegalArgumentException("publisher cannot be blank");
+        Pane workspace = loadBookTableWorkspace("publisher");
+        setWorkspace(workspace);
+        push("publisher", publisher);
+        bookLoaderService.loadBooksByPublisher(publisher);
     }
 
     public void showArchiveWorkspace(ArchiveNavigationKey archive) {
         if (archive == null) throw new IllegalArgumentException("archive cannot be null");
         Pane workspace = loadBookTableWorkspace("archive");
-        setWorkspace(workspace, "archive");
+        setWorkspace(workspace);
         push("archive", archive.encode());
         bookLoaderService.loadBooksByArchive(archive);
     }
@@ -165,7 +188,7 @@ public class WorkspaceManager {
     public void showKeywordWorkspace(String keyword) {
         if (keyword == null || keyword.isBlank()) throw new IllegalArgumentException("keyword cannot be blank");
         Pane workspace = loadBookTableWorkspace("keyword");
-        setWorkspace(workspace, "keyword");
+        setWorkspace(workspace);
         push("keyword", keyword);
         bookLoaderService.loadBooksByKeyword(keyword);
     }
@@ -173,7 +196,7 @@ public class WorkspaceManager {
     public void showGroupBooksWorkspace(GroupId groupId) {
         if (groupId == null || groupId.asLong() == null) throw new IllegalArgumentException("groupId cannot be null");
         Pane workspace = loadBookTableWorkspace("group-nav");
-        setWorkspace(workspace, "group-nav");
+        setWorkspace(workspace);
         push("group-nav", groupId.toString());
         bookLoaderService.loadBooksByGroup(groupId);
     }
@@ -181,79 +204,93 @@ public class WorkspaceManager {
     public void showReviewsWorkspace(ReviewNavigationFilter filter) {
         if (filter == null) throw new IllegalArgumentException("filter cannot be null");
         Pane workspace = loadBookTableWorkspace("reviews");
-        setWorkspace(workspace, "reviews");
+        setWorkspace(workspace);
         push("reviews", filter.id());
         bookLoaderService.loadBooksByReviewSubset(filter);
     }
 
     public void showAllBooksWorkspace() {
         Pane workspace = loadBookTableWorkspace("all-books");
-        setWorkspace(workspace, "all-books");
+        setWorkspace(workspace);
         push("all-books", "");
         bookLoaderService.loadAllBooks();
     }
 
     public void showUpdatesWorkspace() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/updates-workspace.fxml");
-        setWorkspace(workspace, "updates");
+        setWorkspace(workspace);
         push("updates", "");
     }
 
     public void showAlreadyReadWorkspace() {
         Pane workspace = loadBookTableWorkspace("already-read");
-        setWorkspace(workspace, "already-read");
+        setWorkspace(workspace);
         push("already-read", "");
         bookLoaderService.loadAlreadyReadBooks();
     }
 
     public void showHistoryWorkspace() {
         Pane workspace = loadBookTableWorkspace("history");
-        setWorkspace(workspace, "history");
+        setWorkspace(workspace);
         push("history", "");
         bookLoaderService.loadReadingHistory();
     }
 
     public void showSearchResults(String query) {
         Pane workspace = fxmlLoaderFactory.loadSearchWorkspace(query);
-        setWorkspace(workspace, "search");
+        setWorkspace(workspace);
         push("search", query != null ? query : "");
     }
 
     public void showSearchResults(List<BookDto> results) {
-        Pane workspace = fxmlLoaderFactory.loadSearchWorkspace(results);
-        setWorkspace(workspace, "search");
-        push("search", "results_" + (results != null ? results.size() : 0));
+        List<BookDto> snapshot = results == null ? List.of() : List.copyOf(results);
+        Pane workspace = fxmlLoaderFactory.loadSearchWorkspace(snapshot);
+        setWorkspace(workspace);
+        push(new WorkspaceEntry("search-results", Integer.toString(snapshot.size()), snapshot), false);
     }
 
     public void showCollectionWorkspace() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/collection-workspace.fxml");
-        setWorkspace(workspace, "collection");
+        setWorkspace(workspace);
         push("collection", "");
     }
 
     public void showGroupWorkspace(Group group) {
         Pane workspace = fxmlLoaderFactory.loadGroupWorkspace(group);
-        setWorkspace(workspace, "groups");
+        setWorkspace(workspace);
         push("groups", group != null ? group.getId().toString() : "");
     }
 
-    /** Compatibility alias retained for old navigation entries. */
-    public void showReaderWorkspace(BookId bookId) {
-        showNewReaderWorkspace(bookId);
-    }
 
     /**
-     * НОВИЙ МЕТОД: показує новий Reader Workspace (без WebView).
+     * Opens the Reader only after the physical book resource is available.
+     * This is the single guarded entry point so recent/history/programmatic
+     * navigation cannot bypass the missing-book download confirmation.
      */
     public void showNewReaderWorkspace(BookId bookId) {
+        if (bookId == null) return;
+        var book = loadBookByIdUseCase.execute(bookId);
+        if (book.isEmpty()) {
+            log.warn("Не вдалося відкрити Reader: книгу {} не знайдено в активній колекції", bookId);
+            return;
+        }
+        bookDownloadCoordinator.ensureLocalForOpen(book.get()).whenComplete((path, error) -> {
+            if (error != null) return;
+            Runnable open = () -> openNewReaderWorkspaceLocal(bookId);
+            if (Platform.isFxApplicationThread()) open.run();
+            else Platform.runLater(open);
+        });
+    }
+
+    private void openNewReaderWorkspaceLocal(BookId bookId) {
         Pane workspace = fxmlLoaderFactory.loadNewReaderWorkspace(bookId);
-        setWorkspace(workspace, "new-reader");
-        push("new-reader", bookId != null ? bookId.asString() : "");
+        setWorkspace(workspace);
+        push("new-reader", bookId.asString());
     }
 
     public void showImportWorkspace() {
         Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/import-workspace.fxml");
-        setWorkspace(workspace, "import");
+        setWorkspace(workspace);
         push("import", "");
     }
 
@@ -301,6 +338,7 @@ public class WorkspaceManager {
             case "genre" -> showGenreWorkspace(GenreId.fromCode(entry.id));
             case "year" -> showYearWorkspace(Integer.parseInt(entry.id));
             case "language" -> showLanguageWorkspace(entry.id);
+            case "publisher" -> showPublisherWorkspace(entry.id);
             case "archive" -> showArchiveWorkspace(ArchiveNavigationKey.decode(entry.id));
             case "keyword" -> showKeywordWorkspace(entry.id);
             case "group-nav" -> showGroupBooksWorkspace(GroupId.fromLong(Long.parseLong(entry.id)));
@@ -313,8 +351,14 @@ public class WorkspaceManager {
             case "reader" -> showNewReaderWorkspace(BookId.fromString(entry.id)); // Перенаправляємо на новий Reader
             case "new-reader" -> showNewReaderWorkspace(BookId.fromString(entry.id));
             case "search" -> showSearchResults(entry.id);
+            case "search-results" -> showSearchResults(entry.results == null ? List.of() : entry.results);
             case "collection" -> showCollectionWorkspace();
-            case "groups" -> showGroupWorkspace(null);
+            case "groups" -> {
+                Long groupId = parseLong(entry.id);
+                if (groupId == null) showGroupWorkspace(null);
+                else loadGroupUseCase.execute(groupId)
+                        .ifPresentOrElse(this::showGroupWorkspace, this::showCollectionWorkspace);
+            }
             case "import" -> showImportWorkspace();
             default -> showDashboard();
         }
@@ -323,7 +367,34 @@ public class WorkspaceManager {
 
 
     public String currentHelpTopic() {
-        return helpTopicRegistry.topicForWorkspace(currentEntry == null ? "dashboard" : currentEntry.type);
+        String type = currentEntry == null ? "dashboard" : currentEntry.type;
+        if ("search-results".equals(type)) type = "search";
+        return helpTopicRegistry.topicForWorkspace(type);
+    }
+
+    /** Restore a persisted workspace without restoring stale in-memory history. */
+    public void restoreSessionWorkspace(SessionService.WorkspaceState state) {
+        history.clear();
+        forwardStack.clear();
+        if (state == null || state.type().isBlank()) {
+            showDashboard();
+            return;
+        }
+        try {
+            restoreWorkspace(new WorkspaceEntry(state.type(), state.id(), null));
+            history.clear();
+            forwardStack.clear();
+            refreshNavigationState();
+        } catch (RuntimeException ex) {
+            log.warn("Не вдалося відновити workspace {}:{}; відкриваємо dashboard", state.type(), state.id(), ex);
+            history.clear();
+            forwardStack.clear();
+            showDashboard();
+        }
+    }
+
+    private static Long parseLong(String value) {
+        try { return Long.valueOf(value); } catch (Exception ignored) { return null; }
     }
 
 
@@ -350,17 +421,19 @@ public class WorkspaceManager {
 
     // ==================== Внутрішній клас ====================
 
-    private record WorkspaceEntry(String type, String id) {
-        @Override
-        public boolean equals(Object o) {
-            if (this == o) return true;
-            if (!(o instanceof WorkspaceEntry that)) return false;
-            return type.equals(that.type) && id.equals(that.id);
+    private record WorkspaceEntry(String type, String id, List<BookDto> results) {
+        private WorkspaceEntry {
+            type = type == null ? "dashboard" : type;
+            id = id == null ? "" : id;
+            results = results == null ? null : List.copyOf(results);
         }
 
-        @Override
-        public int hashCode() {
-            return 31 * type.hashCode() + id.hashCode();
+        boolean sameLocation(WorkspaceEntry other) {
+            return other != null && type.equals(other.type) && id.equals(other.id);
+        }
+
+        boolean isPersistable() {
+            return !"search-results".equals(type);
         }
     }
 }

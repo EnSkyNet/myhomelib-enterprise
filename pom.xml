@@ -7,7 +7,7 @@
 
     <groupId>com.myhomelibcorp</groupId>
     <artifactId>myhomelib-enterprise</artifactId>
-    <version>1.0.0</version>
+    <version>7.1.0</version>
     <packaging>pom</packaging>
 
     <name>MyHomeLib Enterprise</name>
@@ -30,6 +30,7 @@
         <lucene.version>9.11.0</lucene.version>
         <commons-compress.version>1.28.0</commons-compress.version>
         <junrar.version>8.1.0</junrar.version>
+        <zstd-jni.version>1.5.6-9</zstd-jni.version>
 
         <junit.version>5.10.2</junit.version>
         <mockito.version>5.10.0</mockito.version>
@@ -125,6 +126,11 @@
                 <groupId>com.github.junrar</groupId>
                 <artifactId>junrar</artifactId>
                 <version>${junrar.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.github.luben</groupId>
+                <artifactId>zstd-jni</artifactId>
+                <version>${zstd-jni.version}</version>
             </dependency>
 
             <!-- Lucene -->
@@ -300,7 +306,7 @@
             <id>performance</id>
             <properties>
                 <mhl.performance>true</mhl.performance>
-                <mhl.performance.sizes>100000,500000,1000000</mhl.performance.sizes>
+                <mhl.performance.sizes>100000,500000,700000,1000000</mhl.performance.sizes>
                 <mhl.performance.readerMb>8</mhl.performance.readerMb>
             </properties>
             <build>

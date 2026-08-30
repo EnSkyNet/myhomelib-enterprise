@@ -7,8 +7,6 @@ import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import javafx.collections.ObservableList;
-import javafx.scene.control.ListView;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -27,7 +25,7 @@ public class GroupPresenter {
     private final ApplicationState appState;
     private final NavigationPanelController navigationPanelController;
 
-    public void showAddGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
+    public void showAddGroupDialog(Runnable onComplete) {
         Optional<String> result = dialogService.showTextInput(
                 "Додати групу",
                 "Введіть назву нової групи",
@@ -38,7 +36,6 @@ public class GroupPresenter {
             if (!name.isBlank()) {
                 try {
                     createGroupUseCase.execute(name);
-                    refreshGroupList(groupsListView);
                     appState.getStatusBar().setStatusText("Групу '" + name + "' створено");
                     navigationPanelController.refreshAll();
                     if (onComplete != null) onComplete.run();
@@ -49,8 +46,7 @@ public class GroupPresenter {
         });
     }
 
-    public void showEditGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
-        Group selected = groupsListView.getSelectionModel().getSelectedItem();
+    public void showEditGroupDialog(Group selected, Runnable onComplete) {
         if (selected == null) {
             dialogService.showError("Помилка", "Не вибрано жодної групи");
             return;
@@ -69,7 +65,6 @@ public class GroupPresenter {
             if (!newName.isBlank() && !newName.equals(selected.getName())) {
                 try {
                     renameGroupUseCase.execute(selected.getId().asLong(), newName);
-                    refreshGroupList(groupsListView);
                     appState.getStatusBar().setStatusText("Групу перейменовано на '" + newName + "'");
                     navigationPanelController.refreshAll();
                     if (onComplete != null) onComplete.run();
@@ -80,8 +75,7 @@ public class GroupPresenter {
         });
     }
 
-    public void showDeleteGroupDialog(ListView<Group> groupsListView, Runnable onComplete) {
-        Group selected = groupsListView.getSelectionModel().getSelectedItem();
+    public void showDeleteGroupDialog(Group selected, Runnable onComplete) {
         if (selected == null) {
             dialogService.showError("Помилка", "Не вибрано жодної групи");
             return;
@@ -97,7 +91,6 @@ public class GroupPresenter {
         )) {
             try {
                 deleteGroupUseCase.execute(selected.getId().asLong());
-                refreshGroupList(groupsListView);
                 appState.getStatusBar().setStatusText("Групу видалено");
                 navigationPanelController.refreshAll();
                 if (onComplete != null) onComplete.run();
@@ -107,8 +100,4 @@ public class GroupPresenter {
         }
     }
 
-    private void refreshGroupList(ListView<Group> groupsListView) {
-        // Оновлення відбувається через NavigationPanelController.refreshAll()
-        log.debug("Оновлення списку груп");
-    }
 }

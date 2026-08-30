@@ -15,11 +15,4 @@ public class LoadSavedSearchesUseCase {
         return savedSearchRepository.findAll();
     }
 
-    public List<SavedSearch> executeRecent(int limit) {
-        return savedSearchRepository.findRecent(limit);
-    }
-
-    public List<SavedSearch> executeMostUsed(int limit) {
-        return savedSearchRepository.findMostUsed(limit);
-    }
 }

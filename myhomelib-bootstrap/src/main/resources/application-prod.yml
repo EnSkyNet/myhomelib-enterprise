@@ -13,18 +13,9 @@ logging:
 
 app:
   import:
-    batch-size: 10000
-    index-disable-threshold: 1000000
+    batch-size: 1000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
-  features:
-    new-importer: true
-    new-navigation: true
-    virtual-table: true
-    lazy-search: true
-    async-cover-loading: true
-    use-fts5: false
-
 spring.cache.type: caffeine
 spring.cache.caffeine.spec: maximumSize=10000,expireAfterWrite=60m
 

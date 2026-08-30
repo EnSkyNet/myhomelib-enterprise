@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.NoArgsConstructor;
 import lombok.Value;
 
+import java.util.Map;
+
 @Value
 @Builder(toBuilder = true)
 @NoArgsConstructor(force = true)
@@ -40,4 +42,13 @@ public class ReaderPreferences {
     @Builder.Default String tapLeftAction = "previous-page";
     @Builder.Default String tapCenterAction = "toggle-toolbar";
     @Builder.Default String tapRightAction = "next-page";
+
+    // v7.1 reader parity: real two-page layout and configurable 9-zone/gesture input map.
+    @Builder.Default boolean twoPageMode = false;
+    @Builder.Default boolean autoTwoPageLandscape = true;
+    @Builder.Default boolean showStatusClock = false;
+    @Builder.Default boolean pinchZoom = true;
+    @Builder.Default Map<String, String> tapActions = Map.of();
+    @Builder.Default Map<String, String> longTapActions = Map.of();
+    @Builder.Default Map<String, String> gestureActions = Map.of();
 }

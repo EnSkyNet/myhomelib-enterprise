@@ -8,7 +8,7 @@ class ReaderSettingsPresetsTest {
     @Test
     void builtInsProvideUsableNavigationAndStatusDefaults() {
         assertThat(ReaderSettingsPresets.builtIns()).extracting(ReaderSettingsPreset::id)
-                .containsExactly("default", "comfortable", "compact", "night");
+                .containsExactly("default", "day", "comfortable", "compact", "night");
         assertThat(ReaderSettingsPresets.builtIns()).allSatisfy(p -> {
             assertThat(p.settings().fontSize()).isBetween(10.0, 52.0);
             assertThat(p.settings().tapLeftAction()).isNotBlank();

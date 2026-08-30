@@ -28,7 +28,7 @@ def watcher_contract() -> None:
     src = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/monitor/CollectionSourceMonitorAdapter.java")
     for marker in (
         "WatchService", "ENTRY_CREATE", "ENTRY_MODIFY", "ENTRY_DELETE",
-        "scheduleDebouncedCheck", "pendingChecks.compute", "SHA-256",
+        "scheduleDebouncedCheck", "pendingChecks.compute", "Sha256Support.file(source)",
         "ZipFile", "CollectionSourceUpdateAvailableEvent", "changed.getFileName().equals",
     ):
         require(src, marker, "watcher")
@@ -60,7 +60,9 @@ def watcher_contract() -> None:
 
 
 def maintenance_contract() -> None:
-    src = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/maintenance/CollectionMaintenanceAdapter.java")
+    adapter = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/maintenance/CollectionMaintenanceAdapter.java")
+    analyzer = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/maintenance/CollectionMaintenanceAnalyzer.java")
+    src = adapter + "\n" + analyzer
     for marker in (
         "PRAGMA quick_check", "MISSING_FILE", "INVALID_ARCHIVE_REFERENCE", "ORPHAN_FILE",
         "ORPHANED_AUTHOR", "ORPHANED_GENRE", "DUPLICATE_BOOK", "VACUUM INTO",
@@ -70,12 +72,21 @@ def maintenance_contract() -> None:
         require(src, marker, "maintenance")
     if "Files.delete(" in src or "deletePhysicalFile" in src:
         raise AssertionError("maintenance must not auto-delete orphan physical files")
+    if " OFFSET " in analyzer or "OFFSET ?" in analyzer:
+        raise AssertionError("maintenance book traversal must remain keyset-based, not OFFSET-based")
+    require(analyzer, "AND id > ?", "maintenance keyset traversal")
+    require(analyzer, "SELECT COALESCE(SUM(cnt - 1), 0)", "bounded duplicate count")
+    require(analyzer, "LIMIT ?", "bounded issue sampling")
+    if "List<DuplicateRow> duplicates = findDuplicateBooks" in analyzer:
+        raise AssertionError("maintenance must not materialize all duplicate rows")
 
     port = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/collection/CollectionMaintenancePort.java")
     require(port, "boolean dryRun", "dry-run contract")
-    ui = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/CollectionWorkspaceController.java")
+    ui_controller = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/CollectionWorkspaceController.java")
+    ui_coordinator = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/CollectionMaintenancePanelCoordinator.java")
+    ui = ui_controller + "\n" + ui_coordinator
     for marker in ("onAnalyzeMaintenance", "onDryRunMaintenance", "onApplyMaintenance",
-                   "create", "Backup", "repairableIssueIds"):
+                   "Backup", "repairableIssueIds"):
         require(ui, marker, "maintenance UI")
 
     legacy = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/integrity/DataIntegrityChecker.java")
@@ -157,7 +168,7 @@ def main() -> None:
     fxml_contract()
     print("STAGE 12+13 COLLECTION MAINTENANCE CHECK: PASS")
     print(" - metadata V3 source-watch state: PASS")
-    print(" - WatchService + source-only filtering + debounce + SHA-256: PASS")
+    print(" - WatchService + source-only filtering + debounce + shared SHA-256: PASS")
     print(" - readable/ZIP validation + manual refresh + baseline acknowledge: PASS")
     print(" - analyze/preview/dry-run/apply + mandatory SQLite backup: PASS")
     print(" - missing/archive/orphan/duplicate/orphan-dictionary analysis: PASS")

@@ -77,6 +77,11 @@ public class CachedGenreRepository implements GenreRepository {
     }
 
     @Override
+    public List<Genre> searchByName(String query, int limit) {
+        return delegate.searchByName(query, limit);
+    }
+
+    @Override
     public long countOrphanedGenres() {
         return delegate.countOrphanedGenres();
     }

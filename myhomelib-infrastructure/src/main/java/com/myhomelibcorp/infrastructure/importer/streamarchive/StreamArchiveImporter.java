@@ -46,8 +46,8 @@ public class StreamArchiveImporter implements BookImporterPort {
     }
 
     private boolean isBook(String name){
-        if(!ArchiveImportSupport.isSafeEntryName(name)||ArchiveImportSupport.isNestedArchive(name))return false;
-        try{registry.findImporter(Path.of(name));return true;}catch(Exception e){return false;}
+        return ArchiveImportSupport.isSafeEntryName(name)
+                && ArchiveImportSupport.isSupportedBookEntry(name, registry);
     }
     private ArchiveInputStream<?> open(Path p)throws Exception{
         String n=p.getFileName().toString().toLowerCase(Locale.ROOT);

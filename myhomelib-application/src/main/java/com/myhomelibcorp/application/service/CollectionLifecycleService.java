@@ -1,14 +1,12 @@
 package com.myhomelibcorp.application.service;
 
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
-import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.application.port.out.repository.GroupRepository;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
+import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
@@ -25,11 +23,9 @@ public class CollectionLifecycleService {
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final DatabaseMigrationPort databaseMigrationPort;
     private final CacheInvalidationPort cacheInvalidationPort;
-    private final DictionaryCachePort dictionaryCachePort;
-    private final GenreRepository genreRepository;
     private final SeriesRepository seriesRepository;
-    private final GroupRepository groupRepository;
     private final IndexRebuilder indexRebuilder;
+    private final SearchIndexLifecycle searchIndexLifecycle;
     private final DomainEventPublisher eventPublisher;
     private final ExecutorPort executorPort;
 
@@ -38,7 +34,7 @@ public class CollectionLifecycleService {
     /**
      * Повна ініціалізація колекції: переключення, міграція, кеші, індекс (асинхронно).
      */
-    public void initializeCollection(Collection collection, boolean rebuildIndex) {
+    public boolean initializeCollection(Collection collection, boolean rebuildIndex) {
         if (!isInitializing.compareAndSet(false, true)) {
             log.warn("Ініціалізація колекції вже виконується");
             throw new IllegalStateException("Інше переключення колекції вже виконується");
@@ -50,8 +46,13 @@ public class CollectionLifecycleService {
         try {
             log.info("🚀 Початок ініціалізації колекції: {}", collection.getName());
 
-            // 1. Переключаємо колекцію
+            // Each collection owns its Lucene directory. Close the previous index BEFORE
+            // switching the DataSource, then activate/validate the target index after migrations.
+            if (changedCollection) searchIndexLifecycle.closeCurrentIndex();
+
+            // 1. Переключаємо колекцію; switch closes/checkpoints the previous SQLite datasource.
             collectionLifecyclePort.switchToCollection(collection);
+            if (changedCollection && previous != null) searchIndexLifecycle.sealClosedIndex(previous);
 
             // 2. Виконуємо міграції
             int migrations = databaseMigrationPort.migrateCurrentCollection();
@@ -62,18 +63,25 @@ public class CollectionLifecycleService {
             // 3. Очищуємо кеші
             cacheInvalidationPort.invalidateAll();
 
-            // 4. Завантажуємо кеші словників
-            loadDictionaries();
+            // 4. Синхронізуємо persisted series identities до завантаження кешу.
+            seriesRepository.syncSeriesFromBooks();
 
-            // 5. Перебудовуємо індекс (АСИНХРОННО, якщо потрібно)
-            if (rebuildIndex) {
-                rebuildIndexAsync(collection);
-            }
+            // 5. Відкриваємо per-collection Lucene і перебудовуємо лише dirty/absent index.
+            boolean reusableIndex = searchIndexLifecycle.activateCollectionIndex(collection);
+            boolean shouldRebuild = rebuildIndex && !reusableIndex;
+            if (shouldRebuild) rebuildIndexAsync(collection);
 
             // 6. Публікуємо доменну подію
             eventPublisher.publish(new CollectionOpenedEvent(collection));
 
-            log.info("✅ Ініціалізацію колекції {} завершено (індекс перебудовується у фоні)", collection.getName());
+            if (shouldRebuild) {
+                log.info("✅ Ініціалізацію колекції {} завершено; dirty/absent індекс перебудовується у фоні", collection.getName());
+            } else if (reusableIndex) {
+                log.info("✅ Ініціалізацію колекції {} завершено; готовий per-collection індекс перевикористано", collection.getName());
+            } else {
+                log.info("✅ Ініціалізацію колекції {} завершено без автоматичної перебудови індексу", collection.getName());
+            }
+            return reusableIndex;
 
         } catch (Exception e) {
             log.error("❌ Помилка ініціалізації колекції: {}", e.getMessage(), e);
@@ -151,34 +159,23 @@ public class CollectionLifecycleService {
      */
     private void restorePreviousCollection(Collection previous) {
         try {
+            searchIndexLifecycle.closeCurrentIndex();
             if (previous == null) {
                 collectionLifecyclePort.closeCurrentCollection();
                 cacheInvalidationPort.invalidateAll();
                 log.warn("Невдалу першу колекцію закрито після помилки ініціалізації");
                 return;
             }
+            Collection failed = collectionLifecyclePort.getCurrentCollection();
             collectionLifecyclePort.switchToCollection(previous);
+            if (failed != null) searchIndexLifecycle.sealClosedIndex(failed);
             databaseMigrationPort.migrateCurrentCollection();
             cacheInvalidationPort.invalidateAll();
-            loadDictionaries();
-            log.warn("Після помилки відновлено попередню колекцію: {}", previous.getName());
+            seriesRepository.syncSeriesFromBooks();
+            if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();
+            log.warn("Після помилки відновлено попередню колекцію та її пошуковий індекс: {}", previous.getName());
         } catch (Exception rollbackError) {
             log.error("❌ Не вдалося відновити попередню колекцію після помилки ініціалізації", rollbackError);
-        }
-    }
-
-    /**
-     * Завантажує кеші словників.
-     */
-    private void loadDictionaries() {
-        log.info("📚 Завантаження кешів словників");
-        try {
-            dictionaryCachePort.loadGenres(genreRepository.findAll());
-            dictionaryCachePort.loadSeries(seriesRepository.findAll());
-            dictionaryCachePort.loadGroups(groupRepository.findAll());
-            log.info("✅ Кеші словників завантажено");
-        } catch (Exception e) {
-            log.error("❌ Помилка завантаження кешів словників", e);
         }
     }
 
@@ -186,7 +183,10 @@ public class CollectionLifecycleService {
      * Закриває поточну колекцію.
      */
     public void closeCollection() {
+        Collection current = collectionLifecyclePort.getCurrentCollection();
+        searchIndexLifecycle.closeCurrentIndex();
         collectionLifecyclePort.closeCurrentCollection();
+        if (current != null) searchIndexLifecycle.sealClosedIndex(current);
         cacheInvalidationPort.invalidateAll();
         log.info("Колекцію закрито");
     }

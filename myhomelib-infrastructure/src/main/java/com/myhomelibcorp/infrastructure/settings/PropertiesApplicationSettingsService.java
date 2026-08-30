@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.settings;
 
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -9,7 +10,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Properties;
@@ -40,13 +40,9 @@ public class PropertiesApplicationSettingsService implements ApplicationSettings
         try {
             Files.createDirectories(file.getParent());
             try (OutputStream out = Files.newOutputStream(tmp)) {
-                properties.store(out, "MyHomeLib 1.0.0 settings");
+                properties.store(out, "MyHomeLib 7.1.0 settings");
             }
-            try {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (Exception atomicUnsupported) {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            AtomicFileSupport.moveReplacing(tmp, file);
         } catch (Exception e) {
             log.error("Cannot save application settings to {}", file, e);
         }

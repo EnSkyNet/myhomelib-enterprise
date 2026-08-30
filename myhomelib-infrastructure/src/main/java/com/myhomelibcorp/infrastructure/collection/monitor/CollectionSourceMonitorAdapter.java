@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.collection.CollectionSourceState;
 import com.myhomelibcorp.application.event.CollectionSourceUpdateAvailableEvent;
 import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
+import com.myhomelibcorp.shared.util.Sha256Support;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -13,11 +14,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.*;
-import java.security.MessageDigest;
 import java.time.Instant;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,8 +36,6 @@ public class CollectionSourceMonitorAdapter implements CollectionSourceMonitorPo
     private static final int MAX_DEBOUNCE_SECONDS = 3600;
 
     private final JdbcTemplate metadataJdbcTemplate;
-    @SuppressWarnings("unused")
-    private final Flyway flywayMetadata; // establishes migration ordering for collection_source_watch
     private final DomainEventPublisher eventPublisher;
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(2, runnable -> {
@@ -55,7 +51,8 @@ public class CollectionSourceMonitorAdapter implements CollectionSourceMonitorPo
             @Qualifier("flywayMetadata") Flyway flywayMetadata,
             DomainEventPublisher eventPublisher) {
         this.metadataJdbcTemplate = metadataJdbcTemplate;
-        this.flywayMetadata = flywayMetadata;
+        // Constructor dependency deliberately forces metadata Flyway migration before watch-table access.
+        java.util.Objects.requireNonNull(flywayMetadata, "flywayMetadata");
         this.eventPublisher = eventPublisher;
     }
 
@@ -273,22 +270,10 @@ public class CollectionSourceMonitorAdapter implements CollectionSourceMonitorPo
                     return new FingerprintResult(null, "SOURCE_ARCHIVE_INVALID: " + safeMessage(e));
                 }
             }
-            return new FingerprintResult(sha256(source), "READY");
+            return new FingerprintResult(Sha256Support.file(source), "READY");
         } catch (Exception e) {
             return new FingerprintResult(null, "SOURCE_ERROR: " + safeMessage(e));
         }
-    }
-
-    private String sha256(Path path) throws Exception {
-        MessageDigest digest = MessageDigest.getInstance("SHA-256");
-        byte[] buffer = new byte[1024 * 1024];
-        try (InputStream in = Files.newInputStream(path)) {
-            int n;
-            while ((n = in.read(buffer)) >= 0) {
-                if (n > 0) digest.update(buffer, 0, n);
-            }
-        }
-        return HexFormat.of().formatHex(digest.digest());
     }
 
     private void requireCollection(String collectionId) {

@@ -134,6 +134,25 @@ public class GenreServiceImpl implements GenreRepository {
     }
 
     @Override
+    public List<Genre> searchByName(String query, int limit) {
+        if (query == null || query.isBlank() || limit <= 0) return List.of();
+        String pattern = "%" + query.trim().toLowerCase(Locale.ROOT) + "%";
+        String sql = """
+                SELECT code, name, parent_code, fb2_code
+                  FROM genres
+                 WHERE LOWER(name) LIKE ? OR LOWER(code) LIKE ?
+                 ORDER BY LOWER(name), code
+                 LIMIT ?
+                """;
+        return getJdbcTemplate().query(sql, (rs, rowNum) -> {
+            GenreId id = GenreId.fromCode(rs.getString("code"));
+            GenreId parentId = rs.getString("parent_code") != null
+                    ? GenreId.fromCode(rs.getString("parent_code")) : null;
+            return new Genre(id, rs.getString("name"), parentId, rs.getString("fb2_code"));
+        }, pattern, pattern, Math.min(limit, 200));
+    }
+
+    @Override
     public Optional<Genre> findById(GenreId id) {
         try {
             String sql = "SELECT code, name, parent_code, fb2_code FROM genres WHERE code = ?";

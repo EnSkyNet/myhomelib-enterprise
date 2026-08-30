@@ -1,6 +1,5 @@
 package com.myhomelibcorp.infrastructure.importer;
 
-import com.myhomelibcorp.application.imports.detector.BookFormatDetector;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import lombok.RequiredArgsConstructor;
@@ -16,7 +15,6 @@ import java.util.List;
 public class DefaultImporterRegistry implements ImporterRegistry {
 
     private final List<BookImporterPort> importers;
-    private final BookFormatDetector formatDetector;
 
     @Override
     public BookImporterPort findImporter(Path file) {

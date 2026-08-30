@@ -19,4 +19,11 @@ public class LibraryStatistics {
     private long totalSizeBytes;
     private long duplicatesCount;
     private long missingCoversCount;
+    private long localBooksCount;
+    private long remoteBooksCount;
+    private long readBooksCount;
+    private long unreadBooksCount;
+    private long favoritesCount;
+    private long deletedBooksCount;
+    private long sourcesCount;
 }

@@ -33,6 +33,8 @@ public class CollectionPropertiesUiService {
         try { pass.setText(nvl(c.getDecryptedPassword())); } catch(Exception ignored) { }
         TextField baseUrl=new TextField(nvl(c.getUrl())); TextField inpxUrl=new TextField(settings.get("collection."+c.getId()+".inpxUrl",""));
         TextArea notes=new TextArea(nvl(c.getNotes())); notes.setPrefRowCount(3);
+        TextArea connectionScript=new TextArea(nvl(c.getConnectionScript())); connectionScript.setPrefRowCount(8);
+        connectionScript.setPromptText("GET / POST / ADD / CHECK / REDIR / PAUSE");
         ComboBox<CollectionType> type=new ComboBox<>();
         type.getItems().setAll(CollectionType.values());
         type.setValue(CollectionType.fromCode(c.getType()));
@@ -41,12 +43,13 @@ public class CollectionPropertiesUiService {
         g.addRow(r++,new Label("Назва:"),name);g.addRow(r++,new Label("Тип:"),type);g.addRow(r++,new Label("Коренева папка:"),root,browse);
         g.addRow(r++,new Label("Base URL книг/архівів:"),baseUrl);g.addRow(r++,new Label("URL INPX для оновлення:"),inpxUrl);
         g.addRow(r++,new Label("Користувач:"),user);g.addRow(r++,new Label("Пароль:"),pass);g.addRow(r++,new Label("Нотатки:"),notes);
+        g.addRow(r++,new Label("ConnectionScript:"),connectionScript);
         d.getDialogPane().setContent(g);
         if(d.showAndWait().orElse(ButtonType.CANCEL)!=ButtonType.OK)return null;
         try {
             Path rootPath=root.getText().isBlank()?c.getRootFolder():Path.of(root.getText());
             CollectionType selectedType = type.getValue() == null ? CollectionType.fromCode(c.getType()) : type.getValue();
-            Collection updated=updateUseCase.execute(c,name.getText(),rootPath,selectedType.getCode(),user.getText(),pass.getText(),baseUrl.getText(),notes.getText());
+            Collection updated=updateUseCase.execute(c,name.getText(),rootPath,selectedType.getCode(),user.getText(),pass.getText(),baseUrl.getText(),notes.getText(),connectionScript.getText());
             settings.put("collection."+updated.getId()+".inpxUrl",inpxUrl.getText().trim()); state.setCurrentLibraryCollection(updated); return updated;
         } catch(Exception ex) { alert(owner,"Не вдалося зберегти властивості: "+ex.getMessage()); return null; }
     }

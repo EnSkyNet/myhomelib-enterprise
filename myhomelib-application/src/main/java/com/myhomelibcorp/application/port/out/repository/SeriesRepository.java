@@ -9,9 +9,11 @@ import java.util.Optional;
 public interface SeriesRepository {
     List<Series> findAll();
     Optional<Series> findById(SeriesId id);
+    Optional<Series> findByName(String name);
     Series save(Series series);
     void deleteById(SeriesId id);
     List<String> getAllSeriesNames();
+    List<String> searchNames(String query, int limit);
 
     /**
      * Синхронізує серії з таблиці books у таблицю series.

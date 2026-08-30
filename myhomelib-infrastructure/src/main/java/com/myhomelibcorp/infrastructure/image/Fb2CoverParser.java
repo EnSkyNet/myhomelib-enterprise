@@ -149,15 +149,4 @@ public class Fb2CoverParser {
         }
     }
 
-    /**
-     * Допоміжний метод для читання зображення з потоку (без парсингу XML).
-     */
-    public byte[] parseImageOnly(InputStream inputStream) {
-        try {
-            return inputStream.readAllBytes();
-        } catch (Exception e) {
-            log.error("Помилка читання зображення", e);
-            return null;
-        }
-    }
 }

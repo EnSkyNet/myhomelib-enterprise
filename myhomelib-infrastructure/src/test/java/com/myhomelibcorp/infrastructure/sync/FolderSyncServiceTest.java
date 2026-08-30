@@ -1,11 +1,15 @@
 package com.myhomelibcorp.infrastructure.sync;
 
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
+import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
+import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
+import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
@@ -23,6 +27,7 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -40,6 +45,7 @@ class FolderSyncServiceTest {
         BookQueryRepository queries = mock(BookQueryRepository.class);
         BookCommandRepository commands = mock(BookCommandRepository.class);
         SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
         InpxImportPipeline inpx = mock(InpxImportPipeline.class);
@@ -62,7 +68,7 @@ class FolderSyncServiceTest {
         when(registry.findImporter(absolute)).thenReturn(importer);
         when(importer.importBooks(absolute)).thenReturn(Stream.of(parsed));
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().updateChanged(true).build());
 
         assertThat(result.getUpdated()).isEqualTo(1);
@@ -89,6 +95,7 @@ class FolderSyncServiceTest {
         BookQueryRepository queries = mock(BookQueryRepository.class);
         BookCommandRepository commands = mock(BookCommandRepository.class);
         SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
         InpxImportPipeline inpx = mock(InpxImportPipeline.class);
@@ -103,7 +110,7 @@ class FolderSyncServiceTest {
         when(registry.findImporter(absolute)).thenReturn(importer);
         when(importer.importBooks(absolute)).thenReturn(Stream.of(parsed));
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().build());
 
         assertThat(result.getAdded()).isEqualTo(1);
@@ -117,6 +124,7 @@ class FolderSyncServiceTest {
         BookQueryRepository queries = mock(BookQueryRepository.class);
         BookCommandRepository commands = mock(BookCommandRepository.class);
         SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
         InpxImportPipeline inpx = mock(InpxImportPipeline.class);
@@ -125,12 +133,88 @@ class FolderSyncServiceTest {
         when(scanner.streamSupportedFiles(eq(root), anyBoolean(), anyInt(), anyLong()))
                 .thenThrow(new java.io.IOException("scan failed"));
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().build());
 
         assertThat(result.getErrors()).isEqualTo(1);
         assertThat(result.getErrorMessages()).hasSize(1);
         verifyNoInteractions(commands, indexer, registry, inpx);
+    }
+
+
+    @Test
+    void multipleInpxFilesUseOneBoundedSelectiveLuceneFinalization() throws Exception {
+        Path first = temp.resolve("first.inpx").toAbsolutePath().normalize();
+        Path second = temp.resolve("second.inpx").toAbsolutePath().normalize();
+        Files.writeString(first, "fixture");
+        Files.writeString(second, "fixture");
+
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        BookCommandRepository commands = mock(BookCommandRepository.class);
+        SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
+        LibraryScanner scanner = mock(LibraryScanner.class);
+        ImporterRegistry registry = mock(ImporterRegistry.class);
+        InpxImportPipeline inpx = mock(InpxImportPipeline.class);
+
+        BookId inserted = BookId.generate();
+        BookId updated = BookId.generate();
+        ImportResult firstResult = new ImportResult(1, 0, 0, 0, 10, ImportStatus.SUCCESS,
+                new ImportChangeSet(Set.of(inserted.asString()), Set.of(), Set.of(), true), List.of());
+        ImportResult secondResult = new ImportResult(1, 0, 0, 0, 10, ImportStatus.SUCCESS,
+                new ImportChangeSet(Set.of(), Set.of(updated.asString()), Set.of(), true), List.of());
+
+        Path root = temp.toAbsolutePath().normalize();
+        when(scanner.streamSupportedFiles(eq(root), anyBoolean(), anyInt(), anyLong()))
+                .thenReturn(Stream.of(first, second));
+        when(inpx.importFileWithResult(eq(first), eq(1000), eq(root), any(), isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(firstResult);
+        when(inpx.importFileWithResult(eq(second), eq(1000), eq(root), any(), isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(secondResult);
+        when(synchronizer.synchronizeSafelyNow(anyList())).thenReturn(true);
+
+        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        var result = service.syncFolder(temp, SyncOptions.builder().build());
+
+        assertThat(result.getAdded()).isEqualTo(1);
+        assertThat(result.getUpdated()).isEqualTo(1);
+        verify(synchronizer, times(1)).synchronizeSafelyNow(argThat(ids ->
+                ids.size() == 2 && ids.contains(inserted) && ids.contains(updated)));
+        verify(indexer, never()).rebuildIndex();
+        verify(indexer, never()).commit();
+        verifyNoInteractions(commands, registry);
+    }
+
+    @Test
+    void incompleteInpxTrackingTriggersOnlyOneFullRebuildAfterAllFiles() throws Exception {
+        Path first = temp.resolve("large-a.inpx").toAbsolutePath().normalize();
+        Path second = temp.resolve("large-b.inpx").toAbsolutePath().normalize();
+        Files.writeString(first, "fixture");
+        Files.writeString(second, "fixture");
+
+        BookQueryRepository queries = mock(BookQueryRepository.class);
+        BookCommandRepository commands = mock(BookCommandRepository.class);
+        SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
+        LibraryScanner scanner = mock(LibraryScanner.class);
+        ImporterRegistry registry = mock(ImporterRegistry.class);
+        InpxImportPipeline inpx = mock(InpxImportPipeline.class);
+
+        ImportChangeSet overflow = new ImportChangeSet(Set.of(), Set.of(), Set.of(), false, 60_000, 0, 0);
+        ImportResult large = new ImportResult(60_000, 0, 0, 0, 10, ImportStatus.SUCCESS, overflow, List.of());
+        Path root = temp.toAbsolutePath().normalize();
+        when(scanner.streamSupportedFiles(eq(root), anyBoolean(), anyInt(), anyLong()))
+                .thenReturn(Stream.of(first, second));
+        when(inpx.importFileWithResult(any(Path.class), eq(1000), eq(root), any(), isNull(), isNull(), isNull(), isNull()))
+                .thenReturn(large);
+
+        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        var result = service.syncFolder(temp, SyncOptions.builder().build());
+
+        assertThat(result.getAdded()).isEqualTo(120_000);
+        verify(indexer, times(1)).rebuildIndex();
+        verifyNoInteractions(synchronizer);
+        verify(indexer, never()).commit();
     }
 
     private Book book(BookId id, String title, BookMetadata metadata, BookFile file, LocalDateTime update) {

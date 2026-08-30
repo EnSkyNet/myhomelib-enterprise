@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.usecase.export;
 
 import com.myhomelibcorp.application.dto.InpxExportRequest;
+import com.myhomelibcorp.application.catalog.collectioninfo.CollectionInfoCodec;
+import com.myhomelibcorp.application.catalog.collectioninfo.CollectionSourceProperties;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.RequiredArgsConstructor;
@@ -165,7 +167,7 @@ public class ExportToInpxUseCase {
 
         sb.append(0).append(FIELD_DELIMITER);
         sb.append(book.getFolder() != null ? escapeField(book.getFolder()) : "").append(FIELD_DELIMITER);
-        sb.append(book.getLanguage() != null ? book.getLanguage().toString() : "uk").append(FIELD_DELIMITER);
+        sb.append(book.getLanguage() != null ? book.getLanguage().toString() : "und").append(FIELD_DELIMITER);
         sb.append(book.getKeywords() != null ? escapeField(book.getKeywords()) : "");
         return sb.toString();
     }
@@ -203,14 +205,13 @@ public class ExportToInpxUseCase {
     }
 
     private String buildCollectionInfo(InpxExportRequest request) {
-        StringBuilder sb = new StringBuilder();
-        sb.append(request.getCollectionName() != null ? request.getCollectionName() : "MyHomeLib Collection").append("\n");
-        sb.append(request.getOutputFile().getFileName()).append("\n");
-        sb.append("0\n");
-        sb.append("Експортовано з MyHomeLib Enterprise\n");
-        sb.append("\n");
-        sb.append("\n");
-        return sb.toString();
+        return CollectionInfoCodec.serialize(new CollectionSourceProperties(
+                request.getCollectionName() != null ? request.getCollectionName() : "MyHomeLib Collection",
+                request.getOutputFile().getFileName().toString(),
+                request.getCollectionType() == null ? 0 : request.getCollectionType(),
+                request.getCollectionNotes(),
+                request.getCollectionUrl(),
+                request.getConnectionScript()));
     }
 
     private String escapeField(String value) {

@@ -26,6 +26,8 @@ import java.util.List;
 @Slf4j
 public class TextLayoutEngine {
 
+    private static final int MAX_LAYOUT_FRAGMENT_CHARS = 262_144;
+
     private FontMetricsProvider fontMetrics;
     private ReaderSettings settings;
     private final TextLineLayoutSupport lineSupport;
@@ -58,12 +60,10 @@ public class TextLayoutEngine {
         long startTime = System.currentTimeMillis();
         int clampedOffset = (int) Math.max(0, Math.min(textOffset, Math.max(0, text.length() - 1L)));
 
+        List<ParagraphInfo> paragraphs = text.getParagraphs();
         ParagraphInfo firstParagraph = text.findParagraphAt(clampedOffset);
         if (firstParagraph == null) {
-            List<ParagraphInfo> paragraphs = text.getParagraphs();
-            if (paragraphs.isEmpty()) {
-                return PageLayout.empty();
-            }
+            if (paragraphs.isEmpty()) return PageLayout.empty();
             firstParagraph = paragraphs.getFirst();
             clampedOffset = firstParagraph.offset();
         }
@@ -84,10 +84,10 @@ public class TextLayoutEngine {
         boolean firstOnPage = true;
 
         while (paragraphIndex < text.getParagraphCount() && currentY < bottomY) {
-            ParagraphInfo paragraphInfo = text.getParagraphs().get(paragraphIndex);
+            ParagraphInfo paragraphInfo = paragraphs.get(paragraphIndex);
             int paragraphStart = paragraphInfo.offset();
-            int paragraphEnd = paragraphIndex + 1 < text.getParagraphCount()
-                    ? text.getParagraphs().get(paragraphIndex + 1).offset()
+            int paragraphEnd = paragraphIndex + 1 < paragraphs.size()
+                    ? paragraphs.get(paragraphIndex + 1).offset()
                     : text.length();
 
             int fragmentStart = firstOnPage ? Math.max(clampedOffset, paragraphStart) : paragraphStart;
@@ -98,7 +98,11 @@ public class TextLayoutEngine {
                 continue;
             }
 
-            String paragraphText = text.getText(fragmentStart, paragraphEnd);
+            // A malformed/converted ebook may contain a multi-megabyte single
+            // paragraph. A page never needs the whole tail at once, so cap the
+            // temporary substring and style projection used by one layout pass.
+            int layoutEnd = Math.min(paragraphEnd, fragmentStart + MAX_LAYOUT_FRAGMENT_CHARS);
+            String paragraphText = text.getText(fragmentStart, layoutEnd);
             if (paragraphText.isEmpty()) {
                 paragraphIndex++;
                 continue;
@@ -106,7 +110,7 @@ public class TextLayoutEngine {
 
             TextStyle style = paragraphInfo.style() != null ? paragraphInfo.style() : TextStyle.NORMAL;
             boolean firstLineOfParagraph = fragmentStart == paragraphStart;
-            List<StyleSpan> fragmentSpans = text.getSpans(fragmentStart, paragraphEnd);
+            List<StyleSpan> fragmentSpans = text.getSpans(fragmentStart, layoutEnd);
 
             ParagraphLayout fragment = layoutParagraphFragment(
                     paragraphText,

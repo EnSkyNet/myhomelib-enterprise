@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.collection;
 
 import com.myhomelibcorp.application.dto.CollectionDto;
+import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -24,18 +25,7 @@ public class LoadCollectionsUseCase {
         return collections.stream()
                 .map(collection -> {
                     boolean isActive = active != null && active.getId().equals(collection.getId());
-                    return CollectionDto.builder()
-                            .id(collection.getId())
-                            .name(collection.getName())
-                            .active(isActive)
-                            .allowRename(true)
-                            .allowDelete(canDeleteAny && !isActive)
-                            .rootFolder(collection.getRootFolder() == null
-                                    ? null : collection.getRootFolder().toString())
-                            .dbFile(collection.getDbFile())
-                            .type(collection.getType())
-                            .booksCount(-1L)
-                            .build();
+                    return CollectionDtoMapper.toDto(collection, isActive, canDeleteAny);
                 })
                 .toList();
     }

@@ -3,6 +3,8 @@ package com.myhomelibcorp.application.usecase.collection;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
+import com.myhomelibcorp.application.port.out.catalog.CollectionInfoPort;
+import com.myhomelibcorp.application.catalog.collectioninfo.CollectionSourceProperties;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.application.imports.context.ImportContext;
@@ -21,6 +23,7 @@ public class CreateCollectionUseCase {
     private final CollectionRepository collectionRepository;
     private final CollectionLifecycleService collectionLifecycleService;
     private final ImportFileUseCase importFileUseCase;
+    private final CollectionInfoPort collectionInfoPort;
 
     public Collection execute(CreateCollectionRequest request) {
         if (request == null) {
@@ -33,6 +36,10 @@ public class CreateCollectionUseCase {
         log.info("📚 Створення нової колекції: {}", request.getName());
 
         String dbPath = determineDbPath(request);
+        CollectionSourceProperties sourceProperties = sourceProperties(request);
+        String effectiveUrl = firstNonBlank(request.getUrl(), sourceProperties == null ? null : sourceProperties.url());
+        String effectiveNotes = firstNonBlankPreserve(request.getNotes(), sourceProperties == null ? null : sourceProperties.notes());
+        String effectiveScript = firstNonBlankPreserve(request.getConnectionScript(), sourceProperties == null ? null : sourceProperties.connectionScript());
 
         // ID = null - репозиторій створить сам
         Collection collection = new Collection(
@@ -43,8 +50,9 @@ public class CreateCollectionUseCase {
                 request.getTypeCode(),
                 request.getUser(),
                 request.getPassword(),
-                request.getUrl(),
-                request.getNotes()
+                effectiveUrl,
+                effectiveNotes,
+                effectiveScript
         );
 
         log.info("Шлях до БД: {}", dbPath);
@@ -69,7 +77,7 @@ public class CreateCollectionUseCase {
                     .rootDirectory(root)
                     .updateExisting(false)
                     .indexAfterSave(false)
-                    .batchSize(5000);
+                    .batchSize(1000);
             String lower = source.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
             if (lower.endsWith(".inpx") || lower.endsWith(".inp")) {
                 context.catalogSourceKey(CatalogSourceIdentity.localInpx(source, root))
@@ -82,6 +90,19 @@ public class CreateCollectionUseCase {
         }
 
         return saved;
+    }
+
+    private CollectionSourceProperties sourceProperties(CreateCollectionRequest request) {
+        if (request.getSourcePath() == null || request.getSourcePath().isBlank()) return null;
+        return collectionInfoPort.read(Path.of(request.getSourcePath()).toAbsolutePath().normalize()).orElse(null);
+    }
+
+    private static String firstNonBlank(String local, String source) {
+        return local != null && !local.isBlank() ? local.trim() : source;
+    }
+
+    private static String firstNonBlankPreserve(String local, String source) {
+        return local != null && !local.isBlank() ? local : source;
     }
 
     private String determineDbPath(CreateCollectionRequest request) {

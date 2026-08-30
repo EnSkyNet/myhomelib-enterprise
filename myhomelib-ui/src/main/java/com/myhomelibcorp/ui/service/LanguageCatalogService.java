@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.shared.util.AppPaths;
@@ -15,6 +17,7 @@ import java.util.*;
 @Component
 @Slf4j
 public class LanguageCatalogService {
+    private static final long MAX_LANGUAGE_FILE_BYTES = 4L * 1024 * 1024;
     public static final int CURRENT_SCHEMA_VERSION = 2;
     private static final List<String> BUNDLED_DEFAULTS = List.of("uk", "en", "bg");
     private static final String AVAILABLE_LANGUAGES_FILE = "available-languages.txt";
@@ -81,7 +84,8 @@ public class LanguageCatalogService {
         if (catalogs.containsKey("uk")) return "uk";
         return catalogs.keySet().stream().findFirst().orElse("uk");
     }
-    public Path languageDirectory() { return languageDir; }
+
+
     public Path availableLanguagesFile() { return availableLanguagesFile; }
 
     private void initializeFirstRunCatalogues() {
@@ -125,7 +129,8 @@ public class LanguageCatalogService {
 
     private Optional<Catalog> loadCatalog(Path json, List<String> messages) {
         try {
-            Map<String, Object> root = mapper.readValue(Files.readAllBytes(json), new TypeReference<>() {});
+            if (Files.size(json) > MAX_LANGUAGE_FILE_BYTES) throw new IllegalArgumentException("language file is too large");
+            Map<String, Object> root = mapper.readValue(json.toFile(), new TypeReference<>() {});
             String fileCode = stripExtension(json.getFileName().toString());
             String code = normalizeCode(String.valueOf(root.getOrDefault("code", fileCode)));
             if (code.isBlank()) throw new IllegalArgumentException("invalid language code");
@@ -207,8 +212,7 @@ public class LanguageCatalogService {
         Files.createDirectories(target.getParent());
         Path temp = target.resolveSibling(target.getFileName() + ".tmp");
         Files.writeString(temp, text, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        try { Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE); }
-        catch (AtomicMoveNotSupportedException e) { Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING); }
+        AtomicFileSupport.moveReplacing(temp, target);
     }
 
     private static Path resolveLanguageDirectory() {

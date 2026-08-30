@@ -2,7 +2,6 @@ package com.myhomelibcorp.infrastructure.integrity;
 
 import com.myhomelibcorp.application.port.out.integrity.DataIntegrityPort;
 import com.myhomelibcorp.application.usecase.integrity.IntegrityReport;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
@@ -52,14 +50,12 @@ public class DataIntegrityService implements DataIntegrityPort {
             issues.add("Знайдено " + orphanedGenres + " жанрів без книг");
         }
 
-        // 5. Дублікати книг
-        List<BookId> duplicateIds = findDuplicateBookIds();
-        long duplicateBooks = duplicateIds.size();
+        // 5. Physical catalog duplicates. Count in SQL and keep only a tiny sample in memory.
+        DuplicateScan duplicateScan = scanPhysicalDuplicates();
+        long duplicateBooks = duplicateScan.count();
         if (duplicateBooks > 0) {
-            issues.add("Знайдено " + duplicateBooks + " дублікатів книг");
-            duplicateIds.stream().limit(10).forEach(id ->
-                    log.debug("Дублікат ID: {}", id)
-            );
+            issues.add("Знайдено " + duplicateBooks + " фізичних дублікатів книг");
+            duplicateScan.sampleIds().forEach(id -> log.debug("Дублікат ID: {}", id));
         }
 
         return new IntegrityReport(issues, booksWithoutAuthor, booksWithoutGenre,
@@ -109,32 +105,55 @@ public class DataIntegrityService implements DataIntegrityPort {
         return getJdbcTemplate().queryForObject(sql, Long.class);
     }
 
-    private List<BookId> findDuplicateBookIds() {
-        List<String> idStrings = findDuplicateBookIdStrings();
-        return idStrings.stream().map(BookId::fromString).collect(Collectors.toList());
-    }
+    /**
+     * Uses the same stable physical identity as maintenance/statistics instead of an O(N²)-like
+     * correlated title/author search. User-visible logical editions with the same title are not
+     * treated as corruption merely because their metadata happens to match.
+     */
+    private DuplicateScan scanPhysicalDuplicates() {
+        String groups = """
+                FROM books
+                WHERE COALESCE(deleted, 0) = 0
+                  AND TRIM(COALESCE(lib_id, '')) <> ''
+                GROUP BY lib_id,
+                         COALESCE(collection_root, ''),
+                         COALESCE(folder, ''),
+                         COALESCE(file_name, ''),
+                         COALESCE(archive_entry, '')
+                HAVING COUNT(*) > 1
+                """;
+        Long count = getJdbcTemplate().queryForObject(
+                "SELECT COALESCE(SUM(cnt - 1), 0) FROM (SELECT COUNT(*) AS cnt " + groups + ")",
+                Long.class);
+        long duplicateCount = count == null ? 0L : count;
+        if (duplicateCount == 0) return new DuplicateScan(0, List.of());
 
-    private List<String> findDuplicateBookIdStrings() {
-        String sql = """
+        String sampleSql = """
+                WITH duplicate_groups AS (
+                    SELECT lib_id,
+                           COALESCE(collection_root, '') AS collection_root,
+                           COALESCE(folder, '') AS folder,
+                           COALESCE(file_name, '') AS file_name,
+                           COALESCE(archive_entry, '') AS archive_entry,
+                           MIN(id) AS keep_id
+                    """ + groups + """
+                )
                 SELECT b.id
                 FROM books b
-                WHERE EXISTS (
-                    SELECT 1
-                    FROM books b2
-                    JOIN book_authors ba2 ON b2.id = ba2.book_id
-                    JOIN authors a2 ON ba2.author_id = a2.id
-                    WHERE b2.id != b.id
-                      AND b2.title = b.title
-                      AND a2.last_name = (
-                          SELECT a.last_name
-                          FROM book_authors ba
-                          JOIN authors a ON ba.author_id = a.id
-                          WHERE ba.book_id = b.id
-                          LIMIT 1
-                      )
-                      AND b2.id < b.id
-                )
+                JOIN duplicate_groups d
+                  ON b.lib_id = d.lib_id
+                 AND COALESCE(b.collection_root, '') = d.collection_root
+                 AND COALESCE(b.folder, '') = d.folder
+                 AND COALESCE(b.file_name, '') = d.file_name
+                 AND COALESCE(b.archive_entry, '') = d.archive_entry
+                WHERE COALESCE(b.deleted, 0) = 0
+                  AND b.id <> d.keep_id
+                LIMIT 10
                 """;
-        return getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString("id"));
+        List<String> sample = getJdbcTemplate().query(sampleSql, (rs, rowNum) -> rs.getString("id"));
+        return new DuplicateScan(duplicateCount, List.copyOf(sample));
     }
+
+    private record DuplicateScan(long count, List<String> sampleIds) { }
+
 }

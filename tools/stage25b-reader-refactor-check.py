@@ -71,6 +71,7 @@ def compile_line_support():
         td=Path(td); src=td/'src'; out=td/'out'; out.mkdir()
         rels=(
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSettings.java',
+          'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderInputSettings.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/TextStyle.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/StyleSpan.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/model/TextRunLayout.java',

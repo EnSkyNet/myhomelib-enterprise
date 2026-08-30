@@ -14,4 +14,8 @@ public class InpxExportRequest {
     Path outputFile;                // Шлях до вихідного .inpx файлу
     String collectionName;          // Назва колекції
     String collectionVersion;       // Версія колекції
+    Integer collectionType;
+    String collectionNotes;
+    String collectionUrl;
+    String connectionScript;
 }

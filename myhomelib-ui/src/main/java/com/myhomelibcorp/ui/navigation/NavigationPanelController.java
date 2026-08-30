@@ -147,18 +147,7 @@ public class NavigationPanelController {
         });
     }
 
-    public void refreshAfterImport() {
-        log.info("Оновлення навігації після імпорту: {}", currentMode);
-        Platform.runLater(() -> {
-            if (currentMode == NavigationMode.AUTHORS) {
-                currentLetter = null;
-                alphabetToolbarController.clearSelection();
-            }
-            allNodes = List.of();
-            navigationListView.getItems().clear();
-            loadMode(currentMode);
-        });
-    }
+
 
     /**
      * Повне скидання навігації - очищує всі кеші та перезавантажує
@@ -415,31 +404,9 @@ public class NavigationPanelController {
         navigationListView.getSelectionModel().clearSelection();
     }
 
-    // Compatibility entry points
-    public void loadAuthors() { loadMode(NavigationMode.AUTHORS); }
-    public void loadSeries() { loadMode(NavigationMode.SERIES); }
-    public void loadGenres() { loadMode(NavigationMode.GENRES); }
-    public void loadYears() { loadMode(NavigationMode.YEARS); }
-    public void loadLanguages() { loadMode(NavigationMode.LANGUAGES); }
-    public void loadArchives() { loadMode(NavigationMode.ARCHIVES); }
-    public void loadKeywords() { loadMode(NavigationMode.KEYWORDS); }
-    public void loadGroups() { loadMode(NavigationMode.GROUPS); }
-    public void loadReviews() { loadMode(NavigationMode.REVIEWS); }
-    public void loadUpdates() { loadMode(NavigationMode.UPDATES); }
-    public void loadAlreadyRead() { loadMode(NavigationMode.ALREADY_READ); }
-    public void loadHistory() { loadMode(NavigationMode.HISTORY); }
-    public void loadAllBooks() { loadMode(NavigationMode.ALL_BOOKS); }
+    @FXML public void onAuthors() { loadMode(NavigationMode.AUTHORS); clearSelection(); }
+    @FXML public void onSeries() { loadMode(NavigationMode.SERIES); clearSelection(); }
+    @FXML public void onGenres() { loadMode(NavigationMode.GENRES); clearSelection(); }
+    @FXML public void onAllBooks() { loadMode(NavigationMode.ALL_BOOKS); clearSelection(); }
 
-    @FXML public void onAuthors() { loadAuthors(); clearSelection(); }
-    @FXML public void onSeries() { loadSeries(); clearSelection(); }
-    @FXML public void onGenres() { loadGenres(); clearSelection(); }
-    @FXML public void onYears() { loadYears(); clearSelection(); }
-    @FXML public void onLanguages() { loadLanguages(); clearSelection(); }
-    @FXML public void onArchives() { loadArchives(); clearSelection(); }
-    @FXML public void onKeywords() { loadKeywords(); clearSelection(); }
-    @FXML public void onGroups() { loadGroups(); clearSelection(); }
-    @FXML public void onReviews() { loadReviews(); clearSelection(); }
-    @FXML public void onAlreadyRead() { loadAlreadyRead(); clearSelection(); }
-    @FXML public void onHistory() { loadHistory(); clearSelection(); }
-    @FXML public void onAllBooks() { loadAllBooks(); clearSelection(); }
 }

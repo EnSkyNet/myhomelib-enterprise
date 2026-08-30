@@ -2,8 +2,8 @@ package com.myhomelibcorp.application.port.out.catalog;
 
 import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogSyncSession;
+import com.myhomelibcorp.application.catalog.CatalogUpdateCursor;
 import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
-import com.myhomelibcorp.application.catalog.CatalogUpdateRecord;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 
@@ -29,14 +29,12 @@ public interface CatalogUpdateTrackingPort {
 
     boolean isAuthorFollowed(AuthorId authorId);
 
-    List<CatalogUpdateRecord> findPendingUpdates(int limit, int offset);
-
     /**
      * Pending rows already enriched with title and a deterministic author for Stage 7 grouping.
      * NEW_BY_FOLLOWED_AUTHOR prefers a followed co-author; other rows use the same deterministic
      * ordering so one event is rendered exactly once and counters stay consistent.
      */
-    List<CatalogUpdateItem> findPendingUpdateItems(int limit, int offset);
+    List<CatalogUpdateItem> findPendingUpdateItems(int limit, CatalogUpdateCursor after);
 
     long countPendingUpdates();
 }

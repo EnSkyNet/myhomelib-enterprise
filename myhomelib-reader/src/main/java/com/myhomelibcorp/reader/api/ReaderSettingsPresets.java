@@ -9,6 +9,11 @@ public final class ReaderSettingsPresets {
         ReaderSettings d = ReaderSettings.defaultSettings();
         return List.of(
                 new ReaderSettingsPreset("default", "Стандартний", d),
+                new ReaderSettingsPreset("day", "Денний", new ReaderSettings(
+                        "light", "Georgia", 19, 1.62, 1.4, 1.35, "justify",
+                        34, 34, 22, 22, true, false, false, 3, true, "",
+                        true, true, true, true,
+                        "previous-page", "toggle-toolbar", "next-page")),
                 new ReaderSettingsPreset("comfortable", "Комфорт", new ReaderSettings(
                         "sepia", "Georgia", 20, 1.72, 1.7, 1.4, "justify",
                         42, 42, 28, 28, true, false, false, 3, true, "",

@@ -31,10 +31,10 @@ public class MainBookCommandCoordinator {
         if (classicActions.editBook(owner, BookId.fromString(selected.getId()))) refresh.run();
     }
 
-    public void deleteBook(Window owner, Runnable refresh) {
+    public void deleteBook(Runnable refresh) {
         BookDto selected = requireBook();
         if (selected == null) return;
-        if (classicActions.deleteBook(owner, BookId.fromString(selected.getId()))) {
+        if (classicActions.deleteBook(BookId.fromString(selected.getId()))) {
             appState.getBookDetails().setCurrentBook(null);
             refresh.run();
         }
@@ -43,7 +43,7 @@ public class MainBookCommandCoordinator {
     public void openInternal() {
         BookDto selected = requireBook();
         if (selected == null) return;
-        bookDownloadCoordinator.ensureLocal(selected).whenComplete((path, error) -> {
+        bookDownloadCoordinator.ensureLocalForOpen(selected).whenComplete((path, error) -> {
             if (error == null) Platform.runLater(() -> workspaceManager.showNewReaderWorkspace(BookId.fromString(selected.getId())));
         });
     }
@@ -71,7 +71,7 @@ public class MainBookCommandCoordinator {
     public void openExternal() {
         BookDto selected = requireBook();
         if (selected == null) return;
-        bookDownloadCoordinator.ensureLocal(selected).whenComplete((path, error) -> {
+        bookDownloadCoordinator.ensureLocalForOpen(selected).whenComplete((path, error) -> {
             if (error != null) return;
             try {
                 externalBookLauncher.open(selected);

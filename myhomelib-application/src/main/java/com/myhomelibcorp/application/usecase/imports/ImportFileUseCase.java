@@ -5,16 +5,19 @@ import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.imports.error.ImportErrorHandler;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
+import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.imports.statistics.ImportStatistics;
-import com.myhomelibcorp.application.port.out.cache.CacheRefresherPort;
+import com.myhomelibcorp.application.port.out.catalog.CatalogImportPort;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.event.EventPublisher;
 import com.myhomelibcorp.application.port.out.importer.FastImportService;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
-import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,9 +25,10 @@ import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.stream.Stream;
 
@@ -39,13 +43,15 @@ public class ImportFileUseCase {
     private final EventPublisher eventPublisher;
     private final BulkImportOptimizer bulkImportOptimizer;
     private final FastImportService fastImportService;
-    private final CacheRefresherPort cacheRefresherPort;
     private final SearchIndexer searchIndexer;
+    private final CatalogImportPort catalogImportPort;
+    private final BookQueryRepository bookQueryRepository;
 
-    @Value("${app.import.batch-size:500}")
+    @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
 
-    private static final long INDEX_DISABLE_THRESHOLD = 500_000;
+    @Value("${app.import.change-tracking-limit:50000}")
+    private int changeTrackingLimit;
 
     // ==================== ОСНОВНИЙ МЕТОД ====================
 
@@ -58,98 +64,11 @@ public class ImportFileUseCase {
         if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
             return executeInpx(context);
         }
+        if (catalogImportPort.supports(context.getFile())) {
+            return executeNeutralCatalog(context);
+        }
 
         return executeLegacy(context);
-    }
-
-    // ==================== МЕТОДИ З ПРОГРЕСОМ ====================
-
-    /**
-     * Виконує імпорт з передачею прогресу через DoubleConsumer.
-     * Значення progress від 0.0 до 1.0.
-     */
-    public ImportResult executeWithProgress(ImportContext context, DoubleConsumer progressConsumer) {
-        if (context == null || context.getFile() == null) {
-            throw new IllegalArgumentException("File cannot be null");
-        }
-
-        // Додаємо progressConsumer до контексту
-        ImportContext contextWithProgress = ImportContext.builder()
-                .file(context.getFile())
-                .rootDirectory(context.getRootDirectory())
-                .archiveEntry(context.getArchiveEntry())
-                .catalogSourceKey(context.getCatalogSourceKey())
-                .catalogSourceLocation(context.getCatalogSourceLocation())
-                .updateExisting(context.isUpdateExisting())
-                .indexAfterSave(context.isIndexAfterSave())
-                .catalogFullSnapshot(context.isCatalogFullSnapshot())
-                .progressListener(progressConsumer)
-                .statusConsumer(context.getStatusConsumer())
-                .cancelFlag(context.getCancelFlag())
-                .batchSize(context.getBatchSize())
-                .build();
-
-        return execute(contextWithProgress);
-    }
-
-    /**
-     * Виконує імпорт з передачею прогресу та статусу.
-     */
-    public ImportResult executeWithProgressAndStatus(ImportContext context,
-                                                     DoubleConsumer progressConsumer,
-                                                     Consumer<String> statusConsumer) {
-        if (context == null || context.getFile() == null) {
-            throw new IllegalArgumentException("File cannot be null");
-        }
-
-        ImportContext contextWithProgress = ImportContext.builder()
-                .file(context.getFile())
-                .rootDirectory(context.getRootDirectory())
-                .archiveEntry(context.getArchiveEntry())
-                .catalogSourceKey(context.getCatalogSourceKey())
-                .catalogSourceLocation(context.getCatalogSourceLocation())
-                .updateExisting(context.isUpdateExisting())
-                .indexAfterSave(context.isIndexAfterSave())
-                .catalogFullSnapshot(context.isCatalogFullSnapshot())
-                .progressListener(progressConsumer)
-                .statusConsumer(statusConsumer)
-                .cancelFlag(context.getCancelFlag())
-                .batchSize(context.getBatchSize())
-                .build();
-
-        return execute(contextWithProgress);
-    }
-
-    /**
-     * Виконує імпорт з детальним прогресом для UI.
-     * Повертає ImportResult та оновлює прогреси.
-     */
-    public ImportResult executeWithDetailedProgress(ImportContext context,
-                                                    DoubleConsumer overallProgress,
-                                                    Consumer<String> statusConsumer,
-                                                    Consumer<Long> processedCountConsumer,
-                                                    Consumer<Double> speedConsumer) {
-        if (context == null || context.getFile() == null) {
-            throw new IllegalArgumentException("File cannot be null");
-        }
-
-        // Додаємо всі колбеки до контексту
-        ImportContext contextWithProgress = ImportContext.builder()
-                .file(context.getFile())
-                .rootDirectory(context.getRootDirectory())
-                .archiveEntry(context.getArchiveEntry())
-                .catalogSourceKey(context.getCatalogSourceKey())
-                .catalogSourceLocation(context.getCatalogSourceLocation())
-                .updateExisting(context.isUpdateExisting())
-                .indexAfterSave(context.isIndexAfterSave())
-                .catalogFullSnapshot(context.isCatalogFullSnapshot())
-                .progressListener(overallProgress)
-                .statusConsumer(statusConsumer)
-                .cancelFlag(context.getCancelFlag())
-                .batchSize(context.getBatchSize())
-                .build();
-
-        return execute(contextWithProgress);
     }
 
     // ==================== ВНУТРІШНІ МЕТОДИ ====================
@@ -167,28 +86,86 @@ public class ImportFileUseCase {
                 context.getCatalogSourceLocation(),
                 context.isCatalogFullSnapshot(),
                 context.getProgressListener(),
-                context.getStatusConsumer());
+                context.getStatusConsumer(),
+                context.getOperationId(),
+                context.getOperationProgressListener());
 
-        if (result.imported() > 0) {
-            cacheRefresherPort.refreshCachesAsync();
-            log.info("Запущено асинхронне оновлення малих словникових кешів після {} книг", result.imported());
-
-            try {
-                searchIndexer.commit();
-                log.info("📌 Індекс закомічено після імпорту {} книг", result.imported());
-            } catch (Exception e) {
-                log.warn("Не вдалося закомітити індекс після імпорту", e);
+        if (context.isIndexAfterSave() && requiresSearchFinalization(result)) {
+            if (result.changes().complete()) {
+                applyIncrementalIndex(result.changes());
+                log.info("📌 Selective Lucene update applied after fast INPX import: +{}, ~{}, -{}",
+                        result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount());
+            } else {
+                // Exact IDs were deliberately discarded after the bounded tracking threshold.
+                // Rebuild from the committed database instead of pretending that commit() indexes DB rows.
+                searchIndexer.rebuildIndex();
+                log.info("📌 Full Lucene rebuild completed after bounded INPX change tracking overflow");
             }
         }
 
-        eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(context.getFile(), result));
+        publishFinished(context, result);
         return result;
+    }
+
+    private static boolean requiresSearchFinalization(ImportResult result) {
+        if (result == null || result.changes() == null) return false;
+        var changes = result.changes();
+        long trackedChanges = changes.insertedCount() + changes.updatedCount() + changes.deletedCount();
+        // Incomplete means exact IDs are unavailable. Compatibility FastImportService implementations
+        // may only report imported rows, so a positive import still requires a safe full rebuild.
+        return trackedChanges > 0 || (!changes.complete() && result.imported() > 0);
+    }
+
+    private ImportResult executeNeutralCatalog(ImportContext context) {
+        ImportResult result = catalogImportPort.importCatalog(context);
+        if (result.status() == com.myhomelibcorp.application.imports.statistics.ImportStatus.CANCELLED) {
+            publishFinished(context, result);
+            return result;
+        }
+
+        if (result.imported() > 0) {
+            if (context.isIndexAfterSave()) {
+                if (context.isCatalogFullSnapshot() || !result.changes().complete()) {
+                    searchIndexer.rebuildIndex();
+                } else {
+                    applyIncrementalIndex(result.changes());
+                }
+            }
+        }
+        publishFinished(context, result);
+        return result;
+    }
+
+    private void applyIncrementalIndex(com.myhomelibcorp.application.imports.statistics.ImportChangeSet changes) {
+        boolean begun = false;
+        try {
+            searchIndexer.beginAtomicUpdate();
+            begun = true;
+            for (String id : changes.deleted()) searchIndexer.deleteBook(BookId.fromString(id));
+
+            Set<String> changed = new LinkedHashSet<>(changes.inserted());
+            changed.addAll(changes.updated());
+            List<String> ids = new ArrayList<>(changed);
+            for (int from = 0; from < ids.size(); from += 400) {
+                List<BookId> batchIds = ids.subList(from, Math.min(ids.size(), from + 400)).stream()
+                        .map(BookId::fromString).toList();
+                for (Book book : bookQueryRepository.findByIds(batchIds)) {
+                    if (book == null) continue;
+                    if (book.isDeleted()) searchIndexer.deleteBook(book.getId());
+                    else searchIndexer.indexBook(book);
+                }
+            }
+            searchIndexer.commit();
+        } catch (RuntimeException e) {
+            if (begun) {
+                try { searchIndexer.rollbackAtomicUpdate(); } catch (RuntimeException rollback) { e.addSuppressed(rollback); }
+            }
+            throw e;
+        }
     }
 
     private ImportResult executeLegacy(ImportContext context) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
-        boolean indexAfterSave = context.isIndexAfterSave();
-
         // Отримуємо progress listener з контексту
         DoubleConsumer progressListener = context.getProgressListener();
         AtomicLong totalProcessed = new AtomicLong(0);
@@ -199,17 +176,14 @@ public class ImportFileUseCase {
         try {
             var importer = importerRegistry.findImporter(context.getFile());
             estimatedCount = importer.countBooks(context.getFile());
-            if (estimatedCount > INDEX_DISABLE_THRESHOLD) {
-                indexAfterSave = false;
-                log.info("Файл містить {} книг (поріг {}), індексацію вимкнено для прискорення",
-                        estimatedCount, INDEX_DISABLE_THRESHOLD);
-            }
         } catch (Exception e) {
-            log.debug("Не вдалося оцінити кількість книг, індексація залишена увімкненою");
+            log.debug("Не вдалося оцінити кількість книг для progress telemetry");
         }
 
         ImportStatistics stats = new ImportStatistics();
-        log.info("Початок імпорту файлу: {}, індексація: {}", context.getFile(), indexAfterSave);
+        ImportChangeAccumulator changes = new ImportChangeAccumulator(
+                ImportChangeAccumulator.normalizeLimit(changeTrackingLimit));
+        log.info("Початок імпорту файлу: {}; Lucene фіналізується один раз після DB batches", context.getFile());
 
         if (estimatedCount > 10000) {
             bulkImportOptimizer.enableBulkInsertMode();
@@ -217,7 +191,7 @@ public class ImportFileUseCase {
 
         try {
             var importer = importerRegistry.findImporter(context.getFile());
-            DuplicatePolicy policy = DuplicatePolicy.SKIP;
+            DuplicatePolicy policy = context.isUpdateExisting() ? DuplicatePolicy.MERGE : DuplicatePolicy.SKIP;
             List<Book> batch = new ArrayList<>(batchSize);
 
             // Оновлюємо прогрес на початку
@@ -245,20 +219,14 @@ public class ImportFileUseCase {
                     }
 
                     if (batch.size() >= batchSize) {
-                        int attempted = batch.size();
-                        int saved = bookSaver.saveBatch(batch, indexAfterSave, policy);
-                        stats.incrementImported(saved);
-                        stats.getSkipped().addAndGet(attempted - saved);
+                        saveLegacyBatch(batch, policy, stats, changes);
                         batch.clear();
                     }
                 }
             }
 
             if (!batch.isEmpty()) {
-                int attempted = batch.size();
-                int saved = bookSaver.saveBatch(batch, indexAfterSave, policy);
-                stats.incrementImported(saved);
-                stats.getSkipped().addAndGet(attempted - saved);
+                saveLegacyBatch(batch, policy, stats, changes);
                 batch.clear();
             }
 
@@ -275,29 +243,58 @@ public class ImportFileUseCase {
             }
         }
 
-        // Фінальний прогрес
-        reportProgress(progressListener, 1.0, estimatedCount, totalProcessed, lastReported, startTime);
-
-        ImportResult result = ImportResult.fromStatistics(stats);
+        ImportResult result = new ImportResult(
+                stats.getImported().get(),
+                stats.getSkipped().get(),
+                stats.getDuplicates().get(),
+                stats.getErrors().get(),
+                stats.getDurationMs(),
+                isCancelled(context) ? ImportStatus.CANCELLED
+                        : (stats.getErrors().get() > 0 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS),
+                changes.snapshot(),
+                List.of());
         log.info("Імпорт файлу завершено: {}", result);
 
-        if (stats.getImported().get() > 0) {
-            try {
-                searchIndexer.commit();
-                log.info("📌 Індекс закомічено після імпорту {} книг", stats.getImported().get());
-            } catch (Exception e) {
-                log.warn("Не вдалося закомітити індекс після імпорту", e);
+        if (context.isIndexAfterSave() && requiresSearchFinalization(result)) {
+            if (result.changes().complete()) {
+                applyIncrementalIndex(result.changes());
+                log.info("📌 Selective Lucene update після legacy import: +{}, ~{}, -{}",
+                        result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount());
+            } else {
+                searchIndexer.rebuildIndex();
+                log.info("📌 Full Lucene rebuild після bounded legacy change-tracking overflow");
             }
-
-            cacheRefresherPort.refreshCachesAsync();
-            log.info("Запущено асинхронне оновлення кешів словників після legacy-імпорту");
         }
 
-        eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(context.getFile(), result));
+        // 100% means both DB import and requested search synchronization have completed.
+        // Cancellation may leave already committed legacy batches synchronized, but is not completion.
+        if (!isCancelled(context)) {
+            reportProgress(progressListener, 1.0, estimatedCount, totalProcessed, lastReported, startTime);
+        }
+        publishFinished(context, result);
         return result;
     }
 
+    private void saveLegacyBatch(List<Book> batch,
+                                 DuplicatePolicy policy,
+                                 ImportStatistics stats,
+                                 ImportChangeAccumulator changes) {
+        BookSaver.BatchSaveResult saveResult = bookSaver.saveBatchWithResult(batch, false, policy);
+        int savedCount = saveResult.insertedBooks().size() + saveResult.updatedBooks().size();
+        stats.incrementImported(savedCount);
+        stats.getSkipped().addAndGet(saveResult.skippedBooks().size());
+        stats.getDuplicates().addAndGet(saveResult.skippedBooks().size());
+        for (Book inserted : saveResult.insertedBooks()) changes.recordInserted(inserted.getId().asString());
+        for (Book updated : saveResult.updatedBooks()) changes.recordUpdated(updated.getId().asString());
+    }
+
     // ==================== ДОПОМІЖНІ МЕТОДИ ====================
+
+    private void publishFinished(ImportContext context, ImportResult result) {
+        if (context != null && context.isPublishFinishedEvent()) {
+            eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(context.getFile(), result));
+        }
+    }
 
     /**
      * Репортит прогрес через listener.
@@ -323,6 +320,11 @@ public class ImportFileUseCase {
             }
             lastReported.set(processed);
         }
+    }
+
+
+    private static boolean isCancelled(ImportContext context) {
+        return context != null && context.getCancelFlag() != null && context.getCancelFlag().get();
     }
 
     private Stream<Book> enrichWithCollectionRoot(Stream<Book> bookStream, Path rootDirectory) {
@@ -361,46 +363,4 @@ public class ImportFileUseCase {
         });
     }
 
-    // ==================== ДОДАТКОВІ МЕТОДИ ДЛЯ ЗРУЧНОСТІ ====================
-
-    /**
-     * Створює ImportContext з додатковими колбеками прогресу.
-     */
-    public static ImportContext createContextWithProgress(Path file,
-                                                          Path rootDirectory,
-                                                          DoubleConsumer progressListener,
-                                                          Consumer<String> statusConsumer,
-                                                          int batchSize) {
-        return ImportContext.builder()
-                .file(file)
-                .rootDirectory(rootDirectory)
-                .batchSize(batchSize)
-                .indexAfterSave(true)
-                .progressListener(progressListener)
-                .statusConsumer(statusConsumer)
-                .build();
-    }
-
-    /**
-     * Створює ImportContext для INPX з прогресами.
-     */
-    public static ImportContext createInpxContext(Path file,
-                                                  Path rootDirectory,
-                                                  String catalogSourceKey,
-                                                  String catalogSourceLocation,
-                                                  DoubleConsumer progressListener,
-                                                  Consumer<String> statusConsumer) {
-        return ImportContext.builder()
-                .file(file)
-                .rootDirectory(rootDirectory)
-                .catalogSourceKey(catalogSourceKey)
-                .catalogSourceLocation(catalogSourceLocation)
-                .catalogFullSnapshot(false)
-                .batchSize(5000)
-                .updateExisting(true)
-                .indexAfterSave(false)
-                .progressListener(progressListener)
-                .statusConsumer(statusConsumer)
-                .build();
-    }
 }

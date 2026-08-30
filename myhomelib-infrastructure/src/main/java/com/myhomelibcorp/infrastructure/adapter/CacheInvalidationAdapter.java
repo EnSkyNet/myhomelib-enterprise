@@ -2,7 +2,6 @@ package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.infrastructure.cache.BookCache;
-import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
 import com.myhomelibcorp.infrastructure.cache.CaffeineSearchCache;
 import com.myhomelibcorp.infrastructure.cache.CaffeineCoverCache;
 import lombok.RequiredArgsConstructor;
@@ -15,7 +14,6 @@ import org.springframework.stereotype.Component;
 public class CacheInvalidationAdapter implements CacheInvalidationPort {
 
     private final BookCache bookCache;
-    private final DictionaryCache dictionaryCache;
     private final CaffeineSearchCache searchCache;
     private final CaffeineCoverCache coverCache;
 
@@ -23,7 +21,6 @@ public class CacheInvalidationAdapter implements CacheInvalidationPort {
     public void invalidateAll() {
         log.info("🧹 Очищення всіх кешів");
         invalidateBookCache();
-        invalidateDictionaryCache();
         invalidateSearchCache();
         invalidateCoverCache();
         log.info("✅ Всі кеші очищено");
@@ -33,12 +30,6 @@ public class CacheInvalidationAdapter implements CacheInvalidationPort {
     public void invalidateBookCache() {
         bookCache.clear();
         log.debug("BookCache очищено");
-    }
-
-    @Override
-    public void invalidateDictionaryCache() {
-        dictionaryCache.clearAll();
-        log.debug("DictionaryCache очищено");
     }
 
     @Override

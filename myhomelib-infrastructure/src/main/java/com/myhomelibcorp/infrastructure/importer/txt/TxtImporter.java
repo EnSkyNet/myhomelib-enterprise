@@ -36,7 +36,7 @@ public class TxtImporter extends AbstractBookImporter {
         BookMetadata metadata = BookMetadata.builder()
                 .annotation("")
                 .keywords("")
-                .language(LanguageCode.of("uk"))
+                .language(LanguageCode.of("und"))
                 .rate(0)
                 .progress(0)
                 .build();

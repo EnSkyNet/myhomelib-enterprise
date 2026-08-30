@@ -1,0 +1,284 @@
+{
+  "schema": 1,
+  "kind": "myhomelib-v7.1-inpx-batch-index-offline-sqlite-evidence",
+  "date": "2026-08-30",
+  "environment": {
+    "python": "3.13.5",
+    "sqlite": "3.46.1",
+    "os": "Linux-6.18.35-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "cpu_count": 5
+  },
+  "settings": {
+    "journal_mode": "WAL",
+    "synchronous": "NORMAL",
+    "temp_store": "MEMORY",
+    "cache_size": -262144,
+    "mmap_size": 2147483648,
+    "batches": [
+      500,
+      1000,
+      5000,
+      10000
+    ],
+    "suspended_indexes": [
+      "idx_books_title",
+      "idx_books_series",
+      "idx_authors_last_name"
+    ]
+  },
+  "duration_seconds": 22.271,
+  "results": [
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 500,
+      "median_ms": 153.847,
+      "rows_per_sec": 77999.8,
+      "runs_ms": [
+        153.228,
+        153.996,
+        153.847,
+        151.387,
+        196.017
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 1000,
+      "median_ms": 151.908,
+      "rows_per_sec": 78995.4,
+      "runs_ms": [
+        152.66,
+        159.491,
+        151.165,
+        151.908,
+        151.231
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 5000,
+      "median_ms": 157.859,
+      "rows_per_sec": 76017.2,
+      "runs_ms": [
+        158.142,
+        157.859,
+        190.663,
+        154.76,
+        155.494
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 10000,
+      "median_ms": 155.054,
+      "rows_per_sec": 77392.6,
+      "runs_ms": [
+        155.313,
+        156.308,
+        155.054,
+        153.253,
+        153.958
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 500,
+      "median_ms": 143.584,
+      "rows_per_sec": 83574.7,
+      "runs_ms": [
+        143.274,
+        143.584,
+        143.343,
+        143.628,
+        143.633
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 1000,
+      "median_ms": 143.012,
+      "rows_per_sec": 83909.1,
+      "runs_ms": [
+        142.535,
+        142.688,
+        143.012,
+        143.709,
+        144.161
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 5000,
+      "median_ms": 146.384,
+      "rows_per_sec": 81976.0,
+      "runs_ms": [
+        146.384,
+        146.272,
+        145.268,
+        146.898,
+        147.175
+      ]
+    },
+    {
+      "books": 100000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 10000,
+      "median_ms": 153.611,
+      "rows_per_sec": 78119.5,
+      "runs_ms": [
+        158.02,
+        153.611,
+        153.123,
+        154.221,
+        151.545
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 500,
+      "median_ms": 166.928,
+      "rows_per_sec": 71887.4,
+      "runs_ms": [
+        163.666,
+        185.966,
+        164.891,
+        166.928,
+        175.888
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 1000,
+      "median_ms": 165.937,
+      "rows_per_sec": 72316.5,
+      "runs_ms": [
+        165.937,
+        163.482,
+        169.836,
+        180.47,
+        162.505
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 5000,
+      "median_ms": 170.226,
+      "rows_per_sec": 70494.4,
+      "runs_ms": [
+        170.597,
+        169.586,
+        170.226,
+        169.043,
+        175.081
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": false,
+      "batch_size": 10000,
+      "median_ms": 170.698,
+      "rows_per_sec": 70299.5,
+      "runs_ms": [
+        170.89,
+        167.47,
+        170.698,
+        182.599,
+        170.113
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 500,
+      "median_ms": 153.694,
+      "rows_per_sec": 78077.0,
+      "runs_ms": [
+        153.694,
+        153.482,
+        154.933,
+        160.089,
+        153.204
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 1000,
+      "median_ms": 150.875,
+      "rows_per_sec": 79536.3,
+      "runs_ms": [
+        150.304,
+        149.813,
+        150.875,
+        153.645,
+        152.84
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 5000,
+      "median_ms": 154.438,
+      "rows_per_sec": 77701.3,
+      "runs_ms": [
+        164.871,
+        154.517,
+        154.344,
+        153.909,
+        154.438
+      ]
+    },
+    {
+      "books": 500000,
+      "probe_rows": 12000,
+      "indexes_suspended": true,
+      "batch_size": 10000,
+      "median_ms": 155.475,
+      "rows_per_sec": 77182.9,
+      "runs_ms": [
+        159.828,
+        155.475,
+        154.943,
+        154.931,
+        155.699
+      ]
+    }
+  ],
+  "recommendation": {
+    "selected_default_batch_size": 1000,
+    "indexes_intact_rows_per_sec_median_by_batch": {
+      "500": 74943.6,
+      "1000": 75655.9,
+      "5000": 73255.8,
+      "10000": 73846.1
+    },
+    "selection_rule": "choose 1000 when within 5% of measured winner; otherwise choose measured winner",
+    "scope_note": "SQLite-only evidence. JVM heap/GC and JdbcTemplate batch allocation still require Maven/JVM benchmark before final release acceptance."
+  }
+}

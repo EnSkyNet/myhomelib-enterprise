@@ -1,0 +1,13 @@
+MyHomeLib/Flibusta server compatibility correction — 2026-08-30
+
+Canonical Alex80 protocol verified against the configured MyHomeLib update scheme:
+- INPX root: https://alex80.github.io/mhl/download/inpx/
+- baseline catalog: flibusta_online_fb2.inpx
+- baseline/full version marker: flibusta_online_fb2.info
+- update root: https://alex80.github.io/mhl/update/
+- full update: flibusta_online_fb2.zip
+- incremental marker: extra_flibusta_online_fb2.info
+- incremental update: extra_flibusta_online_fb2.zip
+
+Legacy source defaults last_flibusta.info / last_flibusta_extra.info / flubusta_update.zip are NOT the configured Alex80 protocol used by current collections.ini deployments.
+The downloader keeps the robust marker-unavailable fallback, but it now probes the canonical marker names first.

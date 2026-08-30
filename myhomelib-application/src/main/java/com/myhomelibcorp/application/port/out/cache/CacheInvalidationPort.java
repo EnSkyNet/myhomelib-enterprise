@@ -19,7 +19,6 @@ public interface CacheInvalidationPort {
     /**
      * Очищує кеш словників (автори, жанри, серії, групи).
      */
-    void invalidateDictionaryCache();
 
     /**
      * Очищує кеш пошуку.

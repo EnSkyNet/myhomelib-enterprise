@@ -3,7 +3,6 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
-import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -11,6 +10,7 @@ import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.EmptyResultDataAccessException;
@@ -30,7 +30,7 @@ import java.util.stream.StreamSupport;
 @Slf4j
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
-    private static final int STREAM_PAGE_SIZE = 10000;
+    private static final int STREAM_PAGE_SIZE = 400;
     private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
@@ -87,13 +87,13 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findByIds(List<BookId> ids) {
-        if (ids == null || ids.isEmpty()) {
-            return List.of();
-        }
-        String placeholders = String.join(",", ids.stream().map(id -> "?").toArray(String[]::new));
-        String sql = "SELECT * FROM books WHERE id IN (" + placeholders + ")";
-        String[] idStrings = ids.stream().map(BookId::asString).toArray(String[]::new);
-        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, (Object[]) idStrings);
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<Book> books = new ArrayList<>(Math.min(ids.size(), SqliteInClauseSupport.MAX_ITEMS));
+        SqliteInClauseSupport.forEachChunk(ids, part -> {
+            String sql = "SELECT * FROM books WHERE id IN (" + SqliteInClauseSupport.placeholders(part.size()) + ")";
+            Object[] params = part.stream().map(BookId::asString).toArray();
+            books.addAll(getJdbcTemplate().query(sql, bookRowMapper, params));
+        });
         enrichBooks(books);
         return books;
     }
@@ -219,58 +219,60 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     // ===== Streaming =====
 
+    /**
+     * Memory-bounded keyset traversal. Unlike OFFSET pagination this keeps
+     * query cost stable as the catalogue grows and avoids COUNT(*) per page.
+     * The batch is deliberately <= common SQLite bind-variable limits because
+     * author/genre enrichment uses one IN (...) query per relation table.
+     */
     public Stream<Book> findAllStreaming() {
         return StreamSupport.stream(
                 Spliterators.spliteratorUnknownSize(
                         new StreamingBookIterator(STREAM_PAGE_SIZE),
-                        Spliterator.ORDERED
+                        Spliterator.ORDERED | Spliterator.NONNULL
                 ),
                 false
         );
     }
 
-    // ===== Внутрішній ітератор =====
-
     private class StreamingBookIterator implements java.util.Iterator<Book> {
         private final int pageSize;
-        private int offset = 0;
-        private List<Book> currentPage = new ArrayList<>();
-        private int currentIndex = 0;
-        private boolean endReached = false;
+        private String lastId = "";
+        private List<Book> currentPage = List.of();
+        private int currentIndex;
+        private boolean endReached;
 
-        public StreamingBookIterator(int pageSize) {
-            this.pageSize = pageSize;
+        private StreamingBookIterator(int pageSize) {
+            this.pageSize = Math.max(1, Math.min(400, pageSize));
             loadNextPage();
         }
 
         @Override
         public boolean hasNext() {
-            if (currentIndex < currentPage.size()) {
-                return true;
-            }
-            if (endReached) {
-                return false;
-            }
+            if (currentIndex < currentPage.size()) return true;
+            if (endReached) return false;
             loadNextPage();
             return currentIndex < currentPage.size();
         }
 
         @Override
         public Book next() {
-            if (!hasNext()) {
-                throw new java.util.NoSuchElementException();
-            }
+            if (!hasNext()) throw new java.util.NoSuchElementException();
             return currentPage.get(currentIndex++);
         }
 
         private void loadNextPage() {
-            BookQuery query = BookQuery.builder()
-                    .pagination(Pagination.of(pageSize, offset))
-                    .build();
-            currentPage = SqliteBookQueryRepository.this.findPage(query).content();
+            String sql = "SELECT * FROM books WHERE id > ? ORDER BY id LIMIT ?";
+            currentPage = getJdbcTemplate().query(sql, bookRowMapper, lastId, pageSize);
+            enrichBooks(currentPage);
             currentIndex = 0;
-            offset += currentPage.size();
+            if (currentPage.isEmpty()) {
+                endReached = true;
+                return;
+            }
+            lastId = currentPage.get(currentPage.size() - 1).getId().asString();
             endReached = currentPage.size() < pageSize;
         }
     }
+
 }

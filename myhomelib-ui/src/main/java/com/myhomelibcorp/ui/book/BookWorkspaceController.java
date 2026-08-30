@@ -12,7 +12,6 @@ import com.myhomelibcorp.ui.presenter.CoverPresenter;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
-import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.scene.image.ImageView;
@@ -20,7 +19,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 import java.util.Optional;
 
 @Component
@@ -33,7 +31,6 @@ public class BookWorkspaceController {
     private final AddBookToGroupUseCase addBookToGroupUseCase;
     private final CoverPresenter coverPresenter;
     private final NavigationService navigationService;
-    private final ApplicationState appState;
     private final BookViewModelMapper bookViewModelMapper;
     private final SessionService sessionService;
     private final DialogService dialogService;

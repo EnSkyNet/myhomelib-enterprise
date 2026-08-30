@@ -20,9 +20,7 @@ public class HelpService {
         this.topics = topics;
     }
 
-    public void showForContext(Window owner, String contextId) {
-        show(owner, topics.topicForContext(contextId));
-    }
+
 
     public void show(Window owner, String topic) {
         String name = topics.isKnownTopic(topic) ? topic : topics.topicForContext(topic);

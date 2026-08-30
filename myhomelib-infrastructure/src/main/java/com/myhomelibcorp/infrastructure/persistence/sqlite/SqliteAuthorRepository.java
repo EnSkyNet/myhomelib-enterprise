@@ -5,6 +5,7 @@ import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -14,10 +15,8 @@ import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
-import java.util.Objects;
 import java.util.Optional;
 import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Repository
 @ConditionalOnProperty(name = "app.database.type", havingValue = "sqlite", matchIfMissing = true)
@@ -32,46 +31,46 @@ public class SqliteAuthorRepository implements AuthorRepository {
         return collectionManager.getCurrentJdbcTemplate();
     }
 
-    // ---- МЕТОДИ ДЛЯ ІНІЦІАЛІЗАЦІЇ (викликаються після вибору колекції) ----
-    public void addSearchNameColumnIfNotExists() {
-        try {
-            getJdbcTemplate().execute("ALTER TABLE authors ADD COLUMN search_name TEXT");
-            log.info("Колонку search_name додано (якщо не існувала)");
-        } catch (Exception e) {
-            // Колонка вже існує
+    private static final String SEARCH_NAME_NORMALIZATION_MARKER = "v71_author_search_name_unicode_normalized";
+    private static final int SEARCH_NAME_BACKFILL_BATCH = 1000;
+
+    /**
+     * One-time, memory-bounded Unicode normalization for legacy author search keys.
+     * The marker is written only after the full keyset pass completes, so an interrupted
+     * run is safely repeatable.
+     */
+    public long normalizeSearchNamesIfNeeded() {
+        JdbcTemplate jdbc = getJdbcTemplate();
+        String marker = jdbc.query(
+                "SELECT value FROM settings WHERE key=?",
+                rs -> rs.next() ? rs.getString(1) : null,
+                SEARCH_NAME_NORMALIZATION_MARKER);
+        if ("1".equals(marker)) return 0L;
+
+        long updated = 0L;
+        String afterId = "";
+        while (true) {
+            List<AuthorSearchRow> rows = jdbc.query(
+                    "SELECT id, first_name, middle_name, last_name FROM authors WHERE id>? ORDER BY id LIMIT ?",
+                    (rs, rowNum) -> new AuthorSearchRow(rs.getString(1), rs.getString(2), rs.getString(3), rs.getString(4)),
+                    afterId, SEARCH_NAME_BACKFILL_BATCH);
+            if (rows.isEmpty()) break;
+
+            List<Object[]> batch = rows.stream()
+                    .map(row -> new Object[]{AuthorSearchNameNormalizer.normalize(row.firstName(), row.middleName(), row.lastName()), row.id()})
+                    .toList();
+            jdbc.batchUpdate("UPDATE authors SET search_name=? WHERE id=?", batch);
+            updated += rows.size();
+            afterId = rows.get(rows.size() - 1).id();
         }
+
+        jdbc.update("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                SEARCH_NAME_NORMALIZATION_MARKER, "1");
+        log.info("Одноразово нормалізовано Unicode search_name для {} авторів", updated);
+        return updated;
     }
 
-    public void updateSearchNamesForAllAuthors() {
-        // Do this set-wise in SQLite. The previous implementation called findAll(),
-        // materializing the complete author table on every collection initialization.
-        String sql = """
-                UPDATE authors
-                SET search_name = TRIM(
-                    COALESCE(last_name, '') || ' ' ||
-                    COALESCE(first_name, '') || ' ' ||
-                    COALESCE(middle_name, '')
-                )
-                WHERE search_name IS NULL
-                   OR search_name <> TRIM(
-                        COALESCE(last_name, '') || ' ' ||
-                        COALESCE(first_name, '') || ' ' ||
-                        COALESCE(middle_name, '')
-                   )
-                """;
-        int updated = getJdbcTemplate().update(sql);
-        log.info("Оновлено search_name для {} авторів без повного завантаження таблиці", updated);
-    }
-
-    private String buildSearchName(Author author) {
-        return Stream.of(
-                        author.getLastName(),
-                        author.getFirstName(),
-                        author.getMiddleName())
-                .filter(Objects::nonNull)
-                .map(s -> s.toLowerCase(java.util.Locale.ROOT))
-                .collect(Collectors.joining(" "));
-    }
+    private record AuthorSearchRow(String id, String firstName, String middleName, String lastName) {}
 
     // ---- ОСНОВНІ МЕТОДИ РЕПОЗИТОРІЮ ----
     @Override
@@ -99,7 +98,8 @@ public class SqliteAuthorRepository implements AuthorRepository {
             author = new Author(AuthorId.generate(),
                     author.getFirstName(), author.getMiddleName(), author.getLastName(), author.getAnnotation());
         }
-        String searchName = buildSearchName(author);
+        String searchName = AuthorSearchNameNormalizer.normalize(
+                author.getFirstName(), author.getMiddleName(), author.getLastName());
         String sql = """
             INSERT INTO authors (id, first_name, middle_name, last_name, search_name, annotation)
             VALUES (?, ?, ?, ?, ?, ?)
@@ -151,6 +151,27 @@ public class SqliteAuthorRepository implements AuthorRepository {
             return Optional.empty();
         }
     }
+    @Override
+    public Optional<Author> findByName(String firstName, String middleName, String lastName) {
+        String sql = """
+                SELECT * FROM authors
+                 WHERE first_name = ? AND middle_name = ? AND last_name = ?
+                 ORDER BY id
+                 LIMIT 1
+                """;
+        try {
+            Author author = getJdbcTemplate().queryForObject(
+                    sql, authorRowMapper, safe(firstName), safe(middleName), safe(lastName));
+            return Optional.ofNullable(author);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
+    private static String safe(String value) {
+        return value == null ? "" : value;
+    }
+
     @Override
     public List<Author> findFavorites(int limit) {
         String sql = """
@@ -268,7 +289,7 @@ public class SqliteAuthorRepository implements AuthorRepository {
         String sql = """
                 SELECT *
                 FROM authors
-                WHERE LOWER(COALESCE(search_name, '')) LIKE ?
+                WHERE COALESCE(search_name, '') LIKE ?
                    OR LOWER(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '') || ' ' || COALESCE(middle_name, '')) LIKE ?
                 ORDER BY
                     COALESCE(last_name, '') COLLATE NOCASE,

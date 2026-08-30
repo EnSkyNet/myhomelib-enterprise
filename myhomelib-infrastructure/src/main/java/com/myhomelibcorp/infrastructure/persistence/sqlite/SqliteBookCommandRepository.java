@@ -9,6 +9,7 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,7 +19,6 @@ import org.springframework.stereotype.Repository;
 import java.sql.PreparedStatement;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.util.Collections;
 import java.util.List;
 
 @Repository
@@ -37,26 +37,6 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
-    }
-
-    // ==================== PRAGMA ДЛЯ ШВИДКОГО ІМПОРТУ ====================
-
-    public void setPragmaForBulkInsert() {
-        JdbcTemplate jt = getJdbcTemplate();
-        jt.execute("PRAGMA journal_mode = WAL");
-        jt.execute("PRAGMA synchronous = NORMAL");
-        jt.execute("PRAGMA temp_store = FILE");
-        jt.execute("PRAGMA cache_size = -32768");
-        log.debug("PRAGMA встановлено для швидкого імпорту");
-    }
-
-    public void resetPragma() {
-        JdbcTemplate jt = getJdbcTemplate();
-        jt.execute("PRAGMA synchronous = NORMAL");
-        jt.execute("PRAGMA journal_mode = WAL");
-        jt.execute("PRAGMA temp_store = FILE");
-        jt.execute("PRAGMA cache_size = -32768");
-        log.debug("PRAGMA відновлено до стандартних");
     }
 
     // ==================== ОСНОВНІ МЕТОДИ ====================
@@ -203,15 +183,16 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         if (bookIds == null || bookIds.isEmpty()) {
             return;
         }
-        String placeholders = String.join(",", Collections.nCopies(bookIds.size(), "?"));
-        String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id IN (" + placeholders + ")";
-        Object[] params = new Object[bookIds.size() + 1];
-        params[0] = rate;
-        for (int i = 0; i < bookIds.size(); i++) {
-            params[i + 1] = bookIds.get(i).asString();
-        }
-        int updated = getJdbcTemplate().update(sql, params);
-        log.info("Batch оновлено рейтинг для {} книг", updated);
+        int[] updated = {0};
+        SqliteInClauseSupport.forEachChunk(bookIds, part -> {
+            String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id IN ("
+                    + SqliteInClauseSupport.placeholders(part.size()) + ")";
+            Object[] params = new Object[part.size() + 1];
+            params[0] = rate;
+            for (int i = 0; i < part.size(); i++) params[i + 1] = part.get(i).asString();
+            updated[0] += getJdbcTemplate().update(sql, params);
+        });
+        log.info("Batch оновлено рейтинг для {} книг", updated[0]);
         bookIds.forEach(bookCache::evict);
     }
 
@@ -220,15 +201,16 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         if (bookIds == null || bookIds.isEmpty()) {
             return;
         }
-        String placeholders = String.join(",", Collections.nCopies(bookIds.size(), "?"));
-        String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id IN (" + placeholders + ")";
-        Object[] params = new Object[bookIds.size() + 1];
-        params[0] = progress;
-        for (int i = 0; i < bookIds.size(); i++) {
-            params[i + 1] = bookIds.get(i).asString();
-        }
-        int updated = getJdbcTemplate().update(sql, params);
-        log.info("Batch оновлено прогрес для {} книг", updated);
+        int[] updated = {0};
+        SqliteInClauseSupport.forEachChunk(bookIds, part -> {
+            String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id IN ("
+                    + SqliteInClauseSupport.placeholders(part.size()) + ")";
+            Object[] params = new Object[part.size() + 1];
+            params[0] = progress;
+            for (int i = 0; i < part.size(); i++) params[i + 1] = part.get(i).asString();
+            updated[0] += getJdbcTemplate().update(sql, params);
+        });
+        log.info("Batch оновлено прогрес для {} книг", updated[0]);
         bookIds.forEach(bookCache::evict);
     }
 }

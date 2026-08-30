@@ -9,7 +9,6 @@ import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.repository.SessionRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -29,12 +28,11 @@ public class LoadDashboardDataUseCase {
 
     private final BookQueryRepository bookQueryRepository;
     private final StatisticsRepository statisticsRepository;
-    private final SessionRepository sessionRepository;
     private final AuthorRepository authorRepository;
     private final BookMapper bookMapper;
     private final AuthorMapper authorMapper;
     private final ExecutorPort executorPort;
-    private final SessionService sessionService; // Додаємо
+    private final SessionService sessionService;
 
     public CompletableFuture<DashboardData> execute() {
         CompletableFuture<LibraryStatistics> statsFuture = executorPort.submit(
@@ -56,7 +54,6 @@ public class LoadDashboardDataUseCase {
                         .collect(Collectors.toList()));
 
         CompletableFuture<BookDto> continueFuture = executorPort.submit(() -> {
-            // Використовуємо SessionService замість прямого виклику репозиторію
             String lastBookId = sessionService.getLastOpenedBookId();
             if (lastBookId == null || lastBookId.isEmpty()) {
                 log.debug("Немає збереженої останньої книги");

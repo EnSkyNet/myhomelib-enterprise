@@ -3,9 +3,6 @@ package com.myhomelibcorp.infrastructure.importengine;
 import com.myhomelibcorp.application.catalog.CatalogSyncSession;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
-import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,15 +34,6 @@ class InpxImportPipelineTest {
     private CollectionManager collectionManager;
 
     @Mock
-    private AuthorRepository authorRepository;
-
-    @Mock
-    private GenreRepository genreRepository;
-
-    @Mock
-    private DictionaryCache dictionaryCache;
-
-    @Mock
     private CatalogUpdateTrackingPort catalogUpdateTrackingPort;
 
     private InpxImportPipeline pipeline;
@@ -60,10 +48,8 @@ class InpxImportPipelineTest {
                 batchWriter,
                 bulkOptimizer,
                 collectionManager,
-                authorRepository,
-                genreRepository,
-                dictionaryCache,
-                catalogUpdateTrackingPort
+                catalogUpdateTrackingPort,
+                mock(ImportIndexLifecycle.class)
         );
     }
 
@@ -79,7 +65,6 @@ class InpxImportPipelineTest {
         assertThat(result).isZero();
         verify(bulkOptimizer).enableBulkInsertMode();
         verify(bulkOptimizer).disableBulkInsertMode();
-        verify(authorRepository, never()).findAll();
         // Перевіряємо, що методи dropIndexes/createIndexes не викликали JdbcTemplate (бо колекція не активна)
         verify(collectionManager, never()).getCurrentJdbcTemplate();
     }
@@ -97,8 +82,8 @@ class InpxImportPipelineTest {
     void importWithResultReportsPreparationAndCompletionWithoutLoadingAllAuthors(@TempDir Path tempDir) throws Exception {
         Path testFile = tempDir.resolve("progress.inpx");
         java.nio.file.Files.createFile(testFile);
-        when(reader.count(eq(testFile), any())).thenReturn(0L);
-        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
+        when(reader.count(eq(testFile), any(), eq(false))).thenReturn(0L);
+        when(reader.read(testFile, false)).thenReturn(Collections.emptyIterator());
 
         List<Double> progress = new ArrayList<>();
         List<String> statuses = new ArrayList<>();
@@ -111,16 +96,14 @@ class InpxImportPipelineTest {
         assertThat(progress.getLast()).isEqualTo(1.0);
         assertThat(statuses).anyMatch(s -> s.contains("Підготовка INPX"));
         assertThat(statuses).anyMatch(s -> s.contains("Аналіз індексу"));
-        verify(authorRepository, never()).findAll();
     }
 
     @Test
     void deltaCatalogImportDoesNotMarkAllExistingBooksMissing(@TempDir Path tempDir) throws Exception {
         Path testFile = tempDir.resolve("extra.inpx");
         java.nio.file.Files.createFile(testFile);
-        when(reader.count(eq(testFile), any())).thenReturn(0L);
-        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
-        when(genreRepository.findAll()).thenReturn(List.of());
+        when(reader.count(eq(testFile), any(), eq(true))).thenReturn(0L);
+        when(reader.read(testFile, true)).thenReturn(Collections.emptyIterator());
         when(collectionManager.hasActiveCollection()).thenReturn(true);
         when(collectionManager.getCurrentDataSource()).thenReturn(null);
         when(collectionManager.getCurrentJdbcTemplate()).thenReturn(mock(JdbcTemplate.class));
@@ -141,9 +124,8 @@ class InpxImportPipelineTest {
     void fullCatalogImportMarksPreviouslyTrackedBooksMissing(@TempDir Path tempDir) throws Exception {
         Path testFile = tempDir.resolve("full.inpx");
         java.nio.file.Files.createFile(testFile);
-        when(reader.count(eq(testFile), any())).thenReturn(0L);
-        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
-        when(genreRepository.findAll()).thenReturn(List.of());
+        when(reader.count(eq(testFile), any(), eq(true))).thenReturn(0L);
+        when(reader.read(testFile, true)).thenReturn(Collections.emptyIterator());
         when(collectionManager.hasActiveCollection()).thenReturn(true);
         when(collectionManager.getCurrentDataSource()).thenReturn(null);
         when(collectionManager.getCurrentJdbcTemplate()).thenReturn(mock(JdbcTemplate.class));

@@ -19,8 +19,6 @@ public class AddToGroupBatchUseCase {
         if (groupId == null || bookIds == null || bookIds.isEmpty()) {
             return;
         }
-        for (BookId bookId : bookIds) {
-            groupRepository.addBookToGroup(groupId, bookId.asString());
-        }
+        groupRepository.addBooksToGroup(groupId, bookIds.stream().map(BookId::asString).toList());
     }
 }

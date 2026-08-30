@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.shared.util.AppPaths;
 import org.springframework.stereotype.Component;
@@ -52,18 +54,13 @@ public class SupportBundleService {
             if (e instanceof IOException io) throw io;
             throw new IOException("Cannot create support bundle", e);
         }
-        try {
-            return Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                    java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-            return Files.move(tmp, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-        }
+        return AtomicFileSupport.moveReplacing(tmp, target);
     }
 
     private String environment() {
         StringBuilder out = new StringBuilder();
         line(out, "created", Instant.now().toString());
-        line(out, "app", "MyHomeLib 1.0.0");
+        line(out, "app", "MyHomeLib 7.1.0");
         line(out, "java.version", System.getProperty("java.version", ""));
         line(out, "java.vendor", System.getProperty("java.vendor", ""));
         line(out, "os.name", System.getProperty("os.name", ""));
@@ -114,7 +111,7 @@ public class SupportBundleService {
     }
 
     private void addValidationFiles(ZipOutputStream zip) throws IOException {
-        for (String name : List.of("RELEASE_VALIDATION.txt", "PARITY_AUDIT.md", "RELEASE_NOTES_1.0.0.md")) {
+        for (String name : List.of("RELEASE_VALIDATION.txt", "PARITY_AUDIT.md", "RELEASE_NOTES_7.1.0.md")) {
             Path file = AppPaths.launchDir().resolve(name);
             if (Files.isRegularFile(file) && Files.size(file) <= 2L * 1024 * 1024) putFile(zip, "release/" + name, file, Files.size(file));
         }

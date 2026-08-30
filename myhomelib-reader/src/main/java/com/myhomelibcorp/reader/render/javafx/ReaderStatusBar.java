@@ -1,6 +1,9 @@
 package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import javafx.animation.Animation;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.control.Label;
@@ -8,14 +11,22 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.Region;
+import javafx.util.Duration;
+
+import java.time.LocalTime;
+import java.time.format.DateTimeFormatter;
 
 /** Lightweight reader status line controlled by ReaderSettings. */
 public final class ReaderStatusBar extends HBox {
+    private static final DateTimeFormatter CLOCK_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
+
     private final ReaderCanvas canvas;
     private final Label chapter = new Label();
     private final Label page = new Label();
     private final Label progressText = new Label();
+    private final Label clock = new Label();
     private final ProgressBar progress = new ProgressBar();
+    private final Timeline clockTimer;
     private ReaderSettings settings = ReaderSettings.defaultSettings();
 
     public ReaderStatusBar(ReaderCanvas canvas) {
@@ -28,7 +39,9 @@ public final class ReaderStatusBar extends HBox {
         progress.setMinWidth(70);
         Region spacer = new Region();
         HBox.setHgrow(spacer, Priority.ALWAYS);
-        getChildren().addAll(chapter, spacer, page, progress, progressText);
+        getChildren().addAll(chapter, spacer, page, progress, progressText, clock);
+        clockTimer = new Timeline(new KeyFrame(Duration.seconds(30), ignored -> updateClock()));
+        clockTimer.setCycleCount(Animation.INDEFINITE);
         applySettings(settings);
     }
 
@@ -40,6 +53,13 @@ public final class ReaderStatusBar extends HBox {
         setNodeVisible(page, this.settings.showStatusPage());
         setNodeVisible(progress, this.settings.showStatusProgress());
         setNodeVisible(progressText, this.settings.showStatusProgress());
+        setNodeVisible(clock, this.settings.showStatusClock());
+        if (this.settings.showStatusBar() && this.settings.showStatusClock()) {
+            updateClock();
+            if (clockTimer.getStatus() != Animation.Status.RUNNING) clockTimer.play();
+        } else {
+            clockTimer.stop();
+        }
         updateState();
     }
 
@@ -54,17 +74,19 @@ public final class ReaderStatusBar extends HBox {
             page.setText("");
             progress.setProgress(0);
             progressText.setText("0%");
+            updateClock();
             return;
         }
         String title = canvas.getCurrentChapterTitle();
         chapter.setText(title == null || title.isBlank() ? "Розділ 1" : title);
-        if (canvas.isPageModeEnabled()) {
-            page.setText(canvas.getCurrentPageNumber() + "/" + canvas.getTotalPages());
-        } else {
-            page.setText("");
-        }
+        page.setText(settings.showStatusPage() ? canvas.getCurrentPageNumber() + "/" + canvas.getTotalPages() : "");
         double pct = canvas.getProgressPercent();
         progress.setProgress(Math.max(0, Math.min(1, pct / 100.0)));
         progressText.setText(String.format("%.0f%%", pct));
+        updateClock();
     }
+
+    private void updateClock() { clock.setText(LocalTime.now().format(CLOCK_FORMAT)); }
+
+    public void dispose() { clockTimer.stop(); }
 }

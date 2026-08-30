@@ -27,11 +27,4 @@ public interface BookSource {
         }
     }
 
-    default String mimeType() {
-        return null;
-    }
-
-    default boolean isArchive() {
-        return false;
-    }
 }

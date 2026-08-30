@@ -31,6 +31,9 @@ import java.util.Map;
 public class JavaFxReaderRenderer implements ReaderRenderer {
 
     private static final int MAX_IMAGE_CACHE_ENTRIES = 8;
+    private static final long MAX_IMAGE_CACHE_BYTES = 32L * 1024 * 1024;
+    private static final int MAX_FONT_CACHE_ENTRIES = 96;
+    private static final double MAX_DECODE_DIMENSION = 3072.0;
 
     private final Canvas canvas;
     private final GraphicsContext gc;
@@ -38,13 +41,14 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
     private ResourceRepository resources;
 
     private RenderMetrics metrics = RenderMetrics.empty();
-    private final Map<String, Font> fontCache = new LinkedHashMap<>();
-    private final Map<String, Image> imageCache = new LinkedHashMap<>(16, 0.75f, true) {
+    private final Map<String, Font> fontCache = new LinkedHashMap<>(128, 0.75f, true) {
         @Override
-        protected boolean removeEldestEntry(Map.Entry<String, Image> eldest) {
-            return size() > MAX_IMAGE_CACHE_ENTRIES;
+        protected boolean removeEldestEntry(Map.Entry<String, Font> eldest) {
+            return size() > MAX_FONT_CACHE_ENTRIES;
         }
     };
+    private final Map<String, Image> imageCache = new LinkedHashMap<>(16, 0.75f, true);
+    private long imageCacheBytes;
 
     public JavaFxReaderRenderer(Canvas canvas, FontProvider fontProvider) {
         if (canvas == null) {
@@ -69,7 +73,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
         long started = System.currentTimeMillis();
         List<LineLayout> lines = page.getLines();
         for (LineLayout line : lines) {
-            renderLine(line, theme);
+            renderLine(line, theme, 0.0, canvas.getWidth());
         }
 
         long renderTime = System.currentTimeMillis() - started;
@@ -85,35 +89,61 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
         gc.fillRect(0, 0, canvas.getWidth(), canvas.getHeight());
     }
 
-    private void renderLine(LineLayout line, ReaderTheme theme) {
+    /** Renders two independently paginated pages on the same Canvas. */
+    public void renderSpread(PageLayout left, PageLayout right, ReaderTheme theme, double rightOffset, double pageWidth) {
+        ReaderTheme effectiveTheme = theme != null ? theme : ReaderTheme.fromName("light");
+        paintBackground(effectiveTheme);
+        long started = System.currentTimeMillis();
+        int lines = 0;
+        if (left != null) {
+            for (LineLayout line : left.getLines()) {
+                renderLine(line, effectiveTheme, 0.0, pageWidth);
+                lines++;
+            }
+        }
+        if (right != null && !right.isEmpty()) {
+            for (LineLayout line : right.getLines()) {
+                renderLine(line, effectiveTheme, rightOffset, pageWidth);
+                lines++;
+            }
+        }
+        gc.setStroke(Color.web(effectiveTheme.foreground(), 0.16));
+        double gutterCenter = rightOffset - Math.max(1.0, (rightOffset - pageWidth) / 2.0);
+        gc.strokeLine(gutterCenter, 12, gutterCenter, Math.max(12, canvas.getHeight() - 12));
+        long renderTime = System.currentTimeMillis() - started;
+        metrics = metrics.withRenderTime(renderTime);
+        if (renderTime > 50) log.debug("⏱️ Spread render {} ms / {} lines", renderTime, lines);
+    }
+
+    private void renderLine(LineLayout line, ReaderTheme theme, double xOffset, double pageWidth) {
         if (line == null || line.isEmpty()) {
             return;
         }
 
         String text = line.text();
         if (text.startsWith("[IMAGE:") && text.endsWith("]")) {
-            renderImageMarker(text, line.x(), line.y(), Math.max(line.height(), line.fontSize() * 4f));
+            renderImageMarker(text, line.x() + xOffset, line.y(), Math.max(line.height(), line.fontSize() * 4f), xOffset + pageWidth);
             return;
         }
 
         if (line.hasStyledRuns()) {
             for (TextRunLayout run : line.runs()) {
-                renderRun(line, run, theme);
+                renderRun(line, run, theme, xOffset);
             }
         } else {
-            renderPlainText(line.text(), line.x(), line.getBaselineY(), line.width(),
-                    line.fontSize(), line.style(), line, theme);
+            renderPlainText(line.text(), (float) (line.x() + xOffset), line.getBaselineY(), line.width(),
+                    line.fontSize(), line.style(), theme);
         }
     }
 
-    private void renderRun(LineLayout line, TextRunLayout run, ReaderTheme theme) {
+    private void renderRun(LineLayout line, TextRunLayout run, ReaderTheme theme, double xOffset) {
         if (run == null || run.isEmpty()) {
             return;
         }
 
         TextStyle style = run.style() != null ? run.style() : line.style();
         float fontSize = Math.max(6f, run.fontSize());
-        float x = line.x() + run.x();
+        float x = (float) (line.x() + run.x() + xOffset);
         float baseline = line.getBaselineY();
 
         if (style == TextStyle.SUPERSCRIPT) {
@@ -128,7 +158,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
                     Math.max(1, line.height() - 2), 3, 3);
         }
 
-        renderPlainText(run.text(), x, baseline, run.width(), fontSize, style, line, theme);
+        renderPlainText(run.text(), x, baseline, run.width(), fontSize, style, theme);
     }
 
     private void renderPlainText(
@@ -138,7 +168,6 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
             float width,
             float fontSize,
             TextStyle style,
-            LineLayout line,
             ReaderTheme theme
     ) {
         if (text == null || text.isEmpty()) {
@@ -166,7 +195,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
         }
     }
 
-    private void renderImageMarker(String marker, float x, float y, float requestedHeight) {
+    private void renderImageMarker(String marker, double x, float y, float requestedHeight, double pageRight) {
         int start = marker.indexOf(':') + 1;
         int end = marker.lastIndexOf(']');
         if (start <= 0 || end <= start) {
@@ -184,7 +213,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
             return;
         }
 
-        double maxWidth = Math.max(1, canvas.getWidth() - x - 20);
+        double maxWidth = Math.max(1, pageRight - x - 20);
         double targetHeight = Math.min(requestedHeight, canvas.getHeight() * 0.45);
         double scale = Math.min(maxWidth / image.getWidth(), targetHeight / image.getHeight());
         scale = Math.min(1.0, Math.max(0.05, scale));
@@ -201,9 +230,11 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
                 return null;
             }
             try (InputStream in = streamOpt.get()) {
-                Image image = new Image(in);
+                double requestedWidth = Math.min(MAX_DECODE_DIMENSION, Math.max(512.0, canvas.getWidth() * 1.5));
+                double requestedHeight = Math.min(MAX_DECODE_DIMENSION, Math.max(512.0, canvas.getHeight() * 1.5));
+                Image image = new Image(in, requestedWidth, requestedHeight, true, true);
                 if (!image.isError()) {
-                    imageCache.put(imageId, image);
+                    cacheImage(imageId, image);
                     return image;
                 }
             }
@@ -242,6 +273,32 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
 
     public void clearImageCache() {
         imageCache.clear();
+        imageCacheBytes = 0L;
+    }
+
+    private void cacheImage(String imageId, Image image) {
+        long bytes = estimatedDecodedBytes(image);
+        if (bytes <= 0 || bytes > MAX_IMAGE_CACHE_BYTES) {
+            return;
+        }
+        Image previous = imageCache.remove(imageId);
+        if (previous != null) imageCacheBytes -= estimatedDecodedBytes(previous);
+        while (!imageCache.isEmpty() &&
+                (imageCache.size() >= MAX_IMAGE_CACHE_ENTRIES || imageCacheBytes + bytes > MAX_IMAGE_CACHE_BYTES)) {
+            var iterator = imageCache.entrySet().iterator();
+            Map.Entry<String, Image> eldest = iterator.next();
+            imageCacheBytes -= estimatedDecodedBytes(eldest.getValue());
+            iterator.remove();
+        }
+        imageCache.put(imageId, image);
+        imageCacheBytes += bytes;
+    }
+
+    private long estimatedDecodedBytes(Image image) {
+        if (image == null || image.getWidth() <= 0 || image.getHeight() <= 0) return 0L;
+        double pixels = image.getWidth() * image.getHeight();
+        if (pixels >= Long.MAX_VALUE / 4.0) return Long.MAX_VALUE;
+        return Math.max(0L, (long) Math.ceil(pixels * 4.0));
     }
 
     public Canvas getCanvas() {

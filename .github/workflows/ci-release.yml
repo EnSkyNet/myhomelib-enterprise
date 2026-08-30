@@ -79,10 +79,16 @@ jobs:
             tools/stage21-help-genre-localization-check.py \
             tools/stage22-versioned-user-data-check.py \
             tools/stage23-cross-platform-release-check.py \
-            tools/stage24-performance-check.py; do
+            tools/stage24-performance-check.py \
+            tools/stage25a-ui-orchestration-check.py \
+            tools/stage25b-reader-refactor-check.py \
+            tools/stage25c-search-sync-refactor-check.py \
+            tools/catalog-lifecycle-regression-check.py \
+            tools/startup-transaction-check.py; do
             python3 "$check"
           done
           python3 tools/validate-language-catalogs.py
+          python3 tools/build-check-v7.py
 
       - name: Build portable app-image and smoke it (Unix)
         if: matrix.platform != 'windows'
@@ -92,8 +98,8 @@ jobs:
         run: |
           ./package-portable.sh
           ./smoke-desktop.sh
-          cp -f myhomelib-mcp/target/myhomelib-mcp-1.0.0.jar dist/
-          cp -f myhomelib-bootstrap/target/myhomelib-bootstrap-1.0.0.jar dist/
+          cp -f myhomelib-mcp/target/myhomelib-mcp-7.1.0.jar dist/
+          cp -f myhomelib-bootstrap/target/myhomelib-bootstrap-7.1.0.jar dist/
           ./checksums.sh dist
 
       - name: Build portable app-image and smoke it (Windows)
@@ -103,8 +109,8 @@ jobs:
           $env:MHL_SKIP_BUILD = '1'
           .\package-portable.ps1
           .\smoke-desktop.ps1
-          Copy-Item -Force 'myhomelib-mcp\target\myhomelib-mcp-1.0.0.jar' dist
-          Copy-Item -Force 'myhomelib-bootstrap\target\myhomelib-bootstrap-1.0.0.jar' dist
+          Copy-Item -Force 'myhomelib-mcp\target\myhomelib-mcp-7.1.0.jar' dist
+          Copy-Item -Force 'myhomelib-bootstrap\target\myhomelib-bootstrap-7.1.0.jar' dist
           .\checksums.ps1 -Directory dist
 
       - name: Upload release-candidate artifacts

@@ -37,7 +37,8 @@ public class RenameCollectionUseCase {
                 collection.getUser(),
                 collection.getPassword(),
                 collection.getUrl(),
-                collection.getNotes()
+                collection.getNotes(),
+                collection.getConnectionScript()
         );
         Collection saved = collectionRepository.save(renamed);
         Collection active = collectionLifecyclePort.getCurrentCollection();

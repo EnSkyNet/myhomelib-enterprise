@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.cover;
 
+import com.myhomelibcorp.shared.util.FileNameSupport;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.CoverLocator;
 import com.myhomelibcorp.application.port.out.cover.CoverReader;
@@ -42,7 +43,7 @@ public class CoverReaderImpl implements CoverReader {
             Path filePath = coverLocator.locateCoverFile(book).orElse(null);
             if (filePath == null || !Files.exists(filePath)) return null;
             if (archiveReader.isArchive(filePath)) return extractFromArchive(filePath, book);
-            return extractFromDocument(filePath, extension(filePath.getFileName().toString()), book);
+            return extractFromDocument(filePath, FileNameSupport.extension(filePath.getFileName().toString()), book);
         } catch (Exception e) {
             log.debug("Обкладинка недоступна для {}: {}", book.getId(), e.getMessage());
             return null;
@@ -69,7 +70,7 @@ public class CoverReaderImpl implements CoverReader {
 
         String targetEntry = findBestEntry(entries, book.getArchiveEntry(), book.getFileName(), book.getTitle());
         if (targetEntry != null) {
-            String ext = extension(targetEntry);
+            String ext = FileNameSupport.extension(targetEntry);
             try (InputStream in = archiveReader.readEntry(archivePath, targetEntry).orElse(null)) {
                 if (in != null) {
                     if (isImageExtension(ext)) return readBounded(in, 24 * 1024 * 1024);
@@ -86,7 +87,7 @@ public class CoverReaderImpl implements CoverReader {
         }
 
         try (InputStream image = archiveReader.findFirstEntry(archivePath,
-                name -> isImageExtension(extension(name))).orElse(null)) {
+                name -> isImageExtension(FileNameSupport.extension(name))).orElse(null)) {
             return image == null ? null : readBounded(image, 24 * 1024 * 1024);
         } catch (Exception e) {
             return null;
@@ -105,10 +106,10 @@ public class CoverReaderImpl implements CoverReader {
             for (String e : entries) {
                 String name = Path.of(e.replace('\\', '/')).getFileName().toString()
                         .toLowerCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
-                if (name.contains(normalizedTitle) && isSupportedDocument(extension(e))) return e;
+                if (name.contains(normalizedTitle) && isSupportedDocument(FileNameSupport.extension(e))) return e;
             }
         }
-        for (String e : entries) if (isSupportedDocument(extension(e))) return e;
+        for (String e : entries) if (isSupportedDocument(FileNameSupport.extension(e))) return e;
         return null;
     }
 
@@ -144,12 +145,6 @@ public class CoverReaderImpl implements CoverReader {
         };
     }
 
-    private static String extension(String name) {
-        if (name == null) return "";
-        int slash = Math.max(name.lastIndexOf('/'), name.lastIndexOf('\\'));
-        int dot = name.lastIndexOf('.');
-        return dot > slash ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
-    }
 
     private static Path materialize(InputStream in, String ext) throws IOException {
         Path temp = Files.createTempFile("myhomelib-cover-", ext.isBlank() ? ".book" : "." + ext);

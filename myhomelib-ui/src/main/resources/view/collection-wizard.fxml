@@ -62,8 +62,10 @@
                 <TextField fx:id="userField" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
                 <Label text="Пароль:" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
                 <PasswordField fx:id="passwordField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+                <Label fx:id="connectionScriptLabel" text="Сценарій підключення:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
+                <TextArea fx:id="connectionScriptArea" GridPane.columnIndex="1" GridPane.rowIndex="4" prefRowCount="6" wrapText="false" promptText="GET / POST / ADD / CHECK / REDIR / PAUSE"/>
             </GridPane>
-            <Label text="Для віддаленої колекції вкажіть INPX та базовий URL. Підтримуються шаблони {archive}, {file}, {entry}." wrapText="true" style="-fx-text-fill: #607d8b;"/>
+            <Label text="Для віддаленої колекції вкажіть INPX, базовий URL та, якщо джерело його потребує, ConnectionScript. Підтримуються шаблони {archive}, {file}, {entry}." wrapText="true" style="-fx-text-fill: #607d8b;"/>
             <CheckBox fx:id="importOnCreateCheck" text="Імпортувати при створенні" selected="true"/>
             <CheckBox fx:id="createIndexCheck" text="Створити пошуковий індекс" selected="true"/>
             <Label fx:id="errorLabel" style="-fx-text-fill: red; -fx-wrap-text: true;"/>

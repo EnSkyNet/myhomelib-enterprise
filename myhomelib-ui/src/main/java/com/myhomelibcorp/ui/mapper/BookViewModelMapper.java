@@ -22,6 +22,7 @@ public class BookViewModelMapper {
         vm.setSeries(dto.getSeries());
         vm.setGenresText(dto.getGenresText());
         vm.setSequenceNumber(dto.getSequenceNumber() != null ? dto.getSequenceNumber() : 0);
+        vm.setYear(dto.getYear());
         vm.setLanguage(dto.getLanguage());
         vm.setFileName(dto.getFileName());
         vm.setFolder(dto.getFolder());
@@ -49,6 +50,7 @@ public class BookViewModelMapper {
         vm.setAuthorsText(item.getAuthorsText());
         vm.setSeries(item.getSeries());
         vm.setGenresText(item.getGenresText());
+        vm.setYear(item.getYear());
         vm.setRate(item.getRate());
         vm.setProgress(item.getProgress());
         vm.setFileSize(item.getFileSize());
@@ -87,6 +89,7 @@ public class BookViewModelMapper {
         dto.setSeries(vm.getSeries());
         dto.setGenresText(vm.getGenresText());
         dto.setSequenceNumber(vm.getSequenceNumber());
+        dto.setYear(vm.getYear() > 0 ? vm.getYear() : null);
         dto.setLanguage(vm.getLanguage());
         dto.setFileName(vm.getFileName());
         dto.setFolder(vm.getFolder());

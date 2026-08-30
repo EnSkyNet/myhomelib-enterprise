@@ -14,6 +14,7 @@ public class BookViewModel {
     private final StringProperty series = new SimpleStringProperty();
     private final StringProperty genresText = new SimpleStringProperty();
     private final IntegerProperty sequenceNumber = new SimpleIntegerProperty();
+    private final IntegerProperty year = new SimpleIntegerProperty();
     private final StringProperty language = new SimpleStringProperty();
     private final StringProperty fileName = new SimpleStringProperty();
     private final StringProperty folder = new SimpleStringProperty();
@@ -50,6 +51,7 @@ public class BookViewModel {
     public StringProperty seriesProperty() { return series; }
     public StringProperty genresTextProperty() { return genresText; }
     public IntegerProperty sequenceNumberProperty() { return sequenceNumber; }
+    public IntegerProperty yearProperty() { return year; }
     public StringProperty languageProperty() { return language; }
     public StringProperty fileNameProperty() { return fileName; }
     public StringProperty folderProperty() { return folder; }
@@ -96,6 +98,9 @@ public class BookViewModel {
 
     public int getSequenceNumber() { return sequenceNumber.get(); }
     public void setSequenceNumber(int sequenceNumber) { this.sequenceNumber.set(sequenceNumber); }
+
+    public int getYear() { return year.get(); }
+    public void setYear(Integer year) { this.year.set(year != null ? year : 0); }
 
     public String getLanguage() { return language.get(); }
     public void setLanguage(String language) { this.language.set(language); }

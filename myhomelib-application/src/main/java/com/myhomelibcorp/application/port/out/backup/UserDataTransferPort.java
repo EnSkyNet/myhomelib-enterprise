@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.port.out.backup;
 
+import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
+
 import java.io.IOException;
 import java.nio.file.Path;
 
@@ -27,5 +29,10 @@ public interface UserDataTransferPort {
     record ImportResult(int sourceSchemaVersion, int effectiveSchemaVersion,
                         long matchedBooks, long unmatchedBooks, long groups,
                         long groupMemberships, long bookmarks, long historyEntries,
-                        long savedSearches, long readerOverrides) { }
+                        long savedSearches, long readerOverrides,
+                        ImportChangeSet searchChanges) {
+        public ImportResult {
+            searchChanges = searchChanges == null ? ImportChangeSet.empty(true) : searchChanges;
+        }
+    }
 }

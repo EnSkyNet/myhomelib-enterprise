@@ -38,12 +38,27 @@ public final class AppPaths {
     public static Path metadataDb() { return dataDir().resolve("meta.db"); }
     public static Path librariesDir() { return dataDir().resolve("libraries"); }
     public static Path searchIndexDir() { return dataDir().resolve("search-index"); }
+
+    /** Per-collection Lucene index directory. Collection ids are restricted to filesystem-safe characters. */
+    public static Path collectionSearchIndexDir(String collectionId) {
+        return searchIndexDir().resolve(safePathSegment(collectionId));
+    }
+
+    /** Freshness marker written only after a successful Lucene commit. */
+    public static Path collectionSearchIndexStateFile(String collectionId) {
+        return searchIndexDir().resolve(safePathSegment(collectionId) + ".state");
+    }
     public static Path configDir() { return dataDir().resolve("config"); }
     public static Path downloadsDir() { return dataDir().resolve("downloads"); }
     public static Path cacheDir() { return dataDir().resolve("cache"); }
     public static Path logsDir() { return dataDir().resolve("logs"); }
     public static Path backupsDir() { return dataDir().resolve("backups"); }
     public static Path helpDir() { return launchDir().resolve("help"); }
+
+    private static String safePathSegment(String value) {
+        if (value == null || value.isBlank()) throw new IllegalArgumentException("collectionId must not be blank");
+        return value.replaceAll("[^A-Za-z0-9._-]", "_");
+    }
 
     /** Set Spring-compatible system properties before the context is created. */
     public static void configureSystemProperties() {
@@ -59,7 +74,6 @@ public final class AppPaths {
             throw new IllegalStateException("Cannot create MyHomeLib data directories: " + dataDir(), e);
         }
         System.setProperty("app.metadata.db-path", metadataDb().toString());
-        System.setProperty("app.search.index-path", searchIndexDir().toString());
         System.setProperty("myhomelib.portable.active", Boolean.toString(portableMode()));
         System.setProperty("myhomelib.logDir", logsDir().toString());
     }

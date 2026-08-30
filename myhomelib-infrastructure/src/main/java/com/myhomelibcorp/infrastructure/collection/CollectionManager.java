@@ -11,8 +11,6 @@ import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.nio.file.Path;
-import java.nio.file.Paths;
-import com.myhomelibcorp.shared.util.AppPaths;
 import java.sql.SQLException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
@@ -59,8 +57,7 @@ public class CollectionManager {
 
             // Спочатку повністю відкриваємо і перевіряємо нову БД. Стару колекцію
             // не закриваємо, доки не впевнимося, що переключення можливе.
-            String dbPath = getDbPath(collection);
-            Path path = Paths.get(dbPath);
+            Path path = CollectionDatabasePathResolver.resolve(collection);
 
             // Створюємо директорію, якщо її немає
             if (path.toAbsolutePath().getParent() != null) {
@@ -144,17 +141,6 @@ public class CollectionManager {
         currentJdbcTemplate.set(null);
     }
 
-    /**
-     * Отримує шлях до БД з колекції.
-     */
-    private String getDbPath(Collection collection) {
-        String dbPath = collection.getDbFile();
-        if (dbPath == null || dbPath.isBlank()) {
-            dbPath = AppPaths.librariesDir().resolve(collection.getId() + ".db").toString();
-        }
-        return dbPath;
-    }
-
     // ==================== ПУБЛІЧНІ МЕТОДИ ====================
 
     public Collection getCurrentCollection() {
@@ -192,9 +178,6 @@ public class CollectionManager {
         return currentCollection.get() != null && currentJdbcTemplate.get() != null;
     }
 
-    public boolean isSwitching() {
-        return isSwitching.get();
-    }
 
     /**
      * Закриває поточну колекцію.
@@ -205,16 +188,4 @@ public class CollectionManager {
         log.info("Поточну колекцію закрито");
     }
 
-    /**
-     * Перевіряє, чи файл БД заблокований.
-     */
-    public boolean isDatabaseLocked() {
-        DataSource ds = currentDataSource.get();
-        if (ds == null) return false;
-        try (var conn = ds.getConnection()) {
-            return !conn.isValid(1);
-        } catch (Exception e) {
-            return true;
-        }
-    }
 }

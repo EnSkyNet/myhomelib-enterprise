@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
+import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
@@ -55,6 +56,8 @@ public class CollectionWizardController {
     @FXML private TextField urlField;
     @FXML private TextField userField;
     @FXML private PasswordField passwordField;
+    @FXML private Label connectionScriptLabel;
+    @FXML private TextArea connectionScriptArea;
     @FXML private CheckBox importOnCreateCheck;
     @FXML private CheckBox createIndexCheck;
     @FXML private Button nextButton;
@@ -89,6 +92,10 @@ public class CollectionWizardController {
             }
             @Override
             public CollectionType fromString(String string) {
+                if (string == null || string.isBlank()) return CollectionType.FB2_LOCAL;
+                for (CollectionType type : CollectionType.values()) {
+                    if (type.getDisplayName().equalsIgnoreCase(string.trim()) || type.name().equalsIgnoreCase(string.trim())) return type;
+                }
                 return CollectionType.FB2_LOCAL;
             }
         });
@@ -116,7 +123,10 @@ public class CollectionWizardController {
         urlField.textProperty().bindBidirectional(model.urlProperty());
         userField.textProperty().bindBidirectional(model.userProperty());
         passwordField.textProperty().bindBidirectional(model.passwordProperty());
+        connectionScriptArea.textProperty().bindBidirectional(model.connectionScriptProperty());
         typeComboBox.valueProperty().bindBidirectional(model.typeProperty());
+        typeComboBox.valueProperty().addListener((obs, oldType, newType) -> updateOnlineFieldsVisibility(newType));
+        updateOnlineFieldsVisibility(typeComboBox.getValue());
         importOnCreateCheck.selectedProperty().bindBidirectional(model.importOnCreateProperty());
         createIndexCheck.selectedProperty().bindBidirectional(model.createIndexProperty());
 
@@ -194,17 +204,7 @@ public class CollectionWizardController {
 
                 UiExecutor.runOnUiThread(() -> {
                     try {
-                        CollectionDto dto = CollectionDto.builder()
-                                .id(activated.getId())
-                                .name(activated.getName())
-                                .active(true)
-                                .allowRename(true)
-                                .allowDelete(true)
-                                .rootFolder(activated.getRootFolder() != null ? activated.getRootFolder().toString() : null)
-                                .dbFile(activated.getDbFile())
-                                .type(activated.getType())
-                                .booksCount(-1L)
-                                .build();
+                        CollectionDto dto = CollectionDtoMapper.toDto(activated, true, true);
 
                         if (collectionList != null) {
                             collectionList.add(dto);
@@ -330,7 +330,21 @@ public class CollectionWizardController {
                 .url(model.getUrl())
                 .user(model.getUser())
                 .password(model.getPassword())
+                .connectionScript(model.getConnectionScript())
                 .build();
+    }
+
+
+    private void updateOnlineFieldsVisibility(CollectionType type) {
+        boolean online = type != null && type.requiresUrl();
+        if (connectionScriptLabel != null) {
+            connectionScriptLabel.setVisible(online);
+            connectionScriptLabel.setManaged(online);
+        }
+        if (connectionScriptArea != null) {
+            connectionScriptArea.setVisible(online);
+            connectionScriptArea.setManaged(online);
+        }
     }
 
     private void closeDialog() {

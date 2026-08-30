@@ -1,0 +1,4 @@
+MyHomeLib Enterprise v7.1 compile-fix-3
+Base: compile-fix-1 (contains the 34 myhomelib-infrastructure javac fixes)
+Overlay: exactly 5 myhomelib-ui source files from compile-fix-2 UI fix pass.
+Reason: compile-fix-2 was accidentally packaged from the older 2026-08-30-1640 snapshot and regressed the infrastructure fixes.

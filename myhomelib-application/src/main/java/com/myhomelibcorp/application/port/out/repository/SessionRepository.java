@@ -4,11 +4,6 @@ public interface SessionRepository {
     void saveLastOpenedBookId(String collectionId, String bookId);
     String getLastOpenedBookId(String collectionId);
 
-    /**
-     * Очищує session state для конкретної колекції.
-     */
-    default void clearSession(String collectionId) {
-        // За замовчуванням нічого не робимо
-        // Конкретна реалізація може перевизначити
-    }
+    /** Очищує session state для конкретної колекції. */
+    void clearSession(String collectionId);
 }

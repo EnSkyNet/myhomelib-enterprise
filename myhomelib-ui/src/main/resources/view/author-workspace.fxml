@@ -2,7 +2,6 @@
 
 <?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
-<?import javafx.scene.image.ImageView?>
 <?import javafx.scene.layout.*?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
@@ -11,13 +10,9 @@
 
     <!-- Заголовок з іменем автора -->
     <HBox spacing="15" alignment="CENTER_LEFT">
-        <ImageView fx:id="authorPhotoImageView" fitWidth="80" fitHeight="80" preserveRatio="true"/>
-        <VBox>
-            <Label fx:id="authorNameLabel" text="Автор" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
-            <Label fx:id="authorFullNameLabel" text="Повне ім'я" style="-fx-font-size: 14px; -fx-text-fill: #666;"/>
-        </VBox>
+        <Label fx:id="authorNameLabel" text="Автор" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <TextField fx:id="searchField" promptText="🔍 Пошук по книгах..." prefWidth="250"/>
+        <Button fx:id="followAuthorButton" text="Стежити за автором" onAction="#onToggleAuthorFollowed"/>
     </HBox>
 
     <!-- Статистика -->
@@ -35,8 +30,9 @@
     <!-- Фільтр та сортування -->
     <HBox spacing="10" alignment="CENTER_LEFT">
         <Label text="Фільтр:"/>
-        <TextField fx:id="filterTextField" promptText="Назва або серія..." prefWidth="200"/>
+        <TextField fx:id="filterTextField" promptText="Назва, серія, ключові слова..." prefWidth="200"/>
         <Separator orientation="VERTICAL"/>
+        <Button text="За серією" onAction="#onSortBySeries"/>
         <Button text="За назвою" onAction="#onSortByTitle"/>
         <Button text="За роком" onAction="#onSortByYear"/>
         <Button text="За рейтингом" onAction="#onSortByRating"/>
@@ -52,10 +48,16 @@
             <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="120"/>
             <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="40"/>
             <TableColumn fx:id="yearColumn" text="Рік" prefWidth="80"/>
-            <TableColumn fx:id="formatColumn" text="Формат" prefWidth="80"/>
+            <TableColumn fx:id="formatColumn" text="Статус" prefWidth="80"/>
             <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
             <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="100"/>
             <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
         </columns>
     </TableView>
+
+    <HBox spacing="10" alignment="CENTER">
+        <Button fx:id="previousPageButton" text="← Попередня" onAction="#onPreviousPage"/>
+        <Label fx:id="pageLabel" text="Сторінка 0 / 0"/>
+        <Button fx:id="nextPageButton" text="Наступна →" onAction="#onNextPage"/>
+    </HBox>
 </VBox>

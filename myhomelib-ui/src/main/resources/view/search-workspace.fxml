@@ -71,6 +71,11 @@
                 <VBox fx:id="booksSection" spacing="4">
                     <HBox spacing="6"><Label text="Книги" style="-fx-font-weight: bold;"/><Label fx:id="booksCountLabel" text="(0)"/></HBox>
                     <ListView fx:id="booksListView" prefHeight="300"/>
+                    <HBox fx:id="booksPagingBox" spacing="10" alignment="CENTER" visible="false" managed="false">
+                        <Button fx:id="booksPreviousPageButton" text="← Попередня" onAction="#onPreviousBooksPage"/>
+                        <Label fx:id="booksPageLabel" text="Сторінка 0 / 0"/>
+                        <Button fx:id="booksNextPageButton" text="Наступна →" onAction="#onNextBooksPage"/>
+                    </HBox>
                 </VBox>
             </VBox>
         </content>

@@ -103,12 +103,24 @@ public class ExportController {
                     case ASK -> "Запитувати для кожного конфлікту";
                 };
             }
-            @Override public ExportRequest.CollisionPolicy fromString(String value) { return collisionPolicyComboBox.getValue(); }
+            @Override public ExportRequest.CollisionPolicy fromString(String value) {
+                if (value == null) return collisionPolicyComboBox.getValue();
+                String normalized = value.trim();
+                for (ExportRequest.CollisionPolicy policy : ExportRequest.CollisionPolicy.values()) {
+                    if (toString(policy).equalsIgnoreCase(normalized) || policy.name().equalsIgnoreCase(normalized)) return policy;
+                }
+                return collisionPolicyComboBox.getValue();
+            }
         });
 
         profileComboBox.setConverter(new StringConverter<>() {
             @Override public String toString(ExportProfile p) { return p == null ? "" : p.name(); }
-            @Override public ExportProfile fromString(String value) { return profileComboBox.getValue(); }
+            @Override public ExportProfile fromString(String value) {
+                if (value == null) return profileComboBox.getValue();
+                return profileComboBox.getItems().stream()
+                        .filter(profile -> profile.name().equalsIgnoreCase(value.trim()))
+                        .findFirst().orElse(profileComboBox.getValue());
+            }
         });
         profileComboBox.valueProperty().addListener((obs, old, value) -> { if (!applyingProfile) applyProfile(value); });
         loadPostActions("");
@@ -233,11 +245,15 @@ public class ExportController {
         File file = fileChooser.showSaveDialog(mainPane.getScene().getWindow());
         if (file == null) return;
 
-        String collectionName = appState.getCurrentLibraryCollection() != null
-                ? appState.getCurrentLibraryCollection().getName() : "MyHomeLib Collection";
+        var currentCollection = appState.getCurrentLibraryCollection();
+        String collectionName = currentCollection != null ? currentCollection.getName() : "MyHomeLib Collection";
         InpxExportRequest request = InpxExportRequest.builder()
                 .bookIds(bookIds).outputFile(file.toPath()).collectionName(collectionName)
                 .collectionVersion(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")))
+                .collectionType(currentCollection == null ? 0 : currentCollection.getType())
+                .collectionNotes(currentCollection == null ? null : currentCollection.getNotes())
+                .collectionUrl(currentCollection == null ? null : currentCollection.getUrl())
+                .connectionScript(currentCollection == null ? null : currentCollection.getConnectionScript())
                 .build();
 
         dialogService.showInfo("Експорт", "Початок експорту в INPX...");

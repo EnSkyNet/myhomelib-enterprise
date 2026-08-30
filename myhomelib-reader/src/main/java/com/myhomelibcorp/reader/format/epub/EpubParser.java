@@ -58,7 +58,7 @@ public final class EpubParser implements BookParser {
 
             int chapterNumber = 0;
             for (String path : documents) {
-                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("EPUB parsing cancelled");
+                checkCancelled();
                 ZipEntry entry = findZip(zip, path);
                 if (entry == null || entry.isDirectory()) continue;
                 checkEntry(entry, "EPUB document");
@@ -116,7 +116,9 @@ public final class EpubParser implements BookParser {
         try (InputStream in = bounded(zip.getInputStream(opf), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
             XMLStreamReader r = xmlFactory.createXMLStreamReader(in);
             try {
+                int events = 0;
                 while (r.hasNext()) {
+                    if (((++events) & 0xFF) == 0) checkCancelled();
                     int event = r.next();
                     if (event != XMLStreamConstants.START_ELEMENT) continue;
                     String local = lower(r.getLocalName());
@@ -209,6 +211,7 @@ public final class EpubParser implements BookParser {
 
     private void preloadImages(ZipFile zip, PackageData pkg, HybridResourceRepository resources, ParseOptions options) throws IOException {
         for (ManifestItem item : pkg.manifest().values()) {
+            checkCancelled();
             if (!isImage(item.mediaType())) continue;
             String id = resolveZipPath(pkg.opfBase(), item.href());
             if (!options.loadImages()) { resources.addMetadata(id, item.mediaType()); continue; }
@@ -236,7 +239,9 @@ public final class EpubParser implements BookParser {
         int headingDepth = 0;
         boolean lastWhitespace = text.length() > 0 && Character.isWhitespace(text.getText(text.length() - 1, text.length()).charAt(0));
         try {
+            int events = 0;
             while (r.hasNext()) {
+                if (((++events) & 0xFF) == 0) checkCancelled();
                 int event = r.next();
                 if (event == XMLStreamConstants.START_ELEMENT) {
                     String tag = lower(r.getLocalName());
@@ -299,7 +304,6 @@ public final class EpubParser implements BookParser {
                                 if (!h.isBlank()) firstHeading = h;
                             }
                         }
-                        text.endParagraph();
                         appendBoundary(text);
                         lastWhitespace = true;
                     }
@@ -441,6 +445,7 @@ public final class EpubParser implements BookParser {
         try (InputStream in = source.openStream(); OutputStream out = Files.newOutputStream(tmp)) {
             byte[] buffer = new byte[64 * 1024]; long total = 0; int n;
             while ((n = in.read(buffer)) >= 0) {
+                checkCancelled();
                 if (n == 0) continue;
                 total += n;
                 if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("EPUB source exceeds Reader safety limit");
@@ -551,4 +556,9 @@ public final class EpubParser implements BookParser {
     private record MaterializedSource(Path path, boolean delete) implements AutoCloseable {
         @Override public void close() throws IOException { if (delete) Files.deleteIfExists(path); }
     }
+    private static void checkCancelled() throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted())
+            throw new InterruptedIOException("EPUB parsing cancelled");
+    }
+
 }

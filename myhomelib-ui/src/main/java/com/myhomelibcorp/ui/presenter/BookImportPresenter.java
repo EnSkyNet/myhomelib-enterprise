@@ -30,7 +30,7 @@ public class BookImportPresenter {
     private final FileChooserService fileChooserService;
     private final ApplicationState appState;
 
-    @Value("${app.import.batch-size:500}")
+    @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
 
     public void importFb2() {

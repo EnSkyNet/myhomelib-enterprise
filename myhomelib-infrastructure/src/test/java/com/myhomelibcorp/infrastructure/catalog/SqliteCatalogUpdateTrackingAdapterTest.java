@@ -61,7 +61,7 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         adapter.recordImportedBooks(changed, List.of(snapshot("b1", "book-b")));
         assertThat(changed.sourceRevision()).isEqualTo(2);
         assertThat(adapter.countPendingUpdates()).isEqualTo(1);
-        assertThat(adapter.findPendingUpdates(10, 0)).singleElement()
+        assertThat(adapter.findPendingUpdateItems(10, null)).singleElement()
                 .extracting(e -> e.type())
                 .isEqualTo(CatalogUpdateType.UPDATED_DOWNLOADED_BOOK);
 
@@ -87,7 +87,7 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         var revision2 = adapter.beginSync("remote-collection:c1", null, "source-b");
         adapter.recordImportedBooks(revision2, List.of(snapshot("old", "old-a"), snapshot("new", "new-a")));
 
-        assertThat(adapter.findPendingUpdates(10, 0))
+        assertThat(adapter.findPendingUpdateItems(10, null))
                 .filteredOn(e -> e.bookId().equals("new"))
                 .singleElement()
                 .extracting(e -> e.type())
@@ -111,13 +111,28 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         var revision2 = adapter.beginSync("remote-collection:c1", null, "source-b");
         adapter.recordImportedBooks(revision2, List.of(snapshot(bookId, "book-new")));
 
-        assertThat(adapter.findPendingUpdateItems(10, 0)).singleElement().satisfies(item -> {
+        assertThat(adapter.findPendingUpdateItems(10, null)).singleElement().satisfies(item -> {
             assertThat(item.bookId()).isEqualTo(bookId);
             assertThat(item.bookTitle()).isEqualTo("Title " + bookId);
             assertThat(item.authorId()).isEqualTo(followed);
             assertThat(item.authorName()).isEqualTo("Writer Followed");
             assertThat(item.type()).isEqualTo(CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR);
         });
+    }
+
+    @Test
+    void pendingUpdateItemsUseStableKeysetCursor() {
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k1','K1','k1.fb2',0)");
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k2','K2','k2.fb2',0)");
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k3','K3','k3.fb2',0)");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,detected_revision,catalog_fingerprint,detected_at) VALUES ('k1','NEW_BY_FOLLOWED_AUTHOR',1,'a','2026-08-30T10:00:00')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,detected_revision,catalog_fingerprint,detected_at) VALUES ('k2','NEW_BY_FOLLOWED_AUTHOR',1,'b','2026-08-30T10:00:00')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,detected_revision,catalog_fingerprint,detected_at) VALUES ('k3','NEW_BY_FOLLOWED_AUTHOR',1,'c','2026-08-29T10:00:00')");
+
+        var first = adapter.findPendingUpdateItems(2, null);
+        assertThat(first).extracting(item -> item.bookId()).containsExactly("k1", "k2");
+        var second = adapter.findPendingUpdateItems(2, com.myhomelibcorp.application.catalog.CatalogUpdateCursor.after(first.getLast()));
+        assertThat(second).extracting(item -> item.bookId()).containsExactly("k3");
     }
 
     @Test

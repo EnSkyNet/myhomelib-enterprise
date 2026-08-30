@@ -124,7 +124,7 @@ public final class MyHomeLibMcpServer implements AutoCloseable {
         ObjectNode r=json.createObjectNode();
         r.put("protocolVersion","2025-06-18");
         r.set("capabilities",json.createObjectNode().set("tools",json.createObjectNode().put("listChanged",false)));
-        r.set("serverInfo",json.createObjectNode().put("name","MyHomeLib MCP").put("version","1.0.0"));
+        r.set("serverInfo",json.createObjectNode().put("name","MyHomeLib MCP").put("version","7.1.0"));
         return r;
     }
 

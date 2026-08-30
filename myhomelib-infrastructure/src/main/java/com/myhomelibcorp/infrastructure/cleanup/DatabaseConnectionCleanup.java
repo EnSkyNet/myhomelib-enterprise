@@ -1,7 +1,6 @@
 package com.myhomelibcorp.infrastructure.cleanup;
 
 import com.myhomelibcorp.infrastructure.cache.BookCache;
-import com.myhomelibcorp.infrastructure.cache.DictionaryCache;
 import com.myhomelibcorp.infrastructure.cache.CaffeineSearchCache;
 import com.myhomelibcorp.infrastructure.cache.CaffeineCoverCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -11,8 +10,6 @@ import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.lang.reflect.Method;
-import java.sql.Connection;
-import java.sql.SQLException;
 
 @Component
 @RequiredArgsConstructor
@@ -21,7 +18,6 @@ public class DatabaseConnectionCleanup {
 
     private final CollectionManager collectionManager;
     private final BookCache bookCache;
-    private final DictionaryCache dictionaryCache;
     private final CaffeineSearchCache searchCache;
     private final CaffeineCoverCache coverCache;
 
@@ -30,7 +26,6 @@ public class DatabaseConnectionCleanup {
 
         // 1. Очищення кешів
         bookCache.clear();
-        dictionaryCache.clearAll();
         searchCache.clear();
         coverCache.clear();
         log.info("  ✅ Кеші очищено");
@@ -78,14 +73,4 @@ public class DatabaseConnectionCleanup {
         log.info("🧹 Очищення ресурсів завершено");
     }
 
-    public boolean isFullyCleaned() {
-        DataSource ds = collectionManager.getCurrentDataSource();
-        if (ds == null) return true;
-
-        try (Connection conn = ds.getConnection()) {
-            return conn.isValid(1);
-        } catch (SQLException e) {
-            return false;
-        }
-    }
 }

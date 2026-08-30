@@ -10,12 +10,9 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Repository;
 
-import java.sql.ResultSet;
-import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
-import java.util.Optional;
 
 @Repository
 @RequiredArgsConstructor
@@ -60,16 +57,6 @@ public class SqliteBookmarkRepository implements BookmarkRepository {
         return queryExecutor.query(sql, rowMapper, bookId);
     }
 
-    @Override
-    public Optional<Bookmark> findById(String id) {
-        String sql = "SELECT * FROM bookmarks WHERE id = ?";
-        try {
-            Bookmark bookmark = queryExecutor.queryForObject(sql, rowMapper, id);
-            return Optional.of(bookmark);
-        } catch (Exception e) {
-            return Optional.empty();
-        }
-    }
 
     @Override
     public Bookmark save(Bookmark bookmark) {
@@ -105,12 +92,6 @@ public class SqliteBookmarkRepository implements BookmarkRepository {
         log.debug("Bookmark deleted: {}", id);
     }
 
-    @Override
-    public void deleteByBookId(String bookId) {
-        String sql = "DELETE FROM bookmarks WHERE book_id = ?";
-        getJdbcTemplate().update(sql, bookId);
-        log.debug("All bookmarks deleted for book: {}", bookId);
-    }
 
     @Override
     public int countByBookId(String bookId) {

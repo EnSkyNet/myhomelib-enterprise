@@ -1,4 +1,4 @@
-# MyHomeLib 1.0.0
+# MyHomeLib Enterprise 7.1.0
 
 Modern Java/JavaFX MyHomeLib desktop library with SQLite, Flyway, Lucene and a lightweight Canvas-based reader.
 
@@ -48,7 +48,7 @@ or Windows:
 .\package.ps1
 ```
 
-Output: `myhomelib-bootstrap/target/myhomelib-bootstrap-1.0.0.jar`.
+Output: `myhomelib-bootstrap/target/myhomelib-bootstrap-7.1.0.jar`.
 
 ## Library/import features
 
@@ -59,7 +59,7 @@ Output: `myhomelib-bootstrap/target/myhomelib-bootstrap-1.0.0.jar`.
 - INPX import with all `.inp` parts, `structure.info` and `archives.info` support;
 - idempotent INPX refresh preserving local storage and user state;
 - Stage 6 online-catalog revision tracking with stable remote source identity, SHA-256 source/book fingerprints, downloaded baselines and pending update classification;
-- online-library settings and cancellable HTTP download with `.part` cleanup;
+- online-library settings, ConnectionScript compatibility, validated downloads, durable queue and validator-bound `.part` resume;
 - archive-entry aware opening/export/cover lookup;
 - bounded batch import and streaming directory traversal.
 
@@ -111,6 +111,17 @@ See `ARCHITECTURE.md` and `docs/architecture/ARCHITECTURE_DEBT.md`.
 
 GitHub Actions verifies the full Maven reactor on Windows, Linux and macOS with JDK 21, then builds a self-contained `jpackage --type app-image` portable archive for each platform. The packaged native launcher is exercised with a headless `--release-smoke` path before artifacts are accepted. Tagged `v*` builds publish platform archives, bootstrap/MCP JARs and a consolidated `SHA256SUMS`. Runtime startup does not download Maven dependencies or require network access; explicitly configured online-library features remain optional. See `docs/release/CROSS_PLATFORM_RELEASE.md`.
 
+## v7.1 upgrade documentation
+
+The v7.1 compatibility/security/performance work is documented in:
+
+- `ARCHITECTURE-UPGRADE-v7.1.md`
+- `ONLINE-LIBRARY-CONNECTION-SCRIPT-v7.1.md`
+- `UPSTREAM-PARITY-MATRIX-v7.1.md`
+- `GITHUB-CI-v7.1.md`
+- `PERFORMANCE-v7.1.md`
+- `UPGRADE-FROM-v7.md`
+
 ## Notes
 
-The production storage target of 1.0.0 is SQLite. Android/iOS are future platform targets; this ZIP is the desktop JavaFX source release. A full Maven build was not executed in the packaging container because external Maven dependencies could not be resolved there. The source tree includes the Maven Wrapper; run `build.ps1`/`build.sh` on a machine with dependency access or a populated Maven cache before treating a binary build as externally validated. See `RELEASE_VALIDATION.txt` for the exact local checks and intentionally skipped external gates.
+The production storage target of 7.1.0 is SQLite. Android/iOS are future platform targets; this ZIP is the desktop JavaFX source release. A full Maven build was not executed in the packaging container because external Maven dependencies could not be resolved there. The source tree includes the Maven Wrapper; run `build.ps1`/`build.sh` on a machine with dependency access or a populated Maven cache before treating a binary build as externally validated. See `RELEASE_VALIDATION.txt` for the exact local checks and intentionally skipped external gates.

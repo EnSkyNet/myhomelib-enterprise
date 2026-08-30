@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteAuthorRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flywaydb.core.Flyway;
@@ -16,6 +17,7 @@ import javax.sql.DataSource;
 public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
 
     private final CollectionManager collectionManager;
+    private final SqliteAuthorRepository authorRepository;
 
     @Override
     public int migrateCurrentCollection() {
@@ -38,6 +40,7 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
                     .load();
 
             MigrateResult result = flyway.migrate();
+            authorRepository.normalizeSearchNamesIfNeeded();
 
             if (result.migrationsExecuted > 0) {
                 log.info("✅ Виконано {} міграцій", result.migrationsExecuted);

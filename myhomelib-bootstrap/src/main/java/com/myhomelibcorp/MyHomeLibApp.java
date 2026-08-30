@@ -1,21 +1,16 @@
 package com.myhomelibcorp;
 
-import com.myhomelibcorp.application.port.out.cache.DictionaryCachePort;
-import com.myhomelibcorp.application.port.out.repository.GenreRepository;
-import com.myhomelibcorp.application.port.out.repository.GroupRepository;
-import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.statistics.StatisticsService;
+import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
-import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
-import com.myhomelibcorp.infrastructure.initializer.DatabaseInitializer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
 import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
-import com.myhomelibcorp.infrastructure.warmup.BackgroundWarmup;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.controller.MainController;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
@@ -73,7 +68,7 @@ public class MyHomeLibApp extends Application {
 
         CompletableFuture.supplyAsync(() -> {
             try {
-                return initializeBackend(primaryStage);
+                return initializeBackend();
             } catch (Exception e) {
                 log.error("Помилка ініціалізації бекенду", e);
                 throw new RuntimeException(e);
@@ -113,12 +108,10 @@ public class MyHomeLibApp extends Application {
         return splash;
     }
 
-    private CollectionManager initializeBackend(Stage primaryStage) {
+    private CollectionManager initializeBackend() {
         CollectionManager collectionManager = context.getBean(CollectionManager.class);
         SqliteCollectionRepository collectionRepository = context.getBean(SqliteCollectionRepository.class);
-        DatabaseInitializer initializer = context.getBean(DatabaseInitializer.class);
         SwitchCollectionUseCase switchCollectionUseCase = context.getBean(SwitchCollectionUseCase.class);
-        SyncSeriesUseCase syncSeriesUseCase = context.getBean(SyncSeriesUseCase.class);
 
         // ОТРИМУЄМО ВСІ КОЛЕКЦІЇ З МЕТА-БД
         List<Collection> collections = collectionRepository.findAll();
@@ -141,10 +134,14 @@ public class MyHomeLibApp extends Application {
             ));
             log.info("Створено стандартну колекцію: id={}, dbFile={}", active.getId(), active.getDbFile());
         } else {
-            // БЕРЕМО ПЕРШУ КОЛЕКЦІЮ ЯК АКТИВНУ (можна змінити на останню використану)
-            active = collections.get(0);
-            log.info("Використовуємо першу колекцію: id={}, name={}, dbFile={}",
-                    active.getId(), active.getName(), active.getDbFile());
+            SessionService sessionService = context.getBean(SessionService.class);
+            String lastCollectionId = sessionService.isRestoreEnabled() ? sessionService.getLastCollectionId() : null;
+            active = lastCollectionId == null ? collections.get(0) : collections.stream()
+                    .filter(c -> lastCollectionId.equals(c.getId()))
+                    .findFirst()
+                    .orElse(collections.get(0));
+            log.info("Використовуємо колекцію при старті: id={}, name={}, dbFile={}, restored={}",
+                    active.getId(), active.getName(), active.getDbFile(), lastCollectionId != null && lastCollectionId.equals(active.getId()));
 
             // Логуємо всі знайдені колекції
             for (Collection c : collections) {
@@ -153,16 +150,12 @@ public class MyHomeLibApp extends Application {
         }
 
         // 1. Переключаємо колекцію
-        switchCollectionUseCase.execute(active);
+        switchCollectionUseCase.execute(active, true);
         context.getBean(ApplicationState.class).setCurrentLibraryCollection(active);
 
-        // 2. Синхронізуємо серії
-        syncSeriesUseCase.execute();
+        // 2. Lifecycle уже виконав Flyway, series sync і dictionary-cache refresh.
 
-        // 3. Ініціалізуємо базу даних
-        initializer.initializeCurrentCollection();
-
-        // 4. Оновлюємо статистику
+        // 3. Оновлюємо статистику
         try {
             StatisticsService statisticsService = context.getBean(StatisticsService.class);
             statisticsService.refreshStatistics();
@@ -170,31 +163,12 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося оновити статистику (можливо, ще не виконана міграція)", e);
         }
 
-        // 5. Завантажуємо кеші
-        DictionaryCachePort dictCache = context.getBean(DictionaryCachePort.class);
-        GenreRepository genreRepo = context.getBean(GenreRepository.class);
-        SeriesRepository seriesRepo = context.getBean(SeriesRepository.class);
-        GroupRepository groupRepo = context.getBean(GroupRepository.class);
-
-        dictCache.loadGenres(genreRepo.findAll());
-        dictCache.loadSeries(seriesRepo.findAll());
-        dictCache.loadGroups(groupRepo.findAll());
-
         InpxImporter inpxImporter = context.getBean(InpxImporter.class);
         inpxImporter.initialize();
 
-        // 6. Перебудовуємо Lucene індекс
-        try {
-            log.info("Перебудова Lucene індексу...");
-            var luceneService = context.getBean(LuceneSearchService.class);
-            luceneService.rebuildIndex();
-            log.info("Lucene індекс перебудовано. Проіндексовано {} книг", luceneService.getDocumentCount());
-        } catch (Exception e) {
-            log.error("Помилка перебудови Lucene індексу", e);
-        }
-
-        BackgroundWarmup backgroundWarmup = context.getBean(BackgroundWarmup.class);
-        backgroundWarmup.warmup();
+        // 4. Per-collection Lucene lifecycle already reused a clean index or started a bounded
+        // background rebuild when the target index was absent/dirty. No unconditional startup rebuild.
+        log.info("Колекція та пошуковий індекс ініціалізовані; dirty index оновлюється у фоні за потреби");
 
         log.info("Всі кеші та компоненти готові до роботи");
         return collectionManager;
@@ -206,7 +180,11 @@ public class MyHomeLibApp extends Application {
             throw new RuntimeException("MainView.fxml не знайдено у ресурсах");
         }
         loader.setControllerFactory(context::getBean);
+        SessionService sessionService = context.getBean(SessionService.class);
+        SessionService.WorkspaceState restoreState = sessionService.getWorkspaceState();
         Parent root = loader.load();
+        MainController mainController = loader.getController();
+        if (restoreState != null) mainController.restoreSessionWorkspace(restoreState);
 
         String collectionName = collectionManager.getCurrentCollection() != null
                 ? collectionManager.getCurrentCollection().getName()
@@ -215,6 +193,12 @@ public class MyHomeLibApp extends Application {
         primaryStage.setScene(new Scene(root, 1100, 750));
         primaryStage.setMinWidth(800);
         primaryStage.setMinHeight(600);
+        if (sessionService.isRestoreEnabled()) {
+            double[] windowState = sessionService.getWindowState();
+            primaryStage.setWidth(Math.max(800, windowState[0]));
+            primaryStage.setHeight(Math.max(600, windowState[1]));
+        }
+        primaryStage.setOnHiding(event -> sessionService.saveWindowState(primaryStage.getWidth(), primaryStage.getHeight()));
         primaryStage.show();
     }
 
@@ -270,15 +254,7 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити BackgroundExecutor", e);
         }
 
-        // 5. Закриваємо BackgroundTaskService
-        try {
-            var bgTaskService = context.getBean(com.myhomelibcorp.ui.service.BackgroundTaskService.class);
-            bgTaskService.shutdown();
-        } catch (Exception e) {
-            log.warn("Не вдалося закрити BackgroundTaskService", e);
-        }
-
-        // 6. Закриваємо SpringExecutorAdapter
+        // 5. Закриваємо SpringExecutorAdapter
         try {
             var executorAdapter = context.getBean(com.myhomelibcorp.infrastructure.executor.SpringExecutorAdapter.class);
             executorAdapter.shutdown();
@@ -286,25 +262,15 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити SpringExecutorAdapter", e);
         }
 
-        // 7. Закриваємо LuceneSearchService
-        try {
-            var luceneService = context.getBean(LuceneSearchService.class);
-            luceneService.close();
-            log.info("LuceneSearchService закрито");
-        } catch (Exception e) {
-            log.warn("Не вдалося закрити LuceneSearchService", e);
-        }
-
-        // 8. Закриваємо CollectionManager
+        // 6. Закриваємо активну колекцію через єдиний lifecycle:
+        // Lucene commit/close -> SQLite close/checkpoint -> freshness seal.
         if (context != null) {
             try {
-                CollectionManager collectionManager = context.getBean(CollectionManager.class);
-                collectionManager.closeCurrentCollection();
-                log.info("CollectionManager закрито");
+                context.getBean(com.myhomelibcorp.application.service.CollectionLifecycleService.class).closeCollection();
             } catch (Exception e) {
-                log.warn("Помилка закриття колекції", e);
+                log.warn("Помилка коректного закриття колекції", e);
             }
-            context.close();
+            context.close(); // @PreDestroy закриє вже неактивний Lucene service та інші beans.
         }
 
         Platform.exit();

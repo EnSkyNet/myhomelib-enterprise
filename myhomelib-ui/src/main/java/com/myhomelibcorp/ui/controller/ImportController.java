@@ -6,20 +6,17 @@ import com.myhomelibcorp.domain.model.sync.SyncResult;
 import com.myhomelibcorp.ui.presenter.BookImportPresenter;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
-import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.scene.control.*;
 import javafx.scene.layout.VBox;
 import javafx.stage.DirectoryChooser;
-import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 @Component
@@ -29,7 +26,6 @@ public class ImportController {
 
     private final BookImportPresenter bookImportPresenter;
     private final SyncFolderUseCase syncFolderUseCase;
-    private final UiBackgroundExecutor executor;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final ApplicationState appState;

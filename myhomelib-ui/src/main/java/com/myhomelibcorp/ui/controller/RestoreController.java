@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.service.BackupRestoreService;
+import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
@@ -27,37 +28,24 @@ public class RestoreController {
     @FXML private TextField backupPathField;
     @FXML private ProgressBar progressBar;
     @FXML private Label statusLabel;
-    @FXML private Label progressLabel;
     @FXML private TextArea logArea;
     @FXML private Button restoreButton;
     @FXML private Button selectPathButton;
-    @FXML private Button cancelButton;
     @FXML private Button closeButton;
-    @FXML private CheckBox restoreIndexCheckBox;
-    @FXML private CheckBox restoreCoversCheckBox;
     @FXML private CheckBox restoreMetadataCheckBox;
     @FXML private CheckBox restoreDatabaseCheckBox;
 
-    private volatile boolean cancelled = false;
     private Stage stage;
-    private boolean restoreCompleted = false;
 
     @FXML
     public void initialize() {
-        restoreIndexCheckBox.setSelected(true);
-        restoreCoversCheckBox.setSelected(true);
         restoreMetadataCheckBox.setSelected(true);
         restoreDatabaseCheckBox.setSelected(true);
         restoreDatabaseCheckBox.selectedProperty().addListener((obs, oldValue, fullRestore) -> {
-            restoreIndexCheckBox.setDisable(!fullRestore);
-            restoreCoversCheckBox.setDisable(!fullRestore);
-            if (!fullRestore) { restoreIndexCheckBox.setSelected(false); restoreCoversCheckBox.setSelected(false); restoreMetadataCheckBox.setSelected(true); }
+            if (!fullRestore) restoreMetadataCheckBox.setSelected(true);
         });
 
-        progressBar.setProgress(0);
         progressBar.setVisible(false);
-        progressLabel.setVisible(false);
-        cancelButton.setVisible(false);
         logArea.setVisible(false);
         statusLabel.setText("Виберіть папку з резервною копією");
         closeButton.setDisable(false);
@@ -72,7 +60,7 @@ public class RestoreController {
     public void onSelectPath() {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Виберіть папку з резервною копією");
-        chooser.setInitialDirectory(new File(System.getProperty("user.home")));
+        chooser.setInitialDirectory(AppPaths.backupsDir().toFile());
         File dir = chooser.showDialog(stage);
         if (dir != null) {
             backupPathField.setText(dir.getAbsolutePath());
@@ -86,8 +74,6 @@ public class RestoreController {
         addLog("Перевірка вмісту резервної копії...");
 
         boolean hasDb = false;
-        boolean hasIndex = false;
-        boolean hasCovers = false;
         boolean hasPortableUserData = false;
 
         try (var stream = Files.list(backupPath)) {
@@ -98,11 +84,9 @@ public class RestoreController {
                     hasDb = true;
                     addLog("  ✅ База даних: " + name);
                 } else if (name.equals("search-index") && Files.isDirectory(path)) {
-                    hasIndex = true;
-                    addLog("  ✅ Пошуковий індекс");
+                    addLog("  ℹ️ Legacy search-index буде проігноровано; індекс перебудовується після restore");
                 } else if (name.equals("covers") && Files.isDirectory(path)) {
-                    hasCovers = true;
-                    addLog("  ✅ Обкладинки");
+                    addLog("  ℹ️ Legacy covers cache буде проігноровано; обкладинки формуються на вимогу");
                 } else if (name.equals("user-data.json") && Files.isRegularFile(path)) {
                     hasPortableUserData = true;
                     addLog("  ✅ Versioned user data: user-data.json");
@@ -161,8 +145,6 @@ public class RestoreController {
 
         BackupRestoreService.RestoreOptions options = new BackupRestoreService.RestoreOptions(
                 backupDir,
-                restoreIndexCheckBox.isSelected(),
-                restoreCoversCheckBox.isSelected(),
                 restoreMetadataCheckBox.isSelected(),
                 true,
                 restoreDatabase
@@ -185,19 +167,13 @@ public class RestoreController {
     }
 
     private void startRestore(String backupPath, Path dbFile, BackupRestoreService.RestoreOptions options) {
-        cancelled = false;
-        restoreCompleted = false;
         restoreButton.setDisable(true);
         selectPathButton.setDisable(true);
-        cancelButton.setVisible(true);
-        cancelButton.setDisable(false);
         closeButton.setDisable(true);
         logArea.setVisible(true);
         logArea.clear();
         progressBar.setVisible(true);
-        progressLabel.setVisible(true);
-        progressBar.setProgress(0);
-        progressLabel.setText("0%");
+        progressBar.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
         statusLabel.setText("Відновлення...");
 
         new Thread(() -> {
@@ -214,9 +190,7 @@ public class RestoreController {
                     if (result.isSuccess()) {
                         statusLabel.setText("✅ Відновлення завершено успішно!");
                         progressBar.setProgress(1.0);
-                        progressLabel.setText("100%");
                         addLog("\n✅ Відновлення завершено успішно!");
-                        restoreCompleted = true;
                         dialogService.showInfo("Успішно",
                                 "Відновлення з резервної копії завершено успішно!\n\n" +
                                         "📁 Джерело: " + backupPath + "\n" +
@@ -252,16 +226,8 @@ public class RestoreController {
         UiExecutor.runOnUiThread(() -> {
             restoreButton.setDisable(false);
             selectPathButton.setDisable(false);
-            cancelButton.setVisible(false);
-            closeButton.setDisable(false);
+                closeButton.setDisable(false);
         });
-    }
-
-    @FXML
-    public void onCancel() {
-        cancelled = true;
-        statusLabel.setText("Скасування...");
-        cancelButton.setDisable(true);
     }
 
     @FXML

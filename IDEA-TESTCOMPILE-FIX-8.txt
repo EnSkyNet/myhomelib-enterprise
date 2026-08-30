@@ -1,0 +1,5 @@
+MyHomeLib Enterprise v7.1 - IDEA Maven testCompile fix 8
+Date: 2026-08-30
+Base: functional-regression-fix-7
+Change: WorkspaceManagerNavigationStateTest updated for WorkspaceManager constructor dependencies BookDownloadCoordinator and LoadBookByIdUseCase.
+Validation before packaging: 46/46 tools/*check.py PASS; v71-standalone-java-smoke.py PASS.

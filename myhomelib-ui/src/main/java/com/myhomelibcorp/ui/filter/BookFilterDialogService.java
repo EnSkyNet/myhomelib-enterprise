@@ -40,7 +40,12 @@ public class BookFilterDialogService {
             @Override public String toString(BookFilterMode value) {
                 return value == BookFilterMode.OR ? i18n.tr("Будь-яка умова (OR)") : i18n.tr("Усі умови (AND)");
             }
-            @Override public BookFilterMode fromString(String value) { return BookFilterMode.AND; }
+            @Override public BookFilterMode fromString(String value) {
+                if (value == null || value.isBlank()) return BookFilterMode.AND;
+                String normalized = value.trim();
+                if (normalized.equalsIgnoreCase(i18n.tr("Будь-яка умова (OR)")) || normalized.equalsIgnoreCase("OR")) return BookFilterMode.OR;
+                return BookFilterMode.AND;
+            }
         });
         mode.setValue(current.mode());
 

@@ -71,32 +71,60 @@ public class ReaderEngine {
         this.settings = settings != null ? settings : ReaderSettings.defaultSettings();
     }
 
-    public void open(BookSource source) throws IOException {
+    /**
+     * Parses a book without mutating ReaderEngine state. This method is deliberately
+     * UI-independent and may run on a background thread. The returned document owns
+     * its resource repository until it is attached with {@link #openPrepared} or
+     * explicitly closed when the request becomes stale/cancelled.
+     */
+    public PreparedBook prepare(BookSource source) throws IOException {
         if (source == null) {
             throw new IOException("Джерело книги не задано");
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            throw new java.io.InterruptedIOException("Reader parsing cancelled");
+        }
+
+        log.info("📖 Підготовка книги: {}", source.name());
+        BookFormat format = formatRegistry.findFormat(source)
+                .orElseThrow(() -> new IOException("Непідтримуваний формат: " + source.extension()));
+        BookParser parser = format.createParser();
+        ReaderDocument document = parser.parse(source, ParseOptions.defaultOptions());
+        if (document == null || document.isEmpty()) {
+            closeDocumentResources(document);
+            throw new IOException("Не вдалося розпарсити книгу або в ній немає тексту");
+        }
+        if (Thread.currentThread().isInterrupted()) {
+            closeDocumentResources(document);
+            throw new java.io.InterruptedIOException("Reader parsing cancelled");
+        }
+        return new PreparedBook(source.id(), source.name(), document);
+    }
+
+    public void open(BookSource source) throws IOException {
+        openPrepared(prepare(source), null);
+    }
+
+    public void openPrepared(PreparedBook prepared) throws IOException {
+        openPrepared(prepared, null);
+    }
+
+    /** Attaches an already parsed document and performs only cheap state initialization. */
+    public void openPrepared(PreparedBook prepared, ReaderPosition initialPosition) throws IOException {
+        if (prepared == null || prepared.document() == null || prepared.document().isEmpty()) {
+            throw new IOException("Підготовлена книга порожня");
         }
         if (isOpen) {
             close();
         }
 
-        log.info("📖 Відкриття книги: {}", source.name());
-
-        BookFormat format = formatRegistry.findFormat(source)
-                .orElseThrow(() -> new IOException("Непідтримуваний формат: " + source.extension()));
-
-        BookParser parser = format.createParser();
-        currentDocument = parser.parse(source, ParseOptions.defaultOptions());
-
-        if (currentDocument == null || currentDocument.isEmpty()) {
-            currentDocument = null;
-            throw new IOException("Не вдалося розпарсити книгу або в ній немає тексту");
-        }
-
-        currentDocumentId = source.id();
+        currentDocument = prepared.document();
+        currentDocumentId = prepared.documentId();
         isOpen = true;
-        currentPosition = positionManager.loadPosition(currentDocumentId)
-                .orElse(ReaderPosition.start());
-        currentPosition = positionManager.validatePosition(currentDocument, currentPosition);
+        ReaderPosition requested = initialPosition != null
+                ? initialPosition
+                : positionManager.loadPosition(currentDocumentId).orElse(ReaderPosition.start());
+        currentPosition = positionManager.validatePosition(currentDocument, requested);
 
         pageCache.clear();
         imageCache.clear();
@@ -123,13 +151,7 @@ public class ReaderEngine {
             renderer.clear();
         }
 
-        if (currentDocument != null && currentDocument.resources() instanceof AutoCloseable closeable) {
-            try {
-                closeable.close();
-            } catch (Exception e) {
-                log.debug("Resource cleanup failed: {}", e.getMessage());
-            }
-        }
+        closeDocumentResources(currentDocument);
 
         currentDocument = null;
         currentPosition = null;
@@ -342,6 +364,17 @@ public class ReaderEngine {
         return pageCache.getOrCompute(currentDocument, currentPosition, dimensions, layoutEngine);
     }
 
+    /** Computes a page at an arbitrary offset without mutating the current reading position. */
+    public PageLayout getPageAt(long offset, PageDimensions dimensions) {
+        if (!isOpen || currentDocument == null || dimensions == null || !dimensions.isValid()
+                || currentDocument.totalTextLength() <= 0) {
+            return PageLayout.empty();
+        }
+        long safeOffset = Math.max(0, Math.min(offset, currentDocument.totalTextLength() - 1));
+        ReaderPosition position = new ReaderPosition(currentDocument.chapterIndexAt(safeOffset), safeOffset, 0, 0);
+        return pageCache.getOrCompute(currentDocument, position, dimensions, layoutEngine);
+    }
+
     public void applySettings(ReaderSettings newSettings) {
         if (newSettings == null) {
             return;
@@ -410,4 +443,22 @@ public class ReaderEngine {
     public TextLayoutEngine getLayoutEngine() {
         return layoutEngine;
     }
+    private static void closeDocumentResources(ReaderDocument document) {
+        if (document != null && document.resources() instanceof AutoCloseable closeable) {
+            try {
+                closeable.close();
+            } catch (Exception e) {
+                log.debug("Resource cleanup failed: {}", e.getMessage());
+            }
+        }
+    }
+
+    /** Parsed document ownership holder used by asynchronous UI open paths. */
+    public record PreparedBook(String documentId, String sourceName, ReaderDocument document) implements AutoCloseable {
+        @Override
+        public void close() {
+            closeDocumentResources(document);
+        }
+    }
+
 }

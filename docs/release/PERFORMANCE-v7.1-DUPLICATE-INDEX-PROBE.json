@@ -1,0 +1,115 @@
+{
+  "date": "2026-08-30",
+  "index": "idx_books_physical_identity_probe",
+  "definition": "CREATE INDEX idx_books_physical_identity_probe ON books(lib_id, collection_root, folder, file_name, archive_entry)",
+  "results": [
+    {
+      "books": 100000,
+      "without_index": {
+        "plan": [
+          "CO-ROUTINE duplicate_groups",
+          "SCAN books USING INDEX idx_books_lib_id",
+          "USE TEMP B-TREE FOR GROUP BY",
+          "SCAN duplicate_groups"
+        ],
+        "query": {
+          "median_ms": 103.58510400010346,
+          "p95_ms": 115.777185999832,
+          "runs_ms": [
+            86.87252800018541,
+            92.46754400010104,
+            95.50056100033544,
+            113.63437999989401,
+            103.58510400010346,
+            120.06192899980306,
+            115.777185999832
+          ]
+        },
+        "insert": {
+          "ms": 121.98890299987397,
+          "rows_per_sec": 98369.60334016937
+        }
+      },
+      "with_index": {
+        "plan": [
+          "CO-ROUTINE duplicate_groups",
+          "SCAN books USING INDEX idx_books_lib_id",
+          "USE TEMP B-TREE FOR GROUP BY",
+          "SCAN duplicate_groups"
+        ],
+        "query": {
+          "median_ms": 101.25016900019546,
+          "p95_ms": 104.72927199998594,
+          "runs_ms": [
+            84.7921149998001,
+            93.16551800020534,
+            104.72927199998594,
+            110.64298500014047,
+            101.25016900019546,
+            102.32777400005943,
+            98.80503500016857
+          ]
+        },
+        "insert": {
+          "ms": 139.28328800011514,
+          "rows_per_sec": 86155.34693573632
+        },
+        "create_ms": 50.11864899961438
+      }
+    },
+    {
+      "books": 500000,
+      "without_index": {
+        "plan": [
+          "CO-ROUTINE duplicate_groups",
+          "SCAN books USING INDEX idx_books_lib_id",
+          "USE TEMP B-TREE FOR GROUP BY",
+          "SCAN duplicate_groups"
+        ],
+        "query": {
+          "median_ms": 538.1321270001536,
+          "p95_ms": 562.5572530002501,
+          "runs_ms": [
+            457.4121969999396,
+            552.522327999668,
+            538.1321270001536,
+            562.5572530002501,
+            496.4350810000724,
+            585.8546720000959,
+            505.2141080000183
+          ]
+        },
+        "insert": {
+          "ms": 129.76366200018674,
+          "rows_per_sec": 92475.8119109087
+        }
+      },
+      "with_index": {
+        "plan": [
+          "CO-ROUTINE duplicate_groups",
+          "SCAN books USING INDEX idx_books_lib_id",
+          "USE TEMP B-TREE FOR GROUP BY",
+          "SCAN duplicate_groups"
+        ],
+        "query": {
+          "median_ms": 508.7040819998947,
+          "p95_ms": 526.1610530001235,
+          "runs_ms": [
+            442.4431630000072,
+            488.1888519998938,
+            508.7040819998947,
+            519.3431460002103,
+            508.58085100026074,
+            562.0295789999545,
+            526.1610530001235
+          ]
+        },
+        "insert": {
+          "ms": 135.1560100001734,
+          "rows_per_sec": 88786.28482732365
+        },
+        "create_ms": 253.98066600018865
+      }
+    }
+  ]
+}

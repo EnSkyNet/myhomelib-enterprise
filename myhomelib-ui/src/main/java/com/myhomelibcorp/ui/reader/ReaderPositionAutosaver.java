@@ -26,15 +26,17 @@ final class ReaderPositionAutosaver implements AutoCloseable {
     private final AtomicReference<ReaderPosition> latest = new AtomicReference<>();
     private final AtomicBoolean dirty = new AtomicBoolean();
     private volatile String bookId;
+    private volatile long totalTextLength;
 
     ReaderPositionAutosaver(NewReaderPersistenceService persistence) {
         this.persistence = persistence;
         executor.scheduleWithFixedDelay(this::flushIfDirty, 3, 3, TimeUnit.SECONDS);
     }
 
-    void start(String bookId) {
+    void start(String bookId, long totalTextLength) {
         flush();
         this.bookId = bookId;
+        this.totalTextLength = Math.max(0L, totalTextLength);
         latest.set(null);
         dirty.set(false);
     }
@@ -54,7 +56,7 @@ final class ReaderPositionAutosaver implements AutoCloseable {
         ReaderPosition pos = latest.get();
         if (id == null || pos == null || !dirty.compareAndSet(true, false)) return;
         try {
-            persistence.savePosition(id, pos);
+            persistence.savePosition(id, pos, totalTextLength);
         } catch (Exception e) {
             dirty.set(true);
             log.warn("Reader autosave failed for {}: {}", id, e.getMessage());
@@ -68,5 +70,6 @@ final class ReaderPositionAutosaver implements AutoCloseable {
         try { executor.awaitTermination(2, TimeUnit.SECONDS); }
         catch (InterruptedException e) { Thread.currentThread().interrupt(); }
         bookId = null;
+        totalTextLength = 0L;
     }
 }

@@ -13,13 +13,13 @@ import java.util.Map;
 public class PageCache {
 
     private final int maxSize;
-    private final Map<String, PageLayout> cache;
+    private final Map<PageKey, PageLayout> cache;
 
     public PageCache(int maxSize) {
         this.maxSize = Math.max(1, maxSize);
         this.cache = new LinkedHashMap<>(maxSize, 0.75f, true) {
             @Override
-            protected boolean removeEldestEntry(Map.Entry<String, PageLayout> eldest) {
+            protected boolean removeEldestEntry(Map.Entry<PageKey, PageLayout> eldest) {
                 return size() > PageCache.this.maxSize;
             }
         };
@@ -31,7 +31,7 @@ public class PageCache {
             PageDimensions dimensions,
             TextLayoutEngine layoutEngine
     ) {
-        String key = buildKey(document, position, dimensions);
+        PageKey key = buildKey(document, position, dimensions);
         PageLayout cached = cache.get(key);
         if (cached != null) {
             return cached;
@@ -42,16 +42,6 @@ public class PageCache {
             cache.put(key, layout);
         }
         return layout;
-    }
-
-    public synchronized PageLayout get(String key) {
-        return cache.get(key);
-    }
-
-    public synchronized void put(String key, PageLayout layout) {
-        if (layout != null) {
-            cache.put(key, layout);
-        }
     }
 
     public synchronized void clear() {
@@ -70,21 +60,19 @@ public class PageCache {
         return maxSize;
     }
 
-    private String buildKey(ReaderDocument document, ReaderPosition position, PageDimensions d) {
+    private PageKey buildKey(ReaderDocument document, ReaderPosition position, PageDimensions d) {
         String documentId = document.metadata() != null && document.metadata().id() != null
-                ? document.metadata().id()
-                : "document";
-        return documentId + ':' + position.textOffset() + ':' +
-                d.width() + 'x' + d.height() + ':' +
-                d.leftMargin() + ':' + d.rightMargin() + ':' +
-                d.topMargin() + ':' + d.bottomMargin();
+                ? document.metadata().id() : "document";
+        return new PageKey(documentId, position.textOffset(), d.width(), d.height(),
+                d.leftMargin(), d.rightMargin(), d.topMargin(), d.bottomMargin());
     }
 
     public synchronized void evictForDocument(ReaderDocument document) {
         String documentId = document.metadata() != null && document.metadata().id() != null
-                ? document.metadata().id()
-                : "document";
-        String prefix = documentId + ':';
-        cache.keySet().removeIf(key -> key.startsWith(prefix));
+                ? document.metadata().id() : "document";
+        cache.keySet().removeIf(key -> key.documentId().equals(documentId));
     }
+
+    private record PageKey(String documentId, long offset, int width, int height,
+                           int left, int right, int top, int bottom) { }
 }

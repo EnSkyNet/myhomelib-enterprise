@@ -3,6 +3,8 @@ package com.myhomelibcorp.ui.service;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.util.CommandTemplate;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.BoundedIoSupport;
+import com.myhomelibcorp.shared.util.EncryptionUtil;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
@@ -47,27 +49,34 @@ public class ApplicationSettingsDialog {
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
         Map<String, TextField> text = new LinkedHashMap<>();
+        Map<String, PasswordField> secrets = new LinkedHashMap<>();
         Map<String, CheckBox> bool = new LinkedHashMap<>();
 
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-        tabs.getTabs().add(tab("Загальні", generalPane(text, bool)));
+        tabs.getTabs().add(tab("Загальні", generalPane(bool)));
         tabs.getTabs().add(tab("Зовнішнє читання", externalReadersPane(text)));
         tabs.getTabs().add(tab("Конвертери", convertersPane(text)));
-        tabs.getTabs().add(tab("Пристрій / експорт", devicePane(text, bool)));
-        tabs.getTabs().add(tab("Online", onlinePane(text)));
+        tabs.getTabs().add(tab("Пристрій / експорт", devicePane(text)));
+        tabs.getTabs().add(tab("Online", onlinePane(text, secrets, bool)));
         tabs.setPrefSize(760, 560);
         dialog.getDialogPane().setContent(tabs);
 
         dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> {
             text.forEach((key, field) -> settings.put(key, field.getText() == null ? "" : field.getText().trim()));
+            secrets.forEach((key, field) -> {
+                String plain = field.getText() == null ? "" : field.getText();
+                if (plain.isBlank()) settings.remove(key);
+                else settings.put(key, EncryptionUtil.encrypt(plain));
+                field.clear();
+            });
             bool.forEach((key, check) -> settings.putBoolean(key, check.isSelected()));
         });
     }
 
     private Tab tab(String title, Node content) { return new Tab(title, content); }
 
-    private Node generalPane(Map<String, TextField> text, Map<String, CheckBox> bool) {
+    private Node generalPane(Map<String, CheckBox> bool) {
         VBox box = section();
         ComboBox<LanguageOption> lang = new ComboBox<>();
         var availableLanguages = localizationService.availableLanguages();
@@ -83,7 +92,6 @@ public class ApplicationSettingsDialog {
         });
         CheckBox confirmDelete = checkbox(bool, "ui.confirmDelete", "Підтверджувати видалення книг", true);
         CheckBox restoreSession = checkbox(bool, "ui.restoreSession", "Відновлювати останню сесію", true);
-        CheckBox autoIndex = checkbox(bool, "search.autoIndex", "Оновлювати пошуковий індекс після змін", true);
         Label paths = new Label("Каталог даних: " + AppPaths.dataDir() + "\nPortable mode: " + (AppPaths.portableMode() ? "увімкнено" : "вимкнено"));
         paths.setWrapText(true);
         Button languageDiagnostics = new Button("Діагностика мов...");
@@ -91,7 +99,7 @@ public class ApplicationSettingsDialog {
         Button diagnostics = new Button("Створити діагностичний ZIP...");
         diagnostics.setOnAction(e -> createSupportBundle(diagnostics.getScene() == null ? null : diagnostics.getScene().getWindow()));
         HBox diagnosticActions = new HBox(8, languageDiagnostics, diagnostics);
-        box.getChildren().addAll(row("Мова інтерфейсу", lang), confirmDelete, restoreSession, autoIndex, new Separator(), paths, diagnosticActions);
+        box.getChildren().addAll(row("Мова інтерфейсу", lang), confirmDelete, restoreSession, new Separator(), paths, diagnosticActions);
         return scroll(box);
     }
 
@@ -117,29 +125,44 @@ public class ApplicationSettingsDialog {
         return scroll(box);
     }
 
-    private Node devicePane(Map<String, TextField> text, Map<String, CheckBox> bool) {
+    private Node devicePane(Map<String, TextField> text) {
         VBox box = section();
-        box.getChildren().add(new Label("Шаблони: %t=назва, %a=автор, %s=серія, %n=№ серії, %id=ID.\nPost-command: %DEST%, %TMP%, %FILE%, %DESTFILE%, %FILENAME%, %TITLE%, %AUTHOR%, %SERIES%, %EXT%, %BOOKID%."));
+        box.getChildren().add(new Label("Шаблони: %t=назва, %a=автор, %s=серія, %n=№ серії, %id=ID. Дії після експорту налаштовуються у профілі експорту/дій."));
         box.getChildren().add(row("Шаблон імені", field(text, "export.filenameTemplate", "%a - %t")));
         box.getChildren().add(row("Підпапка", field(text, "export.subfolderTemplate", "")));
-        TextField post = field(text, "export.postCommand", "");
-        box.getChildren().add(commandRow("Команда після відправки", post, Map.ofEntries(
-                Map.entry("%DEST%", samplePath("device")), Map.entry("%TMP%", samplePath("tmp")),
-                Map.entry("%FILE%", samplePath("source.fb2")), Map.entry("%DESTFILE%", samplePath("device/book.epub")),
-                Map.entry("%FILENAME%", "book.epub"), Map.entry("%TITLE%", "Тестова книга"),
-                Map.entry("%AUTHOR%", "Test Author"), Map.entry("%SERIES%", "Test Series"),
-                Map.entry("%EXT%", "epub"), Map.entry("%BOOKID%", "1"))));
-        box.getChildren().add(checkbox(bool, "export.runPostCommand", "Виконувати post-command після кожної книги", false));
         return scroll(box);
     }
 
-    private Node onlinePane(Map<String, TextField> text) {
+    private Node onlinePane(Map<String, TextField> text, Map<String, PasswordField> secrets, Map<String, CheckBox> bool) {
         VBox box = section();
-        box.getChildren().add(new Label("Для online-колекцій URL задається у властивостях колекції. Тут — глобальні параметри HTTP."));
+        Label intro = new Label("Для online-колекцій URL задається у властивостях колекції. TLS за замовчуванням використовує стандартну перевірку JVM; режим trust-all відсутній.");
+        intro.setWrapText(true);
+        box.getChildren().add(intro);
         box.getChildren().add(row("Timeout connect, сек", field(text, "online.connectTimeoutSeconds", "20")));
         box.getChildren().add(row("Timeout read, сек", field(text, "online.readTimeoutSeconds", "120")));
-        box.getChildren().add(row("User-Agent", field(text, "online.userAgent", "MyHomeLib/1.0.0")));
+        box.getChildren().add(row("User-Agent", field(text, "online.userAgent", "MyHomeLib Enterprise/7.1")));
         box.getChildren().add(row("Макс. паралельних завантажень", field(text, "online.maxParallelDownloads", "2")));
+        box.getChildren().add(row("Макс. паралельних на один хост", field(text, "online.maxParallelDownloadsPerHost", "2")));
+        box.getChildren().add(checkbox(bool, "online.archive.highReliabilityValidation",
+                "Повна CRC/size перевірка ZIP після завантаження (повільніше)", false));
+
+        box.getChildren().add(new Separator());
+        Label proxy = new Label("Proxy: SYSTEM, NONE або HTTP. Для SOCKS використовуйте system proxy JVM/OS.");
+        proxy.setWrapText(true);
+        box.getChildren().add(proxy);
+        box.getChildren().add(row("Proxy mode", field(text, "online.proxy.mode", "SYSTEM")));
+        box.getChildren().add(row("Proxy host", field(text, "online.proxy.host", "")));
+        box.getChildren().add(row("Proxy port", field(text, "online.proxy.port", "8080")));
+        box.getChildren().add(row("Proxy user", field(text, "online.proxy.user", "")));
+        box.getChildren().add(row("Proxy password", secretField(secrets, "online.proxy.password")));
+
+        box.getChildren().add(new Separator());
+        Label tls = new Label("Custom CA: вкажіть JKS/PKCS12 trust store. Порожній шлях = стандартне JVM trust store.");
+        tls.setWrapText(true);
+        box.getChildren().add(tls);
+        box.getChildren().add(row("TLS trust store", field(text, "online.tls.trustStore", "")));
+        box.getChildren().add(row("Trust store type", field(text, "online.tls.trustStoreType", "PKCS12")));
+        box.getChildren().add(row("Trust store password", secretField(secrets, "online.tls.trustStorePassword")));
         return scroll(box);
     }
 
@@ -212,10 +235,14 @@ public class ApplicationSettingsDialog {
 
     private String preview(Path output) throws IOException {
         if (output == null || !Files.exists(output)) return "(stdout/stderr порожній)";
-        byte[] all = Files.readAllBytes(output);
-        int max = Math.min(all.length, 64 * 1024);
-        String text = new String(all, 0, max, StandardCharsets.UTF_8);
-        if (all.length > max) text += "\n… output truncated …";
+        final int maxBytes = 64 * 1024;
+        byte[] prefix;
+        try (var in = Files.newInputStream(output)) {
+            prefix = BoundedIoSupport.readPrefix(in, maxBytes + 1);
+        }
+        int visible = Math.min(prefix.length, maxBytes);
+        String text = new String(prefix, 0, visible, StandardCharsets.UTF_8);
+        if (prefix.length > maxBytes || Files.size(output) > maxBytes) text += "\n… output truncated …";
         return text.isBlank() ? "(stdout/stderr порожній)" : text;
     }
 
@@ -237,6 +264,18 @@ public class ApplicationSettingsDialog {
         f.setPrefColumnCount(42);
         map.put(key, f);
         return f;
+    }
+
+    private PasswordField secretField(Map<String, PasswordField> map, String key) {
+        PasswordField field = new PasswordField();
+        String stored = settings.get(key, "");
+        if (stored != null && !stored.isBlank() && EncryptionUtil.isEncrypted(stored)) {
+            try { field.setText(EncryptionUtil.decrypt(stored)); }
+            catch (RuntimeException ignored) { field.clear(); }
+        }
+        field.setPrefColumnCount(42);
+        map.put(key, field);
+        return field;
     }
 
     private CheckBox checkbox(Map<String, CheckBox> map, String key, String label, boolean def) {

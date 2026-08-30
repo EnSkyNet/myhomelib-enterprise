@@ -38,6 +38,11 @@ public class CachedSeriesRepository implements SeriesRepository {
     }
 
     @Override
+    public Optional<Series> findByName(String name) {
+        return delegate.findByName(name);
+    }
+
+    @Override
     public Series save(Series series) {
         Series saved = delegate.save(series);
         seriesCache.put(saved.getId(), saved);
@@ -53,6 +58,11 @@ public class CachedSeriesRepository implements SeriesRepository {
     @Override
     public List<String> getAllSeriesNames() {
         return delegate.getAllSeriesNames();
+    }
+
+    @Override
+    public List<String> searchNames(String query, int limit) {
+        return delegate.searchNames(query, limit);
     }
 
     @Override

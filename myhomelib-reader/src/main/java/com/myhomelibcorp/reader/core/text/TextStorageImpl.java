@@ -19,9 +19,12 @@ public class TextStorageImpl implements TextStorage {
     private final StringBuilder text = new StringBuilder();
     private final List<StyleSpan> spans = new ArrayList<>();
     private final List<ParagraphInfo> paragraphs = new ArrayList<>();
+    private final List<ParagraphInfo> paragraphView = Collections.unmodifiableList(paragraphs);
 
     private transient int lastParagraphIndex = -1;
-    private transient int lastParagraphOffset = -1;
+    private transient boolean spanIndexDirty = true;
+    private transient boolean spansSorted = true;
+    private transient int[] spanPrefixMaxEnd = new int[0];
 
     public TextStorageImpl() {
     }
@@ -33,7 +36,7 @@ public class TextStorageImpl implements TextStorage {
         int start = text.length();
         text.append(textPart);
         if (style != null && style != TextStyle.NORMAL) {
-            spans.add(new StyleSpan(start, text.length(), style));
+            addIndexedSpan(new StyleSpan(start, text.length(), style));
         }
         return start;
     }
@@ -50,14 +53,17 @@ public class TextStorageImpl implements TextStorage {
         return offset;
     }
 
-    public void endParagraph() {
-        // Нічого не робимо
-    }
 
     public void addSpan(int start, int end, TextStyle style) {
         if (start < end && style != null && style != TextStyle.NORMAL) {
-            spans.add(new StyleSpan(start, end, style));
+            addIndexedSpan(new StyleSpan(start, end, style));
         }
+    }
+
+    private void addIndexedSpan(StyleSpan span) {
+        if (!spans.isEmpty() && spans.getLast().start() > span.start()) spansSorted = false;
+        spans.add(span);
+        spanIndexDirty = true;
     }
 
     @Override
@@ -92,25 +98,56 @@ public class TextStorageImpl implements TextStorage {
 
     @Override
     public List<StyleSpan> getSpans(int start, int end) {
-        if (spans.isEmpty() || start >= end) {
-            return List.of();
+        if (spans.isEmpty() || start >= end) return List.of();
+        ensureSpanIndex();
+
+        // Find the first span prefix that can still overlap `start`. The prefix
+        // max-end array keeps this correct for nested/long spans while avoiding a
+        // full O(totalSpans) scan for every rendered page.
+        int lo = 0, hi = spanPrefixMaxEnd.length - 1, first = spanPrefixMaxEnd.length;
+        while (lo <= hi) {
+            int mid = (lo + hi) >>> 1;
+            if (spanPrefixMaxEnd[mid] > start) {
+                first = mid;
+                hi = mid - 1;
+            } else {
+                lo = mid + 1;
+            }
         }
+        if (first >= spans.size()) return List.of();
+
         List<StyleSpan> result = new ArrayList<>();
-        for (StyleSpan span : spans) {
-            if (span.end() > start && span.start() < end) {
-                int adjustedStart = Math.max(span.start(), start);
-                int adjustedEnd = Math.min(span.end(), end);
-                if (adjustedStart < adjustedEnd) {
-                    result.add(new StyleSpan(adjustedStart - start, adjustedEnd - start, span.style()));
-                }
+        for (int i = first; i < spans.size(); i++) {
+            StyleSpan span = spans.get(i);
+            if (span.start() >= end) break;
+            if (span.end() <= start) continue;
+            int adjustedStart = Math.max(span.start(), start);
+            int adjustedEnd = Math.min(span.end(), end);
+            if (adjustedStart < adjustedEnd) {
+                result.add(new StyleSpan(adjustedStart - start, adjustedEnd - start, span.style()));
             }
         }
         return result;
     }
 
+    private void ensureSpanIndex() {
+        if (!spanIndexDirty) return;
+        if (!spansSorted) {
+            spans.sort(java.util.Comparator.comparingInt(StyleSpan::start).thenComparingInt(StyleSpan::end));
+            spansSorted = true;
+        }
+        spanPrefixMaxEnd = new int[spans.size()];
+        int maxEnd = 0;
+        for (int i = 0; i < spans.size(); i++) {
+            maxEnd = Math.max(maxEnd, spans.get(i).end());
+            spanPrefixMaxEnd[i] = maxEnd;
+        }
+        spanIndexDirty = false;
+    }
+
     @Override
     public List<ParagraphInfo> getParagraphs() {
-        return Collections.unmodifiableList(paragraphs);
+        return paragraphView;
     }
 
     @Override
@@ -146,7 +183,6 @@ public class TextStorageImpl implements TextStorage {
 
         if (best < paragraphs.size()) {
             lastParagraphIndex = best;
-            lastParagraphOffset = offset;
             return paragraphs.get(best);
         }
 
@@ -163,13 +199,17 @@ public class TextStorageImpl implements TextStorage {
         spans.clear();
         paragraphs.clear();
         lastParagraphIndex = -1;
-        lastParagraphOffset = -1;
+        spanPrefixMaxEnd = new int[0];
+        spanIndexDirty = true;
+        spansSorted = true;
     }
 
     public TextStorageImpl copy() {
         TextStorageImpl copy = new TextStorageImpl();
         copy.text.append(this.text);
         copy.spans.addAll(this.spans);
+        copy.spansSorted = this.spansSorted;
+        copy.spanIndexDirty = true;
         copy.paragraphs.addAll(this.paragraphs);
         return copy;
     }

@@ -5,13 +5,9 @@ import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.NavigationNodeDto;
 import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
-import com.myhomelibcorp.application.mapper.BookMapper;
-import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
-import com.myhomelibcorp.application.query.book.BookQuery;
-import com.myhomelibcorp.application.query.common.Pagination;
+import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.session.SessionService;
-import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -29,20 +25,18 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
 public class DefaultNavigationService implements NavigationService {
 
-    private final SessionService sessionService;
     private final WorkspaceManager workspaceManager;
-    private final BookQueryRepository bookQueryRepository;
-    private final BookMapper bookMapper;
+    private final SeriesRepository seriesRepository;
     private final NavigationPanelController navigationPanelController;
     private final BookResourcePort bookResourcePort;
     private final BookDownloadCoordinator bookDownloadCoordinator;
+    private final SessionService sessionService;
 
     @PostConstruct
     public void init() {
@@ -71,9 +65,6 @@ public class DefaultNavigationService implements NavigationService {
 
     @Override
     public void navigateToAuthor(AuthorId authorId) {
-        if (authorId != null) {
-            sessionService.saveSelectedAuthorId(authorId.asString());
-        }
         workspaceManager.showAuthorWorkspace(authorId);
     }
 
@@ -87,27 +78,14 @@ public class DefaultNavigationService implements NavigationService {
     @Override
     public void navigateToSeriesByName(String seriesName) {
         log.info("Навігація до серії за назвою: {}", seriesName);
-        if (seriesName == null || seriesName.isBlank()) {
-            workspaceManager.showSearchResults(List.of());
-            return;
-        }
-        String normalized = normalizeSeriesName(seriesName);
-        BookQuery allQuery = BookQuery.builder()
-                .pagination(Pagination.of(10000, 0))
-                .build();
-        List<Book> allBooks = bookQueryRepository.findPage(allQuery).content();
-        List<Book> filtered = allBooks.stream()
-                .filter(b -> {
-                    String bs = b.getSeries();
-                    if (bs == null || bs.isBlank()) return false;
-                    String normBs = normalizeSeriesName(bs);
-                    return normBs.equals(normalized) || normBs.contains(normalized) || normalized.contains(normBs);
-                })
-                .collect(Collectors.toList());
-        List<BookDto> dtos = filtered.stream()
-                .map(bookMapper::toDto)
-                .collect(Collectors.toList());
-        workspaceManager.showSearchResults(dtos);
+        if (seriesName == null || seriesName.isBlank()) return;
+        seriesRepository.findByName(seriesName)
+                .ifPresentOrElse(
+                        series -> workspaceManager.showSeriesWorkspace(series.getId()),
+                        () -> {
+                            log.warn("Серію не знайдено: {}", seriesName);
+                            workspaceManager.showSearchResults(List.of());
+                        });
     }
 
     @Override
@@ -194,19 +172,10 @@ public class DefaultNavigationService implements NavigationService {
     }
 
     @Override
-    public void navigateToCollection(GroupId groupId) {
-        workspaceManager.showCollectionWorkspace();
-    }
-
-    @Override
     public void showSearchResults(List<BookDto> results) {
         workspaceManager.showSearchResults(results);
     }
 
-    @Override
-    public void clearSearch() {
-        // Not needed
-    }
 
     @Override
     public void openBookFile(BookDto book) {
@@ -292,7 +261,7 @@ public class DefaultNavigationService implements NavigationService {
             log.warn("Спроба відкрити для читання null книгу");
             return;
         }
-        bookDownloadCoordinator.ensureLocal(book).whenComplete((path, error) -> {
+        bookDownloadCoordinator.ensureLocalForOpen(book).whenComplete((path, error) -> {
             if (error != null) return;
             javafx.application.Platform.runLater(() -> {
                 sessionService.saveLastOpenedBookId(book.getId());
@@ -305,22 +274,8 @@ public class DefaultNavigationService implements NavigationService {
     @Override
     public void navigateToPublisher(String publisherName) {
         log.info("Навігація до видавництва: {}", publisherName);
-        if (publisherName == null || publisherName.isBlank()) {
-            workspaceManager.showSearchResults(List.of());
-            return;
-        }
-        BookQuery query = BookQuery.builder()
-                .text(publisherName)
-                .pagination(Pagination.of(1000, 0))
-                .build();
-        List<Book> books = bookQueryRepository.findPage(query).content();
-        List<BookDto> dtos = books.stream()
-                .map(bookMapper::toDto)
-                .collect(Collectors.toList());
-        List<BookDto> filtered = dtos.stream()
-                .filter(b -> publisherName.equalsIgnoreCase(b.getPublisher()))
-                .collect(Collectors.toList());
-        workspaceManager.showSearchResults(filtered);
+        if (publisherName == null || publisherName.isBlank()) return;
+        workspaceManager.showPublisherWorkspace(publisherName);
     }
 
     @Override

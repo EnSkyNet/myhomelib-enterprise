@@ -6,7 +6,6 @@ import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
-import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,7 +24,6 @@ public class IntegrityCheckController {
     @FXML private Button checkButton;
     @FXML private Button fixButton;
     @FXML private Label statusLabel;
-    @FXML private VBox issuesContainer;
     @FXML private Label issuesSummaryLabel;
 
     @FXML

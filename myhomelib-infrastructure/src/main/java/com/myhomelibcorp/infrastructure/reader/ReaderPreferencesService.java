@@ -4,38 +4,32 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.reader.ReaderPreferencesPort;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 
 @Service
+@RequiredArgsConstructor
 @Slf4j
 public class ReaderPreferencesService implements ReaderPreferencesPort {
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
+    private final ReaderPreferencesJsonCodec codec;
     private final Path file = AppPaths.configDir().resolve("reader-preferences.json");
 
     @Override
     public ReaderPreferences loadPreferences() {
         try {
             if (Files.isRegularFile(file)) {
-                var node = objectMapper.readTree(file.toFile());
-                ReaderPreferences loaded = objectMapper.treeToValue(node, ReaderPreferences.class);
-                var builder = loaded.toBuilder();
-                // Backward compatibility: Stage-18 and older JSON files do not
-                // contain the Stage-19 status/tap-zone fields. Jackson's forced
-                // no-args constructor would otherwise turn missing booleans into false.
-                if (!node.has("showStatusBar")) builder.showStatusBar(true);
-                if (!node.has("showStatusProgress")) builder.showStatusProgress(true);
-                if (!node.has("showStatusChapter")) builder.showStatusChapter(true);
-                if (!node.has("showStatusPage")) builder.showStatusPage(true);
-                if (!node.has("tapLeftAction") || node.path("tapLeftAction").asText("").isBlank()) builder.tapLeftAction("previous-page");
-                if (!node.has("tapCenterAction") || node.path("tapCenterAction").asText("").isBlank()) builder.tapCenterAction("toggle-toolbar");
-                if (!node.has("tapRightAction") || node.path("tapRightAction").asText("").isBlank()) builder.tapRightAction("next-page");
-                loaded = builder.build();
+                long size = Files.size(file);
+                if (size > ReaderPreferencesJsonCodec.MAX_JSON_BYTES) {
+                    throw new IllegalArgumentException("Reader preferences file exceeds " + ReaderPreferencesJsonCodec.MAX_JSON_BYTES + " bytes");
+                }
+                ReaderPreferences loaded = codec.decode(objectMapper.readTree(file.toFile()));
                 log.debug("Loaded reader preferences from {}", file);
                 return loaded;
             }
@@ -51,11 +45,7 @@ public class ReaderPreferencesService implements ReaderPreferencesPort {
             Files.createDirectories(file.getParent());
             Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
             objectMapper.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), preferences);
-            try {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-            } catch (Exception unsupported) {
-                Files.move(tmp, file, StandardCopyOption.REPLACE_EXISTING);
-            }
+            AtomicFileSupport.moveReplacing(tmp, file);
             log.debug("Saved reader preferences to {}", file);
         } catch (Exception e) {
             log.error("Не вдалося зберегти налаштування Reader", e);

@@ -8,7 +8,7 @@ if ($env:MHL_SKIP_BUILD -ne "1") {
     & .\mvnw.cmd -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-$jar = "myhomelib-bootstrap\target\myhomelib-bootstrap-1.0.0.jar"
+$jar = "myhomelib-bootstrap\target\myhomelib-bootstrap-7.1.0.jar"
 if (-not (Test-Path $jar)) { throw "Missing $jar" }
 $stage = "myhomelib-bootstrap\target\jpackage-input"
 $dest = "dist"
@@ -19,7 +19,7 @@ Remove-Item -Recurse -Force "$dest\MyHomeLib" -ErrorAction SilentlyContinue
 $args = @(
     "--type", $Type,
     "--name", "MyHomeLib",
-    "--app-version", "1.0.0",
+    "--app-version", "7.1.0",
     "--input", $stage,
     "--main-jar", (Split-Path $jar -Leaf),
     "--dest", $dest,

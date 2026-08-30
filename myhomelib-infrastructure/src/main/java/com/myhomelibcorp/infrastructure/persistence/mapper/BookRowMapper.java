@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.mapper;
 
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.*;
+import com.myhomelibcorp.domain.service.LanguageResolver;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
 
@@ -60,7 +61,7 @@ public class BookRowMapper implements RowMapper<Book> {
         BookMetadata metadata = BookMetadata.builder()
                 .annotation(annotation != null ? annotation : "")
                 .keywords(keywords != null ? keywords : "")
-                .language(language != null ? LanguageCode.of(language) : LanguageCode.of("uk"))
+                .language(LanguageResolver.resolve(language))
                 .isbn(parseIsbn(isbn))
                 .review(review != null ? review : "")
                 .year(year)
@@ -95,12 +96,7 @@ public class BookRowMapper implements RowMapper<Book> {
     }
 
     private Isbn parseIsbn(String value) {
-        if (value == null || value.isBlank()) return null;
-        try {
-            return Isbn.of(value);
-        } catch (IllegalArgumentException ignored) {
-            return null;
-        }
+        return Isbn.tryParse(value).orElse(null);
     }
 
     // ===== Безпечні геттери =====

@@ -46,6 +46,19 @@ public class SqliteSeriesRepository implements SeriesRepository {
     }
 
     @Override
+    public Optional<Series> findByName(String name) {
+        if (name == null || name.isBlank()) return Optional.empty();
+        try {
+            Series series = getJdbcTemplate().queryForObject(
+                    "SELECT id, name FROM series WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) ORDER BY id LIMIT 1",
+                    seriesRowMapper, name);
+            return Optional.ofNullable(series);
+        } catch (EmptyResultDataAccessException e) {
+            return Optional.empty();
+        }
+    }
+
+    @Override
     public Series save(Series series) {
         if (series.getId() == null) {
             SeriesId newId = SeriesId.generate();
@@ -74,6 +87,18 @@ public class SqliteSeriesRepository implements SeriesRepository {
                 ORDER BY LOWER(TRIM(series))
                 """;
         return getJdbcTemplate().query(sql, (rs, rowNum) -> rs.getString(1));
+    }
+
+    @Override
+    public List<String> searchNames(String query, int limit) {
+        if (query == null || query.isBlank() || limit <= 0) return List.of();
+        String pattern = "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
+        return getJdbcTemplate().query("""
+                SELECT name FROM series
+                 WHERE LOWER(name) LIKE ?
+                 ORDER BY LOWER(name), id
+                 LIMIT ?
+                """, (rs, rowNum) -> rs.getString(1), pattern, Math.min(limit, 200));
     }
 
     /**

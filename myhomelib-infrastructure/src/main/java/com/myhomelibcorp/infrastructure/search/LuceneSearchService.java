@@ -2,12 +2,12 @@ package com.myhomelibcorp.infrastructure.search;
 
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.query.book.BookQuery;
-import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.port.out.search.SearchQueryService;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchResult;
+import com.myhomelibcorp.application.search.SearchIndexProgress;
+import com.myhomelibcorp.application.search.SearchIndexPerformanceReport;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -16,33 +16,20 @@ import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.document.Document;
-import org.apache.lucene.document.IntPoint;
-import org.apache.lucene.document.LongPoint;
 import org.apache.lucene.index.*;
 import org.apache.lucene.queryparser.classic.QueryParser;
-import org.apache.lucene.search.BooleanClause;
-import org.apache.lucene.search.BooleanQuery;
-import org.apache.lucene.search.IndexSearcher;
-import org.apache.lucene.search.MatchAllDocsQuery;
-import org.apache.lucene.search.Query;
-import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SearcherManager;
-import org.apache.lucene.search.TopDocs;
 import org.apache.lucene.index.Term;
-import org.apache.lucene.search.TermQuery;
 import org.apache.lucene.store.Directory;
-import org.apache.lucene.store.LockObtainFailedException;
-import org.apache.lucene.store.FSDirectory;
-import org.apache.lucene.index.TieredMergePolicy;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
+import java.time.Instant;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Consumer;
 
 @Component
 @Slf4j
@@ -62,9 +49,9 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     private SearcherManager searcherManager;
     private final AtomicBoolean isClosed = new AtomicBoolean(false);
     private int indexedSinceLastCommit = 0;
-
-    // ⚡ ОПТИМІЗАЦІЯ: лічильник для періодичного commit під час перебудови
-    private static final int REBUILD_COMMIT_INTERVAL = 50_000;
+    private volatile boolean atomicUpdate = false;
+    private volatile SearchIndexPerformanceReport lastPerformanceReport;
+    private java.util.function.IntConsumer commitObserver = ignored -> { };
 
     public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
                                BookQueryRepository bookQueryRepository) {
@@ -77,115 +64,34 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     @PostConstruct
     public void init() {
         log.info("Ініціалізація LuceneSearchService...");
-
-        IndexWriterConfig config = new IndexWriterConfig(analyzer);
-        config.setOpenMode(IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
-
-        // ⚡ ОПТИМІЗАЦІЯ 1: Збільшений RAM буфер для швидкої індексації
-        config.setRAMBufferSizeMB(512.0);              // Було 64 MB
-        config.setMaxBufferedDocs(10000);              // Було 1000
-
-        // ⚡ ОПТИМІЗАЦІЯ 2: Не комітити при закритті (commit в кінці)
-        config.setCommitOnClose(false);
-
-        // ⚡ ОПТИМІЗАЦІЯ 3: Вимкнути compound file для швидшого запису
-        config.setUseCompoundFile(false);
-
-        // ⚡ ОПТИМІЗАЦІЯ 4: Налаштування політики злиття для великих індексів
-        TieredMergePolicy mergePolicy = new TieredMergePolicy();
-        mergePolicy.setMaxMergeAtOnce(10);             // Більше сегментів за раз
-        mergePolicy.setSegmentsPerTier(10);            // Більше сегментів на рівень
-        mergePolicy.setMaxMergedSegmentMB(5120);       // Максимальний розмір сегмента 5GB
-        // У Lucene 9.x немає setMergeFactor, використовуємо setMaxMergeAtOnce та setSegmentsPerTier
-        mergePolicy.setNoCFSRatio(0.0);                // Вимкнути CFS для всіх сегментів
-        config.setMergePolicy(mergePolicy);
-
-        int maxAttempts = 5;
-        int attempt = 0;
-        Exception lastException = null;
-
-        while (attempt < maxAttempts) {
-            try {
-                this.indexWriter = new IndexWriter(directory, config);
-                log.info("IndexWriter створено (спроба {})", attempt + 1);
-                break;
-            } catch (LockObtainFailedException e) {
-                attempt++;
-                log.warn("Індекс заблоковано (спроба {}/{}), очікуємо 1 секунду...", attempt, maxAttempts);
-                lastException = e;
-                try {
-                    Thread.sleep(1000);
-                } catch (InterruptedException ie) {
-                    Thread.currentThread().interrupt();
-                    throw new RuntimeException("Перервано під час очікування lock", ie);
-                }
-            } catch (IndexFormatTooNewException | IndexFormatTooOldException e) {
-                log.warn("Несумісна версія індексу Lucene: {}", e.getMessage());
-                try {
-                    if (!(directory instanceof FSDirectory fsDirectory)) {
-                        throw new IllegalStateException("Cannot recreate non-filesystem Lucene directory", e);
-                    }
-                    Path indexPath = fsDirectory.getDirectory();
-                    directory.close();
-                    deleteDirectory(indexPath);
-                    Files.createDirectories(indexPath);
-                    this.directory = FSDirectory.open(indexPath);
-                    config = new IndexWriterConfig(analyzer);
-                    config.setOpenMode(IndexWriterConfig.OpenMode.CREATE);
-                    config.setRAMBufferSizeMB(512.0);
-                    config.setMaxBufferedDocs(10000);
-                    config.setCommitOnClose(false);
-                    config.setUseCompoundFile(false);
-                    TieredMergePolicy newPolicy = new TieredMergePolicy();
-                    newPolicy.setMaxMergeAtOnce(10);
-                    newPolicy.setSegmentsPerTier(10);
-                    newPolicy.setMaxMergedSegmentMB(5120);
-                    newPolicy.setNoCFSRatio(0.0);
-                    config.setMergePolicy(newPolicy);
-                    this.indexWriter = new IndexWriter(this.directory, config);
-                    log.info("✅ Несумісний індекс видалено та створено заново: {}", indexPath);
-                    break;
-                } catch (Exception ex) {
-                    log.error("Не вдалося створити новий індекс", ex);
-                    throw new RuntimeException("Не вдалося створити IndexWriter", ex);
-                }
-            } catch (IOException e) {
-                log.error("Помилка створення IndexWriter", e);
-                throw new RuntimeException("Не вдалося створити IndexWriter", e);
-            }
-        }
-
-        if (this.indexWriter == null && lastException != null) {
-            log.error("Не вдалося створити IndexWriter після {} спроб", maxAttempts);
-            throw new RuntimeException("Не вдалося отримати lock на індекс", lastException);
-        }
-
-        try {
-            this.searcherManager = new SearcherManager(indexWriter, true, true, null);
-            log.info("SearcherManager створено");
-        } catch (IOException e) {
-            log.error("Помилка створення SearcherManager", e);
-            throw new RuntimeException("Не вдалося створити SearcherManager", e);
-        }
-
-        log.info("LuceneSearchService ініціалізовано з оптимізованими налаштуваннями");
+        LuceneIndexWriterFactory.OpenedIndex opened = LuceneIndexWriterFactory.open(directory, analyzer);
+        directory = opened.directory();
+        indexWriter = opened.writer();
+        searcherManager = opened.searcherManager();
+        log.info("LuceneSearchService ініціалізовано");
     }
 
-    private void deleteDirectory(Path path) throws IOException {
-        if (Files.exists(path)) {
-            try (var stream = Files.walk(path)) {
-                stream.sorted((p1, p2) -> -p1.compareTo(p2))
-                        .forEach(p -> {
-                            try {
-                                Files.deleteIfExists(p);
-                            } catch (IOException e) {
-                                log.warn("Не вдалося видалити: {}", p, e);
-                            }
-                        });
-            }
-        }
+
+    // Package-private hooks owned by LuceneCollectionIndexLifecycle.
+    synchronized void setCommitObserver(java.util.function.IntConsumer observer) {
+        commitObserver = observer == null ? ignored -> { } : observer;
     }
 
+    synchronized void switchDirectory(Directory nextDirectory) {
+        if (isClosed.get()) throw new IllegalStateException("LuceneSearchService is closed");
+        closeIndexResources(false);
+        LuceneIndexWriterFactory.OpenedIndex opened = LuceneIndexWriterFactory.open(nextDirectory, analyzer);
+        directory = opened.directory();
+        indexWriter = opened.writer();
+        searcherManager = opened.searcherManager();
+        indexedSinceLastCommit = 0;
+        atomicUpdate = false;
+    }
+
+    synchronized void closeIndexForSwitch() {
+        if (isClosed.get()) return;
+        closeIndexResources(false);
+    }
     // ==================== SEARCH INDEXER ====================
 
     @Override
@@ -201,11 +107,11 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             Document doc = documentMapper.toDocument(snapshot);
             indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), doc);
             indexedSinceLastCommit++;
-            if (indexedSinceLastCommit >= commitInterval) {
+            if (!atomicUpdate && indexedSinceLastCommit >= commitInterval) {
                 commit();
             }
         } catch (IOException e) {
-            log.error("Помилка індексації книги: {}", snapshot.getId(), e);
+            throw new IllegalStateException("Не вдалося проіндексувати книгу " + snapshot.getId(), e);
         }
     }
 
@@ -222,10 +128,10 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
                 indexed++;
             }
             indexedSinceLastCommit += indexed;
-            if (indexedSinceLastCommit >= commitInterval) commit();
+            if (!atomicUpdate && indexedSinceLastCommit >= commitInterval) commit();
             log.info("Проіндексовано/оновлено {} книг", indexed);
         } catch (IOException e) {
-            log.error("Помилка пакетної індексації", e);
+            throw new IllegalStateException("Не вдалося пакетно оновити Lucene індекс", e);
         }
     }
 
@@ -235,173 +141,174 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         try {
             indexWriter.deleteDocuments(new Term("id", bookId.asString()));
             indexedSinceLastCommit++;
-            if (indexedSinceLastCommit >= commitInterval) {
+            if (!atomicUpdate && indexedSinceLastCommit >= commitInterval) {
                 commit();
             }
             log.debug("Видалено з індексу: {}", bookId);
         } catch (IOException e) {
-            log.error("Помилка видалення з індексу: {}", bookId, e);
+            throw new IllegalStateException("Не вдалося видалити книгу з Lucene: " + bookId, e);
+        }
+    }
+
+    @Override
+    public synchronized void clearIndex() {
+        if (isClosed.get() || indexWriter == null) return;
+        boolean begun = false;
+        try {
+            beginAtomicUpdate();
+            begun = true;
+            indexWriter.deleteAll();
+            indexedSinceLastCommit = 0;
+            commit();
+            log.info("Lucene index cleared before collection-context switch");
+        } catch (Exception error) {
+            if (begun) {
+                try { rollbackAtomicUpdate(); } catch (RuntimeException rollbackFailure) { error.addSuppressed(rollbackFailure); }
+            }
+            throw new IllegalStateException("Не вдалося очистити пошуковий індекс", error);
         }
     }
 
     /**
-     * ⚡ ОПТИМІЗОВАНА перебудова індексу:
-     * - Більші сторінки (5000 замість 2000)
-     * - Commit тільки кожні 50k документів або в кінці
-     * - Вимкнено проміжні commit-и
+     * Bounded full rebuild: keyset repository stream, one atomic publish,
+     * progress/heap telemetry and no materialization of the full catalogue.
      */
     @Override
     public synchronized void rebuildIndex() {
-        if (isClosed.get()) return;
-        if (indexWriter == null) {
-            log.warn("IndexWriter is null, cannot rebuild index");
-            return;
-        }
-        log.info("Початок повної перебудови індексу (оптимізовано)...");
-        final int pageSize = 5_000;  // ⚡ Збільшено з 2000 до 5000
-        int offset = 0;
-        long indexed = 0;
-        long startTime = System.currentTimeMillis();
-
-        try {
-            // ⚡ Видаляємо всі документи без commit
-            indexWriter.deleteAll();
-            indexedSinceLastCommit = 0;
-
-            while (true) {
-                var page = bookQueryRepository.findPage(BookQuery.builder()
-                        .pagination(Pagination.of(pageSize, offset))
-                        .build());
-                List<Book> books = page.content();
-                if (books == null || books.isEmpty()) break;
-
-                for (Book book : books) {
-                    if (book == null || book.isDeleted()) continue;
-                    BookSnapshot snapshot = BookSnapshot.fromBook(book);
-                    indexWriter.updateDocument(new Term("id", snapshot.getId().asString()),
-                            documentMapper.toDocument(snapshot));
-                    indexed++;
-                }
-
-                offset += books.size();
-                if (books.size() < pageSize) break;
-
-                // ⚡ Commit тільки кожні 50k документів (замість 10k)
-                if (indexed % REBUILD_COMMIT_INTERVAL == 0) {
-                    indexWriter.commit();
-                    long elapsed = System.currentTimeMillis() - startTime;
-                    log.info("⏳ Проіндексовано {} книг за {} мс ({} книг/с)",
-                            indexed, elapsed, (indexed * 1000 / Math.max(1, elapsed)));
-                }
-            }
-
-            // ✅ ОДИН фінальний commit
-            indexWriter.commit();
-            searcherManager.maybeRefreshBlocking();
-            indexedSinceLastCommit = 0;
-
-            long totalTime = System.currentTimeMillis() - startTime;
-            double booksPerSecond = indexed * 1000.0 / Math.max(1, totalTime);
-            log.info("✅ Індекс перебудовано: {} документів за {} мс ({} книг/с)",
-                    indexed, totalTime, String.format("%.1f", booksPerSecond));
-
-        } catch (Exception e) {
-            log.error("Помилка перебудови індексу", e);
-            throw new IllegalStateException("Не вдалося перебудувати пошуковий індекс", e);
-        }
-    }
-
-    /**
-     * ⚡ ПАРАЛЕЛЬНА перебудова індексу (експериментальна)
-     * Використовує багато потоків для швидшої індексації на багатоядерних системах
-     */
-    public synchronized void rebuildIndexParallel() {
-        if (isClosed.get()) return;
-        if (indexWriter == null) {
-            log.warn("IndexWriter is null, cannot rebuild index");
-            return;
-        }
-
-        log.info("Початок ПАРАЛЕЛЬНОЇ перебудови індексу...");
-        long startTime = System.currentTimeMillis();
-
-        int pageSize = 10_000;
-        long total = bookQueryRepository.count(BookQuery.builder().build());
-        int totalPages = (int) Math.ceil((double) total / pageSize);
-        int threads = Math.min(4, Runtime.getRuntime().availableProcessors());
-
-        log.info("📊 Всього книг: {}, сторінок: {}, потоків: {}", total, totalPages, threads);
-
-        try {
-            indexWriter.deleteAll();
-
-            java.util.concurrent.ExecutorService executor =
-                    java.util.concurrent.Executors.newFixedThreadPool(threads);
-            List<java.util.concurrent.CompletableFuture<Void>> futures = new ArrayList<>();
-            java.util.concurrent.atomic.AtomicLong indexed = new java.util.concurrent.atomic.AtomicLong(0);
-
-            for (int page = 0; page < totalPages; page++) {
-                final int currentPage = page;
-                final int currentOffset = page * pageSize;
-
-                futures.add(java.util.concurrent.CompletableFuture.runAsync(() -> {
-                    try {
-                        var query = BookQuery.builder()
-                                .pagination(Pagination.of(pageSize, currentOffset))
-                                .build();
-                        var books = bookQueryRepository.findPage(query).content();
-
-                        for (Book book : books) {
-                            if (book == null || book.isDeleted()) continue;
-                            BookSnapshot snapshot = BookSnapshot.fromBook(book);
-                            synchronized (indexWriter) {
-                                indexWriter.updateDocument(
-                                        new Term("id", snapshot.getId().asString()),
-                                        documentMapper.toDocument(snapshot)
-                                );
-                            }
-                            indexed.incrementAndGet();
-                        }
-
-                        if (indexed.get() % 50_000 == 0) {
-                            synchronized (indexWriter) {
-                                indexWriter.commit();
-                            }
-                            log.info("⏳ Паралельно проіндексовано {} книг", indexed.get());
-                        }
-                    } catch (Exception e) {
-                        log.error("Помилка паралельної індексації сторінки {}", currentPage, e);
-                    }
-                }, executor));
-            }
-
-            java.util.concurrent.CompletableFuture.allOf(
-                    futures.toArray(new java.util.concurrent.CompletableFuture[0])
-            ).join();
-
-            executor.shutdown();
-            try {
-                executor.awaitTermination(30, java.util.concurrent.TimeUnit.SECONDS);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-
-            indexWriter.commit();
-            searcherManager.maybeRefreshBlocking();
-            indexedSinceLastCommit = 0;
-
-            long totalTime = System.currentTimeMillis() - startTime;
-            double booksPerSecond = indexed.get() * 1000.0 / Math.max(1, totalTime);
-            log.info("✅ Паралельний індекс перебудовано: {} документів за {} мс ({} книг/с)",
-                    indexed.get(), totalTime, String.format("%.1f", booksPerSecond));
-
-        } catch (Exception e) {
-            log.error("Помилка паралельної перебудови індексу", e);
-            throw new IllegalStateException("Не вдалося перебудувати пошуковий індекс", e);
-        }
+        rebuildIndex(null, null);
     }
 
     @Override
+    public synchronized void rebuildIndex(AtomicBoolean cancelFlag, Consumer<SearchIndexProgress> progressListener) {
+        if (isClosed.get()) return;
+        if (indexWriter == null) {
+            log.warn("IndexWriter is null, cannot rebuild index");
+            return;
+        }
+        log.info("Початок повної перебудови індексу (bounded keyset + atomic commit)...");
+        Instant startedAt = Instant.now();
+        long startedNanos = System.nanoTime();
+        long indexed = 0;
+        long dbReadNanos = 0;
+        long documentBuildNanos = 0;
+        long luceneWriteNanos = 0;
+        long mergeWaitNanos = 0;
+        long commitNanos = 0;
+        long peakHeap = LuceneIndexMetrics.usedHeapBytes();
+        long gcCollectionsBefore = LuceneIndexMetrics.totalGcCollections();
+        long gcTimeBefore = LuceneIndexMetrics.totalGcTimeMs();
+        long total = Math.max(0L, bookQueryRepository.countAll());
+        notifyRebuildProgress(progressListener, 0, total);
+
+        beginAtomicUpdate();
+        try {
+            // Delete and rebuild stay uncommitted until the entire catalog is indexed.
+            indexWriter.deleteAll();
+            indexedSinceLastCommit = 0;
+
+            // Repository stream is a bounded keyset cursor: no OFFSET slowdown,
+            // no COUNT(*) per page, and no List<700000>. Related authors/genres
+            // are fetched in bounded batches instead of N+1 queries.
+            try (var books = bookQueryRepository.streamAll()) {
+                var iterator = books.iterator();
+                while (true) {
+                    checkRebuildCancelled(cancelFlag);
+                    long dbStarted = System.nanoTime();
+                    boolean hasNext = iterator.hasNext();
+                    Book book = hasNext ? iterator.next() : null;
+                    dbReadNanos += System.nanoTime() - dbStarted;
+                    if (!hasNext) break;
+                    if (book == null || book.isDeleted()) continue;
+
+                    long buildStarted = System.nanoTime();
+                    BookSnapshot snapshot = BookSnapshot.fromBook(book);
+                    Document document = documentMapper.toDocument(snapshot);
+                    documentBuildNanos += System.nanoTime() - buildStarted;
+
+                    long writeStarted = System.nanoTime();
+                    indexWriter.updateDocument(new Term("id", snapshot.getId().asString()), document);
+                    luceneWriteNanos += System.nanoTime() - writeStarted;
+                    indexed++;
+
+                    if (indexed % 1_000 == 0) {
+                        notifyRebuildProgress(progressListener, indexed, total);
+                        peakHeap = Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes());
+                    }
+                    if (indexed % 50_000 == 0) {
+                        long elapsed = LuceneIndexMetrics.elapsedMs(startedNanos);
+                        log.info("⏳ Підготовлено {} книг за {} мс (commit буде лише фінальний)", indexed, elapsed);
+                    }
+                }
+            }
+            checkRebuildCancelled(cancelFlag);
+
+            // Merge work required for durability is accounted for by the final commit timing.
+            mergeWaitNanos = 0L;
+
+            // One final commit; this also ends the atomic-update section.
+            long commitStarted = System.nanoTime();
+            commit();
+            commitNanos = System.nanoTime() - commitStarted;
+            notifyRebuildProgress(progressListener, indexed, total > 0 ? total : indexed);
+            peakHeap = Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes());
+
+            long totalTime = LuceneIndexMetrics.elapsedMs(startedNanos);
+            double booksPerSecond = indexed * 1000.0 / Math.max(1, totalTime);
+            lastPerformanceReport = new SearchIndexPerformanceReport(startedAt, "SUCCESS", indexed, total, totalTime,
+                    booksPerSecond, LuceneIndexMetrics.nanosToMs(dbReadNanos), LuceneIndexMetrics.nanosToMs(documentBuildNanos), LuceneIndexMetrics.nanosToMs(luceneWriteNanos),
+                    LuceneIndexMetrics.nanosToMs(mergeWaitNanos), LuceneIndexMetrics.nanosToMs(commitNanos), peakHeap,
+                    Math.max(0, LuceneIndexMetrics.totalGcCollections() - gcCollectionsBefore), Math.max(0, LuceneIndexMetrics.totalGcTimeMs() - gcTimeBefore),
+                    LuceneIndexMetrics.indexSizeBytes(directory), LuceneIndexMetrics.segmentCount(directory));
+            log.info("✅ Індекс перебудовано: {} документів за {} мс ({} книг/с); DB={} мс, Document={} мс, write={} мс, mergeWait={} мс, commit={} мс",
+                    indexed, totalTime, String.format("%.1f", booksPerSecond), lastPerformanceReport.dbReadMs(),
+                    lastPerformanceReport.documentBuildMs(), lastPerformanceReport.luceneWriteMs(),
+                    lastPerformanceReport.mergeWaitMs(), lastPerformanceReport.commitMs());
+
+        } catch (IndexRebuildCancelledException e) {
+            try { rollbackAtomicUpdate(); } catch (Exception rollbackFailure) { e.addSuppressed(rollbackFailure); }
+            long totalTime = LuceneIndexMetrics.elapsedMs(startedNanos);
+            lastPerformanceReport = new SearchIndexPerformanceReport(startedAt, "CANCELLED", indexed, total, totalTime,
+                    indexed * 1000.0 / Math.max(1, totalTime), LuceneIndexMetrics.nanosToMs(dbReadNanos), LuceneIndexMetrics.nanosToMs(documentBuildNanos),
+                    LuceneIndexMetrics.nanosToMs(luceneWriteNanos), LuceneIndexMetrics.nanosToMs(mergeWaitNanos), LuceneIndexMetrics.nanosToMs(commitNanos),
+                    Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes()), Math.max(0, LuceneIndexMetrics.totalGcCollections() - gcCollectionsBefore),
+                    Math.max(0, LuceneIndexMetrics.totalGcTimeMs() - gcTimeBefore), LuceneIndexMetrics.indexSizeBytes(directory), LuceneIndexMetrics.segmentCount(directory));
+            log.info("Перебудову Lucene скасовано; попередній committed індекс збережено");
+            throw e;
+        } catch (Exception e) {
+            try { rollbackAtomicUpdate(); } catch (Exception rollbackFailure) { e.addSuppressed(rollbackFailure); }
+            long totalTime = LuceneIndexMetrics.elapsedMs(startedNanos);
+            lastPerformanceReport = new SearchIndexPerformanceReport(startedAt, "FAILED", indexed, total, totalTime,
+                    indexed * 1000.0 / Math.max(1, totalTime), LuceneIndexMetrics.nanosToMs(dbReadNanos), LuceneIndexMetrics.nanosToMs(documentBuildNanos),
+                    LuceneIndexMetrics.nanosToMs(luceneWriteNanos), LuceneIndexMetrics.nanosToMs(mergeWaitNanos), LuceneIndexMetrics.nanosToMs(commitNanos),
+                    Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes()), Math.max(0, LuceneIndexMetrics.totalGcCollections() - gcCollectionsBefore),
+                    Math.max(0, LuceneIndexMetrics.totalGcTimeMs() - gcTimeBefore), LuceneIndexMetrics.indexSizeBytes(directory), LuceneIndexMetrics.segmentCount(directory));
+            log.error("Помилка перебудови індексу; попередній committed індекс збережено", e);
+            throw new IllegalStateException("Не вдалося перебудувати пошуковий індекс", e);
+        }
+    }
+
+    private static void checkRebuildCancelled(AtomicBoolean cancelFlag) {
+        if ((cancelFlag != null && cancelFlag.get()) || Thread.currentThread().isInterrupted()) {
+            throw new IndexRebuildCancelledException();
+        }
+    }
+
+    private static void notifyRebuildProgress(Consumer<SearchIndexProgress> listener, long processed, long total) {
+        if (listener == null) return;
+        try {
+            listener.accept(new SearchIndexProgress(processed, total));
+        } catch (RuntimeException callbackFailure) {
+            log.debug("Search-index progress listener failed: {}", callbackFailure.toString());
+        }
+    }
+
+    public static final class IndexRebuildCancelledException extends RuntimeException {
+        public IndexRebuildCancelledException() {
+            super("Індексацію скасовано");
+        }
+    }
+
+@Override
     public int getDocumentCount() {
         if (isClosed.get() || indexWriter == null) return 0;
         try {
@@ -413,122 +320,101 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     }
 
     @Override
+    public Optional<SearchIndexPerformanceReport> lastPerformanceReport() {
+        return Optional.ofNullable(lastPerformanceReport);
+    }
+
+    @Override
     public int getIndexedDocumentCount() {
         return getDocumentCount();
     }
 
     @Override
-    public void commit() {
+    public synchronized void beginAtomicUpdate() {
         if (isClosed.get() || indexWriter == null) return;
+        if (atomicUpdate) throw new IllegalStateException("Lucene atomic update is already active");
         try {
+            // Establish an explicit rollback point for any older non-atomic writes.
             indexWriter.commit();
-            searcherManager.maybeRefresh();
+            searcherManager.maybeRefreshBlocking();
             indexedSinceLastCommit = 0;
-            log.debug("Lucene індекс закомічено");
+            atomicUpdate = true;
         } catch (IOException e) {
-            log.error("Помилка commit", e);
+            throw new IllegalStateException("Не вдалося почати атомарне оновлення Lucene", e);
         }
     }
 
+    @Override
+    public synchronized void rollbackAtomicUpdate() {
+        if (!atomicUpdate || indexWriter == null) return;
+        try {
+            if (searcherManager != null) searcherManager.close();
+            indexWriter.rollback();
+            LuceneIndexWriterFactory.OpenedIndex reopened = LuceneIndexWriterFactory.open(directory, analyzer);
+            directory = reopened.directory();
+            indexWriter = reopened.writer();
+            searcherManager = reopened.searcherManager();
+            indexedSinceLastCommit = 0;
+            atomicUpdate = false;
+        } catch (RuntimeException | IOException e) {
+            atomicUpdate = false;
+            throw new IllegalStateException("Не вдалося відкотити Lucene до попереднього commit", e);
+        }
+    }
+
+    @Override
+    public synchronized void commit() {
+        if (isClosed.get() || indexWriter == null) return;
+        try {
+            indexWriter.commit();
+            searcherManager.maybeRefreshBlocking();
+            indexedSinceLastCommit = 0;
+            atomicUpdate = false;
+            notifyCommitObserver();
+            log.debug("Lucene індекс закомічено");
+        } catch (IOException e) {
+            throw new IllegalStateException("Не вдалося закомітити Lucene індекс", e);
+        }
+    }
+
+    private void notifyCommitObserver() {
+        try { commitObserver.accept(getDocumentCount()); }
+        catch (RuntimeException observerFailure) {
+            log.warn("Lucene commit observer failed: {}", observerFailure.toString());
+        }
+    }
+
+
+    private void closeIndexResources(boolean commitBeforeClose) {
+        try {
+            LuceneIndexResourceCloser.close(searcherManager, indexWriter, directory, atomicUpdate,
+                    commitBeforeClose, this::notifyCommitObserver);
+        } finally {
+            searcherManager = null; indexWriter = null; directory = null;
+            atomicUpdate = false; indexedSinceLastCommit = 0;
+        }
+    }
     // ==================== SEARCH QUERY SERVICE ====================
 
     @Override
     public SearchResult search(SearchRequest request) {
         if (request == null || isClosed.get() || indexWriter == null) return SearchResult.empty();
-        long start = System.currentTimeMillis();
-        List<BookId> bookIds = new ArrayList<>();
-
         try {
-            searcherManager.maybeRefresh();
-            IndexSearcher searcher = searcherManager.acquire();
-            try {
-                BooleanQuery.Builder b = new BooleanQuery.Builder();
-                String text = request.text() == null ? "" : request.text().trim();
-                if (!text.isBlank()) {
-                    b.add(queryNormalizer.parse(text, request.mode()), BooleanClause.Occur.MUST);
-                }
-                if (request.authorId() != null) {
-                    b.add(new TermQuery(new Term("author_id", request.authorId().asString())), BooleanClause.Occur.FILTER);
-                }
-                if (request.genreId() != null) {
-                    b.add(new TermQuery(new Term("genre_id", request.genreId().asString())), BooleanClause.Occur.FILTER);
-                }
-                if (request.language() != null) {
-                    b.add(new TermQuery(new Term("language", request.language().value().toLowerCase(java.util.Locale.ROOT))), BooleanClause.Occur.FILTER);
-                }
-                if (request.ratingFrom() != null || request.ratingTo() != null) {
-                    int lo = request.ratingFrom() == null ? Integer.MIN_VALUE : request.ratingFrom();
-                    int hi = request.ratingTo() == null ? Integer.MAX_VALUE : request.ratingTo();
-                    b.add(IntPoint.newRangeQuery("library_rate_num", lo, hi), BooleanClause.Occur.FILTER);
-                }
-                if (request.yearFrom() != null || request.yearTo() != null) {
-                    int lo = request.yearFrom() == null ? Integer.MIN_VALUE : request.yearFrom();
-                    int hi = request.yearTo() == null ? Integer.MAX_VALUE : request.yearTo();
-                    b.add(IntPoint.newRangeQuery("year_num", lo, hi), BooleanClause.Occur.FILTER);
-                }
-                if (request.addedFrom() != null || request.addedTo() != null) {
-                    long lo = request.addedFrom() == null ? Long.MIN_VALUE : request.addedFrom().toEpochDay();
-                    long hi = request.addedTo() == null ? Long.MAX_VALUE : request.addedTo().toEpochDay();
-                    b.add(LongPoint.newRangeQuery("created_day", lo, hi), BooleanClause.Occur.FILTER);
-                }
-                if (request.localOnly() != null) {
-                    b.add(new TermQuery(new Term("local", request.localOnly() ? "1" : "0")), BooleanClause.Occur.FILTER);
-                }
-                unifiedFilterBuilder.addTo(b, request.filterSpec());
-                b.add(new TermQuery(new Term("deleted", "0")), BooleanClause.Occur.FILTER);
-                Query query = b.build().clauses().isEmpty() ? new MatchAllDocsQuery() : b.build();
-
-                int offset = Math.max(0, request.offset());
-                int limit = Math.max(1, request.limit());
-                int requested = Math.min(100_000, offset + limit);
-                TopDocs top = searcher.search(query, requested);
-                ScoreDoc[] hits = top.scoreDocs;
-                for (int i = offset; i < hits.length && bookIds.size() < limit; i++) {
-                    Document doc = searcher.doc(hits[i].doc);
-                    String id = doc.get("id");
-                    if (id != null && !id.isEmpty()) bookIds.add(BookId.fromString(id));
-                }
-
-                long elapsed = System.currentTimeMillis() - start;
-                return new SearchResult(bookIds, Math.toIntExact(Math.min(Integer.MAX_VALUE, top.totalHits.value)),
-                        offset / limit, limit, elapsed);
-            } finally {
-                searcherManager.release(searcher);
-            }
+            return LuceneSearchExecutor.search(request, searcherManager, queryNormalizer, unifiedFilterBuilder);
         } catch (Exception e) {
             log.error("Помилка пошуку: {}", request.text(), e);
             return SearchResult.empty();
         }
     }
 
-    public boolean isClosed() {
-        return isClosed.get();
-    }
-
     @PreDestroy
-    public void close() {
-        if (isClosed.get()) return;
-
+    public synchronized void close() {
+        if (isClosed.getAndSet(true)) return;
         log.info("Закриття LuceneSearchService...");
-
         try {
-            if (indexWriter != null) {
-                indexWriter.commit();
-                indexWriter.close();
-                log.info("IndexWriter закрито");
-            }
-            if (searcherManager != null) {
-                searcherManager.close();
-                log.info("SearcherManager закрито");
-            }
-            if (directory != null) {
-                directory.close();
-                log.info("Directory закрито");
-            }
-        } catch (IOException e) {
+            closeIndexResources(true);
+        } catch (RuntimeException e) {
             log.error("Помилка закриття LuceneSearchService", e);
         }
-        isClosed.set(true);
         log.info("LuceneSearchService завершено");
-    }
-}
+    }}

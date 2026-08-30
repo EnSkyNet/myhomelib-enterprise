@@ -59,7 +59,7 @@ public class SevenZImporter implements BookImporterPort {
             int entries = 0;
             while ((entry = archive.getNextEntry()) != null) {
                 if (++entries > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return -1;
-                if (!entry.isDirectory() && isBookEntry(entry.getName())) count++;
+                if (!entry.isDirectory() && ArchiveImportSupport.isSupportedBookEntry(entry.getName(), importerRegistry)) count++;
             }
             return count;
         } catch (Exception e) {
@@ -67,11 +67,6 @@ public class SevenZImporter implements BookImporterPort {
         }
     }
 
-    private boolean isBookEntry(String name) {
-        if (name == null || ArchiveImportSupport.isNestedArchive(name)) return false;
-        try { importerRegistry.findImporter(Path.of(name)); return true; }
-        catch (Exception e) { return false; }
-    }
 
     private final class SevenZIterator implements Iterator<Book>, AutoCloseable {
         private final Path archivePath;

@@ -1,12 +1,14 @@
 package com.myhomelibcorp.ui.reader;
 
 import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.mapper.BookMapperHelper;
+import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
+import com.myhomelibcorp.application.reader.ReaderSettingsState;
 import com.myhomelibcorp.application.reader.ReaderSettingsStateService;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.application.service.ReadingHistoryService;
+import com.myhomelibcorp.application.service.ReadingSessionService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.bookmark.Bookmark;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -14,17 +16,24 @@ import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.FileBookSource;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.core.ReaderEngine;
+import com.myhomelibcorp.reader.core.ReaderEngine.PreparedBook;
 import com.myhomelibcorp.reader.render.javafx.ReaderView;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Alert;
+import javafx.scene.control.ButtonType;
+import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.TextInputDialog;
+import javafx.scene.control.ProgressIndicator;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -37,11 +46,17 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.Future;
+import java.util.concurrent.RejectedExecutionException;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
@@ -51,23 +66,28 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private final LoadBookByIdUseCase loadBookByIdUseCase;
     private final BookResourcePort bookResourcePort;
-    private final BookMapperHelper bookMapperHelper;
+    private final BookMapper bookMapper;
     private final NavigationService navigationService;
     private final SessionService sessionService;
     private final ReadingHistoryService readingHistoryService;
+    private final ReadingSessionService readingSessionService;
     private final DialogService dialogService;
     private final NewReaderPersistenceService persistenceService;
     private final ReaderSettingsStateService readerSettingsStateService;
     private final ApplicationContext springContext;
+    private final UiBackgroundExecutor uiBackgroundExecutor;
 
     @FXML
     private StackPane readerContainer;
 
     private ReaderView readerView;
+    private ProgressIndicator loadingIndicator;
     private BookDto currentBook;
     private BookId currentBookId;
     private Path materializedBookFile;
-    private boolean isDisposed = false;
+    private volatile boolean isDisposed = false;
+    private final AtomicLong openGeneration = new AtomicLong();
+    private volatile Future<?> openTask;
 
     private ReaderPositionAutosaver positionAutosaver;
     private boolean positionChanged = false;
@@ -76,116 +96,186 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     @FXML
     public void initialize() {
         log.info("📖 NewReaderWorkspaceController ініціалізовано");
-
         positionAutosaver = new ReaderPositionAutosaver(persistenceService);
+        initializeReaderView();
     }
 
-    public void setBookId(BookId bookId) {
-        if (bookId == null) {
-            log.warn("❌ bookId is null");
-            return;
-        }
-
-        if (isDisposed) {
-            log.warn("❌ Controller вже знищено, пропускаємо");
-            return;
-        }
-
-        this.currentBookId = bookId;
-
-        Optional<BookDto> bookOpt = loadBookByIdUseCase.execute(bookId);
-        if (bookOpt.isEmpty()) {
-            log.warn("❌ Книгу не знайдено: {}", bookId);
-            return;
-        }
-
-        this.currentBook = bookOpt.get();
-        log.info("📖 Відкриття книги: {}", currentBook.getTitle());
-
-        sessionService.saveLastOpenedBookId(bookId.asString());
-
-        try {
-            openBook(currentBook);
-            readingHistoryService.recordOpened(bookId);
-        } catch (Exception e) {
-            cleanupMaterializedBookFile();
-            log.error("❌ Помилка відкриття книги", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити книгу: " + e.getMessage());
-        }
-    }
-
-    private void openBook(BookDto bookDto) throws Exception {
-        Book book = bookMapperHelper.toDomain(bookDto);
-
-        cleanupMaterializedBookFile();
-        Path filePath = bookResourcePort.locateBookFile(book)
-                .orElseThrow(() -> new IOException("Файл книги не знайдено: " + book.getFileName()));
-
-        Path readerPath = materializeReaderEntryIfNeeded(book, filePath);
-        BookSource source = new FileBookSource(readerPath, book.getId().asString());
-
-        if (readerView == null) {
-            readerView = new ReaderView();
-
-            // Формати FB2/FBD, EPUB, TXT/MD та legacy ZIP реєструються самим ReaderView.
-            // Налаштовуємо колбеки
-            readerView.setOnBackClick(this::onBack);
-            readerView.setOnSettingsClick(this::showSettings);
-            readerView.setOnSettingsChanged(this::persistReaderSettings);
-            readerView.setOnBookmarkClick(this::addBookmark);
-            readerView.setOnTocClick(this::showToc);
-            readerView.setOnSearchClick(this::showSearch);
-
-            // Додаємо до контейнера
-            Platform.runLater(() -> {
-                if (!isDisposed && readerContainer != null) {
-                    readerContainer.getChildren().add(readerView);
-                }
-            });
-        }
-
-        // Завантажуємо збережені налаштування до першого layout книги.
-        var settingsState = readerSettingsStateService.load(book.getId().asString());
-        currentBookOverride = settingsState.bookOverride();
-        ReaderSettings savedSettings = ReaderSettingsMapper.fromDomain(settingsState.preferences());
-        readerView.applySettings(savedSettings);
-        positionAutosaver.start(book.getId().asString());
-
-        // Відкриваємо книгу
-        readerView.openBook(source);
-
-        // Відновлюємо позицію з БД
-        Optional<ReaderPosition> savedPosition = persistenceService.loadPosition(book.getId().asString());
-        savedPosition.ifPresent(pos -> {
-            log.info("📖 Відновлення позиції з БД: offset={}", pos.textOffset());
-            Platform.runLater(() -> {
-                if (!isDisposed && readerView != null && readerView.isBookOpen()) {
-                    readerView.goToPosition(pos);
-                }
-            });
-        });
-
-        // Плануємо оновлення розмірів Canvas
-        scheduleSizeUpdate();
-
-        // Слухаємо зміну позиції через callback
+    private void initializeReaderView() {
+        readerView = new ReaderView();
+        readerView.setOnBackClick(this::onBack);
+        readerView.setOnSettingsClick(this::showSettings);
+        readerView.setOnSettingsChanged(this::persistReaderSettings);
+        readerView.setOnBookmarkClick(this::addBookmark);
+        readerView.setOnBookmarksClick(this::showBookmarks);
+        readerView.setOnTocClick(this::showToc);
+        readerView.setOnSearchClick(this::showSearch);
         readerView.getCanvas().setOnPositionChanged(pos -> {
             positionChanged = true;
             if (positionAutosaver != null) positionAutosaver.mark(pos);
         });
 
-        log.info("✅ Книгу відкрито в новому Reader: {}", book.getTitle());
+        loadingIndicator = new ProgressIndicator();
+        loadingIndicator.setMaxSize(64, 64);
+        loadingIndicator.setVisible(false);
+        loadingIndicator.setManaged(false);
+        if (readerContainer != null) {
+            readerContainer.getChildren().setAll(readerView, loadingIndicator);
+        }
+    }
+
+    public void setBookId(BookId bookId) {
+        if (!Platform.isFxApplicationThread()) {
+            Platform.runLater(() -> setBookId(bookId));
+            return;
+        }
+        if (bookId == null) {
+            log.warn("❌ bookId is null");
+            return;
+        }
+        if (isDisposed) {
+            log.warn("❌ Controller вже знищено, пропускаємо");
+            return;
+        }
+
+        long generation = openGeneration.incrementAndGet();
+        cancelPendingOpen();
+        closeCurrentBookForReplacement();
+        setLoading(true);
+        log.info("📖 Асинхронна підготовка книги: {}", bookId);
+
+        try {
+            ReaderEngine engine = readerView.getEngine();
+            openTask = uiBackgroundExecutor.submitCancellable(() -> {
+                try {
+                    PreparedOpen prepared = prepareOpen(bookId, engine);
+                    if (Thread.currentThread().isInterrupted()) {
+                        prepared.closeAbandoned();
+                        return null;
+                    }
+                    Platform.runLater(() -> applyPreparedOpen(generation, prepared));
+                } catch (Throwable error) {
+                    Platform.runLater(() -> handleOpenFailure(generation, bookId, error));
+                }
+                return null;
+            });
+        } catch (RejectedExecutionException e) {
+            setLoading(false);
+            dialogService.showError("Помилка", "Черга фонових операцій переповнена. Спробуйте ще раз.");
+        }
+    }
+
+    private PreparedOpen prepareOpen(BookId bookId, ReaderEngine engine) throws Exception {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Reader open cancelled");
+        BookDto dto = loadBookByIdUseCase.execute(bookId)
+                .orElseThrow(() -> new IOException("Книгу не знайдено: " + bookId));
+        Book book = bookMapper.toDomain(dto);
+        Path filePath = bookResourcePort.locateBookFile(book)
+                .orElseThrow(() -> new IOException("Файл книги не знайдено: " + book.getFileName()));
+
+        MaterializedReaderSource materialized = materializeReaderEntryIfNeeded(book, filePath);
+        PreparedBook preparedBook = null;
+        try {
+            ReaderSettingsState state = readerSettingsStateService.load(book.getId().asString());
+            ReaderSettings settings = ReaderSettingsMapper.fromDomain(state.preferences());
+            Optional<ReaderPosition> savedPosition = persistenceService.loadPosition(book.getId().asString());
+            BookSource source = new FileBookSource(materialized.readerPath(), book.getId().asString());
+            preparedBook = engine.prepare(source);
+            return new PreparedOpen(dto, book, preparedBook, materialized.temporaryPath(),
+                    settings, state.bookOverride(), savedPosition);
+        } catch (Throwable e) {
+            if (preparedBook != null) preparedBook.close();
+            deleteTemp(materialized.temporaryPath());
+            throw e;
+        }
+    }
+
+    private void applyPreparedOpen(long generation, PreparedOpen prepared) {
+        if (isDisposed || generation != openGeneration.get()) {
+            prepared.closeAbandoned();
+            return;
+        }
+        try {
+            currentBook = prepared.dto();
+            currentBookId = prepared.book().getId();
+            materializedBookFile = prepared.temporaryPath();
+            currentBookOverride = prepared.bookOverride();
+            positionChanged = false;
+
+            readerView.applySettings(prepared.settings());
+            readerView.openPrepared(prepared.preparedBook(), prepared.savedPosition().orElse(null));
+            long totalTextLength = readerView.getEngine().getCurrentDocument() == null
+                    ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
+            positionAutosaver.start(currentBookId.asString(), totalTextLength);
+            readingSessionService.start(currentBookId.asString(), currentProgressPercent());
+            setLoading(false);
+
+            // Persistence/history are not part of first-paint latency.
+            BookId openedId = currentBookId;
+            uiBackgroundExecutor.execute(() -> {
+                if (isDisposed || generation != openGeneration.get()) return;
+                sessionService.saveLastOpenedBookId(openedId.asString());
+                readingHistoryService.recordOpened(openedId);
+            });
+            log.info("✅ Книгу відкрито в Reader: {}", currentBook.getTitle());
+        } catch (Throwable error) {
+            prepared.preparedBook().close();
+            deleteTemp(prepared.temporaryPath());
+            materializedBookFile = null;
+            setLoading(false);
+            log.error("❌ Помилка підключення підготовленої книги", error);
+            dialogService.showError("Помилка", "Не вдалося відкрити книгу: " + rootMessage(error));
+        }
+    }
+
+    private void handleOpenFailure(long generation, BookId bookId, Throwable error) {
+        if (generation != openGeneration.get() || isDisposed) return;
+        setLoading(false);
+        Throwable root = unwrap(error);
+        if (root instanceof InterruptedException || root instanceof InterruptedIOException
+                || root instanceof CancellationException) {
+            log.debug("Reader open cancelled for {}", bookId);
+            return;
+        }
+        log.error("❌ Помилка відкриття книги {}", bookId, root);
+        dialogService.showError("Помилка", "Не вдалося відкрити книгу: " + rootMessage(root));
+    }
+
+    private void closeCurrentBookForReplacement() {
+        if (currentBookId == null && (readerView == null || !readerView.isBookOpen())) return;
+        savePosition();
+        finishReadingSession();
+        if (readerView != null && readerView.isBookOpen()) readerView.closeBook();
+        cleanupMaterializedBookFile();
+        currentBook = null;
+        currentBookId = null;
+        positionChanged = false;
+    }
+
+    private void cancelPendingOpen() {
+        Future<?> task = openTask;
+        openTask = null;
+        if (task != null && !task.isDone()) task.cancel(true);
+    }
+
+    private void setLoading(boolean loading) {
+        if (loadingIndicator != null) {
+            loadingIndicator.setVisible(loading);
+            loadingIndicator.setManaged(loading);
+        }
+        if (readerView != null) readerView.setDisable(loading);
     }
 
     /**
      * The catalog path of an archived book points to the physical container.
-     * Reader formats, however, must receive the actual FB2/EPUB/TXT payload.
-     * Materialize only one bounded entry and delete it when the workspace closes.
+     * Materialization is bounded and interruptible so closing the workspace does
+     * not wait for a large archived payload to finish copying.
      */
-    private Path materializeReaderEntryIfNeeded(Book book, Path physicalPath) throws IOException {
+    private MaterializedReaderSource materializeReaderEntryIfNeeded(Book book, Path physicalPath) throws IOException {
         String archiveEntry = book.getArchiveEntry();
         boolean physicalArchive = bookResourcePort.isArchive(physicalPath.toString());
-        if ((archiveEntry == null || archiveEntry.isBlank()) && !physicalArchive) return physicalPath;
+        if ((archiveEntry == null || archiveEntry.isBlank()) && !physicalArchive) {
+            return new MaterializedReaderSource(physicalPath, null);
+        }
 
         String selectedEntry = archiveEntry;
         if ((selectedEntry == null || selectedEntry.isBlank()) && physicalArchive) {
@@ -195,9 +285,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                     .orElse(null);
         }
         if (selectedEntry == null || selectedEntry.isBlank() || !isReaderEntry(selectedEntry)) {
-            // Let Reader's ZIP fallback handle legacy FB2 ZIPs; unsupported containers
-            // will produce the normal "unsupported format" error instead of guessing.
-            return physicalPath;
+            return new MaterializedReaderSource(physicalPath, null);
         }
 
         Optional<InputStream> stream = physicalArchive
@@ -205,14 +293,14 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 : bookResourcePort.readBookData(book);
         if (stream.isEmpty()) throw new IOException("Не вдалося прочитати запис архіву: " + selectedEntry);
 
-        String suffix = readerSuffix(selectedEntry);
-        Path temp = Files.createTempFile("myhomelib-reader-book-", suffix);
+        Path temp = Files.createTempFile("myhomelib-reader-book-", readerSuffix(selectedEntry));
         boolean success = false;
         try (InputStream in = stream.get(); OutputStream out = Files.newOutputStream(temp)) {
             byte[] buffer = new byte[64 * 1024];
             long total = 0;
             int read;
             while ((read = in.read(buffer)) >= 0) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Reader materialization cancelled");
                 if (read == 0) continue;
                 total += read;
                 if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES)
@@ -223,8 +311,38 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         } finally {
             if (!success) Files.deleteIfExists(temp);
         }
-        materializedBookFile = temp;
-        return temp;
+        return new MaterializedReaderSource(temp, temp);
+    }
+
+    private static void deleteTemp(Path temp) {
+        if (temp == null) return;
+        try { Files.deleteIfExists(temp); } catch (IOException ignored) { }
+    }
+
+    private static Throwable unwrap(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && (current instanceof java.util.concurrent.CompletionException
+                || current instanceof java.util.concurrent.ExecutionException)) {
+            current = current.getCause();
+        }
+        return current;
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable root = unwrap(error);
+        return root.getMessage() == null || root.getMessage().isBlank()
+                ? root.getClass().getSimpleName() : root.getMessage();
+    }
+
+    private record MaterializedReaderSource(Path readerPath, Path temporaryPath) { }
+
+    private record PreparedOpen(
+            BookDto dto, Book book, PreparedBook preparedBook, Path temporaryPath,
+            ReaderSettings settings, boolean bookOverride, Optional<ReaderPosition> savedPosition) {
+        void closeAbandoned() {
+            preparedBook.close();
+            deleteTemp(temporaryPath);
+        }
     }
 
     private boolean isReaderEntry(String name) {
@@ -249,18 +367,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    // Замість 4-х спроб, використовуємо одну з правильною перевіркою
-    private void scheduleSizeUpdate() {
-        // Чекаємо, поки Canvas отримає розміри через listener
-        Platform.runLater(() -> {
-            if (!isDisposed && readerView != null) {
-                // Використовуємо updateSize з перевіркою
-                readerView.getCanvas().updateSize();
-                log.info("📐 Оновлення розмірів Canvas");
-            }
-        });
-    }
-
     /**
      * Зберігає поточну позицію в БД.
      */
@@ -275,7 +381,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                     positionAutosaver.mark(pos);
                     positionAutosaver.flush();
                 } else {
-                    persistenceService.savePosition(currentBookId.asString(), pos);
+                    persistenceService.savePosition(currentBookId.asString(), pos, currentDocumentLength());
                 }
             }
         } catch (Exception e) {
@@ -297,12 +403,36 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             savePosition();
         }
 
+        finishReadingSession();
         if (readerView != null && readerView.isBookOpen()) {
             readerView.closeBook();
         }
         cleanupMaterializedBookFile();
 
         navigationService.goBack();
+    }
+
+    private void finishReadingSession() {
+        if (currentBookId == null) return;
+        readingSessionService.finish(currentBookId.asString(), currentProgressPercent());
+    }
+
+    private long currentDocumentLength() {
+        if (readerView == null || readerView.getEngine().getCurrentDocument() == null) return 0L;
+        return Math.max(0L, readerView.getEngine().getCurrentDocument().totalTextLength());
+    }
+
+    private int currentProgressPercent() {
+        if (readerView == null || !readerView.isBookOpen()) return 0;
+        ReaderPosition position = readerView.getCurrentPosition();
+        return position == null ? 0 : percentForPosition(position);
+    }
+
+    private int percentForPosition(ReaderPosition position) {
+        if (position == null || readerView == null || readerView.getEngine().getCurrentDocument() == null) return 0;
+        long total = currentDocumentLength();
+        if (total <= 0) return 0;
+        return Math.max(0, Math.min(100, (int) Math.round(position.getPercent(total))));
     }
 
     private void persistReaderSettings(ReaderSettings settings) {
@@ -354,16 +484,62 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         ReaderPosition pos = readerView.getCurrentPosition();
         if (pos != null) {
+            long totalTextLength = readerView.getEngine().getCurrentDocument() == null
+                    ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
             Bookmark bookmark = persistenceService.saveBookmark(
-                    currentBookId.asString(),
-                    pos,
-                    title,
-                    ""
-            );
+                    currentBookId.asString(), pos, totalTextLength, title, "");
             if (bookmark != null) {
                 dialogService.showInfo("Успішно", "Закладку додано: " + title);
                 log.info("⭐ Закладку додано: {}", title);
             }
+        }
+    }
+
+    private void showBookmarks() {
+        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) {
+            return;
+        }
+        List<Bookmark> bookmarks = persistenceService.loadBookmarks(currentBookId.asString());
+        if (bookmarks.isEmpty()) {
+            dialogService.showInfo("Закладки", "У цієї книги ще немає закладок.");
+            return;
+        }
+
+        List<BookmarkChoice> choices = bookmarks.stream().map(BookmarkChoice::new).toList();
+        ChoiceDialog<BookmarkChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        dialog.setTitle("Закладки");
+        dialog.setHeaderText("Виберіть закладку");
+        dialog.setContentText("Закладка:");
+        Optional<BookmarkChoice> selected = dialog.showAndWait();
+        if (selected.isEmpty()) {
+            return;
+        }
+
+        Bookmark bookmark = selected.get().bookmark();
+        ButtonType goTo = new ButtonType("Перейти");
+        ButtonType delete = new ButtonType("Видалити");
+        Alert action = new Alert(Alert.AlertType.CONFIRMATION);
+        action.setTitle("Закладка");
+        action.setHeaderText(selected.get().toString());
+        action.setContentText("Що зробити із закладкою?");
+        action.getButtonTypes().setAll(goTo, delete, ButtonType.CANCEL);
+        Optional<ButtonType> result = action.showAndWait();
+        if (result.filter(goTo::equals).isPresent()) {
+            long totalTextLength = readerView.getEngine().getCurrentDocument() == null
+                    ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
+            readerView.goToPosition(persistenceService.bookmarkToPosition(bookmark, totalTextLength));
+        } else if (result.filter(delete::equals).isPresent()) {
+            persistenceService.deleteBookmark(bookmark.getId());
+            dialogService.showInfo("Закладки", "Закладку видалено.");
+        }
+    }
+
+    private record BookmarkChoice(Bookmark bookmark) {
+        @Override
+        public String toString() {
+            String title = bookmark.getChapterTitle();
+            if (title == null || title.isBlank()) title = "Закладка";
+            return String.format(Locale.ROOT, "%s — %.1f%%", title, bookmark.getPosition());
         }
     }
 
@@ -448,6 +624,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
         isDisposed = true;
+        openGeneration.incrementAndGet();
+        cancelPendingOpen();
 
         log.info("🧹 NewReaderWorkspaceController: початок очищення");
 
@@ -464,6 +642,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             positionAutosaver = null;
         }
 
+        finishReadingSession();
         if (readerView != null) {
             if (readerView.isBookOpen()) {
                 readerView.closeBook();

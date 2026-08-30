@@ -6,7 +6,6 @@ import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.application.dto.GroupDto;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.reader.inspection.DocumentImageInfo;

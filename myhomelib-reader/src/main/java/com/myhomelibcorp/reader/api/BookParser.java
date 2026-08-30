@@ -4,7 +4,14 @@ import java.io.IOException;
 
 public interface BookParser {
 
-    BookDocumentMetadata readMetadata(BookSource source) throws IOException;
+    default BookDocumentMetadata readMetadata(BookSource source) throws IOException {
+        ReaderDocument document = parse(source, ParseOptions.minimal());
+        return new BookDocumentMetadataSnapshot(
+                document.metadata(),
+                document.totalTextLength(),
+                document.resources() != null && document.resources().count() > 0,
+                document.chapters().size());
+    }
 
     ReaderDocument parse(BookSource source, ParseOptions options) throws IOException;
 

@@ -9,7 +9,6 @@ def text(rel): return (ROOT/rel).read_text(encoding='utf-8')
 
 main=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java')
 workspace=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/WorkspaceManager.java')
-history=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/NavigationHistoryService.java')
 defnav=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java')
 details=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/details/BookDetailsController.java')
 navcoord=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/MainNavigationCoordinator.java')
@@ -19,7 +18,12 @@ test=text('myhomelib-ui/src/test/java/com/myhomelibcorp/ui/navigation/WorkspaceM
 need(len(main.splitlines()) <= 660, f'MainController still too large: {len(main.splitlines())} lines')
 need('setMainController(' not in main, 'MainController must not wire callback cycles')
 need('MainController' not in workspace, 'WorkspaceManager must not depend on MainController')
-need('MainController' not in history, 'NavigationHistoryService must not depend on MainController')
+need(not (ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/NavigationHistoryService.java').exists(),
+     'redundant NavigationHistoryService facade must stay removed')
+need('workspaceManager::canGoBack' in main and 'workspaceManager::canGoForward' in main,
+     'MainController navigation actions must use WorkspaceManager directly')
+need('workspaceManager.goBack()' in main and 'workspaceManager.goForward()' in main,
+     'MainController back/forward handlers must use WorkspaceManager directly')
 need('MainController' not in defnav, 'DefaultNavigationService must not depend on MainController')
 need('MainController' not in details, 'BookDetailsController must not depend on MainController')
 need('ReadOnlyBooleanProperty canGoBackProperty()' in workspace and 'ReadOnlyBooleanProperty canGoForwardProperty()' in workspace,
@@ -45,6 +49,6 @@ if errors:
     sys.exit(1)
 print('STAGE 25A UI ORCHESTRATION CHECK: PASS')
 print(f' - MainController reduced to {len(main.splitlines())} lines with FXML shell compatibility')
-print(' - WorkspaceManager owns observable back/forward state; callback cycle removed')
+print(' - WorkspaceManager owns observable back/forward state; redundant history facade removed')
 print(' - navigation/book command orchestration extracted; concrete MainController fan-in removed')
 print(' - history-state JUnit regression fixture: PRESENT')

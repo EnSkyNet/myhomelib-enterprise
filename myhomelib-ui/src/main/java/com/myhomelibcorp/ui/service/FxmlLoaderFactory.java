@@ -7,7 +7,6 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
 import com.myhomelibcorp.ui.book.BookWorkspaceController;
 import com.myhomelibcorp.ui.group.GroupWorkspaceController;
-import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.reader.NewReaderWorkspaceController;
 import com.myhomelibcorp.ui.search.SearchWorkspaceController;
 import javafx.fxml.FXMLLoader;

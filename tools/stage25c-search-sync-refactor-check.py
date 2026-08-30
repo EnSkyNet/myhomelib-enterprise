@@ -33,8 +33,10 @@ for marker in ('created_day','lib_id','detectFormat','deleted'):
 need('FolderSyncBookSupport syncSupport' in sync, 'FolderSyncService helper extraction missing')
 for old in ('private Book normalizeStorage(', 'private Book mergePreservingUserState(', 'private Path physicalPath('):
     need(old not in sync, f'FolderSyncService still owns extracted policy: {old}')
-for marker in ('normalizeStorage(', 'mergePreservingUserState(', 'physicalPath(', 'archiveChanged(', 'isArchive('):
+for marker in ('normalizeStorage(', 'physicalPath(', 'archiveChanged(', 'isArchive('):
     need(marker in support, f'FolderSyncBookSupport missing {marker}')
+need('ImportBookMergePolicy.mergePreservingUserState(' in sync, 'FolderSyncService must use centralized user-state merge policy')
+need('mergePreservingUserState(' not in support, 'FolderSyncBookSupport must not duplicate centralized merge policy')
 need('counters.errors++;\n            counters.errors++;' not in sync, 'scanner failure is still double-counted')
 need('scannerFailureIsCountedOnce' in text('myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/sync/FolderSyncServiceTest.java'),
      'scanner error-count regression test missing')
@@ -70,6 +72,6 @@ except Exception as e:
     print('STAGE 25C SEARCH/SYNC REFACTOR CHECK: FAIL'); print(e); sys.exit(1)
 print('STAGE 25C SEARCH/SYNC REFACTOR CHECK: PASS')
 print(f' - LuceneSearchService: {len(lucene.splitlines())} lines; mapping/filter/query normalization extracted')
-print(f' - FolderSyncService: {len(sync.splitlines())} lines; storage/path/user-state merge policy extracted')
+print(f' - FolderSyncService: {len(sync.splitlines())} lines; storage/path extracted and merge policy centralized')
 print(' - classic query normalizer standalone javac/runtime smoke: PASS')
 print(' - scanner IOException counted once: regression fixture PRESENT')

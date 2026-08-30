@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
@@ -9,8 +10,8 @@ import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
-import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.service.LanguageResolver;
 import javafx.geometry.Insets;
 import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
@@ -27,13 +28,14 @@ public class ClassicLibraryActionsService {
     private final BookCommandRepository commands;
     private final SearchIndexer indexer;
     private final BookMapper mapper;
+    private final BookSaver bookSaver;
     private final ApplicationSettingsPort settings;
     private final DialogService dialogs;
 
     public ClassicLibraryActionsService(BookQueryRepository query, BookCommandRepository commands,
-                                        SearchIndexer indexer, BookMapper mapper,
+                                        SearchIndexer indexer, BookMapper mapper, BookSaver bookSaver,
                                         ApplicationSettingsPort settings, DialogService dialogs) {
-        this.query=query; this.commands=commands; this.indexer=indexer; this.mapper=mapper;
+        this.query=query; this.commands=commands; this.indexer=indexer; this.mapper=mapper; this.bookSaver=bookSaver;
         this.settings=settings; this.dialogs=dialogs;
     }
 
@@ -58,7 +60,7 @@ public class ClassicLibraryActionsService {
         try {
             BookMetadata old=book.getMetadata();
             BookMetadata md=BookMetadata.builder().annotation(annotation.getText()).keywords(keywords.getText())
-                    .language(LanguageCode.of(blankDefault(lang.getText(),"uk"))).isbn(old.getIsbn()).review(review.getText())
+                    .language(LanguageResolver.resolve(lang.getText())).isbn(old.getIsbn()).review(review.getText())
                     .year(intOrNull(year.getText())).publisher(publisher.getText()).rate(old.getRate()).progress(old.getProgress()).build();
             List<Author> authorList=parseAuthors(authors.getText(),book.getAuthors());
             Book updated=Book.builder().id(book.getId()).title(title.getText().trim()).authors(authorList).genres(book.getGenres())
@@ -68,10 +70,11 @@ public class ClassicLibraryActionsService {
         } catch(Exception e){ dialogs.showError("Помилка редагування",e.getMessage()); return false; }
     }
 
-    public boolean deleteBook(Window owner, BookId id) {
+    public boolean deleteBook(BookId id) {
         Book book=query.findById(id).orElse(null); if(book==null)return false;
         if(settings.getBoolean("ui.confirmDelete",true) && !dialogs.showConfirmation("Видалити книгу?", book.getTitle(), "Запис буде видалено з каталогу. Файл на диску не видаляється.")) return false;
-        commands.deleteById(id); indexer.deleteBook(id); indexer.commit(); return true;
+        bookSaver.deleteBook(id);
+        return true;
     }
 
     private List<Author> parseAuthors(String value,List<Author> fallback){

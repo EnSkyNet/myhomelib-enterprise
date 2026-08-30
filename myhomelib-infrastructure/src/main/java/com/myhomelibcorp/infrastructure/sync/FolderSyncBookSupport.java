@@ -2,7 +2,6 @@ package com.myhomelibcorp.infrastructure.sync;
 
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
-import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
@@ -58,45 +57,6 @@ final class FolderSyncBookSupport {
                 .updateDate(fileTimestamp(physicalFile))
                 .createdAt(parsed.getCreatedAt())
                 .deleted(parsed.isDeleted())
-                .local(true)
-                .build();
-    }
-
-    Book mergePreservingUserState(Book existing, Book parsed, Path physicalFile) {
-        BookMetadata pm = parsed.getMetadata();
-        BookMetadata em = existing.getMetadata();
-        BookMetadata mergedMetadata = BookMetadata.builder()
-                .annotation(preferParsed(pm != null ? pm.getAnnotation() : null, em != null ? em.getAnnotation() : null))
-                .keywords(preferParsed(pm != null ? pm.getKeywords() : null, em != null ? em.getKeywords() : null))
-                .language(pm != null && pm.getLanguage() != null ? pm.getLanguage() : existing.getLanguage())
-                .isbn(pm != null && pm.getIsbn() != null ? pm.getIsbn() : existing.getIsbn())
-                .review(existing.getReview())
-                .year(pm != null && pm.getYear() != null ? pm.getYear() : existing.getYear())
-                .publisher(preferParsed(pm != null ? pm.getPublisher() : null, existing.getPublisher()))
-                .libId(existing.getLibId() != null && !existing.getLibId().isBlank()
-                        ? existing.getLibId() : (pm != null ? pm.getLibId() : ""))
-                .libraryRate(pm != null && pm.getLibraryRate() != 0 ? pm.getLibraryRate() : existing.getLibraryRate())
-                .translators(preferParsed(pm != null ? pm.getTranslators() : null, existing.getTranslators()))
-                .city(preferParsed(pm != null ? pm.getCity() : null, existing.getCity()))
-                .sourceUrl(preferParsed(pm != null ? pm.getSourceUrl() : null, existing.getSourceUrl()))
-                .rate(existing.getRate())
-                .progress(existing.getProgress())
-                .build();
-
-        return Book.builder()
-                .id(existing.getId())
-                .title(parsed.getTitle() == null || parsed.getTitle().isBlank() ? existing.getTitle() : parsed.getTitle())
-                .authors(parsed.getAuthors() == null || parsed.getAuthors().isEmpty()
-                        ? new ArrayList<>(existing.getAuthors()) : new ArrayList<>(parsed.getAuthors()))
-                .genres(parsed.getGenres() == null ? new ArrayList<>(existing.getGenres()) : new ArrayList<>(parsed.getGenres()))
-                .series(parsed.getSeries())
-                .sequenceNumber(parsed.getSequenceNumber())
-                .metadata(mergedMetadata)
-                .file(parsed.getFile())
-                .cover(parsed.getCover() != null ? parsed.getCover() : existing.getCover())
-                .updateDate(fileTimestamp(physicalFile))
-                .createdAt(existing.getCreatedAt())
-                .deleted(existing.isDeleted())
                 .local(true)
                 .build();
     }

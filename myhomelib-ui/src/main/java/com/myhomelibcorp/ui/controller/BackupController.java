@@ -1,7 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.service.BackupRestoreService;
-import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
@@ -28,34 +28,23 @@ public class BackupController {
     private final DialogService dialogService;
 
     @FXML private TextField backupPathField;
-    @FXML private CheckBox includeIndexCheckBox;
-    @FXML private CheckBox includeCoversCheckBox;
     @FXML private CheckBox includeMetadataCheckBox;
     @FXML private ProgressBar progressBar;
     @FXML private Label statusLabel;
-    @FXML private Label progressLabel;
     @FXML private TextArea logArea;
     @FXML private Button backupButton;
     @FXML private Button selectPathButton;
-    @FXML private Button cancelButton;
 
-    private volatile boolean cancelled = false;
     private Stage stage;
 
     @FXML
     public void initialize() {
-        includeIndexCheckBox.setSelected(true);
-        includeCoversCheckBox.setSelected(true);
         includeMetadataCheckBox.setSelected(true);
 
-        String defaultBackupPath = System.getProperty("user.home") +
-                "/MyHomeLib_Backup_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
-        backupPathField.setText(defaultBackupPath);
+        String backupName = "MyHomeLib_Backup_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        backupPathField.setText(AppPaths.backupsDir().resolve(backupName).toString());
 
-        progressBar.setProgress(0);
         progressBar.setVisible(false);
-        progressLabel.setVisible(false);
-        cancelButton.setVisible(false);
         logArea.setVisible(false);
         statusLabel.setText("Готово до резервного копіювання");
     }
@@ -68,7 +57,7 @@ public class BackupController {
     public void onSelectPath() {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Виберіть папку для резервної копії");
-        chooser.setInitialDirectory(new File(System.getProperty("user.home")));
+        chooser.setInitialDirectory(AppPaths.backupsDir().toFile());
         File dir = chooser.showDialog(stage);
         if (dir != null) {
             backupPathField.setText(dir.getAbsolutePath());
@@ -104,16 +93,6 @@ public class BackupController {
     }
 
     @FXML
-    public void onCancel() {
-        cancelled = true;
-        UiExecutor.runOnUiThread(() -> {
-            statusLabel.setText("Скасування...");
-            cancelButton.setDisable(true);
-        });
-        log.info("Резервне копіювання скасовано користувачем");
-    }
-
-    @FXML
     public void onClose() {
         if (stage != null) {
             stage.close();
@@ -121,25 +100,18 @@ public class BackupController {
     }
 
     private void startBackup(Path backupDir) {
-        cancelled = false;
         UiExecutor.runOnUiThread(() -> {
             backupButton.setDisable(true);
             selectPathButton.setDisable(true);
-            cancelButton.setVisible(true);
-            cancelButton.setDisable(false);
             logArea.setVisible(true);
             logArea.clear();
             progressBar.setVisible(true);
-            progressLabel.setVisible(true);
-            progressBar.setProgress(0);
-            progressLabel.setText("0%");
+            progressBar.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
             statusLabel.setText("Створення резервної копії...");
         });
 
         BackupRestoreService.BackupOptions options = new BackupRestoreService.BackupOptions(
                 backupDir,
-                includeIndexCheckBox.isSelected(),
-                includeCoversCheckBox.isSelected(),
                 includeMetadataCheckBox.isSelected()
         );
         new Thread(() -> {
@@ -153,7 +125,6 @@ public class BackupController {
                     if (result.isSuccess()) {
                         statusLabel.setText("Резервне копіювання завершено успішно!");
                         progressBar.setProgress(1.0);
-                        progressLabel.setText("100%");
                         addLog("\n✅ Резервне копіювання завершено успішно!");
                         addLog("📁 Папка: " + backupDir);
                         addLog("📄 Скопійовано елементів: " + result.itemsCopied());
@@ -192,10 +163,6 @@ public class BackupController {
         UiExecutor.runOnUiThread(() -> {
             backupButton.setDisable(false);
             selectPathButton.setDisable(false);
-            cancelButton.setVisible(false);
-            if (!cancelled) {
-                statusLabel.setText("Готово");
-            }
         });
     }
 }

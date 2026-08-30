@@ -8,7 +8,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.DoubleConsumer;
 
 public interface OnlineBookDownloadPort {
-    DownloadedBook download(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress) throws Exception;
+    /** Force refresh must still validate into a temporary file before replacing an existing local copy. */
+    DownloadedBook download(BookDto book, Collection collection, AtomicBoolean cancelFlag,
+                            DoubleConsumer progress, boolean forceRefresh) throws Exception;
 
     record DownloadedBook(Path root, String folder, String fileName, String archiveEntry, Path physicalPath) { }
 }

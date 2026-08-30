@@ -17,7 +17,10 @@ public class CaffeineSearchCache implements SearchCache {
 
     public CaffeineSearchCache() {
         this.cache = Caffeine.newBuilder()
-                .maximumSize(1000)
+                // Bound by cached result cardinality, not query count: otherwise
+                // 1000 queries x 1000 BookIds can retain ~1M IDs in heap.
+                .maximumWeight(50_000)
+                .weigher((String key, List<BookId> ids) -> Math.max(1, Math.min(10_000, ids.size())))
                 .expireAfterWrite(10, TimeUnit.MINUTES)
                 .recordStats()
                 .build();

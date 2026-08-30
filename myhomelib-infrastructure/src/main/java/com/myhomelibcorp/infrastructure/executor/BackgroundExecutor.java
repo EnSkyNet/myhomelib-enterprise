@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.executor;
 
+import com.myhomelibcorp.shared.util.ExecutorShutdown;
 import jakarta.annotation.PreDestroy;
 import org.springframework.stereotype.Component;
 
@@ -32,14 +33,6 @@ public class BackgroundExecutor implements java.util.concurrent.Executor {
 
     @PreDestroy
     public void shutdown() {
-        executor.shutdown();
-        try {
-            if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                executor.shutdownNow();
-            }
-        } catch (InterruptedException e) {
-            executor.shutdownNow();
-            Thread.currentThread().interrupt();
-        }
+        ExecutorShutdown.gracefully(executor, 5, TimeUnit.SECONDS);
     }
 }

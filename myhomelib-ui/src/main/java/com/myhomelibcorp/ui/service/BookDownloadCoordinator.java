@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @Service
@@ -51,6 +52,36 @@ public class BookDownloadCoordinator {
         return download(book, false);
     }
 
+    /**
+     * Opening a remote-only book is an explicit user decision. A missing physical
+     * file must never start a download silently just because the Reader was opened.
+     */
+    public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
+        if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        var existing = bookResourcePort.locateBookFile(
+                book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+        if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
+
+        if (!Platform.isFxApplicationThread()) {
+            CompletableFuture<Path> result = new CompletableFuture<>();
+            Platform.runLater(() -> ensureLocalForOpen(book).whenComplete((path, error) -> {
+                if (error == null) result.complete(path);
+                else result.completeExceptionally(error);
+            }));
+            return result;
+        }
+
+        boolean approved = dialogService.showConfirmation(
+                "Книга відсутня",
+                book.getTitle() == null || book.getTitle().isBlank() ? "Файл книги відсутній" : book.getTitle(),
+                "Книга фізично відсутня на комп’ютері. Завантажити та зберегти її перед відкриттям?");
+        if (!approved) {
+            return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(
+                    "Відкриття скасовано користувачем"));
+        }
+        return download(book, false);
+    }
+
     /** Force a fresh online copy even when an older local file exists. */
     public CompletableFuture<Path> downloadUpdate(BookDto book) {
         return download(book, true);
@@ -80,11 +111,17 @@ public class BookDownloadCoordinator {
         return executor.submit(() -> {
                     boolean acquired = false;
                     try {
-                        downloadSlots.acquire();
-                        acquired = true;
-                        if (cancel.get()) throw new java.util.concurrent.CancellationException("Завантаження скасовано");
+                        while (!cancel.get() && !Thread.currentThread().isInterrupted()) {
+                            if (downloadSlots.tryAcquire(100, TimeUnit.MILLISECONDS)) {
+                                acquired = true;
+                                break;
+                            }
+                        }
+                        if (!acquired || cancel.get() || Thread.currentThread().isInterrupted()) {
+                            throw new java.util.concurrent.CancellationException("Завантаження скасовано");
+                        }
                         return downloadBookUseCase.execute(book, collection, cancel, value ->
-                                Platform.runLater(() -> applicationState.getStatusBar().setProgress(value)));
+                                Platform.runLater(() -> applicationState.getStatusBar().setProgress(value)), force);
                     } finally {
                         if (acquired) downloadSlots.release();
                     }

@@ -1,0 +1,3 @@
+Base: online-fix-5
+Change: expose ConnectionScript in collection creation wizard for online collection types; field remains available in Collection -> Properties.
+Verified: build-check-v7, implementation-completeness, Stage6, Stage7 UI, Reader, online download/concurrency, standalone Java smoke.

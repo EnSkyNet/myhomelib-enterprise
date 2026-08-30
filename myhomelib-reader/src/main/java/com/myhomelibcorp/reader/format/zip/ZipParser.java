@@ -8,6 +8,8 @@ import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
@@ -27,16 +29,6 @@ public class ZipParser implements BookParser {
     };
 
 
-    @Override
-    public BookDocumentMetadata readMetadata(BookSource source) throws IOException {
-        ReaderDocument document = parse(source, ParseOptions.minimal());
-        return new BookDocumentMetadataSnapshot(
-                document.metadata(),
-                document.totalTextLength(),
-                document.resources() != null && document.resources().count() > 0,
-                document.chapters().size()
-        );
-    }
 
     @Override
     public ReaderDocument parse(BookSource source, ParseOptions options) throws IOException {
@@ -44,12 +36,15 @@ public class ZipParser implements BookParser {
 
         Exception lastException = null;
         for (Charset charset : CHARSETS) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
             try {
                 ReaderDocument result = parseWithCharset(source, charset, options);
                 if (result != null && !result.isEmpty()) {
                     log.info("✅ ZIP розпарсено з кодуванням: {}", charset);
                     return result;
                 }
+            } catch (InterruptedIOException e) {
+                throw e;
             } catch (Exception e) {
                 log.debug("Не вдалося з кодуванням {}: {}", charset, e.getMessage());
                 lastException = e;
@@ -65,8 +60,8 @@ public class ZipParser implements BookParser {
         java.nio.file.Path tempFile = null;
         try {
             tempFile = java.nio.file.Files.createTempFile("zip_parser_", ".zip");
-            try (InputStream is = source.openStream()) {
-                java.nio.file.Files.copy(is, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            try (InputStream is = source.openStream(); OutputStream out = java.nio.file.Files.newOutputStream(tempFile)) {
+                copyInterruptibly(is, out, ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
             }
 
             try (ZipFile zipFile = new ZipFile(tempFile.toFile(), charset)) {
@@ -74,6 +69,7 @@ public class ZipParser implements BookParser {
                 int entryCount = 0;
 
                 while (entries.hasMoreElements()) {
+                    if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
                     ZipEntry entry = entries.nextElement();
                     if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT)
                         throw new IOException("ZIP contains too many entries");
@@ -101,6 +97,7 @@ public class ZipParser implements BookParser {
                                 long total = 0;
                                 int read;
                                 while ((read = entryStream.read(buffer)) >= 0) {
+                                    if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
                                     if (read == 0) continue;
                                     total += read;
                                     if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
@@ -124,6 +121,8 @@ public class ZipParser implements BookParser {
 
                             try {
                                 return parser.parse(innerSource, options);
+                            } catch (InterruptedIOException e) {
+                                throw e;
                             } catch (Exception e) {
                                 log.error("Помилка парсингу {} з ZIP: {}", entry.getName(), e.getMessage());
                                 throw new IOException("Не вдалося розпарсити " + entry.getName(), e);
@@ -156,6 +155,20 @@ public class ZipParser implements BookParser {
         }
     }
 
+
+
+    private static void copyInterruptibly(InputStream in, OutputStream out, long maxBytes) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = in.read(buffer)) >= 0) {
+            if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
+            if (read == 0) continue;
+            total += read;
+            if (maxBytes > 0 && total > maxBytes) throw new IOException("ZIP source exceeds Reader safety limit");
+            out.write(buffer, 0, read);
+        }
+    }
 
     private boolean isReaderBook(String name) {
         return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".epub")
