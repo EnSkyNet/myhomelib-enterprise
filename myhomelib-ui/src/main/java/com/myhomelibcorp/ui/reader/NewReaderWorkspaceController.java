@@ -24,6 +24,7 @@ import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -32,8 +33,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
-import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.TextInputDialog;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
@@ -76,6 +77,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final ReaderSettingsStateService readerSettingsStateService;
     private final ApplicationContext springContext;
     private final UiBackgroundExecutor uiBackgroundExecutor;
+    private final ApplicationState appState;
 
     @FXML
     private StackPane readerContainer;
@@ -164,14 +166,40 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
+    /**
+     * Показує прогрес завантаження книги.
+     */
+    private void showDownloadProgress(double progress, String status) {
+        Platform.runLater(() -> {
+            if (loadingIndicator != null) {
+                loadingIndicator.setVisible(true);
+                loadingIndicator.setManaged(true);
+                if (progress > 0 && progress < 1) {
+                    loadingIndicator.setProgress(progress);
+                } else {
+                    loadingIndicator.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
+                }
+            }
+            if (status != null && !status.isEmpty()) {
+                appState.getStatusBar().setStatusText(status);
+            }
+        });
+    }
+
     private PreparedOpen prepareOpen(BookId bookId, ReaderEngine engine) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Reader open cancelled");
+
+        showDownloadProgress(-1, "📖 Завантаження метаданих книги...");
+
         BookDto dto = loadBookByIdUseCase.execute(bookId)
                 .orElseThrow(() -> new IOException("Книгу не знайдено: " + bookId));
         Book book = bookMapper.toDomain(dto);
+
+        showDownloadProgress(0.1, "📁 Пошук файлу книги...");
         Path filePath = bookResourcePort.locateBookFile(book)
                 .orElseThrow(() -> new IOException("Файл книги не знайдено: " + book.getFileName()));
 
+        showDownloadProgress(0.3, "📦 Підготовка файлу для читання...");
         MaterializedReaderSource materialized = materializeReaderEntryIfNeeded(book, filePath);
         PreparedBook preparedBook = null;
         try {
@@ -179,7 +207,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             ReaderSettings settings = ReaderSettingsMapper.fromDomain(state.preferences());
             Optional<ReaderPosition> savedPosition = persistenceService.loadPosition(book.getId().asString());
             BookSource source = new FileBookSource(materialized.readerPath(), book.getId().asString());
+
+            showDownloadProgress(0.6, "📄 Аналіз структури книги...");
             preparedBook = engine.prepare(source);
+
+            showDownloadProgress(1.0, "✅ Готово до читання!");
             return new PreparedOpen(dto, book, preparedBook, materialized.temporaryPath(),
                     settings, state.bookOverride(), savedPosition);
         } catch (Throwable e) {
@@ -201,6 +233,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             currentBookOverride = prepared.bookOverride();
             positionChanged = false;
 
+            if (loadingIndicator != null) {
+                loadingIndicator.setVisible(false);
+                loadingIndicator.setManaged(false);
+            }
+
             readerView.applySettings(prepared.settings());
             readerView.openPrepared(prepared.preparedBook(), prepared.savedPosition().orElse(null));
             long totalTextLength = readerView.getEngine().getCurrentDocument() == null
@@ -209,7 +246,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             readingSessionService.start(currentBookId.asString(), currentProgressPercent());
             setLoading(false);
 
-            // Persistence/history are not part of first-paint latency.
             BookId openedId = currentBookId;
             uiBackgroundExecutor.execute(() -> {
                 if (isDisposed || generation != openGeneration.get()) return;
@@ -265,11 +301,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         if (readerView != null) readerView.setDisable(loading);
     }
 
-    /**
-     * The catalog path of an archived book points to the physical container.
-     * Materialization is bounded and interruptible so closing the workspace does
-     * not wait for a large archived payload to finish copying.
-     */
     private MaterializedReaderSource materializeReaderEntryIfNeeded(Book book, Path physicalPath) throws IOException {
         String archiveEntry = book.getArchiveEntry();
         boolean physicalArchive = bookResourcePort.isArchive(physicalPath.toString());
@@ -367,9 +398,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    /**
-     * Зберігає поточну позицію в БД.
-     */
     private void savePosition() {
         if (readerView == null || !readerView.isBookOpen() || currentBookId == null) {
             return;
@@ -395,7 +423,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
-        // Зберігаємо позицію перед закриттям
         if (positionChanged) {
             savePosition();
             positionChanged = false;
@@ -629,7 +656,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         log.info("🧹 NewReaderWorkspaceController: початок очищення");
 
-        // Зберігаємо позицію
         if (positionChanged) {
             savePosition();
             positionChanged = false;
@@ -656,7 +682,6 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             Platform.runLater(() -> readerContainer.getChildren().clear());
         }
 
-        // Очищуємо кеш позицій в persistence
         persistenceService.clearCache();
 
         currentBook = null;

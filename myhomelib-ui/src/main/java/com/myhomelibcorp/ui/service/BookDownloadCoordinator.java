@@ -53,10 +53,6 @@ public class BookDownloadCoordinator {
         return download(book, false);
     }
 
-    /**
-     * Opening a remote-only book is an explicit user decision. A missing physical
-     * file must never start a download silently just because the Reader was opened.
-     */
     public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         normalizeLegacyRemoteStorage(book);
@@ -76,7 +72,7 @@ public class BookDownloadCoordinator {
         boolean approved = dialogService.showConfirmation(
                 "Книга відсутня",
                 book.getTitle() == null || book.getTitle().isBlank() ? "Файл книги відсутній" : book.getTitle(),
-                "Книга фізично відсутня на комп’ютері. Завантажити та зберегти її перед відкриттям?");
+                "Книга фізично відсутня на комп'ютері. Завантажити та зберегти її перед відкриттям?");
         if (!approved) {
             return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(
                     "Відкриття скасовано користувачем"));
@@ -84,7 +80,6 @@ public class BookDownloadCoordinator {
         return download(book, false);
     }
 
-    /** Force a fresh online copy even when an older local file exists. */
     public CompletableFuture<Path> downloadUpdate(BookDto book) {
         return download(book, true);
     }
@@ -92,6 +87,7 @@ public class BookDownloadCoordinator {
     private CompletableFuture<Path> download(BookDto book, boolean force) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         normalizeLegacyRemoteStorage(book);
+
         if (!force) {
             var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
             if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
@@ -105,15 +101,21 @@ public class BookDownloadCoordinator {
                 && (collection.getConnectionScript() == null || collection.getConnectionScript().isBlank())) {
             return failedVisible("Файл відсутній локально, а URL/ConnectionScript online-колекції не налаштовано");
         }
+
         AtomicBoolean cancel = new AtomicBoolean(false);
         AtomicBoolean previous = active.putIfAbsent(book.getId(), cancel);
-        if (previous != null) return CompletableFuture.failedFuture(new IllegalStateException("Завантаження цієї книги вже виконується"));
+        if (previous != null) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Завантаження цієї книги вже виконується"));
+        }
 
+        // Показуємо початок завантаження
         Platform.runLater(() -> {
-            applicationState.getStatusBar().setStatusText("Завантаження: " + book.getTitle());
+            applicationState.getStatusBar().setStatusText("📥 Завантаження: " + book.getTitle());
             applicationState.getStatusBar().setProgressVisible(true);
             applicationState.getStatusBar().setProgress(0);
         });
+
+        long startTime = System.currentTimeMillis();
 
         return executor.submit(() -> {
                     boolean acquired = false;
@@ -127,18 +129,30 @@ public class BookDownloadCoordinator {
                         if (!acquired || cancel.get() || Thread.currentThread().isInterrupted()) {
                             throw new java.util.concurrent.CancellationException("Завантаження скасовано");
                         }
+
+                        // Оновлюємо статус
+                        Platform.runLater(() -> {
+                            applicationState.getStatusBar().setStatusText("⏳ Завантаження: " + book.getTitle() + " (очікування слота)");
+                        });
+
                         return downloadBookUseCase.execute(book, collection, cancel, value ->
-                                Platform.runLater(() -> applicationState.getStatusBar().setProgress(value)), force);
+                                Platform.runLater(() -> {
+                                    applicationState.getStatusBar().setProgress(value);
+                                    // Показуємо відсоток
+                                    int percent = (int) Math.round(value * 100);
+                                    applicationState.getStatusBar().setStatusText("📥 Завантаження: " + book.getTitle() + " (" + percent + "%)");
+                                }), force);
                     } finally {
                         if (acquired) downloadSlots.release();
                     }
                 })
                 .whenComplete((path, error) -> {
                     active.remove(book.getId(), cancel);
+                    long duration = System.currentTimeMillis() - startTime;
                     Platform.runLater(() -> {
                         applicationState.getStatusBar().setProgressVisible(false);
                         if (error == null) {
-                            applicationState.getStatusBar().setStatusText("Завантажено: " + book.getTitle());
+                            applicationState.getStatusBar().setStatusText("✅ Завантажено: " + book.getTitle() + " (" + duration / 1000 + "с)");
                             // DB was updated by the use case; align DTO with the collection root for immediate Reader use.
                             Path root = collection.getRootFolder() != null ? collection.getRootFolder().toAbsolutePath().normalize()
                                     : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId()).toAbsolutePath().normalize();
@@ -147,20 +161,16 @@ public class BookDownloadCoordinator {
                             eventPublisher.publishEvent(new NavigationRefreshEvent());
                         } else {
                             Throwable cause = unwrap(error);
-                            applicationState.getStatusBar().setStatusText("Помилка завантаження");
+                            applicationState.getStatusBar().setStatusText("❌ Помилка завантаження: " + book.getTitle());
                             String message = cause.getMessage() == null ? cause.toString() : cause.getMessage();
-                            if (!message.toLowerCase().contains("скасовано")) dialogService.showError("Завантаження", message);
+                            if (!message.toLowerCase().contains("скасовано")) {
+                                dialogService.showError("Завантаження", message);
+                            }
                         }
                     });
                 });
     }
 
-    /**
-     * Repairs only the selected remote DTO. Earlier v7.1 builds persisted both the temporary
-     * catalog cache as collection_root and the catalog member name (online.zip/extra.zip) as
-     * the physical archive. Upstream MyHomeLib instead generates one FB2 ZIP path per book.
-     * Successful download persists the corrected storage through DownloadBookUseCase.updateStorage().
-     */
     private void normalizeLegacyRemoteStorage(BookDto book) {
         if (book == null) return;
         Collection collection = applicationState.getCurrentLibraryCollection();
@@ -170,7 +180,7 @@ public class BookDownloadCoordinator {
             Path root = collection.getRootFolder() != null
                     ? collection.getRootFolder().toAbsolutePath().normalize()
                     : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId())
-                        .toAbsolutePath().normalize();
+                      .toAbsolutePath().normalize();
             book.setCollectionRoot(root.toString());
             log.debug("Нормалізовано transient collection_root для remote-книги {} -> {}", book.getId(), root);
         }
@@ -223,7 +233,6 @@ public class BookDownloadCoordinator {
         return CompletableFuture.failedFuture(new IllegalStateException(message));
     }
 
-
     public CompletableFuture<Integer> removeLocalCopy(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         if (isDownloading(book)) return CompletableFuture.failedFuture(new IllegalStateException("Спочатку скасуйте активне завантаження"));
@@ -231,7 +240,7 @@ public class BookDownloadCoordinator {
                 .whenComplete((count, error) -> Platform.runLater(() -> {
                     if (error == null) {
                         book.setLocal(false);
-                        applicationState.getStatusBar().setStatusText("Локальну копію видалено: " + book.getTitle());
+                        applicationState.getStatusBar().setStatusText("🗑 Локальну копію видалено: " + book.getTitle());
                     } else {
                         Throwable cause = unwrap(error);
                         dialogService.showError("Локальна копія", cause.getMessage() == null ? cause.toString() : cause.getMessage());
@@ -244,7 +253,7 @@ public class BookDownloadCoordinator {
         AtomicBoolean flag = active.get(book.getId());
         if (flag == null) return false;
         flag.set(true);
-        applicationState.getStatusBar().setStatusText("Скасування завантаження…");
+        applicationState.getStatusBar().setStatusText("⏹ Скасування завантаження…");
         return true;
     }
 
