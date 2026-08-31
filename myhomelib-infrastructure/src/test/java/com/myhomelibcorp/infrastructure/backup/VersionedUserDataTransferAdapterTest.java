@@ -55,6 +55,17 @@ class VersionedUserDataTransferAdapterTest {
         assertThat(exportResult.schemaVersion()).isEqualTo(2);
         assertThat(Files.readString(exported)).contains("\"libId\" : \"L100\"").contains("\"schemaVersion\" : 2");
 
+        var manifest = mapper.readTree(exported.toFile());
+        assertThat(manifest.path("bookState").size()).isEqualTo(1);
+        assertThat(manifest.path("readingProgress").size()).isEqualTo(1);
+        assertThat(manifest.path("readingHistory").size()).isEqualTo(1);
+        assertThat(manifest.path("readingStats").size()).isEqualTo(1);
+        assertThat(manifest.path("bookmarks").size()).isEqualTo(1);
+        assertThat(manifest.path("groups").size()).isEqualTo(1);
+        assertThat(manifest.path("groupMemberships").size()).isEqualTo(1);
+        assertThat(manifest.path("savedSearches").size()).isEqualTo(1);
+        assertThat(manifest.path("readerSettings").path("perBook").size()).isEqualTo(1);
+
         // Simulate a freshly imported catalogue: the internal UUID/id changed, LibID did not.
         Db target = db(tempDir.resolve("target.db"));
         createSchema(target.jdbc());

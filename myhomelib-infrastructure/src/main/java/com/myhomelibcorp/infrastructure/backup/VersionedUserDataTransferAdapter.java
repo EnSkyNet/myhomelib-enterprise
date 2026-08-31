@@ -13,6 +13,7 @@ import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.core.ResultSetExtractor;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
@@ -21,7 +22,6 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.sql.ResultSet;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.atomic.AtomicLong;
@@ -676,7 +676,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     FROM reader_book_preferences rbp
                     JOIN books b ON b.id=rbp.book_id
                     ORDER BY b.id
-                    """, rs -> {
+                    """, (ResultSetExtractor<Void>) rs -> {
                 try {
                     while (rs.next()) {
                         String sourceBookId = rs.getString(2);
@@ -695,6 +695,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
+                return null;
             });
         } catch (UncheckedIOException e) {
             throw e.getCause();
@@ -706,7 +707,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     private void writeRows(JsonGenerator g, String field, String sql, AtomicLong counter) throws IOException {
         g.writeArrayFieldStart(field);
         try {
-            jdbc().query(sql, (ResultSet rs) -> {
+            jdbc().query(sql, (ResultSetExtractor<Void>) rs -> {
                 try {
                     while (rs.next()) {
                         g.writeStartObject();
@@ -730,6 +731,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
+                return null;
             });
         } catch (UncheckedIOException e) {
             throw e.getCause();
