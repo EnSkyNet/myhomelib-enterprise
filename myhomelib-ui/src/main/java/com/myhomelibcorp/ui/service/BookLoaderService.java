@@ -77,11 +77,10 @@ public class BookLoaderService {
             vm.setTotalPages(result.totalPages());
             vm.setCurrentPage(result.currentPage());
 
-            if (!vms.isEmpty()) {
-                vm.setSelectedBook(vms.get(0));
-            } else {
-                vm.setSelectedBook(null);
-            }
+            // Loading a page must not implicitly arm single-book commands for the first row.
+            // Row selection (current book) and checkbox selection (batch books) are intentionally separate.
+            vm.setSelectedBook(null);
+            appState.getBookDetails().setCurrentBook(null);
             appState.getStatusBar().setStatusText(
                     String.format("Показано %d з %d книг", vms.size(), result.totalElements())
             );

@@ -1,6 +1,5 @@
 package com.myhomelibcorp.infrastructure.backup;
 
-import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.JsonGenerator;
 import com.fasterxml.jackson.core.JsonParser;
 import com.fasterxml.jackson.core.JsonToken;
@@ -41,7 +40,6 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     private final CollectionManager collectionManager;
     private final ApplicationSettingsPort settings;
     private final ObjectMapper mapper;
-    private final JsonFactory jsonFactory = new JsonFactory();
     private final ReentrantReadWriteLock fileLock = new ReentrantReadWriteLock();
 
     private final Path readerPreferencesFile = AppPaths.configDir().resolve("reader-preferences.json");
@@ -66,7 +64,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         AtomicLong savedSearches = new AtomicLong();
         AtomicLong readerOverrides = new AtomicLong();
 
-        try (JsonGenerator g = jsonFactory.createGenerator(tmp.toFile(), com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
+        try (JsonGenerator g = mapper.getFactory().createGenerator(tmp.toFile(), com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
             g.useDefaultPrettyPrinter();
             g.writeStartObject();
             g.writeNumberField("schemaVersion", CURRENT_SCHEMA_VERSION);
@@ -82,10 +80,9 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             exportGroupMemberships(g, groupMemberships);
             exportSavedSearches(g, savedSearches);
 
-            // ✅ ВИПРАВЛЕНО: серіалізація через ObjectMapper
             g.writeFieldName("filterSettings");
             Map<String, String> filterSettings = settings.findByPrefix(FILTER_PREFIX);
-            g.writeRawValue(mapper.writeValueAsString(filterSettings));
+            mapper.writeValue(g, filterSettings == null ? Map.of() : filterSettings);
 
             g.writeObjectFieldStart("readerSettings");
             exportReaderSettings(g, readerOverrides);

@@ -310,10 +310,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         String selectedEntry = archiveEntry;
         if ((selectedEntry == null || selectedEntry.isBlank()) && physicalArchive) {
-            selectedEntry = bookResourcePort.listArchiveEntries(physicalPath).stream()
-                    .filter(this::isReaderEntry)
-                    .findFirst()
-                    .orElse(null);
+            // Keep the complete archive. ZipParser will preserve every supported book
+            // and build a hierarchical book -> chapter TOC instead of silently opening
+            // only the first member.
+            return new MaterializedReaderSource(physicalPath, null);
         }
         if (selectedEntry == null || selectedEntry.isBlank() || !isReaderEntry(selectedEntry)) {
             return new MaterializedReaderSource(physicalPath, null);
@@ -405,11 +405,15 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             ReaderPosition pos = readerView.getCurrentPosition();
             if (pos != null) {
+                boolean saved;
                 if (positionAutosaver != null) {
                     positionAutosaver.mark(pos);
-                    positionAutosaver.flush();
+                    saved = positionAutosaver.flush();
                 } else {
-                    persistenceService.savePosition(currentBookId.asString(), pos, currentDocumentLength());
+                    saved = persistenceService.savePosition(currentBookId.asString(), pos, currentDocumentLength());
+                }
+                if (!saved) {
+                    appState.getStatusBar().setStatusText("⚠ Позицію читання не вдалося зберегти; буде повторна спроба");
                 }
             }
         } catch (Exception e) {

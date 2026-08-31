@@ -43,7 +43,11 @@ for marker in ['workflow_dispatch','schedule:','-Pperformance','stage24-performa
 runner=text('tools/stage24-performance-baseline.py')
 for marker in ['100_000, 500_000, 1_000_000','EXPLAIN QUERY PLAN','import_probe','navigation_authors_A','catalog_filtered_page','resource.getrusage']:
     need(marker in runner,f'offline runner missing {marker}')
-need((ROOT/'docs/PERFORMANCE_BASELINE.md').exists(),'performance baseline documentation missing')
+dev_doc=ROOT/'MYHOMELIB-DEVELOPMENT.md'
+need(dev_doc.exists(),'canonical development/performance documentation missing')
+if dev_doc.exists():
+    dev=dev_doc.read_text(encoding='utf-8')
+    need('100k/500k/1M' in dev and 'Performance baseline' in dev,'canonical performance baseline summary missing')
 
 for p in [ROOT/'pom.xml',ROOT/'myhomelib-benchmark/pom.xml']:
     try: ET.parse(p)

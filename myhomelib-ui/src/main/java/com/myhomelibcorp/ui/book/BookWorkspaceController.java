@@ -5,11 +5,12 @@ import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
 import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
-import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.presenter.CoverPresenter;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.ClassicLibraryActionsService;
+import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
@@ -32,9 +33,10 @@ public class BookWorkspaceController {
     private final CoverPresenter coverPresenter;
     private final NavigationService navigationService;
     private final BookViewModelMapper bookViewModelMapper;
-    private final SessionService sessionService;
     private final DialogService dialogService;
+    private final BookDownloadCoordinator bookDownloadCoordinator;
     private final BookSaver bookSaver;
+    private final ClassicLibraryActionsService classicLibraryActionsService;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -48,7 +50,6 @@ public class BookWorkspaceController {
     @FXML private Label formatLabel;
     @FXML private Label sizeLabel;
     @FXML private Label ratingLabel;
-    @FXML private Label pagesLabel;
     @FXML private TextArea annotationArea;
     @FXML private ProgressBar readingProgress;
     @FXML private Label progressLabel;
@@ -61,8 +62,6 @@ public class BookWorkspaceController {
     }
 
     public void setBookId(BookId bookId) {
-        sessionService.saveLastOpenedBookId(bookId.asString());
-
         loadBookByIdUseCase.execute(bookId).ifPresentOrElse(book -> {
             currentBook = book;
             UiExecutor.runOnUiThread(() -> {
@@ -84,13 +83,22 @@ public class BookWorkspaceController {
         yearLabel.setText("Рік: " + (book.getYear() != null && book.getYear() > 0 ? String.valueOf(book.getYear()) : "—"));
         publisherLabel.setText("Видавництво: " + (book.getPublisher() != null ? book.getPublisher() : "—"));
         isbnLabel.setText("ISBN: " + (book.getIsbn() != null ? book.getIsbn() : "—"));
-        formatLabel.setText("Формат: " + (book.getFileName() != null ? book.getFileName().substring(book.getFileName().lastIndexOf('.')) : "—"));
+        formatLabel.setText("Формат: " + displayFormat(book.getFileName(), book.getArchiveEntry()));
         sizeLabel.setText("Розмір: " + book.getFileSizeFormatted());
         ratingLabel.setText("Рейтинг: " + book.getRateStars());
-        pagesLabel.setText("Сторінок: —");
         annotationArea.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
         readingProgress.setProgress(book.getProgress() / 100.0);
         progressLabel.setText(book.getProgress() + "%");
+    }
+
+    private static String displayFormat(String fileName, String archiveEntry) {
+        String source = archiveEntry != null && !archiveEntry.isBlank() ? archiveEntry : fileName;
+        if (source == null || source.isBlank()) return "—";
+        int slash = Math.max(source.lastIndexOf('/'), source.lastIndexOf('\\'));
+        int dot = source.lastIndexOf('.');
+        return dot > slash && dot + 1 < source.length()
+                ? source.substring(dot + 1).toUpperCase(java.util.Locale.ROOT)
+                : "—";
     }
 
     private void clearUI() {
@@ -105,7 +113,6 @@ public class BookWorkspaceController {
         formatLabel.setText("Формат");
         sizeLabel.setText("Розмір");
         ratingLabel.setText("Рейтинг");
-        pagesLabel.setText("Сторінок");
         annotationArea.setText("");
         readingProgress.setProgress(0);
         progressLabel.setText("0%");
@@ -120,6 +127,15 @@ public class BookWorkspaceController {
     }
 
     @FXML
+    private void onDownload() {
+        if (currentBook == null) return;
+        BookId id = BookId.fromString(currentBook.getId());
+        bookDownloadCoordinator.ensureLocal(id).whenComplete((path, error) -> {
+            if (error == null) UiExecutor.runOnUiThread(() -> setBookId(id));
+        });
+    }
+
+    @FXML
     private void onRead() {
         if (currentBook != null) {
             navigationService.readBook(currentBook);
@@ -128,8 +144,11 @@ public class BookWorkspaceController {
 
     @FXML
     private void onEdit() {
-        if (currentBook != null) {
-            showEditDialog();
+        if (currentBook == null) return;
+        BookId id = BookId.fromString(currentBook.getId());
+        javafx.stage.Window owner = titleLabel != null && titleLabel.getScene() != null ? titleLabel.getScene().getWindow() : null;
+        if (classicLibraryActionsService.editBook(owner, id)) {
+            setBookId(id);
         }
     }
 
@@ -148,23 +167,23 @@ public class BookWorkspaceController {
         }
         var groups = loadGroupsUseCase.execute();
         if (groups.isEmpty()) {
-            dialogService.showWarning("Немає колекцій", "Створіть колекцію перед додаванням.");
+            dialogService.showWarning("Немає груп", "Створіть групу перед додаванням книги.");
             return;
         }
         Optional<com.myhomelibcorp.application.dto.GroupDto> selected = dialogService.showChoiceDialog(
                 groups,
                 groups.get(0),
-                "Додати до колекції",
-                "Виберіть колекцію для книги \"" + currentBook.getTitle() + "\"",
-                "Колекція:"
+                "Додати до групи",
+                "Виберіть групу для книги \"" + currentBook.getTitle() + "\"",
+                "Група:"
         );
         selected.ifPresent(group -> {
             try {
                 addBookToGroupUseCase.execute(group.getId(), currentBook.getId());
-                dialogService.showInfo("Успішно", "Книгу додано до колекції \"" + group.getName() + "\".");
-                log.info("Книгу {} додано до колекції {}", currentBook.getId(), group.getId());
+                dialogService.showInfo("Успішно", "Книгу додано до групи \"" + group.getName() + "\".");
+                log.info("Книгу {} додано до групи {}", currentBook.getId(), group.getId());
             } catch (Exception e) {
-                log.error("Помилка додавання книги до колекції", e);
+                log.error("Помилка додавання книги до групи", e);
                 dialogService.showError("Помилка", "Не вдалося додати книгу: " + e.getMessage());
             }
         });
@@ -175,35 +194,28 @@ public class BookWorkspaceController {
         if (currentBook == null) return;
         boolean confirmed = dialogService.showConfirmation(
                 "Видалення книги",
-                "Видалити книгу з каталогу?",
+                "Видалити запис із каталогу?",
                 "Файл на диску не видаляється. Книга: " + currentBook.getTitle());
         if (!confirmed) return;
         try {
             bookSaver.deleteBook(BookId.fromString(currentBook.getId()));
             dialogService.showInfo("Готово", "Книгу видалено з каталогу.");
             currentBook = null;
-            navigationService.navigateToAuthor(null);
+            navigateBackOrToAllBooks();
         } catch (Exception e) {
             log.error("Помилка видалення книги", e);
             dialogService.showError("Помилка", "Не вдалося видалити книгу: " + e.getMessage());
         }
     }
 
-    private void showEditDialog() {
-        TextInputDialog dialog = new TextInputDialog(currentBook.getTitle());
-        dialog.setTitle("Редагування книги");
-        dialog.setHeaderText("Змініть назву книги");
-        dialog.setContentText("Нова назва:");
-        dialog.showAndWait().ifPresent(newTitle -> {
-            if (!newTitle.isBlank() && !newTitle.equals(currentBook.getTitle())) {
-                currentBook.setTitle(newTitle);
-                titleLabel.setText(newTitle);
-            }
-        });
-    }
 
     @FXML
     private void onBack() {
-        navigationService.navigateToAuthor(null);
+        navigateBackOrToAllBooks();
+    }
+
+    private void navigateBackOrToAllBooks() {
+        if (navigationService.canGoBack()) navigationService.goBack();
+        else navigationService.navigateToAllBooks();
     }
 }

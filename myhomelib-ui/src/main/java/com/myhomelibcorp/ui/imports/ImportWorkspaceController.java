@@ -10,6 +10,8 @@ import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
+import javafx.animation.PauseTransition;
+import javafx.util.Duration;
 import javafx.scene.control.*;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
@@ -210,14 +212,7 @@ public class ImportWorkspaceController {
                             progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), "Завершено!");
                         }
 
-                        // Затримка перед закриттям, щоб користувач побачив результат
-                        try {
-                            Thread.sleep(1000);
-                        } catch (InterruptedException e) {
-                            Thread.currentThread().interrupt();
-                        }
-                        progressDialog.close();
-                        progressDialog = null;
+                        closeProgressDialogAfter(Duration.seconds(1));
                     }
 
                     if (cancelFlag.get()) {
@@ -244,13 +239,7 @@ public class ImportWorkspaceController {
 
                         if (progressDialog != null) {
                             progressDialog.updateStatus("Помилка: " + ex.getMessage());
-                            try {
-                                Thread.sleep(1500);
-                            } catch (InterruptedException e) {
-                                Thread.currentThread().interrupt();
-                            }
-                            progressDialog.close();
-                            progressDialog = null;
+                            closeProgressDialogAfter(Duration.seconds(1.5));
                         }
 
                         if (cancelFlag.get()) {
@@ -375,4 +364,15 @@ public class ImportWorkspaceController {
             foundFilesLabel.setText(String.valueOf(found));
         });
     }
+    private void closeProgressDialogAfter(Duration delay) {
+        ImportProgressDialog dialog = progressDialog;
+        if (dialog == null) return;
+        PauseTransition pause = new PauseTransition(delay);
+        pause.setOnFinished(event -> {
+            dialog.close();
+            if (progressDialog == dialog) progressDialog = null;
+        });
+        pause.play();
+    }
+
 }

@@ -2,4 +2,4 @@ MyHomeLib Enterprise 7.1.0
 ==========================
 Current validation record: RELEASE_VALIDATION-v7.1.txt
 
-The old 1.0.0 validation text has been superseded. The v7.1 record explicitly separates locally executed checks from Maven/GitHub/runtime gates that could not run in the isolated environment.
+The current record separates locally executed offline/static/smoke checks from external Maven, platform CI and real GUI/network acceptance gates.

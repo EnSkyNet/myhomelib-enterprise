@@ -20,7 +20,7 @@ public class OpdsDownloadService {
         final com.myhomelibcorp.application.dto.BookDto book;
         try {
             var dto = loadBookByIdUseCase.execute(BookId.fromString(bookId));
-            if (dto.isEmpty() || !dto.get().isLocal()) return Optional.empty();
+            if (dto.isEmpty()) return Optional.empty();
             book = dto.get();
         } catch (RuntimeException invalidId) {
             return Optional.empty();

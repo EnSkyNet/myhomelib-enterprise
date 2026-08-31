@@ -336,12 +336,14 @@ def check_source_invariants() -> None:
     require(queue, "IN_PROGRESS", "persistent queue restart recovery")
 
     for required_doc in (
-            "ARCHITECTURE-UPGRADE-v7.1.md",
-            "ONLINE-LIBRARY-CONNECTION-SCRIPT-v7.1.md",
-            "UPSTREAM-PARITY-MATRIX-v7.1.md",
-            "GITHUB-CI-v7.1.md",
-            "PERFORMANCE-v7.1.md",
-            "UPGRADE-FROM-v7.md",
+            "ARCHITECTURE.md",
+            "MYHOMELIB-FEATURES.md",
+            "MYHOMELIB-OPERATIONS.md",
+            "MYHOMELIB-DEVELOPMENT.md",
+            "MYHOMELIB-RELEASE.md",
+            "docs/history/MYHOMELIB-HISTORY-STAGES.md",
+            "docs/history/MYHOMELIB-HISTORY-FIXES.md",
+            "docs/history/MYHOMELIB-HISTORY-AUDITS.md",
             "RELEASE_VALIDATION-v7.1.txt"):
         read(required_doc)
 
@@ -350,8 +352,12 @@ def check_source_invariants() -> None:
     readme = read("README.md")
     require(readme, "MyHomeLib Enterprise 7.1.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
+    root_md = sorted(p.name for p in ROOT.glob("*.md"))
+    expected_root_md = sorted(["README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md"])
+    if root_md != expected_root_md:
+        errors.append(f"root Markdown documentation drift: expected {expected_root_md}, got {root_md}")
     for active_doc in (
-            "docs/release/CROSS_PLATFORM_RELEASE.md",
+            "MYHOMELIB-RELEASE.md",
             "myhomelib-ui/src/main/resources/help/index.md",
             "myhomelib-ui/src/main/resources/help/index.txt",
             "myhomelib-ui/src/main/resources/help/mcp.md",

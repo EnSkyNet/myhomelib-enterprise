@@ -22,7 +22,7 @@ class LanguageCatalogServiceTest {
     }
 
     @Test
-    void createsDefaultsAndSynchronizesNewLanguageFiles() throws Exception {
+    void createsDefaultsAndDiscoversExternalRussianCatalogue() throws Exception {
         Path launch = tempDir.resolve("app");
         Path data = tempDir.resolve("data");
         Files.createDirectories(launch);
@@ -36,23 +36,30 @@ class LanguageCatalogServiceTest {
         assertThat(Files.isRegularFile(data.resolve("Lang/uk.json"))).isTrue();
         assertThat(Files.isRegularFile(data.resolve("config/available-languages.txt"))).isTrue();
 
-        Files.writeString(data.resolve("Lang/pl.json"), """
+        Files.writeString(data.resolve("Lang/ru.json"), """
                 {
-                  "code": "pl",
-                  "name": "Polski",
+                  "schemaVersion": 2,
+                  "code": "ru",
+                  "name": "Русский",
                   "translations": {
-                    "Колекція": "Kolekcja"
+                    "Колекція": "Коллекция",
+                    "Завантажити": "Скачать"
+                  },
+                  "genres": {
+                    "sf": "Научная фантастика"
                   }
                 }
                 """, StandardCharsets.UTF_8);
 
         service.refresh();
 
-        assertThat(service.availableLanguages()).containsEntry("pl", "Polski");
-        assertThat(service.translations("pl")).hasValueSatisfying(map ->
-                assertThat(map).containsEntry("Колекція", "Kolekcja"));
+        assertThat(service.availableLanguages()).containsEntry("ru", "Русский");
+        assertThat(service.translations("ru")).hasValueSatisfying(map ->
+                assertThat(map).containsEntry("Колекція", "Коллекция")
+                        .containsEntry("Завантажити", "Скачать"));
+        assertThat(service.genreName("ru", "sf", "fallback")).isEqualTo("Научная фантастика");
         assertThat(Files.readString(data.resolve("config/available-languages.txt"), StandardCharsets.UTF_8))
-                .contains("pl=Polski");
+                .contains("ru=Русский");
     }
 
     @Test

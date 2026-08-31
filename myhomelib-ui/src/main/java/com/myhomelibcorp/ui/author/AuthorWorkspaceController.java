@@ -15,6 +15,7 @@ import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.table.SeriesGrouping;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -23,6 +24,7 @@ import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -30,6 +32,8 @@ import org.springframework.beans.factory.config.ConfigurableBeanFactory;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
+import java.util.List;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
@@ -46,6 +50,7 @@ public class AuthorWorkspaceController {
     private final LoadAuthorBookStatisticsUseCase loadAuthorBookStatisticsUseCase;
     private final CatalogUpdateService catalogUpdateService;
     private final NavigationService navigationService;
+    private final BookDownloadCoordinator bookDownloadCoordinator;
     private final ApplicationState appState;
     private final BookViewModelMapper bookViewModelMapper;
     private final UiBackgroundExecutor executor;
@@ -78,11 +83,22 @@ public class AuthorWorkspaceController {
     private AuthorBookStatistics authorStatistics = AuthorBookStatistics.empty();
     private boolean currentAuthorFollowed;
     private int currentPage;
+    private boolean hasNextPage;
     private SortBy currentSort = SortBy.SERIES;
     private SortDirection currentDirection = SortDirection.ASC;
 
     @FXML
     public void initialize() {
+        TableColumn<BookViewModel, Boolean> selectColumn = new TableColumn<>("☑");
+        selectColumn.setCellValueFactory(cellData -> cellData.getValue().selectedProperty());
+        selectColumn.setCellFactory(col -> new CheckBoxTableCell<>());
+        selectColumn.setEditable(true);
+        selectColumn.setSortable(false);
+        selectColumn.setResizable(false);
+        selectColumn.setPrefWidth(40);
+        booksTableView.getColumns().add(0, selectColumn);
+        booksTableView.setEditable(true);
+
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         titleColumn.setCellFactory(col -> new TableCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
@@ -221,7 +237,8 @@ public class AuthorWorkspaceController {
                 : " · знайдено " + page.totalElements();
         pageLabel.setText("Сторінка " + shownPage + " / " + (page.totalElements() == 0 ? 0 : totalPages) + suffix);
         previousPageButton.setDisable(!page.hasPrevious());
-        nextPageButton.setDisable(!page.hasNext());
+        hasNextPage = page.hasNext();
+        nextPageButton.setDisable(!hasNextPage);
     }
 
     private void setPagingBusy(boolean busy) {
@@ -271,6 +288,7 @@ public class AuthorWorkspaceController {
 
     @FXML
     private void onNextPage() {
+        if (!hasNextPage) return;
         currentPage++;
         reloadBooksPage();
     }
@@ -313,6 +331,24 @@ public class AuthorWorkspaceController {
         if (selected != null && !selected.isGroupHeader() && selected.getId() != null) {
             navigationService.navigateToBook(BookId.fromString(selected.getId()));
         }
+    }
+
+    @FXML
+    private void onDownloadBook() {
+        List<BookId> ids = booksTableView.getItems().stream()
+                .filter(row -> !row.isGroupHeader() && row.isSelected() && row.getId() != null)
+                .map(row -> BookId.fromString(row.getId()))
+                .distinct()
+                .toList();
+        if (ids.isEmpty()) {
+            BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
+            if (selected == null || selected.isGroupHeader() || selected.getId() == null) return;
+            ids = List.of(BookId.fromString(selected.getId()));
+        }
+        CompletableFuture<?>[] downloads = ids.stream()
+                .map(bookDownloadCoordinator::ensureLocal)
+                .toArray(CompletableFuture[]::new);
+        CompletableFuture.allOf(downloads).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(this::reloadBooksPage));
     }
 
     @FXML

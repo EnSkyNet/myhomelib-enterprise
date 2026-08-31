@@ -89,7 +89,7 @@ class InpxImportPipelineTest {
         Path testFile = tempDir.resolve("test.inpx");
         java.nio.file.Files.createFile(testFile);
 
-        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
+        when(reader.read(testFile, false)).thenReturn(Collections.emptyIterator());
 
         long result = pipeline.importFile(testFile, 100, tempDir);
 
@@ -101,7 +101,7 @@ class InpxImportPipelineTest {
     @Test
     void testImportFile_ShouldHandleNullRootDirectory() throws Exception {
         Path testFile = java.nio.file.Files.createTempFile("test", ".inpx");
-        when(reader.read(testFile)).thenReturn(Collections.emptyIterator());
+        when(reader.read(testFile, false)).thenReturn(Collections.emptyIterator());
 
         long result = pipeline.importFile(testFile, 100, null);
 

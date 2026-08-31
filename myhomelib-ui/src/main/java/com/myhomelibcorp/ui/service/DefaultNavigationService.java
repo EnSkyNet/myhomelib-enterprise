@@ -7,7 +7,6 @@ import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
-import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -19,9 +18,9 @@ import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import javafx.application.Platform;
 
 import java.awt.Desktop;
-import java.io.File;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
@@ -36,7 +35,7 @@ public class DefaultNavigationService implements NavigationService {
     private final NavigationPanelController navigationPanelController;
     private final BookResourcePort bookResourcePort;
     private final BookDownloadCoordinator bookDownloadCoordinator;
-    private final SessionService sessionService;
+    private final ExternalBookLauncher externalBookLauncher;
 
     @PostConstruct
     public void init() {
@@ -183,50 +182,16 @@ public class DefaultNavigationService implements NavigationService {
             log.warn("Спроба відкрити null книгу");
             return;
         }
-
-        String fileName = book.getFileName();
-        String folder = book.getFolder();
-        String root = book.getCollectionRoot();
-        String archiveEntry = book.getArchiveEntry();
-
-        log.debug("openBookFile: fileName='{}', folder='{}', root='{}', archiveEntry='{}'",
-                fileName, folder, root, archiveEntry);
-
-        // Якщо є archiveEntry - відкриваємо архів
-        if (archiveEntry != null && !archiveEntry.isBlank()) {
-            String archivePathStr = (folder != null && !folder.isBlank()) ? folder : fileName;
-            if (archivePathStr == null || archivePathStr.isBlank()) {
-                log.warn("Archive path is empty");
-                return;
-            }
-            Path archivePath = bookResourcePort.buildFilePath(root, null, archivePathStr);
-            File archiveFile = archivePath.toFile();
-            if (archiveFile.exists()) {
-                try {
-                    Desktop.getDesktop().open(archiveFile);
-                    log.info("Відкрито архів: {}", archivePath);
-                } catch (IOException e) {
-                    log.error("Не вдалося відкрити архів: {}", archivePath, e);
-                }
-            } else {
-                log.warn("Архів не знайдено: {}", archivePath);
-            }
-            return;
-        }
-
-        // Звичайний файл
-        Path filePath = bookResourcePort.buildFilePath(root, folder, fileName);
-        File file = filePath.toFile();
-        if (file.exists()) {
+        // One authoritative path for external opening: the same physical-file check,
+        // online confirmation/download and archive materialization as the main toolbar.
+        bookDownloadCoordinator.ensureLocalForOpen(book).whenComplete((path, error) -> {
+            if (error != null) return;
             try {
-                Desktop.getDesktop().open(file);
-                log.info("Відкрито файл: {}", filePath);
-            } catch (IOException e) {
-                log.error("Не вдалося відкрити файл: {}", filePath, e);
+                externalBookLauncher.open(book);
+            } catch (Exception ex) {
+                Platform.runLater(() -> log.error("Не вдалося відкрити книгу у зовнішній програмі: {}", book.getTitle(), ex));
             }
-        } else {
-            log.warn("Файл не знайдено: {}", filePath);
-        }
+        });
     }
 
     @Override
@@ -236,22 +201,22 @@ public class DefaultNavigationService implements NavigationService {
             return;
         }
 
-        String folder = book.getFolder();
-        if (folder == null || folder.isBlank()) {
-            log.warn("Папка для книги {} не вказана", book.getTitle());
+        Path physical = bookResourcePort.locateBookFile(
+                book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry())
+                .orElseGet(() -> bookResourcePort.buildFilePath(
+                        book.getCollectionRoot(), book.getFolder(), book.getFileName()));
+        Path directory = physical != null && java.nio.file.Files.isDirectory(physical)
+                ? physical
+                : physical == null ? null : physical.getParent();
+        if (directory == null || !java.nio.file.Files.isDirectory(directory)) {
+            log.warn("Папку книги не знайдено: {}", physical);
             return;
         }
-
-        File dir = new File(folder);
-        if (dir.exists() && dir.isDirectory()) {
-            try {
-                Desktop.getDesktop().open(dir);
-                log.info("Відкрито папку: {}", folder);
-            } catch (IOException e) {
-                log.error("Не вдалося відкрити папку: {}", folder, e);
-            }
-        } else {
-            log.warn("Папка не існує або не є директорією: {}", folder);
+        try {
+            Desktop.getDesktop().open(directory.toFile());
+            log.info("Відкрито папку: {}", directory);
+        } catch (IOException | UnsupportedOperationException e) {
+            log.error("Не вдалося відкрити папку: {}", directory, e);
         }
     }
 
@@ -261,14 +226,10 @@ public class DefaultNavigationService implements NavigationService {
             log.warn("Спроба відкрити для читання null книгу");
             return;
         }
-        bookDownloadCoordinator.ensureLocalForOpen(book).whenComplete((path, error) -> {
-            if (error != null) return;
-            javafx.application.Platform.runLater(() -> {
-                sessionService.saveLastOpenedBookId(book.getId());
-                workspaceManager.showNewReaderWorkspace(BookId.fromString(book.getId()));
-                        log.info("Відкрито книгу для читання: {}", book.getTitle());
-            });
-        });
+        // WorkspaceManager is the single guarded Reader entry point. It checks the
+        // authoritative book row and downloads missing online content exactly once.
+        workspaceManager.showNewReaderWorkspace(BookId.fromString(book.getId()));
+        log.info("Запит на відкриття книги для читання: {}", book.getTitle());
     }
 
     @Override

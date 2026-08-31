@@ -70,6 +70,12 @@ for p in USECASE_ROOT.rglob('*.java'):
 if (UI_JAVA / 'com/myhomelibcorp/ui/service/BackgroundTaskService.java').exists():
     errors.append('dead BackgroundTaskService returned')
 
+book_workspace = java_text.get(UI_JAVA / 'com/myhomelibcorp/ui/book/BookWorkspaceController.java', '')
+if 'navigateToAuthor(null)' in book_workspace:
+    errors.append('Book workspace back/delete path must not navigate to a null author')
+if 'navigateBackOrToAllBooks()' not in book_workspace:
+    errors.append('Book workspace must have a valid fallback when navigation history is empty')
+
 if errors:
     print('UI FUNCTION REACHABILITY CHECK: FAIL')
     for e in errors:

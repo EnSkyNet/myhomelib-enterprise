@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
 import com.myhomelibcorp.application.usecase.group.LoadGroupUseCase;
-import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
@@ -40,7 +39,6 @@ public class WorkspaceManager {
     private final LocalizationService localizationService;
     private final BookLoaderService bookLoaderService;
     private final BookDownloadCoordinator bookDownloadCoordinator;
-    private final LoadBookByIdUseCase loadBookByIdUseCase;
     private final HelpTopicRegistry helpTopicRegistry;
     private final LoadGroupUseCase loadGroupUseCase;
     private final SessionService sessionService;
@@ -269,13 +267,11 @@ public class WorkspaceManager {
      */
     public void showNewReaderWorkspace(BookId bookId) {
         if (bookId == null) return;
-        var book = loadBookByIdUseCase.execute(bookId);
-        if (book.isEmpty()) {
-            log.warn("Не вдалося відкрити Reader: книгу {} не знайдено в активній колекції", bookId);
-            return;
-        }
-        bookDownloadCoordinator.ensureLocalForOpen(book.get()).whenComplete((path, error) -> {
-            if (error != null) return;
+        bookDownloadCoordinator.ensureLocalForOpen(bookId).whenComplete((path, error) -> {
+            if (error != null) {
+                log.warn("Не вдалося відкрити Reader для книги {}: {}", bookId, error.getMessage());
+                return;
+            }
             Runnable open = () -> openNewReaderWorkspaceLocal(bookId);
             if (Platform.isFxApplicationThread()) open.run();
             else Platform.runLater(open);

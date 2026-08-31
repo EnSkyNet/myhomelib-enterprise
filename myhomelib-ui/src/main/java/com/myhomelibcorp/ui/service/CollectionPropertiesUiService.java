@@ -30,7 +30,13 @@ public class CollectionPropertiesUiService {
         d.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         TextField name=new TextField(c.getName()); TextField root=new TextField(c.getRootFolder()==null?"":c.getRootFolder().toString());
         TextField user=new TextField(nvl(c.getUser())); PasswordField pass=new PasswordField();
-        try { pass.setText(nvl(c.getDecryptedPassword())); } catch(Exception ignored) { }
+        final boolean[] passwordReadable = {true};
+        try { pass.setText(nvl(c.getDecryptedPassword())); }
+        catch(Exception decryptError) {
+            passwordReadable[0] = false;
+            pass.setDisable(true);
+            pass.setPromptText("Існуючий пароль збережено; розшифрування недоступне");
+        }
         TextField baseUrl=new TextField(nvl(c.getUrl())); TextField inpxUrl=new TextField(settings.get("collection."+c.getId()+".inpxUrl",""));
         TextArea notes=new TextArea(nvl(c.getNotes())); notes.setPrefRowCount(3);
         TextArea connectionScript=new TextArea(nvl(c.getConnectionScript())); connectionScript.setPrefRowCount(8);
@@ -70,7 +76,8 @@ public class CollectionPropertiesUiService {
         try {
             Path rootPath=root.getText().isBlank()?c.getRootFolder():Path.of(root.getText());
             CollectionType selectedType = type.getValue() == null ? CollectionType.fromCode(c.getType()) : type.getValue();
-            Collection updated=updateUseCase.execute(c,name.getText(),rootPath,selectedType.getCode(),user.getText(),pass.getText(),baseUrl.getText(),notes.getText(),connectionScript.getText());
+            String passwordValue = passwordReadable[0] ? pass.getText() : c.getPassword();
+            Collection updated=updateUseCase.execute(c,name.getText(),rootPath,selectedType.getCode(),user.getText(),passwordValue,baseUrl.getText(),notes.getText(),connectionScript.getText());
             settings.put("collection."+updated.getId()+".inpxUrl",inpxUrl.getText().trim()); state.setCurrentLibraryCollection(updated); return updated;
         } catch(Exception ex) { alert(owner,"Не вдалося зберегти властивості: "+ex.getMessage()); return null; }
     }

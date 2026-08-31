@@ -50,9 +50,9 @@ need('app-image' in portable_ps and 'Compress-Archive' in portable_ps,'Windows p
 need('MHL_SKIP_BUILD' in txt('package-desktop.sh') and 'MHL_SKIP_BUILD' in txt('package-desktop.ps1'),'verified-build reuse switch missing')
 need('--release-smoke' in txt('smoke-desktop.sh') and '--release-smoke' in txt('smoke-desktop.ps1'),'packaged launcher smoke argument missing')
 
-release_doc=txt('docs/release/CROSS_PLATFORM_RELEASE.md')
-need('does not download Maven artifacts' in release_doc,'no-network runtime contract missing from release docs')
-need('clean-machine' in release_doc.lower(),'clean-machine GUI smoke requirement missing')
+release_doc=txt('MYHOMELIB-RELEASE.md')
+need('does not download Maven dependencies at runtime' in release_doc,'no-network runtime contract missing from release docs')
+need('real desktop smoke' in release_doc.lower(),'real desktop smoke requirement missing')
 need('SHA256' in release_doc,'checksum documentation missing')
 
 # The headless checker is deliberately pure JDK; prove it compiles without Maven/dependencies.

@@ -35,6 +35,36 @@ class DownloadPayloadValidatorTest {
     }
 
     @Test
+    void acceptsFlibustaRenamedEntryAndReturnsActualServerEntry() throws Exception {
+        String actual = "Romanovich_Zemli-chudovishch_1_Zemli-chudovishch.586491.fb2";
+        Path zip = temp.resolve("flibusta.zip");
+        writeZip(zip, new Entry(actual, "<?xml version=\"1.0\"?><FictionBook><body/></FictionBook>"));
+        ArchiveReader reader = reader(List.of(actual), "<?xml version=\"1.0\"?><FictionBook/>");
+
+        BookDto book = mock(BookDto.class);
+        when(book.getArchiveEntry()).thenReturn("586491.fb2");
+        when(book.getFileName()).thenReturn("586491.fb2");
+        when(book.getLibId()).thenReturn("586491");
+
+        String resolved = validator(reader).validate(zip, zip, book, true);
+
+        org.assertj.core.api.Assertions.assertThat(resolved).isEqualTo(actual);
+    }
+
+    @Test
+    void rejectsAmbiguousRenamedArchiveWithMultipleUnmatchedFb2Entries() throws Exception {
+        Path zip = temp.resolve("ambiguous.zip");
+        writeZip(zip,
+                new Entry("other.fb2", "<FictionBook/>"),
+                new Entry("second.fb2", "<FictionBook/>"));
+        ArchiveReader reader = reader(List.of("other.fb2", "second.fb2"), "<FictionBook/>");
+
+        assertThatThrownBy(() -> validator(reader).validate(zip, zip, book("586491.fb2"), true))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("однознач");
+    }
+
+    @Test
     void highReliabilityModeRejectsCaseInsensitiveDuplicateEntryNames() throws Exception {
         Path zip = temp.resolve("duplicate.zip");
         writeZip(zip,

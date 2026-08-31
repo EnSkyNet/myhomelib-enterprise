@@ -198,7 +198,7 @@ final class JdbcCatalogBatchWriter {
                 args.add(k.first); args.add(k.middle); args.add(k.last);
             }
             jdbc.query(sql.toString(), rs -> {
-                PersonKey key = new PersonKey(safe(rs.getString("first_name")), safe(rs.getString("middle_name")), safe(rs.getString("last_name")), "", "");
+                PersonKey key = new PersonKey(safe(rs.getString("first_name")), safe(rs.getString("middle_name")), safe(rs.getString("last_name")), "", "", "", "");
                 // Find the corresponding identity-less key (nickname/disambiguation are not DB lookup identity).
                 for (PersonKey candidate : part) {
                     if (candidate.sameName(key)) {
@@ -542,10 +542,14 @@ final class JdbcCatalogBatchWriter {
     }
     private record RecordState(CatalogRecord record, String bookId) { }
     private record IdentityKey(String scheme, String value) { }
-    private record PersonKey(String first, String middle, String last, String nickname, String disambiguation) {
+    private record PersonKey(String first, String middle, String last, String nickname, String disambiguation,
+                             String identityScheme, String identityValue) {
         static PersonKey of(CatalogPerson p) {
+            ExternalIdentity identity = preferredIdentity(p);
             return new PersonKey(safe(p.firstName()), safe(p.middleName()), safe(p.lastName()),
-                    safe(p.nickname()), safe(p.disambiguation()));
+                    safe(p.nickname()), safe(p.disambiguation()),
+                    identity == null ? "" : safe(identity.scheme()),
+                    identity == null ? "" : safe(identity.value()));
         }
         boolean sameName(PersonKey other) {
             return first.equals(other.first) && middle.equals(other.middle) && last.equals(other.last);

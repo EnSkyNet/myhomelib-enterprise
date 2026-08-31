@@ -41,7 +41,8 @@ public class CollectionController {
         // Lifecycle owns the reuse-vs-rebuild policy for the collection-specific index.
         Collection activated = switchCollectionUseCase.execute(collection, true);
         appState.setCurrentLibraryCollection(activated);
-        statisticsService.refreshStatistics();
+        // Collection switching must not synchronously scan a 500k+ catalog. Show the persisted
+        // snapshot immediately; exact statistics are refreshed only on explicit/background paths.
         appState.getStatusBar().setStatistics(statisticsService.getStatistics());
         appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName()
                 + ". Пошуковий індекс перевірено; оновлення виконується у фоні лише за потреби.");

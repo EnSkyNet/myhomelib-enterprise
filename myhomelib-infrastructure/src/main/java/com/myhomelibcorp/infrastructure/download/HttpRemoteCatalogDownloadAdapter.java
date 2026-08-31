@@ -368,7 +368,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
 
     private static String shortHash(String value) {
         String hash = Sha256Support.utf8(value);
-        return hash.substring(0, Math.min(16, hash.length()));
+        return hash.substring(0, Math.min(20, hash.length()));
     }
 
     private static String sha256(Path file) throws IOException {

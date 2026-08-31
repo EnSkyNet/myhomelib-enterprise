@@ -17,6 +17,7 @@ import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookTableViewModel;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.animation.PauseTransition;
+import javafx.beans.InvalidationListener;
 import javafx.collections.ListChangeListener;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
@@ -61,6 +62,8 @@ public class BookTableController {
     @FXML private ComboBox<BookQuickFilterField> quickFilterColumnComboBox;
     @FXML private TextField quickFilterValueField;
     @FXML private Label pageInfoLabel;
+    @FXML private Label currentBookLabel;
+    @FXML private Label batchSelectionLabel;
     @FXML private Button prevPageButton;
     @FXML private Button nextPageButton;
     @FXML private ComboBox<Integer> pageSizeComboBox;
@@ -70,6 +73,7 @@ public class BookTableController {
     private String profileKey = "default";
     private boolean profileConfigured;
     private boolean applyingProfile;
+    private final InvalidationListener batchSelectionListener = obs -> updateSelectionStatus();
 
     @FXML
     public void initialize() {
@@ -137,6 +141,7 @@ public class BookTableController {
             }
         });
         bookTableView.setItems(vm.getBooks());
+        installSelectionStatusTracking(vm);
 
         bookTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             if (selected != null && selected.isGroupHeader()) return;
@@ -150,7 +155,10 @@ public class BookTableController {
                                 .fileSize(selected.getFileSize()).annotation(selected.getAnnotation()).rate(selected.getRate())
                                 .progress(selected.getProgress()).local(selected.isLocal()).collectionRoot(selected.getCollectionRoot())
                                 .build());
+            } else {
+                appState.getBookDetails().setCurrentBook(null);
             }
+            updateSelectionStatus();
         });
 
         bookTableView.setOnMouseClicked(event -> {
@@ -186,6 +194,45 @@ public class BookTableController {
         setupPagination();
         setupProfilePersistence();
         updateFilterIndicator();
+    }
+
+    private void installSelectionStatusTracking(BookTableViewModel vm) {
+        vm.getBooks().forEach(this::attachBatchSelectionListener);
+        vm.getBooks().addListener((ListChangeListener<BookViewModel>) change -> {
+            while (change.next()) {
+                if (change.wasRemoved()) change.getRemoved().forEach(this::detachBatchSelectionListener);
+                if (change.wasAdded()) change.getAddedSubList().forEach(this::attachBatchSelectionListener);
+            }
+            updateSelectionStatus();
+        });
+        if (currentBookLabel != null) {
+            currentBookLabel.setMaxWidth(280);
+            currentBookLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
+        }
+        updateSelectionStatus();
+    }
+
+    private void attachBatchSelectionListener(BookViewModel book) {
+        if (book != null && !book.isGroupHeader()) book.selectedProperty().addListener(batchSelectionListener);
+    }
+
+    private void detachBatchSelectionListener(BookViewModel book) {
+        if (book != null && !book.isGroupHeader()) book.selectedProperty().removeListener(batchSelectionListener);
+    }
+
+    private void updateSelectionStatus() {
+        if (bookTableView == null) return;
+        BookViewModel current = bookTableView.getSelectionModel().getSelectedItem();
+        String currentTitle = current == null || current.isGroupHeader() || current.getTitle() == null || current.getTitle().isBlank()
+                ? "—" : current.getTitle();
+        long batchCount = appState.getBookTable().getBooks().stream()
+                .filter(book -> !book.isGroupHeader() && book.isSelected())
+                .count();
+        if (currentBookLabel != null) {
+            currentBookLabel.setText(currentTitle);
+            currentBookLabel.setTooltip("—".equals(currentTitle) ? null : new Tooltip(currentTitle));
+        }
+        if (batchSelectionLabel != null) batchSelectionLabel.setText("Пакетно вибрано: " + batchCount);
     }
 
     private void registerProfileColumn(String id, TableColumn<BookViewModel, ?> column) {

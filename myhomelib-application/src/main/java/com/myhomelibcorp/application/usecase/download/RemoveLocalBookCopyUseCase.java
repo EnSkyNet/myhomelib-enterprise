@@ -28,6 +28,26 @@ public class RemoveLocalBookCopyUseCase {
     private final StatisticsRepository statisticsRepository;
     private final SearchIndexSynchronizer searchIndexSynchronizer;
 
+
+    /** Read-only removal impact used by UI confirmation. */
+    public RemovalPreview preview(BookDto book) {
+        if (book == null || book.getId() == null || book.getId().isBlank()) {
+            throw new IllegalArgumentException("Book is required");
+        }
+        Path physical = resources.locateBookFile(
+                book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry()).orElse(null);
+        boolean archived = book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank();
+        int affectedBooks = 1;
+        if (archived) {
+            List<Book> affected = queries.findByArchiveContainer(
+                    book.getCollectionRoot(), book.getFolder(), physical == null ? "" : physical.toString());
+            if (!affected.isEmpty()) affectedBooks = affected.size();
+        }
+        return new RemovalPreview(physical, affectedBooks, archived && affectedBooks > 1);
+    }
+
+    public record RemovalPreview(Path physicalPath, int affectedBooks, boolean sharedArchive) { }
+
     /**
      * @return number of catalog rows switched to non-local. For a shared archive this
      *         includes every book whose physical bytes live in the deleted archive.

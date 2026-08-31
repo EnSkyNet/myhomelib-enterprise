@@ -15,7 +15,7 @@
             <!-- Ліва панель: список колекцій -->
             <VBox spacing="5" style="-fx-padding: 5;">
                 <HBox spacing="5">
-                    <Button text="+" onAction="#onCreateCollection" prefWidth="30"/>
+                    <Button text="+ Порожня" onAction="#onCreateCollection"/>
                     <Button fx:id="activateButton" text="▶ Активувати" onAction="#onActivateCollection" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
                     <Button fx:id="renameButton" text="✏️" onAction="#onRenameCollection" prefWidth="30"/>
                     <Button fx:id="deleteButton" text="🗑" onAction="#onDeleteCollection" prefWidth="30"/>

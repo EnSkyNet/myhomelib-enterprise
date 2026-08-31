@@ -19,8 +19,10 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -50,6 +52,7 @@ public class ApplicationSettingsDialog {
 
         Map<String, TextField> text = new LinkedHashMap<>();
         Map<String, PasswordField> secrets = new LinkedHashMap<>();
+        Set<String> unreadableSecrets = new HashSet<>();
         Map<String, CheckBox> bool = new LinkedHashMap<>();
 
         TabPane tabs = new TabPane();
@@ -58,13 +61,19 @@ public class ApplicationSettingsDialog {
         tabs.getTabs().add(tab("Зовнішнє читання", externalReadersPane(text)));
         tabs.getTabs().add(tab("Конвертери", convertersPane(text)));
         tabs.getTabs().add(tab("Пристрій / експорт", devicePane(text)));
-        tabs.getTabs().add(tab("Online", onlinePane(text, secrets, bool)));
+        tabs.getTabs().add(tab("Online", onlinePane(text, secrets, unreadableSecrets, bool)));
         tabs.setPrefSize(760, 560);
         dialog.getDialogPane().setContent(tabs);
 
         dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> {
             text.forEach((key, field) -> settings.put(key, field.getText() == null ? "" : field.getText().trim()));
             secrets.forEach((key, field) -> {
+                // If an existing encrypted value cannot be decrypted in this runtime, preserving it is safer
+                // than silently replacing it with an empty value when the user presses OK.
+                if (unreadableSecrets.contains(key)) {
+                    field.clear();
+                    return;
+                }
                 String plain = field.getText() == null ? "" : field.getText();
                 if (plain.isBlank()) settings.remove(key);
                 else settings.put(key, EncryptionUtil.encrypt(plain));
@@ -133,7 +142,7 @@ public class ApplicationSettingsDialog {
         return scroll(box);
     }
 
-    private Node onlinePane(Map<String, TextField> text, Map<String, PasswordField> secrets, Map<String, CheckBox> bool) {
+    private Node onlinePane(Map<String, TextField> text, Map<String, PasswordField> secrets, Set<String> unreadableSecrets, Map<String, CheckBox> bool) {
         VBox box = section();
         Label intro = new Label("Для online-колекцій URL задається у властивостях колекції. TLS за замовчуванням використовує стандартну перевірку JVM; режим trust-all відсутній.");
         intro.setWrapText(true);
@@ -154,7 +163,7 @@ public class ApplicationSettingsDialog {
         box.getChildren().add(row("Proxy host", field(text, "online.proxy.host", "")));
         box.getChildren().add(row("Proxy port", field(text, "online.proxy.port", "8080")));
         box.getChildren().add(row("Proxy user", field(text, "online.proxy.user", "")));
-        box.getChildren().add(row("Proxy password", secretField(secrets, "online.proxy.password")));
+        box.getChildren().add(row("Proxy password", secretField(secrets, unreadableSecrets, "online.proxy.password")));
 
         box.getChildren().add(new Separator());
         Label tls = new Label("Custom CA: вкажіть JKS/PKCS12 trust store. Порожній шлях = стандартне JVM trust store.");
@@ -162,7 +171,7 @@ public class ApplicationSettingsDialog {
         box.getChildren().add(tls);
         box.getChildren().add(row("TLS trust store", field(text, "online.tls.trustStore", "")));
         box.getChildren().add(row("Trust store type", field(text, "online.tls.trustStoreType", "PKCS12")));
-        box.getChildren().add(row("Trust store password", secretField(secrets, "online.tls.trustStorePassword")));
+        box.getChildren().add(row("Trust store password", secretField(secrets, unreadableSecrets, "online.tls.trustStorePassword")));
         return scroll(box);
     }
 
@@ -266,12 +275,18 @@ public class ApplicationSettingsDialog {
         return f;
     }
 
-    private PasswordField secretField(Map<String, PasswordField> map, String key) {
+    private PasswordField secretField(Map<String, PasswordField> map, Set<String> unreadableSecrets, String key) {
         PasswordField field = new PasswordField();
         String stored = settings.get(key, "");
         if (stored != null && !stored.isBlank() && EncryptionUtil.isEncrypted(stored)) {
             try { field.setText(EncryptionUtil.decrypt(stored)); }
-            catch (RuntimeException ignored) { field.clear(); }
+            catch (RuntimeException decryptError) {
+                unreadableSecrets.add(key);
+                field.clear();
+                field.setDisable(true);
+                field.setPromptText("Існуюче зашифроване значення буде збережено");
+                field.setTooltip(new Tooltip("Не вдалося розшифрувати поточне значення. Натискання OK не очистить його."));
+            }
         }
         field.setPrefColumnCount(42);
         map.put(key, field);

@@ -83,7 +83,7 @@ public final class DownloadMacroResolver {
     public String expand(String template, String responseUrl) throws DownloadScenarioException {
         if (template == null) return null;
 
-        log.debug("expand() template: {}", template);
+        log.debug("Expanding ConnectionScript template ({} chars)", template.length());
 
         // ===== ЯВНА ЗАМІНА ДЛЯ %b% ТА %B% =====
         // Це вирішує проблему, коли регулярний вираз не знаходить %b%
@@ -116,7 +116,7 @@ public final class DownloadMacroResolver {
                     replacement = macro;
                 }
             }
-            log.debug("  macro: {} -> '{}'", macro, replacement != null && !replacement.equals(macro) ? replacement : "[NOT FOUND]");
+            log.debug("  macro: {} -> {}", macro, replacement == null || replacement.equals(macro) ? "[NOT FOUND]" : "[VALUE]");
             out.append(result, last, matcher.start());
             out.append(replacement == null ? macro : replacement);
             last = matcher.end();
@@ -124,7 +124,7 @@ public final class DownloadMacroResolver {
         out.append(result, last, result.length());
         result = out.toString();
 
-        log.debug("expand() final result: {}", result);
+        log.debug("ConnectionScript template expanded ({} chars)", result.length());
 
         if (result.indexOf('\n') >= 0 || result.indexOf('\r') >= 0 || result.indexOf('\0') >= 0) {
             throw new DownloadScenarioException("ConnectionScript macro expansion contains forbidden control characters");

@@ -572,7 +572,11 @@ public class MainController {
     public void handleEditMetadata() { bookCommandCoordinator.editMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
 
     @FXML
-    public void handleDeleteBook() { bookCommandCoordinator.deleteBook(this::handleRefresh); }
+    public void handleDeleteBook() {
+        if (!batchOperationsController.handleBatchDelete(this::handleRefresh)) {
+            bookCommandCoordinator.deleteBook(this::handleRefresh);
+        }
+    }
 
     @FXML
     public void handleAddBook() {
@@ -585,10 +589,18 @@ public class MainController {
     public void handleOpenNewReader() { bookCommandCoordinator.openInternal(); }
 
     @FXML
-    public void handleDownloadBook() { bookCommandCoordinator.download(); }
+    public void handleDownloadBook() {
+        if (!batchOperationsController.handleBatchDownload(this::handleRefresh)) {
+            bookCommandCoordinator.download();
+        }
+    }
 
     @FXML
-    public void handleRemoveLocalCopy() { bookCommandCoordinator.removeLocalCopy(this::handleRefresh); }
+    public void handleRemoveLocalCopy() {
+        if (!batchOperationsController.handleBatchRemoveLocal(this::handleRefresh)) {
+            bookCommandCoordinator.removeLocalCopy(this::handleRefresh);
+        }
+    }
 
     @FXML
     public void handleCancelDownload() { bookCommandCoordinator.cancelDownload(); }

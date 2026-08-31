@@ -55,6 +55,7 @@ public class GroupWorkspaceController {
     @FXML private TableColumn<BookViewModel, String> titleColumn;
     @FXML private TableColumn<BookViewModel, String> authorColumn;
     @FXML private TableColumn<BookViewModel, String> seriesColumn;
+    @FXML private TableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private Button previousPageButton;
     @FXML private Button nextPageButton;
     @FXML private Label pageLabel;
@@ -71,6 +72,7 @@ public class GroupWorkspaceController {
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
         authorColumn.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
+        fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         booksTableView.setItems(books);
         groupsListView.setItems(groupList);
 

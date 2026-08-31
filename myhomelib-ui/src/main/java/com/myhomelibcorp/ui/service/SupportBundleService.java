@@ -111,7 +111,7 @@ public class SupportBundleService {
     }
 
     private void addValidationFiles(ZipOutputStream zip) throws IOException {
-        for (String name : List.of("RELEASE_VALIDATION.txt", "PARITY_AUDIT.md", "RELEASE_NOTES_7.1.0.md")) {
+        for (String name : List.of("RELEASE_VALIDATION.txt", "MYHOMELIB-RELEASE.md", "ARCHITECTURE.md", "MYHOMELIB-OPERATIONS.md")) {
             Path file = AppPaths.launchDir().resolve(name);
             if (Files.isRegularFile(file) && Files.size(file) <= 2L * 1024 * 1024) putFile(zip, "release/" + name, file, Files.size(file));
         }

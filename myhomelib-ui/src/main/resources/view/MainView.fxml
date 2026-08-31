@@ -39,7 +39,7 @@
                 </Menu>
                 <Menu text="Редагування">
                     <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
-                    <MenuItem text="Видалити книгу" onAction="#handleDeleteBook"/>
+                    <MenuItem text="Видалити запис(и) з каталогу" onAction="#handleDeleteBook"/>
                 </Menu>
                 <!-- ОНОВЛЕНИЙ МЕНЮ READER: тільки новий Reader -->
                 <Menu text="Reader">

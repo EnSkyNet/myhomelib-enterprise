@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.download;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.infrastructure.archive.ArchiveEntryNameSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -43,7 +44,13 @@ public class DownloadPayloadValidator {
         this.settings = settings;
     }
 
-    public void validate(Path payload, Path intendedTarget, BookDto book, boolean archived) throws IOException {
+    /**
+     * Validates the downloaded payload and, for archives, returns the actual entry name
+     * present in the server response. Online libraries (including Flibusta) may rename
+     * the FB2 entry while keeping the same book/lib id, so callers must persist the
+     * resolved entry instead of assuming catalog archiveEntry is also the ZIP entry name.
+     */
+    public String validate(Path payload, Path intendedTarget, BookDto book, boolean archived) throws IOException {
         if (payload == null || !Files.isRegularFile(payload) || Files.size(payload) <= 0) {
             throw new IOException("Сервер повернув порожній payload");
         }
@@ -51,9 +58,12 @@ public class DownloadPayloadValidator {
         if (archived) {
             String foundEntry = validateArchive(payload, intendedTarget, book);
             log.info("Archive validated. Found entry: {}", foundEntry);
-        } else if (looksLikeFb2(intendedTarget, book)) {
+            return foundEntry;
+        }
+        if (looksLikeFb2(intendedTarget, book)) {
             validateFb2(payload);
         }
+        return "";
     }
 
     /**
@@ -78,35 +88,7 @@ public class DownloadPayloadValidator {
             String requested = normalize(book.getArchiveEntry());
             log.debug("validateArchive: requested entry='{}', entries count={}", requested, entries.size());
 
-            // 1. Спроба знайти точний збіг
-            boolean found = false;
-            if (!requested.isBlank()) {
-                found = entries.stream().map(DownloadPayloadValidator::normalize)
-                        .anyMatch(e -> e.equalsIgnoreCase(requested));
-                if (found) {
-                    log.debug("Found exact match: {}", requested);
-                    foundEntry = requested;
-                }
-            }
-
-            // 2. Якщо не знайдено - шукаємо будь-який FB2-файл
-            if (!found) {
-                String fb2Entry = entries.stream()
-                        .filter(e -> e.toLowerCase(Locale.ROOT).endsWith(".fb2"))
-                        .findFirst()
-                        .orElse(null);
-                if (fb2Entry != null) {
-                    log.info("Archive does not contain '{}', but contains FB2 entry: '{}'. Using it instead.", requested, fb2Entry);
-                    found = true;
-                    foundEntry = fb2Entry;
-                }
-            }
-
-            // 3. Якщо все ще не знайдено - помилка
-            if (!found) {
-                String sample = entries.stream().limit(5).collect(java.util.stream.Collectors.joining(", "));
-                throw new IOException("Завантажений архів не містить запис: " + requested + ". Доступні: " + sample);
-            }
+            foundEntry = resolveArchiveEntry(entries, requested, book);
 
             // ===== ВИКОРИСТОВУЄМО ЗНАЙДЕНИЙ ENTRY =====
             final String entryToRead = foundEntry;
@@ -125,6 +107,76 @@ public class DownloadPayloadValidator {
         } finally {
             Files.deleteIfExists(alias);
         }
+    }
+
+
+    /**
+     * Resolve the actual server-side archive entry without trusting an arbitrary file.
+     * Order matters: catalog exact match -> basename -> libId/requested-id token ->
+     * single-FB2 compatibility fallback. Multiple ambiguous FB2 entries remain an error.
+     */
+    private String resolveArchiveEntry(List<String> entries, String requested, BookDto book) throws IOException {
+        if (!requested.isBlank()) {
+            String exact = uniqueMatch(entries,
+                    e -> normalize(e).equalsIgnoreCase(requested));
+            if (exact != null) {
+                log.debug("Found exact archive entry: {}", exact);
+                return exact;
+            }
+
+            String requestedBase = ArchiveEntryNameSupport.baseName(requested);
+            String sameBaseName = uniqueMatch(entries,
+                    e -> ArchiveEntryNameSupport.baseName(normalize(e)).equalsIgnoreCase(requestedBase));
+            if (sameBaseName != null) {
+                log.info("Archive entry path differs from catalog metadata: '{}' -> '{}'", requested, sameBaseName);
+                return sameBaseName;
+            }
+
+            String requestedStem = ArchiveEntryNameSupport.stripFb2Extension(requestedBase);
+            String byRequestedToken = uniqueMatch(entries,
+                    e -> ArchiveEntryNameSupport.isFb2(e) && ArchiveEntryNameSupport.containsDelimitedToken(ArchiveEntryNameSupport.baseName(normalize(e)), requestedStem));
+            if (byRequestedToken != null) {
+                log.info("Server renamed FB2 entry: '{}' -> '{}'", requested, byRequestedToken);
+                return byRequestedToken;
+            }
+        }
+
+        String libId = book == null ? "" : normalizeToken(book.getLibId());
+        if (!libId.isBlank()) {
+            String byLibId = uniqueMatch(entries,
+                    e -> ArchiveEntryNameSupport.isFb2(e) && ArchiveEntryNameSupport.containsDelimitedToken(ArchiveEntryNameSupport.baseName(normalize(e)), libId));
+            if (byLibId != null) {
+                log.info("Resolved renamed FB2 entry by LIBID {}: '{}'", libId, byLibId);
+                return byLibId;
+            }
+        }
+
+        List<String> fb2Entries = entries.stream().filter(ArchiveEntryNameSupport::isFb2).toList();
+        if (fb2Entries.size() == 1) {
+            String only = fb2Entries.getFirst();
+            log.warn("Archive entry '{}' is absent; using the only FB2 entry returned by server: '{}'",
+                    requested, only);
+            return only;
+        }
+
+        String sample = entries.stream().limit(5).collect(java.util.stream.Collectors.joining(", "));
+        if (requested.isBlank()) {
+            throw new IOException("Неможливо однозначно визначити FB2-запис у завантаженому архіві. Доступні: " + sample);
+        }
+        throw new IOException("Завантажений архів не містить однозначного запису для: " + requested + ". Доступні: " + sample);
+    }
+
+    private String uniqueMatch(List<String> entries, java.util.function.Predicate<String> predicate) throws IOException {
+        List<String> matches = entries.stream().filter(predicate).toList();
+        if (matches.size() > 1) {
+            throw new IOException("Архів містить кілька неоднозначних записів: "
+                    + matches.stream().limit(5).collect(java.util.stream.Collectors.joining(", ")));
+        }
+        return matches.isEmpty() ? null : matches.getFirst();
+    }
+
+    private static String normalizeToken(String value) {
+        return value == null ? "" : value.trim();
     }
 
     private boolean highReliabilityArchiveValidation() {

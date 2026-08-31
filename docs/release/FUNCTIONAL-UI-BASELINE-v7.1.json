@@ -257,7 +257,6 @@
     "view/book-workspace.fxml#genresLabel",
     "view/book-workspace.fxml#isbnLabel",
     "view/book-workspace.fxml#languageLabel",
-    "view/book-workspace.fxml#pagesLabel",
     "view/book-workspace.fxml#progressLabel",
     "view/book-workspace.fxml#publisherLabel",
     "view/book-workspace.fxml#ratingLabel",

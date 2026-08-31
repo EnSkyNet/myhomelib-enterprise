@@ -10,6 +10,7 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
@@ -52,6 +53,8 @@ class HttpOnlineBookDownloadAdapterTest {
 
         ArchiveReader archives = mock(ArchiveReader.class);
         when(archives.listEntries(any())).thenReturn(List.of("a.fb2", "b.fb2"));
+        when(archives.readEntry(any(), anyString())).thenAnswer(invocation ->
+                java.util.Optional.of(new ByteArrayInputStream("book".getBytes(StandardCharsets.UTF_8))));
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), archives);
         Collection collection = onlineCollection();
 
@@ -199,6 +202,8 @@ class HttpOnlineBookDownloadAdapterTest {
         });
         ArchiveReader archives = mock(ArchiveReader.class);
         when(archives.listEntries(any())).thenReturn(List.of("текст/книга.fb2"));
+        when(archives.readEntry(any(), anyString())).thenAnswer(invocation ->
+                java.util.Optional.of(new ByteArrayInputStream("book".getBytes(StandardCharsets.UTF_8))));
         String template = baseUrl() + "download/{archive}/{file}/{entry}";
         Collection collection = onlineCollection(null, null, template);
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), archives);
@@ -206,6 +211,29 @@ class HttpOnlineBookDownloadAdapterTest {
         adapter.download(book("u", "книга.fb2", "Архів книг.zip", "текст/книга.fb2"), collection, null, null);
 
         assertThat(temp.resolve("Архів книг.zip")).exists();
+    }
+
+    @Test
+    void legacyScriptPreambleSuppliesUrlMacroWhenCollectionUrlIsMissing() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            requests.incrementAndGet();
+            assertThat(exchange.getRequestURI().getPath()).isEqualTo("/download/321");
+            respond(exchange, 200, "plain-book");
+        });
+
+        String script = baseUrl() + "\nGET %URL%download/%LIBID%\nCHECK";
+        Collection collection = new Collection("online", "Online", temp, null, 1, null, null, null, "", script);
+        BookDto book = BookDto.builder()
+                .id("legacy-url").libId("321").title("Legacy")
+                .fileName("legacy.txt").folder("").archiveEntry("")
+                .build();
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+
+        adapter.download(book, collection, null, null);
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(Files.readString(temp.resolve("legacy.txt"))).isEqualTo("plain-book");
     }
 
     @Test
@@ -264,16 +292,50 @@ class HttpOnlineBookDownloadAdapterTest {
     }
 
     @Test
-    void rejectsArchiveWhenRequestedEntryIsMissing() throws Exception {
+    void rejectsArchiveWhenRequestedEntryCannotBeResolvedUnambiguously() throws Exception {
         server = server(exchange -> respond(exchange, 200, "archive-bytes"));
         ArchiveReader archives = mock(ArchiveReader.class);
-        when(archives.listEntries(any())).thenReturn(List.of("other.fb2"));
+        when(archives.listEntries(any())).thenReturn(List.of("other.fb2", "second.fb2"));
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), archives);
 
         assertThatThrownBy(() -> adapter.download(
                 book("a", "a.fb2", "archive.zip", "a.fb2"), onlineCollection(), null, null))
                 .isInstanceOf(IOException.class)
-                .hasMessageContaining("не містить запис");
+                .hasMessageContaining("однознач");
+    }
+
+    @Test
+    void flibustaConnectionScriptAcceptsRenamedZipEntryAndReturnsActualEntry() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            requests.incrementAndGet();
+            assertThat(exchange.getRequestURI().getPath()).isEqualTo("/b/586491/get");
+            respond(exchange, 200, "archive-bytes");
+        });
+
+        String actualEntry = "Romanovich_Zemli-chudovishch_1_Zemli-chudovishch.586491.fb2";
+        ArchiveReader archives = mock(ArchiveReader.class);
+        when(archives.listEntries(any())).thenReturn(List.of(actualEntry));
+        when(archives.readEntry(any(), anyString())).thenAnswer(invocation ->
+                java.util.Optional.of(new ByteArrayInputStream("<FictionBook/>".getBytes(StandardCharsets.UTF_8))));
+
+        String script = baseUrl() + "\nGET %URL%b/%LIBID%/get\nCHECK";
+        Collection collection = new Collection("online", "Online", temp, null, 1, null, null, null, "", script);
+        BookDto flibustaBook = BookDto.builder()
+                .id("719c5e74-3cf3-3c1c-95c6-1de03831fe48")
+                .libId("586491")
+                .title("Земли чудовищ")
+                .fileName("586491.fb2")
+                .folder("online.zip")
+                .archiveEntry("586491.fb2")
+                .build();
+
+        var result = new HttpOnlineBookDownloadAdapter(settings(), archives)
+                .download(flibustaBook, collection, null, null);
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(result.archiveEntry()).isEqualTo(actualEntry);
+        assertThat(result.physicalPath()).exists();
     }
 
     private HttpServer server(Handler handler) throws IOException {

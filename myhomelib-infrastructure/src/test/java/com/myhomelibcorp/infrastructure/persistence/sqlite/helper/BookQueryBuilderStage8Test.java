@@ -57,6 +57,17 @@ class BookQueryBuilderStage8Test {
         assertThat(sql).contains("ORDER BY b.author_sort ASC, b.id ASC");
     }
 
+
+    @Test
+    void seriesSortIsStableAcrossOffsetPagesAndKeepsUnnumberedAndStandaloneBooksLast() {
+        String sql = normalize(builder.build(BookQuery.builder().sortBy(SortBy.SERIES).build()).sql());
+
+        assertThat(sql).contains("CASE WHEN TRIM(COALESCE(b.series, '')) = '' THEN 1 ELSE 0 END ASC");
+        assertThat(sql).contains("LOWER(TRIM(COALESCE(b.series, ''))) ASC");
+        assertThat(sql).contains("CASE WHEN COALESCE(b.sequence_number, 0) > 0 THEN b.sequence_number ELSE 2147483647 END ASC");
+        assertThat(sql).contains("LOWER(COALESCE(b.title, '')) ASC, b.id ASC LIMIT ? OFFSET ?");
+    }
+
     private static String normalize(String sql) {
         return sql.replaceAll("\\s+", " ").trim();
     }

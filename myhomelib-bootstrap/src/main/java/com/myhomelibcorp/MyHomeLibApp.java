@@ -1,13 +1,11 @@
 package com.myhomelibcorp;
 
-import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
-import com.myhomelibcorp.infrastructure.search.LuceneSearchService;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.controller.MainController;
@@ -155,14 +153,9 @@ public class MyHomeLibApp extends Application {
 
         // 2. Lifecycle уже виконав Flyway, series sync і dictionary-cache refresh.
 
-        // 3. Оновлюємо статистику
-        try {
-            StatisticsService statisticsService = context.getBean(StatisticsService.class);
-            statisticsService.refreshStatistics();
-        } catch (Exception e) {
-            log.warn("Не вдалося оновити статистику (можливо, ще не виконана міграція)", e);
-        }
-
+        // 3. Не перераховуємо статистику на startup critical path.
+        // library_statistics є persistent cache; повний COUNT/SUM/GROUP BY виконується лише
+        // після явного refresh (наприклад, у вікні статистики або після імпорту).
         InpxImporter inpxImporter = context.getBean(InpxImporter.class);
         inpxImporter.initialize();
 

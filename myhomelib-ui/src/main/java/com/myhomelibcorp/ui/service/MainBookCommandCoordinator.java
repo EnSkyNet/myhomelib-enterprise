@@ -42,10 +42,7 @@ public class MainBookCommandCoordinator {
 
     public void openInternal() {
         BookDto selected = requireBook();
-        if (selected == null) return;
-        bookDownloadCoordinator.ensureLocalForOpen(selected).whenComplete((path, error) -> {
-            if (error == null) Platform.runLater(() -> workspaceManager.showNewReaderWorkspace(BookId.fromString(selected.getId())));
-        });
+        if (selected != null) workspaceManager.showNewReaderWorkspace(BookId.fromString(selected.getId()));
     }
 
     public void download() {

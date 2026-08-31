@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import shutil
 import subprocess
+import re
 import tempfile
 from pathlib import Path
 
@@ -46,19 +47,35 @@ import java.lang.annotation.*;
 @Retention(RetentionPolicy.RUNTIME) @Target({ElementType.CONSTRUCTOR,ElementType.FIELD,ElementType.METHOD})
 public @interface Autowired {}
 """)
+        write(src / "com/myhomelibcorp/shared/smoke/SmokeLog.java", """
+package com.myhomelibcorp.shared.smoke;
+public final class SmokeLog {
+ public void debug(String message, Object... args){} public void info(String message, Object... args){}
+ public void warn(String message, Object... args){} public void error(String message, Object... args){}
+}
+""")
 
         # MacroResolver only needs a read-only subset of the real DTO/domain surface.
+        write(src / "com/myhomelibcorp/application/dto/AuthorDto.java", """
+package com.myhomelibcorp.application.dto;
+public class AuthorDto {
+ private String fullName="Author", lastName="Author";
+ public String getFullName(){return fullName;} public String getLastName(){return lastName;}
+}
+""")
         write(src / "com/myhomelibcorp/application/dto/BookDto.java", """
 package com.myhomelibcorp.application.dto;
 import java.time.LocalDateTime;
+import java.util.List;
 public class BookDto {
  public String id="id-1", title="Title", authorsText="Author", series="Series", genresText="genre";
  public String language="uk", fileName="book.fb2", folder="folder", archiveEntry="book.fb2";
  public long fileSize=123; public int rate=4, progress=20, libraryRate=5; public Integer sequenceNumber=1, year=2026;
  public String libId="LIB-1", keywords="k", annotation="a", review="r", translators="t", publisher="p", city="c", isbn="9780000000000", sourceUrl="https://source";
  public LocalDateTime updateDate=LocalDateTime.of(2026,8,28,12,0);
+ public List<AuthorDto> authors=List.of();
  public String getId(){return id;} public String getTitle(){return title;} public String getAuthorsText(){return authorsText;}
- public String getSeries(){return series;} public String getGenresText(){return genresText;} public String getLanguage(){return language;}
+ public List<AuthorDto> getAuthors(){return authors;} public String getSeries(){return series;} public String getGenresText(){return genresText;} public String getLanguage(){return language;}
  public String getFileName(){return fileName;} public String getFolder(){return folder;} public String getArchiveEntry(){return archiveEntry;}
  public long getFileSize(){return fileSize;} public int getRate(){return rate;} public int getProgress(){return progress;}
  public int getLibraryRate(){return libraryRate;} public Integer getSequenceNumber(){return sequenceNumber;} public Integer getYear(){return year;}
@@ -284,6 +301,13 @@ public class V71StandaloneSmoke {
       BookDto b=new BookDto(); b.archiveEntry="book.fb2"; b.fileName="book.fb2";
       new DownloadPayloadValidator(new SimpleArchiveReader(), new MapSettings()).validate(good,good,b,true);
 
+      String flibustaEntry="Romanovich_Zemli-chudovishch_1_Zemli-chudovishch.586491.fb2";
+      Path renamed=dir.resolve("renamed.zip");
+      zip(renamed,new String[][]{{flibustaEntry,"<?xml version=\"1.0\"?><FictionBook><body/></FictionBook>"}});
+      BookDto renamedBook=new BookDto(); renamedBook.archiveEntry="586491.fb2"; renamedBook.fileName="586491.fb2"; renamedBook.libId="586491";
+      String resolved=new DownloadPayloadValidator(new SimpleArchiveReader(),new MapSettings()).validate(renamed,renamed,renamedBook,true);
+      check(flibustaEntry.equals(resolved),"Flibusta renamed FB2 entry resolved and returned");
+
       Path dup=dir.resolve("dup.zip");
       zip(dup,new String[][]{{"book.fb2","<FictionBook/>"},{"BOOK.FB2","<FictionBook/>"}});
       boolean rejected=false;
@@ -335,6 +359,7 @@ public class V71StandaloneSmoke {
             ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/collectioninfo/CollectionSourceProperties.java",
             ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/cover/ArchiveReader.java",
             ROOT / "myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/settings/ApplicationSettingsPort.java",
+            ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/archive/ArchiveEntryNameSupport.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/DownloadPayloadValidator.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/OnlineHttpPolicy.java",
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/OnlineRequestLimiter.java",
@@ -347,8 +372,28 @@ public class V71StandaloneSmoke {
             ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/scenario/DownloadMacroResolver.java",
             ROOT / "myhomelib-shared/src/main/java/com/myhomelibcorp/shared/security/SensitiveDataSanitizer.java",
         ]
+        # Lombok is intentionally not a dependency of this standalone gate. For sources using
+        # @Slf4j, compile an equivalent temporary copy with a no-op logger field. This keeps the
+        # smoke harness aligned with production method contracts without requiring Lombok/Maven.
+        compile_sources = []
+        transformed_root = t / "real-src"
+        for real in real_sources:
+            text = real.read_text(encoding="utf-8")
+            if "@Slf4j" in text:
+                text = text.replace("import lombok.extern.slf4j.Slf4j;\n", "").replace("@Slf4j\n", "")
+                class_match = re.search(r"(public\s+(?:final\s+)?class\s+\w+[^\{]*\{)", text)
+                if not class_match:
+                    raise SystemExit(f"cannot inject standalone logger into {real}")
+                injected = class_match.group(1) + "\n    private static final com.myhomelibcorp.shared.smoke.SmokeLog log = new com.myhomelibcorp.shared.smoke.SmokeLog();"
+                text = text[:class_match.start()] + injected + text[class_match.end():]
+                package = re.search(r"package\s+([\w.]+);", text).group(1)
+                target = transformed_root / Path(*package.split('.')) / real.name
+                write(target, text)
+                compile_sources.append(target)
+            else:
+                compile_sources.append(real)
         generated = list(src.rglob("*.java"))
-        cmd = [javac, "--add-modules", "jdk.httpserver", "-encoding", "UTF-8", "-d", str(out), *map(str, real_sources), *map(str, generated)]
+        cmd = [javac, "--add-modules", "jdk.httpserver", "-encoding", "UTF-8", "-d", str(out), *map(str, compile_sources), *map(str, generated)]
         cp = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True)
         if cp.returncode != 0:
             print(cp.stdout)

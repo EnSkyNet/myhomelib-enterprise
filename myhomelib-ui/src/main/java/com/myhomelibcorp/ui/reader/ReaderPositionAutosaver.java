@@ -47,19 +47,23 @@ final class ReaderPositionAutosaver implements AutoCloseable {
         dirty.set(true);
     }
 
-    void flush() {
-        flushIfDirty();
+    boolean flush() {
+        return flushIfDirty();
     }
 
-    private void flushIfDirty() {
+    private boolean flushIfDirty() {
         String id = bookId;
         ReaderPosition pos = latest.get();
-        if (id == null || pos == null || !dirty.compareAndSet(true, false)) return;
+        if (id == null || pos == null || !dirty.compareAndSet(true, false)) return true;
         try {
-            persistence.savePosition(id, pos, totalTextLength);
+            if (persistence.savePosition(id, pos, totalTextLength)) return true;
+            dirty.set(true);
+            log.warn("Reader autosave failed for {}; position remains dirty for retry", id);
+            return false;
         } catch (Exception e) {
             dirty.set(true);
             log.warn("Reader autosave failed for {}: {}", id, e.getMessage());
+            return false;
         }
     }
 

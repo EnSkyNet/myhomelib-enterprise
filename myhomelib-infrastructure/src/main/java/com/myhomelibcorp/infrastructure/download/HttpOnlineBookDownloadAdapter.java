@@ -107,8 +107,8 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         Path target = safeResolve(root, relative).toAbsolutePath().normalize();
 
         if (!forceRefresh && Files.isRegularFile(target) && Files.size(target) > 0) {
-            payloadValidator.validate(target, target, book, archived);
-            return buildResult(book, root, relative, target, archived);
+            String resolvedArchiveEntry = payloadValidator.validate(target, target, book, archived);
+            return buildResult(book, root, relative, target, archived, resolvedArchiveEntry);
         }
 
         // Перевіряємо, чи інший запит уже завантажує цей самий файл
@@ -116,41 +116,40 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         CompletableFuture<Path> existingFuture = inFlightTargets.putIfAbsent(target, ownerFuture);
         if (existingFuture != null) {
             Path ready = awaitSharedDownload(existingFuture, cancel);
-            payloadValidator.validate(ready, ready, book, archived);
+            String resolvedArchiveEntry = payloadValidator.validate(ready, ready, book, archived);
             progressSink.accept(1.0);
-            return buildResult(book, root, relative, ready, archived);
+            return buildResult(book, root, relative, ready, archived, resolvedArchiveEntry);
         }
 
         try {
             // ВИЗНАЧЕННЯ РЕЖИМУ ЗАВАНТАЖЕННЯ
             List<DownloadScenarioCommand> commands = null;
             if (collection.getConnectionScript() != null && !collection.getConnectionScript().isBlank()) {
-                try {
-                    commands = DownloadScenarioParser.parse(collection.getConnectionScript());
-                    log.debug("Parsed {} commands from ConnectionScript", commands != null ? commands.size() : 0);
-                } catch (Exception e) {
-                    log.warn("Failed to parse ConnectionScript: {}", e.getMessage());
-                    commands = List.of();
-                }
+                // A configured script is authoritative. Invalid commands must fail visibly instead of
+                // silently falling back to another download mechanism.
+                commands = DownloadScenarioParser.parse(collection.getConnectionScript());
+                log.debug("Parsed {} commands from ConnectionScript", commands.size());
             }
 
             DownloadMode mode = sourceResolver.resolve(collection, commands);
             log.info("Download mode resolved: {} for book: {}", mode, book.getId());
 
+            String resolvedArchiveEntry;
             if (mode == DownloadMode.CONNECTION_SCRIPT) {
-                downloadViaConnectionScript(book, collection, relative, target, root, archived, cancel, progressSink);
+                resolvedArchiveEntry = downloadViaConnectionScript(
+                        book, collection, relative, target, root, archived, cancel, progressSink);
             } else {
                 String baseUrl = effectiveBaseUrl(collection);
                 if (baseUrl == null || baseUrl.isBlank()) {
                     throw new IllegalStateException("Для online-колекції не задано URL");
                 }
                 Collection effectiveCollection = collectionWithEffectiveUrl(collection, baseUrl);
-                downloadPhysical(book, effectiveCollection, baseUrl, relative, target, archived, cancel, progressSink);
+                resolvedArchiveEntry = downloadPhysical(
+                        book, effectiveCollection, baseUrl, relative, target, archived, cancel, progressSink);
             }
 
-            payloadValidator.validate(target, target, book, archived);
             ownerFuture.complete(target);
-            return buildResult(book, root, relative, target, archived);
+            return buildResult(book, root, relative, target, archived, resolvedArchiveEntry);
         } catch (Exception e) {
             ownerFuture.completeExceptionally(e);
             throw e;
@@ -162,7 +161,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     /**
      * Завантаження через прямий HTTP GET.
      */
-    private void downloadPhysical(BookDto book,
+    private String downloadPhysical(BookDto book,
                                   Collection collection,
                                   String baseUrl,
                                   String relative,
@@ -196,8 +195,11 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 HttpResponse<InputStream> response = client.send(
                         buildRequest(uri, collection, existing, resume), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
-
-                log.info("HTTP response status: {}", status);
+                String responseContentType = response.headers().firstValue("Content-Type").orElse("unknown");
+                long responseContentLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                log.info("HTTP RESPONSE: status={}, finalUrl={}, contentType={}, contentLength={}",
+                        status, SensitiveDataSanitizer.sanitizeUri(response.uri()),
+                        responseContentType, responseContentLength);
 
                 if (status == 416 && existing > 0) {
                     try (InputStream responseBody = response.body()) { }
@@ -267,19 +269,24 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 }
 
                 checkCancelled(cancel);
+                String resolvedArchiveEntry;
                 try {
-                    payloadValidator.validate(part, target, book, archived);
+                    resolvedArchiveEntry = payloadValidator.validate(part, target, book, archived);
+                    log.info("PAYLOAD VALIDATED: bookId={}, bytes={}, archived={}, resolvedArchiveEntry={}",
+                            book.getId(), Files.size(part), archived, resolvedArchiveEntry);
                 } catch (IOException semanticFailure) {
                     Files.deleteIfExists(part);
                     Files.deleteIfExists(partMeta);
                     throw new NonRetryableHttpException(semanticFailure.getMessage());
                 }
+
                 AtomicFileSupport.moveReplacing(part, target);
                 Files.deleteIfExists(partMeta);
                 progress.accept(1.0);
 
+                log.info("STORAGE COMMIT: target={}, replace=atomic-with-safe-fallback", target);
                 log.info("DIRECT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));
-                return;
+                return resolvedArchiveEntry;
             } catch (DownloadCancelledException e) {
                 throw e;
             } catch (NonRetryableHttpException e) {
@@ -306,40 +313,29 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     /**
      * Завантаження через ConnectionScript.
      */
-    private void downloadViaConnectionScript(BookDto book, Collection collection, String relative, Path target,
+    private String downloadViaConnectionScript(BookDto book, Collection collection, String relative, Path target,
                                              Path root, boolean archived, AtomicBoolean cancel,
                                              DoubleConsumer progress) throws Exception {
         log.info("SCRIPT DOWNLOAD START: bookId={}, target={}", book.getId(), target);
         ConnectionScriptExecutor executor = new ConnectionScriptExecutor(settings, payloadValidator, requestLimiter);
+        String baseUrl = effectiveBaseUrl(collection);
+        Collection scriptCollection = baseUrl == null || baseUrl.isBlank()
+                ? collection
+                : collectionWithEffectiveUrl(collection, baseUrl);
         ConnectionScriptExecutor.Result result = executor.execute(
-                collection.getConnectionScript(), book, collection, root, relative, target, archived, cancel, progress);
+                collection.getConnectionScript(), book, scriptCollection, root, relative, target, archived, cancel, progress);
         checkCancelled(cancel);
-        payloadValidator.validate(result.payload(), target, book, archived);
+        String resolvedArchiveEntry = result.resolvedArchiveEntry();
+        log.info("PAYLOAD VALIDATED: bookId={}, bytes={}, archived={}, mode=CONNECTION_SCRIPT, resolvedArchiveEntry={}",
+                book.getId(), Files.size(result.payload()), archived, resolvedArchiveEntry);
 
-        // Якщо валідація пройшла, але archiveEntry може відрізнятися - оновлюємо
-        // Це потрібно для випадків, коли сервер повернув інший entry
-        if (archived && book.getArchiveEntry() != null) {
-            // Перевіряємо, чи файл в архіві має інше ім'я
-            try {
-                List<String> entries = archiveReader.listEntries(result.payload());
-                if (!entries.isEmpty()) {
-                    String actualEntry = entries.stream()
-                            .filter(e -> e.toLowerCase(Locale.ROOT).endsWith(".fb2"))
-                            .findFirst()
-                            .orElse(null);
-                    if (actualEntry != null && !actualEntry.equals(book.getArchiveEntry())) {
-                        log.info("Updating archiveEntry from '{}' to '{}'", book.getArchiveEntry(), actualEntry);
-                        book.setArchiveEntry(actualEntry);
-                    }
-                }
-            } catch (Exception e) {
-                log.debug("Could not update archiveEntry: {}", e.getMessage());
-            }
-        }
-
+        // ConnectionScriptExecutor validates the final response (CHECK or mandatory implicit check).
+        // Commit exactly those validated bytes; do not rescan the same archive after the atomic move.
         AtomicFileSupport.moveReplacing(result.payload(), target);
         progress.accept(1.0);
+        log.info("STORAGE COMMIT: target={}, replace=atomic-with-safe-fallback, mode=CONNECTION_SCRIPT", target);
         log.info("SCRIPT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));
+        return resolvedArchiveEntry;
     }
 
     /**
@@ -490,10 +486,13 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         if (cancel.get() || Thread.currentThread().isInterrupted()) throw new DownloadCancelledException();
     }
 
-    private DownloadedBook buildResult(BookDto book, Path root, String relative, Path target, boolean archived) {
+    private DownloadedBook buildResult(BookDto book, Path root, String relative, Path target, boolean archived,
+                                       String resolvedArchiveEntry) {
         String normalized = relative.replace('\\', '/');
         if (archived) {
-            return new DownloadedBook(root, normalized, book.getFileName(), book.getArchiveEntry(), target);
+            String actualEntry = resolvedArchiveEntry == null || resolvedArchiveEntry.isBlank()
+                    ? book.getArchiveEntry() : resolvedArchiveEntry;
+            return new DownloadedBook(root, normalized, book.getFileName(), actualEntry, target);
         }
         Path rel = Path.of(normalized);
         String folder = rel.getParent() == null ? "" : rel.getParent().toString().replace('\\', '/');

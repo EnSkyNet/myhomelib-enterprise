@@ -39,6 +39,7 @@
         <Region HBox.hgrow="ALWAYS"/>
         <Button text="Відкрити книгу" onAction="#onOpenBook"/>
         <Button text="Читати" onAction="#onReadBook"/>
+        <Button text="Завантажити" onAction="#onDownloadBook"/>
     </HBox>
 
     <!-- Таблиця книг -->

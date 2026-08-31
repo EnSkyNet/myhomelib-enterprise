@@ -23,6 +23,25 @@ class SeriesGroupingTest {
                 .containsExactly("Series B", "Series A");
     }
 
+
+    @Test
+    void seriesCrossingServerPageBoundaryGetsAHeaderOnEachPageWithoutReordering() {
+        BookViewModel page1a = book("1", "One", "Long Series");
+        BookViewModel page1b = book("2", "Two", "Long Series");
+        BookViewModel page2a = book("3", "Three", "Long Series");
+        BookViewModel standalone = book("4", "Standalone", null);
+
+        var firstPage = SeriesGrouping.groupPreservingOrder(List.of(page1a, page1b));
+        var secondPage = SeriesGrouping.groupPreservingOrder(List.of(page2a, standalone));
+
+        assertThat(firstPage.stream().filter(BookViewModel::isGroupHeader).map(BookViewModel::getSeries).toList())
+                .containsExactly("Long Series");
+        assertThat(secondPage.stream().filter(BookViewModel::isGroupHeader).map(BookViewModel::getSeries).toList())
+                .containsExactly("Long Series");
+        assertThat(secondPage.stream().filter(row -> !row.isGroupHeader()).toList())
+                .containsExactly(page2a, standalone);
+    }
+
     @Test
     void blankSeriesDoesNotCreateHeader() {
         BookViewModel a = book("1", "A", null);

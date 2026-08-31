@@ -86,6 +86,37 @@ public class ZipArchiveReader implements ArchiveReader {
         }
     }
 
+    /**
+     * Checks whether a named logical entry exists without extracting its payload.
+     * ZIP uses the central directory directly; sequential archive formats fall back
+     * to bounded entry enumeration. This is used by effective-local resolution so
+     * an existing but incomplete/corrupt shared archive is not treated as a local book.
+     */
+    public boolean containsEntry(Path archivePath, String entryName) {
+        if (archivePath == null || entryName == null || entryName.isBlank() || !Files.isRegularFile(archivePath)) {
+            return false;
+        }
+        String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
+        try {
+            if (!lower.endsWith(".7z") && !lower.endsWith(".rar") && !lower.endsWith(".cbr")
+                    && !isStreamArchiveName(lower)) {
+                for (Charset charset : ZIP_CHARSETS) {
+                    try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
+                        ZipEntry entry = findZipEntry(zip, entryName);
+                        if (entry != null && !entry.isDirectory()) return true;
+                    } catch (Exception ignored) {
+                        // Try the next legacy ZIP charset.
+                    }
+                }
+                return false;
+            }
+            return listEntries(archivePath).stream().anyMatch(name -> sameEntry(name, entryName));
+        } catch (RuntimeException error) {
+            log.debug("Не вдалося перевірити запис '{}' у {}: {}", entryName, archivePath, error.getMessage());
+            return false;
+        }
+    }
+
     @Override
     public Optional<InputStream> readEntry(Path archivePath, String entryName) {
         if (archivePath == null || entryName == null || entryName.isBlank()) return Optional.empty();

@@ -42,8 +42,8 @@ public class NewReaderPersistenceService {
     }
 
     /** Зберігає позицію читання, якщо вона змінилася. */
-    public void savePosition(String bookId, ReaderPosition position, long totalTextLength) {
-        if (bookId == null || position == null || !isPositionChanged(bookId, position)) return;
+    public boolean savePosition(String bookId, ReaderPosition position, long totalTextLength) {
+        if (bookId == null || position == null || !isPositionChanged(bookId, position)) return true;
         try {
             Optional<ReadingProgressDto> existing = readingProgressRepository.findByBookId(bookId);
             ReadingProgressDto dto;
@@ -69,8 +69,10 @@ public class NewReaderPersistenceService {
             }
             readingProgressRepository.save(dto);
             lastSavedPositions.put(bookId, position);
+            return true;
         } catch (Exception e) {
             log.error("Помилка збереження позиції в БД: {}", e.getMessage());
+            return false;
         }
     }
 

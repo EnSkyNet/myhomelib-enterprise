@@ -11,4 +11,10 @@ assert 'effectiveBaseUrl(collection)' in ad
 assert 'collectionWithEffectiveUrl' in ad
 assert '.fb2.zip' in ut
 assert 'URL/ConnectionScript online-колекції' in co
+assert 'loadAuthoritative(book).thenCompose' in co
+assert 'ensureLocalForOpenAuthoritative' in co
+# The caller DTO must be updated before the completion callback can launch/open it.
+copy_pos = co.find('if (error == null) copyStorageState(refreshed, book);')
+fx_pos = co.find('Platform.runLater(() -> {', copy_pos)
+assert copy_pos >= 0 and fx_pos > copy_pos
 print('PASS online-book runtime compatibility guard')

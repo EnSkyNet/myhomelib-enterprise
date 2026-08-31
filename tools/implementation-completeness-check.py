@@ -38,7 +38,7 @@ java_files = [p for base in MAIN_ROOTS if base.exists() for p in base.rglob("*.j
 
 # 1. No obvious production placeholders / deliberately unimplemented behavior.
 placeholder_re = re.compile(
-    r"\bTODO\b|\bFIXME\b|UnsupportedOperationException|NotImplementedException|"
+    r"\bTODO\b|\bFIXME\b|NotImplementedException|"
     r"not\s+implemented|не\s+реалізован[а-яіїєґ]*",
     re.IGNORECASE,
 )
@@ -47,6 +47,9 @@ for p in java_files:
     for match in placeholder_re.finditer(text):
         line = text.count("\n", 0, match.start()) + 1
         fail(f"placeholder/unimplemented marker: {p.relative_to(ROOT)}:{line}: {match.group(0)}")
+    for match in re.finditer(r"throw\s+new\s+UnsupportedOperationException\b", text):
+        line = text.count("\n", 0, match.start()) + 1
+        fail(f"placeholder/unimplemented marker: {p.relative_to(ROOT)}:{line}: thrown UnsupportedOperationException")
 
 # 2. No empty public/protected methods. Constructors/records are not matched by requiring a return type.
 empty_method_re = re.compile(

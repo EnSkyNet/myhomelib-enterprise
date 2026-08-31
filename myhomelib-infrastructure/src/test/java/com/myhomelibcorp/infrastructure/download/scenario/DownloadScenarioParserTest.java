@@ -44,6 +44,13 @@ class DownloadScenarioParserTest {
     }
 
     @Test
+    void joinsLegacyBaseUrlAndRootRelativeCommandWithoutLosingSlash() throws Exception {
+        var commands = DownloadScenarioParser.parse("https://flibusta.is\nGET /b/123/get");
+        assertThat(commands).hasSize(1);
+        assertThat(commands.getFirst().first()).isEqualTo("https://flibusta.is/b/123/get");
+    }
+
+    @Test
     void rejectsUnknownAndMalformedCommandsWithLineNumber() {
         assertThatThrownBy(() -> DownloadScenarioParser.parse("GET https://example.test\nEXEC rm -rf /"))
                 .isInstanceOf(DownloadScenarioException.class)

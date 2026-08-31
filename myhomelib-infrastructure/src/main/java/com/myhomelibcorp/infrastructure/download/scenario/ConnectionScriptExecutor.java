@@ -1,5 +1,7 @@
 package com.myhomelibcorp.infrastructure.download.scenario;
 
+import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
+
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -16,7 +18,6 @@ import java.io.OutputStream;
 import java.net.CookieManager;
 import java.net.CookiePolicy;
 import java.net.URI;
-import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
@@ -34,7 +35,7 @@ import java.util.function.DoubleConsumer;
 /** Executes the declarative MyHomeLib ConnectionScript without dynamic-code facilities. */
 @Slf4j
 public final class ConnectionScriptExecutor {
-    public record Result(Path payload, URI responseUri, boolean checked) { }
+    public record Result(Path payload, URI responseUri, boolean checked, String resolvedArchiveEntry) { }
     private record FormField(String name, String value) { }
     private record ResponseState(Path payload, URI requestedUri, URI responseUri) {
         boolean redirected() { return requestedUri != null && responseUri != null && !requestedUri.equals(responseUri); }
@@ -83,6 +84,7 @@ public final class ConnectionScriptExecutor {
         Path responseFile = target.resolveSibling(target.getFileName() + ".script.part");
         ResponseState state = null;
         boolean checked = false;
+        String resolvedArchiveEntry = "";
 
         try {
             Files.createDirectories(responseFile.getParent());
@@ -104,32 +106,34 @@ public final class ConnectionScriptExecutor {
                     case GET -> {
                         String expanded = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         URI uri = safeHttpUri(expanded);
-                        log.info("  GET request: {}", uri);
+                        log.info("  GET request: {}", SensitiveDataSanitizer.sanitizeUri(uri));
                         state = send(client, "GET", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
-                        log.info("  GET response: uri={}, payload={}", state.responseUri(), state.payload());
+                        resolvedArchiveEntry = "";
+                        log.info("  GET response: uri={}, payload={}", SensitiveDataSanitizer.sanitizeUri(state.responseUri()), state.payload());
                     }
                     case POST -> {
                         String expanded = macros.expand(command.first(), state == null ? null : uriText(state.responseUri()));
                         URI uri = safeHttpUri(expanded);
-                        log.info("  POST request: {}", uri);
+                        log.info("  POST request: {}", SensitiveDataSanitizer.sanitizeUri(uri));
                         state = send(client, "POST", uri, fields, responseFile, collection, cancel, progress);
                         checked = false;
-                        log.info("  POST response: uri={}, payload={}", state.responseUri(), state.payload());
+                        resolvedArchiveEntry = "";
+                        log.info("  POST response: uri={}, payload={}", SensitiveDataSanitizer.sanitizeUri(state.responseUri()), state.payload());
                     }
                     case REDIR -> {
                         log.debug("  REDIR");
                         if (state == null || !state.redirected()) {
                             throw new DownloadScenarioException("ConnectionScript REDIR: попередній request не мав redirect-result");
                         }
-                        log.info("  REDIR from: {} to: {}", state.requestedUri(), state.responseUri());
+                        log.info("  REDIR from: {} to: {}", SensitiveDataSanitizer.sanitizeUri(state.requestedUri()), SensitiveDataSanitizer.sanitizeUri(state.responseUri()));
                     }
                     case CHECK -> {
                         log.debug("  CHECK");
                         if (state == null || state.payload() == null) {
                             throw new DownloadScenarioException("ConnectionScript CHECK: відсутній response payload");
                         }
-                        validator.validate(state.payload(), target, book, archived);
+                        resolvedArchiveEntry = validator.validate(state.payload(), target, book, archived);
                         checked = true;
                         log.debug("  CHECK passed");
                     }
@@ -145,11 +149,12 @@ public final class ConnectionScriptExecutor {
 
             if (!checked) {
                 log.debug("No CHECK command, validating payload anyway");
-                validator.validate(state.payload(), target, book, archived);
+                resolvedArchiveEntry = validator.validate(state.payload(), target, book, archived);
             }
 
-            log.info("ConnectionScript SUCCESS: payload={}, responseUri={}", state.payload(), state.responseUri());
-            return new Result(state.payload(), state.responseUri(), checked);
+            log.info("ConnectionScript SUCCESS: payload={}, responseUri={}, resolvedArchiveEntry={}",
+                    state.payload(), SensitiveDataSanitizer.sanitizeUri(state.responseUri()), resolvedArchiveEntry);
+            return new Result(state.payload(), state.responseUri(), checked, resolvedArchiveEntry);
 
         } catch (Exception e) {
             log.error("ConnectionScript FAILED: {}", e.getMessage(), e);
@@ -160,7 +165,7 @@ public final class ConnectionScriptExecutor {
 
     private ResponseState send(HttpClient client, String method, URI uri, List<FormField> fields, Path responseFile,
                                Collection collection, AtomicBoolean cancel, DoubleConsumer progress) throws Exception {
-        log.info("send() START: method={}, uri={}", method, uri);
+        log.info("send() START: method={}, uri={}", method, SensitiveDataSanitizer.sanitizeUri(uri));
 
         int retries = method.equals("GET") ? clamp(settings.getInt("online.retryCount", 3), 0, 6) : 0;
         Exception last = null;
@@ -174,13 +179,12 @@ public final class ConnectionScriptExecutor {
             addBasicAuth(request, collection);
 
             if (method.equals("POST")) {
-                // Для legacy MyHomeLib використовуємо application/x-www-form-urlencoded
-                // Для сучасних API - multipart/form-data
-                String contentType = detectContentType(fields);
-                byte[] body = encodePostBody(fields, contentType);
+                String boundary = "----MHL71" + UUID.randomUUID().toString().replace("-", "");
+                byte[] body = encodeMultipartBody(fields, boundary);
+                String contentType = "multipart/form-data; boundary=" + boundary;
                 request.header("Content-Type", contentType)
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body));
-                log.debug("  POST body size: {} bytes, type: {}", body.length, contentType);
+                log.debug("  POST body size: {} bytes, type: multipart/form-data", body.length);
             } else {
                 request.GET();
             }
@@ -196,7 +200,7 @@ public final class ConnectionScriptExecutor {
                 URI responseUri = response.uri();
 
                 log.info("  HTTP {} in {} ms, Content-Type: {}, Content-Length: {}, Response URI: {}",
-                        status, duration, contentType, contentLength, responseUri);
+                        status, duration, contentType, contentLength, SensitiveDataSanitizer.sanitizeUri(responseUri));
 
                 if (status < 200 || status >= 300) {
                     String retryAfter = response.headers().firstValue("Retry-After").orElse(null);
@@ -206,7 +210,7 @@ public final class ConnectionScriptExecutor {
                     if (status >= 300 && status < 400) {
                         String location = response.headers().firstValue("Location").orElse(null);
                         if (location != null) {
-                            log.info("  Redirect to: {}", location);
+                            log.info("  Redirect to: {}", SensitiveDataSanitizer.sanitizeText(location));
                             return new ResponseState(null, uri, URI.create(location));
                         }
                     }
@@ -259,45 +263,24 @@ public final class ConnectionScriptExecutor {
         throw new DownloadScenarioException("ConnectionScript network request failed");
     }
 
-    private String detectContentType(List<FormField> fields) {
-        // Якщо є файли або великі дані - використовуємо multipart
-        long totalSize = fields.stream().mapToLong(f -> f.value().length()).sum();
-        boolean hasBinary = fields.stream().anyMatch(f -> f.value().length() > 1024);
-        if (hasBinary || totalSize > 4096) {
-            return "multipart/form-data";
-        }
-        return "application/x-www-form-urlencoded";
-    }
-
-    private byte[] encodePostBody(List<FormField> fields, String contentType) throws DownloadScenarioException {
-        if (contentType.contains("multipart/form-data")) {
-            String boundary = "----MHL71" + UUID.randomUUID().toString().replace("-", "");
-            StringBuilder b = new StringBuilder();
-            int totalChars = 0;
-            for (FormField f : fields) {
-                if (f.name() == null || !f.name().matches("[A-Za-z0-9_.\\-]+"))
-                    throw new DownloadScenarioException("Некоректне ім'я POST field");
-                String value = f.value() == null ? "" : f.value();
-                totalChars += value.length();
-                if (totalChars > 1_000_000) throw new DownloadScenarioException("POST parameters перевищують safety limit");
-                b.append("--").append(boundary).append("\r\n")
-                        .append("Content-Disposition: form-data; name=\"").append(f.name()).append("\"\r\n\r\n")
-                        .append(value).append("\r\n");
+    private byte[] encodeMultipartBody(List<FormField> fields, String boundary) throws DownloadScenarioException {
+        StringBuilder body = new StringBuilder();
+        int totalChars = 0;
+        for (FormField field : fields) {
+            if (field.name() == null || !field.name().matches("[A-Za-z0-9_.\\-]+")) {
+                throw new DownloadScenarioException("Некоректне ім'я POST field");
             }
-            b.append("--").append(boundary).append("--\r\n");
-            return b.toString().getBytes(StandardCharsets.UTF_8);
-        } else {
-            // application/x-www-form-urlencoded
-            StringBuilder b = new StringBuilder();
-            for (int i = 0; i < fields.size(); i++) {
-                if (i > 0) b.append('&');
-                FormField f = fields.get(i);
-                b.append(URLEncoder.encode(f.name(), StandardCharsets.UTF_8))
-                        .append('=')
-                        .append(URLEncoder.encode(f.value(), StandardCharsets.UTF_8));
+            String value = field.value() == null ? "" : field.value();
+            totalChars += value.length();
+            if (totalChars > 1_000_000) {
+                throw new DownloadScenarioException("POST parameters перевищують safety limit");
             }
-            return b.toString().getBytes(StandardCharsets.UTF_8);
+            body.append("--").append(boundary).append("\r\n")
+                    .append("Content-Disposition: form-data; name=\"").append(field.name()).append("\"\r\n\r\n")
+                    .append(value).append("\r\n");
         }
+        body.append("--").append(boundary).append("--\r\n");
+        return body.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private void addBasicAuth(HttpRequest.Builder request, Collection collection) {
@@ -327,7 +310,7 @@ public final class ConnectionScriptExecutor {
             if (uri.getHost() == null) {
                 throw new DownloadScenarioException("ConnectionScript URL не містить host");
             }
-            log.debug("  safe URI: {}", uri);
+            log.debug("  safe URI: {}", SensitiveDataSanitizer.sanitizeUri(uri));
             return uri;
         } catch (IllegalArgumentException e) {
             throw new DownloadScenarioException("Некоректний ConnectionScript URL: " + raw);

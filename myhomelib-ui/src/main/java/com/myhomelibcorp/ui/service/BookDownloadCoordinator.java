@@ -5,6 +5,8 @@ import com.myhomelibcorp.application.catalog.LegacyOnlineBookLocation;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.download.DownloadBookUseCase;
+import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.application.usecase.download.RemoveLocalBookCopyUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
@@ -16,6 +18,8 @@ import org.springframework.stereotype.Service;
 
 import java.nio.file.Path;
 import java.util.Map;
+import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Semaphore;
@@ -27,6 +31,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public class BookDownloadCoordinator {
     private final DownloadBookUseCase downloadBookUseCase;
     private final RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase;
+    private final LoadBookByIdUseCase loadBookByIdUseCase;
     private final BookResourcePort bookResourcePort;
     private final UiBackgroundExecutor executor;
     private final ApplicationState applicationState;
@@ -36,10 +41,11 @@ public class BookDownloadCoordinator {
     private final Map<String, AtomicBoolean> active = new ConcurrentHashMap<>();
 
     public BookDownloadCoordinator(DownloadBookUseCase downloadBookUseCase, RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase,
-                                   BookResourcePort bookResourcePort, UiBackgroundExecutor executor, ApplicationState applicationState,
+                                   LoadBookByIdUseCase loadBookByIdUseCase, BookResourcePort bookResourcePort, UiBackgroundExecutor executor, ApplicationState applicationState,
                                    DialogService dialogService, ApplicationSettingsPort settings, ApplicationEventPublisher eventPublisher) {
         this.downloadBookUseCase = downloadBookUseCase;
         this.removeLocalBookCopyUseCase = removeLocalBookCopyUseCase;
+        this.loadBookByIdUseCase = loadBookByIdUseCase;
         this.bookResourcePort = bookResourcePort;
         this.executor = executor;
         this.applicationState = applicationState;
@@ -50,11 +56,41 @@ public class BookDownloadCoordinator {
     }
 
     public CompletableFuture<Path> ensureLocal(BookDto book) {
-        return download(book, false);
+        if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        return loadAuthoritative(book).thenCompose(authoritative ->
+                download(authoritative, false).whenComplete((path, error) -> {
+                    if (error == null) copyStorageState(authoritative, book);
+                }));
     }
 
+    /** Load the authoritative DB row first. List workspaces intentionally carry only a lightweight DTO. */
+    public CompletableFuture<Path> ensureLocal(BookId bookId) {
+        if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
+        return executor.submit(() -> loadBookByIdUseCase.execute(bookId)
+                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
+                .thenCompose(book -> download(book, false));
+    }
+
+    /**
+     * Open/read guard using the authoritative DB row before checking the physical file.
+     * Lightweight table DTOs may intentionally omit online/storage metadata.
+     */
     public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        return loadAuthoritative(book).thenCompose(authoritative ->
+                ensureLocalForOpenAuthoritative(authoritative).whenComplete((path, error) -> {
+                    if (error == null) copyStorageState(authoritative, book);
+                }));
+    }
+
+    public CompletableFuture<Path> ensureLocalForOpen(BookId bookId) {
+        if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
+        return executor.submit(() -> loadBookByIdUseCase.execute(bookId)
+                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
+                .thenCompose(this::ensureLocalForOpenAuthoritative);
+    }
+
+    private CompletableFuture<Path> ensureLocalForOpenAuthoritative(BookDto book) {
         normalizeLegacyRemoteStorage(book);
         var existing = bookResourcePort.locateBookFile(
                 book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
@@ -62,7 +98,7 @@ public class BookDownloadCoordinator {
 
         if (!Platform.isFxApplicationThread()) {
             CompletableFuture<Path> result = new CompletableFuture<>();
-            Platform.runLater(() -> ensureLocalForOpen(book).whenComplete((path, error) -> {
+            Platform.runLater(() -> ensureLocalForOpenAuthoritative(book).whenComplete((path, error) -> {
                 if (error == null) result.complete(path);
                 else result.completeExceptionally(error);
             }));
@@ -72,7 +108,7 @@ public class BookDownloadCoordinator {
         boolean approved = dialogService.showConfirmation(
                 "Книга відсутня",
                 book.getTitle() == null || book.getTitle().isBlank() ? "Файл книги відсутній" : book.getTitle(),
-                "Книга фізично відсутня на комп'ютері. Завантажити та зберегти її перед відкриттям?");
+                "Книга фізично відсутня на комп’ютері. Завантажити та зберегти її перед відкриттям?");
         if (!approved) {
             return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(
                     "Відкриття скасовано користувачем"));
@@ -81,7 +117,24 @@ public class BookDownloadCoordinator {
     }
 
     public CompletableFuture<Path> downloadUpdate(BookDto book) {
-        return download(book, true);
+        if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
+        return loadAuthoritative(book).thenCompose(authoritative ->
+                download(authoritative, true).whenComplete((path, error) -> {
+                    if (error == null) copyStorageState(authoritative, book);
+                }));
+    }
+
+    private CompletableFuture<BookDto> loadAuthoritative(BookDto fallback) {
+        if (fallback == null || fallback.getId() == null || fallback.getId().isBlank()) {
+            return CompletableFuture.completedFuture(fallback);
+        }
+        BookId id;
+        try {
+            id = BookId.fromString(fallback.getId());
+        } catch (RuntimeException invalidId) {
+            return CompletableFuture.completedFuture(fallback);
+        }
+        return executor.submit(() -> loadBookByIdUseCase.execute(id).orElse(fallback));
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
@@ -135,12 +188,13 @@ public class BookDownloadCoordinator {
                             applicationState.getStatusBar().setStatusText("⏳ Завантаження: " + book.getTitle() + " (очікування слота)");
                         });
 
-                        return downloadBookUseCase.execute(book, collection, cancel, value ->
+                        BookDto effectiveBook = loadBookByIdUseCase.execute(BookId.fromString(book.getId())).orElse(book);
+                        normalizeLegacyRemoteStorage(effectiveBook);
+                        return downloadBookUseCase.execute(effectiveBook, collection, cancel, value ->
                                 Platform.runLater(() -> {
                                     applicationState.getStatusBar().setProgress(value);
-                                    // Показуємо відсоток
                                     int percent = (int) Math.round(value * 100);
-                                    applicationState.getStatusBar().setStatusText("📥 Завантаження: " + book.getTitle() + " (" + percent + "%)");
+                                    applicationState.getStatusBar().setStatusText("📥 Завантаження: " + effectiveBook.getTitle() + " (" + percent + "%)");
                                 }), force);
                     } finally {
                         if (acquired) downloadSlots.release();
@@ -149,15 +203,30 @@ public class BookDownloadCoordinator {
                 .whenComplete((path, error) -> {
                     active.remove(book.getId(), cancel);
                     long duration = System.currentTimeMillis() - startTime;
+                    BookDto refreshed = error == null ? reloadSafely(book) : book;
+                    // Complete the future only after the caller's DTO has authoritative storage metadata.
+                    // External-open callbacks may run immediately when this stage completes and must not
+                    // observe the pre-download remote folder/fileName.
+                    if (error == null) copyStorageState(refreshed, book);
                     Platform.runLater(() -> {
                         applicationState.getStatusBar().setProgressVisible(false);
                         if (error == null) {
-                            applicationState.getStatusBar().setStatusText("✅ Завантажено: " + book.getTitle() + " (" + duration / 1000 + "с)");
-                            // DB was updated by the use case; align DTO with the collection root for immediate Reader use.
-                            Path root = collection.getRootFolder() != null ? collection.getRootFolder().toAbsolutePath().normalize()
-                                    : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId()).toAbsolutePath().normalize();
-                            book.setCollectionRoot(root.toString());
-                            book.setLocal(true);
+                            applicationState.getStatusBar().setStatusText("✅ Завантажено: " + refreshed.getTitle() + " (" + duration / 1000 + "с)");
+                            BookDto details = applicationState.getBookDetails().getCurrentBook();
+                            if (details != null && book.getId().equals(details.getId())) {
+                                applicationState.getBookDetails().setCurrentBook(refreshed);
+                            }
+                            applicationState.getBookTable().getBooks().stream()
+                                    .filter(row -> book.getId().equals(row.getId()))
+                                    .findFirst()
+                                    .ifPresent(row -> {
+                                        row.setLocal(refreshed.isLocal());
+                                        row.setCollectionRoot(refreshed.getCollectionRoot());
+                                        row.setFolder(refreshed.getFolder());
+                                        row.setFileName(refreshed.getFileName());
+                                        row.setArchiveEntry(refreshed.getArchiveEntry());
+                                        row.setFileSize(refreshed.getFileSize());
+                                    });
                             eventPublisher.publishEvent(new NavigationRefreshEvent());
                         } else {
                             Throwable cause = unwrap(error);
@@ -228,6 +297,28 @@ public class BookDownloadCoordinator {
                 || normalized.endsWith("/.myhomelibcorp/cache/catalog-updates");
     }
 
+    private BookDto reloadSafely(BookDto fallback) {
+        if (fallback == null || fallback.getId() == null || fallback.getId().isBlank()) return fallback;
+        try {
+            return loadBookByIdUseCase.execute(BookId.fromString(fallback.getId())).orElse(fallback);
+        } catch (RuntimeException error) {
+            log.warn("Книгу {} завантажено, але не вдалося перечитати оновлені metadata", fallback.getId(), error);
+            return fallback;
+        }
+    }
+
+    private static void copyStorageState(BookDto source, BookDto target) {
+        if (source == null || target == null) return;
+        target.setCollectionRoot(source.getCollectionRoot());
+        target.setFolder(source.getFolder());
+        target.setFileName(source.getFileName());
+        target.setArchiveEntry(source.getArchiveEntry());
+        target.setFileSize(source.getFileSize());
+        target.setLocal(source.isLocal());
+        target.setLibId(source.getLibId());
+        target.setSourceUrl(source.getSourceUrl());
+    }
+
     private CompletableFuture<Path> failedVisible(String message) {
         Platform.runLater(() -> dialogService.showError("Завантаження", message));
         return CompletableFuture.failedFuture(new IllegalStateException(message));
@@ -236,17 +327,95 @@ public class BookDownloadCoordinator {
     public CompletableFuture<Integer> removeLocalCopy(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         if (isDownloading(book)) return CompletableFuture.failedFuture(new IllegalStateException("Спочатку скасуйте активне завантаження"));
-        return executor.submit(() -> removeLocalBookCopyUseCase.execute(book))
+        return loadAuthoritative(book).thenCompose(authoritative ->
+                executor.submit(() -> removeLocalBookCopyUseCase.preview(authoritative))
+                        .thenCompose(preview -> confirmSingleRemoval(authoritative, preview)
+                                .thenCompose(approved -> approved
+                                        ? executor.submit(() -> removeLocalBookCopyUseCase.execute(authoritative))
+                                        : CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("Видалення скасовано користувачем")))))
                 .whenComplete((count, error) -> Platform.runLater(() -> {
                     if (error == null) {
                         book.setLocal(false);
-                        applicationState.getStatusBar().setStatusText("🗑 Локальну копію видалено: " + book.getTitle());
+                        applicationState.getStatusBar().setStatusText("Локальну копію видалено: " + book.getTitle());
+                        eventPublisher.publishEvent(new NavigationRefreshEvent());
                     } else {
                         Throwable cause = unwrap(error);
-                        dialogService.showError("Локальна копія", cause.getMessage() == null ? cause.toString() : cause.getMessage());
+                        if (!(cause instanceof java.util.concurrent.CancellationException)) {
+                            dialogService.showError("Локальна копія", cause.getMessage() == null ? cause.toString() : cause.getMessage());
+                        }
                     }
                 }));
     }
+
+    public CompletableFuture<Integer> removeLocalCopies(List<BookId> bookIds) {
+        if (bookIds == null || bookIds.isEmpty()) return CompletableFuture.completedFuture(0);
+        return executor.submit(() -> {
+            LinkedHashMap<String, PlannedRemoval> unique = new LinkedHashMap<>();
+            for (BookId id : bookIds.stream().distinct().toList()) {
+                BookDto book = loadBookByIdUseCase.execute(id).orElse(null);
+                if (book == null) continue;
+                var preview = removeLocalBookCopyUseCase.preview(book);
+                String key = preview.physicalPath() == null
+                        ? "book:" + book.getId()
+                        : "file:" + preview.physicalPath().toAbsolutePath().normalize();
+                unique.putIfAbsent(key, new PlannedRemoval(book, preview));
+            }
+            return List.copyOf(unique.values());
+        }).thenCompose(plans -> confirmBatchRemoval(plans).thenCompose(approved -> {
+            if (!approved) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("Видалення скасовано користувачем"));
+            return executor.submit(() -> {
+                int affected = 0;
+                for (PlannedRemoval plan : plans) affected += removeLocalBookCopyUseCase.execute(plan.book());
+                return affected;
+            });
+        })).whenComplete((count, error) -> Platform.runLater(() -> {
+            if (error == null) {
+                applicationState.getStatusBar().setStatusText("Локальні копії видалено; оновлено записів: " + count);
+                eventPublisher.publishEvent(new NavigationRefreshEvent());
+            } else {
+                Throwable cause = unwrap(error);
+                if (!(cause instanceof java.util.concurrent.CancellationException)) {
+                    dialogService.showError("Локальні копії", cause.getMessage() == null ? cause.toString() : cause.getMessage());
+                }
+            }
+        }));
+    }
+
+    private CompletableFuture<Boolean> confirmSingleRemoval(BookDto book, RemoveLocalBookCopyUseCase.RemovalPreview preview) {
+        String details = preview.sharedArchive()
+                ? "Файл/архів: " + displayPath(preview.physicalPath()) + "\nУ ньому каталогізовано книг: " + preview.affectedBooks() +
+                  "\nПісля видалення всі вони стануть віддаленими. Продовжити?"
+                : "Файл: " + displayPath(preview.physicalPath()) + "\nКаталожний запис буде збережено. Продовжити?";
+        return confirmOnFx("Видалення локальної копії", book.getTitle(), details);
+    }
+
+    private CompletableFuture<Boolean> confirmBatchRemoval(List<PlannedRemoval> plans) {
+        int physicalFiles = (int) plans.stream().filter(p -> p.preview().physicalPath() != null).count();
+        int affectedBooks = plans.stream().mapToInt(p -> p.preview().affectedBooks()).sum();
+        long sharedArchives = plans.stream().filter(p -> p.preview().sharedArchive()).count();
+        String details = "Фізичних файлів/архівів: " + physicalFiles + "\nЗаписів, що стануть віддаленими: " + affectedBooks
+                + (sharedArchives > 0 ? "\nСпільних архівів: " + sharedArchives : "")
+                + "\nКаталожні записи не видаляються. Продовжити?";
+        return confirmOnFx("Видалення локальних копій", "Вибрано книг: " + plans.size(), details);
+    }
+
+    private CompletableFuture<Boolean> confirmOnFx(String title, String header, String details) {
+        if (Platform.isFxApplicationThread()) {
+            return CompletableFuture.completedFuture(dialogService.showConfirmation(title, header, details));
+        }
+        CompletableFuture<Boolean> result = new CompletableFuture<>();
+        Platform.runLater(() -> {
+            try { result.complete(dialogService.showConfirmation(title, header, details)); }
+            catch (Throwable error) { result.completeExceptionally(error); }
+        });
+        return result;
+    }
+
+    private static String displayPath(Path path) {
+        return path == null ? "файл уже відсутній" : path.toString();
+    }
+
+    private record PlannedRemoval(BookDto book, RemoveLocalBookCopyUseCase.RemovalPreview preview) { }
 
     public boolean cancel(BookDto book) {
         if (book == null) return false;

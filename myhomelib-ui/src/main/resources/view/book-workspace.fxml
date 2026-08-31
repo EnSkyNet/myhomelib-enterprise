@@ -24,7 +24,6 @@
             <Label fx:id="formatLabel" text="Формат"/>
             <Label fx:id="sizeLabel" text="Розмір"/>
             <Label fx:id="ratingLabel" text="Рейтинг"/>
-            <Label fx:id="pagesLabel" text="Сторінок"/>
             <HBox spacing="5" alignment="CENTER_LEFT">
                 <ProgressBar fx:id="readingProgress" prefWidth="150"/>
                 <Label fx:id="progressLabel" text="0%"/>
@@ -36,13 +35,14 @@
     <TextArea fx:id="annotationArea" wrapText="true" prefHeight="120" editable="false"/>
 
     <HBox spacing="10">
-        <Button text="Відкрити" onAction="#onOpen" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
-        <Button text="Читати" onAction="#onRead" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+        <Button text="Відкрити у зовнішній програмі" onAction="#onOpen" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+        <Button text="Читати у MyHomeLib" onAction="#onRead" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+        <Button text="Завантажити" onAction="#onDownload"/>
         <Button text="Редагувати" onAction="#onEdit" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
         <Button text="Відкрити папку" onAction="#onOpenFolder"/>
-        <Button text="Додати до колекції" onAction="#onAddToCollection"/>
+        <Button text="Додати до групи" onAction="#onAddToCollection"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Видалити" onAction="#onDeleteBook" style="-fx-background-color: #f44336; -fx-text-fill: white;"/>
+        <Button text="Видалити запис із каталогу" onAction="#onDeleteBook" style="-fx-background-color: #f44336; -fx-text-fill: white;"/>
         <Button text="← Назад" onAction="#onBack"/>
     </HBox>
 </VBox>

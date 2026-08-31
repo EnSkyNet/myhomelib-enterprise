@@ -32,7 +32,8 @@ public class ExternalBookLauncher {
         String source = nonBlank(dto.getArchiveEntry(), dto.getFileName());
         String ext = extension(source);
         Path file = materialize(dto, ext);
-        String command = settings.get("reader.external." + ext, "").trim();
+        String configured = settings.get("reader.external." + ext, "");
+        String command = configured == null ? "" : configured.trim();
         if (command.isEmpty()) {
             if (!Desktop.isDesktopSupported()) throw new IllegalStateException("Desktop API недоступний");
             Desktop.getDesktop().open(file.toFile());
@@ -48,8 +49,8 @@ public class ExternalBookLauncher {
 
     private Path materialize(BookDto dto, String ext) throws Exception {
         if (dto.getArchiveEntry() == null || dto.getArchiveEntry().isBlank()) {
-            Path p = resources.buildFilePath(dto.getCollectionRoot(), dto.getFolder(), dto.getFileName());
-            if (Files.isRegularFile(p)) return p;
+            Path located = resources.locateBookFile(dto.getFileName(), dto.getFolder(), dto.getCollectionRoot(), dto.getArchiveEntry()).orElse(null);
+            if (located != null && Files.isRegularFile(located) && !resources.isArchive(located.toString())) return located;
         }
         Path dir = AppPaths.cacheDir().resolve("external-reader");
         Files.createDirectories(dir);

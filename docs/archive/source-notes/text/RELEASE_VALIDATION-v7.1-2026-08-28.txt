@@ -1,0 +1,51 @@
+MyHomeLib Enterprise 7.1.0 — local release validation
+=====================================================
+Date: 2026-08-28
+
+VERIFIED IN THIS ENVIRONMENT
+- JDK: OpenJDK 21.0.11 / javac 21.0.11.
+- tools/build-check-v7.py: PASS.
+  - Flyway collection migrations V1-V40: sequencing/integrity PASS.
+  - V1-V36 immutable baseline SHA-256 check: PASS.
+  - existing v7 DB -> v7.1 representative user-data upgrade: PASS.
+  - metadata migrations through V5: PASS.
+  - XML/FXML: PASS.
+  - v7.1 source invariants: PASS.
+  - release-tree cleanliness guard: PASS.
+- all available `tools/*check.py` regression/architecture gates: PASS (architecture, lifecycle, INPX hot path, navigation/stages 3–25C, OPDS, reader, versioned user-data, cross-platform release contracts, startup transaction split).
+- tools/v71-standalone-java-smoke.py: PASS using installed JDK 21 and production source units.
+  - collection.info multiline round-trip: PASS.
+  - ConnectionScript parser/unknown-command rejection: PASS.
+  - embedded HTTP `ADD → POST → redirect → REDIR → CHECK`: PASS.
+  - `PAUSE → GET → CHECK`, Unicode URL and cancellation: PASS.
+  - one-pass macro substitution and secret sanitization: PASS.
+  - high-reliability ZIP validation / case-insensitive duplicate-entry rejection: PASS.
+- tools/static_release_check.py: PASS.
+  - POM/FXML XML files: 38; errors: 0.
+  - FXML workspaces: 25; handler references: 163; missing: 0.
+  - SQLite migrations: 40; integrity_check: ok.
+  - root shell scripts: 9; static issues: 0.
+  - Java sources: 693; Java test sources: 76.
+- Stage 8+9 filter/table check: PASS.
+- Stage 24 performance contract check: PASS.
+- Stage 25C search/sync refactor check: PASS.
+- workflow YAML parsing: PASS.
+- root shell `bash -n`: PASS.
+- `git diff --check`: PASS after current source edits.
+- dependency-less `javac -proc:none` structural scan: no duplicate-local/syntax/unclosed-block patterns found (external dependency resolution errors are expected and are not counted as compilation PASS).
+- source-artifact packaging/re-extraction gate (`tools/package-v71-source.py`): PASS in this environment; authoritative ZIP SHA-256 is written next to the artifact after each final packaging run.
+
+EXECUTED v7.1 SQLITE PERFORMANCE PROBES (V1-V40)
+- 100k: 62,152 books/s import probe; Authors(A) p95 13.6 ms; first page p95 0.1 ms; PASS.
+- 500k: 47,209 books/s import probe; Authors(A) p95 134.8 ms; first page p95 0.2 ms; PASS.
+- 700k: 58,402 books/s import probe; Authors(A) p95 136.1 ms; first page p95 0.1 ms; PASS.
+- 1M: 64,938 books/s import probe; Authors(A) p95 208.9 ms; first page p95 0.105 ms; PASS.
+
+NOT VERIFIED / RELEASE BLOCKERS
+- `./mvnw clean verify -Pproduction`: NOT RUN. Maven distribution/dependencies are not cached and repo.maven.apache.org cannot be resolved in this environment.
+- Java/JUnit compilation and runtime suite using the complete external dependency classpath: NOT VERIFIED.
+- JavaFX/jpackage packaged runtime smoke test: NOT VERIFIED here.
+- Real GitHub Actions run: NOT RUN; Ubuntu/Windows/macOS results and run ID/URL unavailable.
+- JVM/Lucene 700k/1M full/selective before/after benchmark: NOT RUN; instrumentation exists, figures are not invented.
+
+This file records only checks that actually ran. Source/test presence is not treated as executed test success.

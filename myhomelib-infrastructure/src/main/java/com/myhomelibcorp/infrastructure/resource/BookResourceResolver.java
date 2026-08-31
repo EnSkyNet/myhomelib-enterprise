@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.resource;
 
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.infrastructure.archive.ArchiveEntryNameSupport;
 import com.myhomelibcorp.infrastructure.cover.ZipArchiveReader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -49,19 +50,30 @@ public class BookResourceResolver implements BookResourcePort {
         log.debug("locateBookFile: fileName='{}', folder='{}', root='{}', archiveEntry='{}'",
                 fileName, folder, collectionRoot, archiveEntry);
 
-        // 1. Якщо є archiveEntry, шукаємо архів
+        // 1. Якщо є archiveEntry, локальною є лише книга, чий конкретний запис
+        // реально присутній в архіві. Сам факт існування shared ZIP недостатній.
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             Path archivePath = findArchivePath(fileName, folder, collectionRoot);
-            if (archivePath != null && Files.exists(archivePath)) {
-                log.debug("Знайдено архів: {}", archivePath);
-                return Optional.of(archivePath);
+            if (archivePath != null && Files.isRegularFile(archivePath)) {
+                if (archiveReader.containsEntry(archivePath, archiveEntry)) {
+                    log.debug("Знайдено архів і запис '{}': {}", archiveEntry, archivePath);
+                    return Optional.of(archivePath);
+                }
+                Optional<String> compatible = resolveCompatibleArchiveEntry(archivePath, archiveEntry, fileName);
+                if (compatible.isPresent()) {
+                    log.info("Знайдено server-renamed/legacy archive entry: '{}' -> '{}' у {}",
+                            archiveEntry, compatible.get(), archivePath);
+                    return Optional.of(archivePath);
+                }
+                log.debug("Архів існує, але запис '{}' відсутній: {}", archiveEntry, archivePath);
             }
+            return Optional.empty();
         }
 
         // 2. Якщо fileName є архівом
         if (fileName != null && isArchive(fileName)) {
             Path archivePath = buildFilePath(collectionRoot, folder, fileName);
-            if (archivePath != null && Files.exists(archivePath)) {
+            if (archivePath != null && Files.isRegularFile(archivePath)) {
                 log.debug("Знайдено архів (fileName): {}", archivePath);
                 return Optional.of(archivePath);
             }
@@ -70,7 +82,7 @@ public class BookResourceResolver implements BookResourcePort {
         // 3. Якщо folder є архівом
         if (folder != null && isArchive(folder)) {
             Path archivePath = buildFilePath(collectionRoot, null, folder);
-            if (archivePath != null && Files.exists(archivePath)) {
+            if (archivePath != null && Files.isRegularFile(archivePath)) {
                 log.debug("Знайдено архів (folder): {}", archivePath);
                 return Optional.of(archivePath);
             }
@@ -78,7 +90,7 @@ public class BookResourceResolver implements BookResourcePort {
 
         // 4. Звичайний файл
         Path filePath = buildFilePath(collectionRoot, folder, fileName);
-        if (filePath != null && Files.exists(filePath) && !isArchive(filePath.toString())) {
+        if (filePath != null && Files.isRegularFile(filePath) && !isArchive(filePath.toString())) {
             log.debug("Знайдено файл: {}", filePath);
             return Optional.of(filePath);
         }
@@ -101,7 +113,7 @@ public class BookResourceResolver implements BookResourcePort {
         // Спроба 3: folder + fileName як архів
         if (folder != null && !folder.isBlank() && fileName != null && !fileName.isBlank()) {
             Path combined = buildFilePath(collectionRoot, folder, fileName);
-            if (combined != null && Files.exists(combined) && isArchive(combined.toString())) {
+            if (combined != null && Files.isRegularFile(combined) && isArchive(combined.toString())) {
                 return combined;
             }
         }
@@ -131,15 +143,22 @@ public class BookResourceResolver implements BookResourcePort {
             // 1. Якщо є archiveEntry - читаємо з архіву
             if (archiveEntry != null && !archiveEntry.isBlank()) {
                 Path archivePath = findArchivePath(fileName, folder, collectionRoot);
-                if (archivePath != null && Files.exists(archivePath)) {
-                    log.debug("Читання з архіву: {}, запис: {}", archivePath, archiveEntry);
-                    return archiveReader.readEntry(archivePath, archiveEntry);
+                if (archivePath != null && Files.isRegularFile(archivePath)) {
+                    String actualEntry = archiveReader.containsEntry(archivePath, archiveEntry)
+                            ? archiveEntry
+                            : resolveCompatibleArchiveEntry(archivePath, archiveEntry, fileName).orElse(null);
+                    if (actualEntry != null) {
+                        log.debug("Читання з архіву: {}, запис: {}", archivePath, actualEntry);
+                        return archiveReader.readEntry(archivePath, actualEntry);
+                    }
+                    log.debug("Не знайдено однозначного запису '{}' в архіві {}", archiveEntry, archivePath);
+                    return Optional.empty();
                 }
             }
 
             // 2. Якщо fileName або folder є архівом
             Path archivePath = findArchivePath(fileName, folder, collectionRoot);
-            if (archivePath != null && Files.exists(archivePath)) {
+            if (archivePath != null && Files.isRegularFile(archivePath)) {
                 // Шукаємо перший FB2 в архіві
                 log.debug("Пошук FB2 в архіві: {}", archivePath);
                 return archiveReader.findFirstEntry(archivePath,
@@ -148,7 +167,7 @@ public class BookResourceResolver implements BookResourcePort {
 
             // 3. Звичайний файл
             Path filePath = buildFilePath(collectionRoot, folder, fileName);
-            if (filePath != null && Files.exists(filePath)) {
+            if (filePath != null && Files.isRegularFile(filePath)) {
                 log.debug("Читання файлу: {}", filePath);
                 return Optional.of(Files.newInputStream(filePath));
             }
@@ -160,6 +179,40 @@ public class BookResourceResolver implements BookResourcePort {
             log.error("Помилка читання даних книги: fileName='{}', folder='{}'", fileName, folder, e);
             return Optional.empty();
         }
+    }
+
+    /**
+     * Backward-compatible resolver for archives downloaded by older builds where the server
+     * renamed the FB2 entry but the catalog entry name was persisted unchanged. Exact matches
+     * remain preferred; fallback is allowed only when a token match is unique or the archive
+     * contains exactly one FB2 document, so shared multi-book archives are never guessed.
+     */
+    private Optional<String> resolveCompatibleArchiveEntry(Path archivePath, String requestedEntry, String fileName) {
+        List<String> entries = archiveReader.listEntries(archivePath);
+        if (entries.isEmpty()) return Optional.empty();
+
+        String requested = ArchiveEntryNameSupport.baseName(requestedEntry);
+        String file = ArchiveEntryNameSupport.baseName(fileName);
+        String requestedStem = ArchiveEntryNameSupport.stripFb2Extension(requested);
+        String fileStem = ArchiveEntryNameSupport.stripFb2Extension(file);
+
+        Optional<String> byRequested = uniqueEntry(entries,
+                entry -> ArchiveEntryNameSupport.isFb2(entry) && ArchiveEntryNameSupport.containsDelimitedToken(ArchiveEntryNameSupport.baseName(entry), requestedStem));
+        if (byRequested.isPresent()) return byRequested;
+
+        if (!fileStem.isBlank() && !fileStem.equalsIgnoreCase(requestedStem)) {
+            Optional<String> byFile = uniqueEntry(entries,
+                    entry -> ArchiveEntryNameSupport.isFb2(entry) && ArchiveEntryNameSupport.containsDelimitedToken(ArchiveEntryNameSupport.baseName(entry), fileStem));
+            if (byFile.isPresent()) return byFile;
+        }
+
+        List<String> fb2Entries = entries.stream().filter(ArchiveEntryNameSupport::isFb2).toList();
+        return fb2Entries.size() == 1 ? Optional.of(fb2Entries.getFirst()) : Optional.empty();
+    }
+
+    private static Optional<String> uniqueEntry(List<String> entries, Predicate<String> predicate) {
+        List<String> matches = entries.stream().filter(predicate).limit(2).toList();
+        return matches.size() == 1 ? Optional.of(matches.getFirst()) : Optional.empty();
     }
 
     // ==================== Робота з архівами ====================

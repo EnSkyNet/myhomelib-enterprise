@@ -125,9 +125,10 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k1','K1','k1.fb2',0)");
         jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k2','K2','k2.fb2',0)");
         jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k3','K3','k3.fb2',0)");
-        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,detected_revision,catalog_fingerprint,detected_at) VALUES ('k1','NEW_BY_FOLLOWED_AUTHOR',1,'a','2026-08-30T10:00:00')");
-        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,detected_revision,catalog_fingerprint,detected_at) VALUES ('k2','NEW_BY_FOLLOWED_AUTHOR',1,'b','2026-08-30T10:00:00')");
-        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,detected_revision,catalog_fingerprint,detected_at) VALUES ('k3','NEW_BY_FOLLOWED_AUTHOR',1,'c','2026-08-29T10:00:00')");
+        jdbc.update("INSERT INTO catalog_sources(source_id,source_key,source_fingerprint) VALUES ('test-source','test-source','fixture')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint,detected_at) VALUES ('k1','NEW_BY_FOLLOWED_AUTHOR','test-source',1,'a','2026-08-30T10:00:00')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint,detected_at) VALUES ('k2','NEW_BY_FOLLOWED_AUTHOR','test-source',1,'b','2026-08-30T10:00:00')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint,detected_at) VALUES ('k3','NEW_BY_FOLLOWED_AUTHOR','test-source',1,'c','2026-08-29T10:00:00')");
 
         var first = adapter.findPendingUpdateItems(2, null);
         assertThat(first).extracting(item -> item.bookId()).containsExactly("k1", "k2");

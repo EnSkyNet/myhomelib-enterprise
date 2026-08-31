@@ -29,12 +29,15 @@ checks={
 'Open flows use confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/MainBookCommandCoordinator.java',
  ['ensureLocalForOpen(selected)']),
-'Navigation read uses confirmation': (
+'External open uses authoritative confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java',
- ['ensureLocalForOpen(book)']),
+ ['bookDownloadCoordinator.ensureLocalForOpen(book)', 'externalBookLauncher.open(book)']),
+'Navigation read uses the single Reader guard': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java',
+ ['workspaceManager.showNewReaderWorkspace(BookId.fromString(book.getId()))']),
 'Reader entry point is centrally guarded': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/WorkspaceManager.java',
- ['loadBookByIdUseCase.execute(bookId)', 'bookDownloadCoordinator.ensureLocalForOpen(book.get())', 'openNewReaderWorkspaceLocal(bookId)']),
+ ['bookDownloadCoordinator.ensureLocalForOpen(bookId)', 'openNewReaderWorkspaceLocal(bookId)']),
 'Author series grouping': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
  ['SortBy.SERIES', 'SeriesGrouping.groupPreservingOrder', 'onSortBySeries']),

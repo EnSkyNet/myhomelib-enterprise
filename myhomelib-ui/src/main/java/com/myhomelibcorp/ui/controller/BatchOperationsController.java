@@ -1,7 +1,10 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.dto.GroupDto;
+import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.usecase.book.MarkAsReadBatchUseCase;
+import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
+import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.application.usecase.book.UpdateProgressBatchUseCase;
 import com.myhomelibcorp.application.usecase.book.UpdateRateBatchUseCase;
 import com.myhomelibcorp.application.usecase.group.AddToGroupBatchUseCase;
@@ -9,6 +12,7 @@ import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +21,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 @Component
@@ -27,12 +33,83 @@ public class BatchOperationsController {
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final BookLoaderService bookLoaderService;
+    private final BookDownloadCoordinator bookDownloadCoordinator;
+    private final UiBackgroundExecutor executor;
+    private final BookSaver bookSaver;
 
     private final UpdateRateBatchUseCase updateRateBatchUseCase;
     private final UpdateProgressBatchUseCase updateProgressBatchUseCase;
     private final MarkAsReadBatchUseCase markAsReadBatchUseCase;
     private final AddToGroupBatchUseCase addToGroupBatchUseCase;
     private final LoadGroupsUseCase loadGroupsUseCase;
+
+
+    /**
+     * Downloads the books checked in the current table. Returns false when there is no checkbox selection,
+     * so the caller may fall back to the single current-book action.
+     */
+    public boolean handleBatchDownload(Runnable onComplete) {
+        List<BookId> selected = getSelectedBookIds();
+        if (selected.isEmpty()) return false;
+
+        AtomicInteger succeeded = new AtomicInteger();
+        AtomicInteger failed = new AtomicInteger();
+        CompletableFuture<?>[] tasks = selected.stream()
+                .map(id -> bookDownloadCoordinator.ensureLocal(id)
+                        .handle((path, error) -> {
+                            if (error == null) succeeded.incrementAndGet();
+                            else failed.incrementAndGet();
+                            return null;
+                        }))
+                .toArray(CompletableFuture[]::new);
+
+        CompletableFuture.allOf(tasks).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+            int ok = succeeded.get();
+            int bad = failed.get();
+            if (bad == 0) {
+                dialogService.showInfo("Завантаження", "Завантажено/вже локально: " + ok + " книг.");
+            } else {
+                dialogService.showWarning("Завантаження завершено",
+                        "Успішно: " + ok + ", з помилкою: " + bad + ". Деталі помилок показані під час завантаження.");
+            }
+            handleClearSelection();
+            if (onComplete != null) onComplete.run();
+        }));
+        return true;
+    }
+
+    public boolean handleBatchRemoveLocal(Runnable onComplete) {
+        List<BookId> selected = getSelectedBookIds();
+        if (selected.isEmpty()) return false;
+        bookDownloadCoordinator.removeLocalCopies(selected).whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
+            if (error == null) {
+                handleClearSelection();
+                if (onComplete != null) onComplete.run();
+            }
+        }));
+        return true;
+    }
+
+    public boolean handleBatchDelete(Runnable onComplete) {
+        List<BookId> selected = getSelectedBookIds();
+        if (selected.isEmpty()) return false;
+        if (!dialogService.showConfirmation("Видалення записів із каталогу",
+                "Видалити вибрані записи: " + selected.size() + "?",
+                "Файли на диску НЕ видаляються. Цю дію буде застосовано лише до каталогу.")) return true;
+        executor.submit(() -> {
+            selected.forEach(bookSaver::deleteBook);
+            return selected.size();
+        }).whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
+            if (error == null) {
+                dialogService.showInfo("Готово", "Видалено записів із каталогу: " + count);
+                handleClearSelection();
+                if (onComplete != null) onComplete.run();
+            } else {
+                dialogService.showError("Помилка", "Не вдалося видалити вибрані записи: " + error.getMessage());
+            }
+        }));
+        return true;
+    }
 
     public void handleBatchRate(Runnable onComplete) {
         List<BookId> selected = getSelectedBookIds();

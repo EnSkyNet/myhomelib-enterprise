@@ -42,9 +42,14 @@ public class StatusBarController {
             }
         });
 
-        // Початкове завантаження
-        statisticsService.getStatistics();
-        updateStatsLabel(statisticsService.getStatistics());
+        // Початкове завантаження — один O(1) read persistent statistics cache.
+        try {
+            LibraryStatistics stats = statisticsService.getStatistics();
+            vm.setStatistics(stats);
+            updateStatsLabel(stats);
+        } catch (RuntimeException error) {
+            log.warn("Не вдалося прочитати кеш статистики для status bar", error);
+        }
     }
 
     private void updateStatsLabel(LibraryStatistics stats) {

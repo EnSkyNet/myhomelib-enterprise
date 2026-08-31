@@ -39,6 +39,7 @@
                         <TableColumn fx:id="titleColumn" text="Назва" prefWidth="200"/>
                         <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
                         <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
+                        <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
                     </columns>
                 </TableView>
 

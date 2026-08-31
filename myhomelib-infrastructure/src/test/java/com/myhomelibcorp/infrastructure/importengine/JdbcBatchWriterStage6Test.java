@@ -93,14 +93,14 @@ class JdbcBatchWriterStage6Test {
     }
 
     private static Object[] stage6Row() {
-        Object[] row = new Object[29];
+        Object[] row = new Object[30];
         row[0] = "book"; row[1] = "Updated catalog title"; row[2] = ""; row[3] = 0;
         row[4] = "remote-v2.fb2"; row[5] = "catalog-v2.zip"; row[6] = "remote-v2.fb2"; row[7] = "uk";
         row[8] = 200L; row[9] = "new-keyword"; row[10] = "new annotation"; row[11] = 0; row[12] = 0;
         row[13] = "2026-08-24 20:00:00.000"; row[14] = ""; row[15] = 0; row[16] = 0;
         row[17] = ""; row[18] = "2026-08-24 20:00:00.000"; row[19] = ""; row[20] = "";
         row[21] = "/remote"; row[22] = 2026; row[23] = "Publisher"; row[24] = "lib"; row[25] = 0;
-        row[26] = ""; row[27] = ""; row[28] = "catalog:source";
+        row[26] = ""; row[27] = ""; row[28] = "catalog:source"; row[29] = "Updated Author";
         return row;
     }
 }

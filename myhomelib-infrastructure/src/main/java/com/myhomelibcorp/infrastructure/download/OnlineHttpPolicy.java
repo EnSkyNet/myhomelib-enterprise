@@ -34,7 +34,7 @@ public final class OnlineHttpPolicy {
         if (cookies != null) builder.cookieHandler(cookies);
         configureTls(builder);
 
-        String mode = settings.get("online.proxy.mode", "SYSTEM").trim().toUpperCase(Locale.ROOT);
+        String mode = setting("online.proxy.mode", "SYSTEM").trim().toUpperCase(Locale.ROOT);
         switch (mode) {
             case "NONE", "DIRECT" -> { }
             case "HTTP" -> configureHttpProxy(builder);
@@ -50,16 +50,16 @@ public final class OnlineHttpPolicy {
     }
 
     private void configureTls(HttpClient.Builder builder) {
-        String trustStorePath = settings.get("online.tls.trustStore", "").trim();
+        String trustStorePath = setting("online.tls.trustStore", "").trim();
         if (trustStorePath.isBlank()) return; // Normal JVM trust validation.
 
         Path path = Path.of(trustStorePath).toAbsolutePath().normalize();
         if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
             throw new IllegalStateException("TLS trust store недоступний: " + path);
         }
-        String type = settings.get("online.tls.trustStoreType", inferKeyStoreType(path)).trim();
+        String type = setting("online.tls.trustStoreType", inferKeyStoreType(path)).trim();
         if (type.isBlank()) type = KeyStore.getDefaultType();
-        String storedPassword = settings.get("online.tls.trustStorePassword", "");
+        String storedPassword = setting("online.tls.trustStorePassword", "");
         char[] password = new char[0];
         try {
             if (storedPassword != null && !storedPassword.isBlank()) {
@@ -89,12 +89,12 @@ public final class OnlineHttpPolicy {
     }
 
     private void configureHttpProxy(HttpClient.Builder builder) {
-        String host = settings.get("online.proxy.host", "").trim();
+        String host = setting("online.proxy.host", "").trim();
         int port = clamp(settings.getInt("online.proxy.port", 8080), 1, 65535);
         if (host.isBlank()) throw new IllegalStateException("HTTP proxy увімкнено, але host не задано");
         builder.proxy(ProxySelector.of(new InetSocketAddress(host, port)));
-        String user = settings.get("online.proxy.user", "").trim();
-        String storedPassword = settings.get("online.proxy.password", "");
+        String user = setting("online.proxy.user", "").trim();
+        String storedPassword = setting("online.proxy.password", "");
         if (!user.isBlank()) {
             final String password = decryptStoredSecret(storedPassword);
             builder.authenticator(new Authenticator() {
@@ -121,8 +121,13 @@ public final class OnlineHttpPolicy {
     }
 
     public String userAgent() {
-        String value = settings.get("online.userAgent", "MyHomeLib Enterprise/7.1").trim();
+        String value = setting("online.userAgent", "MyHomeLib Enterprise/7.1").trim();
         return value.isBlank() ? "MyHomeLib Enterprise/7.1" : value;
+    }
+
+    private String setting(String key, String defaultValue) {
+        String value = settings.get(key, defaultValue);
+        return value == null ? defaultValue : value;
     }
 
     private static int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }

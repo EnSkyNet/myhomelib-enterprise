@@ -58,6 +58,29 @@ class Fb2StreamingParserTest {
     }
 
     @Test
+    void preservesWhitespaceAcrossInlineElementBoundaries() throws Exception {
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info><book-title>Whitespace</book-title><lang>uk</lang></title-info></description>
+                  <body><section>
+                    <p>Перше <strong>виділене</strong> слово і <emphasis>ще</emphasis> текст.</p>
+                    <p>Межа<strong>без пробілу</strong>має лишитися без штучного пробілу.</p>
+                    <p>До <strong>тега</strong>   після.</p>
+                  </section></body>
+                </FictionBook>
+                """;
+
+        ReaderDocument document = new Fb2StreamingParser().parse(
+                new MemoryBookSource(fb2), ParseOptions.withoutImages());
+
+        assertThat(document.text().getFullText())
+                .contains("Перше виділене слово і ще текст.")
+                .contains("Межабез пробілумaє".replace('a', 'а'))
+                .contains("До тега після.");
+    }
+
+    @Test
     void keepsNestedBoldItalicAndStreamsLargeBinaryResource() throws Exception {
         byte[] image = new byte[300_000];
         for (int i = 0; i < image.length; i++) {

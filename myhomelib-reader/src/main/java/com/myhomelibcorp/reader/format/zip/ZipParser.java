@@ -58,12 +58,15 @@ public class ZipParser implements BookParser {
             throws IOException {
 
         java.nio.file.Path tempFile = null;
+        List<ReaderDocument> parsedBooks = new ArrayList<>();
         try {
             tempFile = java.nio.file.Files.createTempFile("zip_parser_", ".zip");
             try (InputStream is = source.openStream(); OutputStream out = java.nio.file.Files.newOutputStream(tempFile)) {
                 copyInterruptibly(is, out, ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
             }
 
+            Exception lastBookError = null;
+            long totalExpandedBytes = 0;
             try (ZipFile zipFile = new ZipFile(tempFile.toFile(), charset)) {
                 Enumeration<? extends ZipEntry> entries = zipFile.entries();
                 int entryCount = 0;
@@ -74,88 +77,99 @@ public class ZipParser implements BookParser {
                     if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT)
                         throw new IOException("ZIP contains too many entries");
                     String name = entry.getName().toLowerCase(Locale.ROOT);
+                    if (!isReaderBook(name)) continue;
 
-                    if (isReaderBook(name)) {
-                        log.info("📄 Знайдено книгу в ZIP: {} (кодування імен: {})", entry.getName(), charset);
+                    log.info("📄 Знайдено книгу в ZIP: {} (кодування імен: {})", entry.getName(), charset);
+                    if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
+                        log.warn("⚠️ Розмір книги перевищує ліміт: {} байт", entry.getSize());
+                        continue;
+                    }
 
-                        if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
-                            log.warn("⚠️ Розмір FB2 перевищує ліміт: {} байт", entry.getSize());
-                            continue;
-                        }
+                    String suffix = name.endsWith(".epub") ? ".epub" :
+                            (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? ".txt" : ".fb2";
+                    java.nio.file.Path extractedBook = java.nio.file.Files.createTempFile("myhomelib_zip_book_", suffix);
+                    try {
+                        long expanded = copyEntryInterruptibly(zipFile, entry, extractedBook,
+                                ArchiveSafetyLimits.MAX_ENTRY_BYTES,
+                                ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES - totalExpandedBytes);
+                        totalExpandedBytes += expanded;
 
-                        // Не тримаємо розпакований FB2 (до 50 MB) як byte[] у heap.
-                        // Тимчасовий файл також дозволяє FB2 parser-у безкоштовно
-                        // перевідкрити stream для fallback-кодувань.
-                        String suffix = name.endsWith(".epub") ? ".epub" :
-                                (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? ".txt" : ".fb2";
-                        java.nio.file.Path extractedBook = java.nio.file.Files.createTempFile("myhomelib_zip_book_", suffix);
+                        BookSource innerSource = new FileBookSource(extractedBook, source.id() + "!" + entry.getName());
+                        BookParser parser = name.endsWith(".epub") ? new EpubParser() :
+                                (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? new TxtParser() :
+                                new Fb2StreamingParser();
                         try {
-                            boolean tooLarge = false;
-                            try (InputStream entryStream = zipFile.getInputStream(entry);
-                                 java.io.OutputStream out = java.nio.file.Files.newOutputStream(extractedBook)) {
-                                byte[] buffer = new byte[64 * 1024];
-                                long total = 0;
-                                int read;
-                                while ((read = entryStream.read(buffer)) >= 0) {
-                                    if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
-                                    if (read == 0) continue;
-                                    total += read;
-                                    if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
-                                        tooLarge = true;
-                                        break;
-                                    }
-                                    out.write(buffer, 0, read);
-                                }
-                            }
-
-                            if (tooLarge) {
-                                log.warn("⚠️ Розпакований FB2 перевищує ліміт {} MB", ArchiveSafetyLimits.MAX_ENTRY_BYTES / 1024 / 1024);
-                                continue;
-                            }
-
-                            BookSource innerSource = new FileBookSource(
-                                    extractedBook, source.id() + "!" + entry.getName());
-                            BookParser parser = name.endsWith(".epub") ? new EpubParser() :
-                                    (name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")) ? new TxtParser() :
-                                    new Fb2StreamingParser();
-
-                            try {
-                                return parser.parse(innerSource, options);
-                            } catch (InterruptedIOException e) {
-                                throw e;
-                            } catch (Exception e) {
-                                log.error("Помилка парсингу {} з ZIP: {}", entry.getName(), e.getMessage());
-                                throw new IOException("Не вдалося розпарсити " + entry.getName(), e);
-                            }
-                        } finally {
-                            try {
-                                java.nio.file.Files.deleteIfExists(extractedBook);
-                            } catch (IOException ignored) {
-                            }
+                            ReaderDocument document = parser.parse(innerSource, options);
+                            if (document != null && !document.isEmpty()) parsedBooks.add(document);
+                        } catch (InterruptedIOException e) {
+                            throw e;
+                        } catch (Exception e) {
+                            lastBookError = e;
+                            log.warn("Пропущено пошкоджену/непідтримувану книгу {} у ZIP: {}", entry.getName(), e.getMessage());
                         }
+                    } finally {
+                        try { java.nio.file.Files.deleteIfExists(extractedBook); } catch (IOException ignored) { }
                     }
                 }
             }
 
-            return null;
+            if (parsedBooks.isEmpty()) {
+                if (lastBookError != null) throw new IOException("У ZIP не вдалося розпарсити жодної книги", lastBookError);
+                return null;
+            }
+            if (parsedBooks.size() == 1) return parsedBooks.getFirst();
+
+            int mergedBookCount = parsedBooks.size();
+            ReaderDocument merged = ZipDocumentMerger.merge(source, parsedBooks);
+            closeDocuments(parsedBooks);
+            parsedBooks.clear();
+            log.info("✅ ZIP об'єднано в один Reader document: {} книг, {} TOC roots",
+                    mergedBookCount, merged == null || merged.toc() == null ? 0 : merged.toc().size());
+            return merged;
 
         } catch (IOException e) {
+            closeDocuments(parsedBooks);
             throw e;
         } catch (Exception e) {
+            closeDocuments(parsedBooks);
             log.error("Помилка парсингу ZIP з кодуванням {}: {}", charset, e.getMessage());
             throw new IOException("Не вдалося розпарсити ZIP з кодуванням " + charset, e);
         } finally {
             if (tempFile != null) {
-                try {
-                    java.nio.file.Files.deleteIfExists(tempFile);
-                } catch (IOException e) {
+                try { java.nio.file.Files.deleteIfExists(tempFile); } catch (IOException e) {
                     log.debug("Не вдалося видалити тимчасовий файл: {}", e.getMessage());
                 }
             }
         }
     }
 
+    private static long copyEntryInterruptibly(ZipFile zipFile, ZipEntry entry, java.nio.file.Path target,
+                                               long perEntryLimit, long remainingTotalLimit) throws IOException {
+        if (remainingTotalLimit <= 0) throw new IOException("ZIP exceeds cumulative Reader safety limit");
+        try (InputStream in = zipFile.getInputStream(entry); OutputStream out = java.nio.file.Files.newOutputStream(target)) {
+            byte[] buffer = new byte[64 * 1024];
+            long total = 0;
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("ZIP parsing cancelled");
+                if (read == 0) continue;
+                total += read;
+                if (total > perEntryLimit) throw new IOException("ZIP entry exceeds Reader safety limit: " + entry.getName());
+                if (total > remainingTotalLimit) throw new IOException("ZIP exceeds cumulative Reader safety limit");
+                out.write(buffer, 0, read);
+            }
+            return total;
+        }
+    }
 
+    private static void closeDocuments(List<ReaderDocument> documents) {
+        if (documents == null) return;
+        for (ReaderDocument document : documents) {
+            if (document != null && document.resources() instanceof AutoCloseable closeable) {
+                try { closeable.close(); } catch (Exception ignored) { }
+            }
+        }
+    }
 
     private static void copyInterruptibly(InputStream in, OutputStream out, long maxBytes) throws IOException {
         byte[] buffer = new byte[64 * 1024];

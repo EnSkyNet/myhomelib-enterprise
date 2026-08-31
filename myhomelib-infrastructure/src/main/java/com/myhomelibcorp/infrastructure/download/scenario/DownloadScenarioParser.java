@@ -61,7 +61,7 @@ public final class DownloadScenarioParser {
                     // Якщо URL починається з '/' - додаємо baseUrl
                     String url = args;
                     if (url.startsWith("/") && baseUrl != null) {
-                        url = baseUrl + url.substring(1);
+                        url = (baseUrl.endsWith("/") ? baseUrl : baseUrl + "/") + url.substring(1);
                     }
                     rejectControlChars(url, i);
                     result.add(new DownloadScenarioCommand(type, url, null, i + 1));

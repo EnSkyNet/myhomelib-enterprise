@@ -75,7 +75,7 @@ public class CoverPresenter {
                     lastLoadedBookId = bookId;
                     log.debug("Обкладинку встановлено для {}", book.getTitle());
                 } else {
-                    log.warn("Обкладинка не знайдена для {}", book.getTitle());
+                    log.debug("Обкладинка відсутня для {}", book.getTitle());
                     coverImageView.setImage(null);
                 }
             } else {

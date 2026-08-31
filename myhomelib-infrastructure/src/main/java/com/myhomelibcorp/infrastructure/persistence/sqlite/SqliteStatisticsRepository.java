@@ -23,6 +23,24 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
 
     @Override
     public LibraryStatistics getStatistics() {
+        // Startup/status-bar reads must remain O(1). The cache row is persistent and migrations
+        // create it; a missing row (for example after an older build deleted it) is repaired with
+        // defaults rather than triggering a catalog-wide COUNT/SUM/GROUP BY on the caller thread.
+        LibraryStatistics stats = readCachedStatistics();
+        if (stats != null) return stats;
+
+        getJdbcTemplate().update("""
+                INSERT OR IGNORE INTO library_statistics
+                (id, books_count, authors_count, series_count, genres_count)
+                VALUES (1, 0, 0, 0, 0)
+                """);
+        stats = readCachedStatistics();
+        if (stats == null) throw new IllegalStateException("Statistics cache is unavailable for the active collection");
+        log.warn("Statistics cache row was missing and has been recreated without a startup catalog scan");
+        return stats;
+    }
+
+    private LibraryStatistics readCachedStatistics() {
         String sql = "SELECT books_count, authors_count, series_count, genres_count, " +
                 "COALESCE(languages_count, 0) AS languages_count, " +
                 "COALESCE(publishers_count, 0) AS publishers_count, " +
@@ -37,7 +55,7 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                 "COALESCE(deleted_books_count, 0) AS deleted_books_count, " +
                 "COALESCE(sources_count, 0) AS sources_count " +
                 "FROM library_statistics WHERE id = 1";
-        LibraryStatistics stats = queryExecutor.queryForObject(sql, (rs, rowNum) ->
+        return queryExecutor.queryForObject(sql, (rs, rowNum) ->
                 LibraryStatistics.builder()
                         .booksCount(rs.getLong("books_count"))
                         .authorsCount(rs.getLong("authors_count"))
@@ -56,39 +74,14 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                         .deletedBooksCount(rs.getLong("deleted_books_count"))
                         .sourcesCount(rs.getLong("sources_count"))
                         .build());
-        if (stats == null) {
-            refreshStatistics();
-            stats = queryExecutor.queryForObject(sql, (rs, rowNum) ->
-                    LibraryStatistics.builder()
-                            .booksCount(rs.getLong("books_count"))
-                            .authorsCount(rs.getLong("authors_count"))
-                            .seriesCount(rs.getLong("series_count"))
-                            .genresCount(rs.getLong("genres_count"))
-                            .languagesCount(rs.getLong("languages_count"))
-                            .publishersCount(rs.getLong("publishers_count"))
-                            .totalSizeBytes(rs.getLong("total_size_bytes"))
-                            .duplicatesCount(rs.getLong("duplicates_count"))
-                            .missingCoversCount(rs.getLong("missing_covers_count"))
-                            .localBooksCount(rs.getLong("local_books_count"))
-                            .remoteBooksCount(rs.getLong("remote_books_count"))
-                            .readBooksCount(rs.getLong("read_books_count"))
-                            .unreadBooksCount(rs.getLong("unread_books_count"))
-                            .favoritesCount(rs.getLong("favorites_count"))
-                            .deletedBooksCount(rs.getLong("deleted_books_count"))
-                            .sourcesCount(rs.getLong("sources_count"))
-                            .build());
-        }
-        if (stats == null) throw new IllegalStateException("Statistics are unavailable for the active collection");
-        return stats;
     }
 
     @Override
     public void invalidate() {
-        // Deleting the single cache row is O(1). The next getStatistics() call rebuilds it
-        // on the caller's background executor instead of running large COUNT/GROUP BY work
-        // on every individual download/removal.
-        getJdbcTemplate().update("DELETE FROM library_statistics WHERE id = 1");
-        log.debug("Statistics cache invalidated for the active collection");
+        // Keep the last snapshot available for O(1) startup/status-bar reads. Mark it stale
+        // instead of deleting it; explicit refresh paths can recompute exact values in background.
+        getJdbcTemplate().update("UPDATE library_statistics SET last_updated = NULL WHERE id = 1");
+        log.debug("Statistics cache marked stale for the active collection");
     }
 
     @Override

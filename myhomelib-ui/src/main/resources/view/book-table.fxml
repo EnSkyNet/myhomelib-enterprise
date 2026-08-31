@@ -34,9 +34,13 @@
     </TableView>
 
     <HBox spacing="10" alignment="CENTER_RIGHT" style="-fx-padding: 5 0 0 0;">
+        <Label text="Поточна:"/>
+        <Label fx:id="currentBookLabel" text="—"/>
+        <Separator orientation="VERTICAL"/>
+        <Label fx:id="batchSelectionLabel" text="Пакетно вибрано: 0"/>
+        <Region HBox.hgrow="ALWAYS"/>
         <Label text="Розмір сторінки:"/>
         <ComboBox fx:id="pageSizeComboBox" prefWidth="70"/>
-        <Region HBox.hgrow="ALWAYS"/>
         <Button fx:id="prevPageButton" text="◀"/>
         <Label fx:id="pageInfoLabel" text="Сторінка 1 з 1"/>
         <Button fx:id="nextPageButton" text="▶"/>

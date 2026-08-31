@@ -303,18 +303,20 @@ public class CollectionWorkspaceController {
                 try {
                     CreateCollectionRequest request = CreateCollectionRequest.builder()
                             .name(name)
-                            .importOnCreate(true)
-                            .createIndex(true)
+                            .importOnCreate(false)
+                            .createIndex(false)
                             .build();
 
-                    com.myhomelibcorp.domain.model.collection.Collection collection =
-                            createCollectionUseCase.execute(request);
-
-                    CollectionDto dto = CollectionDtoMapper.toDto(collection, false, true);
-                    collectionList.add(dto);
-                    collectionsListView.getSelectionModel().select(dto);
-                    dialogService.showInfo("Успішно", "Колекцію \"" + name + "\" створено");
-                    log.info("Колекцію створено: id={}, name={}", collection.getId(), collection.getName());
+                    com.myhomelibcorp.domain.model.collection.Collection created = createCollectionUseCase.execute(request);
+                    com.myhomelibcorp.domain.model.collection.Collection active = switchCollectionUseCase.execute(created.getId());
+                    appState.setCurrentLibraryCollection(active);
+                    loadCollections();
+                    collectionList.stream()
+                            .filter(dto -> dto.getId().equals(active.getId()))
+                            .findFirst()
+                            .ifPresent(dto -> collectionsListView.getSelectionModel().select(dto));
+                    dialogService.showInfo("Успішно", "Порожню колекцію \"" + name + "\" створено та активовано.");
+                    log.info("Порожню колекцію створено й активовано: id={}, name={}", active.getId(), active.getName());
                 } catch (Exception e) {
                     log.error("Помилка створення колекції", e);
                     dialogService.showError("Помилка", "Не вдалося створити колекцію: " + e.getMessage());

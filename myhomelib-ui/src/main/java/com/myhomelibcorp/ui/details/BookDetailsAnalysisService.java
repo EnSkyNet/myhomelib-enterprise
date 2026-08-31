@@ -30,12 +30,6 @@ public class BookDetailsAnalysisService {
 
         var groups = loadBookGroupsUseCase.execute(fullBook.getId());
 
-        if (!fullBook.isLocal()) {
-            DocumentInspection unavailable = DocumentInspection.unsupported(formatOf(fullBook),
-                    "Файл ще не завантажено локально");
-            return new RichBookDetailsSession(fullBook, unavailable, groups, null, null);
-        }
-
         try {
             ResolvedBookContent source = resolveBookContentUseCase.execute(
                     fullBook, ResolveBookContentUseCase.DETAILS_EXTENSIONS);
