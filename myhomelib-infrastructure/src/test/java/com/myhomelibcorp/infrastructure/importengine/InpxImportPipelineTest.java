@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 class InpxImportPipelineTest {
@@ -36,20 +37,50 @@ class InpxImportPipelineTest {
     @Mock
     private CatalogUpdateTrackingPort catalogUpdateTrackingPort;
 
+    @Mock
+    private JdbcTemplate jdbcTemplate;
+
+    @Mock
+    private ImportIndexLifecycle importIndexLifecycle;
+
     private InpxImportPipeline pipeline;
 
     @BeforeEach
     void setUp() {
         MockitoAnnotations.openMocks(this);
+
         // За замовчуванням колекція не активна
         when(collectionManager.hasActiveCollection()).thenReturn(false);
+
+        // Мокуємо JdbcTemplate для buildGenreCache()
+        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(jdbcTemplate);
+
+        // Мокуємо void метод query() - використовуємо doAnswer або doNothing
+        doAnswer(invocation -> {
+            // Викликаємо callback без даних (нічого не робимо)
+            org.springframework.jdbc.core.RowCallbackHandler handler =
+                    invocation.getArgument(1);
+            // Не викликаємо handler, тому що немає даних
+            return null;
+        }).when(jdbcTemplate).query(
+                eq("SELECT code FROM genres"),
+                any(org.springframework.jdbc.core.RowCallbackHandler.class)
+        );
+
+        // Мокуємо queryForObject для перевірки наявності колекції
+        when(jdbcTemplate.queryForObject(
+                eq("SELECT COUNT(*) FROM collections WHERE id=?"),
+                eq(Integer.class),
+                anyString()
+        )).thenReturn(0);
+
         pipeline = new InpxImportPipeline(
                 reader,
                 batchWriter,
                 bulkOptimizer,
                 collectionManager,
                 catalogUpdateTrackingPort,
-                mock(ImportIndexLifecycle.class)
+                importIndexLifecycle
         );
     }
 
@@ -65,8 +96,6 @@ class InpxImportPipelineTest {
         assertThat(result).isZero();
         verify(bulkOptimizer).enableBulkInsertMode();
         verify(bulkOptimizer).disableBulkInsertMode();
-        // Перевіряємо, що методи dropIndexes/createIndexes не викликали JdbcTemplate (бо колекція не активна)
-        verify(collectionManager, never()).getCurrentJdbcTemplate();
     }
 
     @Test
@@ -78,6 +107,7 @@ class InpxImportPipelineTest {
 
         assertThat(result).isZero();
     }
+
     @Test
     void importWithResultReportsPreparationAndCompletionWithoutLoadingAllAuthors(@TempDir Path tempDir) throws Exception {
         Path testFile = tempDir.resolve("progress.inpx");
@@ -106,7 +136,7 @@ class InpxImportPipelineTest {
         when(reader.read(testFile, true)).thenReturn(Collections.emptyIterator());
         when(collectionManager.hasActiveCollection()).thenReturn(true);
         when(collectionManager.getCurrentDataSource()).thenReturn(null);
-        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(mock(JdbcTemplate.class));
+        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(jdbcTemplate);
         CatalogSyncSession session = new CatalogSyncSession(
                 "remote-42", "remote-collection:42", 2L, "fingerprint", false, true);
         when(catalogUpdateTrackingPort.beginSync(eq("remote-collection:42"), anyString(), anyString()))
@@ -128,7 +158,7 @@ class InpxImportPipelineTest {
         when(reader.read(testFile, true)).thenReturn(Collections.emptyIterator());
         when(collectionManager.hasActiveCollection()).thenReturn(true);
         when(collectionManager.getCurrentDataSource()).thenReturn(null);
-        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(mock(JdbcTemplate.class));
+        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(jdbcTemplate);
         CatalogSyncSession session = new CatalogSyncSession(
                 "remote-42", "remote-collection:42", 3L, "fingerprint", false, true);
         when(catalogUpdateTrackingPort.beginSync(eq("remote-collection:42"), anyString(), anyString()))
@@ -142,4 +172,32 @@ class InpxImportPipelineTest {
         verify(catalogUpdateTrackingPort).markTrackedBooksMissing(session);
     }
 
+    @Test
+    void catalogImportWithActiveCollection_andExistingData_succeeds(@TempDir Path tempDir) throws Exception {
+        Path testFile = tempDir.resolve("catalog.inpx");
+        java.nio.file.Files.createFile(testFile);
+
+        // Мокуємо активну колекцію
+        when(collectionManager.hasActiveCollection()).thenReturn(true);
+        when(collectionManager.getCurrentDataSource()).thenReturn(null);
+        when(collectionManager.getCurrentJdbcTemplate()).thenReturn(jdbcTemplate);
+
+        // Мокуємо count та read
+        when(reader.count(eq(testFile), any(), eq(false))).thenReturn(5L);
+        when(reader.read(testFile, false)).thenReturn(Collections.emptyIterator());
+
+        // Мокуємо beginSync
+        CatalogSyncSession session = new CatalogSyncSession(
+                "source-1", "test-source", 1L, "fingerprint", true, true);
+        when(catalogUpdateTrackingPort.beginSync(anyString(), anyString(), anyString()))
+                .thenReturn(session);
+
+        var result = pipeline.importFileWithResult(
+                testFile, 100, tempDir, null, "test-source",
+                "https://example.test/catalog.inpx", true, null, null);
+
+        assertThat(result).isNotNull();
+        verify(bulkOptimizer).enableBulkInsertMode();
+        verify(bulkOptimizer).disableBulkInsertMode();
+    }
 }

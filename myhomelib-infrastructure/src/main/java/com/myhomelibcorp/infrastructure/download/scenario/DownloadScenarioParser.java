@@ -5,7 +5,9 @@ import java.util.List;
 import java.util.Locale;
 import java.net.URI;
 
-/** Strict, declarative parser. It never evaluates code or invokes a shell/runtime. */
+/**
+ * Strict, declarative parser. It never evaluates code or invokes a shell/runtime.
+ */
 public final class DownloadScenarioParser {
     private DownloadScenarioParser() { }
 
@@ -64,6 +66,28 @@ public final class DownloadScenarioParser {
         return List.copyOf(result);
     }
 
+    /**
+     * Перевіряє, чи містить сценарій команди GET або POST.
+     * Використовується для швидкого визначення режиму завантаження.
+     */
+    public static boolean hasNetworkRequestCommand(String script) {
+        if (script == null || script.isBlank()) {
+            return false;
+        }
+        String normalized = script.replace("\r\n", "\n").replace('\r', '\n');
+        String[] lines = normalized.split("\n", -1);
+        for (String raw : lines) {
+            String trimmed = raw.trim();
+            if (trimmed.isEmpty()) continue;
+            int split = firstWhitespace(trimmed);
+            if (split < 0) continue;
+            String token = trimmed.substring(0, split).toUpperCase(Locale.ROOT);
+            if ("GET".equals(token) || "POST".equals(token)) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     private static boolean isLegacyUrlPreamble(String raw) {
         if (firstWhitespace(raw) >= 0) return false;

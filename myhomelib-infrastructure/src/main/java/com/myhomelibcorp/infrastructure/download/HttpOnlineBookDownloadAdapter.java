@@ -5,12 +5,16 @@ import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import com.myhomelibcorp.application.port.out.download.OnlineBookDownloadPort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.stereotype.Component;
-import org.springframework.beans.factory.annotation.Autowired;
 import com.myhomelibcorp.infrastructure.download.scenario.ConnectionScriptExecutor;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.infrastructure.download.scenario.DownloadScenarioCommand;
+import com.myhomelibcorp.infrastructure.download.scenario.DownloadScenarioParser;
+import com.myhomelibcorp.infrastructure.download.source.DownloadMode;
+import com.myhomelibcorp.infrastructure.download.source.DownloadSourceResolver;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +29,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Base64;
+import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -41,6 +46,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     private final ArchiveReader archiveReader;
     private final DownloadPayloadValidator payloadValidator;
     private final OnlineHttpPolicy httpPolicy;
+    private final DownloadSourceResolver sourceResolver;
     private final HttpClient client;
     private final OnlineRequestLimiter requestLimiter;
 
@@ -66,6 +72,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         this.payloadValidator = payloadValidator;
         this.requestLimiter = requestLimiter;
         this.httpPolicy = new OnlineHttpPolicy(settings);
+        this.sourceResolver = new DownloadSourceResolver();
         // Reuse a client so HTTP/2 connections, TCP/TLS sessions and proxy pools survive between books.
         this.client = httpPolicy.create(null);
     }
@@ -77,13 +84,18 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     @Override
     public DownloadedBook download(BookDto book, Collection collection, AtomicBoolean cancelFlag,
                                    DoubleConsumer progress, boolean forceRefresh) throws Exception {
-        String baseUrl = effectiveBaseUrl(collection);
-        if (baseUrl == null || baseUrl.isBlank()) {
-            throw new IllegalStateException("Для online-колекції не задано URL ні у властивостях, ні в ConnectionScript");
+        if (book == null) throw new IllegalArgumentException("Book is required");
+        if (collection == null) throw new IllegalStateException("Колекцію не вибрано");
+        if (collection.getId() == null || collection.getId().isBlank()) {
+            throw new IllegalStateException("Колекція не має stable ID");
         }
-        Collection effectiveCollection = collectionWithEffectiveUrl(collection, baseUrl);
+
+        // Логування параметрів завантаження
+        logDownloadStart(book, collection);
+
         AtomicBoolean cancel = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
         DoubleConsumer progressSink = progress == null ? ignored -> { } : progress;
+
         Path root = collection.getRootFolder() != null
                 ? collection.getRootFolder().toAbsolutePath().normalize()
                 : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId()).toAbsolutePath().normalize();
@@ -99,6 +111,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             return buildResult(book, root, relative, target, archived);
         }
 
+        // Перевіряємо, чи інший запит уже завантажує цей самий файл
         CompletableFuture<Path> ownerFuture = new CompletableFuture<>();
         CompletableFuture<Path> existingFuture = inFlightTargets.putIfAbsent(target, ownerFuture);
         if (existingFuture != null) {
@@ -109,11 +122,32 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         }
 
         try {
-            if (effectiveCollection.getConnectionScript() != null && !effectiveCollection.getConnectionScript().isBlank()) {
-                downloadViaConnectionScript(book, effectiveCollection, relative, target, root, archived, cancel, progressSink);
+            // ВИЗНАЧЕННЯ РЕЖИМУ ЗАВАНТАЖЕННЯ
+            List<DownloadScenarioCommand> commands = null;
+            if (collection.getConnectionScript() != null && !collection.getConnectionScript().isBlank()) {
+                try {
+                    commands = DownloadScenarioParser.parse(collection.getConnectionScript());
+                    log.debug("Parsed {} commands from ConnectionScript", commands != null ? commands.size() : 0);
+                } catch (Exception e) {
+                    log.warn("Failed to parse ConnectionScript: {}", e.getMessage());
+                    commands = List.of();
+                }
+            }
+
+            DownloadMode mode = sourceResolver.resolve(collection, commands);
+            log.info("Download mode resolved: {} for book: {}", mode, book.getId());
+
+            if (mode == DownloadMode.CONNECTION_SCRIPT) {
+                downloadViaConnectionScript(book, collection, relative, target, root, archived, cancel, progressSink);
             } else {
+                String baseUrl = effectiveBaseUrl(collection);
+                if (baseUrl == null || baseUrl.isBlank()) {
+                    throw new IllegalStateException("Для online-колекції не задано URL");
+                }
+                Collection effectiveCollection = collectionWithEffectiveUrl(collection, baseUrl);
                 downloadPhysical(book, effectiveCollection, baseUrl, relative, target, archived, cancel, progressSink);
             }
+
             payloadValidator.validate(target, target, book, archived);
             ownerFuture.complete(target);
             return buildResult(book, root, relative, target, archived);
@@ -125,6 +159,9 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         }
     }
 
+    /**
+     * Завантаження через прямий HTTP GET.
+     */
     private void downloadPhysical(BookDto book,
                                   Collection collection,
                                   String baseUrl,
@@ -133,11 +170,14 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                                   boolean archived,
                                   AtomicBoolean cancel,
                                   DoubleConsumer progress) throws Exception {
+        log.info("DIRECT DOWNLOAD START: bookId={}, target={}", book.getId(), target);
         Files.createDirectories(target.getParent());
         Path part = target.resolveSibling(target.getFileName() + ".part");
         Path partMeta = target.resolveSibling(target.getFileName() + ".part.meta");
 
         URI uri = buildUri(baseUrl, relative, book);
+        log.info("DIRECT DOWNLOAD URL: {}", SensitiveDataSanitizer.sanitizeUri(uri));
+
         int retries = clamp(settings.getInt("online.retryCount", 3), 0, 6);
         int attempts = retries + 1;
         Exception last = null;
@@ -148,8 +188,6 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 long existing = Files.isRegularFile(part) ? Files.size(part) : 0L;
                 HttpResumeSupport.ResumeMetadata resume = existing > 0 ? HttpResumeSupport.read(partMeta, uri) : null;
                 if (existing > 0 && (resume == null || resume.validator().isBlank())) {
-                    // A byte range without an entity validator can splice two remote versions together.
-                    // Keep .part on cancellation, but only resume it when ETag/Last-Modified proves identity.
                     Files.deleteIfExists(part);
                     Files.deleteIfExists(partMeta);
                     existing = 0L;
@@ -158,6 +196,9 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 HttpResponse<InputStream> response = client.send(
                         buildRequest(uri, collection, existing, resume), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
+
+                log.info("HTTP response status: {}", status);
+
                 if (status == 416 && existing > 0) {
                     try (InputStream responseBody = response.body()) { }
                     Files.deleteIfExists(part);
@@ -196,7 +237,6 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                         throw invalidRange;
                     }
                 } else if (existing > 0) {
-                    // If-Range mismatch or server ignored Range: response is a complete new representation.
                     Files.deleteIfExists(part);
                     Files.deleteIfExists(partMeta);
                     existing = 0L;
@@ -223,7 +263,6 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                         }
                     }
                 } catch (Exception e) {
-                    // Keep a partial file for a future Range request on transient failures.
                     throw e;
                 }
 
@@ -238,9 +277,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 AtomicFileSupport.moveReplacing(part, target);
                 Files.deleteIfExists(partMeta);
                 progress.accept(1.0);
+
+                log.info("DIRECT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));
                 return;
             } catch (DownloadCancelledException e) {
-                // A network .part is resumable. Keep it for an explicit future retry.
                 throw e;
             } catch (NonRetryableHttpException e) {
                 Files.deleteIfExists(part);
@@ -248,7 +288,6 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 throw e;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                // Preserve resumable partial data on interruption/cancellation.
                 throw new DownloadCancelledException();
             } catch (IOException e) {
                 last = e;
@@ -264,8 +303,61 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         throw OnlineRetryPolicy.safeNetworkFailure("Не вдалося завантажити книгу", uri, last);
     }
 
+    /**
+     * Завантаження через ConnectionScript.
+     */
+    private void downloadViaConnectionScript(BookDto book, Collection collection, String relative, Path target,
+                                             Path root, boolean archived, AtomicBoolean cancel,
+                                             DoubleConsumer progress) throws Exception {
+        log.info("SCRIPT DOWNLOAD START: bookId={}, target={}", book.getId(), target);
+        ConnectionScriptExecutor executor = new ConnectionScriptExecutor(settings, payloadValidator, requestLimiter);
+        ConnectionScriptExecutor.Result result = executor.execute(
+                collection.getConnectionScript(), book, collection, root, relative, target, archived, cancel, progress);
+        checkCancelled(cancel);
+        payloadValidator.validate(result.payload(), target, book, archived);
+        AtomicFileSupport.moveReplacing(result.payload(), target);
+        progress.accept(1.0);
+        log.info("SCRIPT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));
+    }
 
+    /**
+     * Логування початку завантаження.
+     */
+    private void logDownloadStart(BookDto book, Collection collection) {
+        String script = collection.getConnectionScript();
+        List<DownloadScenarioCommand> commands = null;
+        try {
+            if (script != null && !script.isBlank()) {
+                commands = DownloadScenarioParser.parse(script);
+            }
+        } catch (Exception e) {
+            log.debug("Failed to parse ConnectionScript for logging: {}", e.getMessage());
+        }
 
+        boolean hasGet = commands != null && commands.stream().anyMatch(c -> c.type() == DownloadScenarioCommand.Type.GET);
+        boolean hasPost = commands != null && commands.stream().anyMatch(c -> c.type() == DownloadScenarioCommand.Type.POST);
+
+        log.info("""
+                ONLINE DOWNLOAD PREPARATION:
+                  bookId: {}
+                  title: {}
+                  collection: {} ({})
+                  collectionUrl: {}
+                  connectionScriptPresent: {}
+                  scriptCommandCount: {}
+                  scriptHasGet: {}
+                  scriptHasPost: {}
+                """,
+                book.getId(),
+                book.getTitle(),
+                collection.getName(),
+                collection.getId(),
+                collection.getUrl() != null ? SensitiveDataSanitizer.sanitizeText(collection.getUrl()) : "<empty>",
+                script != null && !script.isBlank(),
+                commands != null ? commands.size() : 0,
+                hasGet,
+                hasPost);
+    }
 
     /**
      * Legacy collection.info files sometimes keep the base URL as the first bare HTTP(S) line
@@ -300,18 +392,6 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         return new Collection(collection.getId(), collection.getName(), collection.getRootFolder(), collection.getDbFile(),
                 collection.getType(), collection.getUser(), collection.getPassword(), baseUrl, collection.getNotes(),
                 collection.getConnectionScript());
-    }
-
-    private void downloadViaConnectionScript(BookDto book, Collection collection, String relative, Path target,
-                                             Path root, boolean archived, AtomicBoolean cancel,
-                                             DoubleConsumer progress) throws Exception {
-        ConnectionScriptExecutor executor = new ConnectionScriptExecutor(settings, payloadValidator, requestLimiter);
-        ConnectionScriptExecutor.Result result = executor.execute(
-                collection.getConnectionScript(), book, collection, root, relative, target, archived, cancel, progress);
-        checkCancelled(cancel);
-        payloadValidator.validate(result.payload(), target, book, archived);
-        AtomicFileSupport.moveReplacing(result.payload(), target);
-        progress.accept(1.0);
     }
 
     private HttpRequest buildRequest(URI uri, Collection collection, long resumeFrom, HttpResumeSupport.ResumeMetadata resume) {
