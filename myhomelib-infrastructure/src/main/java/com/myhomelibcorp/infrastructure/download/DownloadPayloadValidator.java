@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.download;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -13,12 +14,14 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.Charset;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
+@Slf4j
 @Component
 public class DownloadPayloadValidator {
     private static final int PREFIX_LIMIT = 8192;
@@ -32,7 +35,6 @@ public class DownloadPayloadValidator {
     private final ArchiveReader archiveReader;
     private final ApplicationSettingsPort settings;
 
-    /** Backward-compatible constructor for focused tests and non-Spring callers. */
     public DownloadPayloadValidator(ArchiveReader archiveReader) { this(archiveReader, null); }
 
     @Autowired
@@ -46,45 +48,90 @@ public class DownloadPayloadValidator {
             throw new IOException("Сервер повернув порожній payload");
         }
         rejectHtmlOrTextError(payload);
-        if (archived) validateArchive(payload, intendedTarget, book);
-        else if (looksLikeFb2(intendedTarget, book)) validateFb2(payload);
+        if (archived) {
+            String foundEntry = validateArchive(payload, intendedTarget, book);
+            log.info("Archive validated. Found entry: {}", foundEntry);
+        } else if (looksLikeFb2(intendedTarget, book)) {
+            validateFb2(payload);
+        }
     }
 
-    private void validateArchive(Path payload, Path target, BookDto book) throws IOException {
+    /**
+     * Валідує архів та повертає ім'я знайденого entry (якщо воно відрізняється від запитуваного).
+     * @return ім'я entry, яке було знайдено (може відрізнятися від запитуваного)
+     */
+    private String validateArchive(Path payload, Path target, BookDto book) throws IOException {
         Path alias = payload.resolveSibling(".validate-" + target.getFileName());
         boolean linked = false;
+        String foundEntry = null;
+
         try {
             Files.deleteIfExists(alias);
             try { Files.createLink(alias, payload); linked = true; }
             catch (Exception e) { Files.copy(payload, alias); }
-            var entries = archiveReader.listEntries(alias);
+
+            // Отримуємо список записів без try-with-resources
+            List<String> entries = archiveReader.listEntries(alias);
             if (entries.isEmpty()) throw new IOException("Завантажений архів пошкоджений або порожній");
             if (highReliabilityArchiveValidation()) validateUniqueEntryNames(entries);
+
             String requested = normalize(book.getArchiveEntry());
-            if (!requested.isBlank() && entries.stream().map(DownloadPayloadValidator::normalize)
-                    .noneMatch(e -> e.equalsIgnoreCase(requested))) {
-                throw new IOException("Завантажений архів не містить запис: " + book.getArchiveEntry());
-            }
+            log.debug("validateArchive: requested entry='{}', entries count={}", requested, entries.size());
+
+            // 1. Спроба знайти точний збіг
+            boolean found = false;
             if (!requested.isBlank()) {
-                try (InputStream in = archiveReader.readEntry(alias, requested)
-                        .orElseThrow(() -> new IOException("Не вдалося прочитати запис архіву: " + requested))) {
-                    if (in.read() < 0) throw new IOException("Запис архіву порожній: " + requested);
+                found = entries.stream().map(DownloadPayloadValidator::normalize)
+                        .anyMatch(e -> e.equalsIgnoreCase(requested));
+                if (found) {
+                    log.debug("Found exact match: {}", requested);
+                    foundEntry = requested;
                 }
             }
-            if (highReliabilityArchiveValidation() && isZipFamily(target)) {
-                validateZipIntegrity(alias, requested);
+
+            // 2. Якщо не знайдено - шукаємо будь-який FB2-файл
+            if (!found) {
+                String fb2Entry = entries.stream()
+                        .filter(e -> e.toLowerCase(Locale.ROOT).endsWith(".fb2"))
+                        .findFirst()
+                        .orElse(null);
+                if (fb2Entry != null) {
+                    log.info("Archive does not contain '{}', but contains FB2 entry: '{}'. Using it instead.", requested, fb2Entry);
+                    found = true;
+                    foundEntry = fb2Entry;
+                }
             }
+
+            // 3. Якщо все ще не знайдено - помилка
+            if (!found) {
+                String sample = entries.stream().limit(5).collect(java.util.stream.Collectors.joining(", "));
+                throw new IOException("Завантажений архів не містить запис: " + requested + ". Доступні: " + sample);
+            }
+
+            // ===== ВИКОРИСТОВУЄМО ЗНАЙДЕНИЙ ENTRY =====
+            final String entryToRead = foundEntry;
+            log.info("Reading archive entry: {}", entryToRead);
+            try (InputStream in = archiveReader.readEntry(alias, entryToRead)
+                    .orElseThrow(() -> new IOException("Не вдалося прочитати запис архіву: " + entryToRead))) {
+                if (in.read() < 0) throw new IOException("Запис архіву порожній: " + entryToRead);
+            }
+
+            if (highReliabilityArchiveValidation() && isZipFamily(target)) {
+                validateZipIntegrity(alias, entryToRead);
+            }
+
+            return foundEntry;
+
         } finally {
             Files.deleteIfExists(alias);
         }
     }
 
-
     private boolean highReliabilityArchiveValidation() {
         return settings != null && settings.getBoolean("online.archive.highReliabilityValidation", false);
     }
 
-    private void validateUniqueEntryNames(java.util.List<String> entries) throws IOException {
+    private void validateUniqueEntryNames(List<String> entries) throws IOException {
         Set<String> seen = new HashSet<>();
         for (String entry : entries) {
             String key = normalize(entry).toLowerCase(Locale.ROOT);

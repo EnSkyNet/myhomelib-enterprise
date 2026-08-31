@@ -1,13 +1,16 @@
 package com.myhomelibcorp.infrastructure.download.scenario;
 
+import lombok.extern.slf4j.Slf4j;
+
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
-import java.net.URI;
 
 /**
  * Strict, declarative parser. It never evaluates code or invokes a shell/runtime.
  */
+@Slf4j
 public final class DownloadScenarioParser {
     private DownloadScenarioParser() { }
 
@@ -16,13 +19,20 @@ public final class DownloadScenarioParser {
         String normalized = script.replace("\r\n", "\n").replace('\r', '\n');
         String[] lines = normalized.split("\n", -1);
         List<DownloadScenarioCommand> result = new ArrayList<>();
+        String baseUrl = null;
+
         for (int i = 0; i < lines.length; i++) {
             String raw = lines[i].trim();
             if (raw.isEmpty()) continue;
+
             // Legacy MyHomeLib ConnectionScript files may start with a bare HTTP(S) URL.
-            // Delphi 2.5 parsed such an unknown line with Code=-1 and simply skipped it.
-            // Preserve only this narrow compatibility case; arbitrary unknown commands remain errors.
-            if (isLegacyUrlPreamble(raw)) continue;
+            // This becomes the base URL for subsequent commands.
+            if (isLegacyUrlPreamble(raw) && baseUrl == null) {
+                baseUrl = raw.trim();
+                log.debug("Legacy URL preamble detected: {}", baseUrl);
+                continue;
+            }
+
             int split = firstWhitespace(raw);
             String token = (split < 0 ? raw : raw.substring(0, split)).toUpperCase(Locale.ROOT);
             String args = split < 0 ? "" : raw.substring(split).trim();
@@ -48,8 +58,13 @@ public final class DownloadScenarioParser {
                 }
                 case GET, POST -> {
                     if (args.isEmpty()) throw error(i, token + " потребує URL");
-                    rejectControlChars(args, i);
-                    result.add(new DownloadScenarioCommand(type, args, null, i + 1));
+                    // Якщо URL починається з '/' - додаємо baseUrl
+                    String url = args;
+                    if (url.startsWith("/") && baseUrl != null) {
+                        url = baseUrl + url.substring(1);
+                    }
+                    rejectControlChars(url, i);
+                    result.add(new DownloadScenarioCommand(type, url, null, i + 1));
                 }
                 case ADD -> {
                     if (args.isEmpty()) throw error(i, "ADD потребує name і value");
@@ -61,6 +76,10 @@ public final class DownloadScenarioParser {
                     rejectControlChars(value, i);
                     result.add(new DownloadScenarioCommand(type, name, value, i + 1));
                 }
+                default -> {
+                    // Unknown command - skip for backward compatibility
+                    log.warn("Unknown command at line {}: {}", i + 1, token);
+                }
             }
         }
         return List.copyOf(result);
@@ -68,25 +87,16 @@ public final class DownloadScenarioParser {
 
     /**
      * Перевіряє, чи містить сценарій команди GET або POST.
-     * Використовується для швидкого визначення режиму завантаження.
      */
     public static boolean hasNetworkRequestCommand(String script) {
-        if (script == null || script.isBlank()) {
+        if (script == null || script.isBlank()) return false;
+        try {
+            return parse(script).stream()
+                    .anyMatch(cmd -> cmd.type() == DownloadScenarioCommand.Type.GET
+                            || cmd.type() == DownloadScenarioCommand.Type.POST);
+        } catch (Exception e) {
             return false;
         }
-        String normalized = script.replace("\r\n", "\n").replace('\r', '\n');
-        String[] lines = normalized.split("\n", -1);
-        for (String raw : lines) {
-            String trimmed = raw.trim();
-            if (trimmed.isEmpty()) continue;
-            int split = firstWhitespace(trimmed);
-            if (split < 0) continue;
-            String token = trimmed.substring(0, split).toUpperCase(Locale.ROOT);
-            if ("GET".equals(token) || "POST".equals(token)) {
-                return true;
-            }
-        }
-        return false;
     }
 
     private static boolean isLegacyUrlPreamble(String raw) {

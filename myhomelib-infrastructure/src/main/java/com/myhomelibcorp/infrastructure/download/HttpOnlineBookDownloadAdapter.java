@@ -315,6 +315,28 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 collection.getConnectionScript(), book, collection, root, relative, target, archived, cancel, progress);
         checkCancelled(cancel);
         payloadValidator.validate(result.payload(), target, book, archived);
+
+        // Якщо валідація пройшла, але archiveEntry може відрізнятися - оновлюємо
+        // Це потрібно для випадків, коли сервер повернув інший entry
+        if (archived && book.getArchiveEntry() != null) {
+            // Перевіряємо, чи файл в архіві має інше ім'я
+            try {
+                List<String> entries = archiveReader.listEntries(result.payload());
+                if (!entries.isEmpty()) {
+                    String actualEntry = entries.stream()
+                            .filter(e -> e.toLowerCase(Locale.ROOT).endsWith(".fb2"))
+                            .findFirst()
+                            .orElse(null);
+                    if (actualEntry != null && !actualEntry.equals(book.getArchiveEntry())) {
+                        log.info("Updating archiveEntry from '{}' to '{}'", book.getArchiveEntry(), actualEntry);
+                        book.setArchiveEntry(actualEntry);
+                    }
+                }
+            } catch (Exception e) {
+                log.debug("Could not update archiveEntry: {}", e.getMessage());
+            }
+        }
+
         AtomicFileSupport.moveReplacing(result.payload(), target);
         progress.accept(1.0);
         log.info("SCRIPT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));
