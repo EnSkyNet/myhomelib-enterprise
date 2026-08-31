@@ -77,10 +77,11 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     @Override
     public DownloadedBook download(BookDto book, Collection collection, AtomicBoolean cancelFlag,
                                    DoubleConsumer progress, boolean forceRefresh) throws Exception {
-        String baseUrl = collection.getUrl();
+        String baseUrl = effectiveBaseUrl(collection);
         if (baseUrl == null || baseUrl.isBlank()) {
-            throw new IllegalStateException("Для online-колекції не задано URL");
+            throw new IllegalStateException("Для online-колекції не задано URL ні у властивостях, ні в ConnectionScript");
         }
+        Collection effectiveCollection = collectionWithEffectiveUrl(collection, baseUrl);
         AtomicBoolean cancel = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
         DoubleConsumer progressSink = progress == null ? ignored -> { } : progress;
         Path root = collection.getRootFolder() != null
@@ -108,10 +109,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         }
 
         try {
-            if (collection.getConnectionScript() != null && !collection.getConnectionScript().isBlank()) {
-                downloadViaConnectionScript(book, collection, relative, target, root, archived, cancel, progressSink);
+            if (effectiveCollection.getConnectionScript() != null && !effectiveCollection.getConnectionScript().isBlank()) {
+                downloadViaConnectionScript(book, effectiveCollection, relative, target, root, archived, cancel, progressSink);
             } else {
-                downloadPhysical(book, collection, baseUrl, relative, target, archived, cancel, progressSink);
+                downloadPhysical(book, effectiveCollection, baseUrl, relative, target, archived, cancel, progressSink);
             }
             payloadValidator.validate(target, target, book, archived);
             ownerFuture.complete(target);
@@ -264,6 +265,42 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     }
 
 
+
+
+    /**
+     * Legacy collection.info files sometimes keep the base URL as the first bare HTTP(S) line
+     * of ConnectionScript. Delphi ignored that line as a command but the same URL was also
+     * available as PROP_URL. Recover it here for older/migrated Java collections where URL
+     * was not persisted, so %URL% expands exactly as the scenario expects.
+     */
+    private static String effectiveBaseUrl(Collection collection) {
+        if (collection == null) return null;
+        if (collection.getUrl() != null && !collection.getUrl().isBlank()) return collection.getUrl().trim();
+        String script = collection.getConnectionScript();
+        if (script == null || script.isBlank()) return null;
+        for (String line : script.replace("\r\n", "\n").replace('\r', '\n').split("\n")) {
+            String candidate = line.trim();
+            if (candidate.isEmpty() || candidate.chars().anyMatch(Character::isWhitespace)) continue;
+            try {
+                URI uri = URI.create(candidate);
+                String scheme = uri.getScheme();
+                if (uri.getHost() != null && scheme != null
+                        && (scheme.equalsIgnoreCase("http") || scheme.equalsIgnoreCase("https"))) {
+                    return candidate;
+                }
+            } catch (IllegalArgumentException ignored) {
+                // Not the legacy URL preamble; continue looking.
+            }
+        }
+        return null;
+    }
+
+    private static Collection collectionWithEffectiveUrl(Collection collection, String baseUrl) {
+        if (collection.getUrl() != null && !collection.getUrl().isBlank()) return collection;
+        return new Collection(collection.getId(), collection.getName(), collection.getRootFolder(), collection.getDbFile(),
+                collection.getType(), collection.getUser(), collection.getPassword(), baseUrl, collection.getNotes(),
+                collection.getConnectionScript());
+    }
 
     private void downloadViaConnectionScript(BookDto book, Collection collection, String relative, Path target,
                                              Path root, boolean archived, AtomicBoolean cancel,

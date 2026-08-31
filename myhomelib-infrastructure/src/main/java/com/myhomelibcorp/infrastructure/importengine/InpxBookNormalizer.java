@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
 import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
+import com.myhomelibcorp.application.catalog.LegacyOnlineBookLocation;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.author.AuthorNameKey;
 import com.myhomelibcorp.domain.model.genre.Genre;
@@ -41,7 +42,8 @@ final class InpxBookNormalizer {
                              Map<String, Genre> pendingGenres,
                              Path root,
                              Map<String, Boolean> localCache,
-                             String sourceMarker) {
+                             String sourceMarker,
+                             boolean onlineCollection) {
         try {
             ParsedAuthors parsedAuthors = parseAuthors(raw.field("AUTHOR"), pendingAuthors);
             if (parsedAuthors.ids().isEmpty()) parsedAuthors = ensureUnknownAuthor(pendingAuthors);
@@ -62,7 +64,22 @@ final class InpxBookNormalizer {
             String folder;
             String archiveEntry;
             boolean local;
-            if (!archiveName.isBlank()) {
+            if (onlineCollection && "fb2".equalsIgnoreCase(ext)) {
+                // Upstream MyHomeLib online FB2 semantics: catalog package names such as
+                // online.zip/extra.zip are never the physical archive of every book.
+                // Each book gets its own generated archive location.
+                AuthorNameKey primary = parsedAuthors.keys().isEmpty()
+                        ? new AuthorNameKey("", "", "Невідомий Автор")
+                        : parsedAuthors.keys().get(0);
+                String authorFullName = String.join(" ",
+                        java.util.List.of(primary.lastName(), primary.firstName(), primary.middleName()).stream()
+                                .filter(v -> v != null && !v.isBlank()).toList());
+                folder = LegacyOnlineBookLocation.archivePath(authorFullName, title, raw.field("LIBID"), fileName);
+                archiveEntry = fileName;
+                Path archivePath = root.resolve(folder).normalize();
+                local = archivePath.startsWith(root)
+                        && localCache.computeIfAbsent(folder, key -> Files.isRegularFile(archivePath));
+            } else if (!archiveName.isBlank()) {
                 folder = archiveName;
                 archiveEntry = fileName;
                 Path archivePath = root.resolve(archiveName).normalize();

@@ -292,7 +292,7 @@ public class InpxImportPipeline {
                     processed++;
 
                     NormalizedBook row = normalizer.normalize(
-                            raw, pendingAuthors, pendingGenres, root, localCache, sourceMarker);
+                            raw, pendingAuthors, pendingGenres, root, localCache, sourceMarker, onlineCollection);
                     if (row == null) {
                         errors++;
                     } else {

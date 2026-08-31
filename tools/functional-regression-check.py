@@ -55,7 +55,7 @@ checks={
  ['onlineBookStorageRoot(active)', 'AppPaths.downloadsDir().resolve(collection.getId())']),
 'Existing transient remote roots are repaired': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java',
- ['normalizeLegacyRemoteRoot(book)', 'isTransientCatalogRoot', '.myhomelibcorp', 'downloads']),
+ ['normalizeLegacyRemoteStorage(book)', 'isTransientCatalogRoot', '.myhomelibcorp', 'downloads']),
 'Remote root repair is bounded SQL': (
  ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookCommandRepository.java',
  ['repairTransientRemoteStorageRoots(String permanentRoot)', "WHERE local = 0", "LIKE '%/.myhomelibcorp/cache/catalog-updates%'"]),

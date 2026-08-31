@@ -31,6 +31,7 @@ public class DataSourceConfig {
 
         config.setConnectionInitSql(
                 "PRAGMA foreign_keys=ON; " +
+                "PRAGMA busy_timeout=5000; " +
                 "PRAGMA journal_mode=WAL; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +
@@ -64,6 +65,7 @@ public class DataSourceConfig {
 
         config.setConnectionInitSql(
                 "PRAGMA foreign_keys=ON; " +
+                "PRAGMA busy_timeout=5000; " +
                 "PRAGMA journal_mode=WAL; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +

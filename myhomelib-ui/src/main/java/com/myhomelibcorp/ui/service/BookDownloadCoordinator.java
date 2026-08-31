@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.catalog.LegacyOnlineBookLocation;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.download.DownloadBookUseCase;
@@ -58,7 +59,7 @@ public class BookDownloadCoordinator {
      */
     public CompletableFuture<Path> ensureLocalForOpen(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        normalizeLegacyRemoteRoot(book);
+        normalizeLegacyRemoteStorage(book);
         var existing = bookResourcePort.locateBookFile(
                 book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
         if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
@@ -90,15 +91,19 @@ public class BookDownloadCoordinator {
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        normalizeLegacyRemoteRoot(book);
+        normalizeLegacyRemoteStorage(book);
         if (!force) {
             var existing = bookResourcePort.locateBookFile(book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
             if (existing.isPresent()) return CompletableFuture.completedFuture(existing.get());
         }
 
         Collection collection = applicationState.getCurrentLibraryCollection();
-        if (collection == null || collection.getUrl() == null || collection.getUrl().isBlank()) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Файл відсутній локально, а URL online-колекції не налаштовано"));
+        if (collection == null) {
+            return failedVisible("Файл відсутній локально, але активну online-колекцію не визначено");
+        }
+        if ((collection.getUrl() == null || collection.getUrl().isBlank())
+                && (collection.getConnectionScript() == null || collection.getConnectionScript().isBlank())) {
+            return failedVisible("Файл відсутній локально, а URL/ConnectionScript online-колекції не налаштовано");
         }
         AtomicBoolean cancel = new AtomicBoolean(false);
         AtomicBoolean previous = active.putIfAbsent(book.getId(), cancel);
@@ -151,20 +156,59 @@ public class BookDownloadCoordinator {
     }
 
     /**
-     * v7.1 briefly persisted the temporary catalog update cache as collection_root for remote books.
-     * Repair only the DTO being used instead of rewriting 700k+ rows during application startup.
-     * A successful download persists the correct root through DownloadBookUseCase.updateStorage().
+     * Repairs only the selected remote DTO. Earlier v7.1 builds persisted both the temporary
+     * catalog cache as collection_root and the catalog member name (online.zip/extra.zip) as
+     * the physical archive. Upstream MyHomeLib instead generates one FB2 ZIP path per book.
+     * Successful download persists the corrected storage through DownloadBookUseCase.updateStorage().
      */
-    private void normalizeLegacyRemoteRoot(BookDto book) {
-        if (book == null || !isTransientCatalogRoot(book.getCollectionRoot())) return;
+    private void normalizeLegacyRemoteStorage(BookDto book) {
+        if (book == null) return;
         Collection collection = applicationState.getCurrentLibraryCollection();
         if (collection == null || collection.getId() == null || collection.getId().isBlank()) return;
-        Path root = collection.getRootFolder() != null
-                ? collection.getRootFolder().toAbsolutePath().normalize()
-                : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId())
-                    .toAbsolutePath().normalize();
-        book.setCollectionRoot(root.toString());
-        log.debug("Нормалізовано transient collection_root для remote-книги {} -> {}", book.getId(), root);
+
+        if (isTransientCatalogRoot(book.getCollectionRoot())) {
+            Path root = collection.getRootFolder() != null
+                    ? collection.getRootFolder().toAbsolutePath().normalize()
+                    : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId())
+                        .toAbsolutePath().normalize();
+            book.setCollectionRoot(root.toString());
+            log.debug("Нормалізовано transient collection_root для remote-книги {} -> {}", book.getId(), root);
+        }
+
+        if (!book.isLocal() && isOnlineCollection(collection) && isFb2(book)) {
+            String author = primaryAuthorName(book);
+            String expectedFolder = LegacyOnlineBookLocation.archivePath(
+                    author, book.getTitle(), book.getLibId(), book.getFileName());
+            if (!expectedFolder.equals(book.getFolder())) {
+                log.debug("Нормалізовано online archive для книги {}: {} -> {}",
+                        book.getId(), book.getFolder(), expectedFolder);
+                book.setFolder(expectedFolder);
+                book.setArchiveEntry(book.getFileName());
+            }
+        }
+    }
+
+    private static boolean isOnlineCollection(Collection collection) {
+        return collection != null && ((collection.getUrl() != null && !collection.getUrl().isBlank())
+                || (collection.getConnectionScript() != null && !collection.getConnectionScript().isBlank()));
+    }
+
+    private static boolean isFb2(BookDto book) {
+        if (book == null || book.getFileName() == null) return false;
+        return book.getFileName().toLowerCase(java.util.Locale.ROOT).endsWith(".fb2");
+    }
+
+    private static String primaryAuthorName(BookDto book) {
+        if (book != null && !book.getAuthors().isEmpty()) {
+            var a = book.getAuthors().get(0);
+            if (a.getFullName() != null && !a.getFullName().isBlank()) return a.getFullName();
+            return java.util.stream.Stream.of(a.getLastName(), a.getFirstName(), a.getMiddleName())
+                    .filter(v -> v != null && !v.isBlank()).collect(java.util.stream.Collectors.joining(" "));
+        }
+        String text = book == null ? null : book.getAuthorsText();
+        if (text == null || text.isBlank()) return "Невідомий Автор";
+        int comma = text.indexOf(',');
+        return (comma > 0 ? text.substring(0, comma) : text).trim();
     }
 
     private static boolean isTransientCatalogRoot(String root) {
@@ -172,6 +216,11 @@ public class BookDownloadCoordinator {
         String normalized = root.replace('\\', '/').toLowerCase(java.util.Locale.ROOT);
         return normalized.contains("/.myhomelibcorp/cache/catalog-updates")
                 || normalized.endsWith("/.myhomelibcorp/cache/catalog-updates");
+    }
+
+    private CompletableFuture<Path> failedVisible(String message) {
+        Platform.runLater(() -> dialogService.showError("Завантаження", message));
+        return CompletableFuture.failedFuture(new IllegalStateException(message));
     }
 
 
