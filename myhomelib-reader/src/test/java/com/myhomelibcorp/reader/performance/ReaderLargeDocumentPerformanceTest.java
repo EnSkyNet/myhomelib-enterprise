@@ -16,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.OptionalLong;
+import java.util.zip.Deflater;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -43,11 +44,9 @@ class ReaderLargeDocumentPerformanceTest {
         Path epub = temp.resolve("large.epub");
         String paragraph = "<p>Large EPUB paragraph with enough content to exercise streaming XHTML parsing and paragraph indexing.</p>";
 
-        // Створюємо ZIP з мінімальним рівнем стиснення (1)
-        // Це запобігає спрацюванню zip-bomb detection
         try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(epub))) {
-            // Встановлюємо мінімальний рівень стиснення для всього ZIP
-            zip.setLevel(1);
+            // Використовуємо NO_COMPRESSION для уникнення zip-bomb detection
+            zip.setLevel(Deflater.NO_COMPRESSION);
 
             put(zip, "mimetype", "application/epub+zip");
             put(zip, "META-INF/container.xml",
@@ -61,6 +60,7 @@ class ReaderLargeDocumentPerformanceTest {
             put(zip, "OPS/c.xhtml",
                     "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>" + paragraph.repeat(16_000) + "</body></html>");
         }
+
         var doc = assertTimeout(Duration.ofSeconds(15), () -> new EpubParser().parse(new FileBookSource(epub), ParseOptions.withoutImages()));
         assertThat(doc.totalTextLength()).isGreaterThan(1_000_000);
         assertThat(doc.text().getParagraphCount()).isGreaterThan(10_000);
