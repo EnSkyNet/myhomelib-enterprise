@@ -11,21 +11,22 @@ public interface RemoteDownloadProgress {
     double fraction();
 
     static RemoteDownloadProgress of(long bytesProcessed, long bytesTotal, String currentItem, double fraction) {
-        return new RemoteDownloadProgressRecord(bytesProcessed, bytesTotal, currentItem, fraction);
+        return new Impl(bytesProcessed, bytesTotal, currentItem, fraction);
     }
-}
 
-/** Internal record implementation. */
-record RemoteDownloadProgressRecord(
-        long bytesProcessed,
-        long bytesTotal,
-        String currentItem,
-        double fraction
-) implements RemoteDownloadProgress {
-    RemoteDownloadProgressRecord {
-        if (bytesProcessed < 0) bytesProcessed = 0;
-        if (bytesTotal == 0) bytesTotal = -1;
-        currentItem = currentItem == null ? "" : currentItem;
-        fraction = Math.max(0.0, Math.min(1.0, fraction));
+    /** Internal implementation - not part of the public API. */
+    record Impl(
+            long bytesProcessed,
+            long bytesTotal,
+            String currentItem,
+            double fraction
+    ) implements RemoteDownloadProgress {
+        // Public compact constructor
+        public Impl {
+            if (bytesProcessed < 0) bytesProcessed = 0;
+            if (bytesTotal == 0) bytesTotal = -1;
+            currentItem = currentItem == null ? "" : currentItem;
+            fraction = Math.max(0.0, Math.min(1.0, fraction));
+        }
     }
 }

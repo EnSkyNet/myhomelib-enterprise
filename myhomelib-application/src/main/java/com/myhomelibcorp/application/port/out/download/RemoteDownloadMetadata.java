@@ -9,19 +9,19 @@ public interface RemoteDownloadMetadata {
     String datasetSchema();
 
     static RemoteDownloadMetadata empty() {
-        return new RemoteDownloadMetadataRecord("", "", "", -1, "");
+        return new Impl("", "", "", -1, "");
     }
 
     static RemoteDownloadMetadata of(String etag, String lastModified, String sha256, long contentLength, String datasetSchema) {
-        return new RemoteDownloadMetadataRecord(etag, lastModified, sha256, contentLength, datasetSchema);
+        return new Impl(etag, lastModified, sha256, contentLength, datasetSchema);
     }
-}
 
-/** Internal record implementation. */
-record RemoteDownloadMetadataRecord(
-        String etag,
-        String lastModified,
-        String sha256,
-        long contentLength,
-        String datasetSchema
-) implements RemoteDownloadMetadata {}
+    /** Internal implementation - not part of the public API. */
+    record Impl(
+            String etag,
+            String lastModified,
+            String sha256,
+            long contentLength,
+            String datasetSchema
+    ) implements RemoteDownloadMetadata {}
+}

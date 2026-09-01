@@ -10,25 +10,25 @@ public interface RemoteCatalogPackage {
     boolean fullSnapshot();
     RemoteDownloadMetadata metadata();
 
-    /** Compatibility method for existing callers/tests. */
     static RemoteCatalogPackage of(Path file, String sourceUrl, String version, boolean fullSnapshot) {
-        return new RemoteCatalogPackageRecord(file, sourceUrl, version, fullSnapshot, RemoteDownloadMetadata.empty());
+        return new Impl(file, sourceUrl, version, fullSnapshot, RemoteDownloadMetadata.empty());
     }
 
     static RemoteCatalogPackage of(Path file, String sourceUrl, String version, boolean fullSnapshot, RemoteDownloadMetadata metadata) {
-        return new RemoteCatalogPackageRecord(file, sourceUrl, version, fullSnapshot, metadata);
+        return new Impl(file, sourceUrl, version, fullSnapshot, metadata);
     }
-}
 
-/** Internal record implementation. */
-record RemoteCatalogPackageRecord(
-        Path file,
-        String sourceUrl,
-        String version,
-        boolean fullSnapshot,
-        RemoteDownloadMetadata metadata
-) implements RemoteCatalogPackage {
-    RemoteCatalogPackageRecord {
-        metadata = metadata == null ? RemoteDownloadMetadata.empty() : metadata;
+    /** Internal implementation - not part of the public API. */
+    record Impl(
+            Path file,
+            String sourceUrl,
+            String version,
+            boolean fullSnapshot,
+            RemoteDownloadMetadata metadata
+    ) implements RemoteCatalogPackage {
+        // Public compact constructor
+        public Impl {
+            metadata = metadata == null ? RemoteDownloadMetadata.empty() : metadata;
+        }
     }
 }

@@ -8,20 +8,21 @@ public interface RemoteCatalogUpdatePlan {
     String latestVersion();
 
     static RemoteCatalogUpdatePlan of(List<RemoteCatalogPackage> packages, String latestVersion) {
-        return new RemoteCatalogUpdatePlanRecord(packages, latestVersion);
+        return new Impl(packages, latestVersion);
     }
 
     default boolean upToDate() {
         return packages().isEmpty();
     }
-}
 
-/** Internal record implementation. */
-record RemoteCatalogUpdatePlanRecord(
-        List<RemoteCatalogPackage> packages,
-        String latestVersion
-) implements RemoteCatalogUpdatePlan {
-    RemoteCatalogUpdatePlanRecord {
-        packages = packages == null ? List.of() : List.copyOf(packages);
+    /** Internal implementation - not part of the public API. */
+    record Impl(
+            List<RemoteCatalogPackage> packages,
+            String latestVersion
+    ) implements RemoteCatalogUpdatePlan {
+        // Public compact constructor
+        public Impl {
+            packages = packages == null ? List.of() : List.copyOf(packages);
+        }
     }
 }

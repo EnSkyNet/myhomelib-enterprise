@@ -10,17 +10,18 @@ public interface DuplicateBookCandidate {
     String firstAuthorLastName();
 
     static DuplicateBookCandidate of(String title, String firstAuthorLastName) {
-        return new DuplicateBookCandidateRecord(title, firstAuthorLastName);
+        return new Impl(title, firstAuthorLastName);
     }
-}
 
-/** Internal record implementation. */
-record DuplicateBookCandidateRecord(
-        String title,
-        String firstAuthorLastName
-) implements DuplicateBookCandidate {
-    DuplicateBookCandidateRecord {
-        title = title == null ? "" : title;
-        firstAuthorLastName = firstAuthorLastName == null ? "" : firstAuthorLastName;
+    /** Internal implementation - not part of the public API. */
+    record Impl(
+            String title,
+            String firstAuthorLastName
+    ) implements DuplicateBookCandidate {
+        // Public compact constructor
+        public Impl {
+            title = title == null ? "" : title;
+            firstAuthorLastName = firstAuthorLastName == null ? "" : firstAuthorLastName;
+        }
     }
 }
