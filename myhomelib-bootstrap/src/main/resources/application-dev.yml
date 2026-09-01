@@ -3,6 +3,8 @@ logging:
   level:
     com.myhomelibcorp: DEBUG
     org.springframework: DEBUG
+    org.sqlite: DEBUG
+    com.zaxxer.hikari: DEBUG
   charset:
     console: UTF-8
   pattern:
@@ -11,3 +13,10 @@ logging:
 app:
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
+
+spring:
+  datasource:
+    hikari:
+      maximum-pool-size: 5
+      connection-timeout: 10000
+      leak-detection-threshold: 30000

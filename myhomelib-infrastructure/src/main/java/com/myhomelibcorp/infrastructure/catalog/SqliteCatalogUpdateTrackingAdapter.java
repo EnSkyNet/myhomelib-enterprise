@@ -3,14 +3,15 @@ package com.myhomelibcorp.infrastructure.catalog;
 import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.catalog.CatalogSyncSession;
+import com.myhomelibcorp.application.catalog.CatalogUpdateCursor;
 import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
-import com.myhomelibcorp.application.catalog.CatalogUpdateCursor;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -22,9 +23,12 @@ import java.util.List;
 /** SQLite implementation of the Stage 6 catalog source/book revision model. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTrackingPort {
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UPDATED = CatalogUpdateType.UPDATED_DOWNLOADED_BOOK.name();
+    private static final int MAX_RETRIES = 5;
+    private static final long RETRY_DELAY_MS = 100;
 
     private final CollectionManager collectionManager;
 
@@ -71,7 +75,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     @Override
     public void markTrackedBooksMissing(CatalogSyncSession session) {
         if (session == null) return;
-        // Keep local=1 and user-owned storage untouched; absence from the new catalog only changes catalog visibility.
         jdbc().update("""
                 UPDATE books
                    SET deleted = 1
@@ -84,7 +87,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         if (session == null || books == null || books.isEmpty()) return;
         String detectedAt = now();
 
-        // If the catalog reverted to exactly the downloaded baseline, an outstanding UPDATED event is no longer valid.
         jdbc().batchUpdate("""
                 DELETE FROM catalog_update_events
                  WHERE book_id = ? AND update_type = 'UPDATED_DOWNLOADED_BOOK'
@@ -100,8 +102,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
             ps.setString(3, book.catalogFingerprint());
         });
 
-        // A downloaded book becomes pending only when the incoming catalog state differs both
-        // from the prior catalog state and from the bytes/revision captured at download time.
         jdbc().batchUpdate("""
                 INSERT INTO catalog_update_events(
                     book_id, update_type, source_id, detected_revision,
@@ -137,7 +137,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
             ps.setString(i, book.catalogFingerprint());
         });
 
-        // Initial adoption of an existing catalog is a baseline, not a flood of "new" books.
         if (!session.initialBaseline()) {
             jdbc().batchUpdate("""
                     INSERT INTO catalog_update_events(
@@ -171,8 +170,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
             });
         }
 
-        // State UPSERT deliberately never overwrites downloaded_* on conflict. New legacy/local rows
-        // get a baseline automatically so the first Stage 6 sync cannot create false update alerts.
         jdbc().batchUpdate("""
                 INSERT INTO catalog_book_state(
                     book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
@@ -227,8 +224,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                        downloaded_baseline_at = ?
                  WHERE book_id = ?
                 """, now, bookId.asString());
-        // A successful download resolves both kinds of pending catalog notification for this book:
-        // it establishes the downloaded baseline and consumes a "new by followed author" event too.
         jdbc().update("""
                 UPDATE catalog_update_events
                    SET acknowledged_at = ?
@@ -247,8 +242,6 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                        downloaded_baseline_at = NULL
                  WHERE book_id = ?
                 """, bookId.asString());
-        // A successful download resolves both kinds of pending catalog notification for this book:
-        // it establishes the downloaded baseline and consumes a "new by followed author" event too.
         jdbc().update("""
                 UPDATE catalog_update_events
                    SET acknowledged_at = ?
@@ -259,12 +252,37 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     @Override
     public void setAuthorFollowed(AuthorId authorId, boolean followed) {
         if (authorId == null) return;
-        if (followed) {
-            jdbc().update("INSERT OR IGNORE INTO followed_authors(author_id, followed_at) VALUES (?, ?)",
-                    authorId.asString(), now());
-        } else {
-            jdbc().update("DELETE FROM followed_authors WHERE author_id = ?", authorId.asString());
+
+        JdbcTemplate jdbc = jdbc();
+        int attempts = 0;
+        Exception lastError = null;
+
+        while (attempts < MAX_RETRIES) {
+            try {
+                if (followed) {
+                    jdbc.update("INSERT OR IGNORE INTO followed_authors(author_id, followed_at) VALUES (?, ?)",
+                            authorId.asString(), now());
+                } else {
+                    jdbc.update("DELETE FROM followed_authors WHERE author_id = ?", authorId.asString());
+                }
+                return;
+            } catch (Exception e) {
+                lastError = e;
+                if (e.getMessage() != null && e.getMessage().contains("SQLITE_BUSY")) {
+                    attempts++;
+                    log.warn("Database locked while updating followed authors (attempt {}/{}), retrying...", attempts, MAX_RETRIES);
+                    try {
+                        Thread.sleep(RETRY_DELAY_MS * attempts);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Interrupted while waiting for database lock", ie);
+                    }
+                } else {
+                    throw e;
+                }
+            }
         }
+        throw new RuntimeException("Failed to update followed authors after " + MAX_RETRIES + " attempts", lastError);
     }
 
     @Override
@@ -326,7 +344,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         Object[] params = after == null
                 ? new Object[]{safeLimit}
                 : new Object[]{after.detectedAt(), after.detectedAt(), after.bookId(),
-                        after.detectedAt(), after.bookId(), after.type().name(), safeLimit};
+                after.detectedAt(), after.bookId(), after.type().name(), safeLimit};
         return jdbc().query(sql, (rs, rowNum) -> new CatalogUpdateItem(
                 rs.getString("book_id"),
                 rs.getString("title"),

@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.RowMapper;
 import org.springframework.stereotype.Component;
@@ -25,16 +26,31 @@ public class QueryExecutor {
     }
 
     public <T> T queryForObject(String sql, RowMapper<T> rowMapper, Object... params) {
-        return getJdbcTemplate().queryForObject(sql, rowMapper, params);
+        try {
+            return getJdbcTemplate().queryForObject(sql, rowMapper, params);
+        } catch (EmptyResultDataAccessException e) {
+            log.debug("Query returned empty result: {}", sql);
+            return null;
+        }
     }
 
     public <T> T queryForObject(String sql, Class<T> requiredType, Object... params) {
-        return getJdbcTemplate().queryForObject(sql, requiredType, params);
+        try {
+            return getJdbcTemplate().queryForObject(sql, requiredType, params);
+        } catch (EmptyResultDataAccessException e) {
+            log.debug("Query returned empty result: {}", sql);
+            return null;
+        }
     }
 
     public long queryForLong(String sql, Object... params) {
-        Long result = getJdbcTemplate().queryForObject(sql, Long.class, params);
-        return result != null ? result : 0L;
+        try {
+            Long result = getJdbcTemplate().queryForObject(sql, Long.class, params);
+            return result != null ? result : 0L;
+        } catch (EmptyResultDataAccessException e) {
+            log.debug("Query returned empty result: {}", sql);
+            return 0L;
+        }
     }
 
     public int update(String sql, Object... params) {

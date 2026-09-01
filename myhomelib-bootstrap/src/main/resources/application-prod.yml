@@ -6,6 +6,7 @@ logging:
     org.flywaydb: WARN
     org.sqlite: WARN
     org.apache.lucene: WARN
+    com.zaxxer.hikari: WARN
   charset:
     console: UTF-8
   pattern:
@@ -16,8 +17,20 @@ app:
     batch-size: 1000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
-spring.cache.type: caffeine
-spring.cache.caffeine.spec: maximumSize=10000,expireAfterWrite=60m
+
+spring:
+  cache:
+    type: caffeine
+    caffeine:
+      spec: maximumSize=10000,expireAfterWrite=60m
+  datasource:
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 120000
 
 management:
   endpoints:

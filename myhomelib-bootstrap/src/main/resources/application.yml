@@ -13,6 +13,24 @@ spring:
   datasource:
     url: jdbc:sqlite:placeholder
     driver-class-name: org.sqlite.JDBC
+    hikari:
+      # Основні налаштування пулу
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      leak-detection-threshold: 60000
+      pool-name: MyHomeLibHikariPool
+      # Налаштування для SQLite
+      connection-init-sql: |
+        PRAGMA foreign_keys=ON;
+        PRAGMA busy_timeout=10000;
+        PRAGMA journal_mode=WAL;
+        PRAGMA synchronous=NORMAL;
+        PRAGMA temp_store=MEMORY;
+        PRAGMA cache_size=-32768;
+        PRAGMA mmap_size=67108864;
 
   cache:
     type: caffeine
@@ -24,8 +42,10 @@ app:
     db-path: ${user.home}/.myhomelibcorp/meta.db
   import:
     batch-size: 1000
+    change-tracking-limit: 50000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
+
 logging:
   level:
     com.myhomelibcorp: DEBUG
@@ -33,6 +53,18 @@ logging:
     org.flywaydb: INFO
     org.sqlite: WARN
     org.apache.lucene: INFO
+    com.zaxxer.hikari: DEBUG
+  charset:
+    console: UTF-8
+    file: UTF-8
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{48} - %msg%n"
+  file:
+    name: ${user.home}/.myhomelibcorp/logs/myhomelib.log
+    max-size: 10MB
+    max-history: 14
+    total-size-cap: 100MB
 
 management:
   endpoints:

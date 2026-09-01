@@ -14,6 +14,9 @@ import org.springframework.stereotype.Repository;
 @Slf4j
 public class SqliteStatisticsRepository implements StatisticsRepository {
 
+    private static final int MAX_RETRIES = 5;
+    private static final long RETRY_DELAY_MS = 100;
+
     private final CollectionManager collectionManager;
     private final QueryExecutor queryExecutor;
 
@@ -26,60 +29,104 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
         // Startup/status-bar reads must remain O(1). The cache row is persistent and migrations
         // create it; a missing row (for example after an older build deleted it) is repaired with
         // defaults rather than triggering a catalog-wide COUNT/SUM/GROUP BY on the caller thread.
+
+        // Спроба прочитати статистику
         LibraryStatistics stats = readCachedStatistics();
         if (stats != null) return stats;
 
-        getJdbcTemplate().update("""
-                INSERT OR IGNORE INTO library_statistics
-                (id, books_count, authors_count, series_count, genres_count)
-                VALUES (1, 0, 0, 0, 0)
-                """);
+        // Якщо запису немає - створюємо його з retry
+        createStatisticsRowWithRetry();
+
         stats = readCachedStatistics();
-        if (stats == null) throw new IllegalStateException("Statistics cache is unavailable for the active collection");
+        if (stats == null) {
+            throw new IllegalStateException("Statistics cache is unavailable for the active collection");
+        }
         log.warn("Statistics cache row was missing and has been recreated without a startup catalog scan");
         return stats;
     }
 
+    private void createStatisticsRowWithRetry() {
+        int attempts = 0;
+        Exception lastError = null;
+
+        while (attempts < MAX_RETRIES) {
+            try {
+                getJdbcTemplate().update("""
+                        INSERT OR IGNORE INTO library_statistics
+                        (id, books_count, authors_count, series_count, genres_count,
+                         languages_count, publishers_count, total_size_bytes,
+                         duplicates_count, missing_covers_count, local_books_count,
+                         remote_books_count, read_books_count, unread_books_count,
+                         favorites_count, deleted_books_count, sources_count, last_updated)
+                        VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, CURRENT_TIMESTAMP)
+                        """);
+                return;
+            } catch (Exception e) {
+                lastError = e;
+                if (e.getMessage() != null && e.getMessage().contains("SQLITE_BUSY")) {
+                    attempts++;
+                    log.warn("Database locked while creating statistics row (attempt {}/{}), retrying...", attempts, MAX_RETRIES);
+                    try {
+                        Thread.sleep(RETRY_DELAY_MS * attempts);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Interrupted while waiting for database lock", ie);
+                    }
+                } else {
+                    throw e;
+                }
+            }
+        }
+        throw new RuntimeException("Failed to create statistics row after " + MAX_RETRIES + " attempts", lastError);
+    }
+
     private LibraryStatistics readCachedStatistics() {
-        String sql = "SELECT books_count, authors_count, series_count, genres_count, " +
-                "COALESCE(languages_count, 0) AS languages_count, " +
-                "COALESCE(publishers_count, 0) AS publishers_count, " +
-                "COALESCE(total_size_bytes, 0) AS total_size_bytes, " +
-                "COALESCE(duplicates_count, 0) AS duplicates_count, " +
-                "COALESCE(missing_covers_count, 0) AS missing_covers_count, " +
-                "COALESCE(local_books_count, 0) AS local_books_count, " +
-                "COALESCE(remote_books_count, 0) AS remote_books_count, " +
-                "COALESCE(read_books_count, 0) AS read_books_count, " +
-                "COALESCE(unread_books_count, 0) AS unread_books_count, " +
-                "COALESCE(favorites_count, 0) AS favorites_count, " +
-                "COALESCE(deleted_books_count, 0) AS deleted_books_count, " +
-                "COALESCE(sources_count, 0) AS sources_count " +
-                "FROM library_statistics WHERE id = 1";
-        return queryExecutor.queryForObject(sql, (rs, rowNum) ->
-                LibraryStatistics.builder()
-                        .booksCount(rs.getLong("books_count"))
-                        .authorsCount(rs.getLong("authors_count"))
-                        .seriesCount(rs.getLong("series_count"))
-                        .genresCount(rs.getLong("genres_count"))
-                        .languagesCount(rs.getLong("languages_count"))
-                        .publishersCount(rs.getLong("publishers_count"))
-                        .totalSizeBytes(rs.getLong("total_size_bytes"))
-                        .duplicatesCount(rs.getLong("duplicates_count"))
-                        .missingCoversCount(rs.getLong("missing_covers_count"))
-                        .localBooksCount(rs.getLong("local_books_count"))
-                        .remoteBooksCount(rs.getLong("remote_books_count"))
-                        .readBooksCount(rs.getLong("read_books_count"))
-                        .unreadBooksCount(rs.getLong("unread_books_count"))
-                        .favoritesCount(rs.getLong("favorites_count"))
-                        .deletedBooksCount(rs.getLong("deleted_books_count"))
-                        .sourcesCount(rs.getLong("sources_count"))
-                        .build());
+        try {
+            String sql = "SELECT books_count, authors_count, series_count, genres_count, " +
+                    "COALESCE(languages_count, 0) AS languages_count, " +
+                    "COALESCE(publishers_count, 0) AS publishers_count, " +
+                    "COALESCE(total_size_bytes, 0) AS total_size_bytes, " +
+                    "COALESCE(duplicates_count, 0) AS duplicates_count, " +
+                    "COALESCE(missing_covers_count, 0) AS missing_covers_count, " +
+                    "COALESCE(local_books_count, 0) AS local_books_count, " +
+                    "COALESCE(remote_books_count, 0) AS remote_books_count, " +
+                    "COALESCE(read_books_count, 0) AS read_books_count, " +
+                    "COALESCE(unread_books_count, 0) AS unread_books_count, " +
+                    "COALESCE(favorites_count, 0) AS favorites_count, " +
+                    "COALESCE(deleted_books_count, 0) AS deleted_books_count, " +
+                    "COALESCE(sources_count, 0) AS sources_count " +
+                    "FROM library_statistics WHERE id = 1";
+            return queryExecutor.queryForObject(sql, (rs, rowNum) ->
+                    LibraryStatistics.builder()
+                            .booksCount(rs.getLong("books_count"))
+                            .authorsCount(rs.getLong("authors_count"))
+                            .seriesCount(rs.getLong("series_count"))
+                            .genresCount(rs.getLong("genres_count"))
+                            .languagesCount(rs.getLong("languages_count"))
+                            .publishersCount(rs.getLong("publishers_count"))
+                            .totalSizeBytes(rs.getLong("total_size_bytes"))
+                            .duplicatesCount(rs.getLong("duplicates_count"))
+                            .missingCoversCount(rs.getLong("missing_covers_count"))
+                            .localBooksCount(rs.getLong("local_books_count"))
+                            .remoteBooksCount(rs.getLong("remote_books_count"))
+                            .readBooksCount(rs.getLong("read_books_count"))
+                            .unreadBooksCount(rs.getLong("unread_books_count"))
+                            .favoritesCount(rs.getLong("favorites_count"))
+                            .deletedBooksCount(rs.getLong("deleted_books_count"))
+                            .sourcesCount(rs.getLong("sources_count"))
+                            .build());
+        } catch (Exception e) {
+            if (e.getMessage() != null && e.getMessage().contains("SQLITE_BUSY")) {
+                log.debug("Database locked while reading statistics: {}", e.getMessage());
+            } else {
+                log.debug("Statistics cache row not found: {}", e.getMessage());
+            }
+            return null;
+        }
     }
 
     @Override
     public void invalidate() {
-        // Keep the last snapshot available for O(1) startup/status-bar reads. Mark it stale
-        // instead of deleting it; explicit refresh paths can recompute exact values in background.
         getJdbcTemplate().update("UPDATE library_statistics SET last_updated = NULL WHERE id = 1");
         log.debug("Statistics cache marked stale for the active collection");
     }
