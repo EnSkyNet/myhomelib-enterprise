@@ -1,13 +1,28 @@
-param([string]$Directory = "dist")
-$ErrorActionPreference = "Stop"
-Set-Location $PSScriptRoot
-if (-not (Test-Path $Directory -PathType Container)) { throw "Directory not found: $Directory" }
-$out = Join-Path $Directory "SHA256SUMS"
-$base = (Resolve-Path $Directory).Path
-$lines = Get-ChildItem $Directory -File -Recurse | Where-Object Name -ne "SHA256SUMS" | Sort-Object FullName | ForEach-Object {
-    $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-    $relative = $_.FullName.Substring($base.Length).TrimStart('\\','/').Replace('\\','/')
-    "$hash  $relative"
+param(
+    [string]$Directory = "."
+)
+
+$checksumFile = Join-Path $Directory "SHA256SUMS"
+$files = Get-ChildItem $Directory -Recurse -File | 
+    Where-Object { $_.Name -ne 'SHA256SUMS' } |
+    Sort-Object FullName
+
+$results = @()
+
+foreach ($file in $files) {
+    # Правильний спосіб отримати відносний шлях
+    $relativePath = $file.FullName
+    if ($relativePath.StartsWith($Directory)) {
+        $relativePath = $relativePath.Substring($Directory.Length).TrimStart('\')
+    }
+    
+    # АБО використовуйте цей спосіб:
+    # $relativePath = Resolve-Path -Relative $file.FullName -RelativeBase $Directory
+    # $relativePath = $relativePath -replace '^\.\\', ''
+    
+    $hash = (Get-FileHash $file.FullName -Algorithm SHA256).Hash
+    $results += "$hash  $relativePath"
 }
-Set-Content -Path $out -Value $lines -Encoding ascii
-Write-Host "Wrote $out"
+
+$results | Out-File $checksumFile -Encoding UTF8
+Write-Host "Created $checksumFile with $($results.Count) entries"
