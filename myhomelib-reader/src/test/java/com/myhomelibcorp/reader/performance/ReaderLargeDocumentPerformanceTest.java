@@ -3,6 +3,7 @@ package com.myhomelibcorp.reader.performance;
 import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.FileBookSource;
 import com.myhomelibcorp.reader.api.ParseOptions;
+import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.format.epub.EpubParser;
 import com.myhomelibcorp.reader.format.fb2.Fb2StreamingParser;
 import org.junit.jupiter.api.Test;
@@ -11,6 +12,7 @@ import org.junit.jupiter.api.io.TempDir;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.OptionalLong;
@@ -40,10 +42,20 @@ class ReaderLargeDocumentPerformanceTest {
     void parsesLargeEpubSpineWithinGuardrail() throws Exception {
         Path epub = temp.resolve("large.epub");
         String paragraph = "<p>Large EPUB paragraph with enough content to exercise streaming XHTML parsing and paragraph indexing.</p>";
-        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
-            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
-            put(zip, "OPS/book.opf", "<package><metadata><title>Large EPUB</title><language>en</language></metadata><manifest><item id=\"c\" href=\"c.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>");
-            put(zip, "OPS/c.xhtml", "<html><body>" + paragraph.repeat(16_000) + "</body></html>");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(epub))) {
+            // Встановлюємо помірний рівень стиснення, щоб уникнути спрацювання захисту від zip-bomb
+            zip.setLevel(5);
+
+            put(zip, "META-INF/container.xml",
+                    "<?xml version=\"1.0\"?><container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">" +
+                            "<rootfiles><rootfile full-path=\"OPS/book.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf",
+                    "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\">" +
+                            "<metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>Large EPUB</dc:title>" +
+                            "<dc:language>en</dc:language></metadata><manifest><item id=\"c\" href=\"c.xhtml\" media-type=\"application/xhtml+xml\"/>" +
+                            "</manifest><spine><itemref idref=\"c\"/></spine></package>");
+            put(zip, "OPS/c.xhtml",
+                    "<html xmlns=\"http://www.w3.org/1999/xhtml\"><body>" + paragraph.repeat(16_000) + "</body></html>");
         }
         var doc = assertTimeout(Duration.ofSeconds(15), () -> new EpubParser().parse(new FileBookSource(epub), ParseOptions.withoutImages()));
         assertThat(doc.totalTextLength()).isGreaterThan(1_000_000);
@@ -51,7 +63,10 @@ class ReaderLargeDocumentPerformanceTest {
     }
 
     private static void put(ZipOutputStream zip, String name, String text) throws Exception {
-        zip.putNextEntry(new ZipEntry(name));
+        ZipEntry entry = new ZipEntry(name);
+        // Явно вказуємо метод стиснення DEFLATED
+        entry.setMethod(ZipEntry.DEFLATED);
+        zip.putNextEntry(entry);
         zip.write(text.getBytes(StandardCharsets.UTF_8));
         zip.closeEntry();
     }
