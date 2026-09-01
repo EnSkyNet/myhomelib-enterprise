@@ -11,8 +11,7 @@ public interface RemoteCatalogDownloadPort {
 
     /**
      * Resolves a server/base URL into the packages required to advance {@code currentVersion}.
-     * Implementations must report both aggregate and detailed progress; no default overload may
-     * silently drop detailed telemetry.
+     * Implementations must report both aggregate and detailed progress.
      */
     RemoteCatalogUpdatePlan downloadUpdates(
             Collection collection,

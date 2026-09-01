@@ -113,8 +113,9 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         if (isExplicitCatalogFile(sourceUri)) {
             Downloaded downloaded = downloadOne(collection, sourceUri, flag, sink, detailSink, 0.0, 1.0);
             boolean full = !fileName(sourceUri).toLowerCase(Locale.ROOT).contains("extra");
-            return new RemoteCatalogUpdatePlan(
-                    List.of(new RemoteCatalogPackage(downloaded.path(), sourceUri.toString(), downloaded.version(), full, downloaded.metadata())),
+            // Використовуємо фабричний метод RemoteCatalogPackage.of
+            return RemoteCatalogUpdatePlan.of(
+                    List.of(RemoteCatalogPackage.of(downloaded.path(), sourceUri.toString(), downloaded.version(), full, downloaded.metadata())),
                     downloaded.version());
         }
 
@@ -122,15 +123,10 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         if (mhl == null) {
             throw new IllegalArgumentException(
                     "URL вказує не на INPX/ZIP-файл. Для MyHomeLib/Flibusta використовуйте " +
-                    FLIBUSTA.baselineUrl() + " або прямий URL *.inpx/*.zip");
+                            FLIBUSTA.baselineUrl() + " або прямий URL *.inpx/*.zip");
         }
 
         long current = versionNumber(currentVersion);
-        // Historical MyHomeLib servers used version marker files in /update/. Some mirrors
-        // (including alex80.github.io as observed in 2026) keep the baseline INPX endpoint
-        // available while those marker files return 404. Markers are therefore hints, not a
-        // prerequisite for a safe update. When both are unavailable we fall back to the
-        // canonical full INPX and use its embedded version.info.
         String fullVersion = fetchVersion(collection, URI.create(mhl.updateBase() + FLIBUSTA.fullVersionEndpoint()), flag, false);
         String extraVersion = fetchVersion(collection, URI.create(mhl.updateBase() + FLIBUSTA.incrementalVersionEndpoint()), flag, false);
         long full = versionNumber(fullVersion);
@@ -146,11 +142,9 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 String baselineVersion = normalizeVersion(baseline.version());
                 long baselineNumber = versionNumber(baselineVersion);
 
-                // If version.info is present and is not newer than the applied catalog, avoid
-                // re-importing the same full snapshot. If it is absent, importing is safer than
-                // incorrectly reporting UP_TO_DATE because the content may have changed.
                 if (current <= 0 || baselineNumber <= 0 || baselineNumber > current) {
-                    packages.add(new RemoteCatalogPackage(
+                    // Використовуємо фабричний метод RemoteCatalogPackage.of
+                    packages.add(RemoteCatalogPackage.of(
                             baseline.path(), baselineUri.toString(), baselineVersion, true, baseline.metadata()));
                 } else {
                     deleteQuietly(baseline.path());
@@ -158,8 +152,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     log.info("Remote Flibusta baseline is not newer: local={}, baseline={}",
                             currentVersion, baselineVersion);
                 }
-                return new RemoteCatalogUpdatePlan(
-                        packages, maxVersion(currentVersion, baselineVersion, null));
+                return RemoteCatalogUpdatePlan.of(packages, maxVersion(currentVersion, baselineVersion, null));
             }
 
             long afterFull = current;
@@ -167,22 +160,20 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 URI baselineUri = URI.create(mhl.inpxBase() + FLIBUSTA.baselineFile());
                 Downloaded baseline = downloadOne(collection, baselineUri, flag, sink, detailSink, 0.0, 0.60);
                 String baselineVersion = normalizeVersion(baseline.version());
-                packages.add(new RemoteCatalogPackage(baseline.path(), baselineUri.toString(), baselineVersion, true, baseline.metadata()));
+                packages.add(RemoteCatalogPackage.of(baseline.path(), baselineUri.toString(), baselineVersion, true, baseline.metadata()));
                 afterFull = versionNumber(baselineVersion);
-                // If the baseline does not carry version.info (or is older), do not assume it is at the
-                // remote full version: apply the official full package before any extra delta.
                 if (full > afterFull) {
                     URI fullUri = URI.create(mhl.updateBase() + FLIBUSTA.fullUpdateFile());
                     Downloaded downloaded = downloadOne(collection, fullUri, flag, sink, detailSink, 0.60, 0.25);
                     String version = firstNonBlank(fullVersion, downloaded.version());
-                    packages.add(new RemoteCatalogPackage(downloaded.path(), fullUri.toString(), version, true, downloaded.metadata()));
+                    packages.add(RemoteCatalogPackage.of(downloaded.path(), fullUri.toString(), version, true, downloaded.metadata()));
                     afterFull = versionNumber(version);
                 }
             } else if (full > current) {
                 URI fullUri = URI.create(mhl.updateBase() + FLIBUSTA.fullUpdateFile());
                 Downloaded downloaded = downloadOne(collection, fullUri, flag, sink, detailSink, 0.0, extra > full ? 0.80 : 1.0);
                 String version = firstNonBlank(fullVersion, downloaded.version());
-                packages.add(new RemoteCatalogPackage(downloaded.path(), fullUri.toString(), version, true, downloaded.metadata()));
+                packages.add(RemoteCatalogPackage.of(downloaded.path(), fullUri.toString(), version, true, downloaded.metadata()));
                 afterFull = versionNumber(version);
             }
 
@@ -191,7 +182,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 double start = packages.isEmpty() ? 0.0 : (current <= 0 ? 0.85 : 0.80);
                 Downloaded downloaded = downloadOne(collection, extraUri, flag, sink, detailSink, start, 1.0 - start);
                 String version = firstNonBlank(extraVersion, downloaded.version());
-                packages.add(new RemoteCatalogPackage(downloaded.path(), extraUri.toString(), version, false, downloaded.metadata()));
+                packages.add(RemoteCatalogPackage.of(downloaded.path(), extraUri.toString(), version, false, downloaded.metadata()));
             }
 
             String latest = maxVersion(currentVersion, fullVersion, extraVersion,
@@ -200,7 +191,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 sink.accept(1.0);
                 log.info("Remote Flibusta catalog is up to date: local={}, full={}, extra={}", currentVersion, fullVersion, extraVersion);
             }
-            return new RemoteCatalogUpdatePlan(packages, latest);
+            return RemoteCatalogUpdatePlan.of(packages, latest);
         } catch (Exception e) {
             for (RemoteCatalogPackage pkg : packages) deleteQuietly(pkg.file());
             throw e;
@@ -229,7 +220,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             long offset = Files.exists(part) ? Files.size(part) : 0L;
             HttpResumeSupport.ResumeMetadata resume = offset > 0 ? HttpResumeSupport.read(partMeta, uri) : null;
             if (offset > 0 && (resume == null || resume.validator().isBlank())) {
-                // Never append bytes from an unvalidated older representation to a newer catalog.
                 Files.deleteIfExists(part);
                 Files.deleteIfExists(partMeta);
                 offset = 0L;
@@ -248,7 +238,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     HttpResumeSupport.validateContentRange(response, offset, uri);
                 } else if (status == 200) {
                     if (offset > 0) {
-                        // Server ignored Range: restart safely instead of appending duplicate bytes.
                         Files.deleteIfExists(part);
                         Files.deleteIfExists(partMeta);
                         offset = 0;
@@ -288,7 +277,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     byte[] buffer = new byte[128 * 1024];
                     for (int n; (n = in.read(buffer)) != -1;) {
                         if (cancel.get() || Thread.currentThread().isInterrupted()) {
-                            // Keep .part intentionally: a later attempt can resume it.
                             throw new IOException("Оновлення скасовано");
                         }
                         if (n == 0) continue;
@@ -313,7 +301,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     throw new RetryableDownloadException("Неповне завантаження: " + actual + " з " + expectedTotal + " байт для " + SensitiveDataSanitizer.sanitizeUri(uri));
                 }
 
-                // Semantic validation failures are not resumable: discard poisoned bytes before retry/exit.
                 String embeddedVersion;
                 try {
                     embeddedVersion = validateCatalogArchive(part, uri);
@@ -330,7 +317,8 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 Files.deleteIfExists(partMeta);
                 progress.accept(Math.min(1.0, progressStart + progressSpan));
                 emitDownloadProgress(detailedProgress, actual, expectedTotal > 0 ? expectedTotal : actual, uri, progressStart, progressSpan);
-                RemoteDownloadMetadata metadata = new RemoteDownloadMetadata(etag, lastModified, sha256, actual, "inpx");
+                // Використовуємо фабричний метод RemoteDownloadMetadata.of
+                RemoteDownloadMetadata metadata = RemoteDownloadMetadata.of(etag, lastModified, sha256, actual, "inpx");
                 return new Downloaded(out, embeddedVersion, metadata);
             } catch (RetryableDownloadException e) {
                 last = e;
@@ -358,7 +346,8 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         double local = total > 0 ? Math.min(1.0, (double) processed / (double) total) : 0.0;
         double overall = Math.min(1.0, progressStart + local * progressSpan);
         try {
-            listener.accept(new RemoteDownloadProgress(
+            // Використовуємо фабричний метод RemoteDownloadProgress.of
+            listener.accept(RemoteDownloadProgress.of(
                     Math.max(0, processed), total > 0 ? total : -1,
                     SensitiveDataSanitizer.sanitizeUri(uri), overall));
         } catch (RuntimeException ignored) {
@@ -375,7 +364,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         return Sha256Support.file(file);
     }
 
-    /** Validate before any importer/database code sees the file. */
     private String validateCatalogArchive(Path file, URI source) throws IOException {
         if (Files.size(file) < 4) throw new IOException("Порожній або пошкоджений каталог: " + SensitiveDataSanitizer.sanitizeUri(source));
         byte[] prefix;
@@ -448,7 +436,6 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 SensitiveDataSanitizer.sanitizeText(last == null ? SensitiveDataSanitizer.sanitizeUri(uri) : last.getMessage()));
         return null;
     }
-
 
     private HttpRequest.Builder request(Collection collection, URI uri) {
         HttpRequest.Builder builder = HttpRequest.newBuilder(uri)

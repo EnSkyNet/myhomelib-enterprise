@@ -66,7 +66,11 @@ public class DuplicateDetector {
                 repeatedIncomingIds.add(book.getId());
                 continue;
             }
-            DuplicateBookCandidate candidate = candidate(book);
+            // Використовуємо фабричний метод замість new
+            DuplicateBookCandidate candidate = DuplicateBookCandidate.of(
+                    book.getTitle(),
+                    book.getAuthors().get(0).getLastName()
+            );
             candidateKeys.putIfAbsent(candidate, naturalKey);
             candidateByIncomingId.put(book.getId(), candidate);
         }
@@ -130,9 +134,11 @@ public class DuplicateDetector {
     }
 
     private static DuplicateBookCandidate candidate(Book book) {
-        return new DuplicateBookCandidate(
+        // Використовуємо фабричний метод
+        return DuplicateBookCandidate.of(
                 book.getTitle(),
-                book.getAuthors().get(0).getLastName());
+                book.getAuthors().get(0).getLastName()
+        );
     }
 
     private DuplicateKey buildNaturalKey(Book book) {

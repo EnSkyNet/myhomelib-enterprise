@@ -5,11 +5,21 @@ package com.myhomelibcorp.application.port.out.repository;
  * The values intentionally preserve the existing catalogue matching semantics:
  * exact title plus the incoming first author's last name.
  */
-public record DuplicateBookCandidate(
+public interface DuplicateBookCandidate {
+    String title();
+    String firstAuthorLastName();
+
+    static DuplicateBookCandidate of(String title, String firstAuthorLastName) {
+        return new DuplicateBookCandidateRecord(title, firstAuthorLastName);
+    }
+}
+
+/** Internal record implementation. */
+record DuplicateBookCandidateRecord(
         String title,
         String firstAuthorLastName
-) {
-    public DuplicateBookCandidate {
+) implements DuplicateBookCandidate {
+    DuplicateBookCandidateRecord {
         title = title == null ? "" : title;
         firstAuthorLastName = firstAuthorLastName == null ? "" : firstAuthorLastName;
     }

@@ -4,13 +4,25 @@ package com.myhomelibcorp.application.port.out.download;
  * Byte-level telemetry for one remote catalog package.
  * A {@code bytesTotal} value below zero means that the server did not expose a reliable total.
  */
-public record RemoteDownloadProgress(
+public interface RemoteDownloadProgress {
+    long bytesProcessed();
+    long bytesTotal();
+    String currentItem();
+    double fraction();
+
+    static RemoteDownloadProgress of(long bytesProcessed, long bytesTotal, String currentItem, double fraction) {
+        return new RemoteDownloadProgressRecord(bytesProcessed, bytesTotal, currentItem, fraction);
+    }
+}
+
+/** Internal record implementation. */
+record RemoteDownloadProgressRecord(
         long bytesProcessed,
         long bytesTotal,
         String currentItem,
         double fraction
-) {
-    public RemoteDownloadProgress {
+) implements RemoteDownloadProgress {
+    RemoteDownloadProgressRecord {
         if (bytesProcessed < 0) bytesProcessed = 0;
         if (bytesTotal == 0) bytesTotal = -1;
         currentItem = currentItem == null ? "" : currentItem;
