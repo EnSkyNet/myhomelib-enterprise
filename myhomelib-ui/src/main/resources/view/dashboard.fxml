@@ -6,35 +6,35 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.dashboard.DashboardController"
-      spacing="12" style="-fx-padding: 20; -fx-background-color: #f8f9fa;">
+      spacing="12" style="-fx-padding: 20; -fx-background-color: -mhl-background;">
 
     <!-- Заголовок -->
-    <Label text="📚 Ласкаво просимо" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+    <Label text="📚 Ласкаво просимо" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <!-- Блок "Продовжити читання" -->
-    <VBox fx:id="continueReadingBox" spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+    <VBox fx:id="continueReadingBox" spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
         <Label text="📖 Продовжити читання" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <HBox spacing="10" alignment="CENTER_LEFT">
             <Label fx:id="continueTitle" text="Немає книг" wrapText="true" HBox.hgrow="ALWAYS" style="-fx-font-size: 14px;"/>
-            <Button text="Читати" onAction="#onContinueReading" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
+            <Button text="Читати" onAction="#onContinueReading" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
         </HBox>
-        <ProgressBar fx:id="continueProgress" prefWidth="200" style="-fx-accent: #4CAF50;"/>
+        <ProgressBar fx:id="continueProgress" prefWidth="200" style="-fx-accent: -mhl-success;"/>
     </VBox>
 
     <!-- Блок "Останні відкриті" -->
-    <VBox spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+    <VBox spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
         <Label text="⏳ Останні відкриті" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <VBox fx:id="recentBooksBox" spacing="4"/>
     </VBox>
 
     <!-- Блок "Нові книги" -->
-    <VBox spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+    <VBox spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
         <Label text="🆕 Нові книги" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <VBox fx:id="newBooksBox" spacing="4"/>
     </VBox>
 
     <!-- Блок "Статистика" -->
-    <VBox spacing="8" style="-fx-background-color: white; -fx-padding: 15; -fx-border-color: #e0e0e0; -fx-border-radius: 8; -fx-background-radius: 8;">
+    <VBox spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
         <Label text="📊 Статистика" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <GridPane hgap="20" vgap="5">
             <Label text="Книг:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>

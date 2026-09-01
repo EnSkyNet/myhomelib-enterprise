@@ -39,6 +39,8 @@ public class ReaderToolbar extends HBox {
     @Getter private final Button themeButton;
     @Getter private final Button settingsButton;
     @Getter private final Button fullscreenButton;
+    @Getter private final Button leftSidebarButton;
+    @Getter private final Button rightSidebarButton;
 
     // Функції
     @Getter private final Button bookmarkButton;
@@ -52,6 +54,8 @@ public class ReaderToolbar extends HBox {
     private Runnable onTocClick;
     private Runnable onSearchClick;
     private Runnable onBackClick;
+    private Runnable onToggleLeftSidebarClick;
+    private Runnable onToggleRightSidebarClick;
 
     public ReaderToolbar(ReaderCanvas canvas) {
         this.canvas = canvas;
@@ -83,6 +87,8 @@ public class ReaderToolbar extends HBox {
         themeButton = createButton("🎨", "Змінити тему (T)");
         settingsButton = createButton("⚙️", "Налаштування");
         fullscreenButton = createButton("⛶", "Повноекранний режим (F11)");
+        leftSidebarButton = createButton("◧", "Показати / сховати ліву панель");
+        rightSidebarButton = createButton("◨", "Показати / сховати праву панель");
 
         // ===== ФУНКЦІЇ =====
         bookmarkButton = createButton("⭐", "Додати закладку");
@@ -111,6 +117,8 @@ public class ReaderToolbar extends HBox {
                 themeButton,
                 settingsButton,
                 fullscreenButton,
+                leftSidebarButton,
+                rightSidebarButton,
                 new Separator(),
                 bookmarkButton,
                 bookmarksButton,
@@ -174,6 +182,13 @@ public class ReaderToolbar extends HBox {
         });
 
         fullscreenButton.setOnAction(e -> toggleFullscreen());
+
+        leftSidebarButton.setOnAction(e -> {
+            if (onToggleLeftSidebarClick != null) onToggleLeftSidebarClick.run();
+        });
+        rightSidebarButton.setOnAction(e -> {
+            if (onToggleRightSidebarClick != null) onToggleRightSidebarClick.run();
+        });
 
         settingsButton.setOnAction(e -> {
             if (onSettingsClick != null) {
@@ -256,6 +271,14 @@ public class ReaderToolbar extends HBox {
 
     public void setOnBackClick(Runnable listener) {
         this.onBackClick = listener;
+    }
+
+    public void setOnToggleLeftSidebarClick(Runnable listener) {
+        this.onToggleLeftSidebarClick = listener;
+    }
+
+    public void setOnToggleRightSidebarClick(Runnable listener) {
+        this.onToggleRightSidebarClick = listener;
     }
 
     public void refresh() {

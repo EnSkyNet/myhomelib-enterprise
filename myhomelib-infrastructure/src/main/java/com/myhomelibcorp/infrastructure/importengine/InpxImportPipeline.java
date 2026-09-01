@@ -183,7 +183,7 @@ public class InpxImportPipeline {
                     return current;
                 });
                 if (outcome == null) {
-                    outcome = new ImportOutcome(0, 0, 0, 0, 0, false, ImportChangeSet.empty(!catalogFullSnapshot));
+                    outcome = new ImportOutcome(0, 0, 0, 0, 0, 0, 0, 0, false, ImportChangeSet.empty(!catalogFullSnapshot));
                 }
             } else {
                 outcome = importTransactional(
@@ -206,7 +206,8 @@ public class InpxImportPipeline {
                     outcome.processed(), totalRecords, 0, -1, 0, 0, 0, outcome.skipped(), outcome.duplicates(),
                     0, outcome.errors(), "", false));
             return new ImportResult(0, outcome.skipped(), outcome.duplicates(), outcome.errors(), duration,
-                    ImportStatus.CANCELLED, ImportChangeSet.empty(false), List.of());
+                    ImportStatus.CANCELLED, ImportChangeSet.empty(false), List.of(),
+                    outcome.withoutAuthor(), outcome.withoutGenre(), outcome.explicitlyDeleted());
         }
 
         notifyProgress(progressListener, 1.0);
@@ -215,13 +216,16 @@ public class InpxImportPipeline {
                 outcome.changes().updatedCount(), outcome.changes().deletedCount(), outcome.skipped(),
                 outcome.duplicates(), 0, outcome.errors(), "", true));
         notifyStatus(statusConsumer, String.format(Locale.ROOT,
-                "Імпорт INPX завершено: %,d / %,d записів", outcome.imported(), totalRecords));
-        log.info("INPX import completed: imported={}, skipped={}, duplicates={}, errors={}, durationMs={}",
-                outcome.imported(), outcome.skipped(), outcome.duplicates(), outcome.errors(), duration);
+                "Імпорт INPX завершено: %,d / %,d; без автора: %,d; без жанру: %,d; явно видалено: %,d; помилок: %,d",
+                outcome.imported(), totalRecords, outcome.withoutAuthor(), outcome.withoutGenre(),
+                outcome.explicitlyDeleted(), outcome.errors()));
+        log.info("INPX import completed: imported={}, skipped={}, duplicates={}, errors={}, withoutAuthor={}, withoutGenre={}, explicitlyDeleted={}, durationMs={}",
+                outcome.imported(), outcome.skipped(), outcome.duplicates(), outcome.errors(),
+                outcome.withoutAuthor(), outcome.withoutGenre(), outcome.explicitlyDeleted(), duration);
         return new ImportResult(
                 outcome.imported(), outcome.skipped(), outcome.duplicates(), outcome.errors(), duration,
                 outcome.errors() > 0 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS,
-                outcome.changes(), List.of());
+                outcome.changes(), List.of(), outcome.withoutAuthor(), outcome.withoutGenre(), outcome.explicitlyDeleted());
     }
 
     /**
@@ -248,9 +252,9 @@ public class InpxImportPipeline {
                 ? catalogUpdateTrackingPort.beginSync(sourceKey, sourceLocation, sourceFingerprint)
                 : new CatalogSyncSession(
                         CatalogSourceIdentity.stableId(sourceKey), sourceKey, 1L, sourceFingerprint, true, true);
-        if (tracked && catalogFullSnapshot) {
-            catalogUpdateTrackingPort.markTrackedBooksMissing(syncSession);
-        }
+        // INPX deletion state is record-driven: only an explicit DEL marker may mark a book deleted.
+        // Never infer deletion from absence in one snapshot; a partial/corrupt catalog must not hide
+        // previously imported books. Catalog tracking still records revisions for rows that are present.
 
         String sourceMarker = sourceKey.startsWith("remote-collection:")
                 ? "catalog:" + syncSession.sourceId()
@@ -266,6 +270,9 @@ public class InpxImportPipeline {
         long skipped = 0;
         long duplicates = 0;
         long errors = 0;
+        long withoutAuthor = 0;
+        long withoutGenre = 0;
+        long explicitlyDeleted = 0;
         long processed = 0;
         long lastReported = 0;
         ImportIndexLifecycle.SuspendedIndexes suspendedIndexes = ImportIndexLifecycle.SuspendedIndexes.empty();
@@ -296,6 +303,9 @@ public class InpxImportPipeline {
                     if (row == null) {
                         errors++;
                     } else {
+                        if (row.withoutAuthor()) withoutAuthor++;
+                        if (row.withoutGenre()) withoutGenre++;
+                        if (row.explicitlyDeleted()) explicitlyDeleted++;
                         books.add(row);
                     }
 
@@ -330,16 +340,9 @@ public class InpxImportPipeline {
                         skipped, duplicates, errors);
             }
 
-            if (catalogFullSnapshot && tracked) {
-                getJdbcTemplate().query(
-                        "SELECT b.id FROM books b JOIN catalog_book_state c ON c.book_id=b.id " +
-                                "WHERE c.source_id=? AND COALESCE(b.deleted,0)<>0",
-                        (org.springframework.jdbc.core.RowCallbackHandler) rs ->
-                                changes.recordDeleted(rs.getString(1)),
-                        syncSession.sourceId());
-            }
             ImportChangeSet changeSet = changes.snapshot();
-            return new ImportOutcome(imported, skipped, duplicates, errors, processed, cancelled, changeSet);
+            return new ImportOutcome(imported, skipped, duplicates, errors, withoutAuthor, withoutGenre,
+                    explicitlyDeleted, processed, cancelled, changeSet);
         } finally {
             importIndexLifecycle.restore(suspendedIndexes);
         }
@@ -350,6 +353,9 @@ public class InpxImportPipeline {
             long skipped,
             long duplicates,
             long errors,
+            long withoutAuthor,
+            long withoutGenre,
+            long explicitlyDeleted,
             long processed,
             boolean cancelled,
             ImportChangeSet changes) {

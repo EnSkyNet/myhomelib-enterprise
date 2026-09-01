@@ -1,0 +1,122 @@
+.root {
+    /* Safe defaults are defined in the base stylesheet so FXML inline styles never
+       resolve theme lookups before the generated user-theme stylesheet is attached. */
+    -mhl-background: #f8f9fa;
+    -mhl-panel: #ffffff;
+    -mhl-text: #202124;
+    -mhl-muted-text: #6b7280;
+    -mhl-accent: #1a73e8;
+    -mhl-accent-secondary: #7b1fa2;
+    -mhl-border: #d5d9df;
+    -mhl-series-row: #e8f0fe;
+    -mhl-book-row: #ffffff;
+    -mhl-downloaded-row: #e6f4ea;
+    -mhl-success: #2e7d32;
+    -mhl-warning: #ed8b00;
+    -mhl-danger: #c62828;
+    -mhl-on-accent: #ffffff;
+    -mhl-warning-bg: #fff3cd;
+    -mhl-warning-text: #7a4f00;
+    -mhl-code-background: #1e1e1e;
+    -mhl-code-text: #d4d4d4;
+    /* Keep Modena's typed lookups concrete. Chaining -fx-base through a custom
+       -mhl-* lookup can surface as a raw String in ComboBox/ScrollBar popup CSS. */
+    -fx-base: #ffffff;
+    -fx-background: #f8f9fa;
+    -fx-control-inner-background: #ffffff;
+    -fx-text-background-color: #202124;
+    -fx-text-base-color: #202124;
+    -fx-accent: #1a73e8;
+    -fx-focus-color: #1a73e8;
+    -fx-faint-focus-color: transparent;
+}
+
+.border-pane, .vbox, .hbox, .stack-pane, .anchor-pane, .flow-pane, .tile-pane,
+.author-workspace, .workspace-root {
+    -fx-background-color: -mhl-background;
+}
+.label, .check-box, .radio-button, .menu-bar, .menu-item, .table-view, .tree-table-view {
+    -fx-text-fill: -mhl-text;
+}
+.text-input, .text-area, .text-field, .combo-box, .list-view, .tree-view, .table-view, .tree-table-view {
+    -fx-text-fill: -mhl-text;
+    -fx-prompt-text-fill: -mhl-muted-text;
+}
+.tool-bar, .main-toolbar-wrap, .menu-bar, .workspace-status-bar {
+    -fx-background-color: -mhl-panel;
+    -fx-border-color: -mhl-border;
+}
+
+.main-toolbar-wrap {
+    -fx-padding: 4 6 4 6;
+    -fx-border-width: 0 0 1 0;
+}
+.button {
+    -fx-background-color: derive(-mhl-panel, -4%);
+    -fx-text-fill: -mhl-text;
+    -fx-border-color: -mhl-border;
+}
+.button:hover { -fx-background-color: derive(-mhl-panel, -10%); }
+.workspace-title { -fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: -mhl-text; }
+.workspace-stat { -fx-font-weight: bold; }
+.muted-text { -fx-text-fill: -mhl-muted-text; }
+.author-bio { -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; }
+.table-view .column-header-background, .tree-table-view .column-header-background { -fx-background-color: -mhl-panel; }
+.table-row-cell, .tree-table-row-cell { -fx-background-color: -mhl-book-row; -fx-text-fill: -mhl-text; }
+.table-row-cell:filled:selected, .tree-table-row-cell:filled:selected { -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; }
+.author-series-row { -fx-background-color: -mhl-series-row; -fx-font-weight: bold; }
+.author-book-local-row { -fx-background-color: -mhl-downloaded-row; }
+
+/* Shared semantic styles: all chrome/dialogs inherit the application theme. */
+.accent-text { -fx-text-fill: -mhl-accent; -fx-font-weight: bold; }
+.danger-text { -fx-text-fill: -mhl-danger; -fx-font-weight: bold; }
+.small-text { -fx-font-size: 11px; }
+.progress-dialog-content {
+    -fx-background-color: -mhl-background;
+    -fx-border-color: -mhl-border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+}
+.alphabet-panel {
+    -fx-background-color: -mhl-panel;
+    -fx-border-color: -mhl-border;
+    -fx-border-width: 0 0 1 0;
+}
+.alphabet-separator {
+    -fx-text-fill: -mhl-border;
+    -fx-font-weight: bold;
+    -fx-padding: 0 2 0 2;
+}
+.alphabet-button {
+    -fx-font-size: 11px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+    -fx-background-color: derive(-mhl-panel, -4%);
+    -fx-text-fill: -mhl-text;
+    -fx-border-color: -mhl-border;
+    -fx-border-width: 1;
+    -fx-padding: 0 2 0 2;
+    -fx-text-alignment: center;
+}
+.alphabet-button:hover {
+    -fx-background-color: derive(-mhl-accent, 75%);
+    -fx-text-fill: -mhl-accent;
+    -fx-border-color: derive(-mhl-accent, 40%);
+}
+.alphabet-button.alphabet-all {
+    -fx-background-color: -mhl-success;
+    -fx-text-fill: -mhl-on-accent;
+}
+.alphabet-button.alphabet-non-alpha {
+    -fx-background-color: -mhl-warning;
+    -fx-text-fill: -mhl-warning-text;
+}
+.alphabet-button.alphabet-selected,
+.alphabet-button.alphabet-selected:hover {
+    -fx-background-color: -mhl-accent;
+    -fx-text-fill: -mhl-on-accent;
+    -fx-border-color: derive(-mhl-accent, -20%);
+    -fx-border-width: 2;
+}

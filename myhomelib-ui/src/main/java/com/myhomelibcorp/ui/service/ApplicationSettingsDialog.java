@@ -11,6 +11,7 @@ import javafx.scene.control.*;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 import org.springframework.stereotype.Component;
@@ -34,13 +35,16 @@ public class ApplicationSettingsDialog {
     private final ApplicationSettingsPort settings;
     private final SupportBundleService supportBundleService;
     private final LocalizationService localizationService;
+    private final ApplicationThemeService themeService;
 
     public ApplicationSettingsDialog(ApplicationSettingsPort settings,
                                      SupportBundleService supportBundleService,
-                                     LocalizationService localizationService) {
+                                     LocalizationService localizationService,
+                                     ApplicationThemeService themeService) {
         this.settings = settings;
         this.supportBundleService = supportBundleService;
         this.localizationService = localizationService;
+        this.themeService = themeService;
     }
 
     public void show(Window owner) {
@@ -55,32 +59,40 @@ public class ApplicationSettingsDialog {
         Set<String> unreadableSecrets = new HashSet<>();
         Map<String, CheckBox> bool = new LinkedHashMap<>();
 
+        ApplicationThemeService.ThemeConfig originalTheme = themeService.current();
+        ThemeEditor themeEditor = new ThemeEditor(originalTheme);
+
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getTabs().add(tab("Загальні", generalPane(bool)));
+        tabs.getTabs().add(tab("Тема", themeEditor.pane()));
         tabs.getTabs().add(tab("Зовнішнє читання", externalReadersPane(text)));
         tabs.getTabs().add(tab("Конвертери", convertersPane(text)));
         tabs.getTabs().add(tab("Пристрій / експорт", devicePane(text)));
         tabs.getTabs().add(tab("Online", onlinePane(text, secrets, unreadableSecrets, bool)));
-        tabs.setPrefSize(760, 560);
+        tabs.setPrefSize(790, 590);
         dialog.getDialogPane().setContent(tabs);
 
-        dialog.showAndWait().filter(ButtonType.OK::equals).ifPresent(ok -> {
-            text.forEach((key, field) -> settings.put(key, field.getText() == null ? "" : field.getText().trim()));
-            secrets.forEach((key, field) -> {
-                // If an existing encrypted value cannot be decrypted in this runtime, preserving it is safer
-                // than silently replacing it with an empty value when the user presses OK.
-                if (unreadableSecrets.contains(key)) {
-                    field.clear();
-                    return;
-                }
-                String plain = field.getText() == null ? "" : field.getText();
-                if (plain.isBlank()) settings.remove(key);
-                else settings.put(key, EncryptionUtil.encrypt(plain));
+        boolean accepted = dialog.showAndWait().filter(ButtonType.OK::equals).isPresent();
+        if (!accepted) {
+            themeService.apply(originalTheme);
+            secrets.values().forEach(PasswordField::clear);
+            return;
+        }
+
+        text.forEach((key, field) -> settings.put(key, field.getText() == null ? "" : field.getText().trim()));
+        secrets.forEach((key, field) -> {
+            if (unreadableSecrets.contains(key)) {
                 field.clear();
-            });
-            bool.forEach((key, check) -> settings.putBoolean(key, check.isSelected()));
+                return;
+            }
+            String plain = field.getText() == null ? "" : field.getText();
+            if (plain.isBlank()) settings.remove(key);
+            else settings.put(key, EncryptionUtil.encrypt(plain));
+            field.clear();
         });
+        bool.forEach((key, check) -> settings.putBoolean(key, check.isSelected()));
+        themeService.save(themeEditor.config());
     }
 
     private Tab tab(String title, Node content) { return new Tab(title, content); }
@@ -137,8 +149,8 @@ public class ApplicationSettingsDialog {
     private Node devicePane(Map<String, TextField> text) {
         VBox box = section();
         box.getChildren().add(new Label("Шаблони: %t=назва, %a=автор, %s=серія, %n=№ серії, %id=ID. Дії після експорту налаштовуються у профілі експорту/дій."));
-        box.getChildren().add(row("Шаблон імені", field(text, "export.filenameTemplate", "%a - %t")));
-        box.getChildren().add(row("Підпапка", field(text, "export.subfolderTemplate", "")));
+        box.getChildren().add(row("Шаблон імені", field(text, "export.filenameTemplate", "%n2 - %t")));
+        box.getChildren().add(row("Підпапка", field(text, "export.subfolderTemplate", "%a/%s")));
         return scroll(box);
     }
 
@@ -173,6 +185,101 @@ public class ApplicationSettingsDialog {
         box.getChildren().add(row("Trust store type", field(text, "online.tls.trustStoreType", "PKCS12")));
         box.getChildren().add(row("Trust store password", secretField(secrets, unreadableSecrets, "online.tls.trustStorePassword")));
         return scroll(box);
+    }
+
+    private final class ThemeEditor {
+        private final ComboBox<ApplicationThemeService.ThemeMode> mode = new ComboBox<>();
+        private final ColorPicker background = new ColorPicker();
+        private final ColorPicker panel = new ColorPicker();
+        private final ColorPicker text = new ColorPicker();
+        private final ColorPicker accent = new ColorPicker();
+        private final ColorPicker seriesRow = new ColorPicker();
+        private final ColorPicker bookRow = new ColorPicker();
+        private final ColorPicker downloadedRow = new ColorPicker();
+        private final Spinner<Double> fontSize = new Spinner<>(9.0, 24.0, 13.0, 0.5);
+        private final VBox pane = section();
+        private boolean updating;
+
+        ThemeEditor(ApplicationThemeService.ThemeConfig initial) {
+            mode.getItems().setAll(ApplicationThemeService.ThemeMode.values());
+            mode.setConverter(new javafx.util.StringConverter<>() {
+                @Override public String toString(ApplicationThemeService.ThemeMode value) {
+                    if (value == null) return "";
+                    return switch (value) {
+                        case SYSTEM -> "Системна"; case LIGHT -> "Світла"; case DARK -> "Темна"; case CUSTOM -> "Власна";
+                    };
+                }
+                @Override public ApplicationThemeService.ThemeMode fromString(String value) { return mode.getValue(); }
+            });
+            applyToControls(initial);
+
+            Label hint = new Label("Зміни застосовуються одразу для всіх відкритих вікон. Reader має власну незалежну тему читання.");
+            hint.setWrapText(true);
+            pane.getChildren().addAll(
+                    row("Режим", mode),
+                    row("Фон програми", background),
+                    row("Панелі", panel),
+                    row("Текст", text),
+                    row("Accent", accent),
+                    row("Рядок серії", seriesRow),
+                    row("Рядок книги", bookRow),
+                    row("Завантажена книга", downloadedRow),
+                    row("Розмір шрифту", fontSize), hint);
+            Button reset = new Button("Відновити стандартні");
+            reset.setOnAction(e -> {
+                applyToControls(themeService.customDefaults());
+                mode.setValue(ApplicationThemeService.ThemeMode.CUSTOM);
+                preview();
+            });
+            pane.getChildren().add(reset);
+
+            javafx.beans.value.ChangeListener<Object> listener = (obs, oldValue, newValue) -> preview();
+            mode.valueProperty().addListener(listener);
+            background.valueProperty().addListener(listener); panel.valueProperty().addListener(listener);
+            text.valueProperty().addListener(listener); accent.valueProperty().addListener(listener);
+            seriesRow.valueProperty().addListener(listener); bookRow.valueProperty().addListener(listener);
+            downloadedRow.valueProperty().addListener(listener); fontSize.valueProperty().addListener(listener);
+            updateCustomControls();
+        }
+
+        Node pane() { return scroll(pane); }
+
+        ApplicationThemeService.ThemeConfig config() {
+            return new ApplicationThemeService.ThemeConfig(mode.getValue(), hex(background.getValue()), hex(panel.getValue()),
+                    hex(text.getValue()), hex(accent.getValue()), hex(seriesRow.getValue()), hex(bookRow.getValue()),
+                    hex(downloadedRow.getValue()), fontSize.getValue());
+        }
+
+        private void preview() {
+            if (updating) return;
+            updateCustomControls();
+            themeService.apply(config());
+        }
+
+        private void updateCustomControls() {
+            boolean custom = mode.getValue() == ApplicationThemeService.ThemeMode.CUSTOM;
+            background.setDisable(!custom); panel.setDisable(!custom); text.setDisable(!custom); accent.setDisable(!custom);
+            seriesRow.setDisable(!custom); bookRow.setDisable(!custom); downloadedRow.setDisable(!custom);
+        }
+
+        private void applyToControls(ApplicationThemeService.ThemeConfig value) {
+            updating = true;
+            try {
+                mode.setValue(value.mode());
+                background.setValue(Color.web(value.background())); panel.setValue(Color.web(value.panel()));
+                text.setValue(Color.web(value.text())); accent.setValue(Color.web(value.accent()));
+                seriesRow.setValue(Color.web(value.seriesRow())); bookRow.setValue(Color.web(value.bookRow()));
+                downloadedRow.setValue(Color.web(value.downloadedRow()));
+                fontSize.getValueFactory().setValue(value.fontSize());
+            } finally { updating = false; }
+            updateCustomControls();
+        }
+
+        private String hex(Color color) {
+            Color c = color == null ? Color.BLACK : color;
+            return String.format(java.util.Locale.ROOT, "#%02x%02x%02x",
+                    Math.round(c.getRed() * 255), Math.round(c.getGreen() * 255), Math.round(c.getBlue() * 255));
+        }
     }
 
     private void addConverterRow(VBox box, Map<String, TextField> text, String label, String key, String ext) {

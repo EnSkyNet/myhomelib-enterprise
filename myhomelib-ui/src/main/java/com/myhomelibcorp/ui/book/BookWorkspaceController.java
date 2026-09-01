@@ -78,7 +78,8 @@ public class BookWorkspaceController {
         titleLabel.setText(book.getTitle());
         authorLabel.setText("Автор: " + book.getAuthorsText());
         seriesLabel.setText("Серія: " + (book.getSeries() != null ? book.getSeries() : "—"));
-        genresLabel.setText("Жанри: " + book.getGenresText());
+        String localizedGenres = bookViewModelMapper.toViewModel(book).getGenresText();
+        genresLabel.setText("Жанри: " + (localizedGenres == null || localizedGenres.isBlank() ? "—" : localizedGenres));
         languageLabel.setText("Мова: " + book.getLanguage());
         yearLabel.setText("Рік: " + (book.getYear() != null && book.getYear() > 0 ? String.valueOf(book.getYear()) : "—"));
         publisherLabel.setText("Видавництво: " + (book.getPublisher() != null ? book.getPublisher() : "—"));
@@ -130,8 +131,9 @@ public class BookWorkspaceController {
     private void onDownload() {
         if (currentBook == null) return;
         BookId id = BookId.fromString(currentBook.getId());
-        bookDownloadCoordinator.ensureLocal(id).whenComplete((path, error) -> {
-            if (error == null) UiExecutor.runOnUiThread(() -> setBookId(id));
+        javafx.stage.Window owner = titleLabel != null && titleLabel.getScene() != null ? titleLabel.getScene().getWindow() : null;
+        bookDownloadCoordinator.downloadBatch(java.util.List.of(id), owner).whenComplete((result, error) -> {
+            if (error == null && result != null && result.failed() == 0) UiExecutor.runOnUiThread(() -> setBookId(id));
         });
     }
 

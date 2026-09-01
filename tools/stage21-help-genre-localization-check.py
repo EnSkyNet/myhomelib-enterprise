@@ -24,7 +24,7 @@ need('HelpTopicRegistry' in workspace, 'WorkspaceManager must use central HelpTo
 for topic in ['navigation','updates','filters','details','maintenance','actions','opds','backup']:
     need(f'"{topic}"' in registry, f'missing help topic {topic}')
 need('new String[]{".md", ".txt", ".html"}' in help_service, 'HelpService must prefer Markdown with legacy fallbacks')
-need('CURRENT_SCHEMA_VERSION = 2' in lang_service, 'language schema v2 missing')
+need('CURRENT_SCHEMA_VERSION = 3' in lang_service, 'language schema v3 missing')
 need('DIAGNOSTICS_FILE = "language-diagnostics.txt"' in lang_service, 'language diagnostics file missing')
 need('unsupported schemaVersion' in lang_service, 'future language schema must be rejected safely')
 need('is legacy; supported with fallback' in lang_service, 'legacy schema fallback warning missing')
@@ -50,12 +50,22 @@ for code in ['uk','en','bg']:
         need(rootp.read_bytes()==bundled.read_bytes(), f'{code} root/bundled catalog mismatch')
         data=json.loads(rootp.read_text(encoding='utf-8'))
         catalogs[code]=data
-        need(data.get('schemaVersion')==2, f'{code} must use schemaVersion 2')
-        need(isinstance(data.get('genres'),dict) and len(data['genres'])>=100, f'{code} insufficient genre coverage')
+        need(data.get('schemaVersion')==3, f'{code} must use schemaVersion 3')
+        need(isinstance(data.get('genres'),dict) and len(data['genres'])==335, f'{code} must contain all 335 extended canonical FB2 genres')
+        need(isinstance(data.get('genreAliases'),dict) and len(data['genreAliases'])==272, f'{code} must contain all 272 legacy numeric FB2 aliases')
+        need(isinstance(data.get('genreGroups'),dict) and len(data['genreGroups'])==23, f'{code} must contain 23 localized genre parent groups')
+        need(isinstance(data.get('genreParents'),dict) and len(data['genreParents'])==335, f'{code} must map all 335 extended genres to semantic parents')
+        need(isinstance(data.get('legacyBaseAliases'),dict) and len(data['legacyBaseAliases'])==25, f'{code} must contain 25 legacy base-category aliases')
 
 if len(catalogs)==3:
     sets=[set(catalogs[c]['genres']) for c in ['uk','en','bg']]
     need(sets[0]==sets[1]==sets[2], 'shipped languages must expose same stable genre codes')
+    aliases=[catalogs[c]['genreAliases'] for c in ['uk','en','bg']]
+    need(aliases[0]==aliases[1]==aliases[2], 'shipped languages must expose identical numeric genre aliases')
+    parents=[catalogs[c]['genreParents'] for c in ['uk','en','bg']]
+    need(parents[0]==parents[1]==parents[2], 'shipped languages must expose identical semantic genre-parent mapping')
+    base_aliases=[catalogs[c]['legacyBaseAliases'] for c in ['uk','en','bg']]
+    need(base_aliases[0]==base_aliases[1]==base_aliases[2], 'shipped languages must expose identical legacy base-category aliases')
 
 if errors:
     print('Stage 21 check FAILED:')

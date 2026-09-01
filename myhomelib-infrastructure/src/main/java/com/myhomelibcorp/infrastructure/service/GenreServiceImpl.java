@@ -4,22 +4,25 @@ import com.myhomelibcorp.application.port.out.repository.GenreRepository;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
-import jakarta.annotation.PostConstruct;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.core.io.ClassPathResource;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
 
+/**
+ * Collection-backed genre repository.
+ *
+ * <p>Genre display names are intentionally NOT loaded from a bundled
+ * {@code genres_fb2.txt}. The canonical/localized FB2 dictionary lives in
+ * {@code Lang/<language>.json}; UI code resolves stable genre codes through
+ * {@code LanguageCatalogService}. The database stores only collection/source
+ * data and stable codes.</p>
+ */
 @Repository
 @Slf4j
 public class GenreServiceImpl implements GenreRepository {
 
-    private final Map<String, String> genreMap = new LinkedHashMap<>();
     private final CollectionManager collectionManager;
 
     public GenreServiceImpl(CollectionManager collectionManager) {
@@ -30,85 +33,57 @@ public class GenreServiceImpl implements GenreRepository {
         return collectionManager.getCurrentJdbcTemplate();
     }
 
-    @PostConstruct
-    public void init() {
-        loadGenresFromResource();
-    }
-
-    private void loadGenresFromResource() {
-        try {
-            ClassPathResource resource = new ClassPathResource("genres_fb2.txt");
-            log.info("Завантаження жанрів з: {}", resource.getPath());
-            try (BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(resource.getInputStream(), StandardCharsets.UTF_8))) {
-                String line;
-                int count = 0;
-                while ((line = reader.readLine()) != null) {
-                    line = line.trim();
-                    if (line.isEmpty() || line.startsWith("#")) continue;
-                    int semicolonIdx = line.indexOf(';');
-                    String code, name;
-                    if (semicolonIdx >= 0) {
-                        String leftPart = line.substring(0, semicolonIdx).trim();
-                        name = line.substring(semicolonIdx + 1).trim();
-                        if (name.isEmpty()) continue;
-                        String[] tokens = leftPart.split("\\s+");
-                        code = tokens.length > 0 ? tokens[tokens.length - 1] : leftPart;
-                    } else {
-                        int firstSpace = line.indexOf(' ');
-                        if (firstSpace < 0) continue;
-                        code = line.substring(0, firstSpace).trim();
-                        name = line.substring(firstSpace + 1).trim();
-                    }
-                    if (!code.isEmpty() && !name.isEmpty()) {
-                        genreMap.put(code, name);
-                        genreMap.put(code.replace(".", ""), name);
-                        count++;
-                    }
-                }
-                log.info("Завантажено {} жанрів з ресурсу", count);
-            }
-        } catch (Exception e) {
-            log.error("Помилка завантаження жанрів", e);
-        }
-    }
-
     @Override
     public String getGenreName(String code) {
-        if (code == null) return "";
-        String name = genreMap.get(code);
-        if (name != null) return name;
-
+        if (code == null || code.isBlank()) return "";
         try {
-            String sql = "SELECT name FROM genres WHERE code = ?";
-            String dbName = getJdbcTemplate().queryForObject(sql, String.class, code);
-            if (dbName != null) {
-                genreMap.put(code, dbName);
-                String noDots = code.replace(".", "");
-                if (!noDots.equals(code)) {
-                    genreMap.put(noDots, dbName);
-                }
-                return dbName;
-            }
-        } catch (Exception e) {
-            log.debug("Жанр з кодом '{}' не знайдено в БД", code);
+            String dbName = getJdbcTemplate().queryForObject(
+                    "SELECT name FROM genres WHERE code = ?", String.class, code);
+            return isMeaningfulSourceName(code, dbName) ? dbName.trim() : code.trim();
+        } catch (Exception ignored) {
+            return code.trim();
         }
-        return code;
     }
 
     @Override
     public List<String> getAllGenreNames() {
-        return new ArrayList<>(genreMap.values());
+        return loadCollectionGenres().values().stream()
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(v -> !v.isBlank())
+                .distinct()
+                .toList();
     }
 
     @Override
     public Map<String, String> getAllGenres() {
-        return new LinkedHashMap<>(genreMap);
+        return loadCollectionGenres();
     }
 
     @Override
     public List<String> getAllGenreCodes() {
-        return new ArrayList<>(genreMap.keySet());
+        return new ArrayList<>(loadCollectionGenres().keySet());
+    }
+
+    private Map<String, String> loadCollectionGenres() {
+        try {
+            Map<String, String> result = new LinkedHashMap<>();
+            getJdbcTemplate().query(
+                    "SELECT code, name FROM genres ORDER BY LOWER(COALESCE(name, code)), code",
+                    rs -> {
+                        String code = rs.getString("code");
+                        if (code == null || code.isBlank()) return;
+                        String name = rs.getString("name");
+                        result.put(code, isMeaningfulSourceName(code, name) ? name.trim() : code.trim());
+                    });
+            return result;
+        } catch (Exception ignored) {
+            return Map.of();
+        }
+    }
+
+    private static boolean isMeaningfulSourceName(String code, String name) {
+        return name != null && !name.isBlank() && !name.trim().equalsIgnoreCase(code.trim());
     }
 
     @Override
@@ -123,7 +98,7 @@ public class GenreServiceImpl implements GenreRepository {
                 return new Genre(id, rs.getString("name"), parentId, rs.getString("fb2_code"));
             });
         } catch (Exception e) {
-            log.warn("Не вдалося завантажити ієрархію жанрів", e);
+            log.warn("Не вдалося завантажити ієрархію жанрів: {}", e.getMessage());
             return List.of();
         }
     }
@@ -163,7 +138,7 @@ public class GenreServiceImpl implements GenreRepository {
                         : null;
                 return new Genre(gid, rs.getString("name"), parentId, rs.getString("fb2_code"));
             }, id.asString());
-            return Optional.of(genre);
+            return Optional.ofNullable(genre);
         } catch (Exception e) {
             return Optional.empty();
         }
@@ -202,9 +177,10 @@ public class GenreServiceImpl implements GenreRepository {
                         SELECT 1 FROM book_genres bg WHERE bg.genre_code = g.code
                     )
                     """;
-            return getJdbcTemplate().queryForObject(sql, Long.class);
+            Long value = getJdbcTemplate().queryForObject(sql, Long.class);
+            return value == null ? 0L : value;
         } catch (Exception e) {
-            log.warn("Не вдалося підрахувати кількість жанрів без книг", e);
+            log.warn("Не вдалося підрахувати кількість жанрів без книг: {}", e.getMessage());
             return 0;
         }
     }

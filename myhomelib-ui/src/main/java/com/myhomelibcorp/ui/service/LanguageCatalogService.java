@@ -18,7 +18,7 @@ import java.util.*;
 @Slf4j
 public class LanguageCatalogService {
     private static final long MAX_LANGUAGE_FILE_BYTES = 4L * 1024 * 1024;
-    public static final int CURRENT_SCHEMA_VERSION = 2;
+    public static final int CURRENT_SCHEMA_VERSION = 3;
     private static final List<String> BUNDLED_DEFAULTS = List.of("uk", "en", "bg");
     private static final String AVAILABLE_LANGUAGES_FILE = "available-languages.txt";
     private static final String DIAGNOSTICS_FILE = "language-diagnostics.txt";
@@ -62,13 +62,144 @@ public class LanguageCatalogService {
         return catalog == null ? Optional.empty() : Optional.of(catalog.translations());
     }
 
-    /** Localize a stable FB2 genre code; missing entries safely preserve the DB/catalog label. */
+    /**
+     * Localized FB2 genre labels are authoritative in Lang/&lt;language&gt;.json.
+     * Stable textual FB2 codes are the identity. Legacy numeric ids are compatibility
+     * aliases only. If an exact extended genre cannot be resolved, the localized parent
+     * group is used as a safe fallback; raw internal codes are never rendered.
+     */
     public String genreName(String language, String genreCode, String fallback) {
-        if (genreCode == null || genreCode.isBlank()) return fallback == null ? "" : fallback;
+        if (genreCode == null || genreCode.isBlank()) return "";
+        String requestedCode = genreCode.trim();
+        String sourceLabel = fallback == null ? "" : fallback.trim();
+
+        Catalog primary = catalogFor(language);
+        Catalog fallbackCatalog = catalogs.get(fallbackLanguage());
+        String canonicalCode = canonicalGenreCode(primary, fallbackCatalog, requestedCode);
+
+        String exact = firstNonBlank(
+                genreLabel(primary, canonicalCode),
+                genreLabel(fallbackCatalog, canonicalCode));
+        if (!exact.isBlank()) return exact;
+
+        String parentKey = firstNonBlank(
+                genreParent(primary, canonicalCode),
+                genreParent(fallbackCatalog, canonicalCode));
+        if (parentKey.isBlank() && isNumericGenreCode(requestedCode)) {
+            String baseCode = numericBaseCode(requestedCode);
+            parentKey = firstNonBlank(
+                    legacyBaseParent(primary, baseCode),
+                    legacyBaseParent(fallbackCatalog, baseCode));
+        }
+        String parentLabel = firstNonBlank(
+                genreGroupLabel(primary, parentKey),
+                genreGroupLabel(fallbackCatalog, parentKey));
+        if (!parentLabel.isBlank()) return parentLabel;
+
+        // A genuinely custom source genre may still have a meaningful human label.
+        // Never leak an internal identifier such as sf_fantasy/det_classic into the UI.
+        if (!sourceLabel.isBlank()
+                && !sourceLabel.equalsIgnoreCase(requestedCode)
+                && !sourceLabel.equalsIgnoreCase(canonicalCode)
+                && !looksLikeInternalGenreCode(sourceLabel)) {
+            return sourceLabel;
+        }
+        return "";
+    }
+
+    /**
+     * Returns false for a base/numeric fallback when the same book/result set already
+     * contains a more specific extended genre from the same parent group.
+     */
+    public boolean shouldDisplayGenre(String language, String genreCode, Collection<String> siblingCodes) {
+        if (genreCode == null || genreCode.isBlank()) return false;
+        Catalog primary = catalogFor(language);
+        Catalog fallbackCatalog = catalogs.get(fallbackLanguage());
+        String requestedCode = genreCode.trim();
+        String canonicalCode = canonicalGenreCode(primary, fallbackCatalog, requestedCode);
+        if (hasExactGenre(primary, canonicalCode) || hasExactGenre(fallbackCatalog, canonicalCode)) return true;
+
+        String group = genreGroupKey(primary, fallbackCatalog, requestedCode, canonicalCode);
+        if (group.isBlank() || siblingCodes == null || siblingCodes.isEmpty()) return true;
+        for (String sibling : siblingCodes) {
+            if (sibling == null || sibling.isBlank() || sibling.equals(requestedCode)) continue;
+            String siblingCanonical = canonicalGenreCode(primary, fallbackCatalog, sibling.trim());
+            if (!(hasExactGenre(primary, siblingCanonical) || hasExactGenre(fallbackCatalog, siblingCanonical))) continue;
+            String siblingGroup = genreGroupKey(primary, fallbackCatalog, sibling.trim(), siblingCanonical);
+            if (group.equals(siblingGroup)) return false;
+        }
+        return true;
+    }
+
+    private Catalog catalogFor(String language) {
         Catalog catalog = catalogs.get(normalizeCode(language));
-        if (catalog == null) catalog = catalogs.get(fallbackLanguage());
-        if (catalog == null) return nonBlank(fallback, genreCode);
-        return nonBlank(catalog.genres().get(genreCode), nonBlank(fallback, genreCode));
+        return catalog != null ? catalog : catalogs.get(fallbackLanguage());
+    }
+
+    private static String canonicalGenreCode(Catalog primary, Catalog fallback, String requestedCode) {
+        if (primary != null) {
+            String mapped = primary.genreAliases().get(requestedCode);
+            if (mapped != null && !mapped.isBlank()) return mapped.trim();
+        }
+        if (fallback != null) {
+            String mapped = fallback.genreAliases().get(requestedCode);
+            if (mapped != null && !mapped.isBlank()) return mapped.trim();
+        }
+        return requestedCode;
+    }
+
+    private static String genreLabel(Catalog catalog, String canonicalCode) {
+        if (catalog == null || canonicalCode == null || canonicalCode.isBlank()) return "";
+        return nonBlank(catalog.genres().get(canonicalCode), "").trim();
+    }
+
+    private static boolean hasExactGenre(Catalog catalog, String canonicalCode) {
+        return catalog != null && canonicalCode != null && catalog.genres().containsKey(canonicalCode)
+                && !nonBlank(catalog.genres().get(canonicalCode), "").isBlank();
+    }
+
+    private static String genreParent(Catalog catalog, String canonicalCode) {
+        if (catalog == null || canonicalCode == null || canonicalCode.isBlank()) return "";
+        return nonBlank(catalog.genreParents().get(canonicalCode), "").trim();
+    }
+
+    private static String legacyBaseParent(Catalog catalog, String baseCode) {
+        if (catalog == null || baseCode == null || baseCode.isBlank()) return "";
+        return nonBlank(catalog.legacyBaseAliases().get(baseCode), "").trim();
+    }
+
+    private static String genreGroupLabel(Catalog catalog, String parentKey) {
+        if (catalog == null || parentKey == null || parentKey.isBlank()) return "";
+        return nonBlank(catalog.genreGroups().get(parentKey), "").trim();
+    }
+
+    private static String genreGroupKey(Catalog primary, Catalog fallback,
+                                        String requestedCode, String canonicalCode) {
+        String group = firstNonBlank(genreParent(primary, canonicalCode), genreParent(fallback, canonicalCode));
+        if (!group.isBlank()) return group;
+        if (!isNumericGenreCode(requestedCode)) return "";
+        String baseCode = numericBaseCode(requestedCode);
+        return firstNonBlank(legacyBaseParent(primary, baseCode), legacyBaseParent(fallback, baseCode));
+    }
+
+    private static boolean isNumericGenreCode(String code) {
+        return code != null && code.matches("0\\.\\d+(?:\\.\\d+)?");
+    }
+
+    private static String numericBaseCode(String code) {
+        if (!isNumericGenreCode(code)) return "";
+        int secondDot = code.indexOf('.', 2);
+        return secondDot < 0 ? code : code.substring(0, secondDot);
+    }
+
+    private static boolean looksLikeInternalGenreCode(String value) {
+        return value.matches("[a-z][a-z0-9_]{1,80}") || isNumericGenreCode(value);
+    }
+
+    private static String firstNonBlank(String... values) {
+        if (values == null) return "";
+        for (String value : values) if (value != null && !value.isBlank()) return value.trim();
+        return "";
     }
 
     public List<String> diagnostics() {
@@ -147,8 +278,32 @@ public class LanguageCatalogService {
 
             Map<String, String> translations = stringMap(root.get("translations"), true, "translations");
             Map<String, String> genres = stringMap(root.get("genres"), false, "genres");
+            Map<String, String> genreAliases = stringMap(root.get("genreAliases"), false, "genreAliases");
+            Map<String, String> genreGroups = stringMap(root.get("genreGroups"), false, "genreGroups");
+            Map<String, String> genreParents = stringMap(root.get("genreParents"), false, "genreParents");
+            Map<String, String> legacyBaseAliases = stringMap(root.get("legacyBaseAliases"), false, "legacyBaseAliases");
+            for (Map.Entry<String, String> alias : genreAliases.entrySet()) {
+                if (!genres.containsKey(alias.getValue())) {
+                    throw new IllegalArgumentException("genreAliases target is missing from genres: "
+                            + alias.getKey() + " -> " + alias.getValue());
+                }
+            }
+            for (Map.Entry<String, String> parent : genreParents.entrySet()) {
+                if (!genreGroups.containsKey(parent.getValue())) {
+                    throw new IllegalArgumentException("genreParents target is missing from genreGroups: "
+                            + parent.getKey() + " -> " + parent.getValue());
+                }
+            }
+            for (Map.Entry<String, String> base : legacyBaseAliases.entrySet()) {
+                if (!genreGroups.containsKey(base.getValue())) {
+                    throw new IllegalArgumentException("legacyBaseAliases target is missing from genreGroups: "
+                            + base.getKey() + " -> " + base.getValue());
+                }
+            }
             return Optional.of(new Catalog(schemaVersion, code, name,
-                    Collections.unmodifiableMap(translations), Collections.unmodifiableMap(genres)));
+                    Collections.unmodifiableMap(translations), Collections.unmodifiableMap(genres),
+                    Collections.unmodifiableMap(genreAliases), Collections.unmodifiableMap(genreGroups),
+                    Collections.unmodifiableMap(genreParents), Collections.unmodifiableMap(legacyBaseAliases)));
         } catch (Exception e) {
             String message = "ERROR " + json.getFileName() + ": " + e.getMessage();
             messages.add(message);
@@ -180,6 +335,22 @@ public class LanguageCatalogService {
             missingGenres.removeAll(catalog.genres().keySet());
             if (!missingGenres.isEmpty()) messages.add("WARN " + catalog.code() + ": missing genre keys=" + missingGenres.size()
                     + " sample=" + sample(missingGenres));
+            Set<String> missingAliases = new TreeSet<>(reference.genreAliases().keySet());
+            missingAliases.removeAll(catalog.genreAliases().keySet());
+            if (!missingAliases.isEmpty()) messages.add("WARN " + catalog.code() + ": missing genre aliases=" + missingAliases.size()
+                    + " sample=" + sample(missingAliases));
+            Set<String> missingGroups = new TreeSet<>(reference.genreGroups().keySet());
+            missingGroups.removeAll(catalog.genreGroups().keySet());
+            if (!missingGroups.isEmpty()) messages.add("WARN " + catalog.code() + ": missing genre groups=" + missingGroups.size()
+                    + " sample=" + sample(missingGroups));
+            Set<String> missingParents = new TreeSet<>(reference.genreParents().keySet());
+            missingParents.removeAll(catalog.genreParents().keySet());
+            if (!missingParents.isEmpty()) messages.add("WARN " + catalog.code() + ": missing genre parents=" + missingParents.size()
+                    + " sample=" + sample(missingParents));
+            Set<String> missingBaseAliases = new TreeSet<>(reference.legacyBaseAliases().keySet());
+            missingBaseAliases.removeAll(catalog.legacyBaseAliases().keySet());
+            if (!missingBaseAliases.isEmpty()) messages.add("WARN " + catalog.code() + ": missing legacy base aliases=" + missingBaseAliases.size()
+                    + " sample=" + sample(missingBaseAliases));
         }
         if (messages.isEmpty()) messages.add("OK all loaded language catalogues match schema and shipped key coverage");
     }
@@ -238,5 +409,7 @@ public class LanguageCatalogService {
     private static String sample(Set<String> values) { return values.stream().limit(8).toList().toString(); }
 
     private record Catalog(int schemaVersion, String code, String name,
-                           Map<String, String> translations, Map<String, String> genres) { }
+                           Map<String, String> translations, Map<String, String> genres,
+                           Map<String, String> genreAliases, Map<String, String> genreGroups,
+                           Map<String, String> genreParents, Map<String, String> legacyBaseAliases) { }
 }

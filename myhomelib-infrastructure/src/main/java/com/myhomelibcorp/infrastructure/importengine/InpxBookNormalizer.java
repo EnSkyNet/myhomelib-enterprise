@@ -26,6 +26,8 @@ import java.util.UUID;
 /** Converts raw INPX records into the explicit JDBC row contract plus catalog/search fingerprints. */
 @Slf4j
 final class InpxBookNormalizer {
+    static final String WITHOUT_AUTHOR_NAME = "Без автора";
+
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
@@ -46,8 +48,10 @@ final class InpxBookNormalizer {
                              boolean onlineCollection) {
         try {
             ParsedAuthors parsedAuthors = parseAuthors(raw.field("AUTHOR"), pendingAuthors);
-            if (parsedAuthors.ids().isEmpty()) parsedAuthors = ensureUnknownAuthor(pendingAuthors);
+            boolean withoutAuthor = parsedAuthors.ids().isEmpty();
+            if (withoutAuthor) parsedAuthors = ensureUnknownAuthor(pendingAuthors);
             List<String> genreCodes = parseGenres(raw.field("GENRE"), pendingGenres);
+            boolean withoutGenre = genreCodes.isEmpty();
 
             String title = defaultIfBlank(raw.field("TITLE"), "Без назви");
             String series = raw.field("SERIES");
@@ -69,7 +73,7 @@ final class InpxBookNormalizer {
                 // online.zip/extra.zip are never the physical archive of every book.
                 // Each book gets its own generated archive location.
                 AuthorNameKey primary = parsedAuthors.keys().isEmpty()
-                        ? new AuthorNameKey("", "", "Невідомий Автор")
+                        ? new AuthorNameKey("", "", WITHOUT_AUTHOR_NAME)
                         : parsedAuthors.keys().get(0);
                 String authorFullName = String.join(" ",
                         java.util.List.of(primary.lastName(), primary.firstName(), primary.middleName()).stream()
@@ -150,7 +154,8 @@ final class InpxBookNormalizer {
                     bookId, sourceBookKey, catalogFingerprint(raw, archiveName, explicitFolder, fileName),
                     fileName, !archiveName.isBlank() ? archiveName : explicitFolder,
                     !archiveName.isBlank() ? fileName : "", size);
-            return new NormalizedBook(row, catalogSnapshot, searchableFingerprint(raw, fileName, deleted));
+            return new NormalizedBook(row, catalogSnapshot, searchableFingerprint(raw, fileName, deleted),
+                    withoutAuthor, withoutGenre, deleted);
         } catch (Exception e) {
             log.warn("Skipping malformed INPX record {} from {}", raw.field("FILE"), raw.inpName(), e);
             return null;
@@ -195,10 +200,10 @@ final class InpxBookNormalizer {
     }
 
     private ParsedAuthors ensureUnknownAuthor(Map<AuthorNameKey, Author> pending) {
-        AuthorNameKey key = new AuthorNameKey("", "", "Невідомий Автор");
+        AuthorNameKey key = new AuthorNameKey("", "", WITHOUT_AUTHOR_NAME);
         String existingId = authorCache.get(key);
         if (existingId != null) return new ParsedAuthors(List.of(existingId), List.of(key));
-        Author candidate = pending.computeIfAbsent(key, ignored -> new Author("", "", "Невідомий Автор"));
+        Author candidate = pending.computeIfAbsent(key, ignored -> new Author("", "", WITHOUT_AUTHOR_NAME));
         return new ParsedAuthors(List.of(candidate.getId().asString()), List.of(key));
     }
 
@@ -296,5 +301,6 @@ final class InpxBookNormalizer {
         }
     }
 
-    record NormalizedBook(Object[] row, CatalogBookSnapshot catalogSnapshot, String searchFingerprint) { }
+    record NormalizedBook(Object[] row, CatalogBookSnapshot catalogSnapshot, String searchFingerprint,
+                          boolean withoutAuthor, boolean withoutGenre, boolean explicitlyDeleted) { }
 }

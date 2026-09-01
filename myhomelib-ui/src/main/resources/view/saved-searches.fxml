@@ -6,7 +6,7 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.SavedSearchesController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;"
+      spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;"
       prefWidth="400" prefHeight="450">
 
     <Label text="💾 Збережені пошуки" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
@@ -19,7 +19,7 @@
     </HBox>
     <HBox spacing="5">
         <TextField fx:id="searchQueryField" promptText="Запит..." HBox.hgrow="ALWAYS"/>
-        <Button text="💾 Зберегти" onAction="#onSaveSearch" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+        <Button text="💾 Зберегти" onAction="#onSaveSearch" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
     <Separator/>

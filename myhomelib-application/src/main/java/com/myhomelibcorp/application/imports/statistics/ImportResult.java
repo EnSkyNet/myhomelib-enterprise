@@ -12,13 +12,22 @@ public record ImportResult(
         long durationMs,
         ImportStatus status,
         ImportChangeSet changes,
-        List<ImportIssue> issues
+        List<ImportIssue> issues,
+        long withoutAuthor,
+        long withoutGenre,
+        long explicitlyDeleted
 ) {
     /** Compatibility constructor for existing importers/tests. */
     public ImportResult(long imported, long skipped, long duplicates, long errors, long durationMs) {
         this(imported, skipped, duplicates, errors, durationMs,
                 errors > 0 ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS,
-                ImportChangeSet.empty(false), List.of());
+                ImportChangeSet.empty(false), List.of(), 0, 0, 0);
+    }
+
+    /** Compatibility constructor used by importers that do not expose INPX diagnostics. */
+    public ImportResult(long imported, long skipped, long duplicates, long errors, long durationMs,
+                        ImportStatus status, ImportChangeSet changes, List<ImportIssue> issues) {
+        this(imported, skipped, duplicates, errors, durationMs, status, changes, issues, 0, 0, 0);
     }
 
     public ImportResult {
@@ -39,6 +48,6 @@ public record ImportResult(
 
     public static ImportResult cancelled(long durationMs) {
         return new ImportResult(0, 0, 0, 0, durationMs,
-                ImportStatus.CANCELLED, ImportChangeSet.empty(false), List.of());
+                ImportStatus.CANCELLED, ImportChangeSet.empty(false), List.of(), 0, 0, 0);
     }
 }

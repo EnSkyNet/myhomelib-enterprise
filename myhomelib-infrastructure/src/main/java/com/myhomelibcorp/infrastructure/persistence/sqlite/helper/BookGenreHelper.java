@@ -31,7 +31,10 @@ public class BookGenreHelper {
         jdbcTemplate.update("DELETE FROM book_genres WHERE book_id = ?", bookId.asString());
         for (Genre genre : genres) {
             String code = genre.getId().asString();
-            String name = genreRepository.getGenreName(code);
+            String sourceName = genre.getName() == null ? "" : genre.getName().trim();
+            String name = !sourceName.isBlank() && !sourceName.equalsIgnoreCase(code)
+                    ? sourceName
+                    : genreRepository.getGenreName(code);
             String insertGenreSql = """
                 INSERT INTO genres (code, name, parent_code, fb2_code)
                 VALUES (?, ?, ?, ?)

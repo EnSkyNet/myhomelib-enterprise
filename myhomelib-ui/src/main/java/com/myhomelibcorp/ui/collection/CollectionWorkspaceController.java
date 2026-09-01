@@ -76,7 +76,7 @@ public class CollectionWorkspaceController {
                     String prefix = item.isActive() ? "● " : "○ ";
                     setText(prefix + item.getName());
                     if (item.isActive()) {
-                        setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
+                        getStyleClass().add("accent-text");
                     } else {
                         setStyle("");
                     }

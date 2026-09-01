@@ -2,14 +2,22 @@ package com.myhomelibcorp.ui.mapper;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.BookListItem;
+import com.myhomelibcorp.application.dto.GenreDto;
+import com.myhomelibcorp.ui.service.BookSelectionService;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
 @Component
+@RequiredArgsConstructor
 public class BookViewModelMapper {
+
+    private final BookSelectionService bookSelectionService;
+    private final LocalizationService localizationService;
 
     private static final DateTimeFormatter DATE_FORMATTER = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
 
@@ -20,7 +28,7 @@ public class BookViewModelMapper {
         vm.setTitle(dto.getTitle());
         vm.setAuthorsText(dto.getAuthorsText());
         vm.setSeries(dto.getSeries());
-        vm.setGenresText(dto.getGenresText());
+        vm.setGenresText(localizedGenres(dto.getGenreItems(), dto.getGenresText()));
         vm.setSequenceNumber(dto.getSequenceNumber() != null ? dto.getSequenceNumber() : 0);
         vm.setYear(dto.getYear());
         vm.setLanguage(dto.getLanguage());
@@ -39,6 +47,7 @@ public class BookViewModelMapper {
         vm.setReview(dto.getReview());
         vm.setCreatedAt(dto.getCreatedAt());
         vm.setCover(null);
+        bookSelectionService.bind(vm);
         return vm;
     }
 
@@ -49,7 +58,7 @@ public class BookViewModelMapper {
         vm.setTitle(item.getTitle());
         vm.setAuthorsText(item.getAuthorsText());
         vm.setSeries(item.getSeries());
-        vm.setGenresText(item.getGenresText());
+        vm.setGenresText(localizedGenres(item.getGenreItems(), item.getGenresText()));
         vm.setYear(item.getYear());
         vm.setRate(item.getRate());
         vm.setProgress(item.getProgress());
@@ -78,8 +87,29 @@ public class BookViewModelMapper {
         vm.setReview("");
         vm.setDeleted(false);
         vm.setCover(null);
+        bookSelectionService.bind(vm);
         return vm;
     }
+
+    private String localizedGenres(java.util.List<GenreDto> genres, String fallback) {
+        // Never use raw genresText as a UI fallback: legacy DTO text may contain
+        // internal identifiers or top-level taxonomy groups.
+        if (genres == null || genres.isEmpty()) return "";
+        java.util.List<String> siblingCodes = genres.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(GenreDto::getCode)
+                .filter(code -> code != null && !code.isBlank())
+                .toList();
+        return genres.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(genre -> localizationService.shouldDisplayGenre(genre.getCode(), siblingCodes))
+                .map(genre -> localizationService.genreName(genre.getCode(),
+                        genre.getName() == null || genre.getName().isBlank() ? genre.getCode() : genre.getName()))
+                .filter(value -> value != null && !value.isBlank())
+                .distinct()
+                .collect(java.util.stream.Collectors.joining(", "));
+    }
+
     public BookDto toDto(BookViewModel vm) {
         if (vm == null) return null;
         BookDto dto = new BookDto();

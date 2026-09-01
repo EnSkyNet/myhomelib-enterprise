@@ -65,6 +65,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                 case GROUPS -> loadGroups(filter);
                 case REVIEWS -> loadReviews(filter);
                 case UPDATES -> loadUpdates();
+                case DOWNLOADED -> loadDownloadedAuthors(filter);
                 case ALREADY_READ -> loadAlreadyRead(filter);
                 case HISTORY -> loadHistory(filter);
                 case ALL_BOOKS -> loadAllBooks(filter);
@@ -104,6 +105,14 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                     char first = label.trim().charAt(0);
                     return Character.isLetter(first) ? Character.toUpperCase(first) : '#';
                 }));
+    }
+
+    private List<NavigationNodeDto> loadDownloadedAuthors(BookFilterSpec filter) {
+        return navigationFacetRepository.findDownloadedAuthors(filter).stream()
+                .map(facet -> new NavigationNodeDto(
+                        NavigationMode.DOWNLOADED, facet.id(), facet.label(), facet.bookCount()))
+                .filter(DefaultNavigationQueryService::hasLabel)
+                .toList();
     }
 
     private List<NavigationNodeDto> loadSeries(BookFilterSpec filter) {

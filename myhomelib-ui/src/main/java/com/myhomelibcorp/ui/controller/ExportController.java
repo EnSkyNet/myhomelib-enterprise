@@ -10,12 +10,18 @@ import com.myhomelibcorp.application.export.ExportHistoryEntry;
 import com.myhomelibcorp.application.export.ExportHistoryService;
 import com.myhomelibcorp.application.export.ExportProfile;
 import com.myhomelibcorp.application.export.ExportProfileService;
+import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.export.ExportToDeviceUseCase;
 import com.myhomelibcorp.application.usecase.export.ExportToInpxUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
+import com.myhomelibcorp.ui.service.BookSelectionService;
+import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -28,6 +34,7 @@ import javafx.stage.FileChooser;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.Window;
+import javafx.util.Duration;
 import javafx.util.StringConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -57,6 +64,11 @@ public class ExportController {
     private final ExportHistoryService exportHistoryService;
     private final BookActionProfileService bookActionProfileService;
     private final ApplicationState appState;
+    private final BookSelectionService bookSelectionService;
+    private final BookDownloadCoordinator bookDownloadCoordinator;
+    private final LoadBookByIdUseCase loadBookByIdUseCase;
+    private final BookViewModelMapper bookViewModelMapper;
+    private final UiBackgroundExecutor executor;
     private final DialogService dialogService;
     private final ApplicationContext springContext;
 
@@ -188,12 +200,34 @@ public class ExportController {
     // ==================== ЕКСПОРТ НА ПРИСТРІЙ ====================
 
     public void handleExport(BorderPane mainPane) {
-        List<BookViewModel> selectedBooks = collectSelectedBooks();
-        if (selectedBooks.isEmpty()) {
-            dialogService.showWarning("Немає вибраних книг", "Будь ласка, виберіть книги за допомогою чекбоксів.");
+        handleExport(mainPane == null || mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+    }
+
+    /** Device export always uses the shared checkbox selection; row cursor is never a fallback. */
+    public void handleExport(Window owner) {
+        List<BookId> selectedIds = bookSelectionService.snapshot();
+        if (selectedIds.isEmpty()) {
+            dialogService.showWarning("Немає вибраних книг",
+                    "Відмітьте книги checkbox. Поточний рядок не підміняє пакетний вибір.");
             return;
         }
-        showExportDialog(mainPane.getScene().getWindow(), selectedBooks);
+        executor.submit(() -> selectedIds.stream()
+                        .map(loadBookByIdUseCase::execute)
+                        .flatMap(java.util.Optional::stream)
+                        .toList())
+                .thenAccept(books -> Platform.runLater(() -> {
+                    List<BookViewModel> rows = books.stream().map(bookViewModelMapper::toViewModel).toList();
+                    if (rows.isEmpty()) {
+                        dialogService.showWarning("Експорт", "Вибрані книги не знайдено в активній колекції.");
+                        return;
+                    }
+                    showExportDialog(owner, rows);
+                }))
+                .exceptionally(error -> {
+                    Platform.runLater(() -> dialogService.showError("Експорт",
+                            "Не вдалося підготувати вибрані книги: " + error.getMessage()));
+                    return null;
+                });
     }
 
     public void showExportDialog(Window owner, List<BookViewModel> selectedBooks) {
@@ -220,22 +254,15 @@ public class ExportController {
         }
     }
 
-    private List<BookViewModel> collectSelectedBooks() {
-        List<BookViewModel> selected = appState.getBookTable().getBooks().stream()
-                .filter(BookViewModel::isSelected).collect(Collectors.toList());
-        log.info("Знайдено {} вибраних книг через ApplicationState", selected.size());
-        return selected;
-    }
-
     // ==================== ЕКСПОРТ В INPX ====================
 
     public void handleExportInpx(BorderPane mainPane, Runnable onComplete) {
-        List<BookViewModel> selectedBooks = collectSelectedBooks();
+        List<BookId> selectedIds = bookSelectionService.snapshot();
         List<BookId> bookIds;
-        if (!selectedBooks.isEmpty()) {
-            bookIds = selectedBooks.stream().map(b -> BookId.fromString(b.getId())).collect(Collectors.toList());
+        if (!selectedIds.isEmpty()) {
+            bookIds = selectedIds;
         } else {
-            if (!dialogService.showConfirmation("Експорт всіх книг", "Жодна книга не вибрана", "Експортувати всі книги колекції?")) return;
+            if (!dialogService.showConfirmation("Експорт всіх книг", "Жодна книга не відмічена checkbox", "Експортувати всі книги колекції?")) return;
             bookIds = null;
         }
 
@@ -432,7 +459,30 @@ public class ExportController {
                 .postActionProfileId(selectedPostActionId())
                 .build();
 
+        // Remote books are downloaded automatically before export. The user should not
+        // have to run a separate download command or see a "not local" error first.
         setExportRunning(true);
+        exportButton.setText("Підготовка книг…");
+        bookDownloadCoordinator.prepareForExport(selectedBookIds, stage).whenComplete((downloadResult, downloadError) ->
+                Platform.runLater(() -> {
+                    if (downloadError != null) {
+                        setExportRunning(false);
+                        dialogService.showError("Експорт", "Не вдалося підготувати книги: " + downloadError.getMessage());
+                        return;
+                    }
+                    if (downloadResult != null && downloadResult.failed() > 0) {
+                        setExportRunning(false);
+                        dialogService.showWarning("Експорт",
+                                "Не всі книги вдалося завантажити. Завантажено: " + downloadResult.downloaded()
+                                        + ", уже локальні: " + downloadResult.alreadyLocal()
+                                        + ", помилок: " + downloadResult.failed() + ".");
+                        return;
+                    }
+                    startExportWorker(request);
+                }));
+    }
+
+    private void startExportWorker(ExportRequest request) {
         exportCancelFlag.set(false);
         appState.getStatusBar().setProgressVisible(true);
         appState.getStatusBar().setProgress(0);
@@ -459,7 +509,8 @@ public class ExportController {
                 });
             }
         }, "myhomelib-export");
-        worker.setDaemon(true); worker.start();
+        worker.setDaemon(true);
+        worker.start();
     }
 
     private ExportCollisionDecision resolveCollision(ExportCollisionContext context) {
@@ -505,7 +556,10 @@ public class ExportController {
         if (result.cancelled()) {
             dialogService.showInfo("Експорт скасовано", summary);
         } else if (result.failed() == 0 && result.errors().isEmpty()) {
-            dialogService.showInfo("Успішно", summary);
+            selectedBooksLabel.setText(summary);
+            PauseTransition closeDelay = new PauseTransition(Duration.seconds(1.0));
+            closeDelay.setOnFinished(event -> closeDialog());
+            closeDelay.play();
         } else if (result.failed() == 0) {
             dialogService.showWarning("Експорт завершено з попередженнями", summary + "\n\n" + String.join("\n", result.errors()));
         } else {

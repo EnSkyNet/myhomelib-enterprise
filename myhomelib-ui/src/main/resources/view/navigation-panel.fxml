@@ -6,10 +6,10 @@
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.navigation.NavigationPanelController"
       spacing="5"
-      style="-fx-padding: 5; -fx-background-color: #f5f5f5; -fx-pref-width: 250; -fx-max-width: 300;"
+      style="-fx-padding: 5; -fx-background-color: -mhl-background; -fx-pref-width: 250; -fx-max-width: 300;"
       VBox.vgrow="ALWAYS">
 
-    <Label text="Навігація" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+    <Label fx:id="navigationTitleLabel" text="Навігація" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
     <!-- Scalable mode selector: stage 3+ can add modes without redesigning the panel. -->
     <ComboBox fx:id="navigationModeComboBox"

@@ -38,9 +38,19 @@ checks={
 'Reader entry point is centrally guarded': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/WorkspaceManager.java',
  ['bookDownloadCoordinator.ensureLocalForOpen(bookId)', 'openNewReaderWorkspaceLocal(bookId)']),
-'Author series grouping': (
+'Author workspace unpaged series grouping': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
- ['SortBy.SERIES', 'SeriesGrouping.groupPreservingOrder', 'onSortBySeries']),
+ ['loadBooksByAuthorUseCase.executeAll', 'currentSort == SortBy.SERIES',
+  'header.setGroupHeader(true)', 'collapsedSeries.contains', 'onSortBySeries',
+  'onCollapseAll', 'onExpandAll']),
+'Author series checkbox keeps partial selection': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
+ ['seriesSelectionState', 'BookSelectionService.SelectionState.PARTIAL',
+  'setSeriesSelected', 'booksInSeries']),
+'Author master checkbox targets visible books only': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
+ ['visibleConcreteBooks()', 'masterSelectionCheckBox.setIndeterminate',
+  'bookSelectionService.state(visible)', 'Пакетно вибрано: ']),
 'Series SQL sequence order': (
  ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookQueryBuilder.java',
  ['sortBy == SortBy.SERIES', 'b.sequence_number', "TRIM(COALESCE(b.series, ''))"]),
@@ -82,7 +92,32 @@ checks={
  ['UPDATED_DOWNLOADED_BOOK', 'NEW_BY_FOLLOWED_AUTHOR']),
 'Language text config': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/LocalizationService.java',
- ['resolve("language.txt")'])
+ ['resolve("language.txt")']),
+'Author search results live in left navigation': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java',
+ ['navigationPanelController.showAuthorSearchResults', 'setSectionVisible(authorsSection, false)',
+  'mainLayoutService.setLeftSidebarVisible(true)', 'searchService.searchAuthorsAll(authorQuery)']),
+'Left author selection opens author books workspace': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java',
+ ['navigationPanelController.setOnNodeSelected(this::navigateToNode)',
+  'case AUTHORS -> navigateToAuthor(AuthorId.fromString(node.id()))',
+  'workspaceManager.showAuthorWorkspace(authorId)']),
+'Author search stays server-side and typed': (
+ ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/search/SearchService.java',
+ ['GlobalSearchResult searchAll', 'List<AuthorDto> searchAuthors', 'authorRepository.searchByName']),
+'Search workspace uses full table with author and highlighted matches': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java',
+ ['TableView<BookDto> booksTableView', 'authorColumn', 'highlightedInline(', 'searchService.searchAll(query)']),
+'Search result limits are paged, not hard 20/50 caps': (
+ ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/search/SearchService.java',
+ ['searchAuthorsAll', 'searchAllBooks', 'chunkSize = 500', 'authorRepository.searchByName(normalizedQuery, chunkSize, offset)']),
+'Main sidebars have one visibility owner': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/MainLayoutService.java',
+ ['leftSidebarVisibleProperty()', 'rightSidebarVisibleProperty()', 'node.setManaged(visible)']),
+'Reader can toggle both sidebars': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java',
+ ['setOnToggleLeftSidebarClick(mainLayoutService::toggleLeftSidebar)',
+  'setOnToggleRightSidebarClick(mainLayoutService::toggleRightSidebar)'])
 }
 for label,(path,needles) in checks.items():
     if not path.exists(): fail(f'{label}: missing file {path.relative_to(ROOT)}')

@@ -8,6 +8,7 @@ import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.service.ApplicationThemeService;
 import com.myhomelibcorp.ui.controller.MainController;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -184,6 +185,7 @@ public class MyHomeLibApp extends Application {
                 : "Без колекції";
         primaryStage.setTitle("MyHomeLib — " + collectionName);
         primaryStage.setScene(new Scene(root, 1100, 750));
+        context.getBean(ApplicationThemeService.class).start();
         primaryStage.setMinWidth(800);
         primaryStage.setMinHeight(600);
         if (sessionService.isRestoreEnabled()) {

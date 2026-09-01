@@ -248,7 +248,9 @@ def check_source_invariants() -> None:
     inpx = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java")
     require(inpx, "AuthorNameKey", "structured INPX author identity")
     forbid(inpx, 'first + "|"', "delimiter author identity")
-    require(inpx, "tracked && catalogFullSnapshot", "full-only missing semantics")
+    require(inpx, "only an explicit DEL marker may mark a book deleted", "explicit record-driven deletion semantics")
+    require(inpx, "row.explicitlyDeleted()", "explicit DEL accounting")
+    forbid(inpx, "markTrackedBooksMissing", "absence-based mass deletion during INPX import")
 
     dictionary_cache = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cache/DictionaryCache.java"
     assert not dictionary_cache.exists(), "full-table DictionaryCache must remain removed for 1M+ heap safety"

@@ -92,6 +92,11 @@ public class CachedAuthorRepository implements AuthorRepository {
     }
 
     @Override
+    public List<Author> searchByName(String query, int limit, int offset) {
+        return delegate.searchByName(query, limit, offset);
+    }
+
+    @Override
     public long countOrphanedAuthors() {
         return delegate.countOrphanedAuthors();
     }

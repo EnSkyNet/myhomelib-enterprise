@@ -19,6 +19,7 @@ import java.util.Optional;
 public class SqliteReadingProgressRepository implements ReadingProgressRepository {
 
     private final CollectionManager collectionManager;
+    private final SqliteBusyRetryExecutor busyRetry;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -56,46 +57,39 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
-        // Отримуємо anchorId
-        String anchorId = progress.getAnchorId() != null && !progress.getAnchorId().isEmpty()
+        // Значення, які використовуються всередині retry-lambda, мають бути final/effectively final.
+        final String anchorId = progress.getAnchorId() != null && !progress.getAnchorId().isEmpty()
                 ? progress.getAnchorId()
                 : String.valueOf(progress.getParagraphIndex());
 
-        // ===== ВИПРАВЛЕНО: ЗАВЖДИ ВСТАНОВЛЮЄМО paragraph_id =====
-        // Використовуємо anchorId як paragraph_id, якщо він не встановлений
-        String paragraphId = progress.getParagraphId();
-        if (paragraphId == null || paragraphId.isEmpty()) {
-            paragraphId = anchorId;
-        }
+        final String paragraphId = progress.getParagraphId() == null || progress.getParagraphId().isEmpty()
+                ? anchorId
+                : progress.getParagraphId();
 
-        // ===== ВИПРАВЛЕНО: ЗАВЖДИ ВСТАНОВЛЮЄМО chapter_title =====
-        String chapterTitle = progress.getChapterTitle();
-        if (chapterTitle == null) {
-            chapterTitle = "";
-        }
+        final String chapterTitle = progress.getChapterTitle() == null
+                ? ""
+                : progress.getChapterTitle();
 
-        // ===== ВИПРАВЛЕНО: ЗАВЖДИ ВСТАНОВЛЮЄМО chapter_id =====
-        String chapterId = progress.getChapterId();
-        if (chapterId == null) {
-            chapterId = "";
-        }
+        final String chapterId = progress.getChapterId() == null
+                ? ""
+                : progress.getChapterId();
 
-        String updatedAt = progress.getUpdatedAt() != null
+        final String updatedAt = progress.getUpdatedAt() != null
                 ? SqliteDateTimeCodec.format(progress.getUpdatedAt())
                 : SqliteDateTimeCodec.format(LocalDateTime.now());
 
-        getJdbcTemplate().update(sql,
+        busyRetry.run("reading progress save", () -> getJdbcTemplate().update(sql,
                 progress.getBookId(),
                 anchorId,
                 progress.getParagraphIndex(),
-                paragraphId,           // <-- ТЕПЕР ЗАВЖДИ НЕ NULL
+                paragraphId,
                 progress.getCharOffset(),
                 progress.getPercent(),
-                chapterTitle,          // <-- ТЕПЕР ЗАВЖДИ НЕ NULL
-                chapterId,             // <-- ТЕПЕР ЗАВЖДИ НЕ NULL
+                chapterTitle,
+                chapterId,
                 updatedAt,
                 progress.getReadingTimeSeconds()
-        );
+        ));
 
         log.debug("Saved reading progress for book {}: anchor={}, paragraph_id={}, charOffset={}, %={}",
                 progress.getBookId(), anchorId, paragraphId, progress.getCharOffset(), progress.getPercent());
@@ -110,7 +104,7 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
 
     @Override
     public void deleteByBookId(String bookId) {
-        getJdbcTemplate().update("DELETE FROM reading_progress WHERE book_id = ?", bookId);
+        busyRetry.run("reading progress delete", () -> getJdbcTemplate().update("DELETE FROM reading_progress WHERE book_id = ?", bookId));
         log.debug("Deleted reading progress for book: {}", bookId);
     }
 

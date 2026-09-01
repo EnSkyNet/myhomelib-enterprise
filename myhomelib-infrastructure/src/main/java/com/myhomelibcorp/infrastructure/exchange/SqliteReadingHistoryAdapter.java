@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.exchange;
 import com.myhomelibcorp.application.port.out.exchange.ReadingHistoryPort;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBusyRetryExecutor;
 import org.springframework.stereotype.Component;
 
 import java.time.LocalDateTime;
@@ -16,9 +17,11 @@ public class SqliteReadingHistoryAdapter implements ReadingHistoryPort {
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
 
     private final CollectionManager collections;
+    private final SqliteBusyRetryExecutor busyRetry;
 
-    public SqliteReadingHistoryAdapter(CollectionManager collections) {
+    public SqliteReadingHistoryAdapter(CollectionManager collections, SqliteBusyRetryExecutor busyRetry) {
         this.collections = collections;
+        this.busyRetry = busyRetry;
     }
 
     @Override
@@ -51,18 +54,18 @@ public class SqliteReadingHistoryAdapter implements ReadingHistoryPort {
     public void recordOpened(BookId bookId) {
         if (bookId == null) return;
         String now = LocalDateTime.now().format(HISTORY_TIMESTAMP);
-        collections.getCurrentJdbcTemplate().update("""
+        busyRetry.run("reading history write", () -> collections.getCurrentJdbcTemplate().update("""
                 INSERT INTO reading_history(book_id, last_opened_at, open_count)
                 VALUES (?, ?, 1)
                 ON CONFLICT(book_id) DO UPDATE SET
                     last_opened_at = excluded.last_opened_at,
                     open_count = reading_history.open_count + 1
-                """, bookId.asString(), now);
+                """, bookId.asString(), now));
     }
 
     @Override
     public void clear() {
-        collections.getCurrentJdbcTemplate().update("DELETE FROM reading_history");
+        busyRetry.run("reading history clear", () -> collections.getCurrentJdbcTemplate().update("DELETE FROM reading_history"));
     }
 
     private static LocalDateTime parseDateTime(String value) {

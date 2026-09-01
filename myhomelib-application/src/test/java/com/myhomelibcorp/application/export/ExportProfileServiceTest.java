@@ -14,13 +14,13 @@ class ExportProfileServiceTest {
     void migratesLegacyDefaultsAndPersistsProfileSpecificSettings() {
         FakeSettings settings = new FakeSettings();
         settings.put("export.filenameTemplate", "%a - %t");
-        settings.put("export.subfolderTemplate", "%a/%s");
+        settings.put("export.subfolderTemplate", "");
         settings.putBoolean("export.runPostCommand", true);
         ExportProfileService service = new ExportProfileService(settings);
 
         ExportProfile migrated = service.loadProfiles().getFirst();
         assertThat(migrated.id()).isEqualTo("default-export");
-        assertThat(migrated.filenameTemplate()).isEqualTo("%a - %t");
+        assertThat(migrated.filenameTemplate()).isEqualTo("%n2 - %t");
         assertThat(migrated.subfolderTemplate()).isEqualTo("%a/%s");
         assertThat(migrated.postActionProfileId()).isEqualTo("legacy-post-command");
 

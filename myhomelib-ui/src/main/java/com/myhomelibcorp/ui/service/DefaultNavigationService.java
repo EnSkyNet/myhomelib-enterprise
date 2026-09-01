@@ -56,6 +56,7 @@ public class DefaultNavigationService implements NavigationService {
             case GROUPS -> navigateToGroup(GroupId.fromLong(Long.parseLong(node.id())));
             case REVIEWS -> navigateToReviews(ReviewNavigationFilter.fromId(node.id()));
             case UPDATES -> navigateToUpdates();
+            case DOWNLOADED -> workspaceManager.showDownloadedAuthorWorkspace(AuthorId.fromString(node.id()));
             case ALREADY_READ -> navigateToAlreadyRead();
             case HISTORY -> navigateToHistory();
             case ALL_BOOKS -> navigateToAllBooks();

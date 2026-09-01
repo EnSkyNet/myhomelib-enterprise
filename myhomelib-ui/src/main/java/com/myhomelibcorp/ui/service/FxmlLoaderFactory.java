@@ -45,6 +45,10 @@ public class FxmlLoaderFactory {
     }
 
     public Pane loadAuthorWorkspace(AuthorId authorId) {
+        return loadAuthorWorkspace(authorId, false);
+    }
+
+    public Pane loadAuthorWorkspace(AuthorId authorId, boolean downloadedOnly) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/author-workspace.fxml"));
             loader.setControllerFactory(springContext::getBean);
@@ -54,6 +58,7 @@ public class FxmlLoaderFactory {
             if (authorId == null) {
                 throw new IllegalArgumentException("AuthorId не може бути null");
             }
+            controller.setDownloadedOnly(downloadedOnly);
             controller.setAuthorId(authorId);
 
             pane.setUserData(controller);

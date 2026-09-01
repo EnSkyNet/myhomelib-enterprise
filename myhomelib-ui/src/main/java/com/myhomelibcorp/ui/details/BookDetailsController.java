@@ -250,15 +250,24 @@ public class BookDetailsController {
     private void renderGenreLinks(List<GenreDto> genres, String fallback) {
         genresLinksPane.getChildren().clear();
         List<GenreDto> safeGenres = genres != null ? genres : Collections.emptyList();
+        List<String> siblingCodes = safeGenres.stream()
+                .filter(java.util.Objects::nonNull)
+                .map(GenreDto::getCode)
+                .filter(code -> code != null && !code.isBlank())
+                .toList();
         if (!safeGenres.isEmpty()) {
             for (GenreDto genre : safeGenres) {
                 if (genre == null || genre.getCode() == null || genre.getCode().isBlank()) continue;
-                Hyperlink link = new Hyperlink(localizationService.genreName(genre.getCode(), value(genre.getName(), genre.getCode())));
+                if (!localizationService.shouldDisplayGenre(genre.getCode(), siblingCodes)) continue;
+                String label = localizationService.genreName(genre.getCode(), genre.getName());
+                if (label == null || label.isBlank()) continue;
+                Hyperlink link = new Hyperlink(label);
                 link.setOnAction(event -> navigationService.navigateToGenre(GenreId.fromCode(genre.getCode())));
                 genresLinksPane.getChildren().add(link);
             }
         }
-        if (genresLinksPane.getChildren().isEmpty()) genresLinksPane.getChildren().add(new Label(value(fallback, "—")));
+        // Raw fallback text may contain internal genre codes or top-level groups; never expose them.
+        if (genresLinksPane.getChildren().isEmpty()) genresLinksPane.getChildren().add(new Label("—"));
     }
 
     private void renderKeywordLinks(String rawKeywords) {

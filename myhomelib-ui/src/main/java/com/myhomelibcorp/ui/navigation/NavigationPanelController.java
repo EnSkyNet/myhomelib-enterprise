@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.navigation;
 
+import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.NavigationNodeDto;
 import com.myhomelibcorp.application.navigation.NavigationQueryService;
@@ -33,6 +34,7 @@ public class NavigationPanelController {
     private Consumer<NavigationNodeDto> onNodeSelected;
 
     @FXML private ListView<NavigationNodeDto> navigationListView;
+    @FXML private javafx.scene.control.Label navigationTitleLabel;
     @FXML private TextField listSearchField;
     @FXML private ComboBox<NavigationMode> navigationModeComboBox;
 
@@ -44,6 +46,7 @@ public class NavigationPanelController {
     private NavigationMode pendingSelectionMode;
     private String pendingSelectionId;
     private boolean suppressSelectionCallback;
+    private boolean temporaryAuthorSearch;
 
     @FXML
     public void initialize() {
@@ -122,10 +125,15 @@ public class NavigationPanelController {
 
     @EventListener
     public void onNavigationRefresh(NavigationRefreshEvent event) {
+        // Download/storage changes must not destroy transient author-search results.
+        // The result set remains valid; only catalogue facets/counts changed in the background.
+        if (temporaryAuthorSearch) return;
         refreshAll();
     }
 
     public void refreshAll() {
+        temporaryAuthorSearch = false;
+        updateNavigationTitle();
         log.info("Оновлення навігаційної панелі: {}", currentMode);
         // Очищаємо кеш перед завантаженням
         allNodes = List.of();
@@ -155,6 +163,8 @@ public class NavigationPanelController {
     public void resetNavigation() {
         log.info("Повне скидання навігації");
         Platform.runLater(() -> {
+            temporaryAuthorSearch = false;
+            updateNavigationTitle();
             allNodes = List.of();
             navigationListView.getItems().clear();
             currentLetter = null;
@@ -169,6 +179,8 @@ public class NavigationPanelController {
         if (mode == null) {
             return;
         }
+        temporaryAuthorSearch = false;
+        updateNavigationTitle();
         boolean modeChanged = currentMode != mode;
         currentMode = mode;
         alphabetToolbarController.setAllOptionEnabled(mode != NavigationMode.AUTHORS);
@@ -243,7 +255,12 @@ public class NavigationPanelController {
         char letter = currentLetter == null ? '*' : currentLetter;
         String query = currentQuery == null ? "" : currentQuery.trim().toLowerCase(Locale.ROOT);
 
+        List<String> genreCodes = currentMode == NavigationMode.GENRES
+                ? allNodes.stream().map(NavigationNodeDto::id).filter(java.util.Objects::nonNull).toList()
+                : List.of();
         List<NavigationNodeDto> filtered = allNodes.stream()
+                .filter(node -> currentMode != NavigationMode.GENRES
+                        || localizationService.shouldDisplayGenre(node.id(), genreCodes))
                 .filter(node -> currentMode == NavigationMode.ALL_BOOKS
                         || currentMode == NavigationMode.ALREADY_READ
                         || currentMode == NavigationMode.HISTORY
@@ -271,6 +288,64 @@ public class NavigationPanelController {
         if (letter == '*') return true;
         if (letter == '#') return !Character.isLetter(name.charAt(0));
         return Character.toUpperCase(name.charAt(0)) == Character.toUpperCase(letter);
+    }
+
+    /**
+     * Shows server-side author-search results in the left sidebar. Selecting a row
+     * uses the normal AUTHORS navigation callback, therefore the central area
+     * becomes the selected author workspace with that author's books.
+     */
+    public void showAuthorSearchResults(String query, List<AuthorDto> authors) {
+        loadGeneration++; // invalidate any in-flight navigation load
+        temporaryAuthorSearch = true;
+        currentMode = NavigationMode.AUTHORS;
+        currentLetter = null;
+        pendingSelectionMode = null;
+        pendingSelectionId = null;
+        currentQuery = "";
+
+        if (navigationModeComboBox != null && navigationModeComboBox.getValue() != NavigationMode.AUTHORS) {
+            navigationModeComboBox.setValue(NavigationMode.AUTHORS);
+        }
+        alphabetToolbarController.clearSelection();
+        if (listSearchField != null && !listSearchField.getText().isEmpty()) {
+            listSearchField.clear();
+        }
+
+        List<NavigationNodeDto> nodes = authors == null ? List.of() : authors.stream()
+                .filter(java.util.Objects::nonNull)
+                .filter(author -> author.getId() != null && !author.getId().isBlank())
+                .map(author -> NavigationNodeDto.of(
+                        NavigationMode.AUTHORS,
+                        author.getId(),
+                        author.getFullName() == null || author.getFullName().isBlank()
+                                ? author.getShortName()
+                                : author.getFullName()))
+                .toList();
+        allNodes = List.copyOf(nodes);
+        navigationListView.setDisable(false);
+        navigationListView.getSelectionModel().clearSelection();
+        updateNavigationTitle(query);
+        filterList();
+    }
+
+    /** Restores regular author navigation after a transient search is cleared. */
+    public void clearAuthorSearchResults() {
+        if (!temporaryAuthorSearch) return;
+        temporaryAuthorSearch = false;
+        updateNavigationTitle();
+        currentLetter = null;
+        loadMode(NavigationMode.AUTHORS);
+    }
+
+    private void updateNavigationTitle() {
+        if (navigationTitleLabel != null) navigationTitleLabel.setText(localizationService.tr("Навігація"));
+    }
+
+    private void updateNavigationTitle(String query) {
+        if (navigationTitleLabel == null) return;
+        String suffix = query == null || query.isBlank() ? "" : ": " + query.trim();
+        navigationTitleLabel.setText(localizationService.tr("Автори — результати пошуку") + suffix);
     }
 
     private String displayLabel(NavigationNodeDto node) {
@@ -310,6 +385,7 @@ public class NavigationPanelController {
             case GROUPS -> "Групи";
             case REVIEWS -> "Відгуки";
             case UPDATES -> "Оновлення";
+            case DOWNLOADED -> "Завантажені книги";
             case ALREADY_READ -> "Прочитані";
             case HISTORY -> "Історія читання";
             case ALL_BOOKS -> "Усі книги";

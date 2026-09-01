@@ -110,10 +110,16 @@ public class ExportToDeviceUseCase {
         }
         try {
             Files.createDirectories(destination);
+            if (!Files.isDirectory(destination)) {
+                throw new IllegalArgumentException("Шлях призначення не є папкою");
+            }
+            if (!Files.isWritable(destination)) {
+                throw new IllegalArgumentException("Папка призначення доступна лише для читання");
+            }
         } catch (Exception e) {
-            log.error("Не вдалося створити папку: {}", destination, e);
+            log.error("Не вдалося підготувати папку: {}", destination, e);
             return finish(request, requested, 0, 0, requested, false, startedAt,
-                    List.of("Не вдалося створити папку: " + e.getMessage()));
+                    List.of("Не вдалося підготувати папку: " + e.getMessage()));
         }
 
         int processed = 0;
@@ -125,6 +131,9 @@ public class ExportToDeviceUseCase {
                 Book book = bookQueryRepository.findById(bookId)
                         .orElseThrow(() -> new IllegalArgumentException("Книгу не знайдено: " + bookId));
                 progressTitle = book.getTitle() == null ? bookId.asString() : book.getTitle();
+                if (bookResourcePort.locateBookFile(book).isEmpty()) {
+                    throw new IllegalStateException("Книга не завантажена локально. Завантажте її перед експортом: " + progressTitle);
+                }
                 boolean extractRawArchiveEntry = request.isExtractOnly() && book.hasArchiveEntry();
                 BookConverter converter = extractRawArchiveEntry ? null : findConverter(request.getFormat(), book);
                 if (!extractRawArchiveEntry && converter == null) {
@@ -142,6 +151,15 @@ public class ExportToDeviceUseCase {
                     throw new IllegalArgumentException("Шаблон підпапки виходить за межі папки експорту");
                 }
                 Files.createDirectories(bookDestination);
+                if (!Files.isWritable(bookDestination)) {
+                    throw new IllegalStateException("Папка призначення доступна лише для читання: " + bookDestination);
+                }
+                long expectedBytes = Math.max(1L, book.getFileSize());
+                long usableBytes = Files.getFileStore(bookDestination).getUsableSpace();
+                if (usableBytes < expectedBytes) {
+                    throw new IllegalStateException("Недостатньо вільного місця: потрібно щонайменше "
+                            + expectedBytes + " байт, доступно " + usableBytes + " байт");
+                }
                 Path targetFile = bookDestination.resolve(fileName + targetExtension).normalize();
                 if (!targetFile.toAbsolutePath().normalize().startsWith(normalizedDestination)) {
                     throw new IllegalArgumentException("Шаблон імені виходить за межі папки експорту");
@@ -154,16 +172,24 @@ public class ExportToDeviceUseCase {
                         case SKIP -> { skipped.incrementAndGet(); continue; }
                         case RENAME -> targetFile = nextAvailableName(bookDestination, fileName, targetExtension);
                         case CANCEL -> { cancel.set(true); continue; }
-                        case OVERWRITE -> { /* converter owns atomic/replace semantics */ }
+                        case OVERWRITE -> { /* existing target is replaced only after staged export validates */ }
                     }
                 }
 
-                try (InputStream sourceStream = getBookStream(book)) {
-                    if (extractRawArchiveEntry) {
-                        Files.copy(sourceStream, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    } else {
-                        converter.convert(book, sourceStream, targetFile);
+                Path stagedFile = Files.createTempFile(bookDestination, ".mhl-export-", targetExtension);
+                try {
+                    try (InputStream sourceStream = getBookStream(book)) {
+                        if (extractRawArchiveEntry) {
+                            Files.copy(sourceStream, stagedFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        } else {
+                            converter.convert(book, sourceStream, stagedFile);
+                        }
                     }
+                    verifyExportedFile(stagedFile);
+                    commitExportedFile(stagedFile, targetFile);
+                    verifyExportedFile(targetFile);
+                } finally {
+                    Files.deleteIfExists(stagedFile);
                 }
                 runPostAction(book, request, destination, targetFile, errors);
                 exported.incrementAndGet();
@@ -184,6 +210,30 @@ public class ExportToDeviceUseCase {
         log.info("Експорт завершено: exported={}, skipped={}, failed={}, cancelled={}, durationMs={}",
                 result.exported(), result.skipped(), result.failed(), result.cancelled(), result.durationMs());
         return result;
+    }
+
+    private void commitExportedFile(Path stagedFile, Path targetFile) throws java.io.IOException {
+        try {
+            Files.move(stagedFile, targetFile, java.nio.file.StandardCopyOption.ATOMIC_MOVE,
+                    java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+            Files.move(stagedFile, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private void verifyExportedFile(Path targetFile) throws java.io.IOException {
+        if (targetFile == null || !Files.isRegularFile(targetFile)) {
+            throw new java.io.IOException("Файл не створено на пристрої: " + targetFile);
+        }
+        long size = Files.size(targetFile);
+        if (size <= 0) {
+            throw new java.io.IOException("Створений файл порожній: " + targetFile);
+        }
+        // Re-open after the converter/copy returned. This verifies that handles were closed and
+        // the destination is readable before the operation is recorded as successful.
+        try (InputStream ignored = Files.newInputStream(targetFile)) {
+            if (ignored.read() < 0) throw new java.io.IOException("Створений файл неможливо прочитати: " + targetFile);
+        }
     }
 
     private ExportCollisionDecision collisionDecision(ExportRequest request, ExportCollisionResolver resolver,
@@ -268,9 +318,12 @@ public class ExportToDeviceUseCase {
 
     private String generateSubfolder(Book book, ExportRequest request) {
         String template = text(request.getSubfolderTemplate());
-        if (template.isBlank()) template = settings.get("export.subfolderTemplate", "").trim();
-        if (template.isEmpty()) return "";
-        return applyTemplate(template, book).replace("..", "_");
+        if (template.isBlank()) template = settings.get("export.subfolderTemplate", "%a/%s").trim();
+        if (template.isBlank()) template = "%a/%s";
+        String result = applyTemplate(template, book).replace("..", "_");
+        // Empty series segments are dropped by sanitizePathTemplate(), therefore the canonical
+        // layout becomes Author/Series when a series exists and simply Author otherwise.
+        return result;
     }
 
     private void runPostAction(Book book, ExportRequest request, Path destination, Path file, List<String> errors) {
@@ -330,23 +383,57 @@ public class ExportToDeviceUseCase {
     }
 
     private String generateFileName(Book book, ExportRequest request) {
-        String template = request.getCustomFileNameTemplate();
-        if (template == null || template.isBlank()) template = settings.get("export.filenameTemplate", "%a - %t");
+        String template = text(request.getCustomFileNameTemplate());
+        if (template.isBlank()) template = settings.get("export.filenameTemplate", "%n2 - %t").trim();
+        if (template.isBlank()) template = "%n2 - %t";
+
+        // Canonical device layout: Author/[Series]/NN - Title.ext.
+        // A book outside a series has no artificial "00 -" prefix.
+        if ("%n2 - %t".equals(template)) {
+            String title = sanitizeFileName(book.getTitle());
+            if (book.getSeries() != null && !book.getSeries().isBlank()
+                    && book.getSequenceNumber() != null && book.getSequenceNumber() > 0) {
+                return String.format(java.util.Locale.ROOT, "%02d - %s", book.getSequenceNumber(), title);
+            }
+            return title.isBlank() ? sanitizeFileName(book.getId().asString()) : title;
+        }
+
         String result = applyTemplate(template, book);
         return result.isBlank() ? sanitizeFileName(book.getId().asString()) : result;
     }
 
     private String applyTemplate(String template, Book book) {
+        String sequence = book.getSequenceNumber() != null && book.getSequenceNumber() > 0
+                ? String.valueOf(book.getSequenceNumber()) : "";
+        String sequence2 = book.getSequenceNumber() != null && book.getSequenceNumber() > 0
+                ? String.format(java.util.Locale.ROOT, "%02d", book.getSequenceNumber()) : "";
         String value = text(template)
                 .replace("%id", book.getId().asString())
                 .replace("%lang", book.getLanguage() == null ? "" : sanitizeFileName(book.getLanguage().toString()))
                 .replace("%pub", sanitizeFileName(book.getPublisher()))
+                .replace("%n2", sequence2)
                 .replace("%y", book.getYear() == null ? "" : book.getYear().toString())
                 .replace("%t", sanitizeFileName(book.getTitle()))
-                .replace("%a", sanitizeFileName(book.authorsText()))
+                .replace("%a", sanitizeFileName(firstAuthorName(book)))
                 .replace("%s", book.getSeries() != null ? sanitizeFileName(book.getSeries()) : "")
-                .replace("%n", book.getSequenceNumber() != null ? String.valueOf(book.getSequenceNumber()) : "");
+                .replace("%n", sequence);
         return sanitizePathTemplate(value);
+    }
+
+
+    /**
+     * Device folder ownership is deterministic: when a book has multiple authors,
+     * only the first author from the book metadata is used for the export path.
+     */
+    private String firstAuthorName(Book book) {
+        if (book != null && book.getAuthors() != null) {
+            for (var author : book.getAuthors()) {
+                if (author == null) continue;
+                String fullName = author.getFullName();
+                if (fullName != null && !fullName.isBlank()) return fullName.trim();
+            }
+        }
+        return "Без автора";
     }
 
     private String sanitizePathTemplate(String value) {

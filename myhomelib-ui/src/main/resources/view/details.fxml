@@ -8,9 +8,9 @@
 <ScrollPane xmlns:fx="http://javafx.com/fxml/1"
             fx:controller="com.myhomelibcorp.ui.details.BookDetailsController"
             fitToWidth="true" hbarPolicy="NEVER" VBox.vgrow="ALWAYS"
-            style="-fx-background-color: transparent; -fx-background: #fafafa;">
+            style="-fx-background-color: transparent; -fx-background: -mhl-panel;">
     <content>
-        <VBox spacing="7" style="-fx-padding: 10; -fx-background-color: #fafafa;">
+        <VBox spacing="7" style="-fx-padding: 10; -fx-background-color: -mhl-panel;">
             <VBox alignment="CENTER" style="-fx-padding: 6;">
                 <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
                            style="-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);"/>
@@ -19,7 +19,7 @@
             <Label fx:id="titleLabel" text="Назва" wrapText="true"
                    style="-fx-font-weight: bold; -fx-font-size: 15px;"/>
             <Label fx:id="documentWarningLabel" wrapText="true" visible="false" managed="false"
-                   style="-fx-text-fill: #8a5a00; -fx-background-color: #fff3cd; -fx-padding: 6;"/>
+                   style="-fx-text-fill: -mhl-warning-text; -fx-background-color: -mhl-warning-bg; -fx-padding: 6;"/>
 
             <Separator/>
             <Label text="Автори" style="-fx-font-weight: bold;"/>
@@ -76,9 +76,9 @@
 
             <HBox spacing="8" style="-fx-padding: 8 0 6 0;">
                 <Button text="Читати" onAction="#onRead"
-                        style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
+                        style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
                 <Button text="Редагувати" onAction="#onEdit"
-                        style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+                        style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
                 <Button text="Папка" onAction="#onOpenFolder"/>
             </HBox>
         </VBox>

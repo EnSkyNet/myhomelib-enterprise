@@ -5,6 +5,8 @@ import lombok.Builder;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
+import java.util.List;
+
 
 @Data
 @Builder
@@ -17,6 +19,7 @@ public class BookListItem {
     private String series;
     private Integer sequenceNumber;
     private String genresText;
+    private List<GenreDto> genreItems;
     private int rate;
     private int progress;
     private String coverHash;

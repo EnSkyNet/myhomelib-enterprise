@@ -100,6 +100,7 @@ public class UpdateCollectionFromNetworkUseCase {
         List<Path> downloaded = new ArrayList<>();
 
         long imported = 0, skipped = 0, duplicates = 0, errors = 0;
+        long withoutAuthor = 0, withoutGenre = 0, explicitlyDeleted = 0;
         ImportChangeAccumulator changes = new ImportChangeAccumulator(changeTrackingLimit);
         List<ImportIssue> issues = new ArrayList<>();
 
@@ -174,6 +175,9 @@ public class UpdateCollectionFromNetworkUseCase {
                 skipped += current.skipped();
                 duplicates += current.duplicates();
                 errors += current.errors();
+                withoutAuthor += current.withoutAuthor();
+                withoutGenre += current.withoutGenre();
+                explicitlyDeleted += current.explicitlyDeleted();
                 changes.merge(current.changes());
                 appendIssuesBounded(issues, current.issues());
             }
@@ -222,7 +226,8 @@ public class UpdateCollectionFromNetworkUseCase {
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors));
-            return new ImportResult(imported, skipped, duplicates, errors, elapsedMillis(operationStartedNanos), status, indexChanges, issues);
+            return new ImportResult(imported, skipped, duplicates, errors, elapsedMillis(operationStartedNanos),
+                    status, indexChanges, issues, withoutAuthor, withoutGenre, explicitlyDeleted);
         } catch (UpdateCancelledException e) {
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),

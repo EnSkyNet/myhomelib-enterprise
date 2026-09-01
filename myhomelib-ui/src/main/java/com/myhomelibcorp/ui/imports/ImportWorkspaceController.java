@@ -336,11 +336,15 @@ public class ImportWorkspaceController {
     }
 
     private String formatImportSummary(ImportResult result, long total) {
-        long durationMs = System.currentTimeMillis() - 0; // треба передавати час
         return String.format(
-                "Імпорт завершено%n%nЗаписів: %,d%nІмпортовано: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
+                "Імпорт завершено%n%nЗаписів: %,d%nІмпортовано: %,d%nДодано: %,d%nОновлено: %,d%nЯвно видалено: %,d%nБез автора: %,d%nБез жанру: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
                 total,
                 result.imported(),
+                result.changes().insertedCount(),
+                result.changes().updatedCount(),
+                result.explicitlyDeleted(),
+                result.withoutAuthor(),
+                result.withoutGenre(),
                 result.skipped(),
                 result.duplicates(),
                 result.errors(),

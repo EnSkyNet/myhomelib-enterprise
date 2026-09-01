@@ -7,7 +7,7 @@
 <?import javafx.scene.layout.Region?>
 <HBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.statusbar.StatusBarController"
-      style="-fx-background-color: #e0e0e0; -fx-border-color: #cccccc; -fx-border-width: 1 0 0 0;"
+      style="-fx-background-color: -mhl-border; -fx-border-color: -mhl-border; -fx-border-width: 1 0 0 0;"
       spacing="10" alignment="CENTER_LEFT" prefHeight="30">
 
     <padding><Insets bottom="4" left="10" right="10" top="4"/></padding>

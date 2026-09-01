@@ -10,6 +10,7 @@ import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBusyRetryExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -31,6 +32,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     private static final long RETRY_DELAY_MS = 100;
 
     private final CollectionManager collectionManager;
+    private final SqliteBusyRetryExecutor busyRetry;
 
     private JdbcTemplate jdbc() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -217,18 +219,20 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     public void markDownloadedBaseline(BookId bookId) {
         if (bookId == null) return;
         String now = now();
-        jdbc().update("""
-                UPDATE catalog_book_state
-                   SET downloaded_revision = catalog_revision,
-                       downloaded_fingerprint = catalog_fingerprint,
-                       downloaded_baseline_at = ?
-                 WHERE book_id = ?
-                """, now, bookId.asString());
-        jdbc().update("""
-                UPDATE catalog_update_events
-                   SET acknowledged_at = ?
-                 WHERE book_id = ? AND acknowledged_at IS NULL
-                """, now, bookId.asString());
+        busyRetry.run("download baseline update", () -> {
+            jdbc().update("""
+                    UPDATE catalog_book_state
+                       SET downloaded_revision = catalog_revision,
+                           downloaded_fingerprint = catalog_fingerprint,
+                           downloaded_baseline_at = ?
+                     WHERE book_id = ?
+                    """, now, bookId.asString());
+            jdbc().update("""
+                    UPDATE catalog_update_events
+                       SET acknowledged_at = ?
+                     WHERE book_id = ? AND acknowledged_at IS NULL
+                    """, now, bookId.asString());
+        });
     }
 
     @Override

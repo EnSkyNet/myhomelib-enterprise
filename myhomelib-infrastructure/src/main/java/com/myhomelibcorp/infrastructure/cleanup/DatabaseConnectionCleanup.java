@@ -8,9 +8,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-import javax.sql.DataSource;
-import java.lang.reflect.Method;
-
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -30,45 +27,11 @@ public class DatabaseConnectionCleanup {
         coverCache.clear();
         log.info("  ✅ Кеші очищено");
 
-        // 2. Закриття активних з'єднань
-        DataSource ds = collectionManager.getCurrentDataSource();
-        if (ds != null) {
-            try {
-                if (ds instanceof com.zaxxer.hikari.HikariDataSource hikariDs) {
-                    try {
-                        Method evictMethod = hikariDs.getClass().getMethod("evictConnections");
-                        evictMethod.invoke(hikariDs);
-                        log.info("  ✅ Evict connections виконано");
-                    } catch (NoSuchMethodException e) {
-                        log.info("  ℹ️ evictConnections не підтримується, закриваємо DataSource");
-                        hikariDs.close();
-                        log.info("  ✅ HikariDataSource закрито");
-                    } catch (Exception e) {
-                        log.warn("  ⚠️ Не вдалося evict connections: {}", e.getMessage());
-                        try {
-                            hikariDs.close();
-                            log.info("  ✅ HikariDataSource закрито (fallback)");
-                        } catch (Exception ex) {
-                            log.warn("  ⚠️ Не вдалося закрити DataSource: {}", ex.getMessage());
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("  ⚠️ Не вдалося закрити з'єднання: {}", e.getMessage());
-            }
-        }
-
-        // 3. Закриття колекції
+        // 2. CollectionManager is the single owner of the active Hikari pool.
+        // Closing it here once avoids reflection against a non-existent
+        // HikariDataSource.evictConnections() method and a second close below.
         collectionManager.forceCloseCurrentCollection();
         log.info("  ✅ Колекцію закрито");
-
-        // 4. Примусове звільнення пам'яті
-        System.gc();
-        try {
-            Thread.sleep(200);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-        }
 
         log.info("🧹 Очищення ресурсів завершено");
     }

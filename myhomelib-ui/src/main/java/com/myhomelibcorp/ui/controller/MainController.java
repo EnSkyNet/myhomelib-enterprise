@@ -29,6 +29,7 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.RadioMenuItem;
@@ -51,7 +52,6 @@ import java.util.List;
 @RequiredArgsConstructor
 @Slf4j
 public class MainController {
-
     // ===== Залежності =====
     private final ApplicationState appState;
     private final DialogService dialogService;
@@ -64,7 +64,7 @@ public class MainController {
     private final ActionCustomizationDialog actionCustomizationDialog;
     private final BookActionProfilesDialog bookActionProfilesDialog;
     private final OpdsUiService opdsUiService;
-
+    private final MainLayoutService mainLayoutService;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -84,13 +84,14 @@ public class MainController {
     private final com.myhomelibcorp.ui.service.CollectionUpdateUiService collectionUpdateUiService;
     private final com.myhomelibcorp.ui.service.LocalizationService localizationService;
     private final com.myhomelibcorp.ui.service.CollectionPropertiesUiService collectionPropertiesUiService;
-
     // ===== FXML =====
     @FXML private BorderPane mainPane;
     @FXML private TextField searchField;
     @FXML private Button backButton;
     @FXML private Button forwardButton;
     @FXML private StackPane workspaceStackPane;
+    @FXML private StackPane leftSidebarContainer;
+    @FXML private Pane rightSidebarContainer;
     @FXML private Menu languageMenu;
     @FXML private Menu recentBooksMenu;
     @FXML private MenuItem collectionsMenuItem;
@@ -104,6 +105,8 @@ public class MainController {
     @FXML private MenuItem bookActionsMenuItem;
     @FXML private MenuItem customizeActionsMenuItem;
     @FXML private MenuItem opdsMenuItem;
+    @FXML private CheckMenuItem leftSidebarMenuItem;
+    @FXML private CheckMenuItem rightSidebarMenuItem;
 
     @FXML
     public void initialize() {
@@ -111,6 +114,8 @@ public class MainController {
 
         viewModeController.init(mainPane);
         workspaceManager.init(workspaceStackPane);
+        mainLayoutService.registerSidebars(leftSidebarContainer, rightSidebarContainer);
+        bindSidebarMenuItems();
         backButton.disableProperty().bind(workspaceManager.canGoBackProperty().not());
         forwardButton.disableProperty().bind(workspaceManager.canGoForwardProperty().not());
         workspaceManager.canGoBackProperty().addListener((obs, oldValue, newValue) -> actionRegistry.refreshContexts());
@@ -130,7 +135,22 @@ public class MainController {
         mainPane.sceneProperty().addListener((obs, oldScene, scene) -> { if (scene != null) actionRegistry.attach(scene); });
         if (mainPane.getScene() != null) actionRegistry.attach(mainPane.getScene());
 
+        Platform.runLater(() -> collectionUpdateUiService.autoUpdateOnStartup(
+                mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+                () -> eventPublisher.publishEvent(new NavigationRefreshEvent())));
+
         log.info("MainController готовий до роботи");
+    }
+
+    private void bindSidebarMenuItems() {
+        if (leftSidebarMenuItem != null) {
+            leftSidebarMenuItem.setSelected(mainLayoutService.isLeftSidebarVisible());
+            leftSidebarMenuItem.selectedProperty().bindBidirectional(mainLayoutService.leftSidebarVisibleProperty());
+        }
+        if (rightSidebarMenuItem != null) {
+            rightSidebarMenuItem.setSelected(mainLayoutService.isRightSidebarVisible());
+            rightSidebarMenuItem.selectedProperty().bindBidirectional(mainLayoutService.rightSidebarVisibleProperty());
+        }
     }
 
     private void populateLanguages() {
@@ -154,9 +174,7 @@ public class MainController {
             languageMenu.getItems().add(item);
         }
     }
-
     // ==================== Навігація по воркспейсах ====================
-
     public void showDashboard() {
         workspaceManager.showDashboard();
     }
@@ -236,8 +254,6 @@ public class MainController {
     public void showGroupWorkspace(Group group) {
         workspaceManager.showGroupWorkspace(group);
     }
-
-
     public void showNewReaderWorkspace(BookId bookId) {
         workspaceManager.showNewReaderWorkspace(bookId);
     }
@@ -278,15 +294,11 @@ public class MainController {
     public BorderPane getMainPane() {
         return mainPane;
     }
-
     // ==================== Reader ====================
-
     public void cleanupReader() {
         mainNavigationCoordinator.cleanupReader();
     }
-
     // ==================== FXML дії ====================
-
     @FXML
     public void handleSearch() {
         String query = searchField.getText();
@@ -345,9 +357,7 @@ public class MainController {
         var updated = collectionPropertiesUiService.show(mainPane.getScene().getWindow());
         if (updated != null) { eventPublisher.publishEvent(new NavigationRefreshEvent()); navigationPanelController.refreshAll(); }
     }
-
     // ==================== Навігаційні дії ====================
-
     @FXML
     public void onAuthors() { mainNavigationCoordinator.authors(); }
 
@@ -390,17 +400,12 @@ public class MainController {
 
     @FXML
     public void onImport() { mainNavigationCoordinator.importWorkspace(); }
-
     // ==================== Дії з колекціями ====================
-
     @FXML
     public void handleNewCollection() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         collectionController.handleNewCollection(stage, this::showDashboard);
     }
-
-
-
     @FXML
     public void handleSelectCollection() {
         collectionController.handleSelectCollection(this::showDashboard);
@@ -414,7 +419,6 @@ public class MainController {
             Parent root = loader.load();
 
             CollectionWizardController controller = loader.getController();
-
             // Передаємо список колекцій у візард
             if (collectionWorkspaceController != null) {
                 controller.setCollectionList(collectionWorkspaceController.getCollectionList());
@@ -438,9 +442,7 @@ public class MainController {
             dialogService.showError("Помилка", "Не вдалося відкрити майстер: " + e.getMessage());
         }
     }
-
     // ==================== Дії з групами ====================
-
     @FXML
     public void handleAddGroup() {
         groupController.handleAddGroup(this::showDashboard);
@@ -455,9 +457,7 @@ public class MainController {
     public void handleDeleteGroup() {
         groupController.handleDeleteGroup(this::showDashboard);
     }
-
     // ==================== Пакетні операції ====================
-
     @FXML
     public void handleBatchRate() {
         batchOperationsController.handleBatchRate(this::handleRefresh);
@@ -482,22 +482,38 @@ public class MainController {
     public void handleClearSelection() {
         batchOperationsController.handleClearSelection();
     }
-
     // ==================== Вигляд ====================
-
     @FXML
     public void handleToggleView() {
         viewModeController.toggleView();
     }
 
     @FXML
-    public void handleShowColumns() {
-        if (appState.getBookTableController() != null) appState.getBookTableController().showColumnChooser();
-        else dialogService.showWarning("Таблиця недоступна", "Відкрийте список книг.");
+    public void handleToggleLeftSidebar() {
+        // selectedProperty is bound bidirectionally to MainLayoutService; this
+        // handler exists as the explicit FXML command and keeps the action clear.
+        mainLayoutService.setLeftSidebarVisible(leftSidebarMenuItem == null
+                ? !mainLayoutService.isLeftSidebarVisible()
+                : leftSidebarMenuItem.isSelected());
     }
 
-    // ==================== Експорт ====================
+    @FXML
+    public void handleToggleRightSidebar() {
+        mainLayoutService.setRightSidebarVisible(rightSidebarMenuItem == null
+                ? !mainLayoutService.isRightSidebarVisible()
+                : rightSidebarMenuItem.isSelected());
+    }
 
+    @FXML
+    public void handleShowColumns() {
+        if (workspaceManager.showColumnChooserForCurrentWorkspace()) return;
+        if (appState.getBookTableController() != null) {
+            appState.getBookTableController().showColumnChooser();
+            return;
+        }
+        dialogService.showWarning("Таблиця недоступна", "У поточному workspace немає таблиці з налаштовуваними колонками.");
+    }
+    // ==================== Експорт ====================
     @FXML
     public void handleExport() {
         exportController.handleExport(mainPane);
@@ -507,9 +523,7 @@ public class MainController {
     public void handleExportInpx() {
         exportController.handleExportInpx(mainPane, this::handleRefresh);
     }
-
     // ==================== Імпорт ====================
-
     @FXML
     public void handleImportFb2() {
         importController.importFb2(this::handleRefresh);
@@ -529,9 +543,7 @@ public class MainController {
     public void handleSyncFolder() {
         importController.handleSyncFolder(this::handleRefresh);
     }
-
     // ==================== Інструменти БД ====================
-
     @FXML
     public void handleCheckIntegrity() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
@@ -565,41 +577,31 @@ public class MainController {
         Stage stage = (Stage) mainPane.getScene().getWindow();
         databaseToolsController.handleStatistics(stage);
     }
-
     // ==================== Редагування книг ====================
-
     @FXML
     public void handleEditMetadata() { bookCommandCoordinator.editMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
 
     @FXML
     public void handleDeleteBook() {
-        if (!batchOperationsController.handleBatchDelete(this::handleRefresh)) {
-            bookCommandCoordinator.deleteBook(this::handleRefresh);
-        }
+        batchOperationsController.handleBatchDelete(this::handleRefresh);
     }
 
     @FXML
     public void handleAddBook() {
         importController.importFb2(this::handleRefresh);
     }
-
     // ==================== МЕТОДИ ДЛЯ РОБОТИ З READER ====================
-
     @FXML
     public void handleOpenNewReader() { bookCommandCoordinator.openInternal(); }
 
     @FXML
     public void handleDownloadBook() {
-        if (!batchOperationsController.handleBatchDownload(this::handleRefresh)) {
-            bookCommandCoordinator.download();
-        }
+        batchOperationsController.handleBatchDownload(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(), workspaceManager::refreshAfterStorageChange);
     }
 
     @FXML
     public void handleRemoveLocalCopy() {
-        if (!batchOperationsController.handleBatchRemoveLocal(this::handleRefresh)) {
-            bookCommandCoordinator.removeLocalCopy(this::handleRefresh);
-        }
+        batchOperationsController.handleBatchRemoveLocal(this::handleRefresh);
     }
 
     @FXML

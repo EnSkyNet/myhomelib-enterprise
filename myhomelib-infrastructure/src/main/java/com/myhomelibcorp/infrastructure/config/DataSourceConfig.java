@@ -2,10 +2,12 @@ package com.myhomelibcorp.infrastructure.config;
 
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
+@Slf4j
 public class DataSourceConfig {
 
     // Large INPX imports intentionally keep one SQLite transaction open for atomicity.
@@ -31,8 +33,7 @@ public class DataSourceConfig {
 
         config.setConnectionInitSql(
                 "PRAGMA foreign_keys=ON; " +
-                "PRAGMA busy_timeout=5000; " +
-                "PRAGMA journal_mode=WAL; " +
+                "PRAGMA busy_timeout=15000; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +
                         "PRAGMA cache_size=-32768; " +
@@ -65,18 +66,41 @@ public class DataSourceConfig {
 
         config.setConnectionInitSql(
                 "PRAGMA foreign_keys=ON; " +
-                "PRAGMA busy_timeout=5000; " +
-                "PRAGMA journal_mode=WAL; " +
+                "PRAGMA busy_timeout=15000; " +
                         "PRAGMA synchronous=NORMAL; " +
                         "PRAGMA temp_store=MEMORY; " +
                         "PRAGMA cache_size=-32768; " +
                         "PRAGMA mmap_size=67108864;"
         );
 
-        String poolName = "HikariPool-" + System.currentTimeMillis() + "-" +
-                dbPath.substring(dbPath.lastIndexOf('/') + 1).replace(".db", "");
-        config.setPoolName(poolName);
+        String normalizedPath = dbPath.replace('\\', '/');
+        String dbName = normalizedPath.substring(normalizedPath.lastIndexOf('/') + 1).replace(".db", "");
+        config.setPoolName("HikariPool-" + System.currentTimeMillis() + "-" + dbName);
 
-        return new HikariDataSource(config);
+        HikariDataSource dataSource = new HikariDataSource(config);
+        initializeWalOnce(dataSource);
+        return dataSource;
+    }
+
+    /** WAL is persistent database state; setting it on every pooled connection can itself contend for a lock. */
+    private void initializeWalOnce(HikariDataSource dataSource) {
+        for (int attempt = 1; attempt <= 3; attempt++) {
+            try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
+                statement.execute("PRAGMA journal_mode=WAL");
+                return;
+            } catch (Exception error) {
+                if (attempt == 3) {
+                    log.warn("Не вдалося підтвердити WAL mode для SQLite; продовжуємо з поточним режимом: {}",
+                            error.getMessage());
+                    return;
+                }
+                try {
+                    Thread.sleep(100L * attempt);
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+        }
     }
 }

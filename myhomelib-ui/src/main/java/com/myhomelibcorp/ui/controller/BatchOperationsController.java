@@ -11,28 +11,24 @@ import com.myhomelibcorp.application.usecase.group.AddToGroupBatchUseCase;
 import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.BookLoaderService;
+import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
-import com.myhomelibcorp.ui.viewmodel.ApplicationState;
-import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.stream.Collectors;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class BatchOperationsController {
 
-    private final ApplicationState appState;
     private final DialogService dialogService;
     private final BookLoaderService bookLoaderService;
+    private final BookSelectionService bookSelectionService;
     private final BookDownloadCoordinator bookDownloadCoordinator;
     private final UiBackgroundExecutor executor;
     private final BookSaver bookSaver;
@@ -44,35 +40,31 @@ public class BatchOperationsController {
     private final LoadGroupsUseCase loadGroupsUseCase;
 
 
-    /**
-     * Downloads the books checked in the current table. Returns false when there is no checkbox selection,
-     * so the caller may fall back to the single current-book action.
-     */
+    /** Downloads only books explicitly checked through the shared batch selection source. */
     public boolean handleBatchDownload(Runnable onComplete) {
+        return handleBatchDownload(null, onComplete);
+    }
+
+    public boolean handleBatchDownload(javafx.stage.Window owner, Runnable onComplete) {
         List<BookId> selected = getSelectedBookIds();
-        if (selected.isEmpty()) return false;
+        if (selected.isEmpty()) {
+            showNoBatchSelection();
+            return true;
+        }
 
-        AtomicInteger succeeded = new AtomicInteger();
-        AtomicInteger failed = new AtomicInteger();
-        CompletableFuture<?>[] tasks = selected.stream()
-                .map(id -> bookDownloadCoordinator.ensureLocal(id)
-                        .handle((path, error) -> {
-                            if (error == null) succeeded.incrementAndGet();
-                            else failed.incrementAndGet();
-                            return null;
-                        }))
-                .toArray(CompletableFuture[]::new);
-
-        CompletableFuture.allOf(tasks).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
-            int ok = succeeded.get();
-            int bad = failed.get();
-            if (bad == 0) {
-                dialogService.showInfo("Завантаження", "Завантажено/вже локально: " + ok + " книг.");
+        bookDownloadCoordinator.downloadBatch(selected, owner).whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+            if (error != null) {
+                dialogService.showWarning("Завантаження", "Не вдалося завершити пакетне завантаження: " + error.getMessage());
             } else {
-                dialogService.showWarning("Завантаження завершено",
-                        "Успішно: " + ok + ", з помилкою: " + bad + ". Деталі помилок показані під час завантаження.");
+                // Download is a terminal batch action: after processing, checkboxes must not remain stale.
+                // This applies to newly downloaded and already-local books alike.
+                handleClearSelection();
+                if (result != null && result.failed() > 0) {
+                    dialogService.showWarning("Завантаження завершено",
+                            "Завантажено: " + result.downloaded() + ", уже локальні: " + result.alreadyLocal()
+                                    + ", помилок: " + result.failed() + ".");
+                }
             }
-            handleClearSelection();
             if (onComplete != null) onComplete.run();
         }));
         return true;
@@ -80,7 +72,10 @@ public class BatchOperationsController {
 
     public boolean handleBatchRemoveLocal(Runnable onComplete) {
         List<BookId> selected = getSelectedBookIds();
-        if (selected.isEmpty()) return false;
+        if (selected.isEmpty()) {
+            showNoBatchSelection();
+            return true;
+        }
         bookDownloadCoordinator.removeLocalCopies(selected).whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
             if (error == null) {
                 handleClearSelection();
@@ -92,7 +87,10 @@ public class BatchOperationsController {
 
     public boolean handleBatchDelete(Runnable onComplete) {
         List<BookId> selected = getSelectedBookIds();
-        if (selected.isEmpty()) return false;
+        if (selected.isEmpty()) {
+            showNoBatchSelection();
+            return true;
+        }
         if (!dialogService.showConfirmation("Видалення записів із каталогу",
                 "Видалити вибрані записи: " + selected.size() + "?",
                 "Файли на диску НЕ видаляються. Цю дію буде застосовано лише до каталогу.")) return true;
@@ -223,7 +221,7 @@ public class BatchOperationsController {
     }
 
     public void handleClearSelection() {
-        appState.getBookTable().getBooks().forEach(book -> book.setSelected(false));
+        bookSelectionService.clear();
     }
 
     private void clearSelection() {
@@ -231,10 +229,12 @@ public class BatchOperationsController {
         bookLoaderService.reloadLastQuery();
     }
 
-    private List<BookId> getSelectedBookIds() {
-        return appState.getBookTable().getBooks().stream()
-                .filter(BookViewModel::isSelected)
-                .map(b -> BookId.fromString(b.getId()))
-                .collect(Collectors.toList());
+    public List<BookId> getSelectedBookIds() {
+        return bookSelectionService.snapshot();
+    }
+
+    private void showNoBatchSelection() {
+        dialogService.showWarning("Немає вибраних книг",
+                "Відмітьте книги checkbox. Поточний рядок не підміняє пакетний вибір.");
     }
 }

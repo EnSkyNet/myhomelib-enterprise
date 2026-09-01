@@ -11,17 +11,16 @@ import com.myhomelibcorp.ui.action.BookActionUiService;
 import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
+import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookTableViewModel;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.animation.PauseTransition;
-import javafx.beans.InvalidationListener;
 import javafx.collections.ListChangeListener;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
-import javafx.scene.control.cell.CheckBoxTableCell;
 import javafx.scene.layout.VBox;
 import javafx.util.Duration;
 import javafx.util.StringConverter;
@@ -41,6 +40,7 @@ public class BookTableController {
     private final ApplicationState appState;
     private final NavigationService navigationService;
     private final BookLoaderService bookLoaderService;
+    private final BookSelectionService bookSelectionService;
     private final BookFilterStateService filterStateService;
     private final BookFilterDialogService filterDialogService;
     private final TableProfileService tableProfileService;
@@ -73,7 +73,8 @@ public class BookTableController {
     private String profileKey = "default";
     private boolean profileConfigured;
     private boolean applyingProfile;
-    private final InvalidationListener batchSelectionListener = obs -> updateSelectionStatus();
+    private CheckBox masterSelectionCheckBox;
+    private boolean updatingMasterSelection;
 
     @FXML
     public void initialize() {
@@ -82,10 +83,50 @@ public class BookTableController {
 
         BookTableViewModel vm = appState.getBookTable();
 
-        TableColumn<BookViewModel, Boolean> selectCol = new TableColumn<>("☑");
+        TableColumn<BookViewModel, Boolean> selectCol = new TableColumn<>();
         selectCol.setId("select");
+        masterSelectionCheckBox = new CheckBox();
+        masterSelectionCheckBox.setAllowIndeterminate(true);
+        masterSelectionCheckBox.setTooltip(new Tooltip("Виділити всі видимі книги"));
+        masterSelectionCheckBox.setOnAction(event -> {
+            if (updatingMasterSelection) return;
+            BookSelectionService.SelectionState before = bookSelectionService.state(bookTableView.getItems());
+            // PARTIAL -> ALL; only ALL -> NONE. Never depend on JavaFX's indeterminate cycle.
+            bookSelectionService.setSelected(bookTableView.getItems(), before != BookSelectionService.SelectionState.ALL);
+            bookTableView.refresh();
+            updateSelectionStatus();
+        });
+        selectCol.setGraphic(masterSelectionCheckBox);
         selectCol.setCellValueFactory(cellData -> cellData.getValue().selectedProperty());
-        selectCol.setCellFactory(col -> new CheckBoxTableCell<>());
+        selectCol.setCellFactory(col -> new TableCell<>() {
+            private final CheckBox checkBox = new CheckBox();
+            private BookViewModel boundRow;
+            private final javafx.beans.value.ChangeListener<Boolean> selectedListener =
+                    (obs, oldValue, newValue) -> checkBox.setSelected(Boolean.TRUE.equals(newValue));
+            {
+                checkBox.setOnAction(event -> {
+                    BookViewModel row = boundRow;
+                    if (row != null && !row.isGroupHeader()) row.setSelected(checkBox.isSelected());
+                });
+            }
+            @Override protected void updateItem(Boolean item, boolean empty) {
+                super.updateItem(item, empty);
+                if (boundRow != null) {
+                    boundRow.selectedProperty().removeListener(selectedListener);
+                    boundRow = null;
+                }
+                BookViewModel row = getTableRow() == null ? null : getTableRow().getItem();
+                if (empty || row == null || row.isGroupHeader()) {
+                    setGraphic(null);
+                    return;
+                }
+                boundRow = row;
+                checkBox.setSelected(row.isSelected());
+                row.selectedProperty().addListener(selectedListener);
+                setGraphic(checkBox);
+                setContentDisplay(ContentDisplay.GRAPHIC_ONLY);
+            }
+        });
         selectCol.setEditable(true);
         selectCol.setPrefWidth(40);
         selectCol.setResizable(false);
@@ -197,14 +238,10 @@ public class BookTableController {
     }
 
     private void installSelectionStatusTracking(BookTableViewModel vm) {
-        vm.getBooks().forEach(this::attachBatchSelectionListener);
-        vm.getBooks().addListener((ListChangeListener<BookViewModel>) change -> {
-            while (change.next()) {
-                if (change.wasRemoved()) change.getRemoved().forEach(this::detachBatchSelectionListener);
-                if (change.wasAdded()) change.getAddedSubList().forEach(this::attachBatchSelectionListener);
-            }
-            updateSelectionStatus();
-        });
+        // BookSelectionService is the sole batch-selection source, so one count listener is enough.
+        // Per-row listeners caused Select All on large pages to recalculate master state repeatedly.
+        bookSelectionService.selectedCountProperty().addListener((obs, oldValue, newValue) -> updateSelectionStatus());
+        vm.getBooks().addListener((ListChangeListener<BookViewModel>) change -> updateSelectionStatus());
         if (currentBookLabel != null) {
             currentBookLabel.setMaxWidth(280);
             currentBookLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
@@ -212,27 +249,34 @@ public class BookTableController {
         updateSelectionStatus();
     }
 
-    private void attachBatchSelectionListener(BookViewModel book) {
-        if (book != null && !book.isGroupHeader()) book.selectedProperty().addListener(batchSelectionListener);
-    }
-
-    private void detachBatchSelectionListener(BookViewModel book) {
-        if (book != null && !book.isGroupHeader()) book.selectedProperty().removeListener(batchSelectionListener);
-    }
-
     private void updateSelectionStatus() {
         if (bookTableView == null) return;
         BookViewModel current = bookTableView.getSelectionModel().getSelectedItem();
         String currentTitle = current == null || current.isGroupHeader() || current.getTitle() == null || current.getTitle().isBlank()
                 ? "—" : current.getTitle();
-        long batchCount = appState.getBookTable().getBooks().stream()
-                .filter(book -> !book.isGroupHeader() && book.isSelected())
-                .count();
+        long batchCount = bookSelectionService.count();
         if (currentBookLabel != null) {
             currentBookLabel.setText(currentTitle);
             currentBookLabel.setTooltip("—".equals(currentTitle) ? null : new Tooltip(currentTitle));
         }
         if (batchSelectionLabel != null) batchSelectionLabel.setText("Пакетно вибрано: " + batchCount);
+        updateMasterSelectionState();
+    }
+
+    private void updateMasterSelectionState() {
+        if (masterSelectionCheckBox == null || bookTableView == null) return;
+        BookSelectionService.SelectionState state = bookSelectionService.state(bookTableView.getItems());
+        boolean hasBooks = bookTableView.getItems().stream().anyMatch(row -> row != null && !row.isGroupHeader());
+        updatingMasterSelection = true;
+        try {
+            masterSelectionCheckBox.setDisable(!hasBooks);
+            masterSelectionCheckBox.setIndeterminate(state == BookSelectionService.SelectionState.PARTIAL);
+            masterSelectionCheckBox.setSelected(state == BookSelectionService.SelectionState.ALL);
+            masterSelectionCheckBox.setTooltip(new Tooltip(state == BookSelectionService.SelectionState.ALL
+                    ? "Зняти вибір з усіх видимих книг" : "Виділити всі видимі книги"));
+        } finally {
+            updatingMasterSelection = false;
+        }
     }
 
     private void registerProfileColumn(String id, TableColumn<BookViewModel, ?> column) {
@@ -457,7 +501,9 @@ public class BookTableController {
         BookTableViewModel vm = appState.getBookTable();
         List<BookViewModel> groupedBooks = SeriesGrouping.groupPreservingOrder(books);
         vm.setBooks(groupedBooks);
-        groupedBooks.stream().filter(book -> !book.isGroupHeader()).findFirst().ifPresent(vm::setSelectedBook);
+        vm.setSelectedBook(null);
+        if (bookTableView.getSelectionModel() != null) bookTableView.getSelectionModel().clearSelection();
+        updateSelectionStatus();
         log.info("Таблиця оновлена: {} рядків, {} книг; SQL order preserved", groupedBooks.size(), books.size());
     }
     /** Refreshes row context menus after Stage 15 profile customization. */

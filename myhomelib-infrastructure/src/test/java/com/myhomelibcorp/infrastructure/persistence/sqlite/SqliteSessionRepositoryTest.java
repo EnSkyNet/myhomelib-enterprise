@@ -22,7 +22,7 @@ class SqliteSessionRepositoryTest {
         when(queryExecutor.queryForObject(anyString(), any(Class.class), any(Object[].class)))
                 .thenThrow(new IllegalStateException("database is locked"));
 
-        SqliteSessionRepository repository = new SqliteSessionRepository(queryExecutor);
+        SqliteSessionRepository repository = new SqliteSessionRepository(queryExecutor, new SqliteBusyRetryExecutor());
         String collectionId = "lock-test-" + UUID.randomUUID();
         String bookId = UUID.randomUUID().toString();
 

@@ -6,10 +6,10 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.BackupController"
-      spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
       prefWidth="620" prefHeight="520">
 
-    <Label text="💾 Резервне копіювання" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+    <Label text="💾 Резервне копіювання" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <Separator/>
 
@@ -18,7 +18,7 @@
         <Label text="📁 Папка для копії:" prefWidth="120" style="-fx-font-weight: bold;"/>
         <TextField fx:id="backupPathField" HBox.hgrow="ALWAYS" promptText="Виберіть папку..."/>
         <Button fx:id="selectPathButton" text="📂 Вибрати" onAction="#onSelectPath"
-                style="-fx-background-color: #3498db; -fx-text-fill: white;"/>
+                style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
     <Separator/>
@@ -26,30 +26,30 @@
     <!-- Опції резервного копіювання -->
     <Label text="📋 Вміст резервної копії:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
-    <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 5;">
+    <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 5;">
         <CheckBox fx:id="includeMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
-        <Label text="Portable user-data.json містить ratings/progress/reviews/bookmarks/groups/history/saved searches/filters/Reader settings і може бути накладений на свіжий каталог." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
-        <Label text="📊 Узгоджений SQLite snapshot завжди включений. Пошуковий індекс і кеш обкладинок є похідними та не архівуються." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        <Label text="Portable user-data.json містить ratings/progress/reviews/bookmarks/groups/history/saved searches/filters/Reader settings і може бути накладений на свіжий каталог." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
+        <Label text="📊 Узгоджений SQLite snapshot завжди включений. Пошуковий індекс і кеш обкладинок є похідними та не архівуються." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>
 
     <!-- Прогрес -->
     <VBox spacing="5">
-        <Label fx:id="statusLabel" text="Готово до резервного копіювання" style="-fx-text-fill: #7f8c8d;"/>
+        <Label fx:id="statusLabel" text="Готово до резервного копіювання" style="-fx-text-fill: -mhl-muted-text;"/>
         <ProgressBar fx:id="progressBar" prefWidth="580" visible="false"/>
     </VBox>
 
     <!-- Лог -->
     <TextArea fx:id="logArea" prefHeight="150" editable="false" visible="false"
-              style="-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: #1e1e1e; -fx-text-fill: #d4d4d4;"/>
+              style="-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: -mhl-code-background; -fx-text-fill: -mhl-code-text;"/>
 
     <!-- Кнопки -->
     <HBox spacing="10" alignment="CENTER_RIGHT">
         <Button fx:id="backupButton" text="💾 Створити копію" onAction="#onBackup"
-                style="-fx-background-color: #27ae60; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 8 25;"/>
+                style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 25;"/>
         <Button text="✕ Закрити" onAction="#onClose"
-                style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+                style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
 </VBox>

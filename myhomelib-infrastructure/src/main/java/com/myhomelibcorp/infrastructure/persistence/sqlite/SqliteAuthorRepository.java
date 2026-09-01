@@ -281,10 +281,15 @@ public class SqliteAuthorRepository implements AuthorRepository {
     @Override
     @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
     public List<Author> searchByName(String query, int limit) {
-        if (query == null || query.isBlank()) {
-            return List.of();
-        }
-        int safeLimit = Math.max(1, Math.min(limit, 200));
+        return searchByName(query, limit, 0);
+    }
+
+    @Override
+    @Transactional(transactionManager = "collectionTransactionManager", readOnly = true)
+    public List<Author> searchByName(String query, int limit, int offset) {
+        if (query == null || query.isBlank()) return List.of();
+        int safeLimit = Math.max(1, Math.min(limit, 500));
+        int safeOffset = Math.max(0, offset);
         String needle = "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
         String sql = """
                 SELECT *
@@ -296,9 +301,9 @@ public class SqliteAuthorRepository implements AuthorRepository {
                     COALESCE(first_name, '') COLLATE NOCASE,
                     COALESCE(middle_name, '') COLLATE NOCASE,
                     id
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """;
-        return getJdbcTemplate().query(sql, authorRowMapper, needle, needle, safeLimit);
+        return getJdbcTemplate().query(sql, authorRowMapper, needle, needle, safeLimit, safeOffset);
     }
 
     @Override

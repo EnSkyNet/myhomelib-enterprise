@@ -14,6 +14,7 @@ import java.util.prefs.Preferences;
 public class SqliteSessionRepository implements SessionRepository {
 
     private final QueryExecutor queryExecutor;
+    private final SqliteBusyRetryExecutor busyRetry;
     private final Preferences prefs = Preferences.userNodeForPackage(SqliteSessionRepository.class);
 
     private static final String PREF_KEY_PREFIX = "lastOpenedBookId_";
@@ -34,10 +35,13 @@ public class SqliteSessionRepository implements SessionRepository {
 
         try {
             String sql = "INSERT OR REPLACE INTO session (key, value) VALUES (?, ?)";
-            queryExecutor.update(sql, prefKey, bookId);
+            busyRetry.run("session last-opened write", () -> queryExecutor.update(sql, prefKey, bookId));
             log.debug("Збережено останню книгу для колекції {}: {}", collectionId, bookId);
-        } catch (Exception e) {
-            log.warn("Не вдалося зберегти lastOpenedBookId в БД для колекції {}", collectionId, e);
+        } catch (RuntimeException e) {
+            // Preferences were already updated above, so a transient DB problem must not break Reader.
+            if (!SqliteBusyRetryExecutor.isBusy(e)) {
+                log.warn("Не вдалося зберегти lastOpenedBookId у БД: {}", e.getMessage());
+            }
         }
     }
 
@@ -76,7 +80,7 @@ public class SqliteSessionRepository implements SessionRepository {
         String prefKey = PREF_KEY_PREFIX + collectionId;
         prefs.remove(prefKey);
         try {
-            queryExecutor.update("DELETE FROM session WHERE key = ?", prefKey);
+            busyRetry.run("session clear", () -> queryExecutor.update("DELETE FROM session WHERE key = ?", prefKey));
             log.debug("Очищено session для колекції {}", collectionId);
         } catch (Exception e) {
             log.warn("Не вдалося очистити session для колекції {}", collectionId, e);

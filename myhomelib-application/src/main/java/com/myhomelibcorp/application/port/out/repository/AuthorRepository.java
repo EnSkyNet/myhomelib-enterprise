@@ -27,5 +27,11 @@ public interface AuthorRepository {
     long countByInitial(char initial);
     List<Author> searchByName(String query, int limit);
 
+    /** Server-side page used by search workspaces that must not silently truncate to 20 authors. */
+    default List<Author> searchByName(String query, int limit, int offset) {
+        if (offset > 0) return List.of();
+        return searchByName(query, limit);
+    }
+
     long countOrphanedAuthors();
 }

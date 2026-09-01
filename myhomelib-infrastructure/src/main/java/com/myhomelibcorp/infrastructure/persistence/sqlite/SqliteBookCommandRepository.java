@@ -34,6 +34,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     private final BookGenreHelper bookGenreHelper;
     private final BookBatchWriter batchWriter;
     private final BookCache bookCache;
+    private final SqliteBusyRetryExecutor busyRetry;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -160,7 +161,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
     @Override
     public void updateStorage(BookId bookId, String collectionRoot, String folder, String fileName, String archiveEntry, boolean local) {
         if (bookId == null) return;
-        getJdbcTemplate().update("""
+        busyRetry.run("book storage update", () -> getJdbcTemplate().update("""
                 UPDATE books
                 SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?,
                     format = ?, update_date = CURRENT_TIMESTAMP
@@ -172,7 +173,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                 archiveEntry == null ? "" : archiveEntry,
                 local ? 1 : 0,
                 BookDenormalizedValues.format(fileName),
-                bookId.asString());
+                bookId.asString()));
         bookCache.evict(bookId);
     }
 

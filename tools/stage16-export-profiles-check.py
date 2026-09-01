@@ -18,7 +18,7 @@ hist=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/exp
 use=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java',
          'ExportCollisionResolver','case ASK','historyService.record','request.getSubfolderTemplate()',
          'request.getPostActionProfileId()','actionExecutionService.execute','request.isExtractOnly() && book.hasArchiveEntry()',
-         'Files.copy(sourceStream, targetFile','ExportProgress','AtomicBoolean')
+         'Files.copy(sourceStream, stagedFile','commitExportedFile(stagedFile, targetFile)','ATOMIC_MOVE','verifyExportedFile(targetFile)','ExportProgress','AtomicBoolean')
 ui=need('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/ExportController.java',
         'ExportProfileService','ExportHistoryService','onSaveProfileAs','onUpdateProfile','onDeleteProfile','onShowHistory',
         'this::resolveCollision','setProgressVisible(true)','setProgress(value)','CollisionPolicy.ASK')

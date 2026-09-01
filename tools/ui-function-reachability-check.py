@@ -27,6 +27,13 @@ for fxml in UI_RES.rglob('*.fxml'):
     controller_name = controller.rsplit('.', 1)[-1] if controller else ''
     controller_text = by_class.get(controller_name, (None, ''))[1]
     for node in root.iter():
+        # JavaFX Control.tooltip is a Tooltip object, not a String. A shortcut such as
+        # tooltip="..." is valid XML but fails at runtime in FXMLLoader with BeanAdapter.coerce().
+        if 'tooltip' in node.attrib:
+            errors.append(
+                f'{fxml.relative_to(ROOT)}: string tooltip attribute is not FXMLLoader-safe; '
+                'use <tooltip><Tooltip text="..."/></tooltip>'
+            )
         for event, value in node.attrib.items():
             if not value.startswith('#'):
                 continue

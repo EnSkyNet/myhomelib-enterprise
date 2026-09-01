@@ -212,7 +212,7 @@ public class BookViewModel {
     }
 
     private void updateLocalStatus() {
-        localStatus.set(local.get() ? "Локальна" : "Хмарна");
+        localStatus.set(local.get() ? "Завантажено" : "Не завантажено");
     }
 
     @Override

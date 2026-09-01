@@ -7,7 +7,7 @@
 <BorderPane xmlns:fx="http://javafx.com/fxml/1"
             fx:id="mainPane"
             fx:controller="com.myhomelibcorp.ui.controller.MainController"
-            style="-fx-background-color: #f0f0f0;">
+            style="-fx-background-color: -mhl-panel;">
 
     <top>
         <VBox>
@@ -53,6 +53,9 @@
                 </Menu>
                 <Menu text="Вигляд">
                     <MenuItem fx:id="refreshMenuItem" text="Оновити" onAction="#handleRefresh"/>
+                    <SeparatorMenuItem/>
+                    <CheckMenuItem fx:id="leftSidebarMenuItem" text="Ліва панель" selected="true" onAction="#handleToggleLeftSidebar"/>
+                    <CheckMenuItem fx:id="rightSidebarMenuItem" text="Права панель" selected="true" onAction="#handleToggleRightSidebar"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
                     <SeparatorMenuItem/>
@@ -103,55 +106,56 @@
                 </Menu>
             </MenuBar>
 
-            <ToolBar>
+            <FlowPane hgap="4" vgap="4" alignment="CENTER_LEFT" styleClass="main-toolbar-wrap">
                 <Button fx:id="backButton" text="←" onAction="#handleBack" disable="true"/>
                 <Button fx:id="forwardButton" text="→" onAction="#handleForward" disable="true"/>
-                <Separator/>
+                <Separator orientation="VERTICAL"/>
                 <Button text="🏠" onAction="#handleHome"/>
-                <Separator/>
+                <Separator orientation="VERTICAL"/>
                 <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="300"/>
                 <Button text="🔍" onAction="#handleSearch"/>
-                <Separator/>
+                <Separator orientation="VERTICAL"/>
                 <Button text="+Імпорт" onAction="#handleImportDirectory"/>
                 <Button text="+Книга" onAction="#handleAddBook"/>
-                <Separator/>
-                <Button text="⭐ Оцінити" onAction="#handleBatchRate" style="-fx-background-color: #FFC107; -fx-text-fill: black;"/>
-                <Button text="📊 Прогрес" onAction="#handleBatchProgress" style="-fx-background-color: #00ACC1; -fx-text-fill: white;"/>
-                <Button text="📖 Прочитано" onAction="#handleBatchMarkRead" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
-                <Button text="📂 Додати до групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
-                <Button text="✖ Зняти вибір" onAction="#handleClearSelection" style="-fx-background-color: #9E9E9E; -fx-text-fill: white;"/>
-                <Button text="🌳" onAction="#handleToggleView" style="-fx-background-color: #9C27B0; -fx-text-fill: white;"/>
-                <Separator/>
-                <Button text="📤 Експорт" onAction="#handleExport" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
-                <Button text="📦 INPX" onAction="#handleExportInpx" style="-fx-background-color: #673AB7; -fx-text-fill: white;"/>
-                <Separator/>
-                <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
-                <Separator/>
-                <!-- НОВА КНОПКА ДЛЯ НОВОГО READER -->
-                <Button text="⬇ Завантажити" onAction="#handleDownloadBook"/>
-                <Button text="⌫ Локальна копія" onAction="#handleRemoveLocalCopy"/>
-                <Button text="✕ Завантаження" onAction="#handleCancelDownload"/>
-                <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
-                <Separator/>
-                <Region HBox.hgrow="ALWAYS"/>
+                <Separator orientation="VERTICAL"/>
+                <Button text="⭐ Оцінити" onAction="#handleBatchRate" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-text;"/>
+                <Button text="📊 Прогрес" onAction="#handleBatchProgress" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
+                <Button text="📖 Прочитано" onAction="#handleBatchMarkRead" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
+                <Button text="📂 Додати до групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
+                <Button text="✖ Зняти вибір" onAction="#handleClearSelection" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
+                <Button text="🌳" onAction="#handleToggleView" style="-fx-background-color: -mhl-accent-secondary; -fx-text-fill: -mhl-on-accent;"/>
+                <Separator orientation="VERTICAL"/>
+                <Button text="📤 Експорт" onAction="#handleExport" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
+                <Button text="📦 INPX" onAction="#handleExportInpx" style="-fx-background-color: -mhl-accent-secondary; -fx-text-fill: -mhl-on-accent;"/>
+                <Separator orientation="VERTICAL"/>
+                <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
+                <Separator orientation="VERTICAL"/>
+                <Button text="⬇ Завантажити вибрані" onAction="#handleDownloadBook"/>
+                <Button text="⌫ Видалити локальну" onAction="#handleRemoveLocalCopy"/>
+                <Button text="✕ Скасувати завантаження" onAction="#handleCancelDownload"/>
+                <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
+                <Separator orientation="VERTICAL"/>
                 <Button text="⚙" onAction="#handleSettings"/>
-            </ToolBar>
+            </FlowPane>
         </VBox>
     </top>
 
     <left>
-        <fx:include source="navigation-panel.fxml"/>
+        <StackPane fx:id="leftSidebarContainer">
+            <fx:include source="navigation-panel.fxml"/>
+        </StackPane>
     </left>
 
     <center>
-        <VBox VBox.vgrow="ALWAYS" style="-fx-background-color: #ffffff;">
+        <VBox VBox.vgrow="ALWAYS" style="-fx-background-color: -mhl-panel;">
             <fx:include source="alphabet-toolbar-view.fxml"/>
             <StackPane fx:id="workspaceStackPane" VBox.vgrow="ALWAYS"/>
         </VBox>
     </center>
 
     <right>
-        <VBox style="-fx-padding: 5; -fx-pref-width: 320; -fx-max-width: 350; -fx-background-color: #fafafa;"
+        <VBox fx:id="rightSidebarContainer"
+              style="-fx-padding: 5; -fx-pref-width: 320; -fx-max-width: 350; -fx-background-color: -mhl-panel;"
               VBox.vgrow="ALWAYS">
             <fx:include source="details.fxml"/>
         </VBox>

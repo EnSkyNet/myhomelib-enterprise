@@ -63,7 +63,7 @@ public final class CatalogUpdateProgressDialog {
         stageLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
         currentItemLabel.setWrapText(true);
         currentItemLabel.setMaxWidth(Double.MAX_VALUE);
-        currentItemLabel.setStyle("-fx-text-fill: #666666;");
+        currentItemLabel.getStyleClass().add("muted-text");
         progressBar.setMaxWidth(Double.MAX_VALUE);
         progressBar.setPrefWidth(580);
 
@@ -191,7 +191,7 @@ public final class CatalogUpdateProgressDialog {
     private static void addCounter(GridPane grid, int columnPair, int row, String title, Label value) {
         int base = columnPair * 2;
         Label name = new Label(title + ":");
-        name.setStyle("-fx-text-fill: #666666;");
+        name.getStyleClass().add("muted-text");
         value.setStyle("-fx-font-weight: bold;");
         grid.add(name, base, row);
         grid.add(value, base + 1, row);

@@ -6,7 +6,7 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.collection.CollectionWorkspaceController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;">
+      spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;">
 
     <Label text="⭐ Колекції" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
 
@@ -16,7 +16,7 @@
             <VBox spacing="5" style="-fx-padding: 5;">
                 <HBox spacing="5">
                     <Button text="+ Порожня" onAction="#onCreateCollection"/>
-                    <Button fx:id="activateButton" text="▶ Активувати" onAction="#onActivateCollection" style="-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;"/>
+                    <Button fx:id="activateButton" text="▶ Активувати" onAction="#onActivateCollection" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
                     <Button fx:id="renameButton" text="✏️" onAction="#onRenameCollection" prefWidth="30"/>
                     <Button fx:id="deleteButton" text="🗑" onAction="#onDeleteCollection" prefWidth="30"/>
                     <Button text="🔄" onAction="#onRefresh" prefWidth="30"/>

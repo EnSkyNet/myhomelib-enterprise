@@ -6,7 +6,7 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.reader.TOCDialogController"
-      spacing="10" style="-fx-padding: 15; -fx-background-color: #f8f9fa;"
+      spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;"
       prefWidth="400" prefHeight="500">
 
     <Label text="📑 Зміст" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
@@ -16,6 +16,6 @@
     <Separator/>
 
     <HBox spacing="10" alignment="CENTER_RIGHT">
-        <Button text="Закрити" onAction="#onClose" style="-fx-background-color: #9e9e9e; -fx-text-fill: white;"/>
+        <Button text="Закрити" onAction="#onClose" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 </VBox>

@@ -25,8 +25,7 @@ spring:
       # Налаштування для SQLite
       connection-init-sql: |
         PRAGMA foreign_keys=ON;
-        PRAGMA busy_timeout=10000;
-        PRAGMA journal_mode=WAL;
+        PRAGMA busy_timeout=15000;
         PRAGMA synchronous=NORMAL;
         PRAGMA temp_store=MEMORY;
         PRAGMA cache_size=-32768;
@@ -48,12 +47,19 @@ app:
 
 logging:
   level:
-    com.myhomelibcorp: DEBUG
-    org.springframework: INFO
-    org.flywaydb: INFO
+    root: WARN
+    # Production defaults: keep lifecycle/business milestones, suppress per-item diagnostics.
+    com.myhomelibcorp: INFO
+    com.myhomelibcorp.infrastructure.resource.BookResourceResolver: WARN
+    com.myhomelibcorp.infrastructure.download: WARN
+    com.myhomelibcorp.infrastructure.persistence.sqlite.helper: WARN
+    com.myhomelibcorp.ui.presenter.CoverPresenter: WARN
+    com.zaxxer.hikari: WARN
+    org.springframework: WARN
+    org.flywaydb: WARN
     org.sqlite: WARN
-    org.apache.lucene: INFO
-    com.zaxxer.hikari: DEBUG
+    org.apache.lucene: WARN
+    org.apache.lucene.internal.vectorization.VectorizationProvider: ERROR
   charset:
     console: UTF-8
     file: UTF-8

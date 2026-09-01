@@ -7,7 +7,7 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.book.BookWorkspaceController"
-      spacing="10" style="-fx-padding: 20; -fx-background-color: #fafafa;">
+      spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-panel;">
 
     <HBox spacing="20" alignment="TOP_LEFT">
         <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
@@ -35,14 +35,14 @@
     <TextArea fx:id="annotationArea" wrapText="true" prefHeight="120" editable="false"/>
 
     <HBox spacing="10">
-        <Button text="Відкрити у зовнішній програмі" onAction="#onOpen" style="-fx-background-color: #4CAF50; -fx-text-fill: white;"/>
-        <Button text="Читати у MyHomeLib" onAction="#onRead" style="-fx-background-color: #2196F3; -fx-text-fill: white;"/>
+        <Button text="Відкрити у зовнішній програмі" onAction="#onOpen" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="Читати у MyHomeLib" onAction="#onRead" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
         <Button text="Завантажити" onAction="#onDownload"/>
-        <Button text="Редагувати" onAction="#onEdit" style="-fx-background-color: #FF9800; -fx-text-fill: white;"/>
+        <Button text="Редагувати" onAction="#onEdit" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
         <Button text="Відкрити папку" onAction="#onOpenFolder"/>
         <Button text="Додати до групи" onAction="#onAddToCollection"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Видалити запис із каталогу" onAction="#onDeleteBook" style="-fx-background-color: #f44336; -fx-text-fill: white;"/>
+        <Button text="Видалити запис із каталогу" onAction="#onDeleteBook" style="-fx-background-color: -mhl-danger; -fx-text-fill: -mhl-on-accent;"/>
         <Button text="← Назад" onAction="#onBack"/>
     </HBox>
 </VBox>

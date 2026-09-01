@@ -66,6 +66,14 @@ public class LocalizationService {
         return languageCatalogs.genreName(language(), genreCode, fallback);
     }
 
+    /**
+     * Hides a base/numeric fallback only when the same set already contains a more
+     * specific extended genre from the same semantic parent group.
+     */
+    public boolean shouldDisplayGenre(String genreCode, java.util.Collection<String> siblingCodes) {
+        return languageCatalogs.shouldDisplayGenre(language(), genreCode, siblingCodes);
+    }
+
     /** User-facing diagnostics generated while scanning Lang/*.json. */
     public java.util.List<String> languageDiagnostics() {
         languageCatalogs.refresh();

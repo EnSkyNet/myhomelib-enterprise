@@ -1,19 +1,19 @@
-/* myhomelib-ui/src/main/resources/css/import-progress.css */
+/* Import progress inherits the whole-application theme variables. */
 
 .progress-bar {
-    -fx-accent: #4CAF50;
-    -fx-background-color: #e0e0e0;
+    -fx-accent: -mhl-success;
+    -fx-background-color: derive(-mhl-panel, -8%);
     -fx-background-radius: 10;
     -fx-padding: 0;
 }
 
 .progress-bar .bar {
-    -fx-background-color: linear-gradient(to right, #4CAF50, #66BB6A);
+    -fx-background-color: linear-gradient(to right, -mhl-success, derive(-mhl-success, 18%));
     -fx-background-radius: 10;
 }
 
 .progress-indicator {
-    -fx-progress-color: #4CAF50;
+    -fx-progress-color: -mhl-success;
 }
 
 .label {
@@ -30,5 +30,5 @@
 
 #speedLabel {
     -fx-font-size: 12px;
-    -fx-text-fill: #888888;
+    -fx-text-fill: -mhl-muted-text;
 }

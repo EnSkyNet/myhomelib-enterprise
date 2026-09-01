@@ -151,7 +151,7 @@ class InpxImportPipelineTest {
     }
 
     @Test
-    void fullCatalogImportMarksPreviouslyTrackedBooksMissing(@TempDir Path tempDir) throws Exception {
+    void fullCatalogImportDoesNotInferDeletionFromAbsence(@TempDir Path tempDir) throws Exception {
         Path testFile = tempDir.resolve("full.inpx");
         java.nio.file.Files.createFile(testFile);
         when(reader.count(eq(testFile), any(), eq(true))).thenReturn(0L);
@@ -169,7 +169,7 @@ class InpxImportPipelineTest {
                 "https://alex80.github.io/mhl/update/flibusta_online_fb2.zip",
                 true, null, null);
 
-        verify(catalogUpdateTrackingPort).markTrackedBooksMissing(session);
+        verify(catalogUpdateTrackingPort, never()).markTrackedBooksMissing(any());
     }
 
     @Test

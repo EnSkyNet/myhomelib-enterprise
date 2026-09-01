@@ -44,7 +44,7 @@ public class OpdsUiService {
         status.setWrapText(true);
         Label exposure = new Label();
         exposure.setWrapText(true);
-        exposure.setStyle("-fx-text-fill: #b71c1c; -fx-font-weight: bold;");
+        exposure.getStyleClass().add("danger-text");
 
         Runnable updateAuth = () -> {
             username.setDisable(!auth.isSelected());

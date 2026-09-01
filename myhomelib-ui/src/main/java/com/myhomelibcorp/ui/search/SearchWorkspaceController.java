@@ -3,15 +3,16 @@ package com.myhomelibcorp.ui.search;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
+import com.myhomelibcorp.application.search.GlobalSearchResult;
 import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.service.BookSelectionService;
+import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchMode;
-import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
@@ -30,6 +31,8 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
+import javafx.geometry.Pos;
+import javafx.scene.text.Text;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.util.Duration;
@@ -41,7 +44,8 @@ import org.springframework.stereotype.Component;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
+import java.util.Locale;
+import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
@@ -59,7 +63,9 @@ public class SearchWorkspaceController {
     private final BookFilterStateService filterStateService;
     private final BookFilterDialogService filterDialogService;
     private final LocalizationService i18n;
+    private final BookSelectionService bookSelectionService;
     private final NavigationPanelController navigationPanelController;
+    private final MainLayoutService mainLayoutService;
 
     @FXML private TextField searchField;
     @FXML private VBox resultsContainer;
@@ -79,12 +85,19 @@ public class SearchWorkspaceController {
     @FXML private Label genresCountLabel;
 
     @FXML private VBox booksSection;
-    @FXML private ListView<BookDto> booksListView;
+    @FXML private TableView<BookDto> booksTableView;
+    @FXML private TableColumn<BookDto, Void> selectColumn;
+    @FXML private TableColumn<BookDto, String> titleColumn;
+    @FXML private TableColumn<BookDto, String> authorColumn;
+    @FXML private TableColumn<BookDto, String> seriesColumn;
+    @FXML private TableColumn<BookDto, String> bookGenresColumn;
+    @FXML private TableColumn<BookDto, String> seqNumberColumn;
+    @FXML private TableColumn<BookDto, String> yearColumn;
+    @FXML private TableColumn<BookDto, String> localColumn;
+    @FXML private TableColumn<BookDto, String> fileSizeColumn;
+    @FXML private TableColumn<BookDto, String> ratingColumn;
+    @FXML private TableColumn<BookDto, String> progressColumn;
     @FXML private Label booksCountLabel;
-    @FXML private HBox booksPagingBox;
-    @FXML private Button booksPreviousPageButton;
-    @FXML private Button booksNextPageButton;
-    @FXML private Label booksPageLabel;
 
     @FXML private Button saveSearchButton;
     @FXML private Button savedSearchesButton;
@@ -105,9 +118,9 @@ public class SearchWorkspaceController {
     @FXML private DatePicker addedToPicker;
     @FXML private CheckBox localOnlyCheck;
 
-    private static final int ADVANCED_PAGE_SIZE = 100;
     private String lastQuery = "";
-    private int advancedPage;
+    private CheckBox masterSelectionCheckBox;
+    private boolean suppressSearchListener;
     private final AtomicLong searchGeneration = new AtomicLong();
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
@@ -151,20 +164,7 @@ public class SearchWorkspaceController {
     // ==================== НАЛАШТУВАННЯ СПИСКІВ ====================
 
     private void setupListViews() {
-        authorsListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
-            @Override protected void updateItem(AuthorDto item, boolean empty) {
-                super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.getFullName());
-            }
-        });
-        authorsListView.setOnMouseClicked(e -> {
-            if (e.getClickCount() == 2) {
-                AuthorDto selected = authorsListView.getSelectionModel().getSelectedItem();
-                if (selected != null) navigationService.navigateToAuthor(AuthorId.fromString(selected.getId()));
-            }
-        });
-
-        seriesListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
+        seriesListView.setCellFactory(lv -> new ListCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
                 setText(empty || item == null ? null : item);
@@ -177,10 +177,10 @@ public class SearchWorkspaceController {
             }
         });
 
-        genresListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
+        genresListView.setCellFactory(lv -> new ListCell<>() {
             @Override protected void updateItem(GenreDto item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.getName());
+                setText(empty || item == null ? null : i18n.genreName(item.getCode(), item.getName()));
             }
         });
         genresListView.setOnMouseClicked(e -> {
@@ -190,27 +190,194 @@ public class SearchWorkspaceController {
             }
         });
 
-        booksListView.setCellFactory(lv -> new javafx.scene.control.ListCell<>() {
-            @Override protected void updateItem(BookDto item, boolean empty) {
+        configureBookResultsTable();
+    }
+
+    private void configureBookResultsTable() {
+        booksTableView.setFixedCellSize(28.0);
+        configureSelectionColumn();
+        installHighlightedColumn(titleColumn, BookDto::getTitle);
+        installHighlightedColumn(authorColumn, BookDto::getAuthorsText);
+        installHighlightedColumn(seriesColumn, BookDto::getSeries);
+        installHighlightedColumn(bookGenresColumn, this::localizedGenres);
+        seqNumberColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(
+                cell.getValue().getSequenceNumber() == null || cell.getValue().getSequenceNumber() <= 0
+                        ? "" : String.valueOf(cell.getValue().getSequenceNumber())));
+        yearColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(
+                cell.getValue().getYear() == null || cell.getValue().getYear() <= 0 ? "" : String.valueOf(cell.getValue().getYear())));
+        localColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getLocalStatus()));
+        fileSizeColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getFileSizeFormatted()));
+        ratingColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getRateStars()));
+        progressColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getProgressFormatted()));
+
+        booksTableView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) ->
+                appState.getBookDetails().setCurrentBook(selected));
+        booksTableView.setRowFactory(tv -> {
+            TableRow<BookDto> row = new TableRow<>();
+            row.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2 && !row.isEmpty() && row.getItem() != null) {
+                    navigationService.navigateToBook(BookId.fromString(row.getItem().getId()));
+                }
+            });
+            return row;
+        });
+    }
+
+    private void configureSelectionColumn() {
+        masterSelectionCheckBox = new CheckBox();
+        masterSelectionCheckBox.setAllowIndeterminate(true);
+        masterSelectionCheckBox.setTooltip(new Tooltip("Вибрати всі книги з результату пошуку"));
+        masterSelectionCheckBox.setOnAction(event -> {
+            List<BookId> ids = resultBookIds();
+            BookSelectionService.SelectionState state = bookSelectionService.stateIds(ids);
+            bookSelectionService.setSelectedIds(ids, state != BookSelectionService.SelectionState.ALL);
+            booksTableView.refresh();
+            refreshMasterSelection();
+        });
+        selectColumn.setGraphic(masterSelectionCheckBox);
+        selectColumn.setSortable(false);
+        selectColumn.setCellFactory(ignored -> new TableCell<>() {
+            private final CheckBox checkBox = new CheckBox();
+            {
+                checkBox.setOnAction(event -> {
+                    BookDto book = getTableRow() == null ? null : getTableRow().getItem();
+                    BookId id = bookId(book);
+                    if (id != null) bookSelectionService.setSelected(id, checkBox.isSelected());
+                });
+            }
+            @Override protected void updateItem(Void item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.getTitle() + " — " + item.getAuthorsText());
+                BookDto book = getTableRow() == null ? null : getTableRow().getItem();
+                BookId id = empty ? null : bookId(book);
+                if (id == null) {
+                    setGraphic(null);
+                    return;
+                }
+                checkBox.setSelected(bookSelectionService.isSelected(id));
+                setGraphic(checkBox);
             }
         });
-        booksListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
-            if (selected != null) appState.getBookDetails().setCurrentBook(selected);
+        bookSelectionService.selectedCountProperty().addListener((obs, oldValue, newValue) -> {
+            refreshMasterSelection();
+            booksTableView.refresh();
         });
-        booksListView.setOnMouseClicked(e -> {
-            if (e.getClickCount() == 2) {
-                BookDto selected = booksListView.getSelectionModel().getSelectedItem();
-                if (selected != null) navigationService.navigateToBook(BookId.fromString(selected.getId()));
+    }
+
+    private List<BookId> resultBookIds() {
+        return booksTableView.getItems().stream().map(this::bookId).filter(java.util.Objects::nonNull).toList();
+    }
+
+    private BookId bookId(BookDto book) {
+        if (book == null || book.getId() == null || book.getId().isBlank()) return null;
+        try { return BookId.fromString(book.getId()); } catch (RuntimeException ignored) { return null; }
+    }
+
+    private void refreshMasterSelection() {
+        if (masterSelectionCheckBox == null) return;
+        List<BookId> ids = resultBookIds();
+        BookSelectionService.SelectionState state = bookSelectionService.stateIds(ids);
+        masterSelectionCheckBox.setDisable(ids.isEmpty());
+        masterSelectionCheckBox.setIndeterminate(state == BookSelectionService.SelectionState.PARTIAL);
+        masterSelectionCheckBox.setSelected(state == BookSelectionService.SelectionState.ALL);
+    }
+
+    private void installHighlightedColumn(TableColumn<BookDto, String> column, Function<BookDto, String> extractor) {
+        column.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(safe(extractor.apply(cell.getValue()))));
+        column.setCellFactory(ignored -> new TableCell<>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || item.isBlank()) {
+                    setText(null);
+                    setGraphic(null);
+                    setTooltip(null);
+                    return;
+                }
+                setText(null);
+                setGraphic(highlightedInline(item, highlightNeedle()));
+                setTooltip(new Tooltip(item));
             }
         });
     }
+
+    private HBox highlightedInline(String value, String needle) {
+        HBox flow = new HBox(0);
+        flow.setAlignment(Pos.CENTER_LEFT);
+        flow.setMinHeight(20);
+        flow.setPrefHeight(20);
+        flow.setMaxHeight(20);
+        if (needle == null || needle.isBlank()) {
+            Text plain = new Text(value);
+            plain.setStyle("-fx-fill: -mhl-text;");
+            flow.getChildren().add(plain);
+            return flow;
+        }
+        String lower = value.toLowerCase(Locale.ROOT);
+        String wanted = needle.toLowerCase(Locale.ROOT);
+        int from = 0;
+        while (from < value.length()) {
+            int hit = lower.indexOf(wanted, from);
+            if (hit < 0) {
+                Text tail = new Text(value.substring(from));
+                tail.setStyle("-fx-fill: -mhl-text;");
+                flow.getChildren().add(tail);
+                break;
+            }
+            if (hit > from) {
+                Text prefix = new Text(value.substring(from, hit));
+                prefix.setStyle("-fx-fill: -mhl-text;");
+                flow.getChildren().add(prefix);
+            }
+            Text match = new Text(value.substring(hit, hit + wanted.length()));
+            match.setStyle("-fx-fill: -mhl-text; -fx-font-weight: bold;");
+            flow.getChildren().add(match);
+            from = hit + wanted.length();
+        }
+        return flow;
+    }
+
+    private String highlightNeedle() {
+        String value = lastQuery == null ? "" : lastQuery.trim();
+        if (value.isBlank()) {
+            for (TextField field : List.of(authorFilter, titleFilter, seriesFilter, genreFilter)) {
+                String candidate = text(field);
+                if (!candidate.isBlank()) { value = candidate; break; }
+            }
+        }
+        if (value.startsWith("%") && value.endsWith("%") && value.length() > 2) value = value.substring(1, value.length() - 1);
+        if (value.startsWith("=\"") && value.endsWith("\"") && value.length() > 3) value = value.substring(2, value.length() - 1);
+        if (value.contains(":")) value = value.substring(value.lastIndexOf(':') + 1);
+        value = value.replace("\"", "").trim();
+        return value;
+    }
+
+    private String localizedGenres(BookDto book) {
+        if (book == null) return "";
+        if (!book.getGenreItems().isEmpty()) {
+            List<String> siblingCodes = book.getGenreItems().stream()
+                    .filter(java.util.Objects::nonNull)
+                    .map(GenreDto::getCode)
+                    .filter(code -> code != null && !code.isBlank())
+                    .toList();
+            return book.getGenreItems().stream()
+                    .filter(java.util.Objects::nonNull)
+                    .filter(genre -> i18n.shouldDisplayGenre(genre.getCode(), siblingCodes))
+                    .map(genre -> i18n.genreName(genre.getCode(), genre.getName()))
+                    .filter(value -> value != null && !value.isBlank())
+                    .distinct()
+                    .collect(java.util.stream.Collectors.joining(", "));
+        }
+        // Genre items carry stable codes. Raw genresText can contain internal identifiers,
+        // therefore it is intentionally not used as a UI fallback.
+        return "";
+    }
+
+    private static String safe(String value) { return value == null ? "" : value; }
 
     // ==================== ПОШУК ====================
 
     private void setupSearchListener() {
         searchField.textProperty().addListener((obs, old, query) -> {
+            if (suppressSearchListener) return;
             debounce.stop();
             debounce.setOnFinished(e -> performSearch(query));
             debounce.playFromStart();
@@ -221,8 +388,8 @@ public class SearchWorkspaceController {
      * ВИПРАВЛЕНО: використовує Executor замість new Thread()
      */
     public void performSearch(String query) {
+        debounce.stop();
         this.lastQuery = query == null ? "" : query;
-        advancedPage = 0;
         performSearchPage(query);
     }
 
@@ -234,9 +401,8 @@ public class SearchWorkspaceController {
             return;
         }
 
-        statusLabel.setText("Пошук...");
+        statusLabel.setText("Пошук…");
         if (!hasAdvancedFilters()) {
-            setBooksPagingVisible(false);
             executor.submit(() -> searchService.searchAll(query)).thenAccept(results ->
                     UiExecutor.runOnUiThread(() -> {
                         if (generation != searchGeneration.get()) return;
@@ -251,17 +417,21 @@ public class SearchWorkspaceController {
             return;
         }
 
-        SearchRequest request = buildAdvancedRequest(query, advancedPage * ADVANCED_PAGE_SIZE);
-        executor.submit(() -> searchService.searchPage(request)).thenAccept(page ->
+        SearchRequest request = buildAdvancedRequest(query);
+        String authorQuery = text(authorFilter);
+        executor.submit(() -> new AdvancedSearchUiResult(
+                searchService.searchAll(request),
+                authorQuery.isBlank() ? List.of() : searchService.searchAuthorsAll(authorQuery)
+        )).thenAccept(result ->
                 UiExecutor.runOnUiThread(() -> {
                     if (generation != searchGeneration.get()) return;
-                    if (page.content().isEmpty() && advancedPage > 0 && page.totalElements() > 0) {
-                        advancedPage = Math.max(0, page.totalPages() - 1);
-                        performSearchPage(query);
-                        return;
+                    if (!authorQuery.isBlank()) {
+                        mainLayoutService.setLeftSidebarVisible(true);
+                        navigationPanelController.showAuthorSearchResults(authorQuery, result.authors());
+                    } else {
+                        navigationPanelController.clearAuthorSearchResults();
                     }
-                    advancedPage = page.currentPage();
-                    setAdvancedResults(page);
+                    setAdvancedResults(result.books());
                 })).exceptionally(ex -> {
             log.error("Advanced search failed", ex);
             UiExecutor.runOnUiThread(() -> {
@@ -271,7 +441,7 @@ public class SearchWorkspaceController {
         });
     }
 
-    private SearchRequest buildAdvancedRequest(String freeText, int offset) {
+    private SearchRequest buildAdvancedRequest(String freeText) {
 
         SearchRequest.Builder b = SearchRequest.builder()
                 .text(buildTextQuery(freeText))
@@ -282,8 +452,8 @@ public class SearchWorkspaceController {
                 .addedFrom(addedFromPicker == null ? null : addedFromPicker.getValue())
                 .addedTo(addedToPicker == null ? null : addedToPicker.getValue())
                 .localOnly(localOnlyCheck != null && localOnlyCheck.isSelected() ? Boolean.TRUE : null)
-                .limit(ADVANCED_PAGE_SIZE)
-                .offset(Math.max(0, offset))
+                .limit(500)
+                .offset(0)
                 .mode(SearchMode.PHRASE);
         String lang = text(languageFilter);
         if (!lang.isBlank()) {
@@ -292,44 +462,20 @@ public class SearchWorkspaceController {
         return b.build();
     }
 
-    private void setAdvancedResults(PageResult<BookDto> page) {
+    private void setAdvancedResults(List<BookDto> books) {
         setSectionVisible(authorsSection, false);
         setSectionVisible(seriesSection, false);
         setSectionVisible(genresSection, false);
-        boolean hasBooks = page.totalElements() > 0;
+        boolean hasBooks = books != null && !books.isEmpty();
         setSectionVisible(booksSection, hasBooks);
-        booksListView.getItems().setAll(page.content());
-        booksCountLabel.setText("(" + page.totalElements() + ")");
-        setBooksPagingVisible(hasBooks);
-        int shownPage = hasBooks ? page.currentPage() + 1 : 0;
-        int totalPages = hasBooks ? Math.max(1, page.totalPages()) : 0;
-        booksPageLabel.setText("Сторінка " + shownPage + " / " + totalPages);
-        booksPreviousPageButton.setDisable(!page.hasPrevious());
-        booksNextPageButton.setDisable(!page.hasNext());
+        booksTableView.getItems().setAll(books == null ? List.of() : books);
+        booksTableView.getSelectionModel().clearSelection();
+        refreshMasterSelection();
+        appState.getBookDetails().setCurrentBook(null);
+        booksCountLabel.setText("(" + (books == null ? 0 : books.size()) + ")");
         statusLabel.setText(hasBooks
-                ? "Розширений пошук: знайдено " + page.totalElements() + " книг"
+                ? "Розширений пошук: знайдено " + books.size() + " книг"
                 : "Книги не знайдено");
-        if (!page.content().isEmpty()) booksListView.getSelectionModel().selectFirst();
-        else appState.getBookDetails().setCurrentBook(null);
-    }
-
-    private void setBooksPagingVisible(boolean visible) {
-        if (booksPagingBox == null) return;
-        booksPagingBox.setVisible(visible);
-        booksPagingBox.setManaged(visible);
-    }
-
-    @FXML
-    private void onPreviousBooksPage() {
-        if (advancedPage <= 0) return;
-        advancedPage--;
-        performSearchPage(lastQuery);
-    }
-
-    @FXML
-    private void onNextBooksPage() {
-        advancedPage++;
-        performSearchPage(lastQuery);
     }
 
     private String buildTextQuery(String freeText) {
@@ -400,42 +546,54 @@ public class SearchWorkspaceController {
                 || (localOnlyCheck != null && localOnlyCheck.isSelected());
     }
 
-    @SuppressWarnings("unchecked")
-    private void updateResults(Map<String, Object> results) {
-        setBooksPagingVisible(false);
-        List<AuthorDto> authors = (List<AuthorDto>) results.get("authors");
-        List<String> series = (List<String>) results.get("series");
-        List<GenreDto> genres = (List<GenreDto>) results.get("genres");
-        List<BookDto> books = (List<BookDto>) results.get("books");
-
-        setSectionVisible(authorsSection, authors != null && !authors.isEmpty());
-        if (authors != null && !authors.isEmpty()) {
-            authorsListView.getItems().setAll(authors);
-            authorsCountLabel.setText("(" + authors.size() + ")");
-        }
-
-        setSectionVisible(seriesSection, series != null && !series.isEmpty());
-        if (series != null && !series.isEmpty()) {
-            seriesListView.getItems().setAll(series);
-            seriesCountLabel.setText("(" + series.size() + ")");
-        }
-
-        setSectionVisible(genresSection, genres != null && !genres.isEmpty());
-        if (genres != null && !genres.isEmpty()) {
-            genresListView.getItems().setAll(genres);
-            genresCountLabel.setText("(" + genres.size() + ")");
-        }
-
-        setSectionVisible(booksSection, books != null && !books.isEmpty());
-        if (books != null && !books.isEmpty()) {
-            booksListView.getItems().setAll(books);
-            booksCountLabel.setText("(" + books.size() + ")");
-            booksListView.getSelectionModel().selectFirst();
-            statusLabel.setText("Результати пошуку для: \"" + lastQuery + "\"");
+    private void updateResults(GlobalSearchResult results) {
+        if (results.authors().isEmpty()) {
+            navigationPanelController.clearAuthorSearchResults();
         } else {
-            statusLabel.setText("Нічого не знайдено");
-            appState.getBookDetails().setCurrentBook(null);
+            mainLayoutService.setLeftSidebarVisible(true);
+            navigationPanelController.showAuthorSearchResults(lastQuery, results.authors());
         }
+        setSectionVisible(authorsSection, false);
+        authorsListView.getItems().clear();
+        authorsCountLabel.setText("(" + results.authors().size() + ")");
+
+        List<String> series = results.series();
+        List<GenreDto> rawGenres = results.genres().stream()
+                .filter(java.util.Objects::nonNull)
+                .toList();
+        List<String> resultGenreCodes = rawGenres.stream()
+                .map(GenreDto::getCode)
+                .filter(code -> code != null && !code.isBlank())
+                .toList();
+        List<GenreDto> genres = rawGenres.stream()
+                .filter(genre -> i18n.shouldDisplayGenre(genre.getCode(), resultGenreCodes))
+                .filter(genre -> {
+                    String label = i18n.genreName(genre.getCode(), genre.getName());
+                    return label != null && !label.isBlank();
+                })
+                .toList();
+        List<BookDto> books = results.books();
+
+        setSectionVisible(seriesSection, !series.isEmpty());
+        seriesListView.getItems().setAll(series);
+        seriesCountLabel.setText("(" + series.size() + ")");
+
+        setSectionVisible(genresSection, !genres.isEmpty());
+        genresListView.getItems().setAll(genres);
+        genresCountLabel.setText("(" + genres.size() + ")");
+
+        setSectionVisible(booksSection, !books.isEmpty());
+        booksTableView.getItems().setAll(books);
+        booksTableView.getSelectionModel().clearSelection();
+        booksTableView.refresh();
+        refreshMasterSelection();
+        booksCountLabel.setText("(" + books.size() + ")");
+        appState.getBookDetails().setCurrentBook(null);
+
+        int total = results.authors().size() + series.size() + genres.size() + books.size();
+        statusLabel.setText(total > 0
+                ? "Результати пошуку для: \"" + lastQuery + "\" — книг: " + books.size() + ", авторів: " + results.authors().size()
+                : "Нічого не знайдено");
     }
 
     private void setSectionVisible(VBox section, boolean visible) {
@@ -445,7 +603,7 @@ public class SearchWorkspaceController {
 
     public void clearResults() {
         searchGeneration.incrementAndGet();
-        setBooksPagingVisible(false);
+        navigationPanelController.clearAuthorSearchResults();
         setSectionVisible(authorsSection, false);
         authorsListView.getItems().clear();
         setSectionVisible(seriesSection, false);
@@ -453,14 +611,20 @@ public class SearchWorkspaceController {
         setSectionVisible(genresSection, false);
         genresListView.getItems().clear();
         setSectionVisible(booksSection, false);
-        booksListView.getItems().clear();
+        booksTableView.getItems().clear();
+        refreshMasterSelection();
         appState.getBookDetails().setCurrentBook(null);
         statusLabel.setText("Введіть запит для пошуку");
     }
 
+    /** Re-run the current query after a storage/download change without leaving Search Workspace. */
+    public void refreshStorageState() {
+        performSearch(lastQuery);
+    }
+
     public void setInitialQuery(String query) {
         if (query != null && !query.isBlank()) {
-            searchField.setText(query);
+            setSearchTextWithoutDebounce(query);
             performSearch(query);
         } else {
             clearResults();
@@ -468,19 +632,21 @@ public class SearchWorkspaceController {
     }
 
     public void setResults(List<BookDto> results) {
-        setBooksPagingVisible(false);
         if (results != null && !results.isEmpty()) {
             setSectionVisible(booksSection, true);
-            booksListView.getItems().setAll(results);
+            booksTableView.getItems().setAll(results);
+            booksTableView.getSelectionModel().clearSelection();
+            booksTableView.refresh();
+            refreshMasterSelection();
             booksCountLabel.setText("(" + results.size() + ")");
             setSectionVisible(authorsSection, false);
             setSectionVisible(seriesSection, false);
             setSectionVisible(genresSection, false);
             statusLabel.setText("Знайдено книг: " + results.size());
-            booksListView.getSelectionModel().selectFirst();
+            appState.getBookDetails().setCurrentBook(null);
         } else {
             setSectionVisible(booksSection, false);
-            booksListView.getItems().clear();
+            booksTableView.getItems().clear();
             appState.getBookDetails().setCurrentBook(null);
             statusLabel.setText("Книги не знайдено");
         }
@@ -526,7 +692,7 @@ public class SearchWorkspaceController {
 
             SavedSearchesController controller = loader.getController();
             controller.setOnSearchSelected(query -> {
-                searchField.setText(query);
+                setSearchTextWithoutDebounce(query);
                 performSearch(query);
             });
 
@@ -550,7 +716,7 @@ public class SearchWorkspaceController {
 
     @FXML
     public void onClear() {
-        searchField.clear();
+        setSearchTextWithoutDebounce("");
         for (TextField f : List.of(titleFilter, authorFilter, seriesFilter, genreFilter, keywordFilter,
                 annotationFilter, fileFilter, languageFilter, ratingFromFilter, ratingToFilter, yearFromFilter, yearToFilter)) {
             if (f != null) f.clear();
@@ -560,5 +726,22 @@ public class SearchWorkspaceController {
         if (localOnlyCheck != null) localOnlyCheck.setSelected(false);
         clearResults();
         searchField.requestFocus();
+    }
+
+    private void setSearchTextWithoutDebounce(String value) {
+        debounce.stop();
+        suppressSearchListener = true;
+        try {
+            searchField.setText(value == null ? "" : value);
+        } finally {
+            suppressSearchListener = false;
+        }
+    }
+
+    private record AdvancedSearchUiResult(List<BookDto> books, List<AuthorDto> authors) {
+        private AdvancedSearchUiResult {
+            books = books == null ? List.of() : List.copyOf(books);
+            authors = authors == null ? List.of() : List.copyOf(authors);
+        }
     }
 }

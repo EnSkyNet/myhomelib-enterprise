@@ -6,11 +6,11 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.RestoreController"
-      spacing="10" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
       prefWidth="620" prefHeight="450">
 
     <Label text="📂 Відновлення з резервної копії"
-           style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+           style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <Separator/>
 
@@ -19,7 +19,7 @@
         <Label text="📁 Папка з копією:" prefWidth="120" style="-fx-font-weight: bold;"/>
         <TextField fx:id="backupPathField" HBox.hgrow="ALWAYS" promptText="Виберіть папку з резервною копією..."/>
         <Button fx:id="selectPathButton" text="📂 Вибрати" onAction="#onSelectPath"
-                style="-fx-background-color: #3498db; -fx-text-fill: white;"/>
+                style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
     <Separator/>
@@ -27,30 +27,30 @@
     <!-- Опції відновлення -->
     <Label text="📋 Що відновлювати:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
-    <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: #ffffff; -fx-border-color: #ddd; -fx-border-radius: 5;">
+    <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 5;">
         <CheckBox fx:id="restoreDatabaseCheckBox" text="📊 База даних каталогу (повне відновлення)" selected="true"/>
         <CheckBox fx:id="restoreMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
-        <Label text="Зніміть «База даних каталогу», щоб перенести лише ratings/progress/reviews/bookmarks/groups/history/filters/Reader settings на свіжий каталог за LibID. Пошуковий індекс після restore перебудовується, кеш обкладинок формується на вимогу." wrapText="true" style="-fx-text-fill: #7f8c8d; -fx-font-style: italic;"/>
+        <Label text="Зніміть «База даних каталогу», щоб перенести лише ratings/progress/reviews/bookmarks/groups/history/filters/Reader settings на свіжий каталог за LibID. Пошуковий індекс після restore перебудовується, кеш обкладинок формується на вимогу." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>
 
     <!-- Прогрес -->
     <VBox spacing="5">
-        <Label fx:id="statusLabel" text="Виберіть папку з резервною копією" style="-fx-text-fill: #7f8c8d;"/>
+        <Label fx:id="statusLabel" text="Виберіть папку з резервною копією" style="-fx-text-fill: -mhl-muted-text;"/>
         <ProgressBar fx:id="progressBar" prefWidth="580" visible="false"/>
     </VBox>
 
     <!-- Лог -->
     <TextArea fx:id="logArea" prefHeight="150" editable="false" visible="false"
-              style="-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: #1e1e1e; -fx-text-fill: #d4d4d4;"/>
+              style="-fx-font-family: monospace; -fx-font-size: 12px; -fx-background-color: -mhl-code-background; -fx-text-fill: -mhl-code-text;"/>
 
     <!-- Кнопки -->
     <HBox spacing="10" alignment="CENTER_RIGHT">
         <Button fx:id="restoreButton" text="📂 Відновити" onAction="#onRestore" disable="true"
-                style="-fx-background-color: #e67e22; -fx-text-fill: white; -fx-font-weight: bold; -fx-padding: 8 25;"/>
+                style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 25;"/>
         <Button fx:id="closeButton" text="✕ Закрити" onAction="#onClose"
-                style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+                style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
 </VBox>

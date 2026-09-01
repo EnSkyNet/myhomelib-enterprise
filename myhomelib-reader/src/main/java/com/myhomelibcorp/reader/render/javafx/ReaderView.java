@@ -154,6 +154,14 @@ public class ReaderView extends BorderPane {
         onBackClick = listener;
     }
 
+    public void setOnToggleLeftSidebarClick(Runnable listener) {
+        toolbar.setOnToggleLeftSidebarClick(listener);
+    }
+
+    public void setOnToggleRightSidebarClick(Runnable listener) {
+        toolbar.setOnToggleRightSidebarClick(listener);
+    }
+
     public void openBook(BookSource source) throws IOException {
         openPrepared(engine.prepare(source), null);
     }

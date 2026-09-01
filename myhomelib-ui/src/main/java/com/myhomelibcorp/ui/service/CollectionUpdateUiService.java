@@ -25,6 +25,7 @@ public class CollectionUpdateUiService {
     private final DialogService dialogs;
     private final UiBackgroundExecutor executor;
     private volatile AtomicBoolean active;
+    private final AtomicBoolean startupCheckStarted = new AtomicBoolean(false);
 
     public void updateFromNetwork(Window owner, Runnable onDone) {
         Collection collection = state.getCurrentLibraryCollection();
@@ -107,6 +108,9 @@ public class CollectionUpdateUiService {
                                         + "\nДодано: " + changes.inserted().size()
                                         + "\nОновлено: " + changes.updated().size()
                                         + "\nВидалено: " + changes.deleted().size()
+                                        + "\nЯвно видалено (DEL): " + result.explicitlyDeleted()
+                                        + "\nБез автора: " + result.withoutAuthor()
+                                        + "\nБез жанру: " + result.withoutGenre()
                                         + "\nПропущено: " + result.skipped()
                                         + "\nДублікати: " + result.duplicates()
                                         + "\nПопередження: " + result.issues().size()
@@ -116,6 +120,69 @@ public class CollectionUpdateUiService {
                         if (onDone != null) onDone.run();
                     }
                 }));
+    }
+
+    public void autoUpdateOnStartup(Window owner, Runnable onDone) {
+        if (!startupCheckStarted.compareAndSet(false, true)) return;
+        if (!settings.getBoolean("online.autoUpdateOnStartup", true)) return;
+
+        Collection collection = state.getCurrentLibraryCollection();
+        if (collection == null || !isOnlineCollection(collection)) return;
+        String source = resolveCatalogSource(collection);
+        if (source == null || source.isBlank()) return;
+
+        AtomicBoolean flag = new AtomicBoolean(false);
+        if (active != null) return;
+        active = flag;
+        state.getStatusBar().setProgressVisible(true);
+        state.getStatusBar().setProgress(0.0);
+        state.getStatusBar().setStatusText("Перевірка оновлення online-каталогу…");
+
+        executor.submit(() -> useCase.execute(
+                        collection, source, flag,
+                        p -> Platform.runLater(() -> state.getStatusBar().setProgress(p)),
+                        progress -> { }))
+                .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (active == flag) active = null;
+                    state.getStatusBar().setProgressVisible(false);
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        if (!flag.get()) {
+                            state.getStatusBar().setStatusText("Не вдалося перевірити online-каталог: " +
+                                    (cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage()));
+                        }
+                        return;
+                    }
+                    if (result == null || (result.imported() == 0 && result.errors() == 0)) {
+                        state.getStatusBar().setStatusText("Online-каталог актуальний");
+                        return;
+                    }
+                    state.getStatusBar().setStatusText("Online-каталог автоматично оновлено: " + result.imported() + " записів");
+                    if (onDone != null) onDone.run();
+                }));
+    }
+
+    private String resolveCatalogSource(Collection collection) {
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) return "";
+        String sourceKey = "collection." + collection.getId() + ".inpxUrl";
+        String configured = settings.get(sourceKey, "").trim();
+        if (!configured.isBlank()) return configured;
+
+        String collectionUrl = collection.getUrl() == null ? "" : collection.getUrl().trim();
+        String lower = collectionUrl.toLowerCase(java.util.Locale.ROOT);
+        if (!collectionUrl.isBlank() && (lower.endsWith(".inpx") || lower.endsWith(".zip") || lower.contains("alex80.github.io/mhl"))) {
+            return collectionUrl;
+        }
+        if (CollectionType.fromCode(collection.getType()) == CollectionType.REMOTE) return DEFAULT_FLIBUSTA_INPX_SERVER;
+        return "";
+    }
+
+    private static boolean isOnlineCollection(Collection collection) {
+        if (collection == null) return false;
+        CollectionType type = CollectionType.fromCode(collection.getType());
+        return type == CollectionType.REMOTE || type == CollectionType.GENERIC_REMOTE
+                || (collection.getUrl() != null && !collection.getUrl().isBlank())
+                || (collection.getConnectionScript() != null && !collection.getConnectionScript().isBlank());
     }
 
     public boolean cancel() {

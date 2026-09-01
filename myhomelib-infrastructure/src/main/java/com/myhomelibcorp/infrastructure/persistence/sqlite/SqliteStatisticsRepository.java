@@ -6,6 +6,7 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.QueryExecutor;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -47,7 +48,7 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
 
     private void createStatisticsRowWithRetry() {
         int attempts = 0;
-        Exception lastError = null;
+        DataAccessException lastError = null;
 
         while (attempts < MAX_RETRIES) {
             try {
@@ -61,11 +62,11 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                         VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, CURRENT_TIMESTAMP)
                         """);
                 return;
-            } catch (Exception e) {
+            } catch (DataAccessException e) {
                 lastError = e;
-                if (e.getMessage() != null && e.getMessage().contains("SQLITE_BUSY")) {
+                if (isDatabaseBusy(e)) {
                     attempts++;
-                    log.warn("Database locked while creating statistics row (attempt {}/{}), retrying...", attempts, MAX_RETRIES);
+                    log.debug("Database locked while creating statistics row (attempt {}/{}), retrying...", attempts, MAX_RETRIES);
                     try {
                         Thread.sleep(RETRY_DELAY_MS * attempts);
                     } catch (InterruptedException ie) {
@@ -115,14 +116,26 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                             .deletedBooksCount(rs.getLong("deleted_books_count"))
                             .sourcesCount(rs.getLong("sources_count"))
                             .build());
-        } catch (Exception e) {
-            if (e.getMessage() != null && e.getMessage().contains("SQLITE_BUSY")) {
+        } catch (DataAccessException e) {
+            if (isDatabaseBusy(e)) {
                 log.debug("Database locked while reading statistics: {}", e.getMessage());
             } else {
                 log.debug("Statistics cache row not found: {}", e.getMessage());
             }
             return null;
         }
+    }
+
+    private boolean isDatabaseBusy(Throwable error) {
+        Throwable current = error;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null && (message.contains("SQLITE_BUSY") || message.contains("database is locked"))) {
+                return true;
+            }
+            current = current.getCause();
+        }
+        return false;
     }
 
     @Override

@@ -19,6 +19,7 @@ public interface BookListItemMapper {
     @Mapping(target = "series", source = "series")
     @Mapping(target = "sequenceNumber", source = "sequenceNumber")
     @Mapping(target = "genresText", expression = "java(book.genresText())")
+    @Mapping(target = "genreItems", expression = "java(toGenreDtos(book))")
     @Mapping(target = "rate", source = "rate")
     @Mapping(target = "progress", source = "progress")
     @Mapping(target = "fileSize", source = "file.fileSize")
@@ -33,6 +34,17 @@ public interface BookListItemMapper {
     @Mapping(target = "updateDate", expression = "java(formatDate(book.getUpdateDate()))")
     @Mapping(target = "createdAt", expression = "java(formatDate(book.getCreatedAt()))")
     BookListItem toListItem(Book book);
+
+
+    default java.util.List<com.myhomelibcorp.application.dto.GenreDto> toGenreDtos(Book book) {
+        if (book == null || book.getGenres() == null) return java.util.List.of();
+        return book.getGenres().stream().map(genre -> com.myhomelibcorp.application.dto.GenreDto.builder()
+                .code(genre.getId() != null ? genre.getId().asString() : null)
+                .name(genre.getName())
+                .parentId(genre.getParentId() != null ? genre.getParentId().asString() : null)
+                .fb2Code(genre.getFb2Code())
+                .build()).toList();
+    }
 
     default String formatDate(LocalDateTime date) {
         return date != null ? date.format(DATE_FORMATTER) : "";

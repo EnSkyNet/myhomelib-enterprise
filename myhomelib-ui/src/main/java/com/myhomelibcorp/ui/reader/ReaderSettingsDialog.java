@@ -57,7 +57,7 @@ final class ReaderSettingsDialog {
 
         CheckBox perBook = c.perBook;
         Label scopeHelp = new Label("Вимкніть, щоб зробити ці налаштування глобальними за замовчуванням.");
-        scopeHelp.setStyle("-fx-text-fill: #666666; -fx-font-size: 11px;");
+        scopeHelp.getStyleClass().addAll("muted-text", "small-text");
 
         HBox presetRow = new HBox(8, new Label("Preset:"), preset, applyPreset);
         VBox header = new VBox(6, presetRow, perBook, scopeHelp);
@@ -167,7 +167,7 @@ final class ReaderSettingsDialog {
 
         Label hint = new Label("9 зон = 3×3 площі Reader. Довге натискання ≈0,52 с. Shift+drag залишено для виділення тексту.");
         hint.setWrapText(true);
-        hint.setStyle("-fx-text-fill: #666666;");
+        hint.getStyleClass().add("muted-text");
         Button reset = new Button("Скинути навігацію");
         reset.setOnAction(e -> c.resetNavigation(ReaderSettings.defaultSettings()));
         box.getChildren().addAll(hint, reset);

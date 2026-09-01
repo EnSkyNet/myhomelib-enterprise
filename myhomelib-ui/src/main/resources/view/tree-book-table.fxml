@@ -11,7 +11,7 @@
     <Label text="📚 Ієрархічний перегляд поточної сторінки" style="-fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 0 0 5 0;"/>
 
     <!-- Панель інструментів -->
-    <ToolBar style="-fx-background-color: #f0f0f0; -fx-padding: 2;">
+    <ToolBar style="-fx-background-color: -mhl-panel; -fx-padding: 2;">
         <Button text="☑ Вибрати всі" onAction="#selectAll" style="-fx-font-size: 11px;">
             <tooltip><Tooltip text="Вибрати всі книги в дереві"/></tooltip>
         </Button>
@@ -19,10 +19,10 @@
             <tooltip><Tooltip text="Зняти вибір з усіх книг"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
-        <Button text="📤 Експортувати вибрані" onAction="#exportSelected" style="-fx-font-size: 11px; -fx-background-color: #4CAF50; -fx-text-fill: white;">
+        <Button text="📤 Експортувати вибрані" onAction="#exportSelected" style="-fx-font-size: 11px; -fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;">
             <tooltip><Tooltip text="Експортувати вибрані книги"/></tooltip>
         </Button>
-        <Button text="📖 Позначити прочитаними" onAction="#markSelectedAsRead" style="-fx-font-size: 11px; -fx-background-color: #2196F3; -fx-text-fill: white;">
+        <Button text="📖 Позначити прочитаними" onAction="#markSelectedAsRead" style="-fx-font-size: 11px; -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;">
             <tooltip><Tooltip text="Позначити вибрані книги як прочитані"/></tooltip>
         </Button>
     </ToolBar>

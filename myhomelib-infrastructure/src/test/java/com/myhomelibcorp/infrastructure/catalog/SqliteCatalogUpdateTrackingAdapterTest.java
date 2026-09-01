@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteBusyRetryExecutor;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.TestCollectionManager;
 import com.zaxxer.hikari.HikariDataSource;
 import org.flywaydb.core.Flyway;
@@ -35,7 +36,7 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         manager.setCurrentCollection(new Collection("c1", "Online", Path.of("."), null, 1, null, null, "https://example.test", null));
         manager.setCurrentDataSource(dataSource);
         manager.setCurrentJdbcTemplate(jdbc);
-        adapter = new SqliteCatalogUpdateTrackingAdapter(manager);
+        adapter = new SqliteCatalogUpdateTrackingAdapter(manager, new SqliteBusyRetryExecutor());
     }
 
     @AfterEach

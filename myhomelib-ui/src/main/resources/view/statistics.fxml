@@ -6,10 +6,10 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.StatisticsController"
-      spacing="15" style="-fx-padding: 20; -fx-background-color: #f8f9fa;"
+      spacing="15" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
       prefWidth="540" prefHeight="620">
 
-    <Label text="📊 Статистика колекції" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: #2c3e50;"/>
+    <Label text="📊 Статистика колекції" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <Separator/>
 
@@ -60,8 +60,8 @@
     <Separator/>
 
     <HBox spacing="10" alignment="CENTER_RIGHT">
-        <Button text="🔄 Оновити" onAction="#onRefresh" style="-fx-background-color: #3498db; -fx-text-fill: white;"/>
-        <Button text="✕ Закрити" onAction="#onClose" style="-fx-background-color: #95a5a6; -fx-text-fill: white;"/>
+        <Button text="🔄 Оновити" onAction="#onRefresh" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="✕ Закрити" onAction="#onClose" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
 </VBox>

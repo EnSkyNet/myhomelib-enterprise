@@ -44,4 +44,26 @@ public class LoadBooksByAuthorUseCase {
         List<BookListItem> content = page.content().stream().map(bookListItemMapper::toListItem).toList();
         return PageResult.of(content, page.totalElements(), page.currentPage(), page.size());
     }
+    /**
+     * Loads the complete author result through bounded SQL pages. The UI stays unpaged while
+     * the repository still avoids one unbounded SELECT for authors with very large bibliographies.
+     */
+    public List<BookListItem> executeAll(AuthorId authorId, String filterText,
+                                         SortBy sortBy, SortDirection direction) {
+        if (authorId == null) return List.of();
+        final int chunkSize = 200;
+        int offset = 0;
+        long expectedTotal = Long.MAX_VALUE;
+        java.util.ArrayList<BookListItem> all = new java.util.ArrayList<>();
+        while (offset < expectedTotal) {
+            PageResult<BookListItem> page = execute(authorId, filterText, sortBy, direction, chunkSize, offset);
+            expectedTotal = page.totalElements();
+            if (page.content().isEmpty()) break;
+            all.addAll(page.content());
+            offset += page.content().size();
+            if (!page.hasNext()) break;
+        }
+        return List.copyOf(all);
+    }
+
 }

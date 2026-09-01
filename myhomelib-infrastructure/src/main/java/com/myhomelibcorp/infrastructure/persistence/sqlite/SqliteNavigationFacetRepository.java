@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookFilterSqlAdapter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -79,6 +80,40 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
                 rs.getString("id"),
                 fullName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name")),
                 rs.getLong("book_count")), params.toArray());
+    }
+
+    @Override
+    public List<Facet> findDownloadedAuthors(BookFilterSpec filter) {
+        var collection = collectionManager.getCurrentCollection();
+        if (collection == null) return List.of();
+        CollectionType type = CollectionType.fromCode(collection.getType());
+        boolean online = type == CollectionType.REMOTE || type == CollectionType.GENERIC_REMOTE
+                || (collection.getUrl() != null && !collection.getUrl().isBlank())
+                || (collection.getConnectionScript() != null && !collection.getConnectionScript().isBlank());
+        if (!online) return List.of();
+        BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
+        String sql = """
+                SELECT a.id,
+                       a.first_name,
+                       a.middle_name,
+                       a.last_name,
+                       COUNT(DISTINCT b.id) AS book_count
+                FROM authors a
+                JOIN book_authors ba ON ba.author_id = a.id
+                JOIN books b ON b.id = ba.book_id
+                WHERE b.deleted = 0
+                  AND COALESCE(b.local, 0) = 1
+                  %s
+                GROUP BY a.id, a.first_name, a.middle_name, a.last_name
+                ORDER BY COALESCE(a.last_name, '') COLLATE NOCASE,
+                         COALESCE(a.first_name, '') COLLATE NOCASE,
+                         COALESCE(a.middle_name, '') COLLATE NOCASE,
+                         a.id
+                """.formatted(andFilter(f));
+        return jdbc().query(sql, (rs, rowNum) -> new Facet(
+                rs.getString("id"),
+                fullName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name")),
+                rs.getLong("book_count")), f.params().toArray());
     }
 
     @Override

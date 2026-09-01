@@ -22,6 +22,7 @@ import com.myhomelibcorp.reader.render.javafx.ReaderView;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -78,6 +79,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final ApplicationContext springContext;
     private final UiBackgroundExecutor uiBackgroundExecutor;
     private final ApplicationState appState;
+    private final MainLayoutService mainLayoutService;
 
     @FXML
     private StackPane readerContainer;
@@ -111,6 +113,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         readerView.setOnBookmarksClick(this::showBookmarks);
         readerView.setOnTocClick(this::showToc);
         readerView.setOnSearchClick(this::showSearch);
+        readerView.setOnToggleLeftSidebarClick(mainLayoutService::toggleLeftSidebar);
+        readerView.setOnToggleRightSidebarClick(mainLayoutService::toggleRightSidebar);
         readerView.getCanvas().setOnPositionChanged(pos -> {
             positionChanged = true;
             if (positionAutosaver != null) positionAutosaver.mark(pos);
@@ -229,6 +233,9 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             currentBook = prepared.dto();
             currentBookId = prepared.book().getId();
+            // Reader is also a book workspace. Keep the shared right details panel
+            // bound to the currently opened book even if the panel was hidden while opening.
+            appState.getBookDetails().setCurrentBook(currentBook);
             materializedBookFile = prepared.temporaryPath();
             currentBookOverride = prepared.bookOverride();
             positionChanged = false;
@@ -249,8 +256,17 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             BookId openedId = currentBookId;
             uiBackgroundExecutor.execute(() -> {
                 if (isDisposed || generation != openGeneration.get()) return;
-                sessionService.saveLastOpenedBookId(openedId.asString());
-                readingHistoryService.recordOpened(openedId);
+                try {
+                    sessionService.saveLastOpenedBookId(openedId.asString());
+                } catch (RuntimeException error) {
+                    log.warn("Не вдалося зберегти останню відкриту книгу: {}", rootMessage(error));
+                }
+                try {
+                    readingHistoryService.recordOpened(openedId);
+                } catch (RuntimeException error) {
+                    // Reading history is auxiliary state and must never terminate the Reader background task.
+                    log.warn("Не вдалося оновити історію читання: {}", rootMessage(error));
+                }
             });
             log.info("✅ Книгу відкрито в Reader: {}", currentBook.getTitle());
         } catch (Throwable error) {

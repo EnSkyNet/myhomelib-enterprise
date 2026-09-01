@@ -19,10 +19,12 @@ public class ExportProfileService {
     private static final String ORDER = "exportProfiles.order";
     private static final String PREFIX = "exportProfiles.profile.";
     private static final String MIGRATION = "exportProfiles.migration.legacy.v1";
+    private static final String PATH_LAYOUT_MIGRATION = "exportProfiles.migration.deviceLayout.v2";
     private final ApplicationSettingsPort settings;
 
     public synchronized List<ExportProfile> loadProfiles() {
         migrateLegacyOnce();
+        migrateCanonicalDeviceLayoutOnce();
         Map<String,String> values = settings.findByPrefix(PREFIX);
         List<String> ids = splitIds(settings.get(ORDER, ""));
         values.keySet().stream().filter(k -> k.endsWith(".name"))
@@ -36,13 +38,14 @@ public class ExportProfileService {
 
     public synchronized Optional<ExportProfile> findById(String id) {
         migrateLegacyOnce();
+        migrateCanonicalDeviceLayoutOnce();
         return validId(id) ? read(id) : Optional.empty();
     }
 
     public ExportProfile newProfile(String name) {
         return new ExportProfile(UUID.randomUUID().toString(), normalizeName(name),
                 ExportRequest.ExportFormat.FB2, "", ExportRequest.CollisionPolicy.RENAME,
-                false, "%a - %t", "", "");
+                false, "%n2 - %t", "%a/%s", "");
     }
 
     public synchronized void save(ExportProfile profile) {
@@ -81,8 +84,8 @@ public class ExportProfileService {
         return Optional.of(new ExportProfile(id, name, format,
                 settings.get(base + ".destination", ""), collision,
                 settings.getBoolean(base + ".extractOnly", false),
-                settings.get(base + ".filenameTemplate", "%a - %t"),
-                settings.get(base + ".subfolderTemplate", ""),
+                settings.get(base + ".filenameTemplate", "%n2 - %t"),
+                settings.get(base + ".subfolderTemplate", "%a/%s"),
                 settings.get(base + ".postActionProfileId", "")));
     }
 
@@ -95,12 +98,36 @@ public class ExportProfileService {
                 ExportProfile profile = new ExportProfile(
                         "default-export", "Default export", ExportRequest.ExportFormat.FB2, "",
                         ExportRequest.CollisionPolicy.RENAME, false,
-                        settings.get("export.filenameTemplate", "%a - %t"),
-                        settings.get("export.subfolderTemplate", ""), postAction);
+                        settings.get("export.filenameTemplate", "%n2 - %t"),
+                        settings.get("export.subfolderTemplate", "%a/%s"), postAction);
                 save(profile);
             }
         } finally {
             settings.putBoolean(MIGRATION, true);
+        }
+    }
+
+    /** Migrates only untouched legacy defaults; explicitly customized profiles are preserved. */
+    private synchronized void migrateCanonicalDeviceLayoutOnce() {
+        if (settings.getBoolean(PATH_LAYOUT_MIGRATION, false)) return;
+        try {
+            for (String id : splitIds(settings.get(ORDER, ""))) {
+                String base = PREFIX + id;
+                String fileTemplate = settings.get(base + ".filenameTemplate", "%a - %t").trim();
+                String folderTemplate = settings.get(base + ".subfolderTemplate", "").trim();
+                if ((fileTemplate.isBlank() || "%a - %t".equals(fileTemplate)) && folderTemplate.isBlank()) {
+                    settings.put(base + ".filenameTemplate", "%n2 - %t");
+                    settings.put(base + ".subfolderTemplate", "%a/%s");
+                }
+            }
+            String globalFile = settings.get("export.filenameTemplate", "%a - %t").trim();
+            String globalFolder = settings.get("export.subfolderTemplate", "").trim();
+            if ((globalFile.isBlank() || "%a - %t".equals(globalFile)) && globalFolder.isBlank()) {
+                settings.put("export.filenameTemplate", "%n2 - %t");
+                settings.put("export.subfolderTemplate", "%a/%s");
+            }
+        } finally {
+            settings.putBoolean(PATH_LAYOUT_MIGRATION, true);
         }
     }
 

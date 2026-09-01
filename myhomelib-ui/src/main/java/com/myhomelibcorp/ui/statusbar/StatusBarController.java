@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.statusbar;
 
 import com.myhomelibcorp.application.dto.LibraryStatistics;
 import com.myhomelibcorp.application.statistics.StatisticsService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.StatusBarViewModel;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
+import java.util.Objects;
 
 @Component
 @RequiredArgsConstructor
@@ -23,6 +25,7 @@ public class StatusBarController {
 
     private final ApplicationState appState;
     private final StatisticsService statisticsService;
+    private final UiBackgroundExecutor executor;
 
     @FXML private Label statusLabel;
     @FXML private Label statsLabel;
@@ -42,14 +45,24 @@ public class StatusBarController {
             }
         });
 
-        // Початкове завантаження — один O(1) read persistent statistics cache.
-        try {
-            LibraryStatistics stats = statisticsService.getStatistics();
-            vm.setStatistics(stats);
-            updateStatsLabel(stats);
-        } catch (RuntimeException error) {
-            log.warn("Не вдалося прочитати кеш статистики для status bar", error);
-        }
+        // Even the O(1) cache read can briefly wait on SQLITE_BUSY while another
+        // startup operation owns the DB. Never perform that retry path on FX.
+        String collectionId = currentCollectionId();
+        executor.submit(() -> statisticsService.getStatistics())
+                .thenAccept(stats -> UiExecutor.runOnUiThread(() -> {
+                    if (!Objects.equals(collectionId, currentCollectionId())) return;
+                    vm.setStatistics(stats);
+                    updateStatsLabel(stats);
+                }))
+                .exceptionally(error -> {
+                    log.warn("Не вдалося прочитати кеш статистики для status bar", error);
+                    return null;
+                });
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     private void updateStatsLabel(LibraryStatistics stats) {

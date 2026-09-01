@@ -15,7 +15,11 @@
         <ComboBox fx:id="quickFilterColumnComboBox" prefWidth="125"/>
         <TextField fx:id="quickFilterValueField" promptText="Введіть значення…" HBox.hgrow="ALWAYS"/>
         <Button text="Застосувати" onAction="#applyQuickFilter"/>
-        <Button text="✕" onAction="#clearQuickFilter" tooltip="Очистити швидкий фільтр"/>
+        <Button text="✕" onAction="#clearQuickFilter">
+            <tooltip>
+                <Tooltip text="Очистити швидкий фільтр"/>
+            </tooltip>
+        </Button>
         <Button text="Колонки…" onAction="#showColumnChooser"/>
         <Button text="Скинути вигляд" onAction="#resetTableProfile"/>
     </HBox>

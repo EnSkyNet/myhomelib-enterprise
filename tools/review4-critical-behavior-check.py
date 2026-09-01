@@ -42,9 +42,10 @@ try:
     require("empty collection lifecycle",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/CollectionWorkspaceController.java",
             [".importOnCreate(false)", ".createIndex(false)", "switchCollectionUseCase.execute(created.getId())", "appState.setCurrentLibraryCollection(active)"], [])
-    require("author paging guard",
+    require("author workspace is intentionally unpaged",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java",
-            ["hasNextPage = page.hasNext()", "if (!hasNextPage) return;"], [])
+            ["loadBooksByAuthorUseCase.executeAll", "currentSort == SortBy.SERIES", "onCollapseAll", "onExpandAll"],
+            ["hasNextPage", "onNextPage", "onPreviousPage", "PAGE_SIZE"] )
     require("no implicit current book",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookLoaderService.java",
             ["vm.setSelectedBook(null)", "appState.getBookDetails().setCurrentBook(null)"],
@@ -54,7 +55,7 @@ try:
             ["Поточна:", "currentBookLabel", "Пакетно вибрано: 0", "batchSelectionLabel"], [])
     require("row and batch selection counters stay live",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/table/BookTableController.java",
-            ["installSelectionStatusTracking", "batchSelectionListener", "Пакетно вибрано: "], [])
+            ["installSelectionStatusTracking", "selectedCountProperty", "Пакетно вибрано: "], [])
     require("password preserve on decrypt failure",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/CollectionPropertiesUiService.java",
             ["passwordReadable[0] = false", "pass.setDisable(true)", "c.getPassword()"],

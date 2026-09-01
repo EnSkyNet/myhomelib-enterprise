@@ -12,6 +12,7 @@ import java.util.Optional;
 public interface NavigationFacetRepository {
 
     List<Facet> findAuthors(char initial, BookFilterSpec filter);
+    List<Facet> findDownloadedAuthors(BookFilterSpec filter);
     Optional<Character> findFirstAuthorInitial(BookFilterSpec filter);
     List<Facet> findSeries(BookFilterSpec filter);
     List<Facet> findGenres(BookFilterSpec filter);

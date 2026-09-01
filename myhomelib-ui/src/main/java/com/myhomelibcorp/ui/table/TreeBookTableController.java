@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.usecase.book.MarkAsReadBatchUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.controller.ExportController;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -30,6 +31,7 @@ public class TreeBookTableController {
     private final NavigationService navigationService;
     private final ExportController exportController;
     private final MarkAsReadBatchUseCase markAsReadBatchUseCase;
+    private final BookSelectionService bookSelectionService;
 
     @FXML private TreeTableView<BookViewModel> treeTableView;
     @FXML private TreeTableColumn<BookViewModel, String> titleColumn;
@@ -80,31 +82,35 @@ public class TreeBookTableController {
 
         selectColumn.setCellFactory(param -> new TreeTableCell<BookViewModel, Boolean>() {
             private final CheckBox checkBox = new CheckBox();
+            private BookViewModel boundBook;
+            private final javafx.beans.value.ChangeListener<Boolean> rowListener =
+                    (obs, oldValue, newValue) -> checkBox.setSelected(Boolean.TRUE.equals(newValue));
+
+            {
+                checkBox.setOnAction(event -> {
+                    if (boundBook != null && !boundBook.isGroupHeader()) {
+                        boundBook.setSelected(checkBox.isSelected());
+                    }
+                });
+            }
 
             @Override
             protected void updateItem(Boolean item, boolean empty) {
                 super.updateItem(item, empty);
-
-                if (empty || getTreeTableRow() == null) {
+                if (boundBook != null) {
+                    boundBook.selectedProperty().removeListener(rowListener);
+                    boundBook = null;
+                }
+                TreeItem<BookViewModel> treeItem = empty || getTreeTableRow() == null
+                        ? null : getTreeTableRow().getTreeItem();
+                BookViewModel book = treeItem == null ? null : treeItem.getValue();
+                if (book == null || book.isGroupHeader() || book.getId() == null || book.getId().isBlank()) {
                     setGraphic(null);
                     return;
                 }
-
-                TreeItem<BookViewModel> treeItem = getTreeTableRow().getTreeItem();
-                if (treeItem == null || treeItem.getValue() == null) {
-                    setGraphic(null);
-                    return;
-                }
-
-                BookViewModel book = treeItem.getValue();
-                checkBox.setSelected(item != null && item);
-                checkBox.setDisable(false);
-
-                checkBox.selectedProperty().addListener((obs, oldVal, newVal) -> {
-                    book.setSelected(newVal);
-                    log.debug("📚 Книгу '{}' {}", book.getTitle(), newVal ? "✅ ВИБРАНО" : "❌ ЗНЯТО ВИБІР");
-                });
-
+                boundBook = book;
+                checkBox.setSelected(book.isSelected());
+                book.selectedProperty().addListener(rowListener);
                 setAlignment(Pos.CENTER);
                 setGraphic(checkBox);
             }
@@ -261,55 +267,37 @@ public class TreeBookTableController {
      * Повертає вибрані книги
      */
     public List<BookViewModel> getSelectedBooks() {
-        List<BookViewModel> selected = new ArrayList<>();
-        TreeItem<BookViewModel> root = treeTableView.getRoot();
-
-        log.debug("🔍 Пошук вибраних книг у дереві...");
-
-        if (root != null) {
-            collectSelectedBooks(root, selected);
-        }
-
-        log.info("📊 Знайдено {} вибраних книг", selected.size());
-
-        if (!selected.isEmpty()) {
-            log.info("📋 Список вибраних книг:");
-            for (BookViewModel book : selected) {
-                log.info("   - {} (ID: {})", book.getTitle(), book.getId());
-            }
-        }
-
-        return selected;
+        java.util.Set<String> selectedIds = bookSelectionService.snapshot().stream()
+                .map(BookId::asString).collect(java.util.stream.Collectors.toSet());
+        if (selectedIds.isEmpty()) return List.of();
+        List<BookViewModel> visible = new ArrayList<>();
+        collectSelectedBooks(treeTableView.getRoot(), selectedIds, visible);
+        return visible;
     }
 
-    private void collectSelectedBooks(TreeItem<BookViewModel> item, List<BookViewModel> selected) {
+    private void collectSelectedBooks(TreeItem<BookViewModel> item, java.util.Set<String> selectedIds,
+                                      List<BookViewModel> selected) {
+        if (item == null) return;
         BookViewModel book = item.getValue();
-        if (book != null && book.getId() != null && !book.getId().isBlank() && book.isSelected()) {
+        if (book != null && !book.isGroupHeader() && book.getId() != null && selectedIds.contains(book.getId())) {
             selected.add(book);
-            log.debug("✅ Додано вибрану книгу: {}", book.getTitle());
         }
-        for (TreeItem<BookViewModel> child : item.getChildren()) {
-            collectSelectedBooks(child, selected);
-        }
+        for (TreeItem<BookViewModel> child : item.getChildren()) collectSelectedBooks(child, selectedIds, selected);
     }
 
     private void selectAllBooks(boolean selected) {
-        TreeItem<BookViewModel> root = treeTableView.getRoot();
-        if (root != null) {
-            selectAllRecursive(root, selected);
-        }
+        List<BookViewModel> books = new ArrayList<>();
+        collectConcreteBooks(treeTableView.getRoot(), books);
+        bookSelectionService.setSelected(books, selected);
         log.info("{} всі книги в дереві", selected ? "✅ Вибрано" : "❌ Знято вибір з");
         treeTableView.refresh();
     }
 
-    private void selectAllRecursive(TreeItem<BookViewModel> item, boolean selected) {
+    private void collectConcreteBooks(TreeItem<BookViewModel> item, List<BookViewModel> books) {
+        if (item == null) return;
         BookViewModel book = item.getValue();
-        if (book != null && book.getId() != null && !book.getId().isBlank()) {
-            book.setSelected(selected);
-        }
-        for (TreeItem<BookViewModel> child : item.getChildren()) {
-            selectAllRecursive(child, selected);
-        }
+        if (book != null && !book.isGroupHeader() && book.getId() != null && !book.getId().isBlank()) books.add(book);
+        for (TreeItem<BookViewModel> child : item.getChildren()) collectConcreteBooks(child, books);
     }
 
     // ===== FXML МЕТОДИ =====
@@ -328,32 +316,27 @@ public class TreeBookTableController {
 
     @FXML
     public void exportSelected() {
-        List<BookViewModel> selected = getSelectedBooks();
-        if (selected.isEmpty()) {
-            showAlert("Немає вибраних книг", "Виберіть книги за допомогою чекбоксів.");
-            return;
-        }
-        exportController.showExportDialog(treeTableView.getScene().getWindow(), selected);
+        exportController.handleExport(treeTableView.getScene() == null ? null : treeTableView.getScene().getWindow());
     }
 
     @FXML
     public void markSelectedAsRead() {
-        List<BookViewModel> selected = getSelectedBooks();
-        if (selected.isEmpty()) {
-            showAlert("Немає вибраних книг", "Виберіть книги за допомогою чекбоксів.");
+        List<BookId> ids = bookSelectionService.snapshot();
+        if (ids.isEmpty()) {
+            showAlert("Немає вибраних книг", "Відмітьте книги checkbox.");
             return;
         }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
         confirm.setTitle("Позначити прочитаними");
-        confirm.setHeaderText("Позначити " + selected.size() + " книг як прочитані?");
+        confirm.setHeaderText("Позначити " + ids.size() + " книг як прочитані?");
         confirm.setContentText("Прогрес буде встановлено на 100%.");
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         try {
-            List<BookId> ids = selected.stream().map(BookViewModel::getId).map(BookId::fromString).toList();
             markAsReadBatchUseCase.execute(ids);
-            selected.forEach(book -> { book.setProgress(100); book.setSelected(false); });
+            getSelectedBooks().forEach(book -> book.setProgress(100));
+            bookSelectionService.clear();
             treeTableView.refresh();
-            showAlert("Готово", selected.size() + " книг позначено як прочитані.");
+            showAlert("Готово", ids.size() + " книг позначено як прочитані.");
         } catch (Exception e) {
             log.error("Не вдалося позначити книги як прочитані", e);
             Alert error = new Alert(Alert.AlertType.ERROR);

@@ -22,7 +22,6 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -124,45 +123,107 @@ public class SearchService {
         return ids.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
     }
 
-    /** Універсальний пошук із bounded SQL lookup для словників. */
-    public Map<String, Object> searchAll(String query) {
+    /**
+     * Global search for the workspace. Textual search no longer truncates books to 50
+     * or authors to 20. Results are loaded through bounded server-side pages and then
+     * exposed as one virtualized UI result set. Blank text with only a global filter
+     * remains bounded to avoid accidentally materializing the complete collection.
+     */
+    public GlobalSearchResult searchAll(String query) {
         String normalizedQuery = query == null ? "" : query.trim();
         BookFilterSpec filter = filterStateService.current();
         if (normalizedQuery.isBlank()) {
-            if (!filter.isActive()) {
-                return Map.of("authors", List.of(), "series", List.of(), "genres", List.of(), "books", List.of());
-            }
-            return Map.of(
-                    "authors", List.of(),
-                    "series", List.of(),
-                    "genres", List.of(),
-                    "books", search("", 50)
-            );
+            if (!filter.isActive()) return GlobalSearchResult.empty();
+            return new GlobalSearchResult(List.of(), List.of(), List.of(), search("", 1000));
         }
 
-        Map<String, Object> results = new HashMap<>();
-        // Автори шукаються bounded SQL-запитом: повний словник авторів не тримаємо в heap.
-        List<AuthorDto> authors = authorRepository.searchByName(normalizedQuery, 20).stream()
-                .map(authorMapper::toDto)
-                .collect(Collectors.toList());
-        results.put("authors", authors);
-
-        // Series/genres stay database-backed; do not materialize a full dictionary
-        // for a 700k-1M collection merely to return 20 autocomplete items.
-        List<String> series = seriesRepository.searchNames(normalizedQuery, 20);
-        results.put("series", series);
-
-        List<GenreDto> genres = genreRepository.searchByName(normalizedQuery, 20).stream()
+        List<AuthorDto> authors = searchAuthorsAll(normalizedQuery);
+        List<String> series = seriesRepository.searchNames(normalizedQuery, 200);
+        List<GenreDto> genres = genreRepository.searchByName(normalizedQuery, 200).stream()
                 .map(genreMapper::toDto)
                 .toList();
-        results.put("genres", genres);
-
-        // Пошук книг через Lucene
-        List<BookDto> books = search(normalizedQuery, 50);
-        results.put("books", books);
+        List<BookDto> books = searchAllBooks(normalizedQuery);
 
         log.debug("Пошук '{}' завершено: авторів {}, серій {}, жанрів {}, книг {}",
                 normalizedQuery, authors.size(), series.size(), genres.size(), books.size());
-        return results;
+        return new GlobalSearchResult(authors, series, genres, books);
+    }
+
+    /** Load every Lucene hit through bounded pages; no visible 50-book ceiling. */
+    public List<BookDto> searchAllBooks(String query) {
+        String normalizedQuery = query == null ? "" : query.trim();
+        BookFilterSpec filter = filterStateService.current();
+        if (normalizedQuery.isBlank() && !filter.isActive()) return List.of();
+        SearchRequest base = SearchRequest.builder()
+                .text(normalizedQuery)
+                .filterSpec(filter)
+                .mode(com.myhomelibcorp.application.query.search.SearchMode.PHRASE)
+                .build();
+        return searchAll(base);
+    }
+
+    /** Complete advanced-search result, fetched in bounded Lucene/SQL chunks. */
+    public List<BookDto> searchAll(SearchRequest request) {
+        if (request == null) return List.of();
+        SearchRequest effective = withFilter(request,
+                request.filterSpec() == null ? filterStateService.current() : request.filterSpec());
+        final int chunkSize = 500;
+        int offset = 0;
+        long total = Long.MAX_VALUE;
+        java.util.ArrayList<BookDto> all = new java.util.ArrayList<>();
+        while (offset < total) {
+            SearchRequest pageRequest = withPaging(effective, chunkSize, offset);
+            SearchResult page = searchQueryService.search(pageRequest);
+            total = page.totalHits();
+            if (page.isEmpty()) break;
+            List<BookDto> loaded = loadBooks(page.bookIds());
+            if (loaded.isEmpty()) break;
+            all.addAll(loaded);
+            offset += page.bookIds().size();
+            if (offset >= total || page.bookIds().size() < chunkSize) break;
+        }
+        return List.copyOf(all);
+    }
+
+    private SearchRequest withPaging(SearchRequest base, int limit, int offset) {
+        return SearchRequest.builder()
+                .text(base.text()).authorId(base.authorId()).genreId(base.genreId())
+                .language(base.language()).ratingFrom(base.ratingFrom()).ratingTo(base.ratingTo())
+                .yearFrom(base.yearFrom()).yearTo(base.yearTo()).addedFrom(base.addedFrom()).addedTo(base.addedTo())
+                .localOnly(base.localOnly()).filterSpec(base.filterSpec())
+                .limit(limit).offset(offset).mode(base.mode())
+                .build();
+    }
+
+    /** All matching authors, loaded in bounded SQL pages rather than a hard 20-row cap. */
+    public List<AuthorDto> searchAuthorsAll(String query) {
+        String normalizedQuery = query == null ? "" : query.trim();
+        if (normalizedQuery.isBlank()) return List.of();
+        final int chunkSize = 500;
+        int offset = 0;
+        java.util.ArrayList<AuthorDto> all = new java.util.ArrayList<>();
+        while (true) {
+            List<com.myhomelibcorp.domain.model.author.Author> chunk =
+                    authorRepository.searchByName(normalizedQuery, chunkSize, offset);
+            if (chunk.isEmpty()) break;
+            chunk.stream().map(authorMapper::toDto).forEach(all::add);
+            offset += chunk.size();
+            if (chunk.size() < chunkSize) break;
+        }
+        return List.copyOf(all);
+    }
+
+    /**
+     * Bounded server-side author lookup used by the left navigation panel.
+     * Keeping this operation separate prevents the UI from materializing or
+     * filtering the complete author dictionary for large collections.
+     */
+    public List<AuthorDto> searchAuthors(String query, int limit) {
+        String normalizedQuery = query == null ? "" : query.trim();
+        if (normalizedQuery.isBlank()) return List.of();
+        int safeLimit = Math.max(1, Math.min(limit, 200));
+        return authorRepository.searchByName(normalizedQuery, safeLimit).stream()
+                .map(authorMapper::toDto)
+                .collect(Collectors.toList());
     }
 }

@@ -11,11 +11,13 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.ui.service.HelpTopicRegistry;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.search.SearchWorkspaceController;
 import com.myhomelibcorp.ui.table.BookTableController;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyBooleanProperty;
@@ -68,6 +70,32 @@ public class WorkspaceManager {
             workspaceStackPane.getChildren().remove(currentWorkspace);
             currentWorkspace = null;
             currentLifecycle = null;
+        }
+    }
+
+    public boolean showColumnChooserForCurrentWorkspace() {
+        if (currentWorkspace == null) return false;
+        Object controller = currentWorkspace.getUserData();
+        if (controller instanceof BookTableController bookTableController) {
+            bookTableController.showColumnChooser();
+            return true;
+        }
+        if (controller instanceof AuthorWorkspaceController authorWorkspaceController) {
+            authorWorkspaceController.showColumnChooser();
+            return true;
+        }
+        return false;
+    }
+
+    public void refreshAfterStorageChange() {
+        if (currentWorkspace == null) return;
+        Object controller = currentWorkspace.getUserData();
+        if (controller instanceof AuthorWorkspaceController authorWorkspaceController) {
+            authorWorkspaceController.refreshData();
+        } else if (controller instanceof BookTableController bookTableController) {
+            bookTableController.refresh();
+        } else if (controller instanceof SearchWorkspaceController searchWorkspaceController) {
+            searchWorkspaceController.refreshStorageState();
         }
     }
 
@@ -125,6 +153,12 @@ public class WorkspaceManager {
         Pane workspace = fxmlLoaderFactory.loadAuthorWorkspace(authorId);
         setWorkspace(workspace);
         push("author", authorId != null ? authorId.asString() : "");
+    }
+
+    public void showDownloadedAuthorWorkspace(AuthorId authorId) {
+        Pane workspace = fxmlLoaderFactory.loadAuthorWorkspace(authorId, true);
+        setWorkspace(workspace);
+        push("downloaded-author", authorId != null ? authorId.asString() : "");
     }
 
     public void showBookWorkspace(BookId bookId) {
@@ -330,6 +364,7 @@ public class WorkspaceManager {
         switch (entry.type) {
             case "dashboard" -> showDashboard();
             case "author" -> showAuthorWorkspace(AuthorId.fromString(entry.id));
+            case "downloaded-author" -> showDownloadedAuthorWorkspace(AuthorId.fromString(entry.id));
             case "series" -> showSeriesWorkspace(SeriesId.fromString(entry.id));
             case "genre" -> showGenreWorkspace(GenreId.fromCode(entry.id));
             case "year" -> showYearWorkspace(Integer.parseInt(entry.id));

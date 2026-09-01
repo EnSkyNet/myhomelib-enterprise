@@ -55,15 +55,15 @@ public class ImportProgressDialog {
         statusLabel.setStyle("-fx-font-size: 14px;");
 
         detailLabel = new Label("0 / 0 книг");
-        detailLabel.setStyle("-fx-text-fill: #666666;");
+        detailLabel.getStyleClass().add("muted-text");
 
         speedLabel = new Label("0 книг/с");
-        speedLabel.setStyle("-fx-text-fill: #888888; -fx-font-size: 12px;");
+        speedLabel.getStyleClass().addAll("muted-text", "small-text");
 
         VBox content = new VBox(10);
         content.setAlignment(Pos.CENTER);
         content.setPadding(new Insets(30));
-        content.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #cccccc; -fx-border-radius: 8; -fx-background-radius: 8;");
+        content.getStyleClass().add("progress-dialog-content");
         content.getChildren().addAll(
                 titleLabel,
                 spinner,

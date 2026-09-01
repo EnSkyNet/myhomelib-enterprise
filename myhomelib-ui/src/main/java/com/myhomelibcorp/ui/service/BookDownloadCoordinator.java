@@ -12,6 +12,7 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
+import javafx.stage.Window;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
@@ -70,6 +71,126 @@ public class BookDownloadCoordinator {
                         .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
                 .thenCompose(book -> download(book, false));
     }
+
+    /**
+     * Ensures physical availability and reports whether I/O was actually required.
+     * Batch UI uses this to distinguish newly downloaded books from already-local ones.
+     */
+    public CompletableFuture<EnsureLocalOutcome> ensureLocalWithStatus(BookId bookId) {
+        return ensureLocalWithStatus(bookId, true);
+    }
+
+    private CompletableFuture<EnsureLocalOutcome> ensureLocalWithStatus(BookId bookId, boolean showErrors) {
+        if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
+        return executor.submit(() -> loadBookByIdUseCase.execute(bookId)
+                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
+                .thenCompose(book -> {
+                    normalizeLegacyRemoteStorage(book);
+                    var existing = bookResourcePort.locateBookFile(
+                            book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
+                    if (existing.isPresent()) {
+                        return CompletableFuture.completedFuture(new EnsureLocalOutcome(existing.get(), true));
+                    }
+                    return download(book, false, showErrors, showErrors).thenApply(path -> new EnsureLocalOutcome(path, false));
+                });
+    }
+
+    public record EnsureLocalOutcome(Path path, boolean alreadyLocal) { }
+
+    public record BatchDownloadResult(int requested, int downloaded, int alreadyLocal, int failed, List<String> errors) {
+        public boolean successful() { return failed == 0; }
+    }
+
+    /**
+     * Downloads the selected books while keeping the current workspace/navigation intact.
+     * A compact progress window shows connection, completed count and committed library saves.
+     */
+    public CompletableFuture<BatchDownloadResult> downloadBatch(List<BookId> bookIds, Window owner) {
+        List<BookId> ids = bookIds == null ? List.of() : bookIds.stream().filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return CompletableFuture.completedFuture(new BatchDownloadResult(0, 0, 0, 0, List.of()));
+        if (!Platform.isFxApplicationThread()) {
+            CompletableFuture<BatchDownloadResult> bridge = new CompletableFuture<>();
+            Platform.runLater(() -> downloadBatch(ids, owner).whenComplete((result, error) -> {
+                if (error == null) bridge.complete(result); else bridge.completeExceptionally(error);
+            }));
+            return bridge;
+        }
+
+        BookDownloadProgressDialog progressDialog = new BookDownloadProgressDialog(owner, ids.size());
+        progressDialog.show();
+        progressDialog.update(0, ids.size(), 0, 0, 0, "Підключення / перевірка локальних копій…");
+
+        java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger downloaded = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger alreadyLocal = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger failed = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.List<String> errors = new java.util.concurrent.CopyOnWriteArrayList<>();
+
+        CompletableFuture<?>[] tasks = ids.stream().map(id -> ensureLocalWithStatus(id, false).handle((outcome, error) -> {
+            if (error != null) {
+                failed.incrementAndGet();
+                errors.add(id + ": " + compactError(unwrap(error)));
+            } else if (outcome.alreadyLocal()) {
+                alreadyLocal.incrementAndGet();
+            } else {
+                downloaded.incrementAndGet();
+            }
+            int done = completed.incrementAndGet();
+            Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
+                    "Підключено. Завантаження та збереження книг…"));
+            return null;
+        })).toArray(CompletableFuture[]::new);
+
+        return CompletableFuture.allOf(tasks).thenApply(ignored -> {
+            BatchDownloadResult result = new BatchDownloadResult(ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(), List.copyOf(errors));
+            Platform.runLater(() -> {
+                progressDialog.complete(ids.size(), result.downloaded(), result.alreadyLocal(), result.failed());
+                if (result.downloaded() > 0) eventPublisher.publishEvent(new NavigationRefreshEvent());
+            });
+            return result;
+        });
+    }
+
+    /**
+     * Export preflight that stays silent when every selected book is already physically local.
+     * Only missing books are handed to the normal batch downloader, so an export of local books
+     * does not flash an unnecessary download window.
+     */
+    public CompletableFuture<BatchDownloadResult> prepareForExport(List<BookId> bookIds, Window owner) {
+        List<BookId> ids = bookIds == null ? List.of() : bookIds.stream()
+                .filter(java.util.Objects::nonNull).distinct().toList();
+        if (ids.isEmpty()) return CompletableFuture.completedFuture(new BatchDownloadResult(0, 0, 0, 0, List.of()));
+
+        return executor.submit(() -> {
+            java.util.ArrayList<BookId> missing = new java.util.ArrayList<>();
+            int local = 0;
+            for (BookId id : ids) {
+                BookDto book = loadBookByIdUseCase.execute(id).orElse(null);
+                if (book == null) {
+                    missing.add(id);
+                    continue;
+                }
+                normalizeLegacyRemoteStorage(book);
+                boolean present = bookResourcePort.locateBookFile(
+                        book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry()).isPresent();
+                if (present) local++; else missing.add(id);
+            }
+            return new ExportPreflight(List.copyOf(missing), local);
+        }).thenCompose(preflight -> {
+            if (preflight.missing().isEmpty()) {
+                return CompletableFuture.completedFuture(new BatchDownloadResult(
+                        ids.size(), 0, preflight.alreadyLocal(), 0, List.of()));
+            }
+            return downloadBatch(preflight.missing(), owner).thenApply(result -> new BatchDownloadResult(
+                    ids.size(),
+                    result.downloaded(),
+                    preflight.alreadyLocal() + result.alreadyLocal(),
+                    result.failed(),
+                    result.errors()));
+        });
+    }
+
+    private record ExportPreflight(List<BookId> missing, int alreadyLocal) { }
 
     /**
      * Open/read guard using the authoritative DB row before checking the physical file.
@@ -138,6 +259,14 @@ public class BookDownloadCoordinator {
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
+        return download(book, force, true, true);
+    }
+
+    private CompletableFuture<Path> download(BookDto book, boolean force, boolean showErrors) {
+        return download(book, force, showErrors, true);
+    }
+
+    private CompletableFuture<Path> download(BookDto book, boolean force, boolean showErrors, boolean publishNavigationRefresh) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
         normalizeLegacyRemoteStorage(book);
 
@@ -227,13 +356,14 @@ public class BookDownloadCoordinator {
                                         row.setArchiveEntry(refreshed.getArchiveEntry());
                                         row.setFileSize(refreshed.getFileSize());
                                     });
-                            eventPublisher.publishEvent(new NavigationRefreshEvent());
+                            if (publishNavigationRefresh) eventPublisher.publishEvent(new NavigationRefreshEvent());
                         } else {
                             Throwable cause = unwrap(error);
                             applicationState.getStatusBar().setStatusText("❌ Помилка завантаження: " + book.getTitle());
                             String message = cause.getMessage() == null ? cause.toString() : cause.getMessage();
-                            if (!message.toLowerCase().contains("скасовано")) {
-                                dialogService.showError("Завантаження", message);
+                            if (!message.toLowerCase(java.util.Locale.ROOT).contains("скасовано")) {
+                                log.error("Завантаження книги {} завершилося помилкою: {}", book.getId(), compactError(cause));
+                                if (showErrors) dialogService.showError("Завантаження", userVisibleDownloadError(cause));
                             }
                         }
                     });
@@ -428,6 +558,32 @@ public class BookDownloadCoordinator {
 
     public boolean isDownloading(BookDto book) {
         return book != null && active.containsKey(book.getId());
+    }
+
+    private static String userVisibleDownloadError(Throwable error) {
+        String detail = compactError(error);
+        String normalized = detail.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.contains("sqlite_busy") || normalized.contains("database is locked")
+                || normalized.contains("database table is locked")) {
+            return "База даних тимчасово зайнята іншою операцією. "
+                    + "Програма вже виконала повторні спроби запису. Повторіть завантаження через кілька секунд.";
+        }
+        if (normalized.contains("preparedstatementcallback") || normalized.contains("uncategorized sqlexception")) {
+            return "Не вдалося зберегти результат завантаження в базі даних. "
+                    + "Файл не буде позначено як успішно завантажений. Перегляньте журнал помилок.";
+        }
+        return detail.isBlank() ? "Невідома помилка завантаження" : detail;
+    }
+
+    private static String compactError(Throwable error) {
+        if (error == null) return "";
+        Throwable current = error;
+        String best = current.getMessage();
+        while (current.getCause() != null && current.getCause() != current) {
+            current = current.getCause();
+            if (current.getMessage() != null && !current.getMessage().isBlank()) best = current.getMessage();
+        }
+        return best == null ? current.getClass().getSimpleName() : best;
     }
 
     private Throwable unwrap(Throwable error) {

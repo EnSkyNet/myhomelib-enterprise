@@ -5,4 +5,4 @@
 <StackPane xmlns:fx="http://javafx.com/fxml/1"
            fx:id="readerContainer"
            fx:controller="com.myhomelibcorp.ui.reader.NewReaderWorkspaceController"
-           style="-fx-background-color: #ffffff;"/>
+           styleClass="workspace-root"/>
