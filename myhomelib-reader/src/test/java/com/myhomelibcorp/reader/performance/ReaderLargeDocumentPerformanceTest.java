@@ -42,10 +42,14 @@ class ReaderLargeDocumentPerformanceTest {
     void parsesLargeEpubSpineWithinGuardrail() throws Exception {
         Path epub = temp.resolve("large.epub");
         String paragraph = "<p>Large EPUB paragraph with enough content to exercise streaming XHTML parsing and paragraph indexing.</p>";
-        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(epub))) {
-            // Встановлюємо помірний рівень стиснення, щоб уникнути спрацювання захисту від zip-bomb
-            zip.setLevel(5);
 
+        // Створюємо ZIP з мінімальним рівнем стиснення (1)
+        // Це запобігає спрацюванню zip-bomb detection
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(epub))) {
+            // Встановлюємо мінімальний рівень стиснення для всього ZIP
+            zip.setLevel(1);
+
+            put(zip, "mimetype", "application/epub+zip");
             put(zip, "META-INF/container.xml",
                     "<?xml version=\"1.0\"?><container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\">" +
                             "<rootfiles><rootfile full-path=\"OPS/book.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>");
@@ -64,8 +68,6 @@ class ReaderLargeDocumentPerformanceTest {
 
     private static void put(ZipOutputStream zip, String name, String text) throws Exception {
         ZipEntry entry = new ZipEntry(name);
-        // Явно вказуємо метод стиснення DEFLATED
-        entry.setMethod(ZipEntry.DEFLATED);
         zip.putNextEntry(entry);
         zip.write(text.getBytes(StandardCharsets.UTF_8));
         zip.closeEntry();
