@@ -8,5 +8,7 @@ public record RemoteDownloadMetadata(
         long contentLength,
         String datasetSchema
 ) {
-    public static RemoteDownloadMetadata empty() { return new RemoteDownloadMetadata("", "", "", -1, ""); }
+    public static RemoteDownloadMetadata empty() {
+        return new RemoteDownloadMetadata("", "", "", -1, "");
+    }
 }
