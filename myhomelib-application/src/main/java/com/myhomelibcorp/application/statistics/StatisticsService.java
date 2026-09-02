@@ -18,6 +18,10 @@ public class StatisticsService {
         return statisticsRepository.getStatistics();
     }
 
+    public void invalidate() {
+        statisticsRepository.invalidate();
+    }
+
     public void refreshStatistics() {
         log.info("Перерахунок статистики активної колекції");
         statisticsRepository.refreshStatistics();

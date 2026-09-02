@@ -43,6 +43,7 @@ public class BookViewModelMapper {
         vm.setUpdateDate(dto.getUpdateDate());
         vm.setDeleted(dto.isDeleted());
         vm.setLocal(dto.isLocal());
+        vm.setMissingSince(dto.getMissingSince());
         vm.setCollectionRoot(dto.getCollectionRoot());
         vm.setReview(dto.getReview());
         vm.setCreatedAt(dto.getCreatedAt());
@@ -64,6 +65,7 @@ public class BookViewModelMapper {
         vm.setProgress(item.getProgress());
         vm.setFileSize(item.getFileSize());
         vm.setLocal(item.isLocal());
+        vm.setMissingSince(item.getMissingSince());
         vm.setFileName(item.getFileName());
         vm.setFolder(item.getFolder());
         vm.setArchiveEntry(item.getArchiveEntry());
@@ -132,6 +134,7 @@ public class BookViewModelMapper {
         dto.setUpdateDate(vm.getUpdateDate());
         dto.setDeleted(vm.isDeleted());
         dto.setLocal(vm.isLocal());
+        dto.setMissingSince(vm.getMissingSince());
         dto.setCollectionRoot(vm.getCollectionRoot());
         dto.setReview(vm.getReview());
         dto.setCreatedAt(vm.getCreatedAt());

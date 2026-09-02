@@ -85,6 +85,9 @@
                     <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
                 </columns>
             </TableView>
+            <HBox alignment="CENTER" spacing="8">
+                <Button fx:id="loadMoreBooksButton" text="Завантажити ще" onAction="#onLoadMoreBooks" visible="false" managed="false"/>
+            </HBox>
         </VBox>
     </VBox>
 </VBox>

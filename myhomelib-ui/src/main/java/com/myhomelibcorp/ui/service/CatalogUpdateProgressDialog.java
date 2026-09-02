@@ -208,7 +208,13 @@ public final class CatalogUpdateProgressDialog {
             case UPDATING_AUTHORS -> "Оновлення авторів";
             case APPLYING_DELETIONS -> "Застосування видалень";
             case UPDATING_SEARCH_INDEX -> "Оновлення пошукового індексу";
+            case REFRESHING_STATISTICS -> "Перерахунок статистики";
             case INTEGRITY_CHECKS -> "Перевірка цілісності";
+            case SYNCHRONIZING_FILES -> "Синхронізація файлів";
+            case OPTIMIZING_DATABASE -> "Оптимізація БД";
+            case BACKING_UP -> "Резервне копіювання";
+            case RESTORING -> "Відновлення";
+            case CREATING_COLLECTION -> "Створення колекції";
             case FINALIZING -> "Завершення";
             case BOOK_DOWNLOAD -> "Завантаження книги";
             case COMPLETED -> "Завершено";

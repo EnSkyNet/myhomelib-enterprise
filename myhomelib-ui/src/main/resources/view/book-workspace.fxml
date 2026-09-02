@@ -32,7 +32,7 @@
     </HBox>
 
     <Label text="Анотація:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
-    <TextArea fx:id="annotationArea" wrapText="true" prefHeight="120" editable="false"/>
+    <Label fx:id="annotationLabel" wrapText="true" maxWidth="1.7976931348623157E308"/>
 
     <HBox spacing="10">
         <Button text="Відкрити у зовнішній програмі" onAction="#onOpen" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>

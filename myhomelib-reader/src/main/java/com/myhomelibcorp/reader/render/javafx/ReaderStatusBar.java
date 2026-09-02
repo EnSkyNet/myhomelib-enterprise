@@ -79,7 +79,14 @@ public final class ReaderStatusBar extends HBox {
         }
         String title = canvas.getCurrentChapterTitle();
         chapter.setText(title == null || title.isBlank() ? "Розділ 1" : title);
-        page.setText(settings.showStatusPage() ? canvas.getCurrentPageNumber() + "/" + canvas.getTotalPages() : "");
+        if (settings.showStatusPage()) {
+            int currentPage = canvas.getCurrentPageNumber();
+            int totalPages = canvas.getTotalPages();
+            page.setText((currentPage > 0 ? Integer.toString(currentPage) : "…") + "/"
+                    + (totalPages > 0 ? Integer.toString(totalPages) : "…") + " стор.");
+        } else {
+            page.setText("");
+        }
         double pct = canvas.getProgressPercent();
         progress.setProgress(Math.max(0, Math.min(1, pct / 100.0)));
         progressText.setText(String.format("%.0f%%", pct));

@@ -1,8 +1,13 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.service.BackupRestoreService;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
@@ -24,6 +29,9 @@ public class RestoreController {
 
     private final BackupRestoreService backupRestoreService;
     private final DialogService dialogService;
+    private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
+    private final ApplicationState appState;
 
     @FXML private TextField backupPathField;
     @FXML private ProgressBar progressBar;
@@ -176,18 +184,27 @@ public class RestoreController {
         progressBar.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
         statusLabel.setText("Відновлення...");
 
-        new Thread(() -> {
-            try {
-                addLog("=== Початок відновлення ===");
-                addLog("Джерело: " + backupPath);
-                addLog("Режим: " + (options.restoreDatabase() ? "повне відновлення БД" : "лише user data за LibID"));
-                if (dbFile != null) addLog("Файл бази даних: " + dbFile.getFileName());
+        var collection = appState.getCurrentLibraryCollection();
+        String operationId = operationCenter.start(
+                "Відновлення з резервної копії", collection == null ? "" : collection.getId(),
+                OperationStage.RESTORING, false);
+        addLog("=== Початок відновлення ===");
+        addLog("Джерело: " + backupPath);
+        addLog("Режим: " + (options.restoreDatabase() ? "повне відновлення БД" : "лише user data за LibID"));
+        if (dbFile != null) addLog("Файл бази даних: " + dbFile.getFileName());
+        addLog("Відновлення...");
 
-                addLog("Відновлення...");
-                BackupRestoreService.RestoreResult result = backupRestoreService.restore(options);
-
-                UiExecutor.runOnUiThread(() -> {
-                    if (result.isSuccess()) {
+        executor.submit(() -> backupRestoreService.restore(options))
+                .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        operationCenter.fail(operationId, cause);
+                        log.error("Помилка відновлення", cause);
+                        statusLabel.setText("❌ Помилка: " + cause.getMessage());
+                        addLog("\n❌ Помилка: " + cause.getMessage());
+                        dialogService.showError("Помилка", "Не вдалося відновити: " + cause.getMessage());
+                    } else if (result != null && result.isSuccess()) {
+                        operationCenter.complete(operationId, "Відновлено елементів: " + result.itemsRestored());
                         statusLabel.setText("✅ Відновлення завершено успішно!");
                         progressBar.setProgress(1.0);
                         addLog("\n✅ Відновлення завершено успішно!");
@@ -196,23 +213,14 @@ public class RestoreController {
                                         "📁 Джерело: " + backupPath + "\n" +
                                         "📄 Відновлено елементів: " + result.itemsRestored());
                     } else {
-                        statusLabel.setText("❌ Помилка: " + result.error());
-                        addLog("\n❌ Помилка: " + result.error());
-                        dialogService.showError("Помилка", "Не вдалося відновити: " + result.error());
+                        String message = result == null ? "Невідомий результат" : result.error();
+                        operationCenter.fail(operationId, new IllegalStateException(message));
+                        statusLabel.setText("❌ Помилка: " + message);
+                        addLog("\n❌ Помилка: " + message);
+                        dialogService.showError("Помилка", "Не вдалося відновити: " + message);
                     }
                     resetUI();
-                });
-
-            } catch (Exception e) {
-                log.error("Помилка відновлення", e);
-                UiExecutor.runOnUiThread(() -> {
-                    statusLabel.setText("❌ Помилка: " + e.getMessage());
-                    addLog("\n❌ Помилка: " + e.getMessage());
-                    dialogService.showError("Помилка", "Не вдалося відновити: " + e.getMessage());
-                    resetUI();
-                });
-            }
-        }).start();
+                }));
     }
 
     private void addLog(String message) {

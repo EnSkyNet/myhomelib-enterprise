@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchResult;
 import com.myhomelibcorp.application.search.SearchIndexProgress;
 import com.myhomelibcorp.application.search.SearchIndexPerformanceReport;
+import com.myhomelibcorp.application.search.SearchIndexUnavailableException;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -52,6 +53,9 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     private volatile boolean atomicUpdate = false;
     private volatile SearchIndexPerformanceReport lastPerformanceReport;
     private java.util.function.IntConsumer commitObserver = ignored -> { };
+    private Runnable fullRebuildObserver = () -> { };
+    private volatile boolean queryAvailable = false;
+    private volatile String queryUnavailableReason = "Пошуковий індекс ще не готовий";
 
     public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
                                BookQueryRepository bookQueryRepository) {
@@ -71,10 +75,19 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         log.info("LuceneSearchService ініціалізовано");
     }
 
-
     // Package-private hooks owned by LuceneCollectionIndexLifecycle.
     synchronized void setCommitObserver(java.util.function.IntConsumer observer) {
         commitObserver = observer == null ? ignored -> { } : observer;
+    }
+
+    synchronized void setFullRebuildObserver(Runnable observer) {
+        fullRebuildObserver = observer == null ? () -> { } : observer;
+    }
+
+    synchronized void setQueryAvailability(boolean available, String reason) {
+        queryAvailable = available;
+        queryUnavailableReason = available ? ""
+                : (reason == null || reason.isBlank() ? "Пошуковий індекс ще не готовий" : reason);
     }
 
     synchronized void switchDirectory(Directory nextDirectory) {
@@ -86,6 +99,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         searcherManager = opened.searcherManager();
         indexedSinceLastCommit = 0;
         atomicUpdate = false;
+        setQueryAvailability(false, "Пошуковий індекс перемикається на іншу колекцію");
     }
 
     synchronized void closeIndexForSwitch() {
@@ -198,7 +212,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         long gcCollectionsBefore = LuceneIndexMetrics.totalGcCollections();
         long gcTimeBefore = LuceneIndexMetrics.totalGcTimeMs();
         long total = Math.max(0L, bookQueryRepository.countAll());
-        notifyRebuildProgress(progressListener, 0, total);
+        LuceneRebuildSupport.notifyProgress(progressListener, 0, total);
 
         beginAtomicUpdate();
         try {
@@ -212,7 +226,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             try (var books = bookQueryRepository.streamAll()) {
                 var iterator = books.iterator();
                 while (true) {
-                    checkRebuildCancelled(cancelFlag);
+                    LuceneRebuildSupport.checkCancelled(cancelFlag);
                     long dbStarted = System.nanoTime();
                     boolean hasNext = iterator.hasNext();
                     Book book = hasNext ? iterator.next() : null;
@@ -231,7 +245,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
                     indexed++;
 
                     if (indexed % 1_000 == 0) {
-                        notifyRebuildProgress(progressListener, indexed, total);
+                        LuceneRebuildSupport.notifyProgress(progressListener, indexed, total);
                         peakHeap = Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes());
                     }
                     if (indexed % 50_000 == 0) {
@@ -240,7 +254,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
                     }
                 }
             }
-            checkRebuildCancelled(cancelFlag);
+            LuceneRebuildSupport.checkCancelled(cancelFlag);
 
             // Merge work required for durability is accounted for by the final commit timing.
             mergeWaitNanos = 0L;
@@ -249,62 +263,32 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             long commitStarted = System.nanoTime();
             commit();
             commitNanos = System.nanoTime() - commitStarted;
-            notifyRebuildProgress(progressListener, indexed, total > 0 ? total : indexed);
+            notifyFullRebuildObserver();
+            LuceneRebuildSupport.notifyProgress(progressListener, indexed, total > 0 ? total : indexed);
             peakHeap = Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes());
 
-            long totalTime = LuceneIndexMetrics.elapsedMs(startedNanos);
-            double booksPerSecond = indexed * 1000.0 / Math.max(1, totalTime);
-            lastPerformanceReport = new SearchIndexPerformanceReport(startedAt, "SUCCESS", indexed, total, totalTime,
-                    booksPerSecond, LuceneIndexMetrics.nanosToMs(dbReadNanos), LuceneIndexMetrics.nanosToMs(documentBuildNanos), LuceneIndexMetrics.nanosToMs(luceneWriteNanos),
-                    LuceneIndexMetrics.nanosToMs(mergeWaitNanos), LuceneIndexMetrics.nanosToMs(commitNanos), peakHeap,
-                    Math.max(0, LuceneIndexMetrics.totalGcCollections() - gcCollectionsBefore), Math.max(0, LuceneIndexMetrics.totalGcTimeMs() - gcTimeBefore),
-                    LuceneIndexMetrics.indexSizeBytes(directory), LuceneIndexMetrics.segmentCount(directory));
+            lastPerformanceReport = LuceneRebuildSupport.report(startedAt, "SUCCESS", indexed, total, startedNanos,
+                    dbReadNanos, documentBuildNanos, luceneWriteNanos, mergeWaitNanos, commitNanos, peakHeap,
+                    gcCollectionsBefore, gcTimeBefore, directory);
             log.info("✅ Індекс перебудовано: {} документів за {} мс ({} книг/с); DB={} мс, Document={} мс, write={} мс, mergeWait={} мс, commit={} мс",
-                    indexed, totalTime, String.format("%.1f", booksPerSecond), lastPerformanceReport.dbReadMs(),
+                    indexed, lastPerformanceReport.totalDurationMs(), String.format("%.1f", lastPerformanceReport.documentsPerSecond()), lastPerformanceReport.dbReadMs(),
                     lastPerformanceReport.documentBuildMs(), lastPerformanceReport.luceneWriteMs(),
                     lastPerformanceReport.mergeWaitMs(), lastPerformanceReport.commitMs());
 
-        } catch (IndexRebuildCancelledException e) {
+        } catch (LuceneRebuildSupport.CancelledException e) {
             try { rollbackAtomicUpdate(); } catch (Exception rollbackFailure) { e.addSuppressed(rollbackFailure); }
-            long totalTime = LuceneIndexMetrics.elapsedMs(startedNanos);
-            lastPerformanceReport = new SearchIndexPerformanceReport(startedAt, "CANCELLED", indexed, total, totalTime,
-                    indexed * 1000.0 / Math.max(1, totalTime), LuceneIndexMetrics.nanosToMs(dbReadNanos), LuceneIndexMetrics.nanosToMs(documentBuildNanos),
-                    LuceneIndexMetrics.nanosToMs(luceneWriteNanos), LuceneIndexMetrics.nanosToMs(mergeWaitNanos), LuceneIndexMetrics.nanosToMs(commitNanos),
-                    Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes()), Math.max(0, LuceneIndexMetrics.totalGcCollections() - gcCollectionsBefore),
-                    Math.max(0, LuceneIndexMetrics.totalGcTimeMs() - gcTimeBefore), LuceneIndexMetrics.indexSizeBytes(directory), LuceneIndexMetrics.segmentCount(directory));
+            lastPerformanceReport = LuceneRebuildSupport.report(startedAt, "CANCELLED", indexed, total, startedNanos,
+                    dbReadNanos, documentBuildNanos, luceneWriteNanos, mergeWaitNanos, commitNanos, peakHeap,
+                    gcCollectionsBefore, gcTimeBefore, directory);
             log.info("Перебудову Lucene скасовано; попередній committed індекс збережено");
             throw e;
         } catch (Exception e) {
             try { rollbackAtomicUpdate(); } catch (Exception rollbackFailure) { e.addSuppressed(rollbackFailure); }
-            long totalTime = LuceneIndexMetrics.elapsedMs(startedNanos);
-            lastPerformanceReport = new SearchIndexPerformanceReport(startedAt, "FAILED", indexed, total, totalTime,
-                    indexed * 1000.0 / Math.max(1, totalTime), LuceneIndexMetrics.nanosToMs(dbReadNanos), LuceneIndexMetrics.nanosToMs(documentBuildNanos),
-                    LuceneIndexMetrics.nanosToMs(luceneWriteNanos), LuceneIndexMetrics.nanosToMs(mergeWaitNanos), LuceneIndexMetrics.nanosToMs(commitNanos),
-                    Math.max(peakHeap, LuceneIndexMetrics.usedHeapBytes()), Math.max(0, LuceneIndexMetrics.totalGcCollections() - gcCollectionsBefore),
-                    Math.max(0, LuceneIndexMetrics.totalGcTimeMs() - gcTimeBefore), LuceneIndexMetrics.indexSizeBytes(directory), LuceneIndexMetrics.segmentCount(directory));
+            lastPerformanceReport = LuceneRebuildSupport.report(startedAt, "FAILED", indexed, total, startedNanos,
+                    dbReadNanos, documentBuildNanos, luceneWriteNanos, mergeWaitNanos, commitNanos, peakHeap,
+                    gcCollectionsBefore, gcTimeBefore, directory);
             log.error("Помилка перебудови індексу; попередній committed індекс збережено", e);
             throw new IllegalStateException("Не вдалося перебудувати пошуковий індекс", e);
-        }
-    }
-
-    private static void checkRebuildCancelled(AtomicBoolean cancelFlag) {
-        if ((cancelFlag != null && cancelFlag.get()) || Thread.currentThread().isInterrupted()) {
-            throw new IndexRebuildCancelledException();
-        }
-    }
-
-    private static void notifyRebuildProgress(Consumer<SearchIndexProgress> listener, long processed, long total) {
-        if (listener == null) return;
-        try {
-            listener.accept(new SearchIndexProgress(processed, total));
-        } catch (RuntimeException callbackFailure) {
-            log.debug("Search-index progress listener failed: {}", callbackFailure.toString());
-        }
-    }
-
-    public static final class IndexRebuildCancelledException extends RuntimeException {
-        public IndexRebuildCancelledException() {
-            super("Індексацію скасовано");
         }
     }
 
@@ -384,6 +368,12 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         }
     }
 
+    private void notifyFullRebuildObserver() {
+        try { fullRebuildObserver.run(); }
+        catch (RuntimeException observerFailure) {
+            log.warn("Lucene full-rebuild observer failed: {}", observerFailure.toString());
+        }
+    }
 
     private void closeIndexResources(boolean commitBeforeClose) {
         try {
@@ -392,18 +382,27 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         } finally {
             searcherManager = null; indexWriter = null; directory = null;
             atomicUpdate = false; indexedSinceLastCommit = 0;
+            setQueryAvailability(false, "Пошуковий індекс закрито");
         }
     }
     // ==================== SEARCH QUERY SERVICE ====================
 
     @Override
     public SearchResult search(SearchRequest request) {
-        if (request == null || isClosed.get() || indexWriter == null) return SearchResult.empty();
+        if (request == null) return SearchResult.empty();
+        if (isClosed.get() || indexWriter == null || searcherManager == null) {
+            throw new SearchIndexUnavailableException("Пошуковий індекс зараз недоступний");
+        }
+        if (!queryAvailable) {
+            throw new SearchIndexUnavailableException(queryUnavailableReason);
+        }
         try {
             return LuceneSearchExecutor.search(request, searcherManager, queryNormalizer, unifiedFilterBuilder);
+        } catch (SearchIndexUnavailableException e) {
+            throw e;
         } catch (Exception e) {
             log.error("Помилка пошуку: {}", request.text(), e);
-            return SearchResult.empty();
+            throw new IllegalStateException("Помилка пошукового індексу", e);
         }
     }
 

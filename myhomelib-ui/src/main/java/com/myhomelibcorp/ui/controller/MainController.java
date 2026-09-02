@@ -1,16 +1,9 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.dto.BookDto;
-import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
-import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.domain.model.valueobject.GenreId;
-import com.myhomelibcorp.domain.model.valueobject.GroupId;
-import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.action.ActionCustomizationDialog;
 import com.myhomelibcorp.ui.action.ActionRegistry;
 import com.myhomelibcorp.ui.action.BookActionProfilesDialog;
@@ -46,7 +39,6 @@ import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
 
 @Component
 @RequiredArgsConstructor
@@ -65,6 +57,8 @@ public class MainController {
     private final BookActionProfilesDialog bookActionProfilesDialog;
     private final OpdsUiService opdsUiService;
     private final MainLayoutService mainLayoutService;
+    private final CatalogUpdateService catalogUpdateService;
+    private final UiBackgroundExecutor uiBackgroundExecutor;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -93,6 +87,7 @@ public class MainController {
     @FXML private StackPane leftSidebarContainer;
     @FXML private Pane rightSidebarContainer;
     @FXML private Menu languageMenu;
+    @FXML private Menu viewMenu;
     @FXML private Menu recentBooksMenu;
     @FXML private MenuItem collectionsMenuItem;
     @FXML private MenuItem openInternalMenuItem;
@@ -105,8 +100,11 @@ public class MainController {
     @FXML private MenuItem bookActionsMenuItem;
     @FXML private MenuItem customizeActionsMenuItem;
     @FXML private MenuItem opdsMenuItem;
+    @FXML private MenuItem updatesMenuItem;
     @FXML private CheckMenuItem leftSidebarMenuItem;
     @FXML private CheckMenuItem rightSidebarMenuItem;
+
+    private long updateBadgeGeneration;
 
     @FXML
     public void initialize() {
@@ -128,6 +126,9 @@ public class MainController {
         populateLanguages();
         if (languageMenu != null) languageMenu.setOnShowing(event -> populateLanguages());
         if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> mainNavigationCoordinator.populateRecentBooksMenu(recentBooksMenu));
+        if (viewMenu != null) viewMenu.setOnShowing(event -> refreshUpdateBadge());
+        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> refreshUpdateBadge());
+        Platform.runLater(this::refreshUpdateBadge);
 
         configureActionRegistry();
         updateNavigationButtons();
@@ -140,6 +141,31 @@ public class MainController {
                 () -> eventPublisher.publishEvent(new NavigationRefreshEvent())));
 
         log.info("MainController готовий до роботи");
+    }
+
+    private void refreshUpdateBadge() {
+        if (updatesMenuItem == null) return;
+        long generation = ++updateBadgeGeneration;
+        Collection collection = appState.getCurrentLibraryCollection();
+        String collectionId = collection == null || collection.getId() == null ? "" : collection.getId();
+        if (collectionId.isBlank()) {
+            updatesMenuItem.setText(localizationService.tr("Оновлення каталогу"));
+            return;
+        }
+        uiBackgroundExecutor.submit(catalogUpdateService::pendingUpdateCount)
+                .whenComplete((count, error) -> Platform.runLater(() -> {
+                    Collection current = appState.getCurrentLibraryCollection();
+                    String currentId = current == null || current.getId() == null ? "" : current.getId();
+                    if (generation != updateBadgeGeneration || !collectionId.equals(currentId)) return;
+                    if (error != null) {
+                        updatesMenuItem.setText(localizationService.tr("Оновлення каталогу"));
+                        return;
+                    }
+                    long unread = count == null ? 0L : count;
+                    updatesMenuItem.setText(unread > 0
+                            ? localizationService.tr("Оновлення каталогу") + " (" + unread + ")"
+                            : localizationService.tr("Оновлення каталогу"));
+                }));
     }
 
     private void bindSidebarMenuItems() {
@@ -179,91 +205,9 @@ public class MainController {
         workspaceManager.showDashboard();
     }
 
+    /** Bootstrap-only restoration entry; all runtime navigation goes through WorkspaceManager/coordinators. */
     public void restoreSessionWorkspace(SessionService.WorkspaceState state) {
         if (state != null) workspaceManager.restoreSessionWorkspace(state);
-    }
-
-    public void showAuthorWorkspace(AuthorId authorId) {
-        workspaceManager.showAuthorWorkspace(authorId);
-    }
-
-    public void showBookWorkspace(BookId bookId) {
-        workspaceManager.showBookWorkspace(bookId);
-    }
-
-    public void showSeriesWorkspace(SeriesId seriesId) {
-        workspaceManager.showSeriesWorkspace(seriesId);
-    }
-
-    public void showGenreWorkspace(GenreId genreId) {
-        workspaceManager.showGenreWorkspace(genreId);
-    }
-
-    public void showYearWorkspace(int year) {
-        workspaceManager.showYearWorkspace(year);
-    }
-
-    public void showLanguageWorkspace(String languageCode) {
-        workspaceManager.showLanguageWorkspace(languageCode);
-    }
-
-    public void showArchiveWorkspace(ArchiveNavigationKey archive) {
-        workspaceManager.showArchiveWorkspace(archive);
-    }
-
-    public void showKeywordWorkspace(String keyword) {
-        workspaceManager.showKeywordWorkspace(keyword);
-    }
-
-    public void showGroupBooksWorkspace(GroupId groupId) {
-        workspaceManager.showGroupBooksWorkspace(groupId);
-    }
-
-    public void showReviewsWorkspace(ReviewNavigationFilter filter) {
-        workspaceManager.showReviewsWorkspace(filter);
-    }
-
-    public void showAllBooksWorkspace() {
-        workspaceManager.showAllBooksWorkspace();
-    }
-
-    public void showUpdatesWorkspace() {
-        workspaceManager.showUpdatesWorkspace();
-    }
-
-    public void showAlreadyReadWorkspace() {
-        workspaceManager.showAlreadyReadWorkspace();
-    }
-
-    public void showHistoryWorkspace() {
-        workspaceManager.showHistoryWorkspace();
-    }
-
-    public void showSearchResults(String query) {
-        workspaceManager.showSearchResults(query);
-    }
-
-    public void showSearchResults(List<BookDto> results) {
-        workspaceManager.showSearchResults(results);
-    }
-
-    public void showCollectionWorkspace() {
-        workspaceManager.showCollectionWorkspace();
-    }
-
-    public void showGroupWorkspace(Group group) {
-        workspaceManager.showGroupWorkspace(group);
-    }
-    public void showNewReaderWorkspace(BookId bookId) {
-        workspaceManager.showNewReaderWorkspace(bookId);
-    }
-
-    public void showImportWorkspace() {
-        workspaceManager.showImportWorkspace();
-    }
-
-    public void setWorkspace(Pane workspace) {
-        workspaceManager.setWorkspace(workspace);
     }
 
     public void updateNavigationButtons() {
@@ -287,13 +231,6 @@ public class MainController {
         actionRegistry.register(CoreActions.OPDS_MANAGE, opdsMenuItem, () -> true, this::handleOpds);
     }
 
-    public void switchToCollection(Collection collection) {
-        collectionController.switchToCollection(collection, this::showDashboard);
-    }
-
-    public BorderPane getMainPane() {
-        return mainPane;
-    }
     // ==================== Reader ====================
     public void cleanupReader() {
         mainNavigationCoordinator.cleanupReader();
@@ -309,6 +246,7 @@ public class MainController {
     public void handleRefresh() {
         eventPublisher.publishEvent(new NavigationRefreshEvent());
         navigationPanelController.refreshAll();
+        refreshUpdateBadge();
         showDashboard();
     }
 
@@ -377,14 +315,26 @@ public class MainController {
     public void onGroups() {
         cleanupReader();
         Group currentGroup = appState.getCurrentGroup();
-        showGroupWorkspace(currentGroup);
+        workspaceManager.showGroupWorkspace(currentGroup);
     }
 
     @FXML
     public void onNewBooks() { mainNavigationCoordinator.newBooks(); }
 
     @FXML
-    public void onUpdates() { mainNavigationCoordinator.updates(); }
+    public void onUpdates() {
+        mainNavigationCoordinator.updates();
+        refreshUpdateBadge();
+    }
+
+    @FXML
+    public void onFollowedAuthors() { mainNavigationCoordinator.followedAuthors(); }
+
+    @FXML
+    public void onOperations() {
+        cleanupReader();
+        workspaceManager.showOperationCenterWorkspace();
+    }
 
     @FXML
     public void onAlreadyRead() { mainNavigationCoordinator.alreadyRead(); }
@@ -607,7 +557,6 @@ public class MainController {
     @FXML
     public void handleCancelDownload() { bookCommandCoordinator.cancelDownload(); }
 
-    public void openInNewReader(BookId bookId) { bookCommandCoordinator.openInNewReader(bookId); }
 
     @FXML
     public void handleCloseReader() {

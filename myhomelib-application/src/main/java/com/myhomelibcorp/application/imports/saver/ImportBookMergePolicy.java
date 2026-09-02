@@ -42,6 +42,8 @@ public final class ImportBookMergePolicy {
         boolean preserveLocalCopy = existing.isLocal();
         BookFile effectiveFile = preserveLocalCopy ? existing.getFile() : incoming.getFile();
         boolean effectiveLocal = preserveLocalCopy || incoming.isLocal();
+        java.time.LocalDateTime effectiveMissingSince = effectiveLocal ? null
+                : (existing.getMissingSince() != null ? existing.getMissingSince() : incoming.getMissingSince());
         Cover effectiveCover = incoming.getCover() != null && !incoming.getCover().isEmpty()
                 ? incoming.getCover() : existing.getCover();
 
@@ -61,6 +63,7 @@ public final class ImportBookMergePolicy {
                 .createdAt(existing.getCreatedAt())
                 .deleted(existing.isDeleted())
                 .local(effectiveLocal)
+                .missingSince(effectiveMissingSince)
                 .build();
     }
 

@@ -35,6 +35,7 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     @PostConstruct
     void registerCommitObserver() {
         search.setCommitObserver(this::onLuceneCommit);
+        search.setFullRebuildObserver(this::markCurrentIndexSynchronized);
     }
 
     @Override
@@ -50,10 +51,14 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
 
             ReuseCheck check = checkCurrentIndexReusable();
             boolean reusable = check.reusable();
+            activeIndexDirty = !reusable;
             if (!reusable) {
                 log.info("Per-collection Lucene {} requires rebuild: {}", indexPath, check.reason());
+                search.setQueryAvailability(false, "Пошуковий індекс перебудовується: " + check.reason());
+                persistDirtyMarker(activeStateFile);
                 if (search.getDocumentCount() > 0) search.clearIndex();
             } else {
+                search.setQueryAvailability(true, null);
                 log.info("Per-collection Lucene {} is reusable: {} documents", indexPath, search.getDocumentCount());
             }
             return reusable;
@@ -67,6 +72,7 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     public synchronized void markCurrentIndexDirty() {
         if (activeCollectionId == null) return;
         activeIndexDirty = true;
+        search.setQueryAvailability(false, "Пошуковий індекс синхронізується з каталогом");
         if (activeStateFile != null) persistDirtyMarker(activeStateFile);
     }
 
@@ -75,6 +81,7 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
         if (activeCollectionId == null || activeDatabasePath == null || activeStateFile == null) return;
         activeIndexDirty = false;
         persistMarker(activeStateFile, activeDatabasePath, search.getDocumentCount());
+        search.setQueryAvailability(true, null);
     }
 
     @Override

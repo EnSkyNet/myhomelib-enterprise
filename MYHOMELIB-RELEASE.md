@@ -88,3 +88,7 @@ Development-stage changelogs, runtime fixes, parity/audit documents and older re
 - `docs/history/MYHOMELIB-HISTORY-AUDITS.md`.
 
 Original Markdown source notes are preserved under `docs/archive/source-notes/`.
+
+## 2026-09-02 refactoring completion note
+
+The source tree has passed the repository's offline architecture, lifecycle, functional, Reader, localization, performance-baseline and static release checks after the stabilization pass. See `REFACTORING_COMPLETION.md` for the exact source-level baseline. This does not waive the formal release boundary above: compiled Maven verification, platform packaging and real desktop smoke testing are still mandatory before publishing a binary release.

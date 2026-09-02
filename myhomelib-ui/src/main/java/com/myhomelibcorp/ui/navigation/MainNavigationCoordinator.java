@@ -49,6 +49,11 @@ public class MainNavigationCoordinator {
         workspaceManager.showUpdatesWorkspace();
     }
 
+    public void followedAuthors() {
+        cleanupReader();
+        workspaceManager.showFollowedAuthorsWorkspace();
+    }
+
     public void alreadyRead() {
         cleanupReader();
         navigationPanelController.revealNode(NavigationMode.ALREADY_READ, "already-read");

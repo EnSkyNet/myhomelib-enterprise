@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.myhomelibcorp.ui.operation.OperationCenterController"
+            style="-fx-background-color: -mhl-panel;">
+    <top>
+        <VBox spacing="8">
+            <padding><Insets top="14" right="14" bottom="8" left="14"/></padding>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Операції" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button text="Оновити" onAction="#onRefresh"/>
+                <Button text="Очистити завершені" onAction="#onClearCompleted"/>
+            </HBox>
+            <Label fx:id="summaryLabel" text="Активних операцій немає"/>
+        </VBox>
+    </top>
+    <center>
+        <SplitPane orientation="VERTICAL" dividerPositions="0.68">
+            <TableView fx:id="operationsTable" VBox.vgrow="ALWAYS">
+                <columns>
+                    <TableColumn fx:id="stateColumn" text="Стан" prefWidth="125"/>
+                    <TableColumn fx:id="titleColumn" text="Операція" prefWidth="210"/>
+                    <TableColumn fx:id="stageColumn" text="Етап" prefWidth="155"/>
+                    <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="190"/>
+                    <TableColumn fx:id="startedColumn" text="Початок" prefWidth="90"/>
+                    <TableColumn fx:id="durationColumn" text="Час" prefWidth="85"/>
+                </columns>
+            </TableView>
+            <TextArea fx:id="detailsArea" editable="false" wrapText="true" promptText="Виберіть операцію для перегляду деталей"/>
+        </SplitPane>
+    </center>
+</BorderPane>

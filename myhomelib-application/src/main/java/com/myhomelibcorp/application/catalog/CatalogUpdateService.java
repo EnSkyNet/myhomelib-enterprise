@@ -2,6 +2,7 @@ package com.myhomelibcorp.application.catalog;
 
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -30,6 +31,24 @@ public class CatalogUpdateService {
 
     public long pendingUpdateCount() {
         return tracking.countPendingUpdates();
+    }
+
+    public List<FollowedAuthorSummary> followedAuthors() {
+        return tracking.findFollowedAuthors();
+    }
+
+    public void acknowledgeUpdate(BookId bookId, CatalogUpdateType type) {
+        if (bookId == null || type == null) return;
+        tracking.acknowledgeUpdate(bookId, type);
+    }
+
+    public void acknowledgeAuthorUpdates(AuthorId authorId) {
+        if (authorId == null) return;
+        tracking.acknowledgeAuthorUpdates(authorId);
+    }
+
+    public void acknowledgeAllUpdates() {
+        tracking.acknowledgeAllUpdates();
     }
 
     /**

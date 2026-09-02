@@ -96,7 +96,7 @@ checks={
 'Author search results live in left navigation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java',
  ['navigationPanelController.showAuthorSearchResults', 'setSectionVisible(authorsSection, false)',
-  'mainLayoutService.setLeftSidebarVisible(true)', 'searchService.searchAuthorsAll(authorQuery)']),
+  'mainLayoutService.setLeftSidebarVisible(true)', 'searchService.searchAuthors(authorQuery, 200)']),
 'Left author selection opens author books workspace': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java',
  ['navigationPanelController.setOnNodeSelected(this::navigateToNode)',
@@ -107,7 +107,7 @@ checks={
  ['GlobalSearchResult searchAll', 'List<AuthorDto> searchAuthors', 'authorRepository.searchByName']),
 'Search workspace uses full table with author and highlighted matches': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java',
- ['TableView<BookDto> booksTableView', 'authorColumn', 'highlightedInline(', 'searchService.searchAll(query)']),
+ ['TableView<BookDto> booksTableView', 'authorColumn', 'highlightedInline(', 'searchService.searchOverview(query)', 'searchService.searchPage(request)']),
 'Search result limits are paged, not hard 20/50 caps': (
  ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/search/SearchService.java',
  ['searchAuthorsAll', 'searchAllBooks', 'chunkSize = 500', 'authorRepository.searchByName(normalizedQuery, chunkSize, offset)']),

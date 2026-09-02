@@ -36,6 +36,7 @@ public class BookDto {
     private LocalDateTime updateDate;
     private boolean deleted;
     private boolean local;
+    private LocalDateTime missingSince;
     private String collectionRoot;
     private String review;
     private LocalDateTime createdAt;
@@ -102,6 +103,7 @@ public class BookDto {
     }
 
     public String getLocalStatus() {
-        return local ? "Локальна" : "Хмарна";
+        if (local) return "Локальна";
+        return missingSince != null ? "Файл відсутній" : "Хмарна";
     }
 }

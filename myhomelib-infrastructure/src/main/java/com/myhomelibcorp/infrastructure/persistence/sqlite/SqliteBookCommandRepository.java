@@ -164,7 +164,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         busyRetry.run("book storage update", () -> getJdbcTemplate().update("""
                 UPDATE books
                 SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?,
-                    format = ?, update_date = CURRENT_TIMESTAMP
+                    missing_since = NULL, format = ?, update_date = CURRENT_TIMESTAMP
                 WHERE id = ?
                 """,
                 collectionRoot == null ? "" : collectionRoot,
@@ -174,6 +174,19 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                 local ? 1 : 0,
                 BookDenormalizedValues.format(fileName),
                 bookId.asString()));
+        bookCache.evict(bookId);
+    }
+
+    @Override
+    public void markStorageMissing(BookId bookId) {
+        if (bookId == null) return;
+        busyRetry.run("book storage missing", () -> getJdbcTemplate().update("""
+                UPDATE books
+                   SET local = 0,
+                       missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP),
+                       update_date = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, bookId.asString()));
         bookCache.evict(bookId);
     }
 

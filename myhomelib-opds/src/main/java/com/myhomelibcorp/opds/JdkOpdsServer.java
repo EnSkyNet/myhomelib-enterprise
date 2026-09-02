@@ -31,7 +31,7 @@ import java.util.concurrent.atomic.AtomicReference;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class JdkOpdsServer implements OpdsServerControl {
+public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsServerControl {
     private static final String ATOM = "application/atom+xml;profile=opds-catalog;charset=utf-8";
     private static final int DEFAULT_LIMIT = 50;
 

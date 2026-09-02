@@ -69,8 +69,7 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         } catch (Exception e) {
-            log.warn("Не вдалося прочитати per-book Reader settings для {}: {}", bookId, e.getMessage());
-            return Optional.empty();
+            throw new IllegalStateException("Не вдалося прочитати per-book Reader settings для " + bookId, e);
         }
     }
 
@@ -90,7 +89,7 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
                         updated_at=CURRENT_TIMESTAMP
                     """, bookId, json);
         } catch (Exception e) {
-            log.error("Не вдалося зберегти per-book Reader settings для {}", bookId, e);
+            throw new IllegalStateException("Не вдалося зберегти per-book Reader settings для " + bookId, e);
         }
     }
 

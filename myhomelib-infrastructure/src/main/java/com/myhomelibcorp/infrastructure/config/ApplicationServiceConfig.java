@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.config;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
@@ -57,11 +58,13 @@ public class ApplicationServiceConfig {
     @Bean
     public SwitchCollectionUseCase switchCollectionUseCase(
             CollectionRepository collectionRepository,
-            CollectionLifecycleService collectionLifecycleService
+            CollectionLifecycleService collectionLifecycleService,
+            LibraryOperationCoordinator operationCoordinator
     ) {
         return new SwitchCollectionUseCase(
                 collectionRepository,
-                collectionLifecycleService
+                collectionLifecycleService,
+                operationCoordinator
         );
     }
 
@@ -70,13 +73,17 @@ public class ApplicationServiceConfig {
             CollectionRepository collectionRepository,
             CollectionLifecycleService collectionLifecycleService,
             com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importFileUseCase,
-            com.myhomelibcorp.application.port.out.catalog.CollectionInfoPort collectionInfoPort
+            com.myhomelibcorp.application.port.out.catalog.CollectionInfoPort collectionInfoPort,
+            LibraryOperationCoordinator operationCoordinator,
+            com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager storageManager
     ) {
         return new CreateCollectionUseCase(
                 collectionRepository,
                 collectionLifecycleService,
                 importFileUseCase,
-                collectionInfoPort
+                collectionInfoPort,
+                operationCoordinator,
+                storageManager
         );
     }
 
@@ -100,14 +107,18 @@ public class ApplicationServiceConfig {
             CatalogSourceStatePort sourceState,
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository,
+            StatisticsRepository statisticsRepository,
+            LibraryOperationCoordinator operationCoordinator,
             @Value("${app.import.change-tracking-limit:50000}") int changeTrackingLimit) {
         return new UpdateCollectionFromNetworkUseCase(
-                downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, changeTrackingLimit);
+                downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
+                changeTrackingLimit, operationCoordinator);
     }
 
     @Bean
-    public SyncFolderUseCase syncFolderUseCase(FolderSyncPort folderSyncPort) {
-        return new SyncFolderUseCase(folderSyncPort);
+    public SyncFolderUseCase syncFolderUseCase(FolderSyncPort folderSyncPort,
+                                                LibraryOperationCoordinator operationCoordinator) {
+        return new SyncFolderUseCase(folderSyncPort, operationCoordinator);
     }
 
     @Bean

@@ -1,9 +1,12 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.catalog.CatalogSourceProfile;
 import com.myhomelibcorp.application.catalog.CatalogSourceState;
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
@@ -15,6 +18,7 @@ import com.myhomelibcorp.application.port.out.download.RemoteCatalogPackage;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
 import com.myhomelibcorp.application.port.out.download.RemoteDownloadProgress;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
@@ -46,7 +50,9 @@ public class UpdateCollectionFromNetworkUseCase {
     private final CatalogSourceStatePort sourceState;
     private final SearchIndexer searchIndexer;
     private final BookQueryRepository bookQueryRepository;
+    private final StatisticsRepository statisticsRepository;
     private final int changeTrackingLimit;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public UpdateCollectionFromNetworkUseCase(
             RemoteCatalogDownloadPort downloader,
@@ -55,8 +61,8 @@ public class UpdateCollectionFromNetworkUseCase {
             CatalogSourceStatePort sourceState,
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository) {
-        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository,
-                ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT);
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null,
+                ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT, new LibraryOperationCoordinator());
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -67,13 +73,42 @@ public class UpdateCollectionFromNetworkUseCase {
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository,
             int changeTrackingLimit) {
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null,
+                changeTrackingLimit, new LibraryOperationCoordinator());
+    }
+
+    public UpdateCollectionFromNetworkUseCase(
+            RemoteCatalogDownloadPort downloader,
+            ImportFileUseCase importer,
+            CollectionLifecycleService lifecycle,
+            CatalogSourceStatePort sourceState,
+            SearchIndexer searchIndexer,
+            BookQueryRepository bookQueryRepository,
+            int changeTrackingLimit,
+            LibraryOperationCoordinator operationCoordinator) {
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null,
+                changeTrackingLimit, operationCoordinator);
+    }
+
+    public UpdateCollectionFromNetworkUseCase(
+            RemoteCatalogDownloadPort downloader,
+            ImportFileUseCase importer,
+            CollectionLifecycleService lifecycle,
+            CatalogSourceStatePort sourceState,
+            SearchIndexer searchIndexer,
+            BookQueryRepository bookQueryRepository,
+            StatisticsRepository statisticsRepository,
+            int changeTrackingLimit,
+            LibraryOperationCoordinator operationCoordinator) {
         this.downloader = downloader;
         this.importer = importer;
         this.lifecycle = lifecycle;
         this.sourceState = sourceState;
         this.searchIndexer = searchIndexer;
         this.bookQueryRepository = bookQueryRepository;
+        this.statisticsRepository = statisticsRepository;
         this.changeTrackingLimit = ImportChangeAccumulator.normalizeLimit(changeTrackingLimit);
+        this.operationCoordinator = java.util.Objects.requireNonNull(operationCoordinator, "operationCoordinator");
     }
 
     public ImportResult execute(Collection collection, String source, AtomicBoolean cancel, DoubleConsumer progress) {
@@ -82,6 +117,13 @@ public class UpdateCollectionFromNetworkUseCase {
 
     public ImportResult execute(Collection collection, String source, AtomicBoolean cancel, DoubleConsumer progress,
                                 Consumer<OperationProgress> operationProgress) {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.UPDATE)) {
+            return executeLocked(collection, source, cancel, progress, operationProgress);
+        }
+    }
+
+    private ImportResult executeLocked(Collection collection, String source, AtomicBoolean cancel, DoubleConsumer progress,
+                                       Consumer<OperationProgress> operationProgress) {
         if (collection == null) throw new IllegalArgumentException("Колекцію не вибрано");
         if (source == null || source.isBlank()) throw new IllegalArgumentException("Не задано URL INPX/сервера");
         Collection active = lifecycle.getCurrentCollection();
@@ -213,8 +255,17 @@ public class UpdateCollectionFromNetworkUseCase {
                                 .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
                                         indexSkipped, indexDuplicates, indexWarnings, indexErrors)));
             }
-            sink.accept(0.97);
+            sink.accept(0.93);
             checkCancelled(flag);
+
+            if (statisticsRepository != null) {
+                emit(telemetry, OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false)
+                        .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
+                                skipped, duplicates, issues.size(), errors));
+                statisticsRepository.invalidate();
+                statisticsRepository.refreshStatistics();
+            }
+            sink.accept(0.98);
 
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FINALIZING, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
@@ -245,14 +296,14 @@ public class UpdateCollectionFromNetworkUseCase {
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FAILED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors + 1));
-            safeFailure(sourceKey, rootMessage(e));
+            safeFailure(sourceKey, ThrowableMessages.rootMessage(e));
             throw e;
         } catch (Exception e) {
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FAILED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors + 1));
-            safeFailure(sourceKey, rootMessage(e));
-            throw new IllegalStateException("Не вдалося оновити колекцію з мережі: " + rootMessage(e), e);
+            safeFailure(sourceKey, ThrowableMessages.rootMessage(e));
+            throw new IllegalStateException("Не вдалося оновити колекцію з мережі: " + ThrowableMessages.rootMessage(e), e);
         } finally {
             for (Path path : downloaded) {
                 if (path != null && path.startsWith(AppPaths.cacheDir())) {
@@ -389,11 +440,6 @@ public class UpdateCollectionFromNetworkUseCase {
         return Math.max(0L, java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startedNanos));
     }
 
-    private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        return current.getMessage() == null ? error.getClass().getSimpleName() : current.getMessage();
-    }
 
     private static final class UpdateCancelledException extends RuntimeException { }
 }

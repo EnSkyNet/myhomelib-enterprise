@@ -40,6 +40,15 @@ public class StatisticsController {
                 setState("Недоступно");
                 return;
             }
+            if (stats.isStale() && !refresh) {
+                setState("Оновлення…");
+                loadStatistics(true);
+                return;
+            }
+            if (stats.isStale()) {
+                setState("Застаріла");
+                return;
+            }
             booksCount.setText(formatNumber(stats.getBooksCount()));
             authorsCount.setText(formatNumber(stats.getAuthorsCount()));
             seriesCount.setText(formatNumber(stats.getSeriesCount()));

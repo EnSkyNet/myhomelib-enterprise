@@ -26,4 +26,6 @@ public class LibraryStatistics {
     private long favoritesCount;
     private long deletedBooksCount;
     private long sourcesCount;
+    /** True when cached aggregates no longer describe the current catalog state. */
+    private boolean stale;
 }

@@ -26,6 +26,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
 @Service
@@ -40,6 +42,7 @@ public class BookLoaderService {
     private final BookFilterStateService filterStateService;
 
     private static final int DEFAULT_PAGE_SIZE = 50;
+    private final AtomicLong requestGeneration = new AtomicLong();
     private BookQuery lastQuery;
 
     // ===== Завантаження книг =====
@@ -51,6 +54,8 @@ public class BookLoaderService {
             effectiveQuery = activeController.applyPreferredSort(effectiveQuery);
         }
         this.lastQuery = effectiveQuery;
+        long requestId = requestGeneration.incrementAndGet();
+        String collectionId = currentCollectionId();
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
         BookQuery submittedQuery = effectiveQuery;
@@ -60,6 +65,10 @@ public class BookLoaderService {
             log.info("Завантажено {} книг з {}", result.content().size(), result.totalElements());
             return result;
         }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrent(requestId, collectionId)) {
+                log.debug("Ігноруємо застарілий результат BookLoader request={} collection={}", requestId, collectionId);
+                return;
+            }
             vm.setLoading(false);
 
             List<BookViewModel> vms = result.content().stream()
@@ -86,6 +95,7 @@ public class BookLoaderService {
             );
         })).exceptionally(ex -> {
             UiExecutor.runOnUiThread(() -> {
+                if (!isCurrent(requestId, collectionId)) return;
                 vm.setLoading(false);
                 appState.getStatusBar().setStatusText("Помилка завантаження: " + ex.getMessage());
             });
@@ -297,6 +307,20 @@ public class BookLoaderService {
                 .filterSpec(filterStateService.current())
                 .build();
         loadBooks(sorted);
+    }
+
+    /** Invalidates all in-flight page loads; useful before destructive workspace/collection changes. */
+    public void invalidatePendingRequests() {
+        requestGeneration.incrementAndGet();
+    }
+
+    private boolean isCurrent(long requestId, String collectionId) {
+        return requestId == requestGeneration.get() && Objects.equals(collectionId, currentCollectionId());
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     public BookQuery getLastQuery() { return lastQuery; }

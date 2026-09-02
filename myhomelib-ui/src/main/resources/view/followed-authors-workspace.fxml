@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns="http://javafx.com/javafx/21" xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.myhomelibcorp.ui.following.FollowedAuthorsWorkspaceController">
+    <top>
+        <VBox spacing="8" BorderPane.alignment="CENTER">
+            <padding><Insets top="14" right="16" bottom="10" left="16"/></padding>
+            <HBox spacing="10" alignment="CENTER_LEFT">
+                <Label text="Стеження за авторами" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <ProgressIndicator fx:id="progressIndicator" prefWidth="24" prefHeight="24" visible="false" managed="false"/>
+                <Button fx:id="refreshButton" text="Оновити" onAction="#refresh"/>
+            </HBox>
+            <Label fx:id="summaryLabel" text="Стеження за авторами"/>
+            <Separator/>
+        </VBox>
+    </top>
+    <center>
+        <StackPane>
+            <padding><Insets right="16" bottom="10" left="16"/></padding>
+            <TableView fx:id="followedTable">
+                <columns>
+                    <TableColumn fx:id="authorColumn" text="Автор" prefWidth="260"/>
+                    <TableColumn fx:id="booksColumn" text="Книг" prefWidth="80"/>
+                    <TableColumn fx:id="newColumn" text="Нових" prefWidth="80"/>
+                    <TableColumn fx:id="lastBookColumn" text="Остання книга" prefWidth="320"/>
+                    <TableColumn fx:id="dateColumn" text="Дата" prefWidth="120"/>
+                </columns>
+            </TableView>
+            <Label fx:id="emptyLabel" text="Ви ще не стежите за авторами"
+                   visible="false" managed="false" style="-fx-font-size: 15px; -fx-opacity: 0.75;"/>
+        </StackPane>
+    </center>
+    <bottom>
+        <VBox spacing="8">
+            <padding><Insets top="8" right="16" bottom="14" left="16"/></padding>
+            <Label fx:id="detailLabel" text="Виберіть автора." wrapText="true"/>
+            <HBox spacing="8">
+                <Button fx:id="openAuthorButton" text="Відкрити автора" onAction="#openAuthor"/>
+                <Button text="Переглянути оновлення" onAction="#openUpdates"/>
+                <Button fx:id="acknowledgeButton" text="Позначити оновлення переглянутими" onAction="#acknowledgeAuthor"/>
+                <Button fx:id="unfollowButton" text="Не стежити" onAction="#unfollowAuthor"/>
+            </HBox>
+        </VBox>
+    </bottom>
+</BorderPane>

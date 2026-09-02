@@ -1,6 +1,10 @@
 package com.myhomelibcorp.application.usecase.imports;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
@@ -22,6 +26,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.stream.Stream;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 @Component
 @RequiredArgsConstructor
@@ -41,9 +46,16 @@ public class ImportDirectoryUseCase {
     private final SearchIndexSynchronizer searchIndexSynchronizer;
     private final BulkImportOptimizer bulkImportOptimizer;
     private final DatabaseInitializerPort databaseInitializerPort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
 
     public ImportResult execute(ImportContext context) {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
+            return executeLocked(context);
+        }
+    }
+
+    private ImportResult executeLocked(ImportContext context) {
         // ЄДИНИЙ виклик ініціалізації на весь імпорт каталогу
         databaseInitializerPort.initializeCurrentCollection();
 
@@ -53,6 +65,9 @@ public class ImportDirectoryUseCase {
         }
 
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
+        String operationId = context.getOperationId() == null || context.getOperationId().isBlank()
+                ? "directory-import-" + UUID.randomUUID()
+                : context.getOperationId();
 
         log.info("Початок імпорту каталогу: {}", directory);
         ImportStatistics totalStats = new ImportStatistics();
@@ -63,10 +78,12 @@ public class ImportDirectoryUseCase {
 
         boolean cancelled = false;
         boolean childReportedWarningOrFailure = false;
+        AtomicLong processed = new AtomicLong(0);
         try {
-            AtomicLong processed = new AtomicLong(0);
             if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
             if (context.getStatusConsumer() != null) context.getStatusConsumer().accept("Сканування та імпорт каталогу…");
+            emitOperation(context, OperationProgress.stage(operationId, OperationStage.IMPORTING, true)
+                    .withCurrentItem(directory.toString()));
 
             try (Stream<Path> files = libraryScanner.streamSupportedFiles(directory)) {
                 var iterator = files.iterator();
@@ -108,6 +125,11 @@ public class ImportDirectoryUseCase {
                         totalStats.incrementErrors();
                     }
                     long processedCount = processed.incrementAndGet();
+                    emitOperation(context, OperationProgress.stage(operationId, OperationStage.IMPORTING, true)
+                            .withProgress(processedCount, -1)
+                            .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
+                                    totalStats.getSkipped().get(), totalStats.getDuplicates().get(), 0, totalStats.getErrors().get())
+                            .withCurrentItem(file.getFileName() == null ? file.toString() : file.getFileName().toString()));
                     if (context.getStatusConsumer() != null && processedCount % 1000 == 0) {
                         context.getStatusConsumer().accept("Оброблено файлів: " + processedCount);
                     }
@@ -139,6 +161,9 @@ public class ImportDirectoryUseCase {
         if (context.isIndexAfterSave() && requiresSearchFinalization(finalResult)) {
             if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
             if (context.getStatusConsumer() != null) context.getStatusConsumer().accept("Синхронізація пошукового індексу…");
+            emitOperation(context, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, !cancelled)
+                    .withCounts(changeSet.insertedCount(), changeSet.updatedCount(), changeSet.deletedCount(),
+                            finalResult.skipped(), finalResult.duplicates(), 0, finalResult.errors()));
             if (changeSet.complete()) {
                 java.util.LinkedHashSet<String> changedIds = new java.util.LinkedHashSet<>(changeSet.inserted());
                 changedIds.addAll(changeSet.updated());
@@ -165,6 +190,10 @@ public class ImportDirectoryUseCase {
         if (context.getStatusConsumer() != null) {
             context.getStatusConsumer().accept(cancelled ? "Імпорт скасовано" : "Імпорт каталогу завершено");
         }
+        emitOperation(context, OperationProgress.stage(operationId, cancelled ? OperationStage.CANCELLED : OperationStage.COMPLETED, false)
+                .withProgress(processed.get(), processed.get())
+                .withCounts(changeSet.insertedCount(), changeSet.updatedCount(), changeSet.deletedCount(),
+                        finalResult.skipped(), finalResult.duplicates(), 0, finalResult.errors()));
 
         if (context.isPublishFinishedEvent()) {
             eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(directory, finalResult));
@@ -180,6 +209,12 @@ public class ImportDirectoryUseCase {
         // still require a safe rebuild rather than leaving Lucene stale. Deleted-only snapshots also
         // need finalization even when imported == 0.
         return changedRows > 0 || result.imported() > 0;
+    }
+
+    private static void emitOperation(ImportContext context, OperationProgress progress) {
+        if (context == null || context.getOperationProgressListener() == null || progress == null) return;
+        try { context.getOperationProgressListener().accept(progress); }
+        catch (RuntimeException callbackFailure) { log.debug("Operation progress callback failed", callbackFailure); }
     }
 
     private static boolean isCancelled(ImportContext context) {

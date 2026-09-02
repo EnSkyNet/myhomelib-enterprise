@@ -2,7 +2,12 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.usecase.integrity.DataIntegrityChecker;
 import com.myhomelibcorp.application.usecase.integrity.IntegrityReport;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
@@ -18,6 +23,9 @@ public class IntegrityCheckController {
 
     private final DataIntegrityChecker integrityChecker;
     private final DialogService dialogService;
+    private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
+    private final ApplicationState appState;
 
     @FXML private TextArea reportArea;
     @FXML private ProgressIndicator progressIndicator;
@@ -44,36 +52,39 @@ public class IntegrityCheckController {
         reportArea.clear();
         issuesSummaryLabel.setText("");
 
-        new Thread(() -> {
-            try {
-                IntegrityReport report = integrityChecker.check();
-                UiExecutor.runOnUiThread(() -> {
+        var collection = appState.getCurrentLibraryCollection();
+        String operationId = operationCenter.start(
+                "Перевірка цілісності", collection == null ? "" : collection.getId(),
+                OperationStage.INTEGRITY_CHECKS, false);
+        executor.submit(integrityChecker::check)
+                .whenComplete((report, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        operationCenter.fail(operationId, cause);
+                        checkButton.setDisable(false);
+                        progressIndicator.setVisible(false);
+                        statusLabel.setText("❌ Помилка: " + cause.getMessage());
+                        dialogService.showError("Помилка", "Не вдалося виконати перевірку: " + cause.getMessage());
+                        log.error("Помилка перевірки цілісності", cause);
+                        return;
+                    }
+
+                    operationCenter.complete(operationId, report.hasIssues()
+                            ? "Виявлено проблем: " + report.issues().size()
+                            : "Проблем не виявлено");
                     displayReport(report);
                     checkButton.setDisable(false);
                     progressIndicator.setVisible(false);
                     statusLabel.setText("✅ Перевірку завершено");
-
-                    boolean hasIssues = report.hasIssues();
                     fixButton.setDisable(true);
-
-                    if (!hasIssues) {
+                    if (!report.hasIssues()) {
                         issuesSummaryLabel.setText("✅ ПРОБЛЕМ НЕ ВИЯВЛЕНО");
                         issuesSummaryLabel.setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
                     } else {
                         issuesSummaryLabel.setText("⚠️ ВИЯВЛЕНО " + report.issues().size() + " ПРОБЛЕМ");
                         issuesSummaryLabel.setStyle("-fx-text-fill: orange; -fx-font-weight: bold;");
                     }
-                });
-            } catch (Exception e) {
-                UiExecutor.runOnUiThread(() -> {
-                    checkButton.setDisable(false);
-                    progressIndicator.setVisible(false);
-                    statusLabel.setText("❌ Помилка: " + e.getMessage());
-                    dialogService.showError("Помилка", "Не вдалося виконати перевірку: " + e.getMessage());
-                });
-                log.error("Помилка перевірки цілісності", e);
-            }
-        }).start();
+                }));
     }
 
     @FXML

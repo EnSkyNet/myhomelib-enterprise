@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
@@ -18,8 +20,15 @@ public class DeleteCollectionUseCase {
     private final CollectionStorageManager storageManager;
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final CollectionSourceMonitorPort sourceMonitorPort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public void execute(String id) {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.DELETE)) {
+            executeLocked(id);
+        }
+    }
+
+    private void executeLocked(String id) {
         Collection collection = collectionRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Колекцію не знайдено: " + id));
 

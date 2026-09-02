@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.search;
 
+import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
@@ -10,6 +11,7 @@ import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchMode;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
@@ -98,6 +100,7 @@ public class SearchWorkspaceController {
     @FXML private TableColumn<BookDto, String> ratingColumn;
     @FXML private TableColumn<BookDto, String> progressColumn;
     @FXML private Label booksCountLabel;
+    @FXML private Button loadMoreBooksButton;
 
     @FXML private Button saveSearchButton;
     @FXML private Button savedSearchesButton;
@@ -122,6 +125,10 @@ public class SearchWorkspaceController {
     private CheckBox masterSelectionCheckBox;
     private boolean suppressSearchListener;
     private final AtomicLong searchGeneration = new AtomicLong();
+    private static final int BOOK_PAGE_SIZE = 500;
+    private SearchRequest activeBookRequest;
+    private long activeBookTotal;
+    private boolean loadingMoreBooks;
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
 
@@ -395,6 +402,7 @@ public class SearchWorkspaceController {
 
     private void performSearchPage(String query) {
         long generation = searchGeneration.incrementAndGet();
+        resetBookPaging();
         if ((query == null || query.isBlank()) && !hasAdvancedFilters() && !filterStateService.current().isActive()) {
             clearResults();
             statusLabel.setText("Введіть запит або задайте фільтри");
@@ -403,10 +411,16 @@ public class SearchWorkspaceController {
 
         statusLabel.setText("Пошук…");
         if (!hasAdvancedFilters()) {
-            executor.submit(() -> searchService.searchAll(query)).thenAccept(results ->
+            SearchRequest request = buildBasicRequest(query, 0);
+            executor.submit(() -> new SearchUiPage(
+                    searchService.searchOverview(query),
+                    searchService.searchPage(request),
+                    request
+            )).thenAccept(result ->
                     UiExecutor.runOnUiThread(() -> {
                         if (generation != searchGeneration.get()) return;
-                        updateResults(results);
+                        activeBookRequest = result.request();
+                        updateResults(result.overview(), result.books());
                     })).exceptionally(ex -> {
                 log.error("Search failed", ex);
                 UiExecutor.runOnUiThread(() -> {
@@ -417,11 +431,12 @@ public class SearchWorkspaceController {
             return;
         }
 
-        SearchRequest request = buildAdvancedRequest(query);
+        SearchRequest request = buildAdvancedRequest(query, 0);
         String authorQuery = text(authorFilter);
         executor.submit(() -> new AdvancedSearchUiResult(
-                searchService.searchAll(request),
-                authorQuery.isBlank() ? List.of() : searchService.searchAuthorsAll(authorQuery)
+                searchService.searchPage(request),
+                authorQuery.isBlank() ? List.of() : searchService.searchAuthors(authorQuery, 200),
+                request
         )).thenAccept(result ->
                 UiExecutor.runOnUiThread(() -> {
                     if (generation != searchGeneration.get()) return;
@@ -431,6 +446,7 @@ public class SearchWorkspaceController {
                     } else {
                         navigationPanelController.clearAuthorSearchResults();
                     }
+                    activeBookRequest = result.request();
                     setAdvancedResults(result.books());
                 })).exceptionally(ex -> {
             log.error("Advanced search failed", ex);
@@ -441,7 +457,16 @@ public class SearchWorkspaceController {
         });
     }
 
-    private SearchRequest buildAdvancedRequest(String freeText) {
+    private SearchRequest buildBasicRequest(String query, int offset) {
+        return SearchRequest.builder()
+                .text(query == null ? "" : query.trim())
+                .limit(BOOK_PAGE_SIZE)
+                .offset(Math.max(0, offset))
+                .mode(SearchMode.PHRASE)
+                .build();
+    }
+
+    private SearchRequest buildAdvancedRequest(String freeText, int offset) {
 
         SearchRequest.Builder b = SearchRequest.builder()
                 .text(buildTextQuery(freeText))
@@ -452,8 +477,8 @@ public class SearchWorkspaceController {
                 .addedFrom(addedFromPicker == null ? null : addedFromPicker.getValue())
                 .addedTo(addedToPicker == null ? null : addedToPicker.getValue())
                 .localOnly(localOnlyCheck != null && localOnlyCheck.isSelected() ? Boolean.TRUE : null)
-                .limit(500)
-                .offset(0)
+                .limit(BOOK_PAGE_SIZE)
+                .offset(Math.max(0, offset))
                 .mode(SearchMode.PHRASE);
         String lang = text(languageFilter);
         if (!lang.isBlank()) {
@@ -462,19 +487,20 @@ public class SearchWorkspaceController {
         return b.build();
     }
 
-    private void setAdvancedResults(List<BookDto> books) {
+    private void setAdvancedResults(PageResult<BookDto> page) {
         setSectionVisible(authorsSection, false);
         setSectionVisible(seriesSection, false);
         setSectionVisible(genresSection, false);
+        List<BookDto> books = page == null ? List.of() : page.content();
         boolean hasBooks = books != null && !books.isEmpty();
         setSectionVisible(booksSection, hasBooks);
-        booksTableView.getItems().setAll(books == null ? List.of() : books);
+        booksTableView.getItems().setAll(books);
         booksTableView.getSelectionModel().clearSelection();
         refreshMasterSelection();
         appState.getBookDetails().setCurrentBook(null);
-        booksCountLabel.setText("(" + (books == null ? 0 : books.size()) + ")");
+        updateBookPagingUi(page);
         statusLabel.setText(hasBooks
-                ? "Розширений пошук: знайдено " + books.size() + " книг"
+                ? "Розширений пошук: завантажено " + books.size() + " з " + page.totalElements() + " книг"
                 : "Книги не знайдено");
     }
 
@@ -546,7 +572,7 @@ public class SearchWorkspaceController {
                 || (localOnlyCheck != null && localOnlyCheck.isSelected());
     }
 
-    private void updateResults(GlobalSearchResult results) {
+    private void updateResults(GlobalSearchResult results, PageResult<BookDto> bookPage) {
         if (results.authors().isEmpty()) {
             navigationPanelController.clearAuthorSearchResults();
         } else {
@@ -572,7 +598,7 @@ public class SearchWorkspaceController {
                     return label != null && !label.isBlank();
                 })
                 .toList();
-        List<BookDto> books = results.books();
+        List<BookDto> books = bookPage == null ? List.of() : bookPage.content();
 
         setSectionVisible(seriesSection, !series.isEmpty());
         seriesListView.getItems().setAll(series);
@@ -587,14 +613,81 @@ public class SearchWorkspaceController {
         booksTableView.getSelectionModel().clearSelection();
         booksTableView.refresh();
         refreshMasterSelection();
-        booksCountLabel.setText("(" + books.size() + ")");
+        updateBookPagingUi(bookPage);
         appState.getBookDetails().setCurrentBook(null);
 
-        int total = results.authors().size() + series.size() + genres.size() + books.size();
+        long bookTotal = bookPage == null ? 0 : bookPage.totalElements();
+        long total = results.authors().size() + series.size() + genres.size() + bookTotal;
         statusLabel.setText(total > 0
-                ? "Результати пошуку для: \"" + lastQuery + "\" — книг: " + books.size() + ", авторів: " + results.authors().size()
+                ? "Результати пошуку для: \"" + lastQuery + "\" — книг: " + books.size() + " / " + bookTotal
+                    + ", авторів (показано): " + results.authors().size()
                 : "Нічого не знайдено");
     }
+
+    @FXML
+    private void onLoadMoreBooks() {
+        if (loadingMoreBooks || activeBookRequest == null || booksTableView.getItems().size() >= activeBookTotal) {
+            return;
+        }
+
+        final long generation = searchGeneration.get();
+        final int offset = booksTableView.getItems().size();
+        final SearchRequest requestSnapshot = activeBookRequest;
+        loadingMoreBooks = true;
+        updateLoadMoreButton();
+        statusLabel.setText("Завантаження наступних результатів…");
+
+        executor.submit(() -> searchService.searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset)).thenAccept(page ->
+                UiExecutor.runOnUiThread(() -> {
+                    if (generation != searchGeneration.get()) return;
+                    loadingMoreBooks = false;
+                    if (page != null && !page.content().isEmpty()) {
+                        booksTableView.getItems().addAll(page.content());
+                        booksTableView.refresh();
+                        refreshMasterSelection();
+                    }
+                    updateBookPagingUi(page == null
+                            ? PageResult.of(List.copyOf(booksTableView.getItems()), activeBookTotal, 0, BOOK_PAGE_SIZE)
+                            : page);
+                    long loaded = booksTableView.getItems().size();
+                    statusLabel.setText("Книги: завантажено " + loaded + " з " + activeBookTotal);
+                })).exceptionally(ex -> {
+            log.error("Loading next search page failed", ex);
+            UiExecutor.runOnUiThread(() -> {
+                if (generation != searchGeneration.get()) return;
+                loadingMoreBooks = false;
+                updateLoadMoreButton();
+                statusLabel.setText("Не вдалося завантажити наступну сторінку: " + ThrowableMessages.rootMessage(ex, "невідома помилка"));
+            });
+            return null;
+        });
+    }
+
+    private void updateBookPagingUi(PageResult<BookDto> page) {
+        if (page != null) {
+            activeBookTotal = page.totalElements();
+        }
+        long loaded = booksTableView.getItems().size();
+        booksCountLabel.setText("(" + loaded + " / " + activeBookTotal + ")");
+        updateLoadMoreButton();
+    }
+
+    private void updateLoadMoreButton() {
+        if (loadMoreBooksButton == null) return;
+        boolean visible = activeBookRequest != null && booksTableView.getItems().size() < activeBookTotal;
+        loadMoreBooksButton.setVisible(visible);
+        loadMoreBooksButton.setManaged(visible);
+        loadMoreBooksButton.setDisable(loadingMoreBooks);
+        loadMoreBooksButton.setText(loadingMoreBooks ? "Завантаження…" : "Завантажити ще");
+    }
+
+    private void resetBookPaging() {
+        activeBookRequest = null;
+        activeBookTotal = 0;
+        loadingMoreBooks = false;
+        updateLoadMoreButton();
+    }
+
 
     private void setSectionVisible(VBox section, boolean visible) {
         section.setVisible(visible);
@@ -603,6 +696,7 @@ public class SearchWorkspaceController {
 
     public void clearResults() {
         searchGeneration.incrementAndGet();
+        resetBookPaging();
         navigationPanelController.clearAuthorSearchResults();
         setSectionVisible(authorsSection, false);
         authorsListView.getItems().clear();
@@ -632,6 +726,7 @@ public class SearchWorkspaceController {
     }
 
     public void setResults(List<BookDto> results) {
+        resetBookPaging();
         if (results != null && !results.isEmpty()) {
             setSectionVisible(booksSection, true);
             booksTableView.getItems().setAll(results);
@@ -738,9 +833,16 @@ public class SearchWorkspaceController {
         }
     }
 
-    private record AdvancedSearchUiResult(List<BookDto> books, List<AuthorDto> authors) {
+    private record SearchUiPage(GlobalSearchResult overview, PageResult<BookDto> books, SearchRequest request) {
+        private SearchUiPage {
+            overview = overview == null ? GlobalSearchResult.empty() : overview;
+            books = books == null ? PageResult.empty() : books;
+        }
+    }
+
+    private record AdvancedSearchUiResult(PageResult<BookDto> books, List<AuthorDto> authors, SearchRequest request) {
         private AdvancedSearchUiResult {
-            books = books == null ? List.of() : List.copyOf(books);
+            books = books == null ? PageResult.empty() : books;
             authors = authors == null ? List.of() : List.copyOf(authors);
         }
     }

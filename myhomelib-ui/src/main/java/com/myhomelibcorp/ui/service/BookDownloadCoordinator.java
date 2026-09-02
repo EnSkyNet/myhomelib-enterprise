@@ -445,6 +445,7 @@ public class BookDownloadCoordinator {
         target.setArchiveEntry(source.getArchiveEntry());
         target.setFileSize(source.getFileSize());
         target.setLocal(source.isLocal());
+        target.setMissingSince(source.getMissingSince());
         target.setLibId(source.getLibId());
         target.setSourceUrl(source.getSourceUrl());
     }
@@ -466,6 +467,7 @@ public class BookDownloadCoordinator {
                 .whenComplete((count, error) -> Platform.runLater(() -> {
                     if (error == null) {
                         book.setLocal(false);
+                        book.setMissingSince(null);
                         applicationState.getStatusBar().setStatusText("Локальну копію видалено: " + book.getTitle());
                         eventPublisher.publishEvent(new NavigationRefreshEvent());
                     } else {

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.imports;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
@@ -210,6 +212,7 @@ class ImportDirectoryUseCaseTest {
         final BulkImportOptimizer bulk = mock(BulkImportOptimizer.class);
         final DatabaseInitializerPort dbInit = mock(DatabaseInitializerPort.class);
         final ImportDirectoryUseCase useCase = new ImportDirectoryUseCase(
-                importFile, scanner, events, indexRebuilder, searchSync, bulk, dbInit);
+                importFile, scanner, events, indexRebuilder, searchSync, bulk, dbInit,
+                new LibraryOperationCoordinator());
     }
 }

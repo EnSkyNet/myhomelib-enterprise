@@ -122,6 +122,7 @@ public interface BookMapper {
                 .createdAt(dto.getCreatedAt() != null ? dto.getCreatedAt() : LocalDateTime.now())
                 .deleted(dto.isDeleted())
                 .local(dto.isLocal())
+                .missingSince(dto.getMissingSince())
                 .build();
     }
 }

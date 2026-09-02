@@ -1,11 +1,12 @@
 package com.myhomelibcorp.ui.collection;
 
+import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
-import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
 import com.myhomelibcorp.application.usecase.collection.*;
-import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.collections.FXCollections;
 import javafx.collections.ObservableList;
@@ -18,6 +19,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @RequiredArgsConstructor
@@ -33,6 +35,7 @@ public class CollectionWorkspaceController {
     private final CollectionMaintenancePanelCoordinator maintenancePanel;
     private final ApplicationState appState;
     private final DialogService dialogService;
+    private final UiBackgroundExecutor executor;
 
     @FXML private ListView<CollectionDto> collectionsListView;
     @FXML private Label collectionNameLabel;
@@ -57,6 +60,8 @@ public class CollectionWorkspaceController {
     private CollectionDto selectedCollection;
     private CollectionDto activeCollection;
     private final ObservableList<CollectionDto> collectionList = FXCollections.observableArrayList();
+    private final AtomicLong loadGeneration = new AtomicLong();
+    private boolean busy;
 
     @FXML
     public void initialize() {
@@ -205,66 +210,69 @@ public class CollectionWorkspaceController {
             dialogService.showWarning("Активація", "Виберіть колекцію для активації.");
             return;
         }
-
         if (collectionDto.isActive()) {
             dialogService.showInfo("Інформація", "Колекція \"" + collectionDto.getName() + "\" вже активна.");
             return;
         }
+        if (busy) return;
 
         log.info("Активація колекції: {}", collectionDto.getName());
-        appState.getStatusBar().setStatusText("Активація колекції: " + collectionDto.getName());
-        appState.getStatusBar().setProgressVisible(true);
-
-        try {
-            // Переключаємося за ID. Use case сам завантажує повний metadata-запис,
-            // включно з URL/login/password/notes, яких немає у CollectionDto.
-            Collection collection = switchCollectionUseCase.execute(collectionDto.getId());
-
-            // Оновлюємо стан
-            appState.setCurrentLibraryCollection(collection);
-
-            // Оновлюємо список
-            loadCollections();
-
-            // Вибираємо активовану колекцію в списку
-            for (CollectionDto dto : collectionList) {
-                if (dto.getId().equals(collectionDto.getId())) {
-                    collectionsListView.getSelectionModel().select(dto);
-                    break;
-                }
-            }
-
-            appState.getStatusBar().setStatusText("Активовано колекцію: " + collectionDto.getName());
-            appState.getStatusBar().setProgressVisible(false);
-
-            dialogService.showInfo("Успішно", "Колекцію \"" + collectionDto.getName() + "\" активовано.");
-
-        } catch (Exception e) {
-            log.error("Помилка активації колекції", e);
-            appState.getStatusBar().setProgressVisible(false);
-            appState.getStatusBar().setStatusText("Помилка активації колекції");
-            dialogService.showError("Помилка", "Не вдалося активувати колекцію: " + e.getMessage());
-        }
+        setBusy(true, "Активація колекції: " + collectionDto.getName());
+        executor.submit(() -> switchCollectionUseCase.execute(collectionDto.getId()))
+                .thenAccept(collection -> UiExecutor.runOnUiThread(() -> {
+                    appState.setCurrentLibraryCollection(collection);
+                    setBusy(false, "Активовано колекцію: " + collectionDto.getName());
+                    loadCollections(collection.getId());
+                    dialogService.showInfo("Успішно", "Колекцію \"" + collectionDto.getName() + "\" активовано.");
+                }))
+                .exceptionally(error -> {
+                    log.error("Помилка активації колекції", error);
+                    UiExecutor.runOnUiThread(() -> {
+                        setBusy(false, "Помилка активації колекції");
+                        dialogService.showError("Помилка", "Не вдалося активувати колекцію: " + ThrowableMessages.rootMessage(error));
+                    });
+                    return null;
+                });
     }
 
     public void loadCollections() {
-        try {
-            List<CollectionDto> collections = loadCollectionsUseCase.execute();
-            collectionList.setAll(collections);
-            activeCollection = collections.stream().filter(CollectionDto::isActive).findFirst().orElse(null);
-            log.info("Завантажено {} колекцій; active={}", collections.size(),
-                    activeCollection == null ? "<none>" : activeCollection.getName());
-            if (!collections.isEmpty()) {
-                CollectionDto toSelect = activeCollection != null ? activeCollection : collections.getFirst();
-                collectionsListView.getSelectionModel().select(toSelect);
-                updateActivateButton(toSelect);
-            } else {
-                collectionDetailsBox.setVisible(false);
-            }
-        } catch (Exception e) {
-            log.error("Помилка завантаження колекцій", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
+        loadCollections(null);
+    }
+
+    private void loadCollections(String selectId) {
+        long requestId = loadGeneration.incrementAndGet();
+        executor.submit(loadCollectionsUseCase::execute)
+                .thenAccept(collections -> UiExecutor.runOnUiThread(() -> {
+                    if (requestId != loadGeneration.get()) return;
+                    applyCollections(collections, selectId);
+                }))
+                .exceptionally(error -> {
+                    log.error("Помилка завантаження колекцій", error);
+                    UiExecutor.runOnUiThread(() -> {
+                        if (requestId != loadGeneration.get()) return;
+                        dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + ThrowableMessages.rootMessage(error));
+                    });
+                    return null;
+                });
+    }
+
+    private void applyCollections(List<CollectionDto> collections, String selectId) {
+        collectionList.setAll(collections);
+        activeCollection = collections.stream().filter(CollectionDto::isActive).findFirst().orElse(null);
+        log.info("Завантажено {} колекцій; active={}", collections.size(),
+                activeCollection == null ? "<none>" : activeCollection.getName());
+        if (collections.isEmpty()) {
+            selectedCollection = null;
+            collectionDetailsBox.setVisible(false);
+            return;
         }
+        CollectionDto toSelect = null;
+        if (selectId != null) {
+            toSelect = collections.stream().filter(c -> selectId.equals(c.getId())).findFirst().orElse(null);
+        }
+        if (toSelect == null) toSelect = activeCollection != null ? activeCollection : collections.getFirst();
+        collectionsListView.getSelectionModel().select(toSelect);
+        updateActivateButton(toSelect);
     }
 
     private void updateCollectionDetails(CollectionDto collection) {
@@ -299,29 +307,30 @@ public class CollectionWorkspaceController {
                 "Назва:",
                 "");
         result.ifPresent(name -> {
-            if (!name.isBlank()) {
-                try {
-                    CreateCollectionRequest request = CreateCollectionRequest.builder()
-                            .name(name)
-                            .importOnCreate(false)
-                            .createIndex(false)
-                            .build();
-
-                    com.myhomelibcorp.domain.model.collection.Collection created = createCollectionUseCase.execute(request);
-                    com.myhomelibcorp.domain.model.collection.Collection active = switchCollectionUseCase.execute(created.getId());
-                    appState.setCurrentLibraryCollection(active);
-                    loadCollections();
-                    collectionList.stream()
-                            .filter(dto -> dto.getId().equals(active.getId()))
-                            .findFirst()
-                            .ifPresent(dto -> collectionsListView.getSelectionModel().select(dto));
-                    dialogService.showInfo("Успішно", "Порожню колекцію \"" + name + "\" створено та активовано.");
-                    log.info("Порожню колекцію створено й активовано: id={}, name={}", active.getId(), active.getName());
-                } catch (Exception e) {
-                    log.error("Помилка створення колекції", e);
-                    dialogService.showError("Помилка", "Не вдалося створити колекцію: " + e.getMessage());
-                }
-            }
+            if (name.isBlank() || busy) return;
+            CreateCollectionRequest request = CreateCollectionRequest.builder()
+                    .name(name)
+                    .importOnCreate(false)
+                    .createIndex(false)
+                    .build();
+            setBusy(true, "Створення колекції: " + name);
+            executor.submit(() -> {
+                var created = createCollectionUseCase.execute(request);
+                return switchCollectionUseCase.execute(created.getId());
+            }).thenAccept(active -> UiExecutor.runOnUiThread(() -> {
+                appState.setCurrentLibraryCollection(active);
+                setBusy(false, "Колекцію створено: " + name);
+                loadCollections(active.getId());
+                dialogService.showInfo("Успішно", "Порожню колекцію \"" + name + "\" створено та активовано.");
+                log.info("Порожню колекцію створено й активовано: id={}, name={}", active.getId(), active.getName());
+            })).exceptionally(error -> {
+                log.error("Помилка створення колекції", error);
+                UiExecutor.runOnUiThread(() -> {
+                    setBusy(false, "Помилка створення колекції");
+                    dialogService.showError("Помилка", "Не вдалося створити колекцію: " + ThrowableMessages.rootMessage(error));
+                });
+                return null;
+            });
         });
     }
 
@@ -343,24 +352,23 @@ public class CollectionWorkspaceController {
                 selected.getName());
         result.ifPresent(newName -> {
             if (!newName.isBlank() && !newName.equals(selected.getName())) {
-                try {
-                    com.myhomelibcorp.domain.model.collection.Collection renamed =
-                            renameCollectionUseCase.execute(selected.getId(), newName);
-                    CollectionDto updated = CollectionDtoMapper.toDto(
-                            renamed, selected.isActive(), selected.isAllowDelete());
-                    int index = collectionList.indexOf(selected);
-                    if (index >= 0) {
-                        collectionList.set(index, updated);
-                    }
-                    if (selected.isActive()) {
-                        appState.setCurrentLibraryCollection(renamed);
-                    }
-                    collectionsListView.getSelectionModel().select(updated);
-                    dialogService.showInfo("Успішно", "Колекцію перейменовано на \"" + newName + "\"");
-                } catch (Exception e) {
-                    log.error("Помилка перейменування колекції", e);
-                    dialogService.showError("Помилка", "Не вдалося перейменувати: " + e.getMessage());
-                }
+                if (busy) return;
+                setBusy(true, "Перейменування колекції…");
+                executor.submit(() -> renameCollectionUseCase.execute(selected.getId(), newName))
+                        .thenAccept(renamed -> UiExecutor.runOnUiThread(() -> {
+                            if (selected.isActive()) appState.setCurrentLibraryCollection(renamed);
+                            setBusy(false, "Колекцію перейменовано");
+                            loadCollections(renamed.getId());
+                            dialogService.showInfo("Успішно", "Колекцію перейменовано на \"" + newName + "\"");
+                        }))
+                        .exceptionally(error -> {
+                            log.error("Помилка перейменування колекції", error);
+                            UiExecutor.runOnUiThread(() -> {
+                                setBusy(false, "Помилка перейменування колекції");
+                                dialogService.showError("Помилка", "Не вдалося перейменувати: " + ThrowableMessages.rootMessage(error));
+                            });
+                            return null;
+                        });
             }
         });
     }
@@ -385,15 +393,23 @@ public class CollectionWorkspaceController {
         confirm.setHeaderText("Видалити колекцію \"" + selected.getName() + "\"?");
         confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-            try {
+            if (busy) return;
+            setBusy(true, "Видалення колекції: " + selected.getName());
+            executor.submit(() -> {
                 deleteCollectionUseCase.execute(selected.getId());
-                collectionList.remove(selected);
-                collectionDetailsBox.setVisible(false);
+                return selected.getId();
+            }).thenAccept(deletedId -> UiExecutor.runOnUiThread(() -> {
+                setBusy(false, "Колекцію видалено");
+                loadCollections();
                 dialogService.showInfo("Успішно", "Колекцію видалено");
-            } catch (Exception e) {
-                log.error("Помилка видалення колекції", e);
-                dialogService.showError("Помилка", "Не вдалося видалити: " + e.getMessage());
-            }
+            })).exceptionally(error -> {
+                log.error("Помилка видалення колекції", error);
+                UiExecutor.runOnUiThread(() -> {
+                    setBusy(false, "Помилка видалення колекції");
+                    dialogService.showError("Помилка", "Не вдалося видалити: " + ThrowableMessages.rootMessage(error));
+                });
+                return null;
+            });
         }
     }
 
@@ -432,6 +448,17 @@ public class CollectionWorkspaceController {
         loadCollections();
         dialogService.showInfo("Оновлення", "Колекції перезавантажено.");
     }
+
+    private void setBusy(boolean busy, String status) {
+        this.busy = busy;
+        collectionsListView.setDisable(busy);
+        if (activateButton != null) activateButton.setDisable(busy || selectedCollection == null || selectedCollection.isActive());
+        if (renameButton != null) renameButton.setDisable(busy || selectedCollection == null || !selectedCollection.isAllowRename());
+        if (deleteButton != null) deleteButton.setDisable(busy || selectedCollection == null || !selectedCollection.isAllowDelete());
+        appState.getStatusBar().setProgressVisible(busy);
+        if (status != null && !status.isBlank()) appState.getStatusBar().setStatusText(status);
+    }
+
 
     public void refresh() {
         loadCollections();

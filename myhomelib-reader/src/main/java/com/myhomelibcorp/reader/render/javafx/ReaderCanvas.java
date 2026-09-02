@@ -34,6 +34,7 @@ public class ReaderCanvas extends StackPane {
     private final ReaderEngine engine;
     private final AutoScrollController autoScrollController;
     private final ReaderPageHistory pageHistory = new ReaderPageHistory(256);
+    private final ReaderPaginationController paginationController;
     private final ReaderSelectionController selectionController;
     private final ReaderKeyboardScrollController keyboardScrollController;
 
@@ -79,6 +80,7 @@ public class ReaderCanvas extends StackPane {
         }
 
         this.engine = engine;
+        this.paginationController = new ReaderPaginationController(engine);
         this.renderer = fxRenderer;
         this.canvas = fxRenderer.getCanvas(); // критичний fix: один спільний Canvas
         this.zoomBaseFontSize = engine.getSettings().fontSize();
@@ -144,10 +146,14 @@ public class ReaderCanvas extends StackPane {
                     Math.max(0, (int) Math.round(settings.topMargin())),
                     Math.max(0, (int) Math.round(settings.bottomMargin()))
             );
-            if (currentDimensions != null && !currentDimensions.equals(newDimensions)) pageHistory.clear();
+            if (currentDimensions != null && !currentDimensions.equals(newDimensions)) {
+                pageHistory.clear();
+                paginationController.invalidate();
+            }
             currentDimensions = newDimensions;
             sizeUpdated = currentDimensions.isValid();
             if (!sizeUpdated) return;
+            paginationController.prepare(currentDimensions, this::notifyPageChanged);
 
             renderedLeftPage = engine.getCurrentPage(currentDimensions);
             renderedRightPage = PageLayout.empty();
@@ -305,6 +311,7 @@ public class ReaderCanvas extends StackPane {
                 current.tapRightAction(), !active, active ? false : current.autoTwoPageLandscape(),
                 current.showStatusClock(), current.input());
         pageHistory.clear();
+        paginationController.invalidate();
         engine.applySettings(changed);
         render();
         notifySettingsChanged();
@@ -313,43 +320,31 @@ public class ReaderCanvas extends StackPane {
     public boolean isTwoPageModeEnabled() { return twoPageActive; }
 
 
-    /** Номер приблизний; повну карту сторінок навмисно не тримаємо в RAM. */
+    /** Exact canonical page number when indexed; 0 means pagination is still in progress. */
     public int getCurrentPageNumber() {
-        if (!engine.isOpen() || currentDimensions == null) {
-            return 1;
-        }
-        long pageSize = currentPageLength();
-        return (int) Math.max(1, engine.getCurrentPosition().textOffset() / pageSize + 1);
+        if (!engine.isOpen() || currentDimensions == null || engine.getCurrentPosition() == null) return 0;
+        paginationController.prepare(currentDimensions, this::notifyPageChanged);
+        return paginationController.pageForOffset(engine.getCurrentPosition().textOffset());
     }
 
+    /** Exact total page count; 0 while the compact PageIndex is still being calculated. */
     public int getTotalPages() {
-        if (!engine.isOpen() || currentDimensions == null || engine.getCurrentDocument() == null) {
-            return 1;
-        }
-        long pageSize = currentPageLength();
-        long total = engine.getCurrentDocument().totalTextLength();
-        return (int) Math.max(1, Math.min(Integer.MAX_VALUE, (total + pageSize - 1) / pageSize));
-    }
-
-    private long currentPageLength() {
-        PageLayout first = renderedLeftPage != null && !renderedLeftPage.isEmpty()
-                ? renderedLeftPage : engine.getCurrentPage(currentDimensions);
-        long end = twoPageActive && renderedRightPage != null && !renderedRightPage.isEmpty()
-                ? renderedRightPage.getEndOffset() : first.getEndOffset();
-        return Math.max(1, end - first.getStartOffset());
+        if (!engine.isOpen() || currentDimensions == null || engine.getCurrentDocument() == null) return 0;
+        paginationController.prepare(currentDimensions, this::notifyPageChanged);
+        return paginationController.totalPages();
     }
 
     public void goToPage(int page) {
-        if (page <= 1) {
-            goToPercent(0);
-            return;
-        }
-        int total = getTotalPages();
-        double percent = Math.min(100.0, (page - 1) * 100.0 / Math.max(1, total));
-        goToPercent(percent);
-        if (onPageNumberChanged != null) {
-            onPageNumberChanged.accept(getCurrentPageNumber());
-        }
+        if (!engine.isOpen() || page <= 0) return;
+        paginationController.prepare(currentDimensions, this::notifyPageChanged);
+        var target = paginationController.offsetForPage(page);
+        if (target.isEmpty()) return; // Never approximate a page that has not been indexed yet.
+        clearSelection(false);
+        pageHistory.clear();
+        long offset = target.getAsLong();
+        engine.goToPosition(new ReaderPosition(engine.getCurrentDocument().chapterIndexAt(offset), offset, 0, 0));
+        render();
+        notifyPositionChanged();
     }
 
     // ==================== АВТОПРОКРУТКА ====================
@@ -395,6 +390,7 @@ public class ReaderCanvas extends StackPane {
                 Math.max(8, Math.min(72, zoomBaseFontSize * zoom))
         );
         renderer.applySettings(effective);
+        paginationController.invalidate();
         engine.applySettings(effective);
         render();
         notifySettingsChanged();
@@ -429,6 +425,7 @@ public class ReaderCanvas extends StackPane {
         zoom = 1.0;
         zoomBaseFontSize = settings.fontSize();
         pageHistory.clear();
+        paginationController.invalidate();
         renderer.applySettings(settings);
         engine.applySettings(settings);
         render();
@@ -642,6 +639,7 @@ public class ReaderCanvas extends StackPane {
         renderer.setResourceRepository(null);
         clear();
         pageHistory.clear();
+        paginationController.close();
         clearSelection(false);
         sizeUpdated = false;
         if (onBookClosed != null) onBookClosed.run();
@@ -704,6 +702,7 @@ public class ReaderCanvas extends StackPane {
         renderer.clearFontCache();
         renderer.clearImageCache();
         pageHistory.clear();
+        paginationController.close();
         sizeUpdated = false;
     }
 }

@@ -178,3 +178,7 @@ Before treating a build as production-ready:
 5. extract it into a clean directory and rerun release checks there;
 6. verify checksum and executable permissions for Unix launch scripts;
 7. smoke-test a real collection, online download, Reader and backup/restore.
+
+## 12. Coordinated operation lifecycle
+
+Collection-changing and maintenance operations use `LibraryOperationCoordinator`; incompatible operations must not overlap. User-visible long work is registered in Operation Center and should publish authoritative stage/progress rather than synthetic percentages. Online update completion order is SQLite/import → Lucene → statistics refresh → applied source version → completed UI state. Restore uses staged validation and preserves the previous database until the replacement has opened, migrated and passed integrity validation.

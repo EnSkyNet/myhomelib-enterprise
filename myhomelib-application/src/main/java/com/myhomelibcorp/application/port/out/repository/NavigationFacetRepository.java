@@ -12,7 +12,23 @@ import java.util.Optional;
 public interface NavigationFacetRepository {
 
     List<Facet> findAuthors(char initial, BookFilterSpec filter);
+
+    /**
+     * Server-side page of authors for large catalogues. Implementations should
+     * override this method so LIMIT/OFFSET is applied by the database, not after
+     * materializing every author in Java.
+     */
+    default FacetPage findAuthorsPage(char initial, BookFilterSpec filter, int limit, int offset) {
+        List<Facet> all = findAuthors(initial, filter);
+        if (all == null || all.isEmpty()) return FacetPage.empty();
+        int safeOffset = Math.max(0, offset);
+        int safeLimit = Math.max(1, limit);
+        if (safeOffset >= all.size()) return new FacetPage(List.of(), all.size());
+        int end = Math.min(all.size(), safeOffset + safeLimit);
+        return new FacetPage(all.subList(safeOffset, end), all.size());
+    }
     List<Facet> findDownloadedAuthors(BookFilterSpec filter);
+    List<Facet> searchAuthors(String query, BookFilterSpec filter, int limit);
     Optional<Character> findFirstAuthorInitial(BookFilterSpec filter);
     List<Facet> findSeries(BookFilterSpec filter);
     List<Facet> findGenres(BookFilterSpec filter);
@@ -35,6 +51,17 @@ public interface NavigationFacetRepository {
             id = id == null ? "" : id.trim();
             label = label == null ? id : label.trim();
             if (bookCount < 0) throw new IllegalArgumentException("bookCount cannot be negative");
+        }
+    }
+
+    record FacetPage(List<Facet> content, long totalElements) {
+        public FacetPage {
+            content = content == null ? List.of() : List.copyOf(content);
+            if (totalElements < 0) throw new IllegalArgumentException("totalElements cannot be negative");
+        }
+
+        public static FacetPage empty() {
+            return new FacetPage(List.of(), 0);
         }
     }
 

@@ -6,6 +6,7 @@ import lombok.Data;
 import lombok.NoArgsConstructor;
 
 import java.util.List;
+import java.time.LocalDateTime;
 
 
 @Data
@@ -25,6 +26,7 @@ public class BookListItem {
     private String coverHash;
     private long fileSize;
     private boolean local;
+    private LocalDateTime missingSince;
     private String updateDate;
     private String createdAt;
 

@@ -92,7 +92,7 @@ public class BookDetailsController {
     @FXML private VBox tocPreviewBox;
     @FXML private Label imagesCountLabel;
     @FXML private Button showImagesButton;
-    @FXML private TextArea annotationArea;
+    @FXML private Label annotationLabel;
     @FXML private TextArea reviewArea;
 
     private final AtomicLong loadGeneration = new AtomicLong();
@@ -178,7 +178,7 @@ public class BookDetailsController {
         sourceUrlLabel.setText("Джерело: " + value(book.getSourceUrl(), "—"));
 
         String annotation = firstNonBlank(book.getAnnotation(), document.annotation());
-        annotationArea.setText(annotation);
+        annotationLabel.setText(annotation);
         reviewArea.setText(value(book.getReview(), ""));
 
         renderKeywordLinks(book.getKeywords());
@@ -200,7 +200,7 @@ public class BookDetailsController {
         publisherLink.setText("Видавництво: " + value(book.getPublisher(), "—"));
         isbnLabel.setText("ISBN: " + value(book.getIsbn(), "—"));
         translatorsLabel.setText("Перекладачі: " + value(book.getTranslators(), "—"));
-        annotationArea.setText(value(book.getAnnotation(), ""));
+        annotationLabel.setText(value(book.getAnnotation(), ""));
         reviewArea.setText(value(book.getReview(), ""));
         formatLabel.setText("Формат: " + detectFormat(book));
         fileSizeLabel.setText("Розмір файла: " + value(book.getFileSizeFormatted(), "—"));
@@ -478,7 +478,7 @@ public class BookDetailsController {
         progressLabel.setText("Прочитано: —");
         libraryRateLabel.setText("Рейтинг каталогу: —");
         sourceUrlLabel.setText("Джерело: —");
-        annotationArea.clear();
+        annotationLabel.setText("");
         reviewArea.clear();
         keywordsLinksPane.getChildren().setAll(new Label("—"));
         groupLinksPane.getChildren().setAll(new Label("—"));

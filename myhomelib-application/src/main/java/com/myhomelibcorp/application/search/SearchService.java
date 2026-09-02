@@ -101,6 +101,37 @@ public class SearchService {
         return PageResult.of(books, result.totalHits(), result.page(), size);
     }
 
+    /** Load a specific interactive page without leaking SearchRequest-copy logic into the UI layer. */
+    public PageResult<BookDto> searchPage(SearchRequest request, int limit, int offset) {
+        if (request == null) return PageResult.empty();
+        int safeLimit = Math.max(1, Math.min(limit, 1000));
+        return searchPage(withPaging(request, safeLimit, Math.max(0, offset)));
+    }
+
+    /**
+     * Bounded non-book overview for the interactive Search Workspace.
+     *
+     * <p>The previous UI path called {@link #searchAll(String)}, which also
+     * materialized every matching book and every matching author.  For a
+     * 700k–1M catalogue that defeats Lucene paging and can create hundreds of
+     * thousands of Java objects before JavaFX renders the first row.  The
+     * workspace now loads books separately through {@link #searchPage(SearchRequest)}
+     * and keeps these secondary result groups intentionally bounded.</p>
+     */
+    public GlobalSearchResult searchOverview(String query) {
+        String normalizedQuery = query == null ? "" : query.trim();
+        if (normalizedQuery.isBlank()) {
+            return GlobalSearchResult.empty();
+        }
+
+        List<AuthorDto> authors = searchAuthors(normalizedQuery, 200);
+        List<String> series = seriesRepository.searchNames(normalizedQuery, 200);
+        List<GenreDto> genres = genreRepository.searchByName(normalizedQuery, 200).stream()
+                .map(genreMapper::toDto)
+                .toList();
+        return new GlobalSearchResult(authors, series, genres, List.of());
+    }
+
     private SearchRequest withFilter(SearchRequest base, BookFilterSpec filter) {
         return SearchRequest.builder()
                 .text(base.text()).authorId(base.authorId()).genreId(base.genreId())

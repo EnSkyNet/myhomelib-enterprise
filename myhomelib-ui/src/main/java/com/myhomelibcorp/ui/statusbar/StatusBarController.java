@@ -3,6 +3,9 @@ package com.myhomelibcorp.ui.statusbar;
 import com.myhomelibcorp.application.dto.LibraryStatistics;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.navigation.WorkspaceManager;
+import com.myhomelibcorp.ui.operation.OperationCenterEntry;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.StatusBarViewModel;
@@ -26,8 +29,11 @@ public class StatusBarController {
     private final ApplicationState appState;
     private final StatisticsService statisticsService;
     private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
+    private final WorkspaceManager workspaceManager;
 
     @FXML private Label statusLabel;
+    @FXML private Label operationsLabel;
     @FXML private Label statsLabel;
     @FXML private ProgressBar progressBar;
 
@@ -37,6 +43,7 @@ public class StatusBarController {
         statusLabel.textProperty().bind(vm.statusTextProperty());
         progressBar.progressProperty().bind(vm.progressProperty());
         progressBar.visibleProperty().bind(vm.progressVisibleProperty());
+        operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> updateOperationsLabel(snapshot)));
 
         // Оновлення статистики
         vm.statisticsProperty().addListener((obs, old, stats) -> {
@@ -72,7 +79,9 @@ public class StatusBarController {
         long usedMB = heap.getUsed() / (1024 * 1024);
 
         UiExecutor.runOnUiThread(() -> {
-            String text = String.format("Книг: %d | Авторів: %d | Серій: %d | Lucene ✓ | SQLite ✓ | RAM: %d MB",
+            String text = stats.isStale()
+                    ? String.format("Статистика: оновлюється… | RAM: %d MB", usedMB)
+                    : String.format("Книг: %d | Авторів: %d | Серій: %d | RAM: %d MB",
                     stats.getBooksCount(),
                     stats.getAuthorsCount(),
                     stats.getSeriesCount(),
@@ -80,4 +89,16 @@ public class StatusBarController {
             statsLabel.setText(text);
         });
     }
+    @FXML
+    private void onOperationsClick() {
+        workspaceManager.showOperationCenterWorkspace();
+    }
+
+    private void updateOperationsLabel(java.util.List<OperationCenterEntry> snapshot) {
+        int active = 0;
+        if (snapshot != null) for (OperationCenterEntry entry : snapshot) if (entry.active()) active++;
+        int total = snapshot == null ? 0 : snapshot.size();
+        operationsLabel.setText(active > 0 ? "Операції: " + active + " актив." : "Операції: " + total);
+    }
+
 }

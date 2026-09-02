@@ -137,3 +137,7 @@ Active project documentation is limited to:
 - `MYHOMELIB-RELEASE.md`.
 
 Historical summaries live in `docs/history/`; original legacy notes live in `docs/archive/source-notes/`. Runtime help/localization Markdown is not part of this documentation consolidation.
+
+## Refactoring guardrails (2026-09-02)
+
+For new work, preserve the completed stabilization rules: do not run repository/file/index maintenance on the JavaFX Application Thread; acquire the collection-operation coordinator for mutating/maintenance flows; expose long operations through `OperationProgress`/Operation Center; never translate database/index failures into normal empty results; keep interactive search/navigation bounded; and preserve semantic Reader position when layout changes. `REFACTORING_COMPLETION.md` records the current source-level baseline and release boundary.

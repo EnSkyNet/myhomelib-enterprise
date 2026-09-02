@@ -57,6 +57,7 @@
             <TableColumn fx:id="genresColumn" text="Жанри" prefWidth="160"/>
             <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="45"/>
             <TableColumn fx:id="yearColumn" text="Рік" prefWidth="65"/>
+            <TableColumn fx:id="createdAtColumn" text="Додано" prefWidth="135"/>
             <TableColumn fx:id="formatColumn" text="Статус" prefWidth="120"/>
             <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
             <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="100"/>

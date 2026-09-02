@@ -87,7 +87,7 @@ public class NewReaderPersistenceService {
                 return Optional.of(position);
             }
         } catch (Exception e) {
-            log.error("Помилка завантаження позиції з БД: {}", e.getMessage());
+            throw new IllegalStateException("Не вдалося завантажити позицію читання для " + bookId, e);
         }
         return Optional.empty();
     }
@@ -104,7 +104,7 @@ public class NewReaderPersistenceService {
 
     public Bookmark saveBookmark(String bookId, ReaderPosition position, long totalTextLength, String title, String context) {
         if (bookId == null || position == null) {
-            return null;
+            throw new IllegalArgumentException("bookId and position are required");
         }
 
         try {
@@ -127,8 +127,7 @@ public class NewReaderPersistenceService {
             return saved;
 
         } catch (Exception e) {
-            log.error("Помилка збереження закладки в БД: {}", e.getMessage());
-            return null;
+            throw new IllegalStateException("Не вдалося зберегти закладку для " + bookId, e);
         }
     }
 
@@ -140,8 +139,7 @@ public class NewReaderPersistenceService {
         try {
             return bookmarkRepository.findByBookId(bookId);
         } catch (Exception e) {
-            log.error("Помилка завантаження закладок з БД: {}", e.getMessage());
-            return List.of();
+            throw new IllegalStateException("Не вдалося завантажити закладки для " + bookId, e);
         }
     }
 
@@ -154,7 +152,7 @@ public class NewReaderPersistenceService {
             bookmarkRepository.deleteById(bookmarkId);
             log.debug("🗑️ Закладку видалено з БД: id={}", bookmarkId);
         } catch (Exception e) {
-            log.error("Помилка видалення закладки з БД: {}", e.getMessage());
+            throw new IllegalStateException("Не вдалося видалити закладку " + bookmarkId, e);
         }
     }
 
@@ -167,8 +165,7 @@ public class NewReaderPersistenceService {
         try {
             return bookmarkRepository.countByBookId(bookId);
         } catch (Exception e) {
-            log.error("Помилка підрахунку закладок: {}", e.getMessage());
-            return 0;
+            throw new IllegalStateException("Не вдалося підрахувати закладки для " + bookId, e);
         }
     }
 

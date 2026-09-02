@@ -12,6 +12,43 @@
     <top>
         <VBox>
             <MenuBar>
+                <Menu text="Файл">
+                    <MenuItem text="Імпортувати книгу / архів..." onAction="#handleImportFb2"/>
+                    <MenuItem text="Імпортувати каталог..." onAction="#handleImportDirectory"/>
+                    <MenuItem fx:id="exportMenuItem" text="Експортувати книги / на пристрій..." onAction="#handleExport"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Імпорт користувацьких даних..." onAction="#handleImportUserData"/>
+                    <MenuItem text="Експорт користувацьких даних..." onAction="#handleExportUserData"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Резервна копія..." onAction="#handleBackup"/>
+                    <MenuItem text="Відновити з копії..." onAction="#handleRestore"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Вийти" onAction="#handleExit"/>
+                </Menu>
+
+                <Menu text="Бібліотека">
+                    <MenuItem text="Головна" onAction="#handleHome"/>
+                    <MenuItem text="Книги" onAction="#onAllBooks"/>
+                    <MenuItem text="Автори" onAction="#onAuthors"/>
+                    <MenuItem text="Серії" onAction="#onSeries"/>
+                    <MenuItem text="Жанри" onAction="#onGenres"/>
+                    <MenuItem text="Групи" onAction="#onGroups"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Нові книги" onAction="#onNewBooks"/>
+                    <MenuItem text="Стеження за авторами" onAction="#onFollowedAuthors"/>
+                    <MenuItem fx:id="updatesMenuItem" text="Оновлення каталогу" onAction="#onUpdates"/>
+                    <MenuItem text="Прочитані" onAction="#onAlreadyRead"/>
+                    <MenuItem text="Історія читання" onAction="#onHistory"/>
+                    <SeparatorMenuItem/>
+                    <Menu text="Групи — дії">
+                        <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
+                        <MenuItem text="Редагувати групу..." onAction="#handleEditGroup"/>
+                        <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
+                        <MenuItem text="Очистити групу" onAction="#handleClearGroup"/>
+                    </Menu>
+                    <MenuItem text="Очистити історію читання" onAction="#onClearHistory"/>
+                </Menu>
+
                 <Menu text="Колекція">
                     <MenuItem fx:id="collectionsMenuItem" text="Керування колекціями..." onAction="#onCollections"/>
                     <MenuItem text="Створити колекцію..." onAction="#handleNewCollection"/>
@@ -19,61 +56,48 @@
                     <MenuItem text="Підключити існуючу .hlc2 / SQLite..." onAction="#handleAttachCollection"/>
                     <MenuItem text="Властивості колекції..." onAction="#handleCollectionProperties"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Оновити колекцію з INPX..." onAction="#handleUpdateCollectionManual"/>
-                    <MenuItem text="Оновити колекцію з мережі..." onAction="#handleUpdateCollectionNetwork"/>
-                    <MenuItem text="Скасувати оновлення колекції" onAction="#handleCancelCollectionUpdate"/>
+                    <MenuItem text="Оновити з INPX..." onAction="#handleUpdateCollectionManual"/>
+                    <MenuItem text="Оновити з мережі..." onAction="#handleUpdateCollectionNetwork"/>
+                    <MenuItem text="Скасувати оновлення" onAction="#handleCancelCollectionUpdate"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Експорт користувацьких даних..." onAction="#handleExportUserData"/>
-                    <MenuItem text="Імпорт користувацьких даних..." onAction="#handleImportUserData"/>
                     <MenuItem text="Копіювати вибрані книги в іншу колекцію..." onAction="#handleCopyToCollection"/>
-                    <SeparatorMenuItem/>
                     <MenuItem text="Скинути навігацію" onAction="#handleResetNavigation"/>
-                    <SeparatorMenuItem/>
-                    <MenuItem text="Вийти" onAction="#handleExit"/>
                 </Menu>
-                <Menu text="Група">
-                    <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
-                    <MenuItem text="Редагувати групу..." onAction="#handleEditGroup"/>
-                    <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
-                    <MenuItem text="Очистити групу" onAction="#handleClearGroup"/>
-                </Menu>
-                <Menu text="Редагування">
-                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
-                    <MenuItem text="Видалити запис(и) з каталогу" onAction="#handleDeleteBook"/>
-                </Menu>
-                <!-- ОНОВЛЕНИЙ МЕНЮ READER: тільки новий Reader -->
-                <Menu text="Reader">
-                    <MenuItem fx:id="openInternalMenuItem" text="Відкрити у вбудованому Reader" onAction="#handleOpenNewReader"/>
+
+                <Menu text="Книга">
+                    <MenuItem fx:id="openInternalMenuItem" text="Відкрити у Reader" onAction="#handleOpenNewReader"/>
                     <MenuItem fx:id="openExternalMenuItem" text="Відкрити у зовнішній читалці" onAction="#handleOpenExternalReader"/>
-                    <MenuItem text="Завантажити книгу" onAction="#handleDownloadBook"/>
+                    <MenuItem text="Завантажити" onAction="#handleDownloadBook"/>
                     <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
                     <MenuItem text="Скасувати завантаження" onAction="#handleCancelDownload"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Закрити Reader" onAction="#handleCloseReader"/>
+                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
+                    <MenuItem text="Видалити запис(и) з каталогу" onAction="#handleDeleteBook"/>
+                    <MenuItem text="Експортувати..." onAction="#handleExport"/>
                 </Menu>
-                <Menu text="Вигляд">
+
+                <Menu text="Reader">
+                    <MenuItem text="Відкрити" onAction="#handleOpenNewReader"/>
+                    <MenuItem text="Закрити" onAction="#handleCloseReader"/>
+                    <MenuItem text="Відкрити зовнішньою програмою" onAction="#handleOpenExternalReader"/>
+                </Menu>
+
+                <Menu fx:id="viewMenu" text="Вигляд">
                     <MenuItem fx:id="refreshMenuItem" text="Оновити" onAction="#handleRefresh"/>
                     <SeparatorMenuItem/>
                     <CheckMenuItem fx:id="leftSidebarMenuItem" text="Ліва панель" selected="true" onAction="#handleToggleLeftSidebar"/>
                     <CheckMenuItem fx:id="rightSidebarMenuItem" text="Права панель" selected="true" onAction="#handleToggleRightSidebar"/>
-                    <SeparatorMenuItem/>
                     <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Нові книги" onAction="#onNewBooks"/>
-                    <MenuItem text="Оновлення каталогу" onAction="#onUpdates"/>
-                    <SeparatorMenuItem/>
                     <Menu fx:id="recentBooksMenu" text="Недавні книги"/>
-                    <MenuItem text="Прочитані" onAction="#onAlreadyRead"/>
-                    <MenuItem text="Історія читання" onAction="#onHistory"/>
-                    <MenuItem text="Очистити історію читання" onAction="#onClearHistory"/>
-                    <SeparatorMenuItem/>
                     <Menu fx:id="languageMenu" text="Мова / Language"/>
                 </Menu>
+
                 <Menu text="Інструменти">
-                    <MenuItem text="Імпорт книги/архіву..." onAction="#handleImportFb2"/>
                     <MenuItem fx:id="importInpxMenuItem" text="Імпорт INPX..." onAction="#handleImportInpx"/>
                     <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
-                    <MenuItem fx:id="exportMenuItem" text="Експорт книг / на пристрій..." onAction="#handleExport"/>
+                    <MenuItem text="Синхронізувати папку..." onAction="#handleSyncFolder"/>
+                    <SeparatorMenuItem/>
                     <Menu text="Експорт поточного списку">
                         <MenuItem text="HTML..." onAction="#handleExportListHtml"/>
                         <MenuItem text="TXT..." onAction="#handleExportListTxt"/>
@@ -81,23 +105,20 @@
                     </Menu>
                     <SeparatorMenuItem/>
                     <MenuItem text="Перевірити цілісність..." onAction="#handleCheckIntegrity"/>
-                    <MenuItem text="Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
-                    <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
-                    <SeparatorMenuItem/>
-                    <MenuItem text="Резервне копіювання..." onAction="#handleBackup"/>
-                    <MenuItem text="Відновити з копії..." onAction="#handleRestore"/>
-                    <SeparatorMenuItem/>
                     <MenuItem text="Статистика" onAction="#handleStatistics"/>
-                    <SeparatorMenuItem/>
-                    <MenuItem text="Синхронізувати папку..." onAction="#handleSyncFolder"/>
-                    <SeparatorMenuItem/>
-                    <MenuItem fx:id="settingsMenuItem" text="Налаштування..." onAction="#handleSettings"/>
+                    <MenuItem text="Операції" onAction="#onOperations"/>
+                    <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
+                    <MenuItem text="Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="bookActionsMenuItem" text="Дії з книгою / скрипти..." onAction="#handleBookActions"/>
                     <MenuItem fx:id="customizeActionsMenuItem" text="Команди та гарячі клавіші..." onAction="#handleCustomizeActions"/>
-                    <SeparatorMenuItem/>
                     <MenuItem fx:id="opdsMenuItem" text="OPDS сервер..." onAction="#handleOpds"/>
                 </Menu>
+
+                <Menu text="Налаштування">
+                    <MenuItem fx:id="settingsMenuItem" text="Налаштування..." onAction="#handleSettings"/>
+                </Menu>
+
                 <Menu text="Допомога">
                     <MenuItem fx:id="helpMenuItem" text="Довідка (F1)" onAction="#handleHelp"/>
                     <MenuItem text="INPX / online" onAction="#handleInpxHelp"/>

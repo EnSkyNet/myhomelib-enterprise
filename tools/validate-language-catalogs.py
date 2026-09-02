@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LANG_DIR = ROOT / "Lang"
 CODE_RE = re.compile(r"^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$")
-CURRENT_SCHEMA = 2
+CURRENT_SCHEMA = 3
 
 
 def main() -> int:

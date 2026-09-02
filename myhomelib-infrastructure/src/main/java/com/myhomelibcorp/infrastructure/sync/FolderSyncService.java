@@ -20,7 +20,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -48,6 +47,7 @@ public class FolderSyncService implements FolderSyncPort {
     private final ImporterRegistry importerRegistry;
     private final InpxImportPipeline inpxImportPipeline;
     private final FolderSyncBookSupport syncSupport = new FolderSyncBookSupport();
+    private final FolderSyncAvailabilitySupport availabilitySupport = new FolderSyncAvailabilitySupport();
 
     @Value("${app.import.change-tracking-limit:50000}")
     private int changeTrackingLimit = ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT;
@@ -115,7 +115,9 @@ public class FolderSyncService implements FolderSyncPort {
             }
 
             if (effective.isDeleteOrphans() && !cancelFlag.get()) {
-                FileResult orphanResult = deleteMissingPhysicalFiles(root);
+                var missing = availabilitySupport.markMissingPhysicalFiles(
+                        root, cancelFlag, bookQueryRepository, bookCommandRepository, searchIndexer, syncSupport);
+                FileResult orphanResult = new FileResult(0, missing.updated(), 0, missing.errors(), missing.indexDirty());
                 counters.add(orphanResult);
                 indexDirty |= orphanResult.indexDirty();
             }
@@ -192,8 +194,9 @@ public class FolderSyncService implements FolderSyncPort {
             if (existing.isEmpty()) {
                 return importNewFile(file, root);
             }
+            int restored = availabilitySupport.restore(existing, bookCommandRepository, searchIndexer);
             if (!options.isUpdateChanged() || !syncSupport.archiveChanged(file, existing)) {
-                return FileResult.skipped();
+                return restored > 0 ? new FileResult(0, restored, 0, 0, true) : FileResult.skipped();
             }
             return reconcileArchive(file, root, existing, options.isDeleteOrphans());
         }
@@ -203,10 +206,12 @@ public class FolderSyncService implements FolderSyncPort {
         if (existing.isEmpty()) {
             return importNewFile(file, root);
         }
-        if (!options.isUpdateChanged() || !syncSupport.fileChanged(file, existing.get())) {
-            return FileResult.skipped();
+        Book current = existing.get();
+        boolean restored = availabilitySupport.restore(current, bookCommandRepository, searchIndexer);
+        if (!options.isUpdateChanged() || !syncSupport.fileChanged(file, current)) {
+            return restored ? new FileResult(0, 1, 0, 0, true) : FileResult.skipped();
         }
-        return updateLooseBook(file, root, existing.get());
+        return updateLooseBook(file, root, current);
     }
 
     private Optional<Book> findExistingLoose(Path root, String relativeFolder, Path file) {
@@ -297,41 +302,15 @@ public class FolderSyncService implements FolderSyncPort {
             }
         }
 
-        int deleted = 0;
+        int unavailable = 0;
         if (deleteRemoved && !cancelFlag.get()) {
             for (Book old : existing) {
                 if (matchedIds.contains(old.getId().asString())) continue;
-                bookCommandRepository.deleteById(old.getId());
-                searchIndexer.deleteBook(old.getId());
-                deleted++;
+                availabilitySupport.mark(old, false, bookCommandRepository, searchIndexer);
+                unavailable++;
             }
         }
-        return new FileResult(added, updated, deleted, 0, added + updated + deleted > 0);
-    }
-
-    private FileResult deleteMissingPhysicalFiles(Path root) {
-        int deleted = 0;
-        int errors = 0;
-        try (Stream<Book> books = bookQueryRepository.streamAll()) {
-            var iterator = books.iterator();
-            while (iterator.hasNext()) {
-                if (cancelFlag.get()) break;
-                Book book = iterator.next();
-                if (book == null || !book.isLocal()) continue;
-                Path physical = syncSupport.physicalPath(book, root);
-                if (physical == null || !physical.startsWith(root)) continue;
-                if (Files.isRegularFile(physical)) continue;
-                try {
-                    bookCommandRepository.deleteById(book.getId());
-                    searchIndexer.deleteBook(book.getId());
-                    deleted++;
-                } catch (Exception e) {
-                    errors++;
-                    log.error("Не вдалося видалити orphan {}", book.getId(), e);
-                }
-            }
-        }
-        return new FileResult(0, 0, deleted, errors, deleted > 0);
+        return new FileResult(added, updated + unavailable, 0, 0, added + updated + unavailable > 0);
     }
 
     private record FileResult(int added, int updated, int deleted, int errors, boolean indexDirty) {

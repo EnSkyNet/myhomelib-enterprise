@@ -41,21 +41,95 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
 
     @Override
     public List<Facet> findAuthors(char initial, BookFilterSpec filter) {
+        return findAuthorsPage(initial, filter, Integer.MAX_VALUE, 0).content();
+    }
+
+    @Override
+    public FacetPage findAuthorsPage(char initial, BookFilterSpec filter, int limit, int offset) {
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
+        AuthorInitialSql initialSql = authorInitialSql(initial);
+        List<Object> baseParams = new ArrayList<>(initialSql.params());
+        baseParams.addAll(f.params());
+
+        String fromWhere = """
+                FROM authors a
+                JOIN book_authors ba ON ba.author_id = a.id
+                JOIN books b ON b.id = ba.book_id
+                WHERE b.deleted = 0
+                  AND %s
+                  %s
+                """.formatted(initialSql.condition(), andFilter(f));
+
+        Long total = jdbc().queryForObject("""
+                SELECT COUNT(*)
+                FROM (
+                    SELECT a.id
+                    %s
+                    GROUP BY a.id
+                ) matched_authors
+                """.formatted(fromWhere), Long.class, baseParams.toArray());
+
+        int safeLimit = Math.max(1, limit);
+        int safeOffset = Math.max(0, offset);
+        List<Object> dataParams = new ArrayList<>(baseParams);
+        dataParams.add(safeLimit);
+        dataParams.add(safeOffset);
+
+        String sql = """
+                SELECT a.id,
+                       a.first_name,
+                       a.middle_name,
+                       a.last_name,
+                       COUNT(DISTINCT b.id) AS book_count
+                %s
+                GROUP BY a.id, a.first_name, a.middle_name, a.last_name
+                ORDER BY COALESCE(a.last_name, '') COLLATE NOCASE,
+                         COALESCE(a.first_name, '') COLLATE NOCASE,
+                         COALESCE(a.middle_name, '') COLLATE NOCASE,
+                         a.id
+                LIMIT ? OFFSET ?
+                """.formatted(fromWhere);
+
+        List<Facet> content = jdbc().query(sql, (rs, rowNum) -> new Facet(
+                rs.getString("id"),
+                fullName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name")),
+                rs.getLong("book_count")), dataParams.toArray());
+        return new FacetPage(content, total == null ? 0 : total);
+    }
+
+    private AuthorInitialSql authorInitialSql(char initial) {
         List<Object> params = new ArrayList<>();
-        String initialCondition;
+        String condition;
         if (initial == '#') {
             String supported = TOOLBAR_INITIALS + TOOLBAR_INITIALS.toLowerCase(Locale.ROOT);
             String placeholders = String.join(",", java.util.Collections.nCopies(supported.length(), "?"));
-            initialCondition = "SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1) NOT IN (" + placeholders + ") " +
+            condition = "SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1) NOT IN (" + placeholders + ") " +
                     "AND SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1) <> ''";
             supported.chars().forEach(c -> params.add(String.valueOf((char) c)));
         } else {
-            initialCondition = "SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1) IN (?, ?)";
+            condition = "SUBSTR((" + AUTHOR_DISPLAY_EXPR + "), 1, 1) IN (?, ?)";
             params.add(String.valueOf(Character.toUpperCase(initial)));
             params.add(String.valueOf(Character.toLowerCase(initial)));
         }
+        return new AuthorInitialSql(condition, List.copyOf(params));
+    }
+
+    private record AuthorInitialSql(String condition, List<Object> params) {}
+
+    @Override
+    public List<Facet> searchAuthors(String query, BookFilterSpec filter, int limit) {
+        if (query == null || query.isBlank()) return List.of();
+        BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
+        String normalizedPattern = "%" + escapeLike(query.trim().toLowerCase(Locale.ROOT)) + "%";
+        String originalPattern = "%" + escapeLike(query.trim()) + "%";
+        List<Object> params = new ArrayList<>();
+        // SQLite LOWER()/NOCASE are ASCII-only without ICU. Author search_name is
+        // normalized in Java, so it is the authoritative Unicode-aware search key.
+        params.add(normalizedPattern);
+        // Fallback keeps legacy rows searchable until their search_name backfill runs.
+        params.add(originalPattern);
         params.addAll(f.params());
+        params.add(Math.max(1, Math.min(limit, 500)));
 
         String sql = """
                 SELECT a.id,
@@ -67,19 +141,26 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
                 JOIN book_authors ba ON ba.author_id = a.id
                 JOIN books b ON b.id = ba.book_id
                 WHERE b.deleted = 0
-                  AND %s
+                  AND (
+                        COALESCE(a.search_name, '') LIKE ? ESCAPE '\\'
+                     OR TRIM(COALESCE(a.last_name, '') || ' ' || COALESCE(a.first_name, '') || ' ' || COALESCE(a.middle_name, '')) LIKE ? ESCAPE '\\'
+                  )
                   %s
                 GROUP BY a.id, a.first_name, a.middle_name, a.last_name
                 ORDER BY COALESCE(a.last_name, '') COLLATE NOCASE,
                          COALESCE(a.first_name, '') COLLATE NOCASE,
                          COALESCE(a.middle_name, '') COLLATE NOCASE,
                          a.id
-                """.formatted(initialCondition, andFilter(f));
-
+                LIMIT ?
+                """.formatted(andFilter(f));
         return jdbc().query(sql, (rs, rowNum) -> new Facet(
                 rs.getString("id"),
                 fullName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name")),
                 rs.getLong("book_count")), params.toArray());
+    }
+
+    private static String escapeLike(String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     @Override

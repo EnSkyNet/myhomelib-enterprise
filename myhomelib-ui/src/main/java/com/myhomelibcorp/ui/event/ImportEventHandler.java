@@ -31,6 +31,9 @@ public class ImportEventHandler {
     public void onImportFinished(ImportFinishedEvent event) {
         log.info("Отримано подію ImportFinishedEvent: +{} книг", event.getImported());
 
+        // Mark the aggregate cache stale immediately. The expensive refresh still runs in background.
+        statisticsService.invalidate();
+
         // Large-library post-processing must not run on the JavaFX Application Thread.
         executor.submit(() -> {
             try {

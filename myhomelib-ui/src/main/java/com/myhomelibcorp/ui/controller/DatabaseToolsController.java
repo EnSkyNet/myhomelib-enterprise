@@ -2,8 +2,12 @@ package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
@@ -27,6 +31,8 @@ public class DatabaseToolsController {
     private final DialogService dialogService;
     private final DatabaseToolsService databaseToolsService;
     private final CollectionLifecycleService collectionLifecycleService;
+    private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
 
     @FXML
     public void handleCheckIntegrity(Stage owner) {
@@ -67,24 +73,26 @@ public class DatabaseToolsController {
         appState.getStatusBar().setStatusText("Оптимізація бази даних...");
         appState.getStatusBar().setProgressVisible(true);
 
-        new Thread(() -> {
-            try {
-                databaseToolsService.vacuumCurrent();
-
-                UiExecutor.runOnUiThread(() -> {
+        String operationId = operationCenter.start(
+                "VACUUM — " + collection.getName(), collection.getId(), OperationStage.OPTIMIZING_DATABASE, false);
+        executor.submit(() -> {
+                    databaseToolsService.vacuumCurrent();
+                    return null;
+                })
+                .whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("База даних оптимізована");
-                    dialogService.showInfo("Успішно", "База даних оптимізована.");
-                });
-            } catch (Exception e) {
-                log.error("Помилка оптимізації бази даних", e);
-                UiExecutor.runOnUiThread(() -> {
-                    appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("Помилка оптимізації");
-                    dialogService.showError("Помилка", "Не вдалося оптимізувати: " + e.getMessage());
-                });
-            }
-        }).start();
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        operationCenter.fail(operationId, cause);
+                        log.error("Помилка оптимізації бази даних", cause);
+                        appState.getStatusBar().setStatusText("Помилка оптимізації");
+                        dialogService.showError("Помилка", "Не вдалося оптимізувати: " + cause.getMessage());
+                    } else {
+                        operationCenter.complete(operationId, "VACUUM завершено");
+                        appState.getStatusBar().setStatusText("База даних оптимізована");
+                        dialogService.showInfo("Успішно", "База даних оптимізована.");
+                    }
+                }));
     }
 
     @FXML
@@ -99,15 +107,21 @@ public class DatabaseToolsController {
         appState.getStatusBar().setStatusText("Перебудова індексу (фоновий режим)...");
         appState.getStatusBar().setProgressVisible(true);
 
-        // Використовуємо асинхронний метод
+        Collection collection = appState.getCurrentLibraryCollection();
+        String operationId = operationCenter.start(
+                "Перебудова Lucene", collection == null ? "" : collection.getId(),
+                OperationStage.UPDATING_SEARCH_INDEX, false);
         collectionLifecycleService.rebuildSearchIndexAsync()
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
                     if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        operationCenter.fail(operationId, cause);
                         appState.getStatusBar().setStatusText("Помилка перебудови індексу");
-                        dialogService.showError("Помилка", "Не вдалося перебудувати індекс: " + error.getMessage());
+                        dialogService.showError("Помилка", "Не вдалося перебудувати індекс: " + cause.getMessage());
                     } else {
                         int count = databaseToolsService.getIndexedDocumentCount();
+                        operationCenter.complete(operationId, "Проіндексовано " + count + " книг");
                         appState.getStatusBar().setStatusText("Індекс перебудовано. Проіндексовано " + count + " книг.");
                         dialogService.showInfo("Успішно",
                                 "Пошуковий індекс перебудовано.\nПроіндексовано " + count + " книг.");

@@ -1,9 +1,12 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.usecase.sync.SyncFolderUseCase;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
 import com.myhomelibcorp.ui.presenter.BookImportPresenter;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -29,6 +32,7 @@ public class ImportController {
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final ApplicationState appState;
+    private final OperationCenterService operationCenter;
 
     public void importFb2(Runnable onComplete) {
         bookImportPresenter.importFb2(onComplete);
@@ -61,21 +65,28 @@ public class ImportController {
             appState.getStatusBar().setStatusText("🔄 Синхронізація папки: " + dir.getName());
             appState.getStatusBar().setProgressVisible(true);
 
+            var collection = appState.getCurrentLibraryCollection();
+            String operationId = operationCenter.start(
+                    "Синхронізація папки — " + dir.getName(),
+                    collection == null ? "" : collection.getId(), OperationStage.SYNCHRONIZING_FILES, false);
             CompletableFuture<SyncResult> future = syncFolderUseCase.executeAsync(dir.toPath(), options);
 
             future.thenAccept(result -> UiExecutor.runOnUiThread(() -> {
+                        operationCenter.complete(operationId, result.getSummary());
                         appState.getStatusBar().setProgressVisible(false);
                         appState.getStatusBar().setStatusText("✅ " + result.getSummary());
                         dialogService.showInfo("Синхронізація завершена", result.getSummary());
                         if (onComplete != null) onComplete.run();
                     }))
                     .exceptionally(ex -> {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(ex);
+                        operationCenter.fail(operationId, cause);
                         UiExecutor.runOnUiThread(() -> {
                             appState.getStatusBar().setProgressVisible(false);
                             appState.getStatusBar().setStatusText("❌ Помилка синхронізації");
-                            dialogService.showError("Помилка", "Не вдалося синхронізувати: " + ex.getMessage());
+                            dialogService.showError("Помилка", "Не вдалося синхронізувати: " + cause.getMessage());
                         });
-                        log.error("Sync failed", ex);
+                        log.error("Sync failed", cause);
                         return null;
                     });
         });

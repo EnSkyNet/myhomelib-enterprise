@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.download;
 
+import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.download.OnlineBookDownloadPort;
@@ -59,7 +60,7 @@ public class DownloadBookUseCase {
                 downloadQueuePort.markCancelled(collection.getId(), bookId.asString(), resumeHint);
             } else {
                 downloadQueuePort.markFailed(collection.getId(), bookId.asString(),
-                        SensitiveDataSanitizer.sanitizeText(rootMessage(error)), resumeHint);
+                        SensitiveDataSanitizer.sanitizeText(ThrowableMessages.rootMessage(error)), resumeHint);
             }
             throw error;
         }
@@ -87,11 +88,6 @@ public class DownloadBookUseCase {
         return false;
     }
 
-    private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        return current.getMessage() == null ? current.getClass().getSimpleName() : current.getMessage();
-    }
 
     private static String physicalIdentity(BookDto book) {
         String folder = clean(book.getFolder());

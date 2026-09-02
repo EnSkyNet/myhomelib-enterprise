@@ -8,6 +8,8 @@ import javafx.beans.property.SimpleObjectProperty;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
+
 @Component
 @Slf4j
 public class ApplicationState {
@@ -31,7 +33,19 @@ public class ApplicationState {
 
     public ObjectProperty<Collection> currentLibraryCollectionProperty() { return currentLibraryCollection; }
     public Collection getCurrentLibraryCollection() { return currentLibraryCollection.get(); }
-    public void setCurrentLibraryCollection(Collection collection) { currentLibraryCollection.set(collection); }
+    public void setCurrentLibraryCollection(Collection collection) {
+        Collection previous = currentLibraryCollection.get();
+        String previousId = previous == null ? null : previous.getId();
+        String nextId = collection == null ? null : collection.getId();
+        if (!Objects.equals(previousId, nextId)) {
+            dashboard.clear();
+            bookTable.clear();
+            bookDetails.clear();
+            statusBar.setStatistics(null);
+            currentGroup.set(null);
+        }
+        currentLibraryCollection.set(collection);
+    }
 
     public ObjectProperty<Group> currentGroupProperty() { return currentGroup; }
     public Group getCurrentGroup() { return currentGroup.get(); }

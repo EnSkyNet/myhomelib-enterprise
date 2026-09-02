@@ -15,4 +15,7 @@ public interface CollectionBackupPort {
 
     /** Creates a transactionally consistent SQLite database snapshot. */
     void createDatabaseSnapshot(Collection collection, Path targetFile) throws IOException;
+
+    /** Opens the supplied SQLite file independently and requires PRAGMA quick_check = ok. */
+    void validateDatabaseFile(Path databaseFile) throws IOException;
 }

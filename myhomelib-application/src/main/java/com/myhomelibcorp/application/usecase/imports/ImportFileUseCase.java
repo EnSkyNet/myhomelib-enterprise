@@ -1,6 +1,10 @@
 package com.myhomelibcorp.application.usecase.imports;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.imports.error.ImportErrorHandler;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
@@ -29,6 +33,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.stream.Stream;
 
@@ -46,6 +52,7 @@ public class ImportFileUseCase {
     private final SearchIndexer searchIndexer;
     private final CatalogImportPort catalogImportPort;
     private final BookQueryRepository bookQueryRepository;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
@@ -60,15 +67,17 @@ public class ImportFileUseCase {
             throw new IllegalArgumentException("File cannot be null");
         }
 
-        String fileName = context.getFile().getFileName().toString().toLowerCase();
-        if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
-            return executeInpx(context);
-        }
-        if (catalogImportPort.supports(context.getFile())) {
-            return executeNeutralCatalog(context);
-        }
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
+            String fileName = context.getFile().getFileName().toString().toLowerCase();
+            if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
+                return executeInpx(context);
+            }
+            if (catalogImportPort.supports(context.getFile())) {
+                return executeNeutralCatalog(context);
+            }
 
-        return executeLegacy(context);
+            return executeLegacy(context);
+        }
     }
 
     // ==================== ВНУТРІШНІ МЕТОДИ ====================
@@ -76,6 +85,9 @@ public class ImportFileUseCase {
     private ImportResult executeInpx(ImportContext context) {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         Path rootDirectory = context.getRootDirectory();
+        String operationId = operationId(context, "file-import-");
+        Consumer<OperationProgress> telemetry = context.getOperationProgressListener();
+        DoubleConsumer importProgress = scaleImportPhaseProgress(context.getProgressListener(), context.isIndexAfterSave());
 
         ImportResult result = fastImportService.importInpx(
                 context.getFile(),
@@ -85,12 +97,22 @@ public class ImportFileUseCase {
                 context.getCatalogSourceKey(),
                 context.getCatalogSourceLocation(),
                 context.isCatalogFullSnapshot(),
-                context.getProgressListener(),
+                importProgress,
                 context.getStatusConsumer(),
-                context.getOperationId(),
-                context.getOperationProgressListener());
+                operationId,
+                telemetry);
+
+        if (result.status() == ImportStatus.CANCELLED) {
+            publishFinished(context, result);
+            return result;
+        }
 
         if (context.isIndexAfterSave() && requiresSearchFinalization(result)) {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            if (context.getStatusConsumer() != null) context.getStatusConsumer().accept("Оновлення пошукового індексу…");
+            if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
             if (result.changes().complete()) {
                 applyIncrementalIndex(result.changes());
                 log.info("📌 Selective Lucene update applied after fast INPX import: +{}, ~{}, -{}",
@@ -103,6 +125,14 @@ public class ImportFileUseCase {
             }
         }
 
+        if (context.getProgressListener() != null) context.getProgressListener().accept(1.0);
+        if (context.isPublishFinishedEvent()) {
+            long processed = processedForResult(result);
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
+                    .withProgress(processed, processed)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+        }
         publishFinished(context, result);
         return result;
     }
@@ -117,20 +147,31 @@ public class ImportFileUseCase {
     }
 
     private ImportResult executeNeutralCatalog(ImportContext context) {
+        String operationId = operationId(context, "catalog-import-");
+        Consumer<OperationProgress> telemetry = context.getOperationProgressListener();
         ImportResult result = catalogImportPort.importCatalog(context);
-        if (result.status() == com.myhomelibcorp.application.imports.statistics.ImportStatus.CANCELLED) {
+        if (result.status() == ImportStatus.CANCELLED) {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false));
             publishFinished(context, result);
             return result;
         }
 
-        if (result.imported() > 0) {
-            if (context.isIndexAfterSave()) {
-                if (context.isCatalogFullSnapshot() || !result.changes().complete()) {
-                    searchIndexer.rebuildIndex();
-                } else {
-                    applyIncrementalIndex(result.changes());
-                }
+        if (result.imported() > 0 && context.isIndexAfterSave()) {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            if (context.isCatalogFullSnapshot() || !result.changes().complete()) {
+                searchIndexer.rebuildIndex();
+            } else {
+                applyIncrementalIndex(result.changes());
             }
+        }
+        if (context.isPublishFinishedEvent()) {
+            long processed = processedForResult(result);
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
+                    .withProgress(processed, processed)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
         }
         publishFinished(context, result);
         return result;
@@ -168,9 +209,12 @@ public class ImportFileUseCase {
         int batchSize = context.getBatchSize() > 0 ? context.getBatchSize() : defaultBatchSize;
         // Отримуємо progress listener з контексту
         DoubleConsumer progressListener = context.getProgressListener();
+        DoubleConsumer importProgressListener = scaleImportPhaseProgress(progressListener, context.isIndexAfterSave());
         AtomicLong totalProcessed = new AtomicLong(0);
         AtomicLong lastReported = new AtomicLong(0);
         long startTime = System.currentTimeMillis();
+        String operationId = operationId(context, "legacy-import-");
+        Consumer<OperationProgress> telemetry = context.getOperationProgressListener();
 
         long estimatedCount = -1;
         try {
@@ -195,7 +239,10 @@ public class ImportFileUseCase {
             List<Book> batch = new ArrayList<>(batchSize);
 
             // Оновлюємо прогрес на початку
-            reportProgress(progressListener, 0.0, estimatedCount, totalProcessed, lastReported, startTime);
+            reportProgress(importProgressListener, 0.0, estimatedCount, totalProcessed, lastReported, startTime);
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.IMPORTING, true)
+                    .withProgress(0, estimatedCount)
+                    .withCurrentItem(context.getFile().getFileName().toString()));
 
             try (Stream<Book> bookStream = importer.importBooks(context.getFile())) {
                 var iterator = enrichWithCollectionRoot(bookStream, context.getRootDirectory()).iterator();
@@ -213,9 +260,14 @@ public class ImportFileUseCase {
 
                     // Репортимо прогрес кожні 100 книг
                     if (totalProcessed.get() % 100 == 0) {
-                        reportProgress(progressListener,
-                                (double) totalProcessed.get() / Math.max(1, estimatedCount),
+                        reportProgress(importProgressListener,
+                                estimatedCount > 0 ? (double) totalProcessed.get() / estimatedCount : -1.0,
                                 estimatedCount, totalProcessed, lastReported, startTime);
+                        emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.IMPORTING, true)
+                                .withProgress(totalProcessed.get(), estimatedCount)
+                                .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
+                                        stats.getSkipped().get(), stats.getDuplicates().get(), 0, stats.getErrors().get())
+                                .withCurrentItem(context.getFile().getFileName().toString()));
                     }
 
                     if (batch.size() >= batchSize) {
@@ -256,6 +308,11 @@ public class ImportFileUseCase {
         log.info("Імпорт файлу завершено: {}", result);
 
         if (context.isIndexAfterSave() && requiresSearchFinalization(result)) {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            if (context.getStatusConsumer() != null) context.getStatusConsumer().accept("Оновлення пошукового індексу…");
+            if (context.getProgressListener() != null) context.getProgressListener().accept(-1.0);
             if (result.changes().complete()) {
                 applyIncrementalIndex(result.changes());
                 log.info("📌 Selective Lucene update після legacy import: +{}, ~{}, -{}",
@@ -270,6 +327,17 @@ public class ImportFileUseCase {
         // Cancellation may leave already committed legacy batches synchronized, but is not completion.
         if (!isCancelled(context)) {
             reportProgress(progressListener, 1.0, estimatedCount, totalProcessed, lastReported, startTime);
+            if (context.isPublishFinishedEvent()) {
+                emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
+                        .withProgress(totalProcessed.get(), estimatedCount > 0 ? estimatedCount : totalProcessed.get())
+                        .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                                result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            }
+        } else {
+            emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
+                    .withProgress(totalProcessed.get(), estimatedCount)
+                    .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
+                            result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
         }
         publishFinished(context, result);
         return result;
@@ -304,7 +372,7 @@ public class ImportFileUseCase {
                                 AtomicLong lastReported, long startTime) {
         if (progressListener == null) return;
 
-        double safeProgress = Math.max(0.0, Math.min(1.0, progress));
+        double safeProgress = progress < 0 ? -1.0 : Math.max(0.0, Math.min(1.0, progress));
         progressListener.accept(safeProgress);
 
         // Логуємо швидкість кожні 1000 книг
@@ -314,14 +382,40 @@ public class ImportFileUseCase {
             long elapsed = System.currentTimeMillis() - startTime;
             if (elapsed > 0 && processed > 0) {
                 double speed = processed * 1000.0 / elapsed;
-                log.info("⏳ Прогрес: {} / {} книг ({}%) - {:.1f} книг/с",
-                        processed, estimatedCount,
-                        Math.round(safeProgress * 100), speed);
+                if (safeProgress >= 0) {
+                    log.info("⏳ Прогрес: {} / {} книг ({}%) - {} книг/с",
+                            processed, estimatedCount, Math.round(safeProgress * 100), String.format(java.util.Locale.ROOT, "%.1f", speed));
+                } else {
+                    log.info("⏳ Прогрес: {} книг - {} книг/с",
+                            processed, String.format(java.util.Locale.ROOT, "%.1f", speed));
+                }
             }
             lastReported.set(processed);
         }
     }
 
+
+    private static DoubleConsumer scaleImportPhaseProgress(DoubleConsumer listener, boolean hasFinalizationStage) {
+        if (listener == null || !hasFinalizationStage) return listener;
+        return value -> listener.accept(value < 0 ? -1.0 : Math.max(0.0, Math.min(0.85, value * 0.85)));
+    }
+
+    private static String operationId(ImportContext context, String prefix) {
+        return context != null && context.getOperationId() != null && !context.getOperationId().isBlank()
+                ? context.getOperationId()
+                : prefix + UUID.randomUUID();
+    }
+
+    private static long processedForResult(ImportResult result) {
+        if (result == null) return 0L;
+        return Math.max(0L, result.imported() + result.skipped() + result.duplicates() + result.errors());
+    }
+
+    private static void emitOperation(Consumer<OperationProgress> listener, OperationProgress progress) {
+        if (listener == null || progress == null) return;
+        try { listener.accept(progress); }
+        catch (RuntimeException callbackFailure) { log.debug("Operation progress callback failed", callbackFailure); }
+    }
 
     private static boolean isCancelled(ImportContext context) {
         return context != null && context.getCancelFlag() != null && context.getCancelFlag().get();
@@ -359,6 +453,7 @@ public class ImportFileUseCase {
                     .createdAt(book.getCreatedAt())
                     .deleted(book.isDeleted())
                     .local(book.isLocal())
+                    .missingSince(book.getMissingSince())
                     .build();
         });
     }

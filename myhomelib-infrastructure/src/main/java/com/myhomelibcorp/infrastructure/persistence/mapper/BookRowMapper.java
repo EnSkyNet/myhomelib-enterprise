@@ -80,6 +80,7 @@ public class BookRowMapper implements RowMapper<Book> {
 
         boolean deleted = safeGetInt(rs, "deleted") == 1;
         boolean local = safeGetInt(rs, "local") == 1;
+        LocalDateTime missingSince = parseDate(safeGetString(rs, "missing_since"));
 
         return Book.builder()
                 .id(id)
@@ -92,6 +93,7 @@ public class BookRowMapper implements RowMapper<Book> {
                 .createdAt(createdAt != null ? createdAt : LocalDateTime.now())
                 .deleted(deleted)
                 .local(local)
+                .missingSince(missingSince)
                 .build();
     }
 

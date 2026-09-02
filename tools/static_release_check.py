@@ -7,6 +7,7 @@ empty file-backed database when Maven dependencies are not available yet.
 """
 from __future__ import annotations
 
+import os
 import re
 import sqlite3
 import sys
@@ -87,16 +88,19 @@ def migration_checks() -> tuple[int, list[str], str]:
 
 
 def shell_checks() -> tuple[int, list[str]]:
-    # Only flag obvious CRLF/shebang problems here; `bash -n` is performed by release scripts.
+    # Flag source-package issues that break Linux/macOS before Maven can even start.
     scripts = sorted(ROOT.glob("*.sh"))
+    executables = scripts + ([ROOT / "mvnw"] if (ROOT / "mvnw").exists() else [])
     errors: list[str] = []
-    for path in scripts:
+    for path in executables:
         data = path.read_bytes()
         if not data.startswith(b"#!/"):
             errors.append(f"{path.name}: missing shebang")
         if b"\r\n" in data:
             errors.append(f"{path.name}: CRLF line endings")
-    return len(scripts), errors
+        if not os.access(path, os.X_OK):
+            errors.append(f"{path.name}: not executable on Unix")
+    return len(executables), errors
 
 
 def main() -> int:

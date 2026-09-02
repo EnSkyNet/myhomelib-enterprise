@@ -27,6 +27,7 @@ public class BookViewModel {
     private final ObjectProperty<LocalDateTime> updateDate = new SimpleObjectProperty<>();
     private final BooleanProperty deleted = new SimpleBooleanProperty();
     private final BooleanProperty local = new SimpleBooleanProperty();
+    private final ObjectProperty<LocalDateTime> missingSince = new SimpleObjectProperty<>();
     private final StringProperty collectionRoot = new SimpleStringProperty();
     private final StringProperty review = new SimpleStringProperty();
     private final ObjectProperty<LocalDateTime> createdAt = new SimpleObjectProperty<>();
@@ -64,6 +65,7 @@ public class BookViewModel {
     public ObjectProperty<LocalDateTime> updateDateProperty() { return updateDate; }
     public BooleanProperty deletedProperty() { return deleted; }
     public BooleanProperty localProperty() { return local; }
+    public ObjectProperty<LocalDateTime> missingSinceProperty() { return missingSince; }
     public StringProperty collectionRootProperty() { return collectionRoot; }
     public StringProperty reviewProperty() { return review; }
     public ObjectProperty<LocalDateTime> createdAtProperty() { return createdAt; }
@@ -153,6 +155,12 @@ public class BookViewModel {
         updateLocalStatus();
     }
 
+    public LocalDateTime getMissingSince() { return missingSince.get(); }
+    public void setMissingSince(LocalDateTime value) {
+        missingSince.set(value);
+        updateLocalStatus();
+    }
+
     public String getCollectionRoot() { return collectionRoot.get(); }
     public void setCollectionRoot(String collectionRoot) { this.collectionRoot.set(collectionRoot); }
 
@@ -212,7 +220,9 @@ public class BookViewModel {
     }
 
     private void updateLocalStatus() {
-        localStatus.set(local.get() ? "Завантажено" : "Не завантажено");
+        if (local.get()) localStatus.set("Завантажено");
+        else if (missingSince.get() != null) localStatus.set("Файл відсутній");
+        else localStatus.set("Не завантажено");
     }
 
     @Override

@@ -254,6 +254,18 @@ public class WorkspaceManager {
         push("updates", "");
     }
 
+    public void showFollowedAuthorsWorkspace() {
+        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/followed-authors-workspace.fxml");
+        setWorkspace(workspace);
+        push("followed-authors", "");
+    }
+
+    public void showOperationCenterWorkspace() {
+        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/operation-center-workspace.fxml");
+        setWorkspace(workspace);
+        push("operations", "");
+    }
+
     public void showAlreadyReadWorkspace() {
         Pane workspace = loadBookTableWorkspace("already-read");
         setWorkspace(workspace);
@@ -375,6 +387,8 @@ public class WorkspaceManager {
             case "group-nav" -> showGroupBooksWorkspace(GroupId.fromLong(Long.parseLong(entry.id)));
             case "reviews" -> showReviewsWorkspace(ReviewNavigationFilter.fromId(entry.id));
             case "updates" -> showUpdatesWorkspace();
+            case "followed-authors" -> showFollowedAuthorsWorkspace();
+            case "operations" -> showOperationCenterWorkspace();
             case "all-books" -> showAllBooksWorkspace();
             case "already-read" -> showAlreadyReadWorkspace();
             case "history" -> showHistoryWorkspace();

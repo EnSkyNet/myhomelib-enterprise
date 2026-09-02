@@ -78,6 +78,31 @@ class DefaultNavigationQueryServiceTest {
     }
 
     @Test
+    void authorPageKeepsExactTotalWithoutMaterializingWholeInitial() {
+        when(navigationFacetRepository.findAuthorsPage('А', filter, 500, 500)).thenReturn(
+                new NavigationFacetRepository.FacetPage(List.of(
+                        new NavigationFacetRepository.Facet("author-501", "Андрухович Юрій", 4)), 12421));
+
+        var page = service.loadAuthorsPage('А', 500, 500).join();
+
+        assertThat(page.totalElements()).isEqualTo(12421);
+        assertThat(page.currentPage()).isEqualTo(1);
+        assertThat(page.content()).extracting(NavigationNodeDto::id).containsExactly("author-501");
+        verify(navigationFacetRepository).findAuthorsPage('А', filter, 500, 500);
+        verify(navigationFacetRepository, never()).findAuthors('А', filter);
+    }
+
+    @Test
+    void authorSearchUsesFilteredFacetRepositoryAndIsBounded() {
+        when(navigationFacetRepository.searchAuthors("алек", filter, 200)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("a", "Александров", 8)));
+
+        assertThat(service.searchAuthors("алек", 200).join())
+                .extracting(NavigationNodeDto::label).containsExactly("Александров");
+        verify(navigationFacetRepository).searchAuthors("алек", filter, 200);
+    }
+
+    @Test
     void seriesAndGenresUseFilteredFacetCountsAndStableIds() {
         when(navigationFacetRepository.findSeries(filter)).thenReturn(List.of(
                 new NavigationFacetRepository.Facet("series-2", "Zulu", 2),

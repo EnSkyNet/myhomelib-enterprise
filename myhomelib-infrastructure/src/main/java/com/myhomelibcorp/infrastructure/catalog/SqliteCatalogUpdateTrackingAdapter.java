@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.catalog.CatalogSyncSession;
 import com.myhomelibcorp.application.catalog.CatalogUpdateCursor;
 import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
+import com.myhomelibcorp.application.catalog.FollowedAuthorSummary;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -28,8 +29,6 @@ import java.util.List;
 public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTrackingPort {
     private static final DateTimeFormatter TS = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
     private static final String UPDATED = CatalogUpdateType.UPDATED_DOWNLOADED_BOOK.name();
-    private static final int MAX_RETRIES = 5;
-    private static final long RETRY_DELAY_MS = 100;
 
     private final CollectionManager collectionManager;
     private final SqliteBusyRetryExecutor busyRetry;
@@ -256,37 +255,14 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     @Override
     public void setAuthorFollowed(AuthorId authorId, boolean followed) {
         if (authorId == null) return;
-
-        JdbcTemplate jdbc = jdbc();
-        int attempts = 0;
-        Exception lastError = null;
-
-        while (attempts < MAX_RETRIES) {
-            try {
-                if (followed) {
-                    jdbc.update("INSERT OR IGNORE INTO followed_authors(author_id, followed_at) VALUES (?, ?)",
-                            authorId.asString(), now());
-                } else {
-                    jdbc.update("DELETE FROM followed_authors WHERE author_id = ?", authorId.asString());
-                }
-                return;
-            } catch (Exception e) {
-                lastError = e;
-                if (e.getMessage() != null && e.getMessage().contains("SQLITE_BUSY")) {
-                    attempts++;
-                    log.warn("Database locked while updating followed authors (attempt {}/{}), retrying...", attempts, MAX_RETRIES);
-                    try {
-                        Thread.sleep(RETRY_DELAY_MS * attempts);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException("Interrupted while waiting for database lock", ie);
-                    }
-                } else {
-                    throw e;
-                }
+        busyRetry.run("followed author update", () -> {
+            if (followed) {
+                jdbc().update("INSERT OR IGNORE INTO followed_authors(author_id, followed_at) VALUES (?, ?)",
+                        authorId.asString(), now());
+            } else {
+                jdbc().update("DELETE FROM followed_authors WHERE author_id = ?", authorId.asString());
             }
-        }
-        throw new RuntimeException("Failed to update followed authors after " + MAX_RETRIES + " attempts", lastError);
+        });
     }
 
     @Override
@@ -295,6 +271,134 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         Integer count = jdbc().queryForObject(
                 "SELECT COUNT(*) FROM followed_authors WHERE author_id = ?", Integer.class, authorId.asString());
         return count != null && count > 0;
+    }
+
+    @Override
+    public List<FollowedAuthorSummary> findFollowedAuthors() {
+        String sql = """
+                WITH followed AS (
+                    SELECT
+                        fa.author_id, fa.followed_at,
+                        TRIM(
+                            COALESCE(NULLIF(a.last_name, ''), '') ||
+                            CASE WHEN COALESCE(NULLIF(a.first_name, ''), '') <> '' THEN
+                                CASE WHEN COALESCE(NULLIF(a.last_name, ''), '') <> '' THEN ' ' ELSE '' END || a.first_name
+                            ELSE '' END ||
+                            CASE WHEN COALESCE(NULLIF(a.middle_name, ''), '') <> '' THEN
+                                CASE WHEN COALESCE(NULLIF(a.last_name, ''), '') <> '' OR COALESCE(NULLIF(a.first_name, ''), '') <> '' THEN ' ' ELSE '' END || a.middle_name
+                            ELSE '' END
+                        ) AS author_name
+                    FROM followed_authors fa
+                    JOIN authors a ON a.id = fa.author_id
+                ),
+                active_counts AS (
+                    SELECT f.author_id, COUNT(DISTINCT b.id) AS active_book_count
+                    FROM followed f
+                    LEFT JOIN book_authors ba ON ba.author_id = f.author_id
+                    LEFT JOIN books b ON b.id = ba.book_id AND COALESCE(b.deleted, 0) = 0
+                    GROUP BY f.author_id
+                ),
+                ranked_pending AS (
+                    SELECT e.book_id, ba.author_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY e.book_id
+                               ORDER BY LOWER(COALESCE(a.last_name, '')),
+                                        LOWER(COALESCE(a.first_name, '')),
+                                        LOWER(COALESCE(a.middle_name, '')), a.id
+                           ) AS rn
+                    FROM catalog_update_events e
+                    JOIN book_authors ba ON ba.book_id = e.book_id
+                    JOIN followed_authors fa ON fa.author_id = ba.author_id
+                    JOIN authors a ON a.id = ba.author_id
+                    WHERE e.update_type = 'NEW_BY_FOLLOWED_AUTHOR' AND e.acknowledged_at IS NULL
+                ),
+                pending_counts AS (
+                    SELECT author_id, COUNT(*) AS new_book_count
+                    FROM ranked_pending
+                    WHERE rn = 1
+                    GROUP BY author_id
+                ),
+                latest_books AS (
+                    SELECT f.author_id, b.title, COALESCE(b.update_date, '') AS book_date,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY f.author_id
+                               ORDER BY COALESCE(b.update_date, '') DESC, LOWER(b.title), b.id
+                           ) AS rn
+                    FROM followed f
+                    JOIN book_authors ba ON ba.author_id = f.author_id
+                    JOIN books b ON b.id = ba.book_id AND COALESCE(b.deleted, 0) = 0
+                )
+                SELECT f.author_id,
+                       COALESCE(NULLIF(f.author_name, ''), 'Без автора') AS author_name,
+                       COALESCE(ac.active_book_count, 0) AS active_book_count,
+                       COALESCE(pc.new_book_count, 0) AS new_book_count,
+                       COALESCE(lb.title, '') AS last_book_title,
+                       COALESCE(lb.book_date, '') AS last_book_date,
+                       f.followed_at
+                FROM followed f
+                LEFT JOIN active_counts ac ON ac.author_id = f.author_id
+                LEFT JOIN pending_counts pc ON pc.author_id = f.author_id
+                LEFT JOIN latest_books lb ON lb.author_id = f.author_id AND lb.rn = 1
+                ORDER BY LOWER(COALESCE(NULLIF(f.author_name, ''), 'Без автора')), f.author_id
+                """;
+        return jdbc().query(sql, (rs, rowNum) -> new FollowedAuthorSummary(
+                rs.getString("author_id"),
+                rs.getString("author_name"),
+                rs.getLong("active_book_count"),
+                rs.getLong("new_book_count"),
+                rs.getString("last_book_title"),
+                rs.getString("last_book_date"),
+                rs.getString("followed_at")));
+    }
+
+    @Override
+    public void acknowledgeUpdate(BookId bookId, CatalogUpdateType type) {
+        if (bookId == null || type == null) return;
+        busyRetry.run("catalog update acknowledgement", () -> jdbc().update("""
+                UPDATE catalog_update_events
+                   SET acknowledged_at = ?
+                 WHERE book_id = ? AND update_type = ? AND acknowledged_at IS NULL
+                """, now(), bookId.asString(), type.name()));
+    }
+
+    @Override
+    public void acknowledgeAuthorUpdates(AuthorId authorId) {
+        if (authorId == null) return;
+        busyRetry.run("author catalog update acknowledgement", () -> jdbc().update("""
+                WITH ranked_authors AS (
+                    SELECT e.book_id, e.update_type, ba.author_id,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY e.book_id, e.update_type
+                               ORDER BY CASE WHEN fa.author_id IS NOT NULL THEN 0 ELSE 1 END,
+                                        LOWER(COALESCE(a.last_name, '')),
+                                        LOWER(COALESCE(a.first_name, '')),
+                                        LOWER(COALESCE(a.middle_name, '')), a.id
+                           ) AS rn
+                    FROM catalog_update_events e
+                    JOIN book_authors ba ON ba.book_id = e.book_id
+                    JOIN authors a ON a.id = ba.author_id
+                    LEFT JOIN followed_authors fa ON fa.author_id = a.id
+                    WHERE e.acknowledged_at IS NULL
+                )
+                UPDATE catalog_update_events
+                   SET acknowledged_at = ?
+                 WHERE acknowledged_at IS NULL
+                   AND EXISTS (
+                       SELECT 1 FROM ranked_authors ra
+                        WHERE ra.book_id = catalog_update_events.book_id
+                          AND ra.update_type = catalog_update_events.update_type
+                          AND ra.rn = 1 AND ra.author_id = ?
+                   )
+                """, now(), authorId.asString()));
+    }
+
+    @Override
+    public void acknowledgeAllUpdates() {
+        busyRetry.run("catalog update acknowledge all", () -> jdbc().update("""
+                UPDATE catalog_update_events
+                   SET acknowledged_at = ?
+                 WHERE acknowledged_at IS NULL
+                """, now()));
     }
 
     @Override

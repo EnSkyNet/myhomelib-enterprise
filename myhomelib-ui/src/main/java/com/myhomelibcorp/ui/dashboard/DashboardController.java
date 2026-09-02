@@ -36,6 +36,7 @@ public class DashboardController {
 
     @FXML
     public void initialize() {
+        appState.getDashboard().statisticsProperty().addListener((obs, oldStats, newStats) -> renderStatistics(newStats));
         loadDashboard();
     }
 
@@ -70,13 +71,22 @@ public class DashboardController {
         newBooksBox.getChildren().clear();
         data.getRecentAdded().forEach(book -> newBooksBox.getChildren().add(createBookLabel(book)));
 
-        var stats = data.getStatistics();
-        if (stats != null) {
-            booksCount.setText(String.valueOf(stats.getBooksCount()));
-            authorsCount.setText(String.valueOf(stats.getAuthorsCount()));
-            seriesCount.setText(String.valueOf(stats.getSeriesCount()));
-            genresCount.setText(String.valueOf(stats.getGenresCount()));
+        renderStatistics(data.getStatistics());
+    }
+
+    private void renderStatistics(com.myhomelibcorp.application.dto.LibraryStatistics stats) {
+        if (stats == null) return;
+        if (stats.isStale()) {
+            booksCount.setText("Оновлюється…");
+            authorsCount.setText("Оновлюється…");
+            seriesCount.setText("Оновлюється…");
+            genresCount.setText("Оновлюється…");
+            return;
         }
+        booksCount.setText(String.valueOf(stats.getBooksCount()));
+        authorsCount.setText(String.valueOf(stats.getAuthorsCount()));
+        seriesCount.setText(String.valueOf(stats.getSeriesCount()));
+        genresCount.setText(String.valueOf(stats.getGenresCount()));
     }
 
     private Label createBookLabel(BookDto book) {

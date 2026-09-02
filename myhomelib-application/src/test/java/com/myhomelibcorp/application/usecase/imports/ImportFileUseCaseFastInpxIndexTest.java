@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.imports;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.error.ImportErrorHandler;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
@@ -100,6 +102,7 @@ class ImportFileUseCaseFastInpxIndexTest {
                 fast,
                 search,
                 mock(CatalogImportPort.class),
-                books);
+                books,
+                new LibraryOperationCoordinator());
     }
 }

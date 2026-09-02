@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.sync;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.infrastructure.FolderSyncPort;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
@@ -17,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 public class SyncFolderUseCase {
 
     private final FolderSyncPort folderSyncPort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public SyncResult execute(Path directory, SyncOptions options) {
         if (directory == null) {
@@ -30,12 +33,22 @@ public class SyncFolderUseCase {
         }
 
         log.info("📂 Початок синхронізації папки: {}", directory);
-        return folderSyncPort.syncFolder(directory, options);
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.SYNC)) {
+            return folderSyncPort.syncFolder(directory, options);
+        }
     }
 
     public CompletableFuture<SyncResult> executeAsync(Path directory, SyncOptions options) {
+        if (directory == null) throw new IllegalArgumentException("Directory cannot be null");
         log.info("📂 Початок асинхронної синхронізації папки: {}", directory);
-        return folderSyncPort.syncFolderAsync(directory, options);
+        var lease = operationCoordinator.acquireDetached(LibraryOperationType.SYNC);
+        try {
+            return folderSyncPort.syncFolderAsync(directory, options)
+                    .whenComplete((ignored, failure) -> lease.close());
+        } catch (RuntimeException e) {
+            lease.close();
+            throw e;
+        }
     }
 
     public boolean isSyncing() {

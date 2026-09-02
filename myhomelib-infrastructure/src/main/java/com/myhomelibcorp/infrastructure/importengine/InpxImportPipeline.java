@@ -16,6 +16,7 @@ import com.myhomelibcorp.domain.model.author.AuthorNameKey;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.importengine.InpxBookNormalizer.NormalizedBook;
+import com.zaxxer.hikari.HikariDataSource;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -168,20 +169,39 @@ public class InpxImportPipeline {
 
             var dataSource = collectionManager.getCurrentDataSource();
             if (dataSource != null) {
+                logPoolState(dataSource, "before-transaction");
                 TransactionTemplate transaction =
                         new TransactionTemplate(new DataSourceTransactionManager(dataSource));
-                outcome = transaction.execute(status -> {
-                    ImportOutcome current = importTransactional(
-                            file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation,
-                            sourceFingerprint, totalRecords, catalogFullSnapshot, onlineCollection, progressListener, statusConsumer,
-                            opId, operationProgressListener);
-                    if (current.cancelled()) {
-                        status.setRollbackOnly();
-                        log.info("INPX import cancelled; transaction rolled back after {} parsed records",
-                                current.processed());
+                long transactionStarted = System.nanoTime();
+                try {
+                    outcome = transaction.execute(status -> {
+                        log.info("INPX transaction started; connection acquired by transaction manager");
+                        ImportOutcome current = importTransactional(
+                                file, effectiveBatch, root, cancelFlag, sourceKey, sourceLocation,
+                                sourceFingerprint, totalRecords, catalogFullSnapshot, onlineCollection, progressListener, statusConsumer,
+                                opId, operationProgressListener);
+                        if (current.cancelled()) {
+                            status.setRollbackOnly();
+                            log.info("INPX import cancelled; transaction marked rollback-only after {} parsed records",
+                                    current.processed());
+                        }
+                        return current;
+                    });
+                    long txMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - transactionStarted);
+                    if (outcome != null && outcome.cancelled()) {
+                        log.info("INPX transaction rolled back; duration={} ms", txMs);
+                    } else {
+                        log.info("INPX transaction committed; duration={} ms", txMs);
                     }
-                    return current;
-                });
+                } catch (RuntimeException transactionFailure) {
+                    long txMs = java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - transactionStarted);
+                    log.warn("INPX transaction rolled back after failure; duration={} ms; cause={}",
+                            txMs, transactionFailure.toString());
+                    throw transactionFailure;
+                } finally {
+                    // TransactionTemplate has completed here, so its connection must already be returned to Hikari.
+                    logPoolState(dataSource, "after-transaction/connection-returned");
+                }
                 if (outcome == null) {
                     outcome = new ImportOutcome(0, 0, 0, 0, 0, 0, 0, 0, false, ImportChangeSet.empty(!catalogFullSnapshot));
                 }
@@ -507,6 +527,23 @@ public class InpxImportPipeline {
     private static void notifyProgress(DoubleConsumer listener, double value) {
         if (listener != null) {
             listener.accept(Math.max(0.0, Math.min(1.0, value)));
+        }
+    }
+
+    private static void logPoolState(javax.sql.DataSource dataSource, String phase) {
+        if (!(dataSource instanceof HikariDataSource hikari)) return;
+        try {
+            var pool = hikari.getHikariPoolMXBean();
+            log.info(
+                    "INPX Hikari [{}]: pool={} max={} minIdle={} connectionTimeout={}ms leakDetection={}ms active={} idle={} total={} waiting={}",
+                    phase, hikari.getPoolName(), hikari.getMaximumPoolSize(), hikari.getMinimumIdle(),
+                    hikari.getConnectionTimeout(), hikari.getLeakDetectionThreshold(),
+                    pool == null ? -1 : pool.getActiveConnections(),
+                    pool == null ? -1 : pool.getIdleConnections(),
+                    pool == null ? -1 : pool.getTotalConnections(),
+                    pool == null ? -1 : pool.getThreadsAwaitingConnection());
+        } catch (RuntimeException metricsFailure) {
+            log.debug("Cannot read Hikari metrics during {}", phase, metricsFailure);
         }
     }
 

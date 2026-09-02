@@ -122,6 +122,57 @@ class SqliteCatalogUpdateTrackingAdapterTest {
     }
 
     @Test
+    void followedAuthorsExposeLiveCountsAndAcknowledgementLifecycle() {
+        String authorId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO authors(id, first_name, last_name) VALUES (?, 'Ada', 'Writer')", authorId);
+        insertBook("old-followed", false);
+        jdbc.update("UPDATE books SET update_date = '2026-08-01' WHERE id = 'old-followed'");
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES ('old-followed', ?)", authorId);
+
+        var baseline = adapter.beginSync("remote-collection:c1", null, "source-a");
+        adapter.recordImportedBooks(baseline, List.of(snapshot("old-followed", "old-a")));
+        adapter.setAuthorFollowed(AuthorId.fromString(authorId), true);
+
+        insertBook("new-followed", false);
+        jdbc.update("UPDATE books SET update_date = '2026-09-01' WHERE id = 'new-followed'");
+        jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES ('new-followed', ?)", authorId);
+        var revision2 = adapter.beginSync("remote-collection:c1", null, "source-b");
+        adapter.recordImportedBooks(revision2, List.of(
+                snapshot("old-followed", "old-a"), snapshot("new-followed", "new-a")));
+
+        assertThat(adapter.findFollowedAuthors()).singleElement().satisfies(summary -> {
+            assertThat(summary.authorId()).isEqualTo(authorId);
+            assertThat(summary.authorName()).isEqualTo("Writer Ada");
+            assertThat(summary.activeBookCount()).isEqualTo(2);
+            assertThat(summary.newBookCount()).isEqualTo(1);
+            assertThat(summary.lastBookTitle()).isEqualTo("Title new-followed");
+        });
+
+        adapter.acknowledgeAuthorUpdates(AuthorId.fromString(authorId));
+        assertThat(adapter.countPendingUpdates()).isZero();
+        assertThat(adapter.findFollowedAuthors()).singleElement()
+                .extracting(summary -> summary.newBookCount()).isEqualTo(0L);
+    }
+
+    @Test
+    void exactAndGlobalAcknowledgementDoNotDeleteEvents() {
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('ack1','A','a.fb2',0)");
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('ack2','B','b.fb2',0)");
+        jdbc.update("INSERT INTO catalog_sources(source_id,source_key,source_fingerprint) VALUES ('ack-source','ack-source','fixture')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint) VALUES ('ack1','UPDATED_DOWNLOADED_BOOK','ack-source',1,'a')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint) VALUES ('ack2','UPDATED_DOWNLOADED_BOOK','ack-source',1,'b')");
+
+        adapter.acknowledgeUpdate(com.myhomelibcorp.domain.model.valueobject.BookId.fromString("ack1"),
+                CatalogUpdateType.UPDATED_DOWNLOADED_BOOK);
+        assertThat(adapter.countPendingUpdates()).isEqualTo(1);
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM catalog_update_events", Integer.class)).isEqualTo(2);
+
+        adapter.acknowledgeAllUpdates();
+        assertThat(adapter.countPendingUpdates()).isZero();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM catalog_update_events", Integer.class)).isEqualTo(2);
+    }
+
+    @Test
     void pendingUpdateItemsUseStableKeysetCursor() {
         jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k1','K1','k1.fb2',0)");
         jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('k2','K2','k2.fb2',0)");

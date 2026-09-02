@@ -15,11 +15,9 @@ import org.springframework.stereotype.Repository;
 @Slf4j
 public class SqliteStatisticsRepository implements StatisticsRepository {
 
-    private static final int MAX_RETRIES = 5;
-    private static final long RETRY_DELAY_MS = 100;
-
     private final CollectionManager collectionManager;
     private final QueryExecutor queryExecutor;
+    private final SqliteBusyRetryExecutor busyRetry;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -47,38 +45,15 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
     }
 
     private void createStatisticsRowWithRetry() {
-        int attempts = 0;
-        DataAccessException lastError = null;
-
-        while (attempts < MAX_RETRIES) {
-            try {
-                getJdbcTemplate().update("""
-                        INSERT OR IGNORE INTO library_statistics
-                        (id, books_count, authors_count, series_count, genres_count,
-                         languages_count, publishers_count, total_size_bytes,
-                         duplicates_count, missing_covers_count, local_books_count,
-                         remote_books_count, read_books_count, unread_books_count,
-                         favorites_count, deleted_books_count, sources_count, last_updated)
-                        VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, CURRENT_TIMESTAMP)
-                        """);
-                return;
-            } catch (DataAccessException e) {
-                lastError = e;
-                if (isDatabaseBusy(e)) {
-                    attempts++;
-                    log.debug("Database locked while creating statistics row (attempt {}/{}), retrying...", attempts, MAX_RETRIES);
-                    try {
-                        Thread.sleep(RETRY_DELAY_MS * attempts);
-                    } catch (InterruptedException ie) {
-                        Thread.currentThread().interrupt();
-                        throw new RuntimeException("Interrupted while waiting for database lock", ie);
-                    }
-                } else {
-                    throw e;
-                }
-            }
-        }
-        throw new RuntimeException("Failed to create statistics row after " + MAX_RETRIES + " attempts", lastError);
+        busyRetry.run("create statistics cache row", () -> getJdbcTemplate().update("""
+                INSERT OR IGNORE INTO library_statistics
+                (id, books_count, authors_count, series_count, genres_count,
+                 languages_count, publishers_count, total_size_bytes,
+                 duplicates_count, missing_covers_count, local_books_count,
+                 remote_books_count, read_books_count, unread_books_count,
+                 favorites_count, deleted_books_count, sources_count, last_updated)
+                VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL)
+                """));
     }
 
     private LibraryStatistics readCachedStatistics() {
@@ -95,7 +70,8 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                     "COALESCE(unread_books_count, 0) AS unread_books_count, " +
                     "COALESCE(favorites_count, 0) AS favorites_count, " +
                     "COALESCE(deleted_books_count, 0) AS deleted_books_count, " +
-                    "COALESCE(sources_count, 0) AS sources_count " +
+                    "COALESCE(sources_count, 0) AS sources_count, " +
+                    "last_updated " +
                     "FROM library_statistics WHERE id = 1";
             return queryExecutor.queryForObject(sql, (rs, rowNum) ->
                     LibraryStatistics.builder()
@@ -115,6 +91,7 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                             .favoritesCount(rs.getLong("favorites_count"))
                             .deletedBooksCount(rs.getLong("deleted_books_count"))
                             .sourcesCount(rs.getLong("sources_count"))
+                            .stale(rs.getObject("last_updated") == null)
                             .build());
         } catch (DataAccessException e) {
             if (isDatabaseBusy(e)) {

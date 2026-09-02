@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.port.out.repository.NavigationFacetReposito
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.query.book.BookQuery;
+import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import org.springframework.stereotype.Service;
 
@@ -85,6 +86,43 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                         NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
                 .filter(DefaultNavigationQueryService::hasLabel)
                 .toList();
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<PageResult<NavigationNodeDto>> loadAuthorsPage(
+            Character initial, int limit, int offset) {
+        return executorPort.submit(() -> {
+            BookFilterSpec filter = filterStateService.current();
+            Character selected = initial;
+            if (selected == null || selected == '*') {
+                selected = navigationFacetRepository.findFirstAuthorInitial(filter).orElse(null);
+            }
+            if (selected == null) return PageResult.empty();
+
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            int safeOffset = Math.max(0, offset);
+            var page = navigationFacetRepository.findAuthorsPage(selected, filter, safeLimit, safeOffset);
+            List<NavigationNodeDto> nodes = page.content().stream()
+                    .map(facet -> new NavigationNodeDto(
+                            NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
+                    .filter(DefaultNavigationQueryService::hasLabel)
+                    .toList();
+            int pageNumber = safeOffset / safeLimit;
+            return PageResult.of(nodes, page.totalElements(), pageNumber, safeLimit);
+        });
+    }
+
+    @Override
+    public java.util.concurrent.CompletableFuture<List<NavigationNodeDto>> searchAuthors(String query, int limit) {
+        String normalized = query == null ? "" : query.trim();
+        if (normalized.isBlank()) return java.util.concurrent.CompletableFuture.completedFuture(List.of());
+        return executorPort.submit(() -> navigationFacetRepository
+                .searchAuthors(normalized, filterStateService.current(), Math.max(1, Math.min(limit, 500)))
+                .stream()
+                .map(facet -> new NavigationNodeDto(
+                        NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
+                .filter(DefaultNavigationQueryService::hasLabel)
+                .toList());
     }
 
     @Override

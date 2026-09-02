@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -14,6 +16,7 @@ public class SwitchCollectionUseCase {
 
     private final CollectionRepository collectionRepository;
     private final CollectionLifecycleService collectionLifecycleService;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public Collection execute(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) {
@@ -34,6 +37,12 @@ public class SwitchCollectionUseCase {
     }
 
     public Collection execute(Collection collection, boolean rebuildIndex) {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.SWITCH)) {
+            return executeLocked(collection, rebuildIndex);
+        }
+    }
+
+    private Collection executeLocked(Collection collection, boolean rebuildIndex) {
         if (collection == null) {
             throw new IllegalArgumentException("Колекція не може бути null");
         }

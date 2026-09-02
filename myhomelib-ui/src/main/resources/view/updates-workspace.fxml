@@ -35,6 +35,8 @@
                 <Button fx:id="openAuthorButton" text="Відкрити автора" onAction="#openAuthor"/>
                 <Button fx:id="openBookButton" text="Відкрити книгу" onAction="#openBook"/>
                 <Button fx:id="downloadButton" text="Завантажити / оновити" onAction="#downloadSelected"/>
+                <Button fx:id="acknowledgeButton" text="Позначити переглянутим" onAction="#acknowledgeSelected"/>
+                <Button fx:id="acknowledgeAllButton" text="Позначити все переглянутим" onAction="#acknowledgeAll"/>
             </HBox>
         </VBox>
     </bottom>

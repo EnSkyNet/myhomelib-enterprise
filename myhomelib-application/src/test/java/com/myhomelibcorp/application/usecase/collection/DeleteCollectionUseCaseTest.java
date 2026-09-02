@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
@@ -20,7 +22,7 @@ class DeleteCollectionUseCaseTest {
         CollectionStorageManager storage = mock(CollectionStorageManager.class);
         CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
         CollectionSourceMonitorPort sourceMonitor = mock(CollectionSourceMonitorPort.class);
-        DeleteCollectionUseCase useCase = new DeleteCollectionUseCase(repository, storage, lifecycle, sourceMonitor);
+        DeleteCollectionUseCase useCase = new DeleteCollectionUseCase(repository, storage, lifecycle, sourceMonitor, new LibraryOperationCoordinator());
 
         Collection active = mock(Collection.class);
         Collection target = mock(Collection.class);

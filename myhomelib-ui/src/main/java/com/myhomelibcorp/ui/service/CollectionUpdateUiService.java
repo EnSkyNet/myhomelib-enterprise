@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetw
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.stage.Window;
@@ -24,6 +25,7 @@ public class CollectionUpdateUiService {
     private final ApplicationState state;
     private final DialogService dialogs;
     private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
     private volatile AtomicBoolean active;
     private final AtomicBoolean startupCheckStarted = new AtomicBoolean(false);
 
@@ -80,7 +82,10 @@ public class CollectionUpdateUiService {
                         source,
                         flag,
                         p -> Platform.runLater(() -> state.getStatusBar().setProgress(p)),
-                        progressDialog::update))
+                        progress -> {
+                            operationCenter.accept("Оновлення каталогу", collection.getId(), progress);
+                            progressDialog.update(progress);
+                        }))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (active == flag) active = null;
                     state.getStatusBar().setProgressVisible(false);
@@ -105,10 +110,10 @@ public class CollectionUpdateUiService {
                         dialogs.showInfo("Оновлення",
                                 "Оброблено: " + processed
                                         + "\nІмпортовано: " + result.imported()
-                                        + "\nДодано: " + changes.inserted().size()
-                                        + "\nОновлено: " + changes.updated().size()
-                                        + "\nВидалено: " + changes.deleted().size()
-                                        + "\nЯвно видалено (DEL): " + result.explicitlyDeleted()
+                                        + "\nДодано: " + changes.insertedCount()
+                                        + "\nОновлено: " + changes.updatedCount()
+                                        + "\nЗаписи, позначені джерелом як видалені (DEL): " + result.explicitlyDeleted()
+                                        + "\nЗмінено стан записів у каталозі: " + changes.deletedCount()
                                         + "\nБез автора: " + result.withoutAuthor()
                                         + "\nБез жанру: " + result.withoutGenre()
                                         + "\nПропущено: " + result.skipped()
@@ -141,7 +146,7 @@ public class CollectionUpdateUiService {
         executor.submit(() -> useCase.execute(
                         collection, source, flag,
                         p -> Platform.runLater(() -> state.getStatusBar().setProgress(p)),
-                        progress -> { }))
+                        progress -> operationCenter.accept("Автооновлення каталогу", collection.getId(), progress)))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (active == flag) active = null;
                     state.getStatusBar().setProgressVisible(false);

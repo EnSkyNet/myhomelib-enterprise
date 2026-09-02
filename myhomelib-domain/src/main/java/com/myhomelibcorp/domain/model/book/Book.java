@@ -25,6 +25,7 @@ public class Book {
     private final LocalDateTime createdAt;
     private final boolean deleted;
     private final boolean local;
+    private final LocalDateTime missingSince;
 
     private Book(Builder builder) {
         this.id = Objects.requireNonNull(builder.id, "BookId cannot be null");
@@ -43,6 +44,7 @@ public class Book {
         this.createdAt = Objects.requireNonNullElse(builder.createdAt, LocalDateTime.now());
         this.deleted = builder.deleted;
         this.local = builder.local;
+        this.missingSince = builder.missingSince;
     }
 
     // === ДЕЛЕГУЮЧІ МЕТОДИ ДЛЯ ЗРУЧНОСТІ (не порушують інкапсуляцію) ===
@@ -116,6 +118,7 @@ public class Book {
                 .createdAt(this.createdAt)
                 .deleted(this.deleted)
                 .local(this.local)
+                .missingSince(this.missingSince)
                 .build();
     }
 
@@ -137,6 +140,7 @@ public class Book {
                 .createdAt(this.createdAt)
                 .deleted(this.deleted)
                 .local(this.local)
+                .missingSince(this.missingSince)
                 .build();
     }
 
@@ -158,6 +162,32 @@ public class Book {
                 .createdAt(this.createdAt)
                 .deleted(this.deleted)
                 .local(this.local)
+                .missingSince(this.missingSince)
+                .build();
+    }
+
+    /** Returns a copy with changed local-file availability while preserving metadata and user state. */
+    public Book withLocal(boolean local) {
+        return withLocalAvailability(local, local ? null : this.missingSince);
+    }
+
+    public Book withLocalAvailability(boolean local, LocalDateTime missingSince) {
+        if (this.local == local && Objects.equals(this.missingSince, missingSince)) return this;
+        return builder()
+                .id(this.id)
+                .title(this.title)
+                .authors(this.authors)
+                .genres(this.genres)
+                .series(this.series)
+                .sequenceNumber(this.sequenceNumber)
+                .metadata(this.metadata)
+                .file(this.file)
+                .cover(this.cover)
+                .updateDate(LocalDateTime.now())
+                .createdAt(this.createdAt)
+                .deleted(this.deleted)
+                .local(local)
+                .missingSince(missingSince)
                 .build();
     }
 
@@ -180,6 +210,7 @@ public class Book {
         private LocalDateTime createdAt;
         private boolean deleted;
         private boolean local;
+        private LocalDateTime missingSince;
 
         public Builder id(BookId id) { this.id = id; return this; }
         public Builder title(String title) { this.title = title; return this; }
@@ -194,6 +225,7 @@ public class Book {
         public Builder createdAt(LocalDateTime createdAt) { this.createdAt = createdAt; return this; }
         public Builder deleted(boolean deleted) { this.deleted = deleted; return this; }
         public Builder local(boolean local) { this.local = local; return this; }
+        public Builder missingSince(LocalDateTime missingSince) { this.missingSince = missingSince; return this; }
 
         // Зручні методи для створення VO всередині (можна використовувати, але краще передавати готові)
         public Builder metadataFrom(BookMetadata metadata) { this.metadata = metadata; return this; }

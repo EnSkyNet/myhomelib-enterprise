@@ -7,12 +7,15 @@ import com.myhomelibcorp.application.navigation.NavigationQueryService;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Button;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.TextField;
+import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.event.EventListener;
@@ -37,6 +40,7 @@ public class NavigationPanelController {
     @FXML private javafx.scene.control.Label navigationTitleLabel;
     @FXML private TextField listSearchField;
     @FXML private ComboBox<NavigationMode> navigationModeComboBox;
+    @FXML private Button loadMoreAuthorsButton;
 
     private List<NavigationNodeDto> allNodes = List.of();
     private NavigationMode currentMode = NavigationMode.AUTHORS;
@@ -47,6 +51,14 @@ public class NavigationPanelController {
     private String pendingSelectionId;
     private boolean suppressSelectionCallback;
     private boolean temporaryAuthorSearch;
+    private boolean authorPanelSearchActive;
+    private boolean suppressListSearchListener;
+    private Character authorLetterBeforeSearch;
+    private static final int AUTHOR_PAGE_SIZE = 500;
+    private static final int AUTHOR_SEARCH_LIMIT = 200;
+    private long authorTotal;
+    private boolean loadingMoreAuthors;
+    private final PauseTransition authorSearchDebounce = new PauseTransition(Duration.millis(250));
 
     @FXML
     public void initialize() {
@@ -54,8 +66,15 @@ public class NavigationPanelController {
         configureList();
 
         listSearchField.textProperty().addListener((obs, old, query) -> {
+            if (suppressListSearchListener) return;
             currentQuery = query == null ? "" : query;
-            filterList();
+            if (currentMode == NavigationMode.AUTHORS) {
+                authorSearchDebounce.stop();
+                authorSearchDebounce.setOnFinished(e -> performAuthorListSearch(currentQuery));
+                authorSearchDebounce.playFromStart();
+            } else {
+                filterList();
+            }
         });
 
         alphabetToolbarController.setOnLetterSelected(letter -> {
@@ -145,6 +164,11 @@ public class NavigationPanelController {
         log.info("Оновлення навігації після зміни глобального фільтра: {}", currentMode);
         Platform.runLater(() -> {
             if (currentMode == NavigationMode.AUTHORS) {
+                String authorQuery = listSearchField == null ? "" : listSearchField.getText().trim();
+                if (!authorQuery.isBlank()) {
+                    performAuthorListSearch(authorQuery);
+                    return;
+                }
                 currentLetter = null;
                 alphabetToolbarController.clearSelection();
             }
@@ -170,7 +194,12 @@ public class NavigationPanelController {
             currentLetter = null;
             currentQuery = "";
             alphabetToolbarController.clearSelection();
-            listSearchField.clear();
+            suppressListSearchListener = true;
+            try {
+                listSearchField.clear();
+            } finally {
+                suppressListSearchListener = false;
+            }
             loadMode(NavigationMode.AUTHORS);
         });
     }
@@ -180,6 +209,9 @@ public class NavigationPanelController {
             return;
         }
         temporaryAuthorSearch = false;
+        authorPanelSearchActive = false;
+        authorLetterBeforeSearch = null;
+        authorSearchDebounce.stop();
         updateNavigationTitle();
         boolean modeChanged = currentMode != mode;
         currentMode = mode;
@@ -197,6 +229,11 @@ public class NavigationPanelController {
             resolveFirstAuthorInitialAndLoad();
             return;
         }
+        if (mode == NavigationMode.AUTHORS) {
+            loadAuthorPage(currentLetter, false);
+            return;
+        }
+        resetAuthorPaging();
         loadNodes(mode, mode == NavigationMode.AUTHORS ? currentLetter : null);
     }
 
@@ -210,11 +247,12 @@ public class NavigationPanelController {
             currentLetter = initial.orElse(null);
             if (currentLetter != null) {
                 alphabetToolbarController.selectLetter(currentLetter);
-                loadNodes(NavigationMode.AUTHORS, currentLetter);
+                loadAuthorPage(currentLetter, false);
             } else {
                 allNodes = List.of();
                 navigationListView.getItems().clear();
                 navigationListView.setDisable(false);
+                resetAuthorPaging();
             }
         })).exceptionally(ex -> {
             handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
@@ -238,6 +276,120 @@ public class NavigationPanelController {
             handleLoadFailure(generation, mode, ex);
             return null;
         });
+    }
+
+    private void loadAuthorPage(Character initial, boolean append) {
+        if (initial == null || loadingMoreAuthors) return;
+        long generation = ++loadGeneration;
+        int offset = append ? allNodes.size() : 0;
+        if (!append) {
+            authorTotal = 0;
+            allNodes = List.of();
+            navigationListView.getItems().clear();
+        }
+        loadingMoreAuthors = true;
+        navigationListView.setDisable(true);
+        updateLoadMoreAuthorsButton();
+
+        navigationQueryService.loadAuthorsPage(initial, AUTHOR_PAGE_SIZE, offset)
+                .thenAccept(page -> UiExecutor.runOnUiThread(() -> {
+                    if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS
+                            || !java.util.Objects.equals(currentLetter, initial)) {
+                        return;
+                    }
+                    loadingMoreAuthors = false;
+                    authorTotal = page == null ? 0 : page.totalElements();
+                    List<NavigationNodeDto> incoming = page == null ? List.of() : page.content();
+                    if (append && !incoming.isEmpty()) {
+                        java.util.ArrayList<NavigationNodeDto> combined = new java.util.ArrayList<>(allNodes.size() + incoming.size());
+                        combined.addAll(allNodes);
+                        combined.addAll(incoming);
+                        allNodes = List.copyOf(combined);
+                    } else if (!append) {
+                        allNodes = List.copyOf(incoming);
+                    }
+                    navigationListView.setDisable(false);
+                    filterList();
+                    updateLoadMoreAuthorsButton();
+                    log.info("Завантажено {} / {} авторів для літери {}", allNodes.size(), authorTotal, initial);
+                })).exceptionally(ex -> {
+                    UiExecutor.runOnUiThread(() -> {
+                        if (generation != loadGeneration) return;
+                        loadingMoreAuthors = false;
+                        updateLoadMoreAuthorsButton();
+                    });
+                    handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
+                    return null;
+                });
+    }
+
+    private void performAuthorListSearch(String query) {
+        if (currentMode != NavigationMode.AUTHORS) return;
+        String normalized = query == null ? "" : query.trim();
+        if (normalized.isBlank()) {
+            if (authorPanelSearchActive) {
+                authorPanelSearchActive = false;
+                temporaryAuthorSearch = false;
+                updateNavigationTitle();
+                currentLetter = authorLetterBeforeSearch;
+                authorLetterBeforeSearch = null;
+                if (currentLetter != null) alphabetToolbarController.selectLetter(currentLetter);
+                loadMode(NavigationMode.AUTHORS);
+            } else {
+                filterList();
+            }
+            return;
+        }
+
+        if (!authorPanelSearchActive) authorLetterBeforeSearch = currentLetter;
+        authorPanelSearchActive = true;
+        temporaryAuthorSearch = true;
+        currentLetter = null;
+        resetAuthorPaging();
+        alphabetToolbarController.clearSelection();
+        final long generation = ++loadGeneration;
+        navigationListView.setDisable(true);
+        updateNavigationTitle(normalized);
+
+        navigationQueryService.searchAuthors(normalized, AUTHOR_SEARCH_LIMIT)
+                .thenAccept(nodes -> UiExecutor.runOnUiThread(() -> {
+                    if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS
+                            || !normalized.equals(currentQuery == null ? "" : currentQuery.trim())) return;
+                    allNodes = nodes == null ? List.of() : List.copyOf(nodes);
+                    navigationListView.setDisable(false);
+                    navigationListView.getSelectionModel().clearSelection();
+                    filterList();
+                    updateLoadMoreAuthorsButton();
+                    log.info("Server-side author search '{}': {} results", normalized, allNodes.size());
+                })).exceptionally(ex -> {
+                    handleLoadFailure(generation, NavigationMode.AUTHORS, ex);
+                    return null;
+                });
+    }
+
+    @FXML
+    private void onLoadMoreAuthors() {
+        if (currentMode != NavigationMode.AUTHORS || currentLetter == null || temporaryAuthorSearch
+                || loadingMoreAuthors || allNodes.size() >= authorTotal) return;
+        loadAuthorPage(currentLetter, true);
+    }
+
+    private void resetAuthorPaging() {
+        authorTotal = 0;
+        loadingMoreAuthors = false;
+        updateLoadMoreAuthorsButton();
+    }
+
+    private void updateLoadMoreAuthorsButton() {
+        if (loadMoreAuthorsButton == null) return;
+        boolean visible = currentMode == NavigationMode.AUTHORS && !temporaryAuthorSearch
+                && currentLetter != null && allNodes.size() < authorTotal;
+        loadMoreAuthorsButton.setVisible(visible);
+        loadMoreAuthorsButton.setManaged(visible);
+        loadMoreAuthorsButton.setDisable(loadingMoreAuthors);
+        loadMoreAuthorsButton.setText(loadingMoreAuthors
+                ? "Завантаження…"
+                : "Завантажити ще (" + allNodes.size() + " / " + authorTotal + ")");
     }
 
     private void handleLoadFailure(long generation, NavigationMode mode, Throwable ex) {
@@ -298,6 +450,8 @@ public class NavigationPanelController {
     public void showAuthorSearchResults(String query, List<AuthorDto> authors) {
         loadGeneration++; // invalidate any in-flight navigation load
         temporaryAuthorSearch = true;
+        authorPanelSearchActive = false;
+        authorLetterBeforeSearch = null;
         currentMode = NavigationMode.AUTHORS;
         currentLetter = null;
         pendingSelectionMode = null;
@@ -309,7 +463,12 @@ public class NavigationPanelController {
         }
         alphabetToolbarController.clearSelection();
         if (listSearchField != null && !listSearchField.getText().isEmpty()) {
-            listSearchField.clear();
+            suppressListSearchListener = true;
+            try {
+                listSearchField.clear();
+            } finally {
+                suppressListSearchListener = false;
+            }
         }
 
         List<NavigationNodeDto> nodes = authors == null ? List.of() : authors.stream()
@@ -326,6 +485,7 @@ public class NavigationPanelController {
         navigationListView.setDisable(false);
         navigationListView.getSelectionModel().clearSelection();
         updateNavigationTitle(query);
+        updateLoadMoreAuthorsButton();
         filterList();
     }
 
@@ -333,6 +493,8 @@ public class NavigationPanelController {
     public void clearAuthorSearchResults() {
         if (!temporaryAuthorSearch) return;
         temporaryAuthorSearch = false;
+        authorPanelSearchActive = false;
+        authorLetterBeforeSearch = null;
         updateNavigationTitle();
         currentLetter = null;
         loadMode(NavigationMode.AUTHORS);
@@ -417,7 +579,12 @@ public class NavigationPanelController {
         currentQuery = "";
         alphabetToolbarController.clearSelection();
         if (listSearchField != null && !listSearchField.getText().isEmpty()) {
-            listSearchField.clear();
+            suppressListSearchListener = true;
+            try {
+                listSearchField.clear();
+            } finally {
+                suppressListSearchListener = false;
+            }
         }
 
         if (mode == NavigationMode.AUTHORS) {

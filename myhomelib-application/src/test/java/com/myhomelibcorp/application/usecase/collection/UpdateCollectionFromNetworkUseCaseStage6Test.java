@@ -10,6 +10,7 @@ import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogPackage;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
@@ -17,6 +18,7 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.mockito.ArgumentCaptor;
+import org.mockito.InOrder;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -65,6 +67,11 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         verify(f.search).commit();
         verify(f.search, never()).rebuildIndex();
         verify(f.state).recordApplied("remote-collection:collection-42", "20260825");
+        InOrder lifecycleOrder = inOrder(f.search, f.statistics, f.state);
+        lifecycleOrder.verify(f.search).commit();
+        lifecycleOrder.verify(f.statistics).invalidate();
+        lifecycleOrder.verify(f.statistics).refreshStatistics();
+        lifecycleOrder.verify(f.state).recordApplied("remote-collection:collection-42", "20260825");
     }
 
     @Test
@@ -134,6 +141,31 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
     }
 
     @Test
+    void failedStatisticsRefreshDoesNotAdvanceAppliedVersion(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        Collection collection = collection("c1", tempDir);
+        Path downloaded = tempDir.resolve("delta.inpx");
+        Files.write(downloaded, new byte[]{1});
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get("remote-collection:c1")).thenReturn(CatalogSourceState.empty("remote-collection:c1"));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(), any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/delta.zip", "20260825", false)), "20260825"));
+        when(f.importer.execute(any())).thenReturn(new ImportResult(1, 0, 0, 0, 1,
+                ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+        doThrow(new IllegalStateException("statistics failed")).when(f.statistics).refreshStatistics();
+
+        assertThatThrownBy(() ->
+                f.useCase.execute(collection, "https://example.test/catalog.inpx", null, null))
+                .hasMessageContaining("statistics failed");
+
+        verify(f.statistics).invalidate();
+        verify(f.statistics).refreshStatistics();
+        verify(f.state, never()).recordApplied(anyString(), anyString());
+        verify(f.state).recordFailure(eq("remote-collection:c1"), anyString());
+    }
+
+    @Test
     void refusesNonActiveCollection(@TempDir Path tempDir) {
         Fixture f = new Fixture();
         Collection requested = collection("c1", tempDir);
@@ -157,11 +189,13 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         final CatalogSourceStatePort state = mock(CatalogSourceStatePort.class);
         final SearchIndexer search = mock(SearchIndexer.class);
         final BookQueryRepository books = mock(BookQueryRepository.class);
+        final StatisticsRepository statistics = mock(StatisticsRepository.class);
         final UpdateCollectionFromNetworkUseCase useCase;
 
         Fixture() {
             this.useCase = new UpdateCollectionFromNetworkUseCase(
-                    downloader, importer, lifecycle, state, search, books
+                    downloader, importer, lifecycle, state, search, books, statistics,
+                    50_000, new com.myhomelibcorp.application.operation.LibraryOperationCoordinator()
             );
         }
     }

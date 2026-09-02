@@ -110,3 +110,12 @@ Desktop Reader behavior is intentionally not a claim of complete Android/iOS or 
 - Ambiguous multi-book ZIP member resolution is rejected rather than guessed.
 - Runtime TLS verification is never disabled globally.
 - Android/iOS are future platform targets; this repository is the desktop JavaFX source product.
+
+## Stabilization features completed on 2026-09-02
+
+- Operation Center for long-running import/update/maintenance work.
+- Followed-author overview with unread update acknowledgement.
+- Saved export state and bounded large-library search/author navigation.
+- Explicit local-file availability (`available`, `missing`, `remote-only`) without conflating it with online DEL/tombstones.
+- Reader layout-based page index and reflow-safe semantic position.
+- Explicit stale statistics and guarded Lucene rebuild/search lifecycle.

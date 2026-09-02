@@ -22,4 +22,9 @@
                style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
 
     <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>
+    <Button fx:id="loadMoreAuthorsButton"
+            text="Завантажити ще"
+            onAction="#onLoadMoreAuthors"
+            maxWidth="1.7976931348623157E308"
+            visible="false" managed="false"/>
 </VBox>

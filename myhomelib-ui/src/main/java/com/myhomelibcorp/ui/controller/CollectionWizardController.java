@@ -3,6 +3,8 @@ package com.myhomelibcorp.ui.controller;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
@@ -13,6 +15,9 @@ import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
+import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.CollectionWizardViewModel;
@@ -45,6 +50,8 @@ public class CollectionWizardController {
     private final SyncSeriesUseCase syncSeriesUseCase;
     private final ApplicationEventPublisher eventPublisher;
     private final ApplicationState appState;
+    private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
 
     private final CollectionWizardViewModel model = new CollectionWizardViewModel();
 
@@ -142,6 +149,10 @@ public class CollectionWizardController {
 
     public void setStage(Stage stage) {
         this.stage = stage;
+        if (stage != null) {
+            stage.setMinWidth(Math.max(720, stage.getMinWidth()));
+            stage.setMinHeight(Math.max(560, stage.getMinHeight()));
+        }
     }
 
     public void setOnComplete(Runnable onComplete) {
@@ -189,64 +200,58 @@ public class CollectionWizardController {
         finishButton.setDisable(true);
         finishButton.setText("Створення...");
         appState.getStatusBar().setStatusText("Створення колекції...");
+        String operationId = operationCenter.start(
+                "Створення колекції — " + request.getName(), "", OperationStage.CREATING_COLLECTION, false);
 
-        new Thread(() -> {
-            try {
-                log.info("Початок створення колекції: {}", request.getName());
+        executor.submit(() -> {
+                    log.info("Початок створення колекції: {}", request.getName());
+                    Collection collection = createCollectionUseCase.execute(request);
+                    log.info("Колекцію створено: id={}, name={}, dbFile={}",
+                            collection.getId(), collection.getName(), collection.getDbFile());
 
-                Collection collection = createCollectionUseCase.execute(request);
-                log.info("Колекцію створено: id={}, name={}, dbFile={}",
-                        collection.getId(), collection.getName(), collection.getDbFile());
+                    // DataSource/migrations/index/statistics/series are all non-UI work.
+                    Collection activated = switchCollectionUseCase.execute(collection, request.isCreateIndex());
+                    operationCenter.accept("Створення колекції — " + request.getName(), activated.getId(),
+                            OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false));
+                    statisticsService.refreshStatistics();
+                    syncSeriesUseCase.execute();
+                    return activated;
+                })
+                .whenComplete((activated, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        operationCenter.fail(operationId, cause);
+                        log.error("Помилка створення колекції", cause);
+                        showError("Помилка створення: " + cause.getMessage());
+                        finishButton.setDisable(false);
+                        finishButton.setText("✅ Створити");
+                        appState.getStatusBar().setStatusText("Помилка створення колекції");
+                        return;
+                    }
 
-                // Повна lifecycle-ініціалізація (DataSource + migrations + optional index)
-                // не повинна блокувати JavaFX thread.
-                Collection activated = switchCollectionUseCase.execute(collection, request.isCreateIndex());
-
-                UiExecutor.runOnUiThread(() -> {
                     try {
                         CollectionDto dto = CollectionDtoMapper.toDto(activated, true, true);
-
                         if (collectionList != null) {
                             collectionList.add(dto);
                             log.info("Колекцію додано до списку UI: {}", dto.getName());
                         }
-
                         appState.setCurrentLibraryCollection(activated);
-
-                        statisticsService.refreshStatistics();
-                        syncSeriesUseCase.execute();
-
                         eventPublisher.publishEvent(new NavigationRefreshEvent());
-
+                        operationCenter.complete(operationId, "Колекція готова: " + activated.getName());
                         appState.getStatusBar().setStatusText("Колекцію '" + activated.getName() + "' створено");
                         dialogService.showInfo("Успішно", "Колекцію '" + activated.getName() + "' створено!");
-
                         finishButton.setDisable(false);
                         finishButton.setText("✅ Створити");
-
-                        if (onComplete != null) {
-                            onComplete.run();
-                        }
+                        if (onComplete != null) onComplete.run();
                         closeDialog();
-
-                    } catch (Exception e) {
-                        log.error("Помилка оновлення UI після створення колекції", e);
-                        dialogService.showError("Помилка", "Колекцію створено, але не вдалося оновити UI: " + e.getMessage());
+                    } catch (RuntimeException uiError) {
+                        log.error("Помилка оновлення UI після створення колекції", uiError);
+                        dialogService.showError("Помилка",
+                                "Колекцію створено, але не вдалося оновити UI: " + uiError.getMessage());
                         finishButton.setDisable(false);
                         finishButton.setText("✅ Створити");
                     }
-                });
-
-            } catch (Exception e) {
-                log.error("Помилка створення колекції", e);
-                UiExecutor.runOnUiThread(() -> {
-                    showError("Помилка створення: " + e.getMessage());
-                    finishButton.setDisable(false);
-                    finishButton.setText("✅ Створити");
-                    appState.getStatusBar().setStatusText("Помилка створення колекції");
-                });
-            }
-        }).start();
+                }));
     }
 
     @FXML
@@ -291,7 +296,9 @@ public class CollectionWizardController {
         model.setCurrentStep(step);
         backButton.setDisable(step == 0);
         nextButton.setVisible(step < 2);
+        nextButton.setManaged(step < 2);
         finishButton.setVisible(step == 2);
+        finishButton.setManaged(step == 2);
         errorLabel.setText("");
         errorLabel2.setText("");
 
@@ -300,7 +307,9 @@ public class CollectionWizardController {
         }
 
         for (int i = 0; i < wizardContent.getChildren().size(); i++) {
-            wizardContent.getChildren().get(i).setVisible(i == step);
+            boolean active = i == step;
+            wizardContent.getChildren().get(i).setVisible(active);
+            wizardContent.getChildren().get(i).setManaged(active);
         }
     }
 

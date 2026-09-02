@@ -87,6 +87,7 @@ public class AuthorWorkspaceController {
     @FXML private TableColumn<BookViewModel, String> genresColumn;
     @FXML private TableColumn<BookViewModel, Number> seqNumberColumn;
     @FXML private TableColumn<BookViewModel, Number> yearColumn;
+    @FXML private TableColumn<BookViewModel, String> createdAtColumn;
     @FXML private TableColumn<BookViewModel, String> formatColumn;
     @FXML private TableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private TableColumn<BookViewModel, String> rateColumn;
@@ -224,6 +225,7 @@ public class AuthorWorkspaceController {
         registerProfileColumn("genres", genresColumn);
         registerProfileColumn("sequence", seqNumberColumn);
         registerProfileColumn("year", yearColumn);
+        registerProfileColumn("createdAt", createdAtColumn);
         registerProfileColumn("local", formatColumn);
         registerProfileColumn("fileSize", fileSizeColumn);
         registerProfileColumn("rating", rateColumn);
@@ -247,6 +249,7 @@ public class AuthorWorkspaceController {
         genresColumn.setCellValueFactory(cell -> cell.getValue().genresTextProperty());
         seqNumberColumn.setCellValueFactory(cell -> cell.getValue().sequenceNumberProperty());
         yearColumn.setCellValueFactory(cellData -> cellData.getValue().yearProperty());
+        createdAtColumn.setCellValueFactory(cell -> cell.getValue().createdAtFormattedProperty());
         formatColumn.setCellValueFactory(cell -> cell.getValue().localStatusProperty());
         fileSizeColumn.setCellValueFactory(cell -> cell.getValue().fileSizeFormattedProperty());
         rateColumn.setCellValueFactory(cell -> cell.getValue().rateStarsProperty());

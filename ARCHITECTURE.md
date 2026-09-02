@@ -251,3 +251,7 @@ Do not create a parallel framework merely to hide these items. Refactor debt onl
 ## 15. Rule for future changes
 
 Prefer application use cases/queries over direct adapter access, keep technology in Infrastructure, keep Reader core JavaFX-free, add Flyway migrations rather than editing history, preserve user data/local books during catalogue work, keep large operations bounded/cancellable, and update architecture tests together with any intentional boundary change.
+
+## 16. 2026-09-02 stabilization baseline
+
+The current architecture now treats collection-changing work as coordinated lifecycle operations. `LibraryOperationCoordinator` prevents incompatible import/update/index/backup/restore/VACUUM/switch/delete flows from overlapping, while `OperationCenterService` provides UI-visible runtime telemetry. Search index reads are gated while Lucene is dirty/rebuilding, statistics carry explicit stale state, and large interactive result sets use bounded paging rather than full materialization. Local file availability is distinct from remote catalogue tombstones (`missing_since`, Flyway V44), so a temporarily unavailable disk/NAS does not destroy book/user metadata.

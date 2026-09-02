@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.export.ExportCollisionContext;
 import com.myhomelibcorp.application.export.ExportCollisionDecision;
 import com.myhomelibcorp.application.export.ExportHistoryEntry;
 import com.myhomelibcorp.application.export.ExportHistoryService;
+import com.myhomelibcorp.application.export.ExportLastStateService;
 import com.myhomelibcorp.application.export.ExportProfile;
 import com.myhomelibcorp.application.export.ExportProfileService;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
@@ -61,6 +62,7 @@ public class ExportController {
     private final ExportToDeviceUseCase exportToDeviceUseCase;
     private final ExportToInpxUseCase exportToInpxUseCase;
     private final ExportProfileService exportProfileService;
+    private final ExportLastStateService exportLastStateService;
     private final ExportHistoryService exportHistoryService;
     private final BookActionProfileService bookActionProfileService;
     private final ApplicationState appState;
@@ -134,9 +136,15 @@ public class ExportController {
                         .findFirst().orElse(profileComboBox.getValue());
             }
         });
-        profileComboBox.valueProperty().addListener((obs, old, value) -> { if (!applyingProfile) applyProfile(value); });
-        loadPostActions("");
-        loadProfiles(null);
+        profileComboBox.valueProperty().addListener((obs, old, value) -> {
+            if (applyingProfile) return;
+            exportLastStateService.rememberProfile(value == null ? "" : value.id());
+            applyProfile(value);
+        });
+        ExportLastStateService.State lastState = exportLastStateService.load();
+        loadPostActions(lastState.hasPostAction() ? lastState.postActionId() : "");
+        loadProfiles(lastState.profileId());
+        restoreLastExportState(lastState);
 
         selectedBooksLabel.setText("0 книг вибрано");
         exportButton.setDisable(true);
@@ -284,23 +292,20 @@ public class ExportController {
                 .build();
 
         dialogService.showInfo("Експорт", "Початок експорту в INPX...");
-        Thread worker = new Thread(() -> {
-            try {
-                ExportToInpxUseCase.ExportResult result = exportToInpxUseCase.execute(request);
-                Platform.runLater(() -> {
-                    if (result.failed() == 0) dialogService.showInfo("Успішно", "Експортовано " + result.exported() + " книг в INPX.");
-                    else dialogService.showError("Помилка", "Не вдалося експортувати: " + result.error());
+        executor.submit(() -> exportToInpxUseCase.execute(request))
+                .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (error != null) {
+                        Throwable cause = com.myhomelibcorp.ui.util.UiExceptionSupport.unwrapAsync(error);
+                        log.error("Помилка експорту в INPX", cause);
+                        dialogService.showError("Помилка", "Не вдалося експортувати: "
+                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                    } else if (result.failed() == 0) {
+                        dialogService.showInfo("Успішно", "Експортовано " + result.exported() + " книг в INPX.");
+                    } else {
+                        dialogService.showError("Помилка", "Не вдалося експортувати: " + result.error());
+                    }
                     if (onComplete != null) onComplete.run();
-                });
-            } catch (Exception e) {
-                log.error("Помилка експорту в INPX", e);
-                Platform.runLater(() -> {
-                    dialogService.showError("Помилка", "Не вдалося експортувати: " + e.getMessage());
-                    if (onComplete != null) onComplete.run();
-                });
-            }
-        }, "myhomelib-inpx-export");
-        worker.setDaemon(true); worker.start();
+                }));
     }
 
     // ==================== STAGE 16 PROFILES / HISTORY ====================
@@ -368,15 +373,40 @@ public class ExportController {
 
     private void loadProfiles(String selectId) {
         List<ExportProfile> profiles = exportProfileService.loadProfiles();
+        String requested = text(selectId);
+        if (requested.isBlank()) requested = exportLastStateService.load().profileId();
+        String requestedId = requested;
         applyingProfile = true;
         try {
             profileComboBox.getItems().setAll(profiles);
-            ExportProfile selected = profiles.stream().filter(p -> p.id().equals(selectId)).findFirst()
+            ExportProfile selected = profiles.stream().filter(p -> p.id().equals(requestedId)).findFirst()
                     .orElse(profiles.isEmpty() ? null : profiles.getFirst());
             profileComboBox.setValue(selected);
-            if (selected != null) applyProfile(selected);
+            if (selected != null) {
+                exportLastStateService.rememberProfile(selected.id());
+                applyProfile(selected);
+            } else {
+                exportLastStateService.rememberProfile("");
+            }
         } finally { applyingProfile = false; }
         updateProfileButtons();
+    }
+
+    private void restoreLastExportState(ExportLastStateService.State saved) {
+        if (saved == null) return;
+        if (saved.format() != null && formatComboBox.getItems().contains(saved.format())) {
+            formatComboBox.setValue(saved.format());
+        }
+        if (saved.hasDestination()) destinationField.setText(saved.destination());
+        if (saved.hasFilenameTemplate()) fileNameTemplateField.setText(saved.filenameTemplate());
+        if (saved.hasSubfolderTemplate()) subfolderTemplateField.setText(saved.subfolderTemplate());
+        if (saved.collisionPolicy() != null) collisionPolicyComboBox.setValue(saved.collisionPolicy());
+        if (saved.extractOnly() != null) extractOnlyCheckBox.setSelected(saved.extractOnly());
+        if (saved.hasPostAction()) selectPostAction(saved.postActionId());
+    }
+
+    private void persistLastExportState(ExportRequest request) {
+        exportLastStateService.save(request);
     }
 
     private void applyProfile(ExportProfile profile) {
@@ -459,6 +489,8 @@ public class ExportController {
                 .postActionProfileId(selectedPostActionId())
                 .build();
 
+        persistLastExportState(request);
+
         // Remote books are downloaded automatically before export. The user should not
         // have to run a separate download command or see a "not local" error first.
         setExportRunning(true);
@@ -488,29 +520,27 @@ public class ExportController {
         appState.getStatusBar().setProgress(0);
         appState.getStatusBar().setStatusText("Експорт: 0/" + selectedBookIds.size());
 
-        Thread worker = new Thread(() -> {
-            try {
-                ExportToDeviceUseCase.ExportResult result = exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->
+        executor.submit(() -> exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->
                         Platform.runLater(() -> {
                             double value = progress.total() <= 0 ? 0 : (double) progress.processed() / progress.total();
                             selectedBooksLabel.setText(String.format("Експорт: %d/%d — %s", progress.processed(), progress.total(), progress.title()));
                             exportButton.setText(String.format("Експортую... %d/%d", progress.processed(), progress.total()));
                             appState.getStatusBar().setProgress(value);
                             appState.getStatusBar().setStatusText(String.format("Експорт: %d/%d — %s", progress.processed(), progress.total(), progress.title()));
-                        }), this::resolveCollision);
-                Platform.runLater(() -> finishExport(result));
-            } catch (Exception e) {
-                log.error("Помилка експорту", e);
-                Platform.runLater(() -> {
-                    setExportRunning(false);
-                    appState.getStatusBar().setProgressVisible(false);
-                    appState.getStatusBar().setStatusText("Помилка експорту");
-                    dialogService.showError("Помилка", "Не вдалося виконати експорт: " + e.getMessage());
-                });
-            }
-        }, "myhomelib-export");
-        worker.setDaemon(true);
-        worker.start();
+                        }), this::resolveCollision))
+                .whenComplete((result, error) -> Platform.runLater(() -> {
+                    if (error != null) {
+                        log.error("Помилка експорту", error);
+                        setExportRunning(false);
+                        appState.getStatusBar().setProgressVisible(false);
+                        appState.getStatusBar().setStatusText("Помилка експорту");
+                        Throwable cause = com.myhomelibcorp.ui.util.UiExceptionSupport.unwrapAsync(error);
+                        dialogService.showError("Помилка", "Не вдалося виконати експорт: "
+                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        return;
+                    }
+                    finishExport(result);
+                }));
     }
 
     private ExportCollisionDecision resolveCollision(ExportCollisionContext context) {

@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.service;
 
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 
 import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.application.port.out.backup.UserDataTransferPort;
@@ -33,14 +35,18 @@ public class BackupRestoreService {
     private final DatabaseMigrationPort databaseMigrationPort;
     private final StatisticsService statisticsService;
     private final IndexRebuilder indexRebuilder;
-
-    private static final int MAX_RETRIES = 5;
-    private static final int RETRY_DELAY_MS = 1000;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     /**
      * Створює резервну копію поточної колекції.
      */
     public BackupResult backup(BackupOptions options) throws IOException {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.BACKUP)) {
+            return backupLocked(options);
+        }
+    }
+
+    private BackupResult backupLocked(BackupOptions options) throws IOException {
         Collection collection = collectionBackupPort.getCurrentCollection();
         if (collection == null) return new BackupResult(0, 1, "No active collection");
 
@@ -55,7 +61,9 @@ public class BackupRestoreService {
         try {
             Path dbSource = Paths.get(collectionBackupPort.getDatabasePath(collection));
             String name = dbSource.getFileName() == null ? "library.db" : dbSource.getFileName().toString();
-            collectionBackupPort.createDatabaseSnapshot(collection, backupDir.resolve(name));
+            Path snapshot = backupDir.resolve(name);
+            collectionBackupPort.createDatabaseSnapshot(collection, snapshot);
+            collectionBackupPort.validateDatabaseFile(snapshot);
             copiedItems++;
         } catch (Exception e) {
             errors.add("Database snapshot failed: " + e.getMessage());
@@ -82,6 +90,12 @@ public class BackupRestoreService {
      * Відновлює поточну колекцію з резервної копії.
      */
     public RestoreResult restore(RestoreOptions options) throws Exception {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.RESTORE)) {
+            return restoreLocked(options);
+        }
+    }
+
+    private RestoreResult restoreLocked(RestoreOptions options) throws Exception {
         Collection collection = collectionBackupPort.getCurrentCollection();
         if (collection == null) return new RestoreResult(0, "No active collection");
 
@@ -91,78 +105,122 @@ public class BackupRestoreService {
                 collection.getName(), backupDir, options.restoreDatabase());
 
         int restoredItems = 0;
-        if (options.restoreDatabase()) {
-            Path dbFile = findDbFile(backupDir);
-            if (dbFile == null) return new RestoreResult(0, "Database file not found in backup");
+        RestoreSwap swap = null;
+        try {
+            if (options.restoreDatabase()) {
+                Path dbFile = findDbFile(backupDir);
+                if (dbFile == null) return new RestoreResult(0, "Database file not found in backup");
 
-            Path targetDb = Paths.get(collectionBackupPort.getDatabasePath(collection));
-            Files.createDirectories(targetDb.toAbsolutePath().getParent());
+                Path targetDb = Paths.get(collectionBackupPort.getDatabasePath(collection));
+                Files.createDirectories(targetDb.toAbsolutePath().getParent());
+                swap = installDatabaseCandidate(collection, dbFile, targetDb);
+                restoredItems++;
+            }
 
-            // Stage the replacement while the current DB is still open. A failed/corrupt source
-            // copy therefore cannot delete the live catalogue. Only the final filesystem swap is
-            // performed after SQLite/WAL handles are released.
-            Path stagedDb = targetDb.resolveSibling(targetDb.getFileName() + ".restore.tmp");
-            Files.deleteIfExists(stagedDb);
-            boolean staged = false;
-            for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-                try {
-                    Files.copy(dbFile, stagedDb, StandardCopyOption.REPLACE_EXISTING);
-                    if (Files.size(stagedDb) <= 0) throw new IOException("Staged database is empty");
-                    staged = true;
-                    break;
-                } catch (IOException e) {
-                    Files.deleteIfExists(stagedDb);
-                    if (attempt == MAX_RETRIES) throw e;
-                    Thread.sleep(RETRY_DELAY_MS);
+            if (options.restoreMetadata()) {
+                if (Files.isRegularFile(portable)) {
+                    var imported = userDataTransferPort.restoreFrom(portable);
+                    restoredItems++;
+                    log.info("Portable user data restored: sourceSchema={}, matched={}, unmatched={}, bookmarks={}, memberships={}",
+                            imported.sourceSchemaVersion(), imported.matchedBooks(), imported.unmatchedBooks(),
+                            imported.bookmarks(), imported.groupMemberships());
+                } else if (!options.restoreDatabase()) {
+                    return new RestoreResult(restoredItems,
+                            "Portable user-data file not found: " + UserDataTransferPort.FILE_NAME);
+                } else {
+                    log.info("Legacy database-only backup detected; portable user-data file is absent");
                 }
             }
-            if (!staged) return new RestoreResult(0, "Failed to stage database after " + MAX_RETRIES + " attempts");
 
-            collectionBackupPort.closeCurrentCollection();
-            try {
-                AtomicFileSupport.moveReplacing(stagedDb, targetDb);
-                restoredItems++;
+            cacheInvalidationPort.invalidateAll();
+            statisticsService.refreshStatistics();
+            if (options.rebuildIndex()) rebuildIndex();
 
-            } finally {
-                try { Files.deleteIfExists(stagedDb); }
-                catch (IOException cleanupError) { log.warn("Cannot delete staged restore file {}", stagedDb, cleanupError); }
-                // Re-open even when an optional index/cover copy fails, so the desktop is not
-                // left with a permanently closed current collection, then apply the normal
-                // sequential Flyway chain to older database-only backups.
-                collectionBackupPort.openCollection(collection);
-                databaseMigrationPort.migrateCurrentCollection();
-            }
+            if (swap != null) commitDatabaseSwap(swap);
+            log.info("Restore completed successfully: {} item(s)", restoredItems);
+            return new RestoreResult(restoredItems, null);
+        } catch (Exception restoreFailure) {
+            if (swap != null) rollbackDatabaseSwap(collection, swap, restoreFailure);
+            throw restoreFailure;
         }
-
-        if (options.restoreMetadata()) {
-            if (Files.isRegularFile(portable)) {
-                var imported = userDataTransferPort.restoreFrom(portable);
-                restoredItems++;
-                log.info("Portable user data restored: sourceSchema={}, matched={}, unmatched={}, bookmarks={}, memberships={}",
-                        imported.sourceSchemaVersion(), imported.matchedBooks(), imported.unmatchedBooks(),
-                        imported.bookmarks(), imported.groupMemberships());
-            } else if (!options.restoreDatabase()) {
-                return new RestoreResult(restoredItems, "Portable user-data file not found: " + UserDataTransferPort.FILE_NAME);
-            } else {
-                log.info("Legacy database-only backup detected; portable user-data file is absent");
-            }
-        }
-
-        cacheInvalidationPort.invalidateAll();
-        statisticsService.refreshStatistics();
-        if (options.rebuildIndex()) {
-            try {
-                rebuildIndex();
-            } catch (Exception e) {
-                log.error("Restore data completed, but search index rebuild failed", e);
-                return new RestoreResult(restoredItems,
-                        "Data restored, but search index rebuild failed: " + e.getMessage());
-            }
-        }
-
-        log.info("Restore completed successfully: {} item(s)", restoredItems);
-        return new RestoreResult(restoredItems, null);
     }
+
+    private RestoreSwap installDatabaseCandidate(Collection collection, Path sourceDb, Path targetDb) throws Exception {
+        Path stagedDb = targetDb.resolveSibling(targetDb.getFileName() + ".restore.tmp");
+        Path previousDb = targetDb.resolveSibling(targetDb.getFileName() + ".restore.previous");
+        Files.deleteIfExists(stagedDb);
+        Files.copy(sourceDb, stagedDb, StandardCopyOption.REPLACE_EXISTING);
+        if (Files.size(stagedDb) <= 0) throw new IOException("Staged database is empty");
+        // Validate before closing the live collection: corrupt input must never disturb the current DB.
+        collectionBackupPort.validateDatabaseFile(stagedDb);
+
+        collectionBackupPort.closeCurrentCollection();
+        boolean previousExisted = Files.isRegularFile(targetDb);
+        try {
+            Files.deleteIfExists(previousDb);
+            deleteSqliteSidecars(targetDb);
+            if (previousExisted) AtomicFileSupport.moveReplacing(targetDb, previousDb);
+            AtomicFileSupport.moveReplacing(stagedDb, targetDb);
+
+            collectionBackupPort.openCollection(collection);
+            databaseMigrationPort.migrateCurrentCollection();
+            collectionBackupPort.validateDatabaseFile(targetDb);
+            return new RestoreSwap(targetDb, previousDb, previousExisted);
+        } catch (Exception installFailure) {
+            RestoreSwap failedSwap = new RestoreSwap(targetDb, previousDb, previousExisted);
+            rollbackDatabaseSwap(collection, failedSwap, installFailure);
+            throw installFailure;
+        } finally {
+            try { Files.deleteIfExists(stagedDb); }
+            catch (IOException cleanupError) { log.warn("Cannot delete staged restore file {}", stagedDb, cleanupError); }
+        }
+    }
+
+    private void commitDatabaseSwap(RestoreSwap swap) {
+        try {
+            Files.deleteIfExists(swap.previousDb());
+            deleteSqliteSidecars(swap.previousDb());
+        } catch (IOException cleanupError) {
+            // The restored database is already validated and active. Keeping the recovery file is safer
+            // than failing a successful restore solely because an old snapshot could not be deleted.
+            log.warn("Restore succeeded, but previous database recovery file could not be removed: {}",
+                    swap.previousDb(), cleanupError);
+        }
+    }
+
+    private void rollbackDatabaseSwap(Collection collection, RestoreSwap swap, Exception original) {
+        try {
+            try { collectionBackupPort.closeCurrentCollection(); }
+            catch (RuntimeException closeFailure) { original.addSuppressed(closeFailure); }
+
+            deleteSqliteSidecars(swap.targetDb());
+            Files.deleteIfExists(swap.targetDb());
+            if (swap.previousExisted() && Files.isRegularFile(swap.previousDb())) {
+                AtomicFileSupport.moveReplacing(swap.previousDb(), swap.targetDb());
+            }
+
+            collectionBackupPort.openCollection(collection);
+            databaseMigrationPort.migrateCurrentCollection();
+            if (swap.previousExisted()) collectionBackupPort.validateDatabaseFile(swap.targetDb());
+            cacheInvalidationPort.invalidateAll();
+            try { statisticsService.refreshStatistics(); }
+            catch (RuntimeException statsFailure) { original.addSuppressed(statsFailure); }
+            try { rebuildIndex(); }
+            catch (RuntimeException indexFailure) { original.addSuppressed(indexFailure); }
+            log.warn("Restore failed; previous database was restored successfully");
+        } catch (Exception rollbackFailure) {
+            original.addSuppressed(rollbackFailure);
+            log.error("Restore failed and rollback of the previous database also failed", rollbackFailure);
+        }
+    }
+
+    private static void deleteSqliteSidecars(Path database) throws IOException {
+        if (database == null) return;
+        Files.deleteIfExists(Path.of(database.toString() + "-wal"));
+        Files.deleteIfExists(Path.of(database.toString() + "-shm"));
+    }
+
+    private record RestoreSwap(Path targetDb, Path previousDb, boolean previousExisted) { }
 
     // ==================== Допоміжні методи ====================
 

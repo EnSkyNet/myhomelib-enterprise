@@ -52,6 +52,8 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
     @FXML private Button openAuthorButton;
     @FXML private Button openBookButton;
     @FXML private Button downloadButton;
+    @FXML private Button acknowledgeButton;
+    @FXML private Button acknowledgeAllButton;
     @FXML private Button refreshButton;
 
     private volatile boolean disposed;
@@ -101,6 +103,62 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         UpdateTreeNode node = selectedNode();
         if (node == null || node.kind != Kind.BOOK || node.item == null) return;
         navigationService.navigateToBook(BookId.fromString(node.item.bookId()));
+    }
+
+    @FXML
+    public void acknowledgeSelected() {
+        TreeItem<UpdateTreeNode> selected = updatesTree.getSelectionModel().getSelectedItem();
+        if (selected == null || selected.getValue() == null) return;
+        UpdateTreeNode node = selected.getValue();
+        setBusy(true);
+        detailLabel.setText(localizationService.tr("Позначення оновлення як переглянутого…"));
+        executor.submit(() -> {
+            if (node.kind == Kind.BOOK && node.item != null) {
+                catalogUpdateService.acknowledgeUpdate(BookId.fromString(node.item.bookId()), node.item.type());
+            } else if (node.kind == Kind.CATEGORY) {
+                for (TreeItem<UpdateTreeNode> child : selected.getChildren()) {
+                    UpdateTreeNode childNode = child.getValue();
+                    if (childNode != null && childNode.item != null) {
+                        catalogUpdateService.acknowledgeUpdate(
+                                BookId.fromString(childNode.item.bookId()), childNode.item.type());
+                    }
+                }
+            } else if (node.kind == Kind.AUTHOR && node.authorId != null && !node.authorId.isBlank()) {
+                catalogUpdateService.acknowledgeAuthorUpdates(AuthorId.fromString(node.authorId));
+            }
+            return null;
+        }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+            if (disposed) return;
+            setBusy(false);
+            if (error != null) {
+                Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                detailLabel.setText(localizationService.tr("Не вдалося позначити оновлення") + ": "
+                        + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                return;
+            }
+            loadUpdates();
+        }));
+    }
+
+    @FXML
+    public void acknowledgeAll() {
+        setBusy(true);
+        detailLabel.setText(localizationService.tr("Позначення всіх оновлень як переглянутих…"));
+        executor.submit(() -> {
+                    catalogUpdateService.acknowledgeAllUpdates();
+                    return null;
+                })
+                .whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (disposed) return;
+                    setBusy(false);
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        detailLabel.setText(localizationService.tr("Не вдалося позначити оновлення") + ": "
+                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        return;
+                    }
+                    loadUpdates();
+                }));
     }
 
     @FXML
@@ -211,6 +269,9 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         openAuthorButton.setDisable(!author);
         openBookButton.setDisable(!book);
         downloadButton.setDisable(!book || progressIndicator.isVisible());
+        acknowledgeButton.setDisable(node == null || node.kind == Kind.ROOT || progressIndicator.isVisible());
+        acknowledgeAllButton.setDisable(progressIndicator.isVisible() || updatesTree.getRoot() == null
+                || updatesTree.getRoot().getChildren().isEmpty());
         if (book && node.item != null) {
             detailLabel.setText(node.item.bookTitle() + " — " + node.authorName);
         }
@@ -222,6 +283,9 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         refreshButton.setDisable(busy);
         UpdateTreeNode node = selectedNode();
         downloadButton.setDisable(busy || node == null || node.kind != Kind.BOOK);
+        acknowledgeButton.setDisable(busy || node == null || node.kind == Kind.ROOT);
+        acknowledgeAllButton.setDisable(busy || updatesTree.getRoot() == null
+                || updatesTree.getRoot().getChildren().isEmpty());
     }
 
     private UpdateTreeNode selectedNode() {

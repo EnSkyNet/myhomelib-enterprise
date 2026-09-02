@@ -209,7 +209,15 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             ReaderSettingsState state = readerSettingsStateService.load(book.getId().asString());
             ReaderSettings settings = ReaderSettingsMapper.fromDomain(state.preferences());
-            Optional<ReaderPosition> savedPosition = persistenceService.loadPosition(book.getId().asString());
+            Optional<ReaderPosition> savedPosition;
+            String persistenceWarning = null;
+            try {
+                savedPosition = persistenceService.loadPosition(book.getId().asString());
+            } catch (RuntimeException persistenceError) {
+                log.warn("Не вдалося завантажити позицію читання для {}", book.getId(), persistenceError);
+                savedPosition = Optional.empty();
+                persistenceWarning = "⚠ Книгу відкрито, але позицію читання не вдалося завантажити";
+            }
             BookSource source = new FileBookSource(materialized.readerPath(), book.getId().asString());
 
             showDownloadProgress(0.6, "📄 Аналіз структури книги...");
@@ -217,7 +225,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
             showDownloadProgress(1.0, "✅ Готово до читання!");
             return new PreparedOpen(dto, book, preparedBook, materialized.temporaryPath(),
-                    settings, state.bookOverride(), savedPosition);
+                    settings, state.bookOverride(), savedPosition, persistenceWarning);
         } catch (Throwable e) {
             if (preparedBook != null) preparedBook.close();
             deleteTemp(materialized.temporaryPath());
@@ -252,6 +260,9 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             positionAutosaver.start(currentBookId.asString(), totalTextLength);
             readingSessionService.start(currentBookId.asString(), currentProgressPercent());
             setLoading(false);
+            if (prepared.persistenceWarning() != null) {
+                appState.getStatusBar().setStatusText(prepared.persistenceWarning());
+            }
 
             BookId openedId = currentBookId;
             uiBackgroundExecutor.execute(() -> {
@@ -385,7 +396,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private record PreparedOpen(
             BookDto dto, Book book, PreparedBook preparedBook, Path temporaryPath,
-            ReaderSettings settings, boolean bookOverride, Optional<ReaderPosition> savedPosition) {
+            ReaderSettings settings, boolean bookOverride, Optional<ReaderPosition> savedPosition,
+            String persistenceWarning) {
         void closeAbandoned() {
             preparedBook.close();
             deleteTemp(temporaryPath);
@@ -489,15 +501,20 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private void persistReaderSettings(ReaderSettings settings, boolean perBook) {
         if (settings == null) return;
         String bookId = currentBookId != null ? currentBookId.asString() : null;
-        if (perBook && bookId != null) {
-            var previous = readerSettingsStateService.load(bookId).preferences();
-            readerSettingsStateService.saveForBook(bookId, ReaderSettingsMapper.toDomain(settings, previous));
-            currentBookOverride = true;
-        } else {
-            var previous = readerSettingsStateService.loadGlobal();
-            readerSettingsStateService.saveGlobal(ReaderSettingsMapper.toDomain(settings, previous));
-            if (bookId != null) readerSettingsStateService.clearBookOverride(bookId);
-            currentBookOverride = false;
+        try {
+            if (perBook && bookId != null) {
+                var previous = readerSettingsStateService.load(bookId).preferences();
+                readerSettingsStateService.saveForBook(bookId, ReaderSettingsMapper.toDomain(settings, previous));
+                currentBookOverride = true;
+            } else {
+                var previous = readerSettingsStateService.loadGlobal();
+                readerSettingsStateService.saveGlobal(ReaderSettingsMapper.toDomain(settings, previous));
+                if (bookId != null) readerSettingsStateService.clearBookOverride(bookId);
+                currentBookOverride = false;
+            }
+        } catch (RuntimeException error) {
+            log.error("Не вдалося зберегти налаштування Reader", error);
+            appState.getStatusBar().setStatusText("Налаштування Reader застосовано, але не вдалося зберегти");
         }
     }
 
@@ -517,50 +534,71 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void addBookmark() {
-        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) {
-            return;
-        }
+        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) return;
 
-        TextInputDialog dialog = new TextInputDialog("Закладка");
+        TextInputDialog dialog = new TextInputDialog("");
         dialog.setTitle("Додати закладку");
         dialog.setHeaderText("Введіть назву закладки");
         dialog.setContentText("Назва:");
-
         Optional<String> result = dialog.showAndWait();
-        String title = result.orElse("Закладка " + (persistenceService.getBookmarkCount(currentBookId.asString()) + 1));
+        if (result.isEmpty()) return;
 
+        String title = result.get() == null || result.get().isBlank() ? "Закладка" : result.get().trim();
         ReaderPosition pos = readerView.getCurrentPosition();
-        if (pos != null) {
-            long totalTextLength = readerView.getEngine().getCurrentDocument() == null
-                    ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
-            Bookmark bookmark = persistenceService.saveBookmark(
-                    currentBookId.asString(), pos, totalTextLength, title, "");
-            if (bookmark != null) {
-                dialogService.showInfo("Успішно", "Закладку додано: " + title);
-                log.info("⭐ Закладку додано: {}", title);
-            }
-        }
+        if (pos == null) return;
+        long totalTextLength = readerView.getEngine().getCurrentDocument() == null
+                ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
+        String bookId = currentBookId.asString();
+        long generation = openGeneration.get();
+
+        uiBackgroundExecutor.submit(() -> persistenceService.saveBookmark(bookId, pos, totalTextLength, title, ""))
+                .thenAccept(bookmark -> Platform.runLater(() -> {
+                    if (!sameOpenBook(generation, bookId)) return;
+                    dialogService.showInfo("Успішно", "Закладку додано: " + title);
+                    log.info("⭐ Закладку додано: {}", title);
+                }))
+                .exceptionally(error -> {
+                    log.error("Не вдалося зберегти закладку", error);
+                    Platform.runLater(() -> {
+                        if (sameOpenBook(generation, bookId))
+                            dialogService.showError("Закладки", "Не вдалося зберегти закладку: " + rootMessage(error));
+                    });
+                    return null;
+                });
     }
 
     private void showBookmarks() {
-        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) {
-            return;
-        }
-        List<Bookmark> bookmarks = persistenceService.loadBookmarks(currentBookId.asString());
-        if (bookmarks.isEmpty()) {
+        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) return;
+        String bookId = currentBookId.asString();
+        long generation = openGeneration.get();
+        appState.getStatusBar().setStatusText("Завантаження закладок…");
+        uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
+                .thenAccept(bookmarks -> Platform.runLater(() -> {
+                    if (!sameOpenBook(generation, bookId)) return;
+                    showBookmarksDialog(bookmarks, generation, bookId);
+                }))
+                .exceptionally(error -> {
+                    log.error("Не вдалося завантажити закладки", error);
+                    Platform.runLater(() -> {
+                        if (sameOpenBook(generation, bookId))
+                            dialogService.showError("Закладки", "Не вдалося завантажити закладки: " + rootMessage(error));
+                    });
+                    return null;
+                });
+    }
+
+    private void showBookmarksDialog(List<Bookmark> bookmarks, long generation, String bookId) {
+        if (bookmarks == null || bookmarks.isEmpty()) {
             dialogService.showInfo("Закладки", "У цієї книги ще немає закладок.");
             return;
         }
-
         List<BookmarkChoice> choices = bookmarks.stream().map(BookmarkChoice::new).toList();
         ChoiceDialog<BookmarkChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
         dialog.setTitle("Закладки");
         dialog.setHeaderText("Виберіть закладку");
         dialog.setContentText("Закладка:");
         Optional<BookmarkChoice> selected = dialog.showAndWait();
-        if (selected.isEmpty()) {
-            return;
-        }
+        if (selected.isEmpty() || !sameOpenBook(generation, bookId)) return;
 
         Bookmark bookmark = selected.get().bookmark();
         ButtonType goTo = new ButtonType("Перейти");
@@ -570,15 +608,31 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         action.setHeaderText(selected.get().toString());
         action.setContentText("Що зробити із закладкою?");
         action.getButtonTypes().setAll(goTo, delete, ButtonType.CANCEL);
-        Optional<ButtonType> result = action.showAndWait();
-        if (result.filter(goTo::equals).isPresent()) {
+        Optional<ButtonType> actionResult = action.showAndWait();
+        if (actionResult.filter(goTo::equals).isPresent()) {
             long totalTextLength = readerView.getEngine().getCurrentDocument() == null
                     ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
             readerView.goToPosition(persistenceService.bookmarkToPosition(bookmark, totalTextLength));
-        } else if (result.filter(delete::equals).isPresent()) {
-            persistenceService.deleteBookmark(bookmark.getId());
-            dialogService.showInfo("Закладки", "Закладку видалено.");
+        } else if (actionResult.filter(delete::equals).isPresent()) {
+            uiBackgroundExecutor.submit(() -> {
+                persistenceService.deleteBookmark(bookmark.getId());
+                return true;
+            }).thenAccept(ignored -> Platform.runLater(() -> {
+                if (sameOpenBook(generation, bookId)) dialogService.showInfo("Закладки", "Закладку видалено.");
+            })).exceptionally(error -> {
+                log.error("Не вдалося видалити закладку", error);
+                Platform.runLater(() -> {
+                    if (sameOpenBook(generation, bookId))
+                        dialogService.showError("Закладки", "Не вдалося видалити закладку: " + rootMessage(error));
+                });
+                return null;
+            });
         }
+    }
+
+    private boolean sameOpenBook(long generation, String bookId) {
+        return !isDisposed && generation == openGeneration.get() && currentBookId != null
+                && currentBookId.asString().equals(bookId);
     }
 
     private record BookmarkChoice(Bookmark bookmark) {

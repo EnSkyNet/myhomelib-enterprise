@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.imports;
 
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -27,6 +29,7 @@ public class ImportProgressDialog {
     private final Label statusLabel;
     private final Label detailLabel;
     private final Label speedLabel;
+    private final Label countsLabel;
     private final NumberFormat numberFormat = NumberFormat.getInstance(Locale.getDefault());
 
     private long startTime;
@@ -57,8 +60,13 @@ public class ImportProgressDialog {
         detailLabel = new Label("0 / 0 книг");
         detailLabel.getStyleClass().add("muted-text");
 
-        speedLabel = new Label("0 книг/с");
+        speedLabel = new Label("0 записів/с");
         speedLabel.getStyleClass().addAll("muted-text", "small-text");
+
+        countsLabel = new Label("");
+        countsLabel.setWrapText(true);
+        countsLabel.setTextAlignment(TextAlignment.CENTER);
+        countsLabel.getStyleClass().addAll("muted-text", "small-text");
 
         VBox content = new VBox(10);
         content.setAlignment(Pos.CENTER);
@@ -70,6 +78,7 @@ public class ImportProgressDialog {
                 progressBar,
                 statusLabel,
                 detailLabel,
+                countsLabel,
                 speedLabel
         );
 
@@ -119,40 +128,87 @@ public class ImportProgressDialog {
     }
 
     public void updateProgress(long processed, long total, String status) {
+        Platform.runLater(() -> applyProgress(processed, total, status));
+    }
+
+    /** Renders authoritative application-layer telemetry without inventing a synthetic 0..1000 scale. */
+    public void update(OperationProgress progress) {
+        if (progress == null) return;
         Platform.runLater(() -> {
-            double progress = total > 0 ? Math.min(1.0, (double) processed / total) : 0;
-            progressBar.setProgress(progress);
-
-            String formattedProcessed = numberFormat.format(processed);
-            String formattedTotal = numberFormat.format(total);
-            detailLabel.setText(formattedProcessed + " / " + formattedTotal + " книг");
-
-            if (status != null && !status.isEmpty()) {
-                statusLabel.setText(status);
-            }
-
-            // Розрахунок швидкості
-            long now = System.currentTimeMillis();
-            long elapsed = now - lastUpdateTime;
-            if (elapsed > 1000 && processed > lastProcessed) {
-                long delta = processed - lastProcessed;
-                double speed = (double) delta / (elapsed / 1000.0);
-                speedLabel.setText(String.format("%.1f книг/с", speed));
-                lastUpdateTime = now;
-                lastProcessed = processed;
-            } else if (processed > 0) {
-                long totalElapsed = now - startTime;
-                if (totalElapsed > 0) {
-                    double avgSpeed = (double) processed / (totalElapsed / 1000.0);
-                    speedLabel.setText(String.format("%.1f книг/с (середня)", avgSpeed));
-                }
-            }
-
-            // Оновлення заголовка з прогресом
-            titleLabel.setText(String.format("%s — %d%%",
-                    stage.getTitle(),
-                    Math.round(progress * 100)));
+            String stageText = stageText(progress.stage());
+            if (!progress.currentItem().isBlank()) stageText += " · " + progress.currentItem();
+            applyProgress(progress.processed(), progress.total(), stageText);
+            countsLabel.setText(String.format(
+                    "Додано: %s · Оновлено: %s · Змінено стан: %s · Пропущено: %s · Дублікатів: %s · Помилок: %s",
+                    numberFormat.format(progress.inserted()),
+                    numberFormat.format(progress.updated()),
+                    numberFormat.format(progress.deleted()),
+                    numberFormat.format(progress.skipped()),
+                    numberFormat.format(progress.duplicates()),
+                    numberFormat.format(progress.errors())));
         });
+    }
+
+    private void applyProgress(long processed, long total, String status) {
+        boolean determinate = total > 0;
+        double progress = determinate ? Math.min(1.0, Math.max(0.0, (double) processed / total)) : -1.0;
+        progressBar.setProgress(determinate ? progress : ProgressBar.INDETERMINATE_PROGRESS);
+        spinner.setVisible(!determinate);
+
+        String formattedProcessed = numberFormat.format(Math.max(0L, processed));
+        detailLabel.setText(determinate
+                ? formattedProcessed + " / " + numberFormat.format(total) + " записів"
+                : formattedProcessed + " записів");
+
+        if (status != null && !status.isEmpty()) statusLabel.setText(status);
+        updateSpeed(Math.max(0L, processed));
+        titleLabel.setText(determinate
+                ? String.format("%s — %d%%", stage.getTitle(), Math.round(progress * 100))
+                : stage.getTitle());
+    }
+
+    private void updateSpeed(long processed) {
+        long now = System.currentTimeMillis();
+        long elapsed = now - lastUpdateTime;
+        if (elapsed > 1000 && processed > lastProcessed) {
+            long delta = processed - lastProcessed;
+            double speed = (double) delta / (elapsed / 1000.0);
+            speedLabel.setText(String.format("%.1f записів/с", speed));
+            lastUpdateTime = now;
+            lastProcessed = processed;
+        } else if (processed > 0) {
+            long totalElapsed = now - startTime;
+            if (totalElapsed > 0) {
+                double avgSpeed = (double) processed / (totalElapsed / 1000.0);
+                speedLabel.setText(String.format("%.1f записів/с (середня)", avgSpeed));
+            }
+        }
+    }
+
+    private static String stageText(OperationStage stage) {
+        if (stage == null) return "Обробка";
+        return switch (stage) {
+            case CHECKING_SERVER -> "Перевірка сервера";
+            case DOWNLOADING -> "Завантаження";
+            case VALIDATING -> "Перевірка даних";
+            case READING_CATALOG -> "Читання каталогу";
+            case IMPORTING -> "Імпорт каталогу";
+            case UPDATING_AUTHORS -> "Оновлення авторів";
+            case APPLYING_DELETIONS -> "Обробка DEL";
+            case UPDATING_SEARCH_INDEX -> "Оновлення Lucene";
+            case REFRESHING_STATISTICS -> "Перерахунок статистики";
+            case INTEGRITY_CHECKS -> "Перевірка цілісності";
+            case SYNCHRONIZING_FILES -> "Синхронізація файлів";
+            case OPTIMIZING_DATABASE -> "Оптимізація БД";
+            case BACKING_UP -> "Резервне копіювання";
+            case RESTORING -> "Відновлення";
+            case CREATING_COLLECTION -> "Створення колекції";
+            case FINALIZING -> "Завершення";
+            case BOOK_DOWNLOAD -> "Завантаження книги";
+            case COMPLETED -> "Завершено";
+            case CANCELLED -> "Скасовано";
+            case FAILED -> "Помилка";
+        };
     }
 
     public void updateStatus(String status) {

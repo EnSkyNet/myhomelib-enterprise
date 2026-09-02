@@ -65,7 +65,8 @@ public class ClassicLibraryActionsService {
             List<Author> authorList=parseAuthors(authors.getText(),book.getAuthors());
             Book updated=Book.builder().id(book.getId()).title(title.getText().trim()).authors(authorList).genres(book.getGenres())
                     .series(blankNull(series.getText())).sequenceNumber(intOrNull(seq.getText())).metadata(md).file(book.getFile()).cover(book.getCover())
-                    .updateDate(java.time.LocalDateTime.now()).createdAt(book.getCreatedAt()).deleted(book.isDeleted()).local(book.isLocal()).build();
+                    .updateDate(java.time.LocalDateTime.now()).createdAt(book.getCreatedAt()).deleted(book.isDeleted()).local(book.isLocal())
+                    .missingSince(book.getMissingSince()).build();
             commands.save(updated); indexer.indexBook(updated); indexer.commit(); return true;
         } catch(Exception e){ dialogs.showError("Помилка редагування",e.getMessage()); return false; }
     }

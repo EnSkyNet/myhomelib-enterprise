@@ -28,6 +28,9 @@
             <FlowPane fx:id="seriesLinksPane" hgap="6" vgap="3"/>
             <Label text="Жанри" style="-fx-font-weight: bold;"/>
             <FlowPane fx:id="genresLinksPane" hgap="6" vgap="3"/>
+            <Label text="Анотація" style="-fx-font-weight: bold;"/>
+            <Label fx:id="annotationLabel" wrapText="true" maxWidth="1.7976931348623157E308"
+                   style="-fx-padding: 4 0 6 0;"/>
 
             <Separator/>
             <Label text="Видання" style="-fx-font-weight: bold; -fx-font-size: 13px;"/>
@@ -53,9 +56,6 @@
             <Separator/>
             <Label text="Ключові слова" style="-fx-font-weight: bold;"/>
             <FlowPane fx:id="keywordsLinksPane" hgap="6" vgap="4"/>
-
-            <Label text="Анотація" style="-fx-font-weight: bold;"/>
-            <TextArea fx:id="annotationArea" wrapText="true" prefHeight="150" editable="false"/>
 
             <Separator/>
             <Label text="Мої дані" style="-fx-font-weight: bold; -fx-font-size: 13px;"/>

@@ -1,0 +1,149 @@
+MyHomeLib Enterprise refactoring validation
+Date: 2026-09-02
+
+PASS  plan-2026-09-01-acceptance-check.py
+PLAN 2026-09-01 ACCEPTANCE CHECK: PASS
+Covered: INPX safety, batch selection, Author Workspace, local state, theme, export staging.
+
+PASS  refactoring-p0-progress-consistency-check.py
+REFACTORING P0 PROGRESS/CONSISTENCY CHECK: PASS
+ - no synthetic 0..1000 progress or FX-thread directory pre-scan
+ - online update: Lucene -> statistics -> appliedVersion
+ - exact import counters + unambiguous DEL wording
+ - Hikari transaction/pool telemetry enabled
+
+PASS  catalog-lifecycle-regression-check.py
+CATALOG LIFECYCLE REGRESSION CHECK: PASS
+ - authoritative metadata preserved on activation: PASS
+ - failed switch keeps/restores previous collection: PASS
+ - active metadata refresh after rename/properties: PASS
+ - persisted encrypted credentials returned after UPDATE: PASS
+ - all collection type codes preserved in properties UI: PASS
+ - remote creation can be URL-only: PASS
+ - online INPX update limited to active collection/credentials: PASS
+ - create-with-source now performs requested import: PASS
+
+PASS  delete-collection-safety-check.py
+DELETE COLLECTION SAFETY CHECK: PASS
+ - inactive collection deletion does not VACUUM active database
+ - active per-collection Lucene directory + freshness marker are deleted
+
+PASS  import-index-lifecycle-check.py
+IMPORT INDEX LIFECYCLE CHECK: PASS
+ - live sqlite_master definitions are captured/restored exactly
+ - managed indexes exist in migrated V1-V41 schema
+ - redundant named relation indexes are not recreated
+
+PASS  inpx-search-index-consistency-check.py
+PASS: fast INPX DB changes are finalized into Lucene selectively or by bounded fallback rebuild
+
+PASS  online-concurrency-check.py
+ONLINE CONCURRENCY CHECK: PASS
+ - shared global + per-host limiter covers book and catalog HTTP paths
+ - cancellation wait <= polling interval behavior exercised with actual Java class
+ - inactive host gates are released instead of accumulating historically
+ - ConnectionScript uses the same limiter and retry policy
+ - UI exposes per-host setting
+
+PASS  reading-statistics-consistency-check.py
+READING STATISTICS CONSISTENCY CHECK: PASS
+ - V41 singleton/dedup contract: PASS
+ - atomic recordSession UPSERT; no read-modify-write API: PASS
+ - portable restore true UPSERT: PASS
+ - Reader session start/finish runtime wiring: PASS
+
+PASS  reader-large-book-persistence-check.py
+READER LARGE-BOOK PERSISTENCE CHECK: PASS
+ - autosave percent uses actual document length, not a 1000-char surrogate
+ - large offsets remain proportional instead of saturating at 100%
+
+PASS  stage12-13-collection-maintenance-check.py
+STAGE 12+13 COLLECTION MAINTENANCE CHECK: PASS
+ - metadata V3 source-watch state: PASS
+ - WatchService + source-only filtering + debounce + shared SHA-256: PASS
+ - readable/ZIP validation + manual refresh + baseline acknowledge: PASS
+ - analyze/preview/dry-run/apply + mandatory SQLite backup: PASS
+ - missing/archive/orphan/duplicate/orphan-dictionary analysis: PASS
+ - physical orphan auto-delete blocked + legacy destructive bypass blocked: PASS
+ - Collection Workspace FXML wiring: PASS
+
+PASS  stage16-export-profiles-check.py
+STAGE 16 EXPORT PROFILES CHECK: PASS
+ - named persisted export profiles + legacy defaults migration: PASS
+ - overwrite/skip/rename/ASK collision contract: PASS
+ - batch progress/cancel + global status-bar wiring: PASS
+ - profile-specific filename/subfolder/post-action: PASS
+ - raw archive-entry extract-only path: PASS
+ - bounded persistent export history: PASS
+
+PASS  stage19-20-reader-check.py
+READER PORTABLE SMOKE: PASS
+STAGE 19/20 READER CHECK: PASS
+ - categorized presets/per-book/global/live-preview settings: PASS
+ - status bar + configurable tap zones: PASS
+ - 3-second crash-loss-bounded position autosave: PASS
+ - uk/en/bg/ru dictionary-aware hyphenation: PASS
+ - EPUB nav/NCX fragment anchors: PASS
+ - Shift-drag selection + Ctrl+C: PASS
+ - large FB2/EPUB performance fixtures: PASS
+
+PASS  stage22-versioned-user-data-check.py
+STAGE 22 VERSIONED USER-DATA CHECK: PASS
+ - schema-v2 portable user-data sections + streaming v1 compatibility: PASS
+ - stable LibID-first remap + bounded identity cache + migrated-schema index lookup: PASS
+ - WAL-safe VACUUM INTO backup + staged atomic DB restore: PASS
+ - full restore + user-data-only UI modes + legacy DB-only compatibility: PASS
+ - JUnit fixtures for changed internal IDs/idempotence/v1 manifest: PRESENT
+
+PASS  stage24-performance-check.py
+STAGE 24 PERFORMANCE CHECK: PASS
+ - stored 100k/500k/1M SQL baseline + query-plan indexes: PASS
+ - opt-in JVM heap/GC + disk-backed Lucene full/selective + huge FB2/EPUB suite: PRESENT
+ - Maven performance profile + scheduled/manual CI workflow: PRESENT
+
+PASS  stage25a-ui-orchestration-check.py
+STAGE 25A UI ORCHESTRATION CHECK: PASS
+ - MainController reduced to 609 lines with FXML shell compatibility
+ - WorkspaceManager owns observable back/forward state; redundant history facade removed
+ - navigation/book command orchestration extracted; concrete MainController fan-in removed
+ - history-state JUnit regression fixture: PRESENT
+
+PASS  stage25b-reader-refactor-check.py
+STAGE 25B READER REFACTOR CHECK: PASS
+ - ReaderCanvas: 708 lines; selection/history state extracted
+ - TextLayoutEngine: 370 lines; line breaking/run composition extracted
+ - Fb2StreamingParser: 589 lines; token/text utilities extracted
+ - extracted pure-JDK helpers compile/run without Maven: PASS
+
+PASS  stage25c-search-sync-refactor-check.py
+STAGE 25C SEARCH/SYNC REFACTOR CHECK: PASS
+ - LuceneSearchService: 419 lines; mapping/filter/query normalization extracted
+ - FolderSyncService: 335 lines; storage/path extracted and merge policy centralized
+ - classic query normalizer standalone javac/runtime smoke: PASS
+ - scanner IOException counted once: regression fixture PRESENT
+
+PASS  startup-nonblocking-check.py
+startup-nonblocking-check: PASS
+
+PASS  user-data-consistency-check.py
+USER-DATA CONSISTENCY CHECK: PASS
+ - one versioned user-data format; legacy duplicate removed: PASS
+ - V42 collection-scoped Reader overrides + bounded migration: PASS
+ - bounded portable restore + LibID ambiguity policy: PASS
+ - direct restore -> Lucene selective/full synchronization: PASS
+ - stale repeated nested-type compile blockers: 0
+
+PASS  user-state-search-index-check.py
+USER STATE / SEARCH INDEX CHECK: PASS
+ - rating/progress/read changes defer Lucene refresh until DB commit
+ - local download/remove changes refresh Lucene derived state
+ - folder INPX changes aggregate bounded exact IDs and finalize once
+
+PASS  validate-language-catalogs.py
+Language catalogue validation OK
+ - bg: bg.json, schema=3, 203 UI keys, 335 genre keys
+ - en: en.json, schema=3, 203 UI keys, 335 genre keys
+ - uk: uk.json, schema=3, 203 UI keys, 335 genre keys
+
+
+Maven/jpackage note: ./mvnw bootstrap is blocked in this environment by DNS/network access to repo.maven.apache.org; stage23 requires generated dist/.

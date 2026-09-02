@@ -48,7 +48,7 @@ def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 def check_migrations() -> None:
     files = migration_files(MIGRATIONS)
     versions = [version(p) for p in files]
-    assert versions == list(range(1, 44)), f"expected sequential V1..V43, got {versions}"
+    assert versions == list(range(1, 45)), f"expected sequential V1..V44, got {versions}"
 
     # v7.1 must append migrations only. Compare the immutable v7 migrations byte-for-byte
     # against the retained release hash manifest so this also works from a source ZIP without .git.
@@ -66,13 +66,14 @@ def check_migrations() -> None:
                   "book_identities", "book_artifacts", "catalog_dataset_metadata",
                   "catalog_record_provenance", "book_source_relations", "artifact_occurrences", "reader_book_preferences"):
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        assert row, f"missing table {table} after V43"
+        assert row, f"missing table {table} after V44"
     manifest_cols = table_columns(conn, "catalog_manifests")
     for column in ("manifest_schema", "importer_version", "source_format", "normalization_version",
                    "fingerprint_model", "fingerprint_version", "processing_flags", "features_enabled"):
         assert column in manifest_cols, f"V39 manifest compatibility column missing: {column}"
     assert "applied_version" in table_columns(conn, "catalog_sources")
     assert "display_name" in table_columns(conn, "authors")
+    assert "missing_since" in table_columns(conn, "books"), "V44 missing-file state column missing"
 
     conn.execute("INSERT INTO authors(id,first_name,middle_name,last_name) VALUES ('a1','John','','Smith')")
     conn.execute("INSERT INTO authors(id,first_name,middle_name,last_name) VALUES ('a2','John','','Smith')")
@@ -109,7 +110,7 @@ def check_upgrade_preserves_data() -> None:
         "groups": conn.execute("SELECT count(*) FROM book_groups WHERE book_id='book-v7-upgrade'").fetchone()[0],
     }
 
-    apply_migrations(conn, [p for p in files if 37 <= version(p) <= 43])
+    apply_migrations(conn, [p for p in files if 37 <= version(p) <= 44])
     after = {
         "book": conn.execute("SELECT title,rate,progress,review,local,lib_id FROM books WHERE id='book-v7-upgrade'").fetchone(),
         "authors": conn.execute("SELECT count(*) FROM book_authors WHERE book_id='book-v7-upgrade'").fetchone()[0],
@@ -118,7 +119,7 @@ def check_upgrade_preserves_data() -> None:
         "bookmark": conn.execute("SELECT book_id,paragraph_id FROM bookmarks WHERE id='bm-v7'").fetchone(),
         "groups": conn.execute("SELECT count(*) FROM book_groups WHERE book_id='book-v7-upgrade'").fetchone()[0],
     }
-    assert before == after, f"v7 user data changed during V37-V43: {before} -> {after}"
+    assert before == after, f"v7 user data changed during V37-V44: {before} -> {after}"
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     conn.close()
 
@@ -416,7 +417,7 @@ def main() -> int:
     parser.add_argument("--skip-tree-cleanliness", action="store_true", help="allow target/IDE dirs while developing")
     args = parser.parse_args()
     checks = [
-        ("Flyway V1-V43 + immutable V1-V36", check_migrations),
+        ("Flyway V1-V44 + immutable V1-V36", check_migrations),
         ("V41 reading statistics singleton", check_v41_reading_stats_singleton),
         ("V42 reader book preferences", check_v42_reader_book_preferences),
         ("V43 group membership lookup", check_v43_group_membership_index),

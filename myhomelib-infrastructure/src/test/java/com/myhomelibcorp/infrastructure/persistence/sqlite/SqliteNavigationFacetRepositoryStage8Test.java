@@ -104,4 +104,29 @@ class SqliteNavigationFacetRepositoryStage8Test {
         assertThat(repository.findYears(filter)).extracting(f -> f.id()).containsExactly("2025");
         assertThat(repository.findAuthors('B', filter)).extracting(f -> f.bookCount()).containsExactly(1L);
     }
+
+    @Test
+    void authorPagingIsAppliedInSqlAndReturnsExactTotal() {
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        jdbc.update("INSERT INTO authors(id, first_name, last_name) VALUES ('a2','Alice','Anderson')");
+        jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('x1','a2')");
+
+        var first = repository.findAuthorsPage('A', BookFilterSpec.empty(), 1, 0);
+        var second = repository.findAuthorsPage('A', BookFilterSpec.empty(), 1, 1);
+
+        assertThat(first.totalElements()).isEqualTo(2);
+        assertThat(first.content()).extracting(f -> f.id()).containsExactly("a1");
+        assertThat(second.totalElements()).isEqualTo(2);
+        assertThat(second.content()).extracting(f -> f.id()).containsExactly("a2");
+    }
+
+    @Test
+    void serverSideAuthorSearchRespectsActiveBookFilter() {
+        assertThat(repository.searchAuthors("ivan", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("a1");
+
+        BookFilterSpec englishOnly = new BookFilterSpec(BookFilterMode.AND, "en", null, null, null,
+                null, null, null, null, false, BookQuickFilterField.ANY, null);
+        assertThat(repository.searchAuthors("ivan", englishOnly, 20)).isEmpty();
+    }
 }

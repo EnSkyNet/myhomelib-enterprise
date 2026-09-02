@@ -2,11 +2,13 @@ package com.myhomelibcorp.ui.imports;
 
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
@@ -24,6 +26,7 @@ import java.io.File;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.prefs.Preferences;
@@ -36,6 +39,7 @@ public class ImportWorkspaceController {
     private final ImportDirectoryUseCase importDirectoryUseCase;
     private final ImportFileUseCase importFileUseCase;
     private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
     private final FileChooserService fileChooserService;
     private final DialogService dialogService;
     private final ApplicationState appState;
@@ -107,23 +111,11 @@ public class ImportWorkspaceController {
             return;
         }
 
-        // Отримуємо кількість файлів для прогресу
-        long totalFiles = 0;
-        try (var stream = java.nio.file.Files.walk(dir)) {
-            totalFiles = stream.filter(java.nio.file.Files::isRegularFile)
-                    .filter(f -> {
-                        String name = f.getFileName().toString().toLowerCase();
-                        return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".epub") ||
-                                name.endsWith(".txt") || name.endsWith(".inpx") || name.endsWith(".inp") ||
-                                name.endsWith(".zip") || name.endsWith(".fb2zip");
-                    })
-                    .count();
-        } catch (Exception e) {
-            log.warn("Не вдалося підрахувати файли: {}", e.getMessage());
-        }
-
+        // Не робимо Files.walk() у JavaFX thread лише заради попереднього count.
+        // Для великих локальних/NAS бібліотек діалог має з'явитися одразу; authoritative
+        // X/Y надходить через OperationProgress, а до появи total показуємо indeterminate state.
         progressDialog = new ImportProgressDialog("Імпорт каталогу");
-        progressDialog.setTotal(totalFiles);
+        progressDialog.setIndeterminate(true);
         progressDialog.setOnCancel(() -> {
             cancelFlag.set(true);
             progressDialog.updateStatus("Скасування...");
@@ -136,7 +128,9 @@ public class ImportWorkspaceController {
                     .batchSize(batchSize)
                     .indexAfterSave(true)
                     .cancelFlag(cancelFlag)
+                    .operationId("directory-import-" + UUID.randomUUID())
                     .progressListener(this::updateProgress)
+                    .operationProgressListener(this::updateOperationProgress)
                     .statusConsumer(this::updateStatus)
                     .build();
             return importDirectoryUseCase.execute(context);
@@ -157,7 +151,7 @@ public class ImportWorkspaceController {
         }
 
         progressDialog = new ImportProgressDialog("Імпорт файлу");
-        progressDialog.setTotal(1);
+        progressDialog.setIndeterminate(true);
         progressDialog.setOnCancel(() -> {
             cancelFlag.set(true);
             progressDialog.updateStatus("Скасування...");
@@ -170,7 +164,9 @@ public class ImportWorkspaceController {
                     .batchSize(batchSize)
                     .indexAfterSave(true)
                     .cancelFlag(cancelFlag)
+                    .operationId("file-import-" + UUID.randomUUID())
                     .progressListener(this::updateProgress)
+                    .operationProgressListener(this::updateOperationProgress)
                     .statusConsumer(this::updateStatus)
                     .build();
             return importFileUseCase.execute(context);
@@ -322,22 +318,28 @@ public class ImportWorkspaceController {
     }
 
     private void updateProgress(double value) {
+        // Legacy scalar progress remains useful for the compact status bar, but the modal dialog
+        // is rendered from OperationProgress so we never invent fake processed/total values.
         setProgress(value);
-        if (progressDialog == null) return;
-        if (value < 0) {
-            progressDialog.setIndeterminate(true);
-        } else {
-            progressDialog.setIndeterminate(false);
-            if (value > 0) {
-                long processed = (long) (value * 1000);
-                progressDialog.updateProgress(processed, 1000, null);
-            }
-        }
+        if (progressDialog != null && value < 0) progressDialog.setIndeterminate(true);
+    }
+
+    private void updateOperationProgress(OperationProgress progress) {
+        if (progress == null) return;
+        var collection = appState.getCurrentLibraryCollection();
+        operationCenter.accept("Імпорт книг", collection == null ? "" : collection.getId(), progress);
+        double fraction = progress.fraction();
+        setProgress(fraction);
+        ImportProgressDialog dialog = progressDialog;
+        if (dialog != null) dialog.update(progress);
+        long imported = Math.max(0L, progress.inserted() + progress.updated());
+        long found = progress.total() >= 0 ? progress.total() : progress.processed();
+        updateStats(imported, progress.errors(), Math.max(0L, found));
     }
 
     private String formatImportSummary(ImportResult result, long total) {
         return String.format(
-                "Імпорт завершено%n%nЗаписів: %,d%nІмпортовано: %,d%nДодано: %,d%nОновлено: %,d%nЯвно видалено: %,d%nБез автора: %,d%nБез жанру: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
+                "Імпорт завершено%n%nОброблено: %,d%nІмпортовано: %,d%nДодано: %,d%nОновлено: %,d%nЗаписи, позначені джерелом як видалені (DEL): %,d%nБез автора: %,d%nБез жанру: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
                 total,
                 result.imported(),
                 result.changes().insertedCount(),

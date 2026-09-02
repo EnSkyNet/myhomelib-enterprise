@@ -12,6 +12,7 @@ public interface BookCommandRepository {
     void updateRate(BookId bookId, int rate);
     void updateProgress(BookId bookId, int progress);
     void updateStorage(BookId bookId, String collectionRoot, String folder, String fileName, String archiveEntry, boolean local);
+    void markStorageMissing(BookId bookId);
 
     /** Repairs the v7.1 regression where remote catalog cache was persisted as a book root. */
     int repairTransientRemoteStorageRoots(String permanentRoot);

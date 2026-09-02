@@ -50,7 +50,7 @@ public class BookWorkspaceController {
     @FXML private Label formatLabel;
     @FXML private Label sizeLabel;
     @FXML private Label ratingLabel;
-    @FXML private TextArea annotationArea;
+    @FXML private Label annotationLabel;
     @FXML private ProgressBar readingProgress;
     @FXML private Label progressLabel;
 
@@ -87,7 +87,7 @@ public class BookWorkspaceController {
         formatLabel.setText("Формат: " + displayFormat(book.getFileName(), book.getArchiveEntry()));
         sizeLabel.setText("Розмір: " + book.getFileSizeFormatted());
         ratingLabel.setText("Рейтинг: " + book.getRateStars());
-        annotationArea.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
+        annotationLabel.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
         readingProgress.setProgress(book.getProgress() / 100.0);
         progressLabel.setText(book.getProgress() + "%");
     }
@@ -114,7 +114,7 @@ public class BookWorkspaceController {
         formatLabel.setText("Формат");
         sizeLabel.setText("Розмір");
         ratingLabel.setText("Рейтинг");
-        annotationArea.setText("");
+        annotationLabel.setText("");
         readingProgress.setProgress(0);
         progressLabel.setText("0%");
         coverPresenter.clearCover();

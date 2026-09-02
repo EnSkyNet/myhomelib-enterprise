@@ -10,6 +10,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.sql.DriverManager;
 
 @Component
 @RequiredArgsConstructor
@@ -47,5 +48,24 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
             throw new IOException("SQLite snapshot was not created: " + targetFile);
         }
         log.info("Created consistent SQLite backup snapshot {}", targetFile);
+    }
+
+    @Override
+    public void validateDatabaseFile(Path databaseFile) throws IOException {
+        if (databaseFile == null || !Files.isRegularFile(databaseFile)) {
+            throw new IOException("SQLite database file does not exist: " + databaseFile);
+        }
+        String url = "jdbc:sqlite:" + databaseFile.toAbsolutePath().normalize();
+        try (var connection = DriverManager.getConnection(url);
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("PRAGMA quick_check")) {
+            if (!result.next() || !"ok".equalsIgnoreCase(result.getString(1))) {
+                throw new IOException("SQLite quick_check failed for " + databaseFile);
+            }
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IOException("Cannot validate SQLite database: " + databaseFile, e);
+        }
     }
 }

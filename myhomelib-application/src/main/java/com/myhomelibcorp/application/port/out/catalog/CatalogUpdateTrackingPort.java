@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogSyncSession;
 import com.myhomelibcorp.application.catalog.CatalogUpdateCursor;
 import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
+import com.myhomelibcorp.application.catalog.CatalogUpdateType;
+import com.myhomelibcorp.application.catalog.FollowedAuthorSummary;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 
@@ -28,6 +30,16 @@ public interface CatalogUpdateTrackingPort {
     void setAuthorFollowed(AuthorId authorId, boolean followed);
 
     boolean isAuthorFollowed(AuthorId authorId);
+
+    /** Followed authors with live catalog counters; never materializes all books in the UI. */
+    List<FollowedAuthorSummary> findFollowedAuthors();
+
+    void acknowledgeUpdate(BookId bookId, CatalogUpdateType type);
+
+    /** Acknowledge pending events deterministically grouped under one author in the Updates workspace. */
+    void acknowledgeAuthorUpdates(AuthorId authorId);
+
+    void acknowledgeAllUpdates();
 
     /**
      * Pending rows already enriched with title and a deterministic author for Stage 7 grouping.
