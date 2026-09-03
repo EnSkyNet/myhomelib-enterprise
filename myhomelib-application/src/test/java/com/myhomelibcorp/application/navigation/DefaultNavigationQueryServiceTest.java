@@ -11,6 +11,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
+import java.util.OptionalLong;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CompletableFuture;
 
@@ -90,6 +91,40 @@ class DefaultNavigationQueryServiceTest {
         assertThat(page.content()).extracting(NavigationNodeDto::id).containsExactly("author-501");
         verify(navigationFacetRepository).findAuthorsPage('А', filter, 500, 500);
         verify(navigationFacetRepository, never()).findAuthors('А', filter);
+    }
+
+    @Test
+    void authorKeysetPageCarriesStableCursorAndCountsOnlyOnFirstSlice() {
+        var repositoryCursor = new NavigationFacetRepository.AuthorCursor("Андрухович", "Юрій", "", "author-500");
+        when(navigationFacetRepository.findAuthorsAfter('А', filter, 500, null)).thenReturn(
+                new NavigationFacetRepository.AuthorFacetSlice(
+                        List.of(new NavigationFacetRepository.Facet("author-500", "Андрухович Юрій", 4)),
+                        OptionalLong.of(12421), repositoryCursor));
+
+        var first = service.loadAuthorsAfter('А', 500, null).join();
+
+        assertThat(first.totalElements()).hasValue(12421);
+        assertThat(first.nextCursor()).isEqualTo(
+                new NavigationQueryService.AuthorCursor("Андрухович", "Юрій", "", "author-500"));
+        assertThat(first.content()).extracting(NavigationNodeDto::id).containsExactly("author-500");
+        verify(navigationFacetRepository).findAuthorsAfter('А', filter, 500, null);
+    }
+
+    @Test
+    void authorKeysetContinuationDoesNotRequireRepeatedTotal() {
+        var request = new NavigationQueryService.AuthorCursor("Андрухович", "Юрій", "", "author-500");
+        var repositoryRequest = new NavigationFacetRepository.AuthorCursor("Андрухович", "Юрій", "", "author-500");
+        when(navigationFacetRepository.findAuthorsAfter('А', filter, 500, repositoryRequest)).thenReturn(
+                new NavigationFacetRepository.AuthorFacetSlice(
+                        List.of(new NavigationFacetRepository.Facet("author-501", "Антоненко Іван", 2)),
+                        OptionalLong.empty(), null));
+
+        var next = service.loadAuthorsAfter('А', 500, request).join();
+
+        assertThat(next.totalElements()).isEmpty();
+        assertThat(next.nextCursor()).isNull();
+        assertThat(next.content()).extracting(NavigationNodeDto::id).containsExactly("author-501");
+        verify(navigationFacetRepository).findAuthorsAfter('А', filter, 500, repositoryRequest);
     }
 
     @Test

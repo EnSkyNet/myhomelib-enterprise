@@ -11,10 +11,16 @@ import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+
+import java.io.File;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 
 @Component
 @RequiredArgsConstructor
@@ -33,6 +39,7 @@ public class IntegrityCheckController {
     @FXML private Button fixButton;
     @FXML private Label statusLabel;
     @FXML private Label issuesSummaryLabel;
+    private String lastReportText = "";
 
     @FXML
     public void initialize() {
@@ -70,18 +77,18 @@ public class IntegrityCheckController {
                     }
 
                     operationCenter.complete(operationId, report.hasIssues()
-                            ? "Виявлено проблем: " + report.issues().size()
+                            ? "Виявлено проблем: " + report.problemCount()
                             : "Проблем не виявлено");
                     displayReport(report);
                     checkButton.setDisable(false);
                     progressIndicator.setVisible(false);
                     statusLabel.setText("✅ Перевірку завершено");
-                    fixButton.setDisable(true);
+                    fixButton.setDisable(!report.hasIssues());
                     if (!report.hasIssues()) {
                         issuesSummaryLabel.setText("✅ ПРОБЛЕМ НЕ ВИЯВЛЕНО");
                         issuesSummaryLabel.setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
                     } else {
-                        issuesSummaryLabel.setText("⚠️ ВИЯВЛЕНО " + report.issues().size() + " ПРОБЛЕМ");
+                        issuesSummaryLabel.setText("⚠️ ВИЯВЛЕНО ПРОБЛЕМ: " + formatNumber(report.problemCount()));
                         issuesSummaryLabel.setStyle("-fx-text-fill: orange; -fx-font-weight: bold;");
                     }
                 }));
@@ -110,8 +117,15 @@ public class IntegrityCheckController {
         sb.append("  👤 Авторів без книг:   ").append(formatNumber(report.orphanedAuthors())).append("\n");
         sb.append("  🏷️ Жанрів без книг:    ").append(formatNumber(report.orphanedGenres())).append("\n");
         sb.append("  🔄 Дублікатів книг:    ").append(formatNumber(report.duplicateBooks())).append("\n");
+        sb.append("  📚 Серій без книг:     ").append(formatNumber(report.orphanedSeries())).append("\n");
+        sb.append("  📕 Книг з невідомою серією: ").append(formatNumber(report.booksWithMissingSeries())).append("\n");
+        sb.append("  🔗 Пошкоджених зв’язків: ").append(formatNumber(report.brokenRelations())).append("\n");
+        sb.append("  🗄 SQLite:             ").append(report.sqliteIntegrityOk() ? "OK" : "ERROR: " + report.sqliteIntegrityMessage()).append("\n");
+        sb.append("  🔎 Lucene:             ").append(report.luceneIntegrityOk() ? "OK" : "ERROR")
+                .append(" (").append(formatNumber(report.luceneDocuments())).append(" / ")
+                .append(formatNumber(report.catalogBooks())).append(")\n");
         sb.append("  ─────────────────────────────────\n");
-        sb.append("  ⚠️ ВСЬОГО ПРОБЛЕМ:     ").append(formatNumber(report.issues().size())).append("\n\n");
+        sb.append("  ⚠️ ВСЬОГО ПРОБЛЕМ:     ").append(formatNumber(report.problemCount())).append("\n\n");
 
         // Детальний список проблем
         if (report.hasIssues()) {
@@ -140,6 +154,15 @@ public class IntegrityCheckController {
             if (report.duplicateBooks() > 0) {
                 sb.append("  • Перевірте детерміновані дублікати у Collection Maintenance\n");
             }
+            if (report.orphanedSeries() > 0 || report.booksWithMissingSeries() > 0) {
+                sb.append("  • Синхронізуйте довідник серій із каталогом книг\n");
+            }
+            if (report.brokenRelations() > 0 || !report.sqliteIntegrityOk()) {
+                sb.append("  • Не застосовуйте автоматичні зміни до резервного копіювання та аналізу Maintenance\n");
+            }
+            if (!report.luceneIntegrityOk()) {
+                sb.append("  • Перебудуйте Lucene та повторіть перевірку цілісності\n");
+            }
             sb.append("\n");
             sb.append("🔧 Для безпечного repair використайте Collection Workspace → Maintenance (з preview/dry-run/backup).");
         } else {
@@ -147,11 +170,33 @@ public class IntegrityCheckController {
             sb.append("  База даних не містить проблем цілісності.");
         }
 
-        reportArea.setText(sb.toString());
+        lastReportText = sb.toString();
+        reportArea.setText(lastReportText);
     }
 
     private String formatNumber(long number) {
-        return String.format("%,d", number);
+        return number < 0 ? "—" : String.format("%,d", number);
+    }
+
+    @FXML
+    public void onExportReport() {
+        if (lastReportText == null || lastReportText.isBlank()) {
+            dialogService.showWarning("Експорт", "Спочатку виконайте перевірку цілісності.");
+            return;
+        }
+        FileChooser chooser = new FileChooser();
+        chooser.setTitle("Експорт звіту цілісності");
+        chooser.setInitialFileName("myhomelib-integrity-report.txt");
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Text report", "*.txt"));
+        File target = chooser.showSaveDialog(reportArea.getScene() == null ? null : reportArea.getScene().getWindow());
+        if (target == null) return;
+        try {
+            Files.writeString(target.toPath(), lastReportText, StandardCharsets.UTF_8);
+            dialogService.showInfo("Експорт", "Звіт збережено: " + target.getAbsolutePath());
+        } catch (IOException error) {
+            log.error("Не вдалося експортувати integrity report", error);
+            dialogService.showError("Експорт", "Не вдалося зберегти звіт: " + error.getMessage());
+        }
     }
 
     @FXML

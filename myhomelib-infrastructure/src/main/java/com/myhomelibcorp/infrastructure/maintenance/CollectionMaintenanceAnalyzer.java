@@ -447,8 +447,8 @@ final class CollectionMaintenanceAnalyzer {
                         "SELECT source_file FROM collection_source_watch WHERE collection_id=?",
                         (rs, rowNum) -> rs.getString(1), collectionId);
                 return rows.stream().filter(Objects::nonNull).filter(s -> !s.isBlank()).findFirst().map(Paths::get);
-            } catch (Exception ignored) {
-                return Optional.empty();
+            } catch (org.springframework.dao.DataAccessException error) {
+                throw new IllegalStateException("Не вдалося прочитати metadata source-watch для collection " + collectionId, error);
             }
         }
 

@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.catalog.importing.*;
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -37,7 +38,7 @@ class JdbcCatalogImportAdapterTest {
         SQLiteDataSource ds = new SQLiteDataSource();
         ds.setUrl("jdbc:sqlite:" + temp.resolve("catalog.db"));
         jdbc = new JdbcTemplate(ds);
-        createSchema(jdbc);
+        Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
 
         CollectionManager manager = mock(CollectionManager.class);
         when(manager.hasActiveCollection()).thenReturn(true);
@@ -213,78 +214,6 @@ class JdbcCatalogImportAdapterTest {
                 "City", List.of(), "Annotation", List.of("keyword"), 4.0, Map.of(),
                 List.of(new CatalogArtifact(id + ".fb2", "application/fb2+xml", "fb2", "", "", 123L,
                         "", "", Map.of())), List.of(new ExternalIdentity("record", id)), List.of());
-    }
-
-    private static void createSchema(JdbcTemplate jdbc) {
-        jdbc.execute("""
-                CREATE TABLE books(
-                    id TEXT PRIMARY KEY,title TEXT NOT NULL,series TEXT,sequence_number INTEGER,file_name TEXT NOT NULL,
-                    folder TEXT,archive_entry TEXT,language TEXT,file_size INTEGER,keywords TEXT,annotation TEXT,
-                    rate INTEGER DEFAULT 0,progress INTEGER DEFAULT 0,update_date TEXT,isbn TEXT,deleted INTEGER DEFAULT 0,
-                    local INTEGER DEFAULT 0,review TEXT DEFAULT '',created_at TEXT,collection_root TEXT,year INTEGER,
-                    publisher TEXT,lib_id TEXT,library_rate INTEGER DEFAULT 0,translators TEXT,city TEXT,source_url TEXT,
-                    format TEXT,author_sort TEXT)
-                """);
-        jdbc.execute("""
-                CREATE TABLE authors(id TEXT PRIMARY KEY,first_name TEXT,middle_name TEXT,last_name TEXT,search_name TEXT,
-                    nickname TEXT,display_name TEXT,disambiguation TEXT)
-                """);
-        jdbc.execute("CREATE INDEX idx_authors_name_lookup ON authors(first_name,middle_name,last_name)");
-        jdbc.execute("CREATE TABLE book_authors(book_id TEXT NOT NULL,author_id TEXT NOT NULL,PRIMARY KEY(book_id,author_id))");
-        jdbc.execute("CREATE TABLE genres(code TEXT PRIMARY KEY,name TEXT,parent_code TEXT,fb2_code TEXT)");
-        jdbc.execute("CREATE TABLE book_genres(book_id TEXT NOT NULL,genre_code TEXT NOT NULL,PRIMARY KEY(book_id,genre_code))");
-        jdbc.execute("""
-                CREATE TABLE catalog_sources(source_id TEXT PRIMARY KEY,source_key TEXT NOT NULL UNIQUE,source_location TEXT,
-                    source_revision INTEGER NOT NULL DEFAULT 1,source_fingerprint TEXT NOT NULL,profile_type TEXT,dataset_schema TEXT,
-                    last_synced_at TEXT DEFAULT CURRENT_TIMESTAMP)
-                """);
-        jdbc.execute("""
-                CREATE TABLE catalog_manifests(source_key TEXT PRIMARY KEY,source_path TEXT,size_bytes INTEGER NOT NULL DEFAULT 0,
-                    mtime_millis INTEGER NOT NULL DEFAULT 0,fingerprint TEXT,parser_version TEXT NOT NULL,record_count INTEGER,
-                    dataset_schema TEXT,last_parsed_at TEXT DEFAULT CURRENT_TIMESTAMP,manifest_schema TEXT NOT NULL DEFAULT '',
-                    importer_version TEXT NOT NULL DEFAULT '',source_format TEXT NOT NULL DEFAULT '',
-                    normalization_version TEXT NOT NULL DEFAULT '',fingerprint_model TEXT NOT NULL DEFAULT '',
-                    fingerprint_version INTEGER NOT NULL DEFAULT 0,processing_flags TEXT NOT NULL DEFAULT '',
-                    features_enabled TEXT NOT NULL DEFAULT '',dataset_normalization_model TEXT)
-                """);
-        jdbc.execute("""
-                CREATE TABLE author_identities(author_id TEXT NOT NULL,source_id TEXT NOT NULL,scheme TEXT NOT NULL,external_id TEXT NOT NULL,
-                    PRIMARY KEY(source_id,scheme,external_id))
-                """);
-        jdbc.execute("""
-                CREATE TABLE book_identities(book_id TEXT NOT NULL,source_id TEXT NOT NULL,scheme TEXT NOT NULL,external_id TEXT NOT NULL,
-                    PRIMARY KEY(source_id,scheme,external_id))
-                """);
-        jdbc.execute("""
-                CREATE TABLE book_artifacts(artifact_id TEXT PRIMARY KEY,book_id TEXT NOT NULL,source_id TEXT,artifact_name TEXT NOT NULL,
-                    media_type TEXT,file_format TEXT,file_name TEXT,archive_name TEXT,archive_entry TEXT,size_bytes INTEGER,sha256 TEXT,
-                    content_fingerprint TEXT,remote INTEGER NOT NULL DEFAULT 0,local INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT DEFAULT CURRENT_TIMESTAMP,updated_at TEXT DEFAULT CURRENT_TIMESTAMP)
-                """);
-        jdbc.execute("""
-                CREATE TABLE catalog_dataset_metadata(source_id TEXT PRIMARY KEY,dataset_id TEXT,dataset_schema TEXT,record_schema TEXT,
-                    library TEXT,generator_name TEXT,generator_version TEXT,normalization_model TEXT,database_id TEXT,database_format TEXT,
-                    dump_date TEXT,dump_checksum TEXT,database_dumps_json TEXT,ordering_json TEXT,processing_json TEXT,archives_json TEXT,
-                    features_json TEXT,raw_header_json TEXT,imported_at TEXT DEFAULT CURRENT_TIMESTAMP)
-                """);
-        jdbc.execute("""
-                CREATE TABLE catalog_record_provenance(source_id TEXT NOT NULL,book_id TEXT NOT NULL,dataset_id TEXT,source_book_id TEXT NOT NULL,
-                    record_schema TEXT,locator_kind TEXT,locator_source TEXT,locator_value TEXT,raw_record_json TEXT,observations_json TEXT,
-                    claims_json TEXT,identities_json TEXT,artifacts_json TEXT,imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY(source_id,book_id))
-                """);
-        jdbc.execute("""
-                CREATE TABLE book_source_relations(relation_id TEXT PRIMARY KEY,source_id TEXT NOT NULL,book_id TEXT NOT NULL,
-                    relation_index INTEGER NOT NULL,relation_type TEXT NOT NULL,observation_id TEXT,target_scheme TEXT,target_value TEXT,
-                    event_id TEXT,event_time TEXT,participants_json TEXT,raw_relation_json TEXT,imported_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(source_id,book_id,relation_index))
-                """);
-        jdbc.execute("CREATE TABLE book_artifact_metadata(artifact_id TEXT NOT NULL,metadata_key TEXT NOT NULL,metadata_value TEXT,PRIMARY KEY(artifact_id,metadata_key))");
-        jdbc.execute("""
-                CREATE TABLE artifact_occurrences(occurrence_id TEXT PRIMARY KEY,artifact_id TEXT NOT NULL,source_id TEXT NOT NULL,book_id TEXT NOT NULL,
-                    occurrence_index INTEGER NOT NULL,archive_name TEXT NOT NULL,entry_name TEXT NOT NULL,archive_index INTEGER,
-                    compressed_size INTEGER,uncompressed_size INTEGER,modified_at TEXT,UNIQUE(artifact_id,occurrence_index))
-                """);
     }
 
     private static final class MutableReader implements CatalogReader {

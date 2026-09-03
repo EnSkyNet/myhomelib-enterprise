@@ -7,6 +7,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -65,10 +66,8 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
                 Files.write(file, bytes);
                 entries.put(id, new Entry(info, null, file));
             } catch (IOException e) {
-                // Якщо temp storage недоступний — краще мати ресурс у RAM, ніж
-                // втратити його повністю. Це fallback, не нормальний шлях.
-                entries.put(id, new Entry(info, bytes, null));
-                inMemoryBytes += bytes.length;
+                throw new UncheckedIOException(
+                        "Не вдалося зберегти великий ресурс Reader у тимчасовому сховищі: " + id, e);
             }
         }
         totalBytes += bytes.length;
@@ -191,8 +190,8 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
         if (entry.file != null) {
             try {
                 return Optional.of(Files.newInputStream(entry.file));
-            } catch (IOException ignored) {
-                return Optional.empty();
+            } catch (IOException e) {
+                throw new UncheckedIOException("Не вдалося відкрити ресурс Reader: " + id, e);
             }
         }
         return Optional.empty();

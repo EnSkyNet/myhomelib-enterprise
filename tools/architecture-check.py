@@ -424,8 +424,10 @@ def check_navigation_stage4() -> None:
     builder = ROOT / "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookQueryBuilder.java"
     if builder.exists():
         text = builder.read_text(encoding="utf-8")
-        if "WITH RECURSIVE split" not in text or "LOWER(token) = LOWER(?)" not in text:
-            fail("Stage 4 keyword filter must match exact split tokens")
+        if "FROM keyword_books kb" not in text or "kb.normalized_name = ?" not in text:
+            fail("Stage 4 keyword filter must use the normalized exact-token projection")
+        if "WITH RECURSIVE split" in text:
+            fail("Stage 4 keyword filter must not split books.keywords recursively per row")
         for clause in ("COALESCE(b.rate, 0) > 0", "b.review IS NOT NULL AND TRIM(b.review) <> ''"):
             if clause not in text:
                 fail(f"Stage 4 review filter clause missing: {clause}")

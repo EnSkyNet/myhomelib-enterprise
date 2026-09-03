@@ -110,6 +110,18 @@ public class TextLayoutEngine {
 
             TextStyle style = paragraphInfo.style() != null ? paragraphInfo.style() : TextStyle.NORMAL;
             boolean firstLineOfParagraph = fragmentStart == paragraphStart;
+            if (firstLineOfParagraph) {
+                float spacingBefore = lineSupport.paragraphSpacingBefore(style);
+                if (spacingBefore > 0f) {
+                    if (currentY + spacingBefore < bottomY) {
+                        currentY += spacingBefore;
+                    } else if (!page.build().isEmpty()) {
+                        break;
+                    }
+                    // If the page is still empty, ignore an oversized semantic
+                    // top spacing so pagination always consumes text and advances.
+                }
+            }
             List<StyleSpan> fragmentSpans = text.getSpans(fragmentStart, layoutEnd);
 
             ParagraphLayout fragment = layoutParagraphFragment(
@@ -286,7 +298,7 @@ public class TextLayoutEngine {
                     ? Math.max(0f, (maxWidth - naturalLineWidth) / spaces)
                     : 0f;
             float lineWidth = justify ? maxWidth : naturalLineWidth;
-            float lineX = lineSupport.resolveLineX(baseX, contentWidth, lineIndent, lineWidth);
+            float lineX = lineSupport.resolveLineX(baseX, contentWidth, lineIndent, lineWidth, paragraphStyle);
             List<TextRunLayout> runs = lineSupport.buildVisualRuns(
                     text, cursor, displayEnd, absoluteStartOffset,
                     paragraphStyle, baseFontSize, spans, extraPerSpace, hyphenated

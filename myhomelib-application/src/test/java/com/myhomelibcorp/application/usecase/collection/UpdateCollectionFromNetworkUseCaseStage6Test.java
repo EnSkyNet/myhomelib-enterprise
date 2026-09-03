@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.port.out.catalog.CatalogSourceStatePort;
+import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogPackage;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
@@ -67,6 +68,8 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         verify(f.search).commit();
         verify(f.search, never()).rebuildIndex();
         verify(f.state).recordApplied("remote-collection:collection-42", "20260825");
+        verify(f.backup).createDatabaseSnapshot(eq(collection), any(Path.class));
+        verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
         InOrder lifecycleOrder = inOrder(f.search, f.statistics, f.state);
         lifecycleOrder.verify(f.search).commit();
         lifecycleOrder.verify(f.statistics).invalidate();
@@ -138,6 +141,8 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         verify(f.search).rollbackAtomicUpdate();
         verify(f.state, never()).recordApplied(anyString(), anyString());
         verify(f.state).recordFailure(eq("remote-collection:c1"), anyString());
+        verify(f.backup).restoreDatabaseSnapshot(eq(collection), any(Path.class));
+        verify(f.search).rebuildIndex(any(AtomicBoolean.class), any(Consumer.class));
     }
 
     @Test
@@ -153,14 +158,28 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
                         List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/delta.zip", "20260825", false)), "20260825"));
         when(f.importer.execute(any())).thenReturn(new ImportResult(1, 0, 0, 0, 1,
                 ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
-        doThrow(new IllegalStateException("statistics failed")).when(f.statistics).refreshStatistics();
+        doThrow(new IllegalStateException("statistics failed"))
+                .doNothing()
+                .when(f.statistics).refreshStatistics();
 
         assertThatThrownBy(() ->
                 f.useCase.execute(collection, "https://example.test/catalog.inpx", null, null))
                 .hasMessageContaining("statistics failed");
 
-        verify(f.statistics).invalidate();
-        verify(f.statistics).refreshStatistics();
+        // The first statistics refresh fails after the catalog mutation. Rollback then restores
+        // SQLite and deterministically rebuilds all derived state, including statistics.
+        // Therefore invalidate/refresh are expected once for the failed attempt and once again
+        // for the restored database.
+        InOrder recoveryOrder = inOrder(f.statistics, f.backup, f.search);
+        recoveryOrder.verify(f.statistics).invalidate();
+        recoveryOrder.verify(f.statistics).refreshStatistics();
+        recoveryOrder.verify(f.backup).restoreDatabaseSnapshot(eq(collection), any(Path.class));
+        recoveryOrder.verify(f.search).rebuildIndex(any(AtomicBoolean.class), any(Consumer.class));
+        recoveryOrder.verify(f.statistics).invalidate();
+        recoveryOrder.verify(f.statistics).refreshStatistics();
+
+        verify(f.statistics, times(2)).invalidate();
+        verify(f.statistics, times(2)).refreshStatistics();
         verify(f.state, never()).recordApplied(anyString(), anyString());
         verify(f.state).recordFailure(eq("remote-collection:c1"), anyString());
     }
@@ -190,11 +209,12 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         final SearchIndexer search = mock(SearchIndexer.class);
         final BookQueryRepository books = mock(BookQueryRepository.class);
         final StatisticsRepository statistics = mock(StatisticsRepository.class);
+        final CollectionBackupPort backup = mock(CollectionBackupPort.class);
         final UpdateCollectionFromNetworkUseCase useCase;
 
         Fixture() {
             this.useCase = new UpdateCollectionFromNetworkUseCase(
-                    downloader, importer, lifecycle, state, search, books, statistics,
+                    downloader, importer, lifecycle, state, search, books, statistics, backup,
                     50_000, new com.myhomelibcorp.application.operation.LibraryOperationCoordinator()
             );
         }

@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.service;
 
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ButtonBar;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.TextInputDialog;
 import org.springframework.stereotype.Service;
@@ -49,6 +50,20 @@ public class DialogService {
         alert.setHeaderText(header);
         alert.setContentText(content);
         alert.showAndWait();
+    }
+
+
+    /** Error dialog with an explicit Retry action. */
+    public boolean showErrorWithRetry(String title, String header, String content) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle(title);
+        alert.setHeaderText(header);
+        alert.setContentText(content);
+        ButtonType retry = new ButtonType("Повторити", ButtonBar.ButtonData.OK_DONE);
+        ButtonType close = new ButtonType("Закрити", ButtonBar.ButtonData.CANCEL_CLOSE);
+        alert.getButtonTypes().setAll(retry, close);
+        Optional<ButtonType> result = alert.showAndWait();
+        return result.isPresent() && result.get() == retry;
     }
 
     // ---- Підтвердження ----

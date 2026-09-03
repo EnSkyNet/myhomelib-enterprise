@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import static com.myhomelibcorp.reader.format.fb2.Fb2ParseSupport.*;
 
 import javax.xml.stream.XMLInputFactory;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamException;
 import javax.xml.stream.XMLStreamReader;
@@ -53,19 +54,7 @@ public class Fb2StreamingParser implements BookParser {
     private final XMLInputFactory xmlFactory;
 
     public Fb2StreamingParser() {
-        xmlFactory = XMLInputFactory.newFactory();
-        setFactoryProperty(XMLInputFactory.SUPPORT_DTD, false);
-        setFactoryProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
-        setFactoryProperty(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, true);
-        setFactoryProperty(XMLInputFactory.IS_COALESCING, false);
-    }
-
-    private void setFactoryProperty(String property, Object value) {
-        try {
-            xmlFactory.setProperty(property, value);
-        } catch (IllegalArgumentException ignored) {
-            // Деякі StAX implementations можуть не підтримувати всі властивості.
-        }
+        xmlFactory = SecureXmlInputFactory.create(false, true);
     }
 
 
@@ -146,6 +135,7 @@ public class Fb2StreamingParser implements BookParser {
         boolean inAnnotation = false;
         boolean inBody = false;
         boolean readableBody = false;
+        Fb2SemanticContext semanticContext = new Fb2SemanticContext();
         boolean inSectionTitle = false;
         StringBuilder sectionTitleText = new StringBuilder();
 
@@ -296,13 +286,15 @@ public class Fb2StreamingParser implements BookParser {
                 if ("body".equals(name)) {
                     inBody = true;
                     String bodyName = reader.getAttributeValue(null, "name");
-                    readableBody = bodyName == null || bodyName.isBlank() || options.loadFootnotes();
+                    readableBody = semanticContext.beginBody(bodyName, options);
                     continue;
                 }
 
                 if (!inBody || !readableBody) {
                     continue;
                 }
+
+                if (semanticContext.enter(name)) continue;
 
                 if ("section".equals(name)) {
                     int level = sections.size() + 1;
@@ -324,7 +316,7 @@ public class Fb2StreamingParser implements BookParser {
 
                 if (isParagraphTag(name) && !inParagraph) {
                     paragraphTag = name;
-                    paragraphStyle = styleForParagraph(name, inSectionTitle, sections.size());
+                    paragraphStyle = semanticContext.paragraphStyle(name, inSectionTitle, sections.size());
                     textStorage.startParagraph(paragraphStyle);
                     inParagraph = true;
                     lastWasSpace = false;
@@ -504,9 +496,12 @@ public class Fb2StreamingParser implements BookParser {
                     }
                 }
 
+                if (inBody && readableBody) semanticContext.exit(name);
+
                 if ("body".equals(name) && inBody) {
                     inBody = false;
                     readableBody = false;
+                    semanticContext.endBody();
                     sections.clear();
                     inSectionTitle = false;
                 }

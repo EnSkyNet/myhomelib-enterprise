@@ -26,7 +26,7 @@ class BookQueryBuilderStage8Test {
         String pageSql = normalize(page.sql());
         String countSql = normalize(count.sql());
 
-        assertThat(pageSql).contains("LOWER(TRIM(COALESCE(b.language, ''))) = LOWER(?)");
+        assertThat(pageSql).contains("LOWER(TRIM(COALESCE(b.language, ''))) = LOWER(TRIM(?))");
         assertThat(pageSql).contains("b.year BETWEEN ? AND ?");
         assertThat(pageSql).contains("UPPER(COALESCE(b.format, '')) = ?");
         assertThat(pageSql).contains("COALESCE(b.local, 0) = ?");

@@ -99,7 +99,7 @@ public class SevenZImporter implements BookImporterPort {
                     if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) { log.warn("Пропущено великий 7z entry: {}", name); continue; }
 
                     BookImporterPort importer;
-                    try { importer = importerRegistry.findImporter(Path.of(name)); }
+                    try { importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(name)); }
                     catch (Exception unsupported) { continue; }
 
                     Path temp = Files.createTempFile("mhl-7z-entry-", ArchiveImportSupport.suffixFor(name));

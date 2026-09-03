@@ -1,6 +1,8 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
 import com.myhomelibcorp.application.filter.BookFilterSpec;
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
@@ -12,6 +14,17 @@ import java.util.List;
 
 @Component
 public class BookQueryBuilder {
+
+    /**
+     * Projection used by pageable/library tables. Large descriptive fields are deliberately
+     * excluded; Book Details loads the complete record by id when the user selects a book.
+     */
+    public static final String BOOK_LIST_PROJECTION = """
+            b.id, b.title, b.series, b.sequence_number,
+            b.file_name, b.folder, b.archive_entry, b.file_size, b.collection_root,
+            b.language, b.year, b.rate, b.progress,
+            b.update_date, b.created_at, b.deleted, b.local, b.missing_since
+            """;
 
     public SqlQuery build(BookQuery query) {
         var context = new QueryContext();
@@ -26,6 +39,40 @@ public class BookQueryBuilder {
         addJoins(context, query);
         addConditions(context, query);
         String sql = buildCountSql(context);
+        return SqlQuery.of(sql, context.params.toArray());
+    }
+
+    /**
+     * Builds a bounded bidirectional keyset page for TITLE sort. The caller reverses
+     * BEFORE results back to display order after the SQL intentionally scans in the
+     * opposite direction.
+     */
+    public SqlQuery buildTitleCursor(BookQuery query, BookPageCursor cursor, BookPageDirection pageDirection) {
+        if (query == null) throw new IllegalArgumentException("query cannot be null");
+        if (cursor == null) throw new IllegalArgumentException("cursor cannot be null");
+        if (pageDirection == null) throw new IllegalArgumentException("pageDirection cannot be null");
+        if (query.onlyInHistory() || query.sortBy() != SortBy.TITLE) {
+            throw new IllegalArgumentException("title cursor paging requires TITLE sort outside reading history");
+        }
+
+        var context = new QueryContext();
+        addJoins(context, query);
+        addConditions(context, query);
+
+        boolean ascending = query.direction() != SortDirection.DESC;
+        boolean after = pageDirection == BookPageDirection.AFTER;
+        String operator = (ascending == after) ? ">" : "<";
+        context.conditions.add("(b.title, b.id) " + operator + " (?, ?)");
+        context.params.add(cursor.title());
+        context.params.add(cursor.id());
+
+        String scanDirection;
+        if (pageDirection == BookPageDirection.BEFORE) {
+            scanDirection = ascending ? "DESC" : "ASC";
+        } else {
+            scanDirection = ascending ? "ASC" : "DESC";
+        }
+        String sql = buildSelectSqlWithoutOffset(context, query, "ORDER BY b.title " + scanDirection + ", b.id " + scanDirection);
         return SqlQuery.of(sql, context.params.toArray());
     }
 
@@ -71,22 +118,17 @@ public class BookQueryBuilder {
             ctx.params.add(query.genreId().asString());
         }
 
-        // EXACT KEYWORD TOKEN (comma/semicolon/pipe separated metadata)
+        // EXACT KEYWORD TOKEN via normalized projection; avoids recursive string splitting per row.
         if (query.keyword() != null) {
             ctx.conditions.add("""
                     EXISTS (
-                        WITH RECURSIVE split(rest, token) AS (
-                            VALUES(REPLACE(REPLACE(COALESCE(b.keywords, ''), ';', ','), '|', ',') || ',', '')
-                            UNION ALL
-                            SELECT SUBSTR(rest, INSTR(rest, ',') + 1),
-                                   TRIM(SUBSTR(rest, 1, INSTR(rest, ',') - 1))
-                            FROM split
-                            WHERE rest <> ''
-                        )
-                        SELECT 1 FROM split WHERE LOWER(token) = LOWER(?) LIMIT 1
+                        SELECT 1
+                        FROM keyword_books kb
+                        WHERE kb.book_id = b.id
+                          AND kb.normalized_name = ?
                     )
                     """);
-            ctx.params.add(query.keyword());
+            ctx.params.add(KeywordIndexSupport.normalizeKeyword(query.keyword()));
         }
 
         // PUBLISHER (exact logical navigation/filter; do not emulate it through title/annotation search)
@@ -97,7 +139,9 @@ public class BookQueryBuilder {
 
         // LANGUAGE
         if (query.language() != null) {
-            ctx.conditions.add("LOWER(TRIM(b.language)) = LOWER(?)");
+            String language = BookFilterSqlAdapter.normalizedLanguageExpression("b");
+            ctx.conditions.add(language + " <> ''");
+            ctx.conditions.add(language + " = LOWER(TRIM(?))");
             ctx.params.add(query.language().toString());
         }
 
@@ -174,7 +218,7 @@ public class BookQueryBuilder {
     }
 
     private String buildSelectSql(QueryContext ctx, BookQuery query) {
-        StringBuilder sql = new StringBuilder("SELECT b.* FROM books b");
+        StringBuilder sql = new StringBuilder("SELECT ").append(BOOK_LIST_PROJECTION).append(" FROM books b");
         for (String join : ctx.joins) {
             sql.append(" ").append(join);
         }
@@ -186,6 +230,20 @@ public class BookQueryBuilder {
         sql.append(" LIMIT ? OFFSET ?");
         ctx.params.add(query.pagination().limit());
         ctx.params.add(query.pagination().offset());
+        return sql.toString();
+    }
+
+    private String buildSelectSqlWithoutOffset(QueryContext ctx, BookQuery query, String orderBy) {
+        StringBuilder sql = new StringBuilder("SELECT ").append(BOOK_LIST_PROJECTION).append(" FROM books b");
+        for (String join : ctx.joins) {
+            sql.append(" ").append(join);
+        }
+        if (!ctx.conditions.isEmpty()) {
+            sql.append(" WHERE ").append(String.join(" AND ", ctx.conditions));
+        }
+        sql.append(" ").append(orderBy);
+        sql.append(" LIMIT ?");
+        ctx.params.add(query.pagination().limit());
         return sql.toString();
     }
 

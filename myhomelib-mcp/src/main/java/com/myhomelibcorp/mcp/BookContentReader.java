@@ -1,6 +1,7 @@
 package com.myhomelibcorp.mcp;
 
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 
 import com.github.junrar.Archive;
 import com.github.junrar.rarfile.FileHeader;
@@ -338,16 +339,17 @@ final class BookContentReader {
         XMLInputFactory f=secureXmlFactory();
         try(InputStream in=openZipEntry(zip,container)) {
             XMLStreamReader r=f.createXMLStreamReader(in);
+            String packagePath=null;
             try {
                 while(r.hasNext()) {
                     if(r.next()==XMLStreamConstants.START_ELEMENT&&"rootfile".equals(r.getLocalName())) {
                         String path=attr(r,"full-path");
-                        if(path!=null&&!path.isBlank()) return norm(path);
+                        if(packagePath==null&&path!=null&&!path.isBlank()) packagePath=norm(path);
                     }
                 }
             } finally { r.close(); }
+            return packagePath;
         }
-        return null;
     }
 
     private List<TocItem> parseEpubNav(InputStream in)throws Exception {
@@ -445,11 +447,7 @@ final class BookContentReader {
     }
 
     private XMLInputFactory secureXmlFactory() {
-        XMLInputFactory f=XMLInputFactory.newFactory();
-        try{f.setProperty(XMLInputFactory.SUPPORT_DTD,false);}catch(Exception ignored){}
-        try{f.setProperty("javax.xml.stream.isSupportingExternalEntities",false);}catch(Exception ignored){}
-        try{f.setProperty(XMLInputFactory.IS_COALESCING,true);}catch(Exception ignored){}
-        return f;
+        return SecureXmlInputFactory.create(true, false);
     }
 
     private String attr(XMLStreamReader r,String local) {

@@ -1,5 +1,8 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
+import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
 import com.myhomelibcorp.shared.util.Utf8Validator;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -21,6 +24,7 @@ import java.util.zip.ZipFile;
 @Slf4j
 public class InpxReader {
     private static final char FIELD_DELIMITER = 0x04;
+    private static final long MAX_METADATA_BYTES = 16L * 1024L * 1024L;
     private static final List<String> DEFAULT_STRUCTURE = List.of(
             "AUTHOR", "GENRE", "TITLE", "SERIES", "SERNO", "FILE", "SIZE",
             "LIBID", "DEL", "EXT", "DATE", "LANG", "KEYWORDS"
@@ -81,6 +85,7 @@ public class InpxReader {
         }
 
         try (ZipFile zip = openZip(file)) {
+            validateArchive(zip);
             List<? extends ZipEntry> inpEntries = zip.stream()
                     .filter(e -> isCatalogInpMember(e, onlineCollection))
                     .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
@@ -89,7 +94,7 @@ public class InpxReader {
                 throw new IOException("No .inp entries in " + file);
             }
             for (ZipEntry entry : inpEntries) {
-                try (InputStream input = zip.getInputStream(entry)) {
+                try (InputStream input = boundedEntryStream(zip, entry, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
                     long entryCount = countLines(input, cancelFlag);
                     if (entryCount < 0) return -1L;
                     count += entryCount;
@@ -146,6 +151,7 @@ public class InpxReader {
 
         private ZipInpxIterator(Path path, boolean onlineCollection) throws IOException {
             this.zip = openZip(path);
+            validateArchive(this.zip);
             this.structure = readStructure(zip);
             this.archivesByStem = readArchives(zip);
             this.inpEntries = zip.stream()
@@ -181,7 +187,7 @@ public class InpxReader {
                             return;
                         }
                         currentEntry = inpEntries.get(entryIndex++);
-                        currentReader = newDetectedReader(zip.getInputStream(currentEntry));
+                        currentReader = newDetectedReader(boundedEntryStream(zip, currentEntry, ArchiveSafetyLimits.MAX_ENTRY_BYTES));
                         log.debug("Читання INP: {}", currentEntry.getName());
                     }
                     String line = currentReader.readLine();
@@ -285,10 +291,10 @@ public class InpxReader {
         return new InpxRecord(fields, inpName, archiveName);
     }
 
-    private static List<String> readStructure(ZipFile zip) {
+    private static List<String> readStructure(ZipFile zip) throws IOException {
         ZipEntry entry = findIgnoreCase(zip, "structure.info");
         if (entry == null) return DEFAULT_STRUCTURE;
-        try (BufferedReader reader = newDetectedReader(zip.getInputStream(entry))) {
+        try (BufferedReader reader = newDetectedReader(boundedEntryStream(zip, entry, MAX_METADATA_BYTES))) {
             String text = readSmallText(reader, 64 * 1024).replace("\uFEFF", "").trim();
             if (text.isBlank()) return DEFAULT_STRUCTURE;
             String firstLine = text.lines().filter(s -> !s.isBlank()).findFirst().orElse(text);
@@ -299,24 +305,19 @@ public class InpxReader {
                     .map(String::trim).map(s -> s.toUpperCase(Locale.ROOT))
                     .filter(s -> !s.isBlank()).toList();
             return result.isEmpty() ? DEFAULT_STRUCTURE : result;
-        } catch (Exception e) {
-            log.warn("Cannot read structure.info, using default INPX structure", e);
-            return DEFAULT_STRUCTURE;
         }
     }
 
-    private static Map<String, String> readArchives(ZipFile zip) {
+    private static Map<String, String> readArchives(ZipFile zip) throws IOException {
         Map<String, String> result = new HashMap<>();
         ZipEntry entry = findIgnoreCase(zip, "archives.info");
         if (entry == null) return result;
-        try (BufferedReader br = newDetectedReader(zip.getInputStream(entry))) {
+        try (BufferedReader br = newDetectedReader(boundedEntryStream(zip, entry, MAX_METADATA_BYTES))) {
             for (String line; (line = br.readLine()) != null;) {
                 ArchiveMapping mapping = parseArchiveMapping(line);
                 if (mapping == null) continue;
                 result.putIfAbsent(mapping.inpStem(), mapping.archiveName());
             }
-        } catch (Exception e) {
-            log.warn("Cannot parse archives.info", e);
         }
         return result;
     }
@@ -344,7 +345,7 @@ public class InpxReader {
         if (first == null || first.equals(archive)) {
             key = stem(archive);
         } else {
-            String firstFile = Path.of(first).getFileName().toString();
+            String firstFile = archiveFileName(first);
             key = stripExtension(firstFile).toLowerCase(Locale.ROOT);
         }
         return new ArchiveMapping(key, archive);
@@ -361,12 +362,12 @@ public class InpxReader {
     private record ArchiveMapping(String inpStem, String archiveName) { }
 
     private static String resolveArchiveName(String inpName, Map<String, String> archivesByStem) {
-        String base = stripExtension(Path.of(inpName).getFileName().toString());
+        String base = stripExtension(archiveFileName(inpName));
         return archivesByStem.getOrDefault(base.toLowerCase(Locale.ROOT), base + ".zip");
     }
 
     private static String stem(String name) {
-        String file = Path.of(name).getFileName().toString();
+        String file = archiveFileName(name);
         String lower = file.toLowerCase(Locale.ROOT);
         for (String ext : ARCHIVE_EXTENSIONS) {
             if (lower.endsWith(ext) && file.length() > ext.length()) {
@@ -381,8 +382,15 @@ public class InpxReader {
         return dot > 0 ? name.substring(0, dot) : name;
     }
 
+    private static String archiveFileName(String value) {
+        if (value == null || value.isBlank()) return "";
+        String normalized = value.replace('\\', '/');
+        int slash = normalized.lastIndexOf('/');
+        return slash >= 0 ? normalized.substring(slash + 1) : normalized;
+    }
+
     private static ZipEntry findIgnoreCase(ZipFile zip, String wanted) {
-        return zip.stream().filter(e -> Path.of(e.getName()).getFileName().toString().equalsIgnoreCase(wanted)).findFirst().orElse(null);
+        return zip.stream().filter(e -> archiveFileName(e.getName()).equalsIgnoreCase(wanted)).findFirst().orElse(null);
     }
 
     /**
@@ -543,12 +551,37 @@ public class InpxReader {
 
     private record DetectedEncoding(Charset charset, int bomBytes) { }
 
-    private static ZipFile openZip(Path path) throws IOException {
-        IOException last = null;
-        for (Charset cs : List.of(StandardCharsets.UTF_8, Charset.forName("CP866"), Charset.forName("windows-1251"))) {
-            try { return new ZipFile(path.toFile(), cs); }
-            catch (IOException e) { last = e; }
+
+    private static void validateArchive(ZipFile zip) throws IOException {
+        int count = 0;
+        Enumeration<? extends ZipEntry> entries = zip.entries();
+        while (entries.hasMoreElements()) {
+            ZipEntry entry = entries.nextElement();
+            if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                throw new IOException("INPX contains too many entries: " + count);
+            }
+            if (entry.isDirectory()) continue;
+            if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
+                throw new IOException("INPX entry is too large: " + entry.getName() + " (" + entry.getSize() + " bytes)");
+            }
+            long compressed = entry.getCompressedSize();
+            long size = entry.getSize();
+            if (compressed > 0 && size > 0
+                    && size / Math.max(1L, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+                throw new IOException("INPX entry has suspicious compression ratio: " + entry.getName());
+            }
         }
-        throw Objects.requireNonNull(last);
+    }
+
+    private static InputStream boundedEntryStream(ZipFile zip, ZipEntry entry, long maxBytes) throws IOException {
+        if (entry == null) throw new IOException("Missing INPX entry");
+        if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize()) || entry.getSize() > maxBytes) {
+            throw new IOException("INPX entry is too large: " + entry.getName());
+        }
+        return new LimitedInputStream(zip.getInputStream(entry), maxBytes);
+    }
+
+    private static ZipFile openZip(Path path) throws IOException {
+        return ZipCharsetSupport.open(path);
     }
 }

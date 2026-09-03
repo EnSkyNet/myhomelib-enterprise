@@ -91,18 +91,26 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             g.writeEndObject();
         } catch (UncheckedIOException e) {
             Files.deleteIfExists(tmp);
-            throw e.getCause();
+            throw portableExportFailure(e.getCause());
         } catch (IOException e) {
             Files.deleteIfExists(tmp);
-            throw e;
+            throw portableExportFailure(e);
         } catch (Exception e) {
             Files.deleteIfExists(tmp);
-            throw new IOException("Cannot export portable user data", e);
+            throw portableExportFailure(e);
         }
 
         AtomicFileSupport.moveReplacing(tmp, targetFile);
         return new ExportResult(CURRENT_SCHEMA_VERSION, bookRecords.get(), groupMemberships.get(), bookmarks.get(),
                 history.get(), savedSearches.get(), readerOverrides.get());
+    }
+
+
+    private static IOException portableExportFailure(Exception cause) {
+        String detail = cause == null || cause.getMessage() == null || cause.getMessage().isBlank()
+                ? "unknown I/O failure"
+                : cause.getMessage();
+        return new IOException("Cannot export portable user data: " + detail, cause);
     }
 
     @Override
@@ -746,17 +754,16 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         AtomicFileSupport.moveReplacing(tmp, file);
     }
 
-    private JsonNode readJsonUnlocked(Path file) {
+    private JsonNode readJsonUnlocked(Path file) throws IOException {
+        if (!Files.isRegularFile(file)) return null;
+        long size = Files.size(file);
+        if (size > MAX_READER_PREFERENCES_JSON_BYTES) {
+            throw new IOException("Reader preferences exceed safety limit (" + size + " bytes): " + file);
+        }
         try {
-            if (!Files.isRegularFile(file)) return null;
-            if (Files.size(file) > MAX_READER_PREFERENCES_JSON_BYTES) {
-                log.warn("Cannot read {}: Reader preferences exceed {} bytes", file, MAX_READER_PREFERENCES_JSON_BYTES);
-                return null;
-            }
             return mapper.readTree(file.toFile());
-        } catch (Exception e) {
-            log.warn("Cannot read {}: {}", file, e.getMessage());
-            return null;
+        } catch (IOException e) {
+            throw new IOException("Cannot read Reader preferences: " + file, e);
         }
     }
 

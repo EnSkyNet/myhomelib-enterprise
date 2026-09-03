@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
 @Component
 public class BookRowMapper implements RowMapper<Book> {
@@ -22,16 +23,16 @@ public class BookRowMapper implements RowMapper<Book> {
         BookId id = BookId.fromString(rs.getString("id"));
 
         // Безпечне читання всіх полів з перевіркою на null
-        String title = safeGetString(rs, "title");
-        String series = safeGetString(rs, "series");
-        int sequenceNumber = safeGetInt(rs, "sequence_number");
+        String title = rs.getString("title");
+        String series = rs.getString("series");
+        int sequenceNumber = rs.getInt("sequence_number");
 
         // File fields
-        String fileName = safeGetString(rs, "file_name");
-        String folder = safeGetString(rs, "folder");
-        String archiveEntry = safeGetString(rs, "archive_entry");
-        long fileSize = safeGetLong(rs, "file_size");
-        String collectionRoot = safeGetString(rs, "collection_root");
+        String fileName = rs.getString("file_name");
+        String folder = rs.getString("folder");
+        String archiveEntry = rs.getString("archive_entry");
+        long fileSize = rs.getLong("file_size");
+        String collectionRoot = rs.getString("collection_root");
         if (collectionRoot == null) collectionRoot = "";
 
         BookFile file = new BookFile(
@@ -43,20 +44,21 @@ public class BookRowMapper implements RowMapper<Book> {
         );
 
         // Metadata
-        String annotation = safeGetString(rs, "annotation");
-        String keywords = safeGetString(rs, "keywords");
-        String language = safeGetString(rs, "language");
-        String isbn = safeGetString(rs, "isbn");
-        String review = safeGetString(rs, "review");
-        Integer year = safeGetNullableInt(rs, "year");
-        String publisher = safeGetString(rs, "publisher");
-        String libId = safeGetString(rs, "lib_id");
-        int libraryRate = safeGetInt(rs, "library_rate");
-        String translators = safeGetString(rs, "translators");
-        String city = safeGetString(rs, "city");
-        String sourceUrl = safeGetString(rs, "source_url");
-        int rate = safeGetInt(rs, "rate");
-        int progress = safeGetInt(rs, "progress");
+        String annotation = rs.getString("annotation");
+        String keywords = rs.getString("keywords");
+        String language = rs.getString("language");
+        String isbn = rs.getString("isbn");
+        String review = rs.getString("review");
+        Integer year = rs.getInt("year");
+        if (rs.wasNull()) year = null;
+        String publisher = rs.getString("publisher");
+        String libId = rs.getString("lib_id");
+        int libraryRate = rs.getInt("library_rate");
+        String translators = rs.getString("translators");
+        String city = rs.getString("city");
+        String sourceUrl = rs.getString("source_url");
+        int rate = rs.getInt("rate");
+        int progress = rs.getInt("progress");
 
         BookMetadata metadata = BookMetadata.builder()
                 .annotation(annotation != null ? annotation : "")
@@ -75,12 +77,12 @@ public class BookRowMapper implements RowMapper<Book> {
                 .progress(progress)
                 .build();
 
-        LocalDateTime updateDate = parseDate(safeGetString(rs, "update_date"));
-        LocalDateTime createdAt = parseDate(safeGetString(rs, "created_at"));
+        LocalDateTime updateDate = parseDate(rs.getString("update_date"));
+        LocalDateTime createdAt = parseDate(rs.getString("created_at"));
 
-        boolean deleted = safeGetInt(rs, "deleted") == 1;
-        boolean local = safeGetInt(rs, "local") == 1;
-        LocalDateTime missingSince = parseDate(safeGetString(rs, "missing_since"));
+        boolean deleted = rs.getInt("deleted") == 1;
+        boolean local = rs.getInt("local") == 1;
+        LocalDateTime missingSince = parseDate(rs.getString("missing_since"));
 
         return Book.builder()
                 .id(id)
@@ -101,48 +103,15 @@ public class BookRowMapper implements RowMapper<Book> {
         return Isbn.tryParse(value).orElse(null);
     }
 
-    // ===== Безпечні геттери =====
-    private String safeGetString(ResultSet rs, String column) {
-        try {
-            return rs.getString(column);
-        } catch (SQLException e) {
-            return null;
-        }
-    }
-
-    private int safeGetInt(ResultSet rs, String column) {
-        try {
-            return rs.getInt(column);
-        } catch (SQLException e) {
-            return 0;
-        }
-    }
-
-    private Integer safeGetNullableInt(ResultSet rs, String column) {
-        try {
-            int value = rs.getInt(column);
-            return rs.wasNull() ? null : value;
-        } catch (SQLException e) {
-            return null;
-        }
-    }
-
-    private long safeGetLong(ResultSet rs, String column) {
-        try {
-            return rs.getLong(column);
-        } catch (SQLException e) {
-            return 0L;
-        }
-    }
 
     private LocalDateTime parseDate(String dateStr) {
         if (dateStr == null || dateStr.isEmpty()) return null;
         try {
             return LocalDateTime.parse(dateStr, DATE_FORMATTER);
-        } catch (Exception e) {
+        } catch (DateTimeParseException e) {
             try {
                 return LocalDateTime.parse(dateStr);
-            } catch (Exception ex) {
+            } catch (DateTimeParseException ex) {
                 return null;
             }
         }

@@ -21,8 +21,10 @@
         <Button fx:id="checkButton" text="🔍 Перевірити" onAction="#onCheckIntegrity"
                 style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 20;"/>
 
-        <Button fx:id="fixButton" text="🔧 Виправити проблеми" onAction="#onFixIssues"
+        <Button fx:id="fixButton" text="🔧 Безпечний repair" onAction="#onFixIssues"
                 style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 20;"/>
+
+        <Button text="💾 Експорт звіту" onAction="#onExportReport"/>
 
         <ProgressIndicator fx:id="progressIndicator" visible="false" prefWidth="30" prefHeight="30"/>
 
@@ -48,7 +50,7 @@
     <!-- Підказка -->
     <HBox spacing="5" alignment="CENTER_LEFT">
         <Label text="💡" style="-fx-font-size: 14px;"/>
-        <Label text="Перевірка аналізує цілісність бази даних і знаходить проблеми, які можна виправити автоматично."
+        <Label text="Перевірка аналізує Books, Authors, Genres, Series, Relations, SQLite та Lucene. Repair дозволений лише через безпечний Maintenance workflow."
                style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 12px;"/>
     </HBox>
 

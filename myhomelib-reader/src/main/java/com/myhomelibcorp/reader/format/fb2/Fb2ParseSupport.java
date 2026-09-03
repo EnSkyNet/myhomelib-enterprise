@@ -31,29 +31,35 @@ final class Fb2ParseSupport {
         };
     }
 
-    static TextStyle styleForParagraph(String tag, boolean inTitle, int sectionDepth) {
+    static TextStyle styleForParagraph(
+            String tag, boolean inTitle, int sectionDepth,
+            boolean inPoem, boolean inEpigraph, boolean inCite, boolean inAnnotation,
+            boolean inFootnoteBody) {
         if (inTitle) {
-            return switch (Math.max(1, Math.min(6, sectionDepth))) {
-                case 1 -> TextStyle.HEADING_1;
-                case 2 -> TextStyle.HEADING_2;
-                case 3 -> TextStyle.HEADING_3;
-                case 4 -> TextStyle.HEADING_4;
-                case 5 -> TextStyle.HEADING_5;
-                default -> TextStyle.HEADING_6;
-            };
+            return sectionDepth <= 1 ? TextStyle.CHAPTER_TITLE : TextStyle.SECTION_TITLE;
         }
         return switch (tag) {
-            case "subtitle" -> TextStyle.HEADING_2;
+            case "subtitle" -> TextStyle.SUBTITLE;
             case "v" -> TextStyle.VERSE;
-            case "text-author" -> TextStyle.TEXT_AUTHOR;
+            case "text-author" -> inPoem ? TextStyle.POEM_AUTHOR : TextStyle.TEXT_AUTHOR;
+            case "p" -> {
+                if (inFootnoteBody) yield TextStyle.FOOTNOTE;
+                if (inAnnotation) yield TextStyle.ANNOTATION;
+                if (inEpigraph) yield TextStyle.EPIGRAPH;
+                if (inCite) yield TextStyle.CITE;
+                if (inPoem) yield TextStyle.POEM;
+                yield TextStyle.NORMAL;
+            }
             default -> TextStyle.NORMAL;
         };
     }
 
     static TextStyle inlineStyleFor(String tag) {
         return switch (tag) {
-            case "strong", "b" -> TextStyle.BOLD;
-            case "emphasis", "i" -> TextStyle.ITALIC;
+            case "strong" -> TextStyle.STRONG;
+            case "b" -> TextStyle.BOLD;
+            case "emphasis" -> TextStyle.EMPHASIS;
+            case "i" -> TextStyle.ITALIC;
             case "a" -> TextStyle.LINK;
             case "code" -> TextStyle.CODE;
             case "sup" -> TextStyle.SUPERSCRIPT;

@@ -27,4 +27,31 @@ class Fb2ParseSupportTest {
                 .isEqualTo(TextStyle.BOLD_ITALIC);
         assertThat(Fb2ParseSupport.cleanTitle("  Розділ\n   один ")).isEqualTo("Розділ один");
     }
+    @Test
+    void mapsFb2SemanticParagraphsWithoutCollapsingThemToGenericHeadings() {
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", true, 1, false, false, false, false, false))
+                .isEqualTo(TextStyle.CHAPTER_TITLE);
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", true, 2, false, false, false, false, false))
+                .isEqualTo(TextStyle.SECTION_TITLE);
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", false, 1, true, false, false, false, false))
+                .isEqualTo(TextStyle.POEM);
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", false, 1, false, true, false, false, false))
+                .isEqualTo(TextStyle.EPIGRAPH);
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", false, 1, false, false, true, false, false))
+                .isEqualTo(TextStyle.CITE);
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", false, 1, false, false, false, true, false))
+                .isEqualTo(TextStyle.ANNOTATION);
+        assertThat(Fb2ParseSupport.styleForParagraph(
+                "p", false, 1, false, false, false, false, true))
+                .isEqualTo(TextStyle.FOOTNOTE);
+        assertThat(Fb2ParseSupport.inlineStyleFor("strong")).isEqualTo(TextStyle.STRONG);
+        assertThat(Fb2ParseSupport.inlineStyleFor("emphasis")).isEqualTo(TextStyle.EMPHASIS);
+    }
+
 }

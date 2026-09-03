@@ -1,6 +1,8 @@
 package com.myhomelibcorp.infrastructure.cache;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -28,6 +30,17 @@ public class CachedBookQueryRepository implements BookQueryRepository {
     @Override
     public PageResult<Book> findPage(BookQuery query) {
         return delegate.findPage(query);
+    }
+
+    @Override
+    public PageResult<Book> findPage(BookQuery query, long knownTotal) {
+        return delegate.findPage(query, knownTotal);
+    }
+
+    @Override
+    public PageResult<Book> findTitlePageByCursor(BookQuery query, BookPageCursor cursor,
+                                                  BookPageDirection pageDirection, long knownTotal) {
+        return delegate.findTitlePageByCursor(query, cursor, pageDirection, knownTotal);
     }
 
     @Override
@@ -81,6 +94,12 @@ public class CachedBookQueryRepository implements BookQueryRepository {
             result.addAll(loaded);
         }
         return result;
+    }
+
+    @Override
+    public List<Book> findListItemsByIds(List<BookId> ids) {
+        // Deliberately bypass the full-book cache: list projections omit large/details fields.
+        return delegate.findListItemsByIds(ids);
     }
 
     @Override

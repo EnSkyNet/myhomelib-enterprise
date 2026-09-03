@@ -108,11 +108,12 @@ public class ApplicationServiceConfig {
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository,
             StatisticsRepository statisticsRepository,
+            com.myhomelibcorp.application.port.out.backup.CollectionBackupPort collectionBackupPort,
             LibraryOperationCoordinator operationCoordinator,
             @Value("${app.import.change-tracking-limit:50000}") int changeTrackingLimit) {
         return new UpdateCollectionFromNetworkUseCase(
                 downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
-                changeTrackingLimit, operationCoordinator);
+                collectionBackupPort, changeTrackingLimit, operationCoordinator);
     }
 
     @Bean

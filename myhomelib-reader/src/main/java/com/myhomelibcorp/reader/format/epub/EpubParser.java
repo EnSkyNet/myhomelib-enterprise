@@ -6,6 +6,7 @@ import com.myhomelibcorp.reader.core.document.DefaultTableOfContents;
 import com.myhomelibcorp.reader.core.resource.HybridResourceRepository;
 import com.myhomelibcorp.reader.core.text.TextStorageImpl;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 
 import javax.xml.stream.*;
 import java.io.*;
@@ -21,6 +22,7 @@ import java.util.zip.ZipFile;
  * or EPUB2 NCX, and embedded images are loaded through bounded streaming.
  */
 public final class EpubParser implements BookParser {
+    private static final int MAX_METADATA_TEXT_CHARS = 64 * 1024;
     private final XMLInputFactory xmlFactory = secureXmlFactory();
 
     @Override
@@ -115,36 +117,53 @@ public final class EpubParser implements BookParser {
 
         try (InputStream in = bounded(zip.getInputStream(opf), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
             XMLStreamReader r = xmlFactory.createXMLStreamReader(in);
+            boolean inMetadata = false;
             try {
                 int events = 0;
                 while (r.hasNext()) {
                     if (((++events) & 0xFF) == 0) checkCancelled();
                     int event = r.next();
+                    if (event == XMLStreamConstants.END_ELEMENT && "metadata".equalsIgnoreCase(r.getLocalName())) {
+                        inMetadata = false;
+                        continue;
+                    }
                     if (event != XMLStreamConstants.START_ELEMENT) continue;
                     String local = lower(r.getLocalName());
+                    if ("metadata".equals(local)) {
+                        inMetadata = true;
+                        continue;
+                    }
+
+                    if (!inMetadata) {
+                        switch (local) {
+                            case "item" -> {
+                                String id = attr(r, "id"), href = attr(r, "href");
+                                if (id != null && href != null)
+                                    manifest.put(id, new ManifestItem(id, href, attr(r, "media-type"), attr(r, "properties")));
+                            }
+                            case "spine" -> tocId = attr(r, "toc");
+                            case "itemref" -> {
+                                String idref = attr(r, "idref");
+                                if (idref != null && !"no".equalsIgnoreCase(attr(r, "linear"))) spineIds.add(idref);
+                            }
+                            default -> { }
+                        }
+                        continue;
+                    }
+
                     switch (local) {
-                        case "item" -> {
-                            String id = attr(r, "id"), href = attr(r, "href");
-                            if (id != null && href != null)
-                                manifest.put(id, new ManifestItem(id, href, attr(r, "media-type"), attr(r, "properties")));
-                        }
-                        case "spine" -> tocId = attr(r, "toc");
-                        case "itemref" -> {
-                            String idref = attr(r, "idref");
-                            if (idref != null && !"no".equalsIgnoreCase(attr(r, "linear"))) spineIds.add(idref);
-                        }
-                        case "title" -> title = firstNonBlank(safeText(r), title);
-                        case "creator" -> { String v = safeText(r); if (!v.isBlank()) authors.add(v); }
-                        case "language" -> language = firstNonBlank(safeText(r), language);
-                        case "publisher" -> publisher = firstNonBlank(safeText(r), publisher);
-                        case "subject" -> { String v = safeText(r); if (!v.isBlank()) genres.add(v); }
+                        case "title" -> title = firstNonBlank(readMetadataText(r), title);
+                        case "creator" -> { String v = readMetadataText(r); if (!v.isBlank()) authors.add(v); }
+                        case "language" -> language = firstNonBlank(readMetadataText(r), language);
+                        case "publisher" -> publisher = firstNonBlank(readMetadataText(r), publisher);
+                        case "subject" -> { String v = readMetadataText(r); if (!v.isBlank()) genres.add(v); }
                         case "date" -> {
-                            String v = safeText(r);
+                            String v = readMetadataText(r);
                             if (v.length() >= 4 && v.substring(0, 4).chars().allMatch(Character::isDigit)) year = v.substring(0, 4);
                         }
                         case "identifier" -> {
                             String scheme = firstNonBlank(attrByLocal(r, "scheme"), "");
-                            String v = safeText(r);
+                            String v = readMetadataText(r);
                             if (isbn == null && (scheme.toLowerCase(Locale.ROOT).contains("isbn") || v.replaceAll("[^0-9Xx]", "").length() >= 10)) isbn = v;
                         }
                         case "meta" -> {
@@ -154,9 +173,9 @@ public final class EpubParser implements BookParser {
                             if ("calibre:series".equals(name)) series = firstNonBlank(content, series);
                             if ("calibre:series_index".equals(name)) sequence = parseSequence(content, sequence);
                             if (property.endsWith("belongs-to-collection")) {
-                                String v = safeText(r); if (!v.isBlank()) series = v;
+                                String v = readMetadataText(r); if (!v.isBlank()) series = v;
                             } else if (property.endsWith("group-position")) {
-                                String v = safeText(r); sequence = parseSequence(v, sequence);
+                                String v = readMetadataText(r); sequence = parseSequence(v, sequence);
                             }
                         }
                         default -> { }
@@ -197,16 +216,17 @@ public final class EpubParser implements BookParser {
         checkEntry(container, "EPUB container.xml");
         try (InputStream in = bounded(zip.getInputStream(container), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
             XMLStreamReader r = xmlFactory.createXMLStreamReader(in);
+            String packagePath = null;
             try {
                 while (r.hasNext()) {
                     if (r.next() == XMLStreamConstants.START_ELEMENT && "rootfile".equalsIgnoreCase(r.getLocalName())) {
                         String fullPath = attr(r, "full-path");
-                        if (fullPath != null && !fullPath.isBlank()) return norm(fullPath);
+                        if (packagePath == null && fullPath != null && !fullPath.isBlank()) packagePath = norm(fullPath);
                     }
                 }
             } finally { r.close(); }
+            return packagePath;
         }
-        return null;
     }
 
     private void preloadImages(ZipFile zip, PackageData pkg, HybridResourceRepository resources, ParseOptions options) throws IOException {
@@ -477,14 +497,31 @@ public final class EpubParser implements BookParser {
     }
 
     private static XMLInputFactory secureXmlFactory() {
-        XMLInputFactory f = XMLInputFactory.newFactory();
-        set(f, XMLInputFactory.SUPPORT_DTD, false);
-        set(f, "javax.xml.stream.isSupportingExternalEntities", false);
-        set(f, XMLInputFactory.IS_COALESCING, true);
-        return f;
+        return SecureXmlInputFactory.create(true, false);
     }
-    private static void set(XMLInputFactory f, String key, Object value) { try { f.setProperty(key, value); } catch (IllegalArgumentException ignored) { } }
-    private String safeText(XMLStreamReader r) throws XMLStreamException { return normalize(r.getElementText()); }
+    private String readMetadataText(XMLStreamReader r) throws XMLStreamException {
+        StringBuilder text = new StringBuilder();
+        int depth = 1;
+        while (depth > 0 && r.hasNext()) {
+            int event = r.next();
+            if (event == XMLStreamConstants.START_ELEMENT) {
+                depth++;
+            } else if (event == XMLStreamConstants.END_ELEMENT) {
+                depth--;
+            } else if ((event == XMLStreamConstants.CHARACTERS
+                    || event == XMLStreamConstants.CDATA
+                    || event == XMLStreamConstants.SPACE
+                    || event == XMLStreamConstants.ENTITY_REFERENCE)
+                    && text.length() < MAX_METADATA_TEXT_CHARS) {
+                String chunk = r.getText();
+                if (chunk != null && !chunk.isEmpty()) {
+                    int remaining = MAX_METADATA_TEXT_CHARS - text.length();
+                    text.append(chunk, 0, Math.min(chunk.length(), remaining));
+                }
+            }
+        }
+        return normalize(text.toString());
+    }
     private String attr(XMLStreamReader r, String local) { String v = r.getAttributeValue(null, local); return v == null || v.isBlank() ? null : v.trim(); }
     private String attrByLocal(XMLStreamReader r, String local) {
         for (int i = 0; i < r.getAttributeCount(); i++) if (local.equalsIgnoreCase(r.getAttributeLocalName(i))) {
@@ -532,8 +569,8 @@ public final class EpubParser implements BookParser {
     private static void appendBoundary(TextStorageImpl text) { if (text.length() > 0 && !"\n".equals(text.getText(text.length() - 1, text.length()))) text.append("\n", TextStyle.NORMAL); }
     private static TextStyle blockStyle(String tag) {
         return switch (tag) {
-            case "h1" -> TextStyle.HEADING_1; case "h2" -> TextStyle.HEADING_2; case "h3" -> TextStyle.HEADING_3;
-            case "h4" -> TextStyle.HEADING_4; case "h5" -> TextStyle.HEADING_5; case "h6" -> TextStyle.HEADING_6;
+            case "h1" -> TextStyle.CHAPTER_TITLE;
+            case "h2", "h3", "h4", "h5", "h6" -> TextStyle.SECTION_TITLE;
             case "blockquote" -> TextStyle.QUOTE; case "pre" -> TextStyle.CODE;
             case "p", "div", "li", "dt", "dd", "section", "article" -> TextStyle.NORMAL;
             default -> null;

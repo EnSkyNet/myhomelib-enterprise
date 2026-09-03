@@ -77,7 +77,7 @@ public class StreamArchiveImporter implements BookImporterPort {
                     String name=e.getName();
                     if(e.isDirectory()||!isBook(name))continue;
                     if(ArchiveSafetyLimits.declaredEntryTooLarge(e.getSize()))continue;
-                    BookImporterPort importer=registry.findImporter(Path.of(name));
+                    BookImporterPort importer=registry.findImporter(ArchiveImportSupport.importerProbePath(name));
                     Path tmp=Files.createTempFile("mhl-archive-",ArchiveImportSupport.suffixFor(name));
                     try{
                         long extracted=copyBounded(in,tmp);

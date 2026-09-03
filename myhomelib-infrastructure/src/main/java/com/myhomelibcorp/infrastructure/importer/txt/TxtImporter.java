@@ -9,7 +9,9 @@ import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
+import java.io.IOException;
 import java.nio.charset.Charset;
+import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -46,7 +48,7 @@ public class TxtImporter extends AbstractBookImporter {
                 "", 0, metadata, bookFile, LocalDateTime.now());
     }
 
-    private String firstMeaningfulLine(Path file, Charset charset) {
+    private String firstMeaningfulLine(Path file, Charset charset) throws IOException {
         try (BufferedReader r = Files.newBufferedReader(file, charset)) {
             for (int i = 0; i < 20; i++) {
                 String line = r.readLine();
@@ -54,8 +56,10 @@ public class TxtImporter extends AbstractBookImporter {
                 line = line.strip();
                 if (!line.isEmpty()) return line;
             }
-        } catch (Exception ignored) { }
-        return null;
+            return null;
+        } catch (CharacterCodingException invalidEncoding) {
+            return null;
+        }
     }
 
     private boolean looksLikeBinary(String s) {

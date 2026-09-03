@@ -1,9 +1,14 @@
 package com.myhomelibcorp.ui.reader;
 
+import com.myhomelibcorp.domain.model.reader.ReaderElementStylePreferences;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
+import com.myhomelibcorp.reader.api.ReaderElementStyle;
 import com.myhomelibcorp.reader.api.ReaderInputSettings;
+import com.myhomelibcorp.reader.api.ReaderSemanticElement;
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.api.ReaderStyleSheet;
 
+import java.util.EnumMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
@@ -15,6 +20,7 @@ final class ReaderSettingsMapper {
     static ReaderSettings fromDomain(ReaderPreferences p) {
         if (p == null) return ReaderSettings.defaultSettings();
         ReaderInputSettings input = inputFromDomain(p);
+        ReaderStyleSheet styleSheet = styleSheetFromDomain(p.getSemanticStyles());
         return new ReaderSettings(
                 p.getTheme(), p.getFontFamily(), p.getFontSize(), p.getLineSpacing(),
                 p.getParagraphSpacing(), p.getFirstLineIndent(), p.getAlignment(),
@@ -23,7 +29,8 @@ final class ReaderSettingsMapper {
                 p.isShowToolbar(), p.getCustomCss(), p.isShowStatusBar(),
                 p.isShowStatusProgress(), p.isShowStatusChapter(), p.isShowStatusPage(),
                 input.middleLeft(), input.middleCenter(), input.middleRight(),
-                p.isTwoPageMode(), p.isAutoTwoPageLandscape(), p.isShowStatusClock(), input
+                p.isTwoPageMode(), p.isAutoTwoPageLandscape(), p.isShowStatusClock(), input,
+                styleSheet
         );
     }
 
@@ -45,7 +52,42 @@ final class ReaderSettingsMapper {
                 .twoPageMode(s.twoPageMode()).autoTwoPageLandscape(s.autoTwoPageLandscape())
                 .showStatusClock(s.showStatusClock()).pinchZoom(input.pinchZoom())
                 .tapActions(tapMap(input)).longTapActions(longTapMap(input)).gestureActions(gestureMap(input))
+                .semanticStyles(stylesToDomain(s.styleSheet()))
                 .build();
+    }
+
+    private static ReaderStyleSheet styleSheetFromDomain(Map<String, ReaderElementStylePreferences> persisted) {
+        if (persisted == null || persisted.isEmpty()) return ReaderStyleSheet.defaults();
+        EnumMap<ReaderSemanticElement, ReaderElementStyle> overrides = new EnumMap<>(ReaderSemanticElement.class);
+        persisted.forEach((key, value) -> {
+            if (key == null || value == null) return;
+            try {
+                ReaderSemanticElement element = ReaderSemanticElement.valueOf(key);
+                overrides.put(element, new ReaderElementStyle(
+                        value.getFontFamily(), value.getFontSize(), value.getFontScale(), value.getFontWeight(),
+                        value.getColor(), value.getAlignment(), value.getSpacingBefore(), value.getSpacingAfter()));
+            } catch (IllegalArgumentException ignored) {
+                // Forward/backward compatibility: unknown semantic style keys are ignored.
+            }
+        });
+        return ReaderStyleSheet.withOverrides(overrides);
+    }
+
+    private static Map<String, ReaderElementStylePreferences> stylesToDomain(ReaderStyleSheet sheet) {
+        ReaderStyleSheet effective = sheet != null ? sheet : ReaderStyleSheet.defaults();
+        Map<String, ReaderElementStylePreferences> result = new LinkedHashMap<>();
+        effective.styles().forEach((element, style) -> result.put(element.name(),
+                ReaderElementStylePreferences.builder()
+                        .fontFamily(style.fontFamily())
+                        .fontSize(style.fontSize())
+                        .fontScale(style.fontScale())
+                        .fontWeight(style.fontWeight())
+                        .color(style.color())
+                        .alignment(style.alignment())
+                        .spacingBefore(style.spacingBefore())
+                        .spacingAfter(style.spacingAfter())
+                        .build()));
+        return Map.copyOf(result);
     }
 
     private static ReaderInputSettings inputFromDomain(ReaderPreferences p) {

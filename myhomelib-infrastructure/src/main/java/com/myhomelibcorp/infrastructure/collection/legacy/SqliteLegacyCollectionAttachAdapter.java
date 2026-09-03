@@ -9,6 +9,7 @@ import com.myhomelibcorp.shared.util.AppPaths;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -109,7 +110,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
         try (Statement st=src.createStatement(); ResultSet rs=st.executeQuery("SELECT * FROM Series")) {
             Set<String> c=columnNames(rs);
             while(rs.next()) map.put(longValue(rs,c,"seriesid",0), value(rs,c,"seriestitle"));
-        } catch(Exception e){ log.warn("Cannot migrate Series",e); }
+        } catch(SQLException e){ throw new IllegalStateException("Помилка перенесення серій", e); }
         return map;
     }
 
@@ -129,7 +130,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                     ON CONFLICT(id) DO UPDATE SET first_name=excluded.first_name,middle_name=excluded.middle_name,
                     last_name=excluded.last_name,search_name=excluded.search_name,annotation=excluded.annotation
                     """,batch);
-        }catch(Exception e){ throw new IllegalStateException("Помилка перенесення авторів",e); }
+        }catch(SQLException e){ throw new IllegalStateException("Помилка перенесення авторів",e); }
         return map;
     }
 
@@ -143,7 +144,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                 result.put(code,code); batch.add(new Object[]{code,blankTo(value(rs,c,"genrealias"),code),value(rs,c,"parentcode"),value(rs,c,"fb2code")});
             }
             jt.batchUpdate("INSERT OR REPLACE INTO genres(code,name,parent_code,fb2_code) VALUES (?,?,?,?)",batch);
-        }catch(Exception e){ log.warn("Cannot migrate genres",e); }
+        }catch(SQLException e){ throw new IllegalStateException("Помилка перенесення жанрів",e); }
         return result;
     }
 
@@ -156,7 +157,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                 if(b!=null&&a!=null) batch.add(new Object[]{b,a});
             }
             jt.batchUpdate("INSERT OR IGNORE INTO book_authors(book_id,author_id) VALUES (?,?)",batch);
-        }catch(Exception e){ log.warn("Cannot migrate author links",e); }
+        }catch(SQLException e){ throw new IllegalStateException("Помилка перенесення зв’язків авторів",e); }
     }
 
     private void migrateBookGenres(Connection src, JdbcTemplate jt, Map<Long,String> books, Map<String,String> genres) {
@@ -168,7 +169,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                 if(b!=null&&!g.isBlank()){ if(!genres.containsKey(g)) jt.update("INSERT OR IGNORE INTO genres(code,name) VALUES (?,?)",g,g); batch.add(new Object[]{b,g}); }
             }
             jt.batchUpdate("INSERT OR IGNORE INTO book_genres(book_id,genre_code) VALUES (?,?)",batch);
-        }catch(Exception e){ log.warn("Cannot migrate genre links",e); }
+        }catch(SQLException e){ throw new IllegalStateException("Помилка перенесення зв’язків жанрів",e); }
     }
 
     /** Stage 8/9 compatibility for HLC2 imported after V33 has already run. */
@@ -204,17 +205,76 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                 isbn=excluded.isbn,deleted=excluded.deleted,local=excluded.local,collection_root=excluded.collection_root,year=excluded.year,
                 publisher=excluded.publisher,lib_id=excluded.lib_id,library_rate=excluded.library_rate,translators=excluded.translators,city=excluded.city
                 """,batch);
+        Map<String, String> keywordProjection = new LinkedHashMap<>(batch.size());
+        for (Object[] row : batch) keywordProjection.put((String) row[0], row[9] == null ? "" : row[9].toString());
+        KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
     }
 
     private static Connection openReadOnly(Path p) throws SQLException { Connection c=DriverManager.getConnection("jdbc:sqlite:"+p); c.setReadOnly(true); return c; }
     private static Set<String> columns(Connection c,String table) throws SQLException { Set<String>s=new HashSet<>(); try(Statement st=c.createStatement();ResultSet r=st.executeQuery("PRAGMA table_info('"+table.replace("'","''")+"')")){while(r.next())s.add(r.getString("name").toLowerCase(Locale.ROOT));} return s; }
-    private static boolean tableExists(Connection c,String table){try(PreparedStatement p=c.prepareStatement("SELECT 1 FROM sqlite_master WHERE type='table' AND lower(name)=lower(?)")){p.setString(1,table);try(ResultSet r=p.executeQuery()){return r.next();}}catch(Exception e){return false;}}
-    private static Set<String> columnNames(ResultSet r)throws SQLException{Set<String>s=new HashSet<>();ResultSetMetaData m=r.getMetaData();for(int i=1;i<=m.getColumnCount();i++)s.add(m.getColumnLabel(i).toLowerCase(Locale.ROOT));return s;}
-    private static String value(ResultSet r,Set<String> c,String name){if(!c.contains(name.toLowerCase(Locale.ROOT)))return "";try{Object o=r.getObject(name);return o==null?"":String.valueOf(o).trim();}catch(Exception e){try{Object o=r.getObject(findColumn(r,name));return o==null?"":String.valueOf(o).trim();}catch(Exception ignored){return "";}}}
-    private static int findColumn(ResultSet r,String name)throws SQLException{ResultSetMetaData m=r.getMetaData();for(int i=1;i<=m.getColumnCount();i++)if(m.getColumnLabel(i).equalsIgnoreCase(name))return i;throw new SQLException(name);}
-    private static long longValue(ResultSet r,Set<String>c,String n,long d){try{String v=value(r,c,n);return v.isBlank()?d:Long.parseLong(v);}catch(Exception e){return d;}}
-    private static int intValue(ResultSet r,Set<String>c,String n,int d){try{String v=value(r,c,n);return v.isBlank()?d:Integer.parseInt(v);}catch(Exception e){return d;}}
-    private static Integer intOrNull(ResultSet r,Set<String>c,String n){String v=value(r,c,n);try{return v.isBlank()?null:Integer.parseInt(v);}catch(Exception e){return null;}}
+    private static boolean tableExists(Connection c,String table){try(PreparedStatement p=c.prepareStatement("SELECT 1 FROM sqlite_master WHERE type='table' AND lower(name)=lower(?)")){p.setString(1,table);try(ResultSet r=p.executeQuery()){return r.next();}}catch(SQLException e){throw new IllegalStateException("Не вдалося перевірити legacy table " + table,e);}}
+    private static Set<String> columnNames(ResultSet resultSet) throws SQLException {
+        Set<String> names = new HashSet<>();
+        ResultSetMetaData metadata = resultSet.getMetaData();
+        for (int i = 1; i <= metadata.getColumnCount(); i++) {
+            names.add(metadata.getColumnLabel(i).toLowerCase(Locale.ROOT));
+        }
+        return names;
+    }
+
+    private static String value(ResultSet resultSet, Set<String> columns, String name) {
+        if (!columns.contains(name.toLowerCase(Locale.ROOT))) return "";
+        try {
+            Object value = resultSet.getObject(name);
+            return value == null ? "" : String.valueOf(value).trim();
+        } catch (SQLException labelFailure) {
+            try {
+                Object value = resultSet.getObject(findColumn(resultSet, name));
+                return value == null ? "" : String.valueOf(value).trim();
+            } catch (SQLException indexFailure) {
+                indexFailure.addSuppressed(labelFailure);
+                throw new IllegalStateException("Не вдалося прочитати legacy column '" + name + "'", indexFailure);
+            }
+        }
+    }
+
+    private static int findColumn(ResultSet resultSet, String name) throws SQLException {
+        ResultSetMetaData metadata = resultSet.getMetaData();
+        for (int i = 1; i <= metadata.getColumnCount(); i++) {
+            if (metadata.getColumnLabel(i).equalsIgnoreCase(name)) return i;
+        }
+        throw new SQLException("Legacy column not found: " + name);
+    }
+
+    private static long longValue(ResultSet resultSet, Set<String> columns, String name, long defaultValue) {
+        String value = value(resultSet, columns, name);
+        if (value.isBlank()) return defaultValue;
+        try {
+            return Long.parseLong(value);
+        } catch (NumberFormatException invalidNumber) {
+            return defaultValue;
+        }
+    }
+
+    private static int intValue(ResultSet resultSet, Set<String> columns, String name, int defaultValue) {
+        String value = value(resultSet, columns, name);
+        if (value.isBlank()) return defaultValue;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException invalidNumber) {
+            return defaultValue;
+        }
+    }
+
+    private static Integer intOrNull(ResultSet resultSet, Set<String> columns, String name) {
+        String value = value(resultSet, columns, name);
+        if (value.isBlank()) return null;
+        try {
+            return Integer.parseInt(value);
+        } catch (NumberFormatException invalidNumber) {
+            return null;
+        }
+    }
     private static long scalar(JdbcTemplate jt,String sql){Long n=jt.queryForObject(sql,Long.class);return n==null?0:n;}
     private static String stableId(String kind,String value){return UUID.nameUUIDFromBytes(("hlc2:"+kind+":"+value).getBytes(StandardCharsets.UTF_8)).toString();}
     private static String normalize(String s){return s==null?"":s.replace('\\','/').replaceAll("^/+","").trim();}

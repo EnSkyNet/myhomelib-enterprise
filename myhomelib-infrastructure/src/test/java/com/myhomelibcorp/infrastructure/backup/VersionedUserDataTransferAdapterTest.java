@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -94,6 +95,27 @@ class VersionedUserDataTransferAdapterTest {
         targetAdapter.restoreFrom(exported);
         assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM bookmarks WHERE id='bm1'", Integer.class)).isEqualTo(1);
         assertThat(target.jdbc().queryForObject("SELECT COUNT(*) FROM book_groups WHERE book_id='new-77'", Integer.class)).isEqualTo(1);
+    }
+
+
+    @Test
+    void exportFailsInsteadOfSilentlyDroppingCorruptReaderPreferences() throws Exception {
+        Path dataDir = tempDir.resolve("appdata-corrupt-reader");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        Files.createDirectories(dataDir.resolve("config"));
+        Files.writeString(dataDir.resolve("config/reader-preferences.json"), "{ broken-json");
+
+        Db source = db(tempDir.resolve("source-corrupt-reader.db"));
+        createSchema(source.jdbc());
+        Path exported = tempDir.resolve("corrupt-reader-export.json");
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(source), new MapSettings(), mapper);
+
+        assertThatThrownBy(() -> adapter.exportTo(exported))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("portable user data");
+        assertThat(exported).doesNotExist();
+        assertThat(exported.resolveSibling(exported.getFileName() + ".tmp")).doesNotExist();
     }
 
     @Test

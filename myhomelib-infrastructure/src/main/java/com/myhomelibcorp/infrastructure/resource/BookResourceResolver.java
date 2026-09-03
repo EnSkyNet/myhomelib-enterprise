@@ -9,6 +9,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -159,10 +161,9 @@ public class BookResourceResolver implements BookResourcePort {
             // 2. Якщо fileName або folder є архівом
             Path archivePath = findArchivePath(fileName, folder, collectionRoot);
             if (archivePath != null && Files.isRegularFile(archivePath)) {
-                // Шукаємо перший FB2 в архіві
-                log.debug("Пошук FB2 в архіві: {}", archivePath);
+                log.debug("Пошук підтримуваного документа в архіві: {}", archivePath);
                 return archiveReader.findFirstEntry(archivePath,
-                        e -> { String n = e.toLowerCase(); return n.endsWith(".fb2") || n.endsWith(".fbd") || n.endsWith(".epub") || n.endsWith(".txt") || n.endsWith(".text"); });
+                        e -> { String n = e.toLowerCase(java.util.Locale.ROOT); return n.endsWith(".fb2") || n.endsWith(".fbd") || n.endsWith(".epub") || n.endsWith(".txt") || n.endsWith(".text"); });
             }
 
             // 3. Звичайний файл
@@ -172,12 +173,11 @@ public class BookResourceResolver implements BookResourcePort {
                 return Optional.of(Files.newInputStream(filePath));
             }
 
-            log.warn("Не вдалося знайти файл для читання: fileName='{}', folder='{}'", fileName, folder);
+            log.debug("Файл книги не знайдено: fileName='{}', folder='{}'", fileName, folder);
             return Optional.empty();
-
-        } catch (Exception e) {
-            log.error("Помилка читання даних книги: fileName='{}', folder='{}'", fileName, folder, e);
-            return Optional.empty();
+        } catch (IOException e) {
+            throw new UncheckedIOException(
+                    "Не вдалося відкрити локальний ресурс книги: fileName='" + fileName + "', folder='" + folder + "'", e);
         }
     }
 

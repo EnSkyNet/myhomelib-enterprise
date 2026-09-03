@@ -16,7 +16,8 @@ catalog_writer = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/
 legacy = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/legacy/SqliteLegacyCollectionAttachAdapter.java')
 
 assert '.toLowerCase(Locale.ROOT)' in helper, 'normalizer must use deterministic Unicode Java lower-case'
-assert 'v71_author_search_name_unicode_normalized' in repo, 'one-time normalization marker missing'
+assert 'Normalizer.Form.NFKC' in helper, 'normalizer must canonicalize compatibility Unicode forms'
+assert 'v71_author_search_name_unicode_nfkc_v2' in repo, 'NFKC normalization marker missing'
 assert 'WHERE id>? ORDER BY id LIMIT ?' in repo, 'legacy backfill must be keyset/bounded'
 assert 'SEARCH_NAME_BACKFILL_BATCH = 1000' in repo, 'bounded backfill batch missing'
 assert 'AuthorSearchNameNormalizer.normalize' in repo, 'repository writes must use canonical normalizer'
@@ -37,6 +38,8 @@ with tempfile.TemporaryDirectory() as td:
           public static void main(String[] args) {
             eq("шевченко тарас григорович", AuthorSearchNameNormalizer.normalize(" Тарас ", "ГРИГОРОВИЧ", "ШЕВЧЕНКО"));
             eq("іваненко іван", AuthorSearchNameNormalizer.normalize("ІВАН", null, "ІВАНЕНКО"));
+            eq("боярский", AuthorSearchNameNormalizer.normalizeQuery("БОЯРСКИЙ"));
+            eq("java", AuthorSearchNameNormalizer.normalizeQuery("Ｊａｖａ"));
             eq("", AuthorSearchNameNormalizer.normalize(" ", null, ""));
           }
           static void eq(String e, String a) { if (!e.equals(a)) throw new AssertionError(e + " != " + a); }

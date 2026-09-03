@@ -9,6 +9,7 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
@@ -43,6 +44,7 @@ public class DatabaseTest {
     @Import({
             SqliteBookQueryRepository.class,
             BookRowMapper.class,
+            BookListRowMapper.class,
             BookAuthorHelper.class,
             BookGenreHelper.class,
             BookQueryBuilder.class,

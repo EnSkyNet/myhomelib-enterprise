@@ -1,6 +1,8 @@
 package com.myhomelibcorp.reader.layout;
 
+import com.myhomelibcorp.reader.api.ReaderElementStyle;
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.api.ReaderStyleSheet;
 import com.myhomelibcorp.reader.api.StyleSpan;
 import com.myhomelibcorp.reader.api.TextStyle;
 import com.myhomelibcorp.reader.model.TextRunLayout;
@@ -161,9 +163,7 @@ final class TextLineLayoutSupport {
             float naturalWidth,
             TextStyle paragraphStyle
     ) {
-        String alignment = settings.alignment() == null
-                ? "left"
-                : settings.alignment().toLowerCase(Locale.ROOT);
+        String alignment = alignmentFor(paragraphStyle);
         if (!"justify".equals(alignment) || paragraphStyle.isHeading()) return false;
         if (displayEnd <= start || rawEnd >= text.length()) return false;
         char breakChar = rawEnd > 0 ? text.charAt(rawEnd - 1) : 0;
@@ -226,9 +226,11 @@ final class TextLineLayoutSupport {
     }
 
     float resolveLineX(float baseX, int contentWidth, float lineIndent, float lineWidth) {
-        String alignment = settings.alignment() == null
-                ? "left"
-                : settings.alignment().toLowerCase(Locale.ROOT);
+        return resolveLineX(baseX, contentWidth, lineIndent, lineWidth, TextStyle.NORMAL);
+    }
+
+    float resolveLineX(float baseX, int contentWidth, float lineIndent, float lineWidth, TextStyle style) {
+        String alignment = alignmentFor(style);
         return switch (alignment) {
             case "center" -> baseX + Math.max(0f, (contentWidth - lineWidth) / 2f);
             case "right" -> baseX + Math.max(0f, contentWidth - lineWidth);
@@ -237,21 +239,29 @@ final class TextLineLayoutSupport {
     }
 
     float resolveFontSize(TextStyle style) {
-        float base = (float) settings.fontSize();
-        if (style == null) return base;
-        return switch (style) {
-            case HEADING_1 -> base * 1.55f;
-            case HEADING_2 -> base * 1.35f;
-            case HEADING_3 -> base * 1.20f;
-            case HEADING_4, HEADING_5, HEADING_6 -> base * 1.10f;
-            case NOTE, FOOTNOTE -> base * 0.90f;
-            default -> base;
-        };
+        ReaderStyleSheet sheet = settings.styleSheet() != null ? settings.styleSheet() : ReaderStyleSheet.defaults();
+        ReaderElementStyle semantic = sheet.forTextStyle(style);
+        return (float) Math.max(6.0, semantic.resolveFontSize(settings.fontSize()));
+    }
+
+    float paragraphSpacingBefore(TextStyle style) {
+        ReaderElementStyle semantic = settings.styleSheet().forTextStyle(style);
+        if (semantic.spacingBefore() != null) return semantic.spacingBefore().floatValue();
+        return 0f;
     }
 
     float paragraphGap(TextStyle style) {
+        ReaderElementStyle semantic = settings.styleSheet().forTextStyle(style);
+        if (semantic.spacingAfter() != null) return semantic.spacingAfter().floatValue();
         double multiplier = style != null && style.isHeading() ? 0.65 : 0.25;
         return (float) Math.max(0, settings.paragraphSpacing() * settings.fontSize() * multiplier);
+    }
+
+    private String alignmentFor(TextStyle style) {
+        ReaderElementStyle semantic = settings.styleSheet().forTextStyle(style);
+        String override = semantic.alignment();
+        String alignment = override == null || override.isBlank() ? settings.alignment() : override;
+        return alignment == null ? "left" : alignment.toLowerCase(Locale.ROOT);
     }
 
     private boolean hasDifferentStyle(List<StyleSpan> spans, int start, int end, TextStyle paragraphStyle) {

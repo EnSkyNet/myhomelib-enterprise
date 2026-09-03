@@ -18,4 +18,11 @@ public interface CollectionBackupPort {
 
     /** Opens the supplied SQLite file independently and requires PRAGMA quick_check = ok. */
     void validateDatabaseFile(Path databaseFile) throws IOException;
+
+    /**
+     * Atomically replaces the active collection database with a previously validated snapshot.
+     * Implementations must reopen the same collection before returning and leave either the old
+     * or restored database usable if the filesystem swap itself fails.
+     */
+    void restoreDatabaseSnapshot(Collection collection, Path snapshotFile) throws IOException;
 }

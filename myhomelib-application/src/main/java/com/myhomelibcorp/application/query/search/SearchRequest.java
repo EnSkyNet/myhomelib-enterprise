@@ -26,7 +26,8 @@ public record SearchRequest(
         BookFilterSpec filterSpec,
         int limit,
         int offset,
-        SearchMode mode
+        SearchMode mode,
+        boolean trackTotalHits
 ) {
     public static Builder builder() {
         return new Builder();
@@ -48,6 +49,7 @@ public record SearchRequest(
         private int limit = 100;
         private int offset = 0;
         private SearchMode mode = SearchMode.PHRASE;
+        private boolean trackTotalHits = true;
 
         public Builder text(String text) { this.text = text; return this; }
         public Builder authorId(AuthorId authorId) { this.authorId = authorId; return this; }
@@ -64,12 +66,13 @@ public record SearchRequest(
         public Builder limit(int limit) { this.limit = limit; return this; }
         public Builder offset(int offset) { this.offset = offset; return this; }
         public Builder mode(SearchMode mode) { this.mode = mode; return this; }
+        public Builder trackTotalHits(boolean trackTotalHits) { this.trackTotalHits = trackTotalHits; return this; }
 
         public SearchRequest build() {
             return new SearchRequest(
                     text, authorId, genreId, language,
                     ratingFrom, ratingTo, yearFrom, yearTo, addedFrom, addedTo, localOnly, filterSpec,
-                    limit, offset, mode
+                    limit, offset, mode, trackTotalHits
             );
         }
     }

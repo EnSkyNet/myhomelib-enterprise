@@ -25,6 +25,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
@@ -66,6 +67,7 @@ public class GroupWorkspaceController {
     private final AtomicLong pageGeneration = new AtomicLong();
     private GroupDto currentGroup;
     private int currentPage;
+    private OptionalLong currentGroupTotal = OptionalLong.empty();
 
     @FXML
     public void initialize() {
@@ -78,6 +80,7 @@ public class GroupWorkspaceController {
 
         groupsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             currentPage = 0;
+            currentGroupTotal = OptionalLong.empty();
             pageGeneration.incrementAndGet();
             if (selected != null) {
                 currentGroup = selected;
@@ -140,15 +143,27 @@ public class GroupWorkspaceController {
         int requestedPage = Math.max(0, currentPage);
         int offset = requestedPage * PAGE_SIZE;
         setPagingBusy(true);
-        executor.submit(() -> loadGroupBooksUseCase.execute(group.getId(), PAGE_SIZE, offset))
+        OptionalLong knownTotal = currentGroupTotal;
+        executor.submit(() -> knownTotal.isPresent()
+                        ? loadGroupBooksUseCase.execute(group.getId(), PAGE_SIZE, offset, knownTotal.getAsLong())
+                        : loadGroupBooksUseCase.execute(group.getId(), PAGE_SIZE, offset))
                 .thenAccept(page -> UiExecutor.runOnUiThread(() -> {
                     if (generation != pageGeneration.get() || currentGroup == null || !currentGroup.getId().equals(group.getId())) return;
                     if (page.content().isEmpty() && requestedPage > 0 && page.totalElements() > 0) {
+                        if (knownTotal.isPresent()) {
+                            // The membership may have changed outside this workspace. Recount once
+                            // before deciding which page is now the last valid page.
+                            currentGroupTotal = OptionalLong.empty();
+                            loadGroupBooks(group);
+                            return;
+                        }
+                        currentGroupTotal = OptionalLong.of(page.totalElements());
                         currentPage = Math.max(0, page.totalPages() - 1);
                         loadGroupBooks(group);
                         return;
                     }
                     currentPage = page.currentPage();
+                    currentGroupTotal = OptionalLong.of(page.totalElements());
                     books.setAll(page.content().stream().map(bookViewModelMapper::toViewModel).toList());
                     groupNameLabel.setText(group.getName());
                     booksCountLabel.setText(page.totalElements() + " книг");
@@ -207,6 +222,7 @@ public class GroupWorkspaceController {
         }
         try {
             addBookToGroupUseCase.execute(currentGroup.getId(), selectedBook.getId());
+            currentGroupTotal = OptionalLong.empty();
             loadGroupBooks(currentGroup);
             dialogService.showInfo("Успішно", "Книгу додано до групи \"" + currentGroup.getName() + "\".");
         } catch (Exception e) {
@@ -233,6 +249,7 @@ public class GroupWorkspaceController {
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
                 removeBookFromGroupUseCase.execute(currentGroup.getId(), selected.getId());
+                currentGroupTotal = OptionalLong.empty();
                 loadGroupBooks(currentGroup);
                 dialogService.showInfo("Успішно", "Книгу видалено з групи");
             } catch (Exception e) {

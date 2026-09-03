@@ -2,6 +2,8 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetworkUseCase;
+import com.myhomelibcorp.application.usecase.collection.CatalogUpdateFailureException;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
@@ -65,7 +67,15 @@ public class CollectionUpdateUiService {
         }
         settings.put(sourceKey, source);
 
+        startManualUpdate(owner, onDone, collection, source);
+    }
+
+    private void startManualUpdate(Window owner, Runnable onDone, Collection collection, String source) {
         AtomicBoolean flag = new AtomicBoolean(false);
+        if (active != null) {
+            dialogs.showWarning("Оновлення колекції", "Інше оновлення вже виконується.");
+            return;
+        }
         active = flag;
         CatalogUpdateProgressDialog progressDialog = new CatalogUpdateProgressDialog(owner);
         progressDialog.setOnCancel(() -> {
@@ -81,22 +91,44 @@ public class CollectionUpdateUiService {
                         collection,
                         source,
                         flag,
-                        p -> Platform.runLater(() -> state.getStatusBar().setProgress(p)),
+                        p -> Platform.runLater(() -> {
+                            if (isActiveCollection(collection.getId())) state.getStatusBar().setProgress(p);
+                        }),
                         progress -> {
                             operationCenter.accept("Оновлення каталогу", collection.getId(), progress);
                             progressDialog.update(progress);
                         }))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (active == flag) active = null;
-                    state.getStatusBar().setProgressVisible(false);
                     progressDialog.close();
+                    if (!isActiveCollection(collection.getId())) return;
+                    state.getStatusBar().setProgressVisible(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         if (flag.get()) {
                             state.getStatusBar().setStatusText("Оновлення скасовано");
                             return;
                         }
-                        dialogs.showError("Оновлення колекції", cause.getMessage());
+                        if (cause instanceof CatalogUpdateFailureException failure) {
+                            state.getStatusBar().setStatusText(updateFailureStatus(failure));
+                            boolean safeToRetry = !failure.mutationMayHaveCommitted() || failure.rollbackSucceeded();
+                            if (safeToRetry) {
+                                boolean retry = dialogs.showErrorWithRetry(
+                                        "Оновлення колекції",
+                                        "Не вдалося завершити online-оновлення",
+                                        updateFailureDetails(failure));
+                                if (retry && isActiveCollection(collection.getId())) {
+                                    Platform.runLater(() -> startManualUpdate(owner, onDone, collection, source));
+                                }
+                            } else {
+                                dialogs.showError("Оновлення колекції",
+                                        "Автоматичний відкат не завершено",
+                                        updateFailureDetails(failure));
+                            }
+                        } else {
+                            state.getStatusBar().setStatusText("Помилка оновлення колекції");
+                            dialogs.showError("Оновлення колекції", safeMessage(cause));
+                        }
                         return;
                     }
                     if (result.imported() == 0 && result.errors() == 0) {
@@ -145,16 +177,22 @@ public class CollectionUpdateUiService {
 
         executor.submit(() -> useCase.execute(
                         collection, source, flag,
-                        p -> Platform.runLater(() -> state.getStatusBar().setProgress(p)),
+                        p -> Platform.runLater(() -> {
+                            if (isActiveCollection(collection.getId())) state.getStatusBar().setProgress(p);
+                        }),
                         progress -> operationCenter.accept("Автооновлення каталогу", collection.getId(), progress)))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (active == flag) active = null;
+                    if (!isActiveCollection(collection.getId())) return;
                     state.getStatusBar().setProgressVisible(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         if (!flag.get()) {
-                            state.getStatusBar().setStatusText("Не вдалося перевірити online-каталог: " +
-                                    (cause.getMessage() == null ? cause.getClass().getSimpleName() : cause.getMessage()));
+                            if (cause instanceof CatalogUpdateFailureException failure) {
+                                state.getStatusBar().setStatusText(updateFailureStatus(failure));
+                            } else {
+                                state.getStatusBar().setStatusText("Не вдалося перевірити online-каталог: " + safeMessage(cause));
+                            }
                         }
                         return;
                     }
@@ -165,6 +203,85 @@ public class CollectionUpdateUiService {
                     state.getStatusBar().setStatusText("Online-каталог автоматично оновлено: " + result.imported() + " записів");
                     if (onDone != null) onDone.run();
                 }));
+    }
+
+    private static String updateFailureStatus(CatalogUpdateFailureException failure) {
+        if (failure == null) return "Помилка online-оновлення";
+        if (failure.mutationMayHaveCommitted() && failure.rollbackSucceeded()) {
+            return "Помилка оновлення; попередній стан колекції відновлено";
+        }
+        if (failure.mutationMayHaveCommitted()) {
+            return "Помилка оновлення; потрібна перевірка цілісності";
+        }
+        return "Помилка online-оновлення на етапі: " + stageText(failure.stage());
+    }
+
+    private static String updateFailureDetails(CatalogUpdateFailureException failure) {
+        String source = failure.source().isBlank() ? "—" : failure.source();
+        String version = failure.lastAppliedVersion().isBlank() ? "—" : failure.lastAppliedVersion();
+        String localState;
+        if (!failure.mutationMayHaveCommitted()) {
+            localState = "Локальну SQLite-базу не змінено.";
+        } else if (failure.rollbackSucceeded()) {
+            localState = "Попередній стан SQLite, Lucene та статистики автоматично відновлено.";
+        } else if (failure.rollbackAttempted()) {
+            localState = "Автоматичний відкат не завершено. Recovery checkpoint збережено; перед новим оновленням запустіть перевірку цілісності.";
+        } else {
+            localState = "Після зміни каталогу автоматичний rollback був недоступний. Перед новим оновленням запустіть перевірку цілісності.";
+        }
+        return "Операція: online-оновлення каталогу"
+                + "\nЕтап: " + stageText(failure.stage())
+                + "\nДжерело: " + source
+                + "\nТехнічна причина: " + rootMessage(failure)
+                + "\nОстання успішна версія: " + version
+                + "\nСтан локальної колекції: " + localState;
+    }
+
+    private static String rootMessage(Throwable error) {
+        if (error == null) return "Невідома помилка";
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+        return safeMessage(current);
+    }
+
+    private static String safeMessage(Throwable error) {
+        if (error == null) return "Невідома помилка";
+        String message = error.getMessage();
+        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+    }
+
+    private static String stageText(OperationStage stage) {
+        if (stage == null) return "невідомий";
+        return switch (stage) {
+            case CHECKING_SERVER -> "перевірка сервера";
+            case DOWNLOADING -> "завантаження";
+            case VALIDATING -> "валідація";
+            case CREATING_CHECKPOINT -> "створення точки відновлення";
+            case READING_CATALOG -> "читання каталогу";
+            case IMPORTING -> "імпорт SQLite";
+            case UPDATING_AUTHORS -> "оновлення авторів";
+            case APPLYING_DELETIONS -> "застосування видалень";
+            case UPDATING_SEARCH_INDEX -> "оновлення Lucene";
+            case REFRESHING_STATISTICS -> "оновлення статистики";
+            case ROLLING_BACK -> "відкат";
+            case FINALIZING -> "фіналізація source state";
+            case INTEGRITY_CHECKS -> "перевірка цілісності";
+            case SYNCHRONIZING_FILES -> "синхронізація файлів";
+            case OPTIMIZING_DATABASE -> "оптимізація БД";
+            case BACKING_UP -> "резервне копіювання";
+            case RESTORING -> "відновлення";
+            case CREATING_COLLECTION -> "створення колекції";
+            case DELETING_COLLECTION -> "видалення колекції";
+            case BOOK_DOWNLOAD -> "завантаження книги";
+            case COMPLETED -> "завершення";
+            case CANCELLED -> "скасування";
+            case FAILED -> "помилка";
+        };
+    }
+
+    private boolean isActiveCollection(String collectionId) {
+        Collection activeCollection = state.getCurrentLibraryCollection();
+        return activeCollection != null && java.util.Objects.equals(collectionId, activeCollection.getId());
     }
 
     private String resolveCatalogSource(Collection collection) {

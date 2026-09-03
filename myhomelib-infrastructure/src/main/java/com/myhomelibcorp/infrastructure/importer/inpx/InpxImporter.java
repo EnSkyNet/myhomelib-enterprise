@@ -7,355 +7,265 @@ import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.author.AuthorNameKey;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.valueobject.*;
+import com.myhomelibcorp.domain.model.valueobject.BookFile;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
+import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.service.LanguageResolver;
+import com.myhomelibcorp.infrastructure.importengine.InpxReader;
+import com.myhomelibcorp.infrastructure.importengine.InpxRecord;
 import com.myhomelibcorp.shared.exception.BusinessException;
 import com.myhomelibcorp.shared.exception.ErrorCode;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.NoSuchElementException;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
+/**
+ * Legacy {@link BookImporterPort} adapter for INP/INPX sources.
+ *
+ * <p>All source decoding, custom {@code structure.info}, legacy charset handling,
+ * archive mapping and streaming now come from the single {@link InpxReader}. This
+ * prevents the historical split where this adapter interpreted the same INPX file
+ * differently from the main catalogue import pipeline.</p>
+ */
 @Component
 @Slf4j
 public class InpxImporter implements BookImporterPort {
 
-    private static final char FIELD_DELIMITER = (char) 4;
-    private static final String FALLBACK_DELIMITER = "|";
-
-    @Autowired
-    private AuthorRepository authorRepository;
-
-    @Autowired
-    private GenreRepository genreRepository;
-
-    // Bounded per-import cache: do not mirror the complete authors table in heap.
     private static final int AUTHOR_CACHE_LIMIT = 10_000;
+
+    @Autowired private AuthorRepository authorRepository;
+    @Autowired private GenreRepository genreRepository;
+    @Autowired private InpxReader inpxReader;
+
+    /** Bounded, per-import object cache. Never mirror the complete authors table in heap. */
     private final Map<AuthorNameKey, Author> authorObjectCache = new LinkedHashMap<>(1024, 0.75f, true) {
         @Override
         protected boolean removeEldestEntry(Map.Entry<AuthorNameKey, Author> eldest) {
             return size() > AUTHOR_CACHE_LIMIT;
         }
     };
-    private final Map<String, GenreId> genreIdCache = new HashMap<>();
-
-    private boolean initialized = false;
+    private final Map<String, GenreId> genreIdCache = new LinkedHashMap<>();
 
     /**
-     * Явна ініціалізація – викликається після вибору колекції.
+     * Kept for bootstrap compatibility. Unlike the old one-shot flag this is safe
+     * across collection switches: every call refreshes the small genre dictionary
+     * and clears collection-scoped author objects.
      */
-    public void initialize() {
-        if (initialized) return;
-        // Authors are resolved lazily. Loading every author here makes startup/import
-        // proportional to catalogue size and causes large heap spikes.
-        loadGenreCache();
-        initialized = true;
-    }
-
-    private void loadGenreCache() {
-        try {
-            List<Genre> genres = genreRepository.findAll();
-            for (Genre genre : genres) {
-                genreIdCache.put(genre.getId().asString(), genre.getId());
+    public synchronized void initialize() {
+        authorObjectCache.clear();
+        genreIdCache.clear();
+        List<Genre> genres = genreRepository.findAll();
+        for (Genre genre : genres) {
+            genreIdCache.put(genre.getId().asString(), genre.getId());
+            if (genre.getFb2Code() != null && !genre.getFb2Code().isBlank()) {
+                genreIdCache.putIfAbsent(genre.getFb2Code(), genre.getId());
             }
-            log.info("Завантажено {} жанрів у кеш InpxImporter", genreIdCache.size());
-        } catch (Exception e) {
-            log.warn("Не вдалося завантажити жанри у кеш InpxImporter", e);
         }
+        log.info("Завантажено {} жанрових ключів у кеш InpxImporter", genreIdCache.size());
     }
 
     @Override
     public boolean supports(Path file) {
-        String name = file.getFileName().toString().toLowerCase();
+        if (file == null || file.getFileName() == null) return false;
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         return name.endsWith(".inpx") || name.endsWith(".inp");
     }
 
     @Override
     public Stream<Book> importBooks(Path file) {
-        log.info("Початок імпорту INPX: {}", file);
+        log.info("Початок streaming-імпорту INP/INPX: {}", file);
         try {
-            // Використовуємо ZipFile замість ZipInputStream для швидшого доступу
-            ZipFile zipFile = new ZipFile(file.toFile());
-            ZipEntry inpEntry = null;
-            Enumeration<? extends ZipEntry> entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.getName().endsWith(".inp")) {
-                    inpEntry = entry;
-                    break;
-                }
-            }
-            if (inpEntry == null) {
-                throw new BusinessException(ErrorCode.IMPORT_FAILED, "INP файл не знайдено в архіві");
-            }
-
-            BufferedReader reader = new BufferedReader(
-                    new InputStreamReader(zipFile.getInputStream(inpEntry), StandardCharsets.UTF_8)
-            );
-
-            // Якщо кеші ще не завантажені – завантажуємо
-            if (!initialized) {
-                initialize();
-            }
-
-            Iterator<Book> iterator = new InpxIterator(reader, zipFile);
-            Spliterator<Book> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED);
-            return StreamSupport.stream(spliterator, false).onClose(() -> {
-                try {
-                    reader.close();
-                    zipFile.close();
-                } catch (Exception e) {
-                    log.warn("Помилка закриття ZIP", e);
-                }
-            });
-        } catch (Exception e) {
-            log.error("Помилка імпорту INPX", e);
-            throw new BusinessException(ErrorCode.IMPORT_FAILED, "Помилка імпорту INPX: " + e.getMessage(), e);
+            initialize();
+            Iterator<InpxRecord> records = inpxReader.read(file);
+            Iterator<Book> books = new MappingIterator(records);
+            return StreamSupport.stream(
+                            Spliterators.spliteratorUnknownSize(books, Spliterator.ORDERED | Spliterator.NONNULL),
+                            false)
+                    .onClose(() -> closeRecords(records));
+        } catch (BusinessException e) {
+            throw e;
+        } catch (RuntimeException e) {
+            throw new BusinessException(ErrorCode.IMPORT_FAILED,
+                    "Помилка імпорту INP/INPX: " + rootMessage(e), e);
         }
     }
 
-    @Override
-    public String getFormatName() {
-        return "INPX";
-    }
+    @Override public String getFormatName() { return "INPX"; }
 
     @Override
     public long countBooks(Path file) {
-        try (ZipFile zipFile = new ZipFile(file.toFile())) {
-            Enumeration<? extends ZipEntry> entries = zipFile.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.getName().endsWith(".inp")) {
-                    long count = 0;
-                    try (BufferedReader reader = new BufferedReader(
-                            new InputStreamReader(zipFile.getInputStream(entry), StandardCharsets.UTF_8))) {
-                        while (reader.readLine() != null) count++;
-                    }
-                    return count;
-                }
-            }
-        } catch (Exception e) {
+        try {
+            return inpxReader.count(file);
+        } catch (RuntimeException e) {
             throw new BusinessException(ErrorCode.IMPORT_FAILED,
-                    "Не вдалося прочитати INPX для підрахунку: " + e.getMessage(), e);
+                    "Не вдалося прочитати INP/INPX для підрахунку: " + rootMessage(e), e);
         }
-        throw new BusinessException(ErrorCode.IMPORT_FAILED, "INP файл не знайдено в архіві");
     }
 
-    // ==================== ВНУТРІШНІЙ КЛАС ІТЕРАТОРА ====================
+    private final class MappingIterator implements Iterator<Book> {
+        private final Iterator<InpxRecord> delegate;
 
-    private class InpxIterator implements Iterator<Book> {
-        private final BufferedReader reader;
-        private final ZipFile zipFile;
-        private String nextLine;
-        private boolean finished;
-        private int lineCount = 0;
-        private int bookCount = 0;
-
-        public InpxIterator(BufferedReader reader, ZipFile zipFile) {
-            this.reader = reader;
-            this.zipFile = zipFile;
-            try {
-                this.nextLine = reader.readLine();
-                if (this.nextLine == null) {
-                    this.finished = true;
-                    reader.close();
-                }
-            } catch (Exception e) {
-                this.finished = true;
-                throw new BusinessException(ErrorCode.IMPORT_FAILED,
-                        "Помилка ініціалізації читання INPX: " + e.getMessage(), e);
-            }
+        private MappingIterator(Iterator<InpxRecord> delegate) {
+            this.delegate = delegate;
         }
 
-        @Override
-        public boolean hasNext() {
-            return !finished && nextLine != null;
-        }
+        @Override public boolean hasNext() { return delegate.hasNext(); }
 
         @Override
         public Book next() {
-            if (finished || nextLine == null) return null;
-            String line = nextLine;
-            lineCount++;
+            if (!delegate.hasNext()) throw new NoSuchElementException();
+            return mapRecord(delegate.next());
+        }
+    }
+
+    private Book mapRecord(InpxRecord record) {
+        List<Author> authors = resolveAuthors(record.field("AUTHOR"));
+        List<Genre> genres = resolveGenres(record.field("GENRE"));
+
+        String title = defaultIfBlank(record.field("TITLE"), "Без назви");
+        String series = record.field("SERIES");
+        int sequenceNumber = parseSequence(record.field("SERNO"));
+        long fileSize = parseNonNegativeLong(record.field("SIZE"));
+
+        String logicalBookName = buildBookFileName(record.field("FILE"), record.field("EXT"));
+        String archiveName = record.archiveName();
+        BookFile bookFile = archiveName == null || archiveName.isBlank()
+                ? new BookFile(logicalBookName, "", "", fileSize, null)
+                : new BookFile(logicalBookName, archiveName, logicalBookName, fileSize, null);
+
+        BookMetadata metadata = BookMetadata.builder()
+                .annotation(record.field("ANNOTATION"))
+                .keywords(record.field("KEYWORDS"))
+                .language(LanguageResolver.resolve(record.field("LANG")))
+                .rate(0)
+                .progress(0)
+                .build();
+
+        return Book.builder()
+                .id(BookId.generate())
+                .title(title)
+                .authors(authors)
+                .genres(genres)
+                .series(series)
+                .sequenceNumber(sequenceNumber)
+                .metadata(metadata)
+                .file(bookFile)
+                .updateDate(LocalDateTime.now())
+                .build();
+    }
+
+    private List<Author> resolveAuthors(String raw) {
+        List<Author> authors = new ArrayList<>(2);
+        if (raw != null && !raw.isBlank() && !raw.equals(":")) {
+            for (String item : raw.split(":")) {
+                if (item == null || item.isBlank()) continue;
+                String[] parts = item.trim().split(",", -1);
+                String lastName = part(parts, 0);
+                String firstName = part(parts, 1);
+                String middleName = part(parts, 2);
+                if (firstName.isBlank() && middleName.isBlank() && lastName.isBlank()) continue;
+                authors.add(resolveAuthor(firstName, middleName, lastName));
+            }
+        }
+        if (authors.isEmpty()) authors.add(resolveAuthor("", "", "Невідомий Автор"));
+        return List.copyOf(authors);
+    }
+
+    private Author resolveAuthor(String firstName, String middleName, String lastName) {
+        AuthorNameKey key = new AuthorNameKey(firstName, middleName, lastName);
+        Author cached = authorObjectCache.get(key);
+        if (cached != null) return cached;
+
+        Author resolved = authorRepository.findByName(firstName, middleName, lastName)
+                .orElseGet(() -> authorRepository.save(new Author(firstName, middleName, lastName)));
+        authorObjectCache.put(key, resolved);
+        return resolved;
+    }
+
+    private List<Genre> resolveGenres(String raw) {
+        if (raw == null || raw.isBlank()) return List.of();
+        List<Genre> genres = new ArrayList<>(2);
+        for (String item : raw.split(":")) {
+            String code = item == null ? "" : item.trim();
+            if (code.isBlank()) continue;
+            GenreId id = genreIdCache.get(code);
+            if (id == null) {
+                Genre created = genreRepository.save(new Genre(code, code));
+                id = created.getId();
+                genreIdCache.put(code, id);
+            }
+            genres.add(new Genre(id, code, null, code));
+        }
+        return List.copyOf(genres);
+    }
+
+    private static int parseSequence(String value) {
+        if (value == null || value.isBlank()) return 0;
+        try {
+            double parsed = Double.parseDouble(value.trim().replace(',', '.'));
+            if (!Double.isFinite(parsed) || parsed < Integer.MIN_VALUE || parsed > Integer.MAX_VALUE) return 0;
+            return (int) Math.round(parsed);
+        } catch (NumberFormatException ignored) {
+            return 0;
+        }
+    }
+
+    private static long parseNonNegativeLong(String value) {
+        if (value == null || value.isBlank()) return 0L;
+        try {
+            long parsed = Long.parseLong(value.trim());
+            return Math.max(0L, parsed);
+        } catch (NumberFormatException ignored) {
+            return 0L;
+        }
+    }
+
+    private static String buildBookFileName(String rawName, String rawExtension) {
+        String name = defaultIfBlank(rawName, "unknown");
+        String extension = rawExtension == null ? "" : rawExtension.trim();
+        while (extension.startsWith(".")) extension = extension.substring(1);
+        if (extension.isBlank()) return name;
+        String suffix = "." + extension;
+        return name.toLowerCase(Locale.ROOT).endsWith(suffix.toLowerCase(Locale.ROOT)) ? name : name + suffix;
+    }
+
+    private static String part(String[] values, int index) {
+        return index < values.length && values[index] != null ? values[index].trim() : "";
+    }
+
+    private static String defaultIfBlank(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private static void closeRecords(Iterator<InpxRecord> records) {
+        if (records instanceof AutoCloseable closeable) {
             try {
-                nextLine = reader.readLine();
-                if (nextLine == null) {
-                    finished = true;
-                    reader.close();
-                    zipFile.close();
-                    log.info("Прочитано {} рядків, розпарсено {} книг", lineCount, bookCount);
-                }
+                closeable.close();
             } catch (Exception e) {
-                finished = true;
-                throw new BusinessException(ErrorCode.IMPORT_FAILED,
-                        "Помилка читання INPX: " + e.getMessage(), e);
-            }
-            Book book = parseInpxLine(line);
-            if (book != null) bookCount++;
-            return book;
-        }
-
-        private Book parseInpxLine(String line) {
-            try {
-                // Власний парсер полів (без regex)
-                String[] parts = splitFields(line, FIELD_DELIMITER);
-                if (parts.length < 8) {
-                    // спроба з резервним роздільником
-                    parts = splitFields(line, FALLBACK_DELIMITER.charAt(0));
-                    if (parts.length < 8) {
-                        log.debug("Замало полів: {} (очікується >= 8)", parts.length);
-                        return null;
-                    }
-                }
-
-                // ---- Автори ----
-                List<Author> authors = new ArrayList<>(2);
-                String authorsStr = parts[0].trim();
-                if (!authorsStr.isEmpty() && !authorsStr.equals(":")) {
-                    String[] authorEntries = authorsStr.split(":");
-                    for (String authorEntry : authorEntries) {
-                        authorEntry = authorEntry.trim();
-                        if (authorEntry.isEmpty()) continue;
-                        String[] nameParts = authorEntry.split(",");
-                        String lastName = nameParts.length > 0 ? nameParts[0].trim() : "";
-                        String firstName = nameParts.length > 1 ? nameParts[1].trim() : "";
-                        String middleName = nameParts.length > 2 ? nameParts[2].trim() : "";
-                        if (lastName.isEmpty() && firstName.isEmpty() && middleName.isEmpty()) continue;
-
-                        AuthorNameKey key = new AuthorNameKey(firstName, middleName, lastName);
-                        Author author = resolveAuthor(key, firstName, middleName, lastName);
-                        authors.add(author);
-                    }
-                }
-                if (authors.isEmpty()) {
-                    AuthorNameKey key = new AuthorNameKey("", "", "Невідомий Автор");
-                    authors.add(resolveAuthor(key, "", "", "Невідомий Автор"));
-                }
-
-                // ---- Жанри ----
-                List<Genre> genres = new ArrayList<>(2);
-                String genresStr = parts[1].trim();
-                if (!genresStr.isEmpty()) {
-                    for (String code : genresStr.split(":")) {
-                        String clean = code.trim();
-                        if (!clean.isEmpty()) {
-                            GenreId genreId = genreIdCache.get(clean);
-                            if (genreId == null) {
-                                // Жанру немає – створюємо
-                                Genre newGenre = new Genre(clean, clean);
-                                genreRepository.save(newGenre);
-                                genreId = newGenre.getId();
-                                genreIdCache.put(clean, genreId);
-                            }
-                            Genre genre = new Genre(genreId, clean, null, clean);
-                            genres.add(genre);
-                        }
-                    }
-                }
-
-                // ---- Назва ----
-                String title = parts[2].trim();
-                if (title.isEmpty()) title = "Без назви";
-
-                // ---- Серія ----
-                String series = parts[3].trim();
-
-                // ---- Номер у серії ----
-                int seqNumber = 0;
-                if (parts.length > 4 && !parts[4].trim().isEmpty()) {
-                    try {
-                        seqNumber = Integer.parseInt(parts[4].trim());
-                    } catch (NumberFormatException ignored) {}
-                }
-
-                // ---- Ім'я файлу ----
-                String fileName = parts.length > 5 ? parts[5].trim() : "unknown.fb2";
-
-                // ---- Розмір файлу ----
-                long fileSize = parts.length > 6 && !parts[6].trim().isEmpty() ?
-                        Long.parseLong(parts[6].trim()) : 0;
-
-                // ---- Мова ----
-                LanguageCode languageCode = LanguageResolver.resolve(
-                        parts.length > 8 ? parts[8] : null);
-
-                // ---- Ключові слова ----
-                String keywords = parts.length > 12 ? parts[12].trim() : "";
-
-                // ---- Анотація ----
-                String annotation = parts.length > 13 ? parts[13].trim() : "";
-
-                // ---- Створення метаданих та файлу ----
-                BookMetadata metadata = BookMetadata.builder()
-                        .annotation(annotation)
-                        .keywords(keywords)
-                        .language(languageCode)
-                        .rate(0)
-                        .progress(0)
-                        .build();
-
-                BookFile bookFile = new BookFile(
-                        fileName,
-                        "",  // folder – буде заповнено при збереженні, якщо потрібно
-                        "",  // archive_entry – для zip-архівів
-                        fileSize,
-                        null // collectionRoot
-                );
-
-                return Book.builder()
-                        .id(BookId.generate())
-                        .title(title)
-                        .authors(authors)
-                        .genres(genres)
-                        .series(series)
-                        .sequenceNumber(seqNumber)
-                        .metadata(metadata)
-                        .file(bookFile)
-                        .updateDate(LocalDateTime.now())
-                        .build();
-
-            } catch (Exception e) {
-                log.warn("Помилка парсингу рядка: {}", line, e);
-                return null;
+                throw new IllegalStateException("Не вдалося закрити INP/INPX reader", e);
             }
         }
+    }
 
-        private Author resolveAuthor(AuthorNameKey key, String firstName, String middleName, String lastName) {
-            Author cached = authorObjectCache.get(key);
-            if (cached != null) {
-                return cached;
-            }
-
-            Author resolved = authorRepository.findByName(firstName, middleName, lastName)
-                    .orElseGet(() -> authorRepository.save(new Author(firstName, middleName, lastName)));
-            authorObjectCache.put(key, resolved);
-            return resolved;
-        }
-
-        /**
-         * Швидкий парсер полів без використання регулярних виразів.
-         */
-        private String[] splitFields(String line, char delimiter) {
-            List<String> fields = new ArrayList<>();
-            int start = 0;
-            for (int i = 0; i < line.length(); i++) {
-                if (line.charAt(i) == delimiter) {
-                    fields.add(line.substring(start, i));
-                    start = i + 1;
-                }
-            }
-            fields.add(line.substring(start));
-            return fields.toArray(new String[0]);
-        }
+    private static String rootMessage(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 }

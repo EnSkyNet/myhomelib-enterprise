@@ -70,6 +70,7 @@ public class BookImportPresenter {
 
         ImportContext context = ImportContext.builder()
                 .rootDirectory(directory)
+                .updateExisting(true)
                 .batchSize(defaultBatchSize)
                 .indexAfterSave(true)
                 .progressListener(progressConsumer)

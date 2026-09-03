@@ -3,9 +3,11 @@ package com.myhomelibcorp.infrastructure.parser.fb2;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.infrastructure.parser.author.LocalAuthorNameParser;
 import lombok.extern.slf4j.Slf4j;
 
 import javax.xml.stream.XMLInputFactory;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
@@ -19,14 +21,8 @@ import java.util.List;
 @Slf4j
 public class Fb2Parser {
 
-    private final XMLInputFactory xmlFactory = XMLInputFactory.newInstance();
+    private final XMLInputFactory xmlFactory = SecureXmlInputFactory.create(false, false);
 
-    public Fb2Parser() {
-        xmlFactory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
-        xmlFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
-        xmlFactory.setProperty(XMLInputFactory.IS_REPLACING_ENTITY_REFERENCES, false);
-        xmlFactory.setProperty(XMLInputFactory.IS_COALESCING, false);
-    }
 
     /**
      * Результат парсингу — всі метадані книги.
@@ -147,8 +143,8 @@ public class Fb2Parser {
 
                 if (inTitleInfo) {
                     if ("author".equalsIgnoreCase(localName) && inAuthor) {
-                        if (!lastName.isEmpty() || !firstName.isEmpty()) {
-                            authors.add(new Author(AuthorId.generate(), firstName, middleName, lastName));
+                        if (!lastName.isEmpty() || !firstName.isEmpty() || !middleName.isEmpty()) {
+                            authors.addAll(LocalAuthorNameParser.fromStructured(firstName, middleName, lastName));
                         }
                         inAuthor = false;
                     } else if ("annotation".equalsIgnoreCase(localName)) {

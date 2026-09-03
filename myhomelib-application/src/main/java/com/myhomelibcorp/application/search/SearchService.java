@@ -105,7 +105,24 @@ public class SearchService {
     public PageResult<BookDto> searchPage(SearchRequest request, int limit, int offset) {
         if (request == null) return PageResult.empty();
         int safeLimit = Math.max(1, Math.min(limit, 1000));
-        return searchPage(withPaging(request, safeLimit, Math.max(0, offset)));
+        return searchPage(withPaging(request, safeLimit, Math.max(0, offset), true));
+    }
+
+    /**
+     * Continuation page for an already-counted interactive result set.
+     * The first page supplies {@code knownTotal}; subsequent pages avoid repeating
+     * an expensive Lucene count(query) while preserving the exact UI total.
+     */
+    public PageResult<BookDto> searchPage(SearchRequest request, int limit, int offset, long knownTotal) {
+        if (request == null) return PageResult.empty();
+        int safeLimit = Math.max(1, Math.min(limit, 1000));
+        int safeOffset = Math.max(0, offset);
+        long safeTotal = Math.max(0, knownTotal);
+        SearchRequest effective = withFilter(request,
+                request.filterSpec() == null ? filterStateService.current() : request.filterSpec());
+        SearchResult result = searchQueryService.search(withPaging(effective, safeLimit, safeOffset, false));
+        List<BookDto> books = result.isEmpty() ? List.of() : loadBooks(result.bookIds());
+        return PageResult.of(books, safeTotal, safeOffset / safeLimit, safeLimit);
     }
 
     /**
@@ -138,7 +155,7 @@ public class SearchService {
                 .language(base.language()).ratingFrom(base.ratingFrom()).ratingTo(base.ratingTo())
                 .yearFrom(base.yearFrom()).yearTo(base.yearTo()).addedFrom(base.addedFrom()).addedTo(base.addedTo())
                 .localOnly(base.localOnly()).filterSpec(filter)
-                .limit(base.limit()).offset(base.offset()).mode(base.mode())
+                .limit(base.limit()).offset(base.offset()).mode(base.mode()).trackTotalHits(base.trackTotalHits())
                 .build();
     }
 
@@ -148,7 +165,7 @@ public class SearchService {
         // SQL IN (...) and the cache adapter do not guarantee input ordering.
         // Preserve Lucene relevance/deep-page order explicitly before mapping to UI DTOs.
         Map<BookId, BookDto> byId = new LinkedHashMap<>();
-        for (var book : bookQueryRepository.findByIds(ids)) {
+        for (var book : bookQueryRepository.findListItemsByIds(ids)) {
             if (book != null && book.getId() != null) byId.put(book.getId(), bookMapper.toDto(book));
         }
         return ids.stream().map(byId::get).filter(java.util.Objects::nonNull).toList();
@@ -203,9 +220,9 @@ public class SearchService {
         long total = Long.MAX_VALUE;
         java.util.ArrayList<BookDto> all = new java.util.ArrayList<>();
         while (offset < total) {
-            SearchRequest pageRequest = withPaging(effective, chunkSize, offset);
+            SearchRequest pageRequest = withPaging(effective, chunkSize, offset, offset == 0);
             SearchResult page = searchQueryService.search(pageRequest);
-            total = page.totalHits();
+            if (offset == 0) total = page.totalHits();
             if (page.isEmpty()) break;
             List<BookDto> loaded = loadBooks(page.bookIds());
             if (loaded.isEmpty()) break;
@@ -217,12 +234,16 @@ public class SearchService {
     }
 
     private SearchRequest withPaging(SearchRequest base, int limit, int offset) {
+        return withPaging(base, limit, offset, base.trackTotalHits());
+    }
+
+    private SearchRequest withPaging(SearchRequest base, int limit, int offset, boolean trackTotalHits) {
         return SearchRequest.builder()
                 .text(base.text()).authorId(base.authorId()).genreId(base.genreId())
                 .language(base.language()).ratingFrom(base.ratingFrom()).ratingTo(base.ratingTo())
                 .yearFrom(base.yearFrom()).yearTo(base.yearTo()).addedFrom(base.addedFrom()).addedTo(base.addedTo())
                 .localOnly(base.localOnly()).filterSpec(base.filterSpec())
-                .limit(limit).offset(offset).mode(base.mode())
+                .limit(limit).offset(offset).mode(base.mode()).trackTotalHits(trackTotalHits)
                 .build();
     }
 

@@ -13,6 +13,7 @@ import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.port.out.catalog.CatalogSourceStatePort;
+import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogPackage;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
@@ -38,6 +39,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.DoubleConsumer;
 import java.util.function.Consumer;
 import java.util.UUID;
@@ -51,6 +53,7 @@ public class UpdateCollectionFromNetworkUseCase {
     private final SearchIndexer searchIndexer;
     private final BookQueryRepository bookQueryRepository;
     private final StatisticsRepository statisticsRepository;
+    private final CollectionBackupPort collectionBackupPort;
     private final int changeTrackingLimit;
     private final LibraryOperationCoordinator operationCoordinator;
 
@@ -61,7 +64,7 @@ public class UpdateCollectionFromNetworkUseCase {
             CatalogSourceStatePort sourceState,
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository) {
-        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null,
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
                 ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT, new LibraryOperationCoordinator());
     }
 
@@ -73,7 +76,7 @@ public class UpdateCollectionFromNetworkUseCase {
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository,
             int changeTrackingLimit) {
-        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null,
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
                 changeTrackingLimit, new LibraryOperationCoordinator());
     }
 
@@ -86,7 +89,7 @@ public class UpdateCollectionFromNetworkUseCase {
             BookQueryRepository bookQueryRepository,
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator) {
-        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null,
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
                 changeTrackingLimit, operationCoordinator);
     }
 
@@ -98,6 +101,7 @@ public class UpdateCollectionFromNetworkUseCase {
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository,
             StatisticsRepository statisticsRepository,
+            CollectionBackupPort collectionBackupPort,
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator) {
         this.downloader = downloader;
@@ -107,6 +111,7 @@ public class UpdateCollectionFromNetworkUseCase {
         this.searchIndexer = searchIndexer;
         this.bookQueryRepository = bookQueryRepository;
         this.statisticsRepository = statisticsRepository;
+        this.collectionBackupPort = collectionBackupPort;
         this.changeTrackingLimit = ImportChangeAccumulator.normalizeLimit(changeTrackingLimit);
         this.operationCoordinator = java.util.Objects.requireNonNull(operationCoordinator, "operationCoordinator");
     }
@@ -139,7 +144,12 @@ public class UpdateCollectionFromNetworkUseCase {
         String sourceKey = CatalogSourceIdentity.remoteCollection(collection.getId());
         CatalogSourceState durable = sourceState.get(sourceKey);
         String localVersion = durable.appliedVersion();
+        String safeSource = safeDisplaySource(source.trim());
+        AtomicReference<OperationStage> currentStage = new AtomicReference<>(OperationStage.CHECKING_SERVER);
         List<Path> downloaded = new ArrayList<>();
+        Path checkpoint = null;
+        boolean mutationMayHaveCommitted = false;
+        boolean keepCheckpoint = false;
 
         long imported = 0, skipped = 0, duplicates = 0, errors = 0;
         long withoutAuthor = 0, withoutGenre = 0, explicitlyDeleted = 0;
@@ -147,10 +157,12 @@ public class UpdateCollectionFromNetworkUseCase {
         List<ImportIssue> issues = new ArrayList<>();
 
         try {
-            String safeSource = safeDisplaySource(source.trim());
+            currentStage.set(OperationStage.CHECKING_SERVER);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.CHECKING_SERVER, true)
                     .withCurrentItem(safeSource));
             sink.accept(0.01);
+
+            currentStage.set(OperationStage.DOWNLOADING);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.DOWNLOADING, true)
                     .withCurrentItem(safeSource));
             RemoteCatalogUpdatePlan plan = downloader.downloadUpdates(
@@ -168,8 +180,22 @@ public class UpdateCollectionFromNetworkUseCase {
                         ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of());
             }
 
+            currentStage.set(OperationStage.VALIDATING);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.VALIDATING, true)
                     .withProgress(plan.packages().size(), plan.packages().size()));
+
+            // Each catalog package is committed in bounded DB transactions. A checkpoint is therefore
+            // created immediately before the first possible catalog mutation, not before network I/O.
+            // This avoids a giant long-lived SQLite transaction while still giving late Lucene/statistics
+            // failures and cancellation a deterministic way back to the previous catalog state.
+            if (!plan.packages().isEmpty() && collectionBackupPort != null) {
+                currentStage.set(OperationStage.CREATING_CHECKPOINT);
+                checkpoint = updateCheckpointPath(active, operationId);
+                emit(telemetry, OperationProgress.stage(operationId, OperationStage.CREATING_CHECKPOINT, false)
+                        .withCurrentItem("SQLite checkpoint"));
+                collectionBackupPort.createDatabaseSnapshot(active, checkpoint);
+                collectionBackupPort.validateDatabaseFile(checkpoint);
+            }
 
             for (int packageIndex = 0; packageIndex < plan.packages().size(); packageIndex++) {
                 RemoteCatalogPackage pkg = plan.packages().get(packageIndex);
@@ -180,18 +206,19 @@ public class UpdateCollectionFromNetworkUseCase {
                         pkg.metadata().sha256(), pkg.metadata().datasetSchema());
 
                 String packageLabel = (pkg.fullSnapshot() ? "FULL · " : "DELTA · ") + pkg.file().getFileName();
+                currentStage.set(OperationStage.READING_CATALOG);
                 emit(telemetry, OperationProgress.stage(operationId, OperationStage.READING_CATALOG, true)
                         .withProgress(packageIndex, plan.packages().size())
                         .withCurrentItem(packageLabel)
                         .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                                 skipped, duplicates, issues.size(), errors));
 
-                // Remote INPX packages live in cache/catalog-updates, but book storage metadata must
-                // point at the permanent collection/download root. Persisting pkg.file().getParent()
-                // made every remote book look for online.zip/extra.zip inside the temporary catalog cache.
                 Path root = onlineBookStorageRoot(active);
                 double importStart = 0.35 + 0.45 * packageIndex / plan.packages().size();
                 double importSpan = 0.45 / plan.packages().size();
+                // Bounded import batches may commit before execute() returns. From this point onward any
+                // failure/cancellation must restore the pre-update checkpoint when one is available.
+                mutationMayHaveCommitted = true;
                 ImportResult current = importer.execute(ImportContext.builder()
                         .file(pkg.file())
                         .rootDirectory(root)
@@ -204,7 +231,10 @@ public class UpdateCollectionFromNetworkUseCase {
                         .batchSize(1000)
                         .cancelFlag(flag)
                         .operationId(operationId)
-                        .operationProgressListener(p -> emit(telemetry, p.withCurrentItem(packageLabel)))
+                        .operationProgressListener(p -> {
+                            if (p != null) currentStage.set(p.stage());
+                            emit(telemetry, p == null ? null : p.withCurrentItem(packageLabel));
+                        })
                         .statusConsumer(ignored -> { })
                         .progressListener(p -> sink.accept(Math.min(0.80, importStart + p * importSpan)))
                         .build());
@@ -224,22 +254,20 @@ public class UpdateCollectionFromNetworkUseCase {
                 appendIssuesBounded(issues, current.issues());
             }
 
+            currentStage.set(OperationStage.APPLYING_DELETIONS);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.APPLYING_DELETIONS, true)
                     .withProgress(changes.deletedCount(), changes.deletedCount())
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors));
 
-            // Freeze the counters before passing them into callbacks. Import state is complete at this point,
-            // so telemetry remains deterministic while Lucene works on background/bounded batches.
             final ImportChangeSet indexChanges = changes.snapshot();
             final long indexSkipped = skipped;
             final long indexDuplicates = duplicates;
             final long indexErrors = errors;
             final long indexWarnings = issues.size();
 
-            // Database packages are applied first. Only after the search index is safely finalized
-            // do we advance applied_version. Cancellation or index failure leaves the previous committed index available.
             sink.accept(0.82);
+            currentStage.set(OperationStage.UPDATING_SEARCH_INDEX);
             if (!indexChanges.complete()) {
                 searchIndexer.rebuildIndex(flag, p -> {
                     checkCancelled(flag);
@@ -259,6 +287,7 @@ public class UpdateCollectionFromNetworkUseCase {
             checkCancelled(flag);
 
             if (statisticsRepository != null) {
+                currentStage.set(OperationStage.REFRESHING_STATISTICS);
                 emit(telemetry, OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false)
                         .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                                 skipped, duplicates, issues.size(), errors));
@@ -267,6 +296,7 @@ public class UpdateCollectionFromNetworkUseCase {
             }
             sink.accept(0.98);
 
+            currentStage.set(OperationStage.FINALIZING);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FINALIZING, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors));
@@ -280,37 +310,140 @@ public class UpdateCollectionFromNetworkUseCase {
             return new ImportResult(imported, skipped, duplicates, errors, elapsedMillis(operationStartedNanos),
                     status, indexChanges, issues, withoutAuthor, withoutGenre, explicitlyDeleted);
         } catch (UpdateCancelledException e) {
+            OperationStage failedAt = currentStage.get();
+            RollbackOutcome rollback = attemptRollback(active, checkpoint, mutationMayHaveCommitted, telemetry,
+                    operationId, changes, skipped, duplicates, issues.size(), errors, e);
+            keepCheckpoint = rollback.attempted() && !rollback.succeeded();
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors));
-            safeFailure(sourceKey, "Оновлення скасовано");
-            throw new IllegalStateException("Оновлення скасовано", e);
+            safeFailure(sourceKey, failureDescription(failedAt, "Оновлення скасовано", rollback));
+            String message = rollback.attempted() && !rollback.succeeded()
+                    ? "Оновлення скасовано; автоматичний відкат не завершено" : "Оновлення скасовано";
+            throw new CatalogUpdateFailureException(message, e, failedAt, safeSource, localVersion,
+                    mutationMayHaveCommitted, rollback.attempted(), rollback.succeeded());
         } catch (RuntimeException e) {
             if (flag.get() || isCancellation(e)) {
+                OperationStage failedAt = currentStage.get();
+                RollbackOutcome rollback = attemptRollback(active, checkpoint, mutationMayHaveCommitted, telemetry,
+                        operationId, changes, skipped, duplicates, issues.size(), errors, e);
+                keepCheckpoint = rollback.attempted() && !rollback.succeeded();
                 emit(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false)
                         .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                                 skipped, duplicates, issues.size(), errors));
-                safeFailure(sourceKey, "Оновлення скасовано");
-                throw new IllegalStateException("Оновлення скасовано", e);
+                safeFailure(sourceKey, failureDescription(failedAt, "Оновлення скасовано", rollback));
+                String message = rollback.attempted() && !rollback.succeeded()
+                        ? "Оновлення скасовано; автоматичний відкат не завершено" : "Оновлення скасовано";
+                throw new CatalogUpdateFailureException(message, e, failedAt, safeSource, localVersion,
+                        mutationMayHaveCommitted, rollback.attempted(), rollback.succeeded());
             }
+            OperationStage failedAt = currentStage.get();
+            RollbackOutcome rollback = attemptRollback(active, checkpoint, mutationMayHaveCommitted, telemetry,
+                    operationId, changes, skipped, duplicates, issues.size(), errors, e);
+            keepCheckpoint = rollback.attempted() && !rollback.succeeded();
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FAILED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors + 1));
-            safeFailure(sourceKey, ThrowableMessages.rootMessage(e));
-            throw e;
+            String root = ThrowableMessages.rootMessage(e);
+            safeFailure(sourceKey, failureDescription(failedAt, root, rollback));
+            throw new CatalogUpdateFailureException("Не вдалося оновити колекцію з мережі: " + root,
+                    e, failedAt, safeSource, localVersion, mutationMayHaveCommitted,
+                    rollback.attempted(), rollback.succeeded());
         } catch (Exception e) {
+            OperationStage failedAt = currentStage.get();
+            RollbackOutcome rollback = attemptRollback(active, checkpoint, mutationMayHaveCommitted, telemetry,
+                    operationId, changes, skipped, duplicates, issues.size(), errors, e);
+            keepCheckpoint = rollback.attempted() && !rollback.succeeded();
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.FAILED, false)
                     .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
                             skipped, duplicates, issues.size(), errors + 1));
-            safeFailure(sourceKey, ThrowableMessages.rootMessage(e));
-            throw new IllegalStateException("Не вдалося оновити колекцію з мережі: " + ThrowableMessages.rootMessage(e), e);
+            String root = ThrowableMessages.rootMessage(e);
+            safeFailure(sourceKey, failureDescription(failedAt, root, rollback));
+            throw new CatalogUpdateFailureException("Не вдалося оновити колекцію з мережі: " + root,
+                    e, failedAt, safeSource, localVersion, mutationMayHaveCommitted,
+                    rollback.attempted(), rollback.succeeded());
         } finally {
             for (Path path : downloaded) {
                 if (path != null && path.startsWith(AppPaths.cacheDir())) {
                     try { Files.deleteIfExists(path); } catch (Exception ignored) { }
                 }
             }
+            if (checkpoint != null && !keepCheckpoint) {
+                try { Files.deleteIfExists(checkpoint); } catch (Exception ignored) { }
+            }
         }
+    }
+
+    private Path updateCheckpointPath(Collection collection, String operationId) {
+        String collectionId = collection == null || collection.getId() == null ? "unknown" : collection.getId();
+        String safeId = collectionId.replaceAll("[^A-Za-z0-9._-]", "_");
+        return AppPaths.cacheDir().resolve("catalog-update-recovery")
+                .resolve(safeId + "-" + operationId + ".db")
+                .toAbsolutePath().normalize();
+    }
+
+    private RollbackOutcome attemptRollback(
+            Collection collection,
+            Path checkpoint,
+            boolean mutationMayHaveCommitted,
+            Consumer<OperationProgress> telemetry,
+            String operationId,
+            ImportChangeAccumulator changes,
+            long skipped,
+            long duplicates,
+            long warnings,
+            long errors,
+            Throwable originalFailure) {
+        if (!mutationMayHaveCommitted || checkpoint == null || collectionBackupPort == null) {
+            return RollbackOutcome.notAttempted();
+        }
+
+        emit(telemetry, OperationProgress.stage(operationId, OperationStage.ROLLING_BACK, false)
+                .withCurrentItem("SQLite → Lucene → statistics")
+                .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
+                        skipped, duplicates, warnings, errors));
+        try {
+            collectionBackupPort.restoreDatabaseSnapshot(collection, checkpoint);
+
+            // Lucene/statistics are derived state. Rebuild them from the restored SQLite source of truth
+            // even if the original failure happened before Lucene was touched: this makes rollback
+            // deterministic across import, cancellation, index, statistics and source-state failures.
+            AtomicBoolean neverCancelRecovery = new AtomicBoolean(false);
+            searchIndexer.rebuildIndex(neverCancelRecovery, p -> emit(telemetry,
+                    OperationProgress.stage(operationId, OperationStage.ROLLING_BACK, false)
+                            .withProgress(p.processed(), p.total())
+                            .withCurrentItem("Відновлення пошукового індексу")
+                            .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
+                                    skipped, duplicates, warnings, errors)));
+            if (statisticsRepository != null) {
+                statisticsRepository.invalidate();
+                statisticsRepository.refreshStatistics();
+            }
+            return RollbackOutcome.success();
+        } catch (Exception rollbackFailure) {
+            if (originalFailure != null) originalFailure.addSuppressed(rollbackFailure);
+            return RollbackOutcome.failed(ThrowableMessages.rootMessage(rollbackFailure));
+        }
+    }
+
+    private static String failureDescription(OperationStage stage, String message, RollbackOutcome rollback) {
+        StringBuilder out = new StringBuilder();
+        out.append(stage == null ? OperationStage.FAILED : stage).append(": ")
+                .append(message == null || message.isBlank() ? "Невідома помилка" : message);
+        if (rollback != null && rollback.attempted()) {
+            out.append(rollback.succeeded() ? " · rollback=OK" : " · rollback=FAILED");
+            if (!rollback.detail().isBlank()) out.append(" (").append(rollback.detail()).append(')');
+        }
+        return out.toString();
+    }
+
+    private record RollbackOutcome(boolean attempted, boolean succeeded, String detail) {
+        private RollbackOutcome {
+            detail = detail == null ? "" : detail;
+        }
+        static RollbackOutcome notAttempted() { return new RollbackOutcome(false, false, ""); }
+        static RollbackOutcome success() { return new RollbackOutcome(true, true, ""); }
+        static RollbackOutcome failed(String detail) { return new RollbackOutcome(true, false, detail); }
     }
 
     private static Path onlineBookStorageRoot(Collection collection) {

@@ -104,6 +104,28 @@ class EpubParserTest {
         assertThat(doc.toc().entries().get(1).textOffset()).isGreaterThan(0);
     }
 
+
+    @Test
+    void readsMixedContentMetadataWithoutLeakingNonMetadataTitles() throws Exception {
+        Path epub = temp.resolve("mixed-metadata.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", """
+                    <package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>Reader <b xmlns="urn:test">Title</b></dc:title>
+                    <dc:creator>Іван <span xmlns="urn:test">Петренко</span></dc:creator>
+                    <dc:language>uk</dc:language>
+                    </metadata><manifest>
+                    <item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"><title>Wrong title</title></item>
+                    </manifest><spine><itemref idref="c"/></spine></package>""");
+            put(zip, "OPS/chapter.xhtml", "<html><body><p>TEXT</p></body></html>");
+        }
+
+        ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
+        assertThat(doc.metadata().title()).isEqualTo("Reader Title");
+        assertThat(doc.metadata().authors()).containsExactly("Іван Петренко");
+    }
+
     private void put(ZipOutputStream zip, String name, String content) throws Exception {
         zip.putNextEntry(new ZipEntry(name));
         zip.write(content.getBytes(StandardCharsets.UTF_8));

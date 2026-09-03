@@ -15,6 +15,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class InpxReaderCompatibilityTest {
     private static final char D = 0x04;
@@ -105,6 +106,21 @@ class InpxReaderCompatibilityTest {
         assertThat(online).extracting(r -> r.field("TITLE")).containsExactly("Extra", "Main");
         assertThat(reader.count(inpx, null, false)).isEqualTo(offline.size());
         assertThat(reader.count(inpx, null, true)).isEqualTo(online.size());
+    }
+
+
+    @Test
+    void rejectsSuspiciouslyCompressedInpEntry(@TempDir Path dir) throws Exception {
+        Path inpx = dir.resolve("suspicious.inpx");
+        byte[] repetitive = new byte[2 * 1024 * 1024];
+        java.util.Arrays.fill(repetitive, (byte) 'A');
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(inpx))) {
+            put(out, "main.inp", repetitive);
+        }
+
+        assertThatThrownBy(() -> reader.count(inpx))
+                .isInstanceOf(java.io.UncheckedIOException.class)
+                .hasMessageContaining("INPX");
     }
 
     private void assertLegacyEncoding(Path dir, Charset charset, String title, String archive) throws IOException {

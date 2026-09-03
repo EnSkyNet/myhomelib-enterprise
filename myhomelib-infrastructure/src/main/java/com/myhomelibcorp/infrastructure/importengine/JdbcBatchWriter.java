@@ -5,6 +5,7 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -105,6 +106,11 @@ public class JdbcBatchWriter {
 
         // ОПТИМІЗОВАНО: використання batchUpdate з великим розміром батчу
         jt.batchUpdate(insertBookSql, bookBatch);
+        Map<String, String> keywordProjection = new LinkedHashMap<>(bookBatch.size());
+        for (Object[] row : bookBatch) {
+            keywordProjection.put((String) row[0], row[9] == null ? "" : row[9].toString());
+        }
+        KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
 
         // SQLite builds commonly expose a much smaller bind-variable limit than our 10k import batch.
         // Delete relationship rows in bounded chunks instead of producing one huge IN (?, ...).

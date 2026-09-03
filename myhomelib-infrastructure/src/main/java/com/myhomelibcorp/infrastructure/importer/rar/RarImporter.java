@@ -106,7 +106,7 @@ public class RarImporter implements BookImporterPort {
                 try {
                     if (header.isDirectory() || !ArchiveImportSupport.isSafeEntryName(name) || ArchiveImportSupport.isNestedArchive(name)) continue;
                     BookImporterPort importer;
-                    try { importer = importerRegistry.findImporter(Path.of(name)); }
+                    try { importer = importerRegistry.findImporter(ArchiveImportSupport.importerProbePath(name)); }
                     catch (Exception unsupported) { continue; }
 
                     Path temp = Files.createTempFile("mhl-rar-entry-", ArchiveImportSupport.suffixFor(name));

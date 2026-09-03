@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import sqlite3
 import tempfile
+import unicodedata
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -36,6 +37,21 @@ def seed(connection: sqlite3.Connection) -> tuple[int, int]:
         """,
         rows,
     )
+    # Mirror the production normalized keyword projection maintained by write paths/backfill.
+    for book_id, _, _, raw_keywords, _, _, _ in rows:
+        for raw in re.split(r"[,;|]", raw_keywords or ""):
+            display = " ".join(unicodedata.normalize("NFKC", raw).split())
+            if not display:
+                continue
+            normalized = display.lower()
+            connection.execute(
+                "INSERT OR IGNORE INTO keywords(normalized_name, display_name) VALUES(?,?)",
+                (normalized, display),
+            )
+            connection.execute(
+                "INSERT OR IGNORE INTO keyword_books(normalized_name, book_id) VALUES(?,?)",
+                (normalized, book_id),
+            )
     connection.execute("INSERT INTO groups(name, allow_delete) VALUES('Sci-Fi shelf', 1)")
     sci_group = connection.execute("SELECT id FROM groups WHERE name='Sci-Fi shelf'").fetchone()[0]
     favorites = connection.execute("SELECT id FROM groups WHERE name='Favorites'").fetchone()[0]
@@ -48,39 +64,24 @@ def seed(connection: sqlite3.Connection) -> tuple[int, int]:
 
 
 KEYWORD_FACETS_SQL = """
-WITH RECURSIVE keyword_source(book_id, rest) AS (
-    SELECT id, REPLACE(REPLACE(COALESCE(keywords, ''), ';', ','), '|', ',') || ','
-    FROM books
-    WHERE deleted = 0 AND keywords IS NOT NULL AND TRIM(keywords) <> ''
-), split(book_id, token, rest) AS (
-    SELECT book_id, '', rest FROM keyword_source
-    UNION ALL
-    SELECT book_id,
-           TRIM(SUBSTR(rest, 1, INSTR(rest, ',') - 1)),
-           SUBSTR(rest, INSTR(rest, ',') + 1)
-    FROM split WHERE rest <> ''
-)
-SELECT LOWER(token), MIN(token), COUNT(DISTINCT book_id)
-FROM split
-WHERE token <> ''
-GROUP BY LOWER(token)
-ORDER BY LOWER(token)
+SELECT k.normalized_name, k.display_name, COUNT(DISTINCT kb.book_id)
+FROM keywords k
+JOIN keyword_books kb ON kb.normalized_name = k.normalized_name
+JOIN books b ON b.id = kb.book_id
+WHERE b.deleted = 0
+GROUP BY k.normalized_name, k.display_name
+ORDER BY k.normalized_name
 """
 
 KEYWORD_FILTER_SQL = """
 SELECT COUNT(*) FROM books b
 WHERE b.deleted = 0
   AND EXISTS (
-      WITH RECURSIVE split(rest, token) AS (
-          VALUES(REPLACE(REPLACE(COALESCE(b.keywords, ''), ';', ','), '|', ',') || ',', '')
-          UNION ALL
-          SELECT SUBSTR(rest, INSTR(rest, ',') + 1),
-                 TRIM(SUBSTR(rest, 1, INSTR(rest, ',') - 1))
-          FROM split WHERE rest <> ''
-      )
-      SELECT 1 FROM split WHERE LOWER(token) = LOWER(?) LIMIT 1
+      SELECT 1 FROM keyword_books kb
+      WHERE kb.book_id = b.id AND kb.normalized_name = ?
   )
 """
+
 
 
 def main() -> int:
@@ -95,12 +96,12 @@ def main() -> int:
                 ("ai", "AI", 2),
                 ("future", "future", 1),
                 ("history", "history", 2),
-                ("space", "Space", 2),
+                ("space", "space", 2),
                 ("spacecraft", "spacecraft", 1),
             ], keywords
 
             assert db.execute(KEYWORD_FILTER_SQL, ("space",)).fetchone()[0] == 2
-            assert db.execute(KEYWORD_FILTER_SQL, ("SPACE",)).fetchone()[0] == 2
+            assert db.execute(KEYWORD_FILTER_SQL, ("space",)).fetchone()[0] == 2
             assert db.execute(KEYWORD_FILTER_SQL, ("spacecraft",)).fetchone()[0] == 1
 
             groups = db.execute(

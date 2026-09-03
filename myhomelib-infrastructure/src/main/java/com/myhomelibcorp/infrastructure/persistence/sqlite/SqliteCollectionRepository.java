@@ -51,19 +51,14 @@ public class SqliteCollectionRepository implements CollectionRepository {
     @Override
     public List<Collection> findAll() {
         String sql = "SELECT * FROM collections ORDER BY name";
-        try {
-            List<Collection> collections = metadataJdbcTemplate.query(sql, collectionRowMapper).stream()
-                    .map(this::migrateLegacyCredential)
-                    .toList();
-            log.info("Завантажено {} колекцій з мета-БД", collections.size());
-            for (Collection c : collections) {
-                log.info("  - Колекція: id={}, name={}, dbFile={}", c.getId(), c.getName(), c.getDbFile());
-            }
-            return collections;
-        } catch (Exception e) {
-            log.error("Помилка завантаження колекцій з мета-БД", e);
-            return List.of();
+        List<Collection> collections = metadataJdbcTemplate.query(sql, collectionRowMapper).stream()
+                .map(this::migrateLegacyCredential)
+                .toList();
+        log.info("Завантажено {} колекцій з мета-БД", collections.size());
+        for (Collection c : collections) {
+            log.info("  - Колекція: id={}, name={}, dbFile={}", c.getId(), c.getName(), c.getDbFile());
         }
+        return collections;
     }
 
     @Override

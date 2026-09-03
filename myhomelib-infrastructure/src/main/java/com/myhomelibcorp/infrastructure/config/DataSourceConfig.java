@@ -6,6 +6,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+import java.sql.SQLException;
+
 @Configuration
 @Slf4j
 public class DataSourceConfig {
@@ -88,7 +90,7 @@ public class DataSourceConfig {
             try (var connection = dataSource.getConnection(); var statement = connection.createStatement()) {
                 statement.execute("PRAGMA journal_mode=WAL");
                 return;
-            } catch (Exception error) {
+            } catch (SQLException error) {
                 if (attempt == 3) {
                     log.warn("Не вдалося підтвердити WAL mode для SQLite; продовжуємо з поточним режимом: {}",
                             error.getMessage());

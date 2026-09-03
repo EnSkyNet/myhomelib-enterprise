@@ -295,12 +295,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 @Override
     public int getDocumentCount() {
         if (isClosed.get() || indexWriter == null) return 0;
-        try {
-            return indexWriter.getDocStats().numDocs;
-        } catch (Exception e) {
-            log.error("Помилка отримання кількості документів", e);
-            return 0;
-        }
+        return indexWriter.getDocStats().numDocs;
     }
 
     @Override

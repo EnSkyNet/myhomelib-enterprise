@@ -6,6 +6,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
@@ -19,12 +20,8 @@ import java.nio.charset.StandardCharsets;
 public class TxtBookConverter implements BookConverter {
 
     private static final String DEFAULT_ENCODING = "UTF-8";
-    private final XMLInputFactory xmlFactory = XMLInputFactory.newInstance();
+    private final XMLInputFactory xmlFactory = SecureXmlInputFactory.create(false, false);
 
-    public TxtBookConverter() {
-        xmlFactory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
-        xmlFactory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
-    }
 
     @Override
     public boolean supports(Book book) {

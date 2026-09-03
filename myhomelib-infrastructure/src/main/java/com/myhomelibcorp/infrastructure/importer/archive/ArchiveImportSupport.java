@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.importer.archive;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
+import com.myhomelibcorp.shared.util.FileNameSupport;
 
 import java.nio.file.Path;
 import java.util.Locale;
@@ -11,17 +12,17 @@ public final class ArchiveImportSupport {
     private ArchiveImportSupport() { }
 
     public static boolean isSafeEntryName(String name) {
-        if (name == null || name.isBlank()) return false;
+        if (name == null || name.isBlank() || name.indexOf('\0') >= 0) return false;
         String normalizedText = name.replace('\\', '/');
-        if (normalizedText.startsWith("/") || normalizedText.startsWith("../") || normalizedText.contains("/../")) {
-            return false;
+        if (normalizedText.startsWith("/") || normalizedText.startsWith("//")
+                || normalizedText.matches("(?i)^[a-z]:/.*")) return false;
+        // Do not ask the host filesystem to encode an archive display name just to
+        // validate traversal. That fails for perfectly valid Cyrillic/CJK names under
+        // a minimal POSIX locale. Reject parent traversal lexically instead.
+        for (String segment : normalizedText.split("/", -1)) {
+            if ("..".equals(segment)) return false;
         }
-        try {
-            Path path = Path.of(normalizedText).normalize();
-            return !path.isAbsolute() && !path.startsWith("..");
-        } catch (Exception e) {
-            return false;
-        }
+        return true;
     }
 
     public static boolean isNestedArchive(String name) {
@@ -38,7 +39,7 @@ public final class ArchiveImportSupport {
     public static boolean isSupportedBookEntry(String name, ImporterRegistry importerRegistry) {
         if (name == null || importerRegistry == null || isNestedArchive(name)) return false;
         try {
-            importerRegistry.findImporter(Path.of(name));
+            importerRegistry.findImporter(importerProbePath(name));
             return true;
         } catch (RuntimeException e) {
             return false;
@@ -46,26 +47,27 @@ public final class ArchiveImportSupport {
     }
 
     public static String suffixFor(String entryName) {
-        String fileName;
-        try {
-            fileName = Path.of(entryName.replace('\\', '/')).getFileName().toString();
-        } catch (Exception e) {
-            fileName = "book.bin";
-        }
-        String lower = fileName.toLowerCase(Locale.ROOT);
+        String lower = fileName(entryName).toLowerCase(Locale.ROOT);
         int dot = lower.lastIndexOf('.');
         String suffix = dot >= 0 ? lower.substring(dot) : ".bin";
         if (suffix.length() > 16 || !suffix.matches("\\.[a-z0-9.]+")) suffix = ".bin";
         return suffix;
     }
 
+    /** Filesystem-independent basename for archive metadata/UI. */
+    public static String fileName(String entryName) {
+        if (entryName == null || entryName.isBlank()) return "book.bin";
+        String result = FileNameSupport.baseName(entryName);
+        return result.isBlank() ? "book.bin" : result;
+    }
+
+    /** ASCII probe path used only for importer selection by extension. */
+    public static Path importerProbePath(String entryName) {
+        return Path.of("archive-entry" + suffixFor(entryName));
+    }
+
     public static Book enrich(Book book, Path archivePath, String entryName, long entrySize) {
-        String displayName;
-        try {
-            displayName = Path.of(entryName.replace('\\', '/')).getFileName().toString();
-        } catch (Exception e) {
-            displayName = entryName;
-        }
+        String displayName = fileName(entryName);
         BookFile file = new BookFile(
                 displayName,
                 archivePath.toAbsolutePath().normalize().toString(),

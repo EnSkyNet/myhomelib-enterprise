@@ -28,6 +28,7 @@
             <!-- Права панель: деталі колекції -->
             <VBox fx:id="collectionDetailsBox" spacing="10" style="-fx-padding: 10;">
                 <Label fx:id="collectionNameLabel" text="Колекція" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <Label fx:id="runtimeStateLabel" text="Стан: ● Готова" wrapText="true"/>
                 <Label fx:id="activeCollectionLabel" text="Активна колекція: ні"/>
                 <Label fx:id="rootFolderLabel" text="Папка: —" wrapText="true"/>
                 <Label fx:id="dbFileLabel" text="БД: —" wrapText="true"/>

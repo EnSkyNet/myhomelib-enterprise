@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.integrity;
 
 import com.myhomelibcorp.application.port.out.integrity.DataIntegrityPort;
+import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.usecase.integrity.IntegrityReport;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
@@ -17,6 +18,7 @@ import java.util.List;
 public class DataIntegrityService implements DataIntegrityPort {
 
     private final CollectionManager collectionManager;
+    private final SearchIndexer searchIndexer;
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
@@ -26,31 +28,18 @@ public class DataIntegrityService implements DataIntegrityPort {
     public IntegrityReport checkIntegrity() {
         List<String> issues = new ArrayList<>();
 
-        // 1. Книги без авторів
         long booksWithoutAuthor = countBooksWithoutAuthor();
-        if (booksWithoutAuthor > 0) {
-            issues.add("Знайдено " + booksWithoutAuthor + " книг без авторів");
-        }
+        if (booksWithoutAuthor > 0) issues.add("Знайдено " + booksWithoutAuthor + " книг без авторів");
 
-        // 2. Книги без жанрів
         long booksWithoutGenre = countBooksWithoutGenre();
-        if (booksWithoutGenre > 0) {
-            issues.add("Знайдено " + booksWithoutGenre + " книг без жанрів");
-        }
+        if (booksWithoutGenre > 0) issues.add("Знайдено " + booksWithoutGenre + " книг без жанрів");
 
-        // 3. Автори без книг
         long orphanedAuthors = countOrphanedAuthors();
-        if (orphanedAuthors > 0) {
-            issues.add("Знайдено " + orphanedAuthors + " авторів без книг");
-        }
+        if (orphanedAuthors > 0) issues.add("Знайдено " + orphanedAuthors + " авторів без книг");
 
-        // 4. Жанри без книг
         long orphanedGenres = countOrphanedGenres();
-        if (orphanedGenres > 0) {
-            issues.add("Знайдено " + orphanedGenres + " жанрів без книг");
-        }
+        if (orphanedGenres > 0) issues.add("Знайдено " + orphanedGenres + " жанрів без книг");
 
-        // 5. Physical catalog duplicates. Count in SQL and keep only a tiny sample in memory.
         DuplicateScan duplicateScan = scanPhysicalDuplicates();
         long duplicateBooks = duplicateScan.count();
         if (duplicateBooks > 0) {
@@ -58,8 +47,34 @@ public class DataIntegrityService implements DataIntegrityPort {
             duplicateScan.sampleIds().forEach(id -> log.debug("Дублікат ID: {}", id));
         }
 
-        return new IntegrityReport(issues, booksWithoutAuthor, booksWithoutGenre,
-                orphanedAuthors, orphanedGenres, duplicateBooks);
+        long orphanedSeries = countOrphanedSeries();
+        if (orphanedSeries > 0) issues.add("Знайдено " + orphanedSeries + " серій без книг");
+
+        long booksWithMissingSeries = countBooksWithMissingSeries();
+        if (booksWithMissingSeries > 0) issues.add("Знайдено " + booksWithMissingSeries + " книг із серіями, відсутніми у довіднику");
+
+        long brokenRelations = countBrokenRelations();
+        if (brokenRelations > 0) issues.add("Знайдено " + brokenRelations + " пошкоджених зв’язків book_authors/book_genres");
+
+        SqliteIntegrity sqlite = checkSqliteIntegrity();
+        if (!sqlite.ok()) issues.add("SQLite integrity_check: " + sqlite.message());
+
+        long catalogBooks = countIndexableBooks();
+        long luceneDocuments = -1L;
+        boolean luceneOk = false;
+        try {
+            luceneDocuments = searchIndexer.getDocumentCount();
+            luceneOk = luceneDocuments == catalogBooks;
+            if (!luceneOk) {
+                issues.add("Lucene не відповідає SQLite: документів " + luceneDocuments + ", книг " + catalogBooks);
+            }
+        } catch (RuntimeException error) {
+            issues.add("Не вдалося перевірити Lucene: " + rootMessage(error));
+        }
+
+        return new IntegrityReport(issues, booksWithoutAuthor, booksWithoutGenre, orphanedAuthors, orphanedGenres,
+                duplicateBooks, orphanedSeries, booksWithMissingSeries, brokenRelations, sqlite.ok(), sqlite.message(),
+                luceneOk, catalogBooks, luceneDocuments);
     }
 
 
@@ -104,6 +119,67 @@ public class DataIntegrityService implements DataIntegrityPort {
                 """;
         return getJdbcTemplate().queryForObject(sql, Long.class);
     }
+
+    private long countOrphanedSeries() {
+        Long count = getJdbcTemplate().queryForObject("""
+                SELECT COUNT(*) FROM series s
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM books b
+                    WHERE TRIM(COALESCE(b.series, '')) <> ''
+                      AND LOWER(TRIM(b.series)) = LOWER(TRIM(s.name))
+                )
+                """, Long.class);
+        return count == null ? 0L : count;
+    }
+
+    private long countBooksWithMissingSeries() {
+        Long count = getJdbcTemplate().queryForObject("""
+                SELECT COUNT(*) FROM books b
+                WHERE TRIM(COALESCE(b.series, '')) <> ''
+                  AND NOT EXISTS (
+                    SELECT 1 FROM series s WHERE LOWER(TRIM(s.name)) = LOWER(TRIM(b.series))
+                  )
+                """, Long.class);
+        return count == null ? 0L : count;
+    }
+
+    private long countBrokenRelations() {
+        Long authorLinks = getJdbcTemplate().queryForObject("""
+                SELECT COUNT(*) FROM book_authors ba
+                LEFT JOIN books b ON b.id = ba.book_id
+                LEFT JOIN authors a ON a.id = ba.author_id
+                WHERE b.id IS NULL OR a.id IS NULL
+                """, Long.class);
+        Long genreLinks = getJdbcTemplate().queryForObject("""
+                SELECT COUNT(*) FROM book_genres bg
+                LEFT JOIN books b ON b.id = bg.book_id
+                LEFT JOIN genres g ON g.code = bg.genre_code
+                WHERE b.id IS NULL OR g.code IS NULL
+                """, Long.class);
+        return (authorLinks == null ? 0L : authorLinks) + (genreLinks == null ? 0L : genreLinks);
+    }
+
+    private SqliteIntegrity checkSqliteIntegrity() {
+        List<String> rows = getJdbcTemplate().query("PRAGMA integrity_check", (rs, rowNum) -> rs.getString(1));
+        if (rows.size() == 1 && "ok".equalsIgnoreCase(rows.getFirst().trim())) return new SqliteIntegrity(true, "ok");
+        String message = rows.isEmpty() ? "немає результату" : String.join("; ", rows.stream().limit(10).toList());
+        return new SqliteIntegrity(false, message);
+    }
+
+    private long countIndexableBooks() {
+        Long count = getJdbcTemplate().queryForObject("SELECT COUNT(*) FROM books WHERE COALESCE(deleted, 0) = 0", Long.class);
+        return count == null ? 0L : count;
+    }
+
+    private static String rootMessage(Throwable error) {
+        Throwable current = error;
+        while (current != null && current.getCause() != null && current.getCause() != current) current = current.getCause();
+        if (current == null) return "невідома помилка";
+        String message = current.getMessage();
+        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+    }
+
+    private record SqliteIntegrity(boolean ok, String message) { }
 
     /**
      * Uses the same stable physical identity as maintenance/statistics instead of an O(N²)-like

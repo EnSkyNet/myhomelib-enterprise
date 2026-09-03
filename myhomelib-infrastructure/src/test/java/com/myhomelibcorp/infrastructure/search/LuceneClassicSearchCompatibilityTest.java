@@ -40,6 +40,9 @@ class LuceneClassicSearchCompatibilityTest {
         search.indexSnapshot(snapshot(second, "Львівські оповідання", "Леся Українка", "en", 2023, 3, 2,
                 LocalDateTime.of(2025, 3, 10, 12, 0)));
         search.commit();
+        // Standalone service tests bypass LuceneCollectionIndexLifecycle, which normally
+        // publishes query availability after the collection index is validated/rebuilt.
+        search.setQueryAvailability(true, null);
     }
 
     @AfterEach

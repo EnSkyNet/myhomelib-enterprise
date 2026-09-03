@@ -17,11 +17,16 @@ public enum TextStyle {
     HEADING_4,
     HEADING_5,
     HEADING_6,
+    BOOK_TITLE,
+    CHAPTER_TITLE,
+    SECTION_TITLE,
+    SUBTITLE,
     QUOTE,
     EPIGRAPH,
     CITE,
     POEM,
     VERSE,
+    POEM_AUTHOR,
     TEXT_AUTHOR,
     NOTE,
     FOOTNOTE,
@@ -31,7 +36,8 @@ public enum TextStyle {
 
     public boolean isHeading() {
         return this == HEADING_1 || this == HEADING_2 || this == HEADING_3 ||
-                this == HEADING_4 || this == HEADING_5 || this == HEADING_6;
+                this == HEADING_4 || this == HEADING_5 || this == HEADING_6 ||
+                this == BOOK_TITLE || this == CHAPTER_TITLE || this == SECTION_TITLE;
     }
 
     public int getHeadingLevel() {

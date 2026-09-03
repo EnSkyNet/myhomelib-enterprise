@@ -9,6 +9,7 @@ import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.domain.service.LanguageResolver;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.nio.charset.StandardCharsets;
@@ -131,6 +132,11 @@ final class JdbcCatalogBatchWriter {
             });
         }
         jdbc.batchUpdate(upsertBook, books);
+        Map<String, String> keywordProjection = new LinkedHashMap<>(books.size());
+        for (Object[] row : books) {
+            keywordProjection.put((String) row[0], row[9] == null ? "" : row[9].toString());
+        }
+        KeywordIndexSupport.replaceForBooks(jdbc, keywordProjection);
 
         deleteRelations(jdbc, bookIds);
         persistBookAuthors(jdbc, states, authorIds);

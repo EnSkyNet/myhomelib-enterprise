@@ -9,6 +9,7 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.batch.BookBatchWriter
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
 import lombok.RequiredArgsConstructor;
@@ -85,6 +86,8 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             return ps;
         });
 
+        KeywordIndexSupport.replaceForBook(getJdbcTemplate(), book.getId().asString(), book.getKeywords());
+
         // Always replace relationship links. An empty parsed list means stale links
         // from a previous version of the file must be removed.
         bookAuthorHelper.saveAuthors(book.getId(),
@@ -114,6 +117,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
 
     @Override
     public void deleteById(BookId id) {
+        getJdbcTemplate().update("DELETE FROM keyword_books WHERE book_id = ?", id.asString());
         getJdbcTemplate().update(BookQueries.DELETE_BY_ID, id.asString());
         bookCache.evict(id);
         log.debug("Книгу видалено: id={}", id.asString());

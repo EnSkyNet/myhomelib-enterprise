@@ -4,6 +4,7 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.query.BookQueries;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookDenormalizedValues;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -13,6 +14,8 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.LinkedHashMap;
+import java.util.Map;
 
 @Component
 @RequiredArgsConstructor
@@ -75,6 +78,7 @@ public class BookBatchWriter {
         }
 
         jdbcTemplate.batchUpdate(BookQueries.INSERT_OR_UPDATE_BOOK, batchArgs);
+        KeywordIndexSupport.replaceForBooks(jdbcTemplate, keywordProjection(books));
         log.debug("Batch вставлено {} книг", books.size());
     }
 
@@ -125,6 +129,15 @@ public class BookBatchWriter {
         }
 
         jdbcTemplate.batchUpdate(BookQueries.UPDATE_BOOK, batchArgs);
+        KeywordIndexSupport.replaceForBooks(jdbcTemplate, keywordProjection(books));
         log.debug("Batch оновлено {} книг", books.size());
     }
+    private static Map<String, String> keywordProjection(List<Book> books) {
+        Map<String, String> result = new LinkedHashMap<>(books.size());
+        for (Book book : books) {
+            result.put(book.getId().asString(), book.getKeywords() == null ? "" : book.getKeywords());
+        }
+        return result;
+    }
+
 }

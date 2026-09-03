@@ -5,6 +5,7 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -40,7 +41,7 @@ public class GenreServiceImpl implements GenreRepository {
             String dbName = getJdbcTemplate().queryForObject(
                     "SELECT name FROM genres WHERE code = ?", String.class, code);
             return isMeaningfulSourceName(code, dbName) ? dbName.trim() : code.trim();
-        } catch (Exception ignored) {
+        } catch (EmptyResultDataAccessException missing) {
             return code.trim();
         }
     }
@@ -66,20 +67,16 @@ public class GenreServiceImpl implements GenreRepository {
     }
 
     private Map<String, String> loadCollectionGenres() {
-        try {
-            Map<String, String> result = new LinkedHashMap<>();
-            getJdbcTemplate().query(
-                    "SELECT code, name FROM genres ORDER BY LOWER(COALESCE(name, code)), code",
-                    rs -> {
-                        String code = rs.getString("code");
-                        if (code == null || code.isBlank()) return;
-                        String name = rs.getString("name");
-                        result.put(code, isMeaningfulSourceName(code, name) ? name.trim() : code.trim());
-                    });
-            return result;
-        } catch (Exception ignored) {
-            return Map.of();
-        }
+        Map<String, String> result = new LinkedHashMap<>();
+        getJdbcTemplate().query(
+                "SELECT code, name FROM genres ORDER BY LOWER(COALESCE(name, code)), code",
+                rs -> {
+                    String code = rs.getString("code");
+                    if (code == null || code.isBlank()) return;
+                    String name = rs.getString("name");
+                    result.put(code, isMeaningfulSourceName(code, name) ? name.trim() : code.trim());
+                });
+        return result;
     }
 
     private static boolean isMeaningfulSourceName(String code, String name) {
@@ -88,19 +85,14 @@ public class GenreServiceImpl implements GenreRepository {
 
     @Override
     public List<Genre> getAllGenresHierarchy() {
-        try {
-            String sql = "SELECT code, name, parent_code, fb2_code FROM genres";
-            return getJdbcTemplate().query(sql, (rs, rowNum) -> {
-                GenreId id = GenreId.fromCode(rs.getString("code"));
-                GenreId parentId = rs.getString("parent_code") != null
-                        ? GenreId.fromCode(rs.getString("parent_code"))
-                        : null;
-                return new Genre(id, rs.getString("name"), parentId, rs.getString("fb2_code"));
-            });
-        } catch (Exception e) {
-            log.warn("Не вдалося завантажити ієрархію жанрів: {}", e.getMessage());
-            return List.of();
-        }
+        String sql = "SELECT code, name, parent_code, fb2_code FROM genres";
+        return getJdbcTemplate().query(sql, (rs, rowNum) -> {
+            GenreId id = GenreId.fromCode(rs.getString("code"));
+            GenreId parentId = rs.getString("parent_code") != null
+                    ? GenreId.fromCode(rs.getString("parent_code"))
+                    : null;
+            return new Genre(id, rs.getString("name"), parentId, rs.getString("fb2_code"));
+        });
     }
 
     @Override
@@ -139,7 +131,7 @@ public class GenreServiceImpl implements GenreRepository {
                 return new Genre(gid, rs.getString("name"), parentId, rs.getString("fb2_code"));
             }, id.asString());
             return Optional.ofNullable(genre);
-        } catch (Exception e) {
+        } catch (EmptyResultDataAccessException missing) {
             return Optional.empty();
         }
     }
@@ -170,18 +162,13 @@ public class GenreServiceImpl implements GenreRepository {
 
     @Override
     public long countOrphanedGenres() {
-        try {
-            String sql = """
-                    SELECT COUNT(*) FROM genres g
-                    WHERE NOT EXISTS (
-                        SELECT 1 FROM book_genres bg WHERE bg.genre_code = g.code
-                    )
-                    """;
-            Long value = getJdbcTemplate().queryForObject(sql, Long.class);
-            return value == null ? 0L : value;
-        } catch (Exception e) {
-            log.warn("Не вдалося підрахувати кількість жанрів без книг: {}", e.getMessage());
-            return 0;
-        }
+        String sql = """
+                SELECT COUNT(*) FROM genres g
+                WHERE NOT EXISTS (
+                    SELECT 1 FROM book_genres bg WHERE bg.genre_code = g.code
+                )
+                """;
+        Long value = getJdbcTemplate().queryForObject(sql, Long.class);
+        return value == null ? 0L : value;
     }
 }

@@ -10,6 +10,7 @@ public record OperationCenterEntry(
         String operationId,
         String title,
         String collectionId,
+        OperationKind kind,
         OperationStage stage,
         long processed,
         long total,
@@ -31,6 +32,7 @@ public record OperationCenterEntry(
         if (operationId == null || operationId.isBlank()) throw new IllegalArgumentException("operationId is required");
         title = title == null || title.isBlank() ? "Операція" : title;
         collectionId = collectionId == null ? "" : collectionId;
+        kind = kind == null ? OperationKind.GENERIC : kind;
         stage = stage == null ? OperationStage.IMPORTING : stage;
         currentItem = currentItem == null ? "" : currentItem;
         startedAt = startedAt == null ? Instant.now() : startedAt;

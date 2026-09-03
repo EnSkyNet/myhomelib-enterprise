@@ -73,8 +73,8 @@ class SqliteNavigationFacetRepositoryStage8Test {
         jdbc.update("DELETE FROM series");
         jdbc.update("DELETE FROM authors");
 
-        jdbc.update("INSERT INTO authors(id, first_name, last_name) VALUES ('a1','Ivan','Abramov')");
-        jdbc.update("INSERT INTO authors(id, first_name, last_name) VALUES ('b1','Bob','Brown')");
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('a1','Ivan','Abramov','abramov ivan')");
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('b1','Bob','Brown','brown bob')");
         jdbc.update("INSERT INTO series(id,name,description) VALUES ('s1','Chronicles','')");
         jdbc.update("INSERT INTO genres(code,name) VALUES ('sf','Sci-Fi')");
         jdbc.update("INSERT INTO books(id,title,file_name,language,year,local,progress,rate,deleted,series,format) " +
@@ -129,4 +129,44 @@ class SqliteNavigationFacetRepositoryStage8Test {
                 null, null, null, null, false, BookQuickFilterField.ANY, null);
         assertThat(repository.searchAuthors("ivan", englishOnly, 20)).isEmpty();
     }
+    @Test
+    void serverSideAuthorSearchIsUnicodeCaseInsensitiveAndSupportsPartialCyrillic() {
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('c1','Михаил','Боярский','боярский михаил')");
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('c2','ІЇЄҐ','Тест','тест іїєґ')");
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('c3','ЁЙ','Тестов','тестов ёй')");
+        jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('x1','c1'),('x1','c2'),('x1','c3')");
+
+        assertThat(repository.searchAuthors("Боярский", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c1");
+        assertThat(repository.searchAuthors("боярский", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c1");
+        assertThat(repository.searchAuthors("бояр", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c1");
+        assertThat(repository.searchAuthors("ІЇЄҐ", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c2");
+        assertThat(repository.searchAuthors("ЁЙ", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c3");
+    }
+
+    @Test
+    void authorKeysetPageIsBoundedAndDoesNotRunExactTotalAggregation() {
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('a2','Alice','Anderson','anderson alice')");
+        jdbc.update("INSERT INTO authors(id, first_name, last_name, search_name) VALUES ('a3','Amy','Archer','archer amy')");
+        jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('x1','a2'),('x1','a3')");
+
+        var first = repository.findAuthorsAfter('A', BookFilterSpec.empty(), 1, null);
+
+        assertThat(first.totalElements()).isEmpty();
+        assertThat(first.content()).extracting(f -> f.id()).containsExactly("a1");
+        assertThat(first.nextCursor()).isNotNull();
+
+        var second = repository.findAuthorsAfter('A', BookFilterSpec.empty(), 1, first.nextCursor());
+        assertThat(second.totalElements()).isEmpty();
+        assertThat(second.content()).extracting(f -> f.id()).containsExactly("a2");
+        assertThat(second.nextCursor()).isNotNull();
+    }
+
+
 }

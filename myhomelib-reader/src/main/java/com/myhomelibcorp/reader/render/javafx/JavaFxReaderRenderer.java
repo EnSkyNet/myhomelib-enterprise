@@ -1,6 +1,8 @@
 package com.myhomelibcorp.reader.render.javafx;
 
+import com.myhomelibcorp.reader.api.ReaderElementStyle;
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.api.ReaderStyleSheet;
 import com.myhomelibcorp.reader.api.ReaderTheme;
 import com.myhomelibcorp.reader.api.ResourceRepository;
 import com.myhomelibcorp.reader.api.TextStyle;
@@ -39,6 +41,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
     private final GraphicsContext gc;
     private FontProvider fontProvider;
     private ResourceRepository resources;
+    private ReaderStyleSheet styleSheet = ReaderStyleSheet.defaults();
 
     private RenderMetrics metrics = RenderMetrics.empty();
     private final Map<String, Font> fontCache = new LinkedHashMap<>(128, 0.75f, true) {
@@ -126,6 +129,13 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
             return;
         }
 
+        if (line.style() == TextStyle.QUOTE || line.style() == TextStyle.CITE) {
+            gc.setFill(Color.web(theme.quoteBackground()));
+            gc.fillRoundRect(line.x() + xOffset - 6, line.y(), Math.min(pageWidth, line.width() + 12), line.height(), 4, 4);
+            gc.setStroke(Color.web(theme.quoteBorder()));
+            gc.strokeLine(line.x() + xOffset - 4, line.y(), line.x() + xOffset - 4, line.y() + line.height());
+        }
+
         if (line.hasStyledRuns()) {
             for (TextRunLayout run : line.runs()) {
                 renderRun(line, run, theme, xOffset);
@@ -175,17 +185,21 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
         }
 
         TextStyle effective = style != null ? style : TextStyle.NORMAL;
-        String fontKey = effective.name() + ':' + Math.round(fontSize * 10f);
-        Font font = fontCache.computeIfAbsent(fontKey, k -> fontProvider.getFont(effective, fontSize));
+        ReaderElementStyle semantic = styleSheet.forTextStyle(effective);
+        String fontKey = effective.name() + ':' + semantic.fontFamily() + ':' + semantic.fontWeight() + ':' + Math.round(fontSize * 10f);
+        Font font = fontCache.computeIfAbsent(fontKey, k -> fontProvider.getFont(effective, fontSize, semantic));
+        String textColor = semantic.color() == null || semantic.color().isBlank()
+                ? defaultColor(effective, theme)
+                : semantic.color();
 
         gc.setFont(font);
-        gc.setFill(Color.web(effective == TextStyle.LINK ? theme.linkColor() : theme.foreground()));
+        gc.setFill(Color.web(textColor));
         gc.setTextAlign(TextAlignment.LEFT);
         gc.setTextBaseline(VPos.BASELINE);
         gc.fillText(text, x, baseline);
 
         if (effective == TextStyle.UNDERLINE || effective == TextStyle.LINK) {
-            gc.setStroke(Color.web(effective == TextStyle.LINK ? theme.linkColor() : theme.foreground()));
+            gc.setStroke(Color.web(textColor));
             gc.strokeLine(x, baseline + 2, x + width, baseline + 2);
         }
         if (effective == TextStyle.STRIKETHROUGH) {
@@ -193,6 +207,14 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
             gc.strokeLine(x, baseline - fontSize * 0.30f,
                     x + width, baseline - fontSize * 0.30f);
         }
+    }
+
+    private String defaultColor(TextStyle style, ReaderTheme theme) {
+        return switch (ReaderStyleSheet.semanticElement(style)) {
+            case LINK -> theme.linkColor();
+            case SUBTITLE, EPIGRAPH, POEM_AUTHOR, TEXT_AUTHOR, FOOTNOTE -> theme.secondaryText();
+            default -> theme.foreground();
+        };
     }
 
     private void renderImageMarker(String marker, double x, float y, float requestedHeight, double pageRight) {
@@ -254,6 +276,7 @@ public class JavaFxReaderRenderer implements ReaderRenderer {
             return;
         }
         this.fontProvider = this.fontProvider.withFontFamily(settings.fontFamily());
+        this.styleSheet = settings.styleSheet() != null ? settings.styleSheet() : ReaderStyleSheet.defaults();
         clearFontCache();
     }
 

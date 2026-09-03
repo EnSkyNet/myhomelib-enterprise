@@ -1,7 +1,10 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.statistics.StatisticsService;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.stage.Stage;
@@ -10,19 +13,30 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class StatisticsController {
     private final StatisticsService statisticsService;
+    private final ApplicationState appState;
+    private final AtomicLong loadGeneration = new AtomicLong();
 
     @FXML private Label booksCount, authorsCount, seriesCount, genresCount, languagesCount, publishersCount;
     @FXML private Label totalSize, duplicatesCount, missingCoversCount;
     @FXML private Label localBooksCount, remoteBooksCount, readBooksCount, unreadBooksCount, favoritesCount, deletedBooksCount, sourcesCount;
 
-    @FXML public void initialize() { loadStatistics(false); }
+    @FXML public void initialize() {
+        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+            String oldId = oldCollection == null ? null : oldCollection.getId();
+            String newId = newCollection == null ? null : newCollection.getId();
+            if (!Objects.equals(oldId, newId)) loadStatistics(false);
+        });
+        loadStatistics(false);
+    }
     @FXML public void onRefresh() { loadStatistics(true); }
     @FXML public void onClose() {
         Stage stage = (Stage) booksCount.getScene().getWindow();
@@ -30,11 +44,13 @@ public class StatisticsController {
     }
 
     private void loadStatistics(boolean refresh) {
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(loadGeneration, appState);
         setState("Завантаження…");
         CompletableFuture.supplyAsync(() -> {
             if (refresh) statisticsService.refreshStatistics();
             return statisticsService.getStatistics();
         }).whenComplete((stats, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)) return;
             if (error != null || stats == null) {
                 log.error("Помилка завантаження статистики", error);
                 setState("Недоступно");

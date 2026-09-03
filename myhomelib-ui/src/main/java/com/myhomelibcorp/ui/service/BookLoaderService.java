@@ -5,6 +5,8 @@ import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.common.Pagination;
@@ -27,6 +29,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Objects;
+import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
 
@@ -44,10 +47,16 @@ public class BookLoaderService {
     private static final int DEFAULT_PAGE_SIZE = 50;
     private final AtomicLong requestGeneration = new AtomicLong();
     private BookQuery lastQuery;
+    private BookPageCursor currentPageFirstCursor;
+    private BookPageCursor currentPageLastCursor;
 
     // ===== Завантаження книг =====
 
     public void loadBooks(BookQuery query) {
+        loadBooks(query, null, null, OptionalLong.empty());
+    }
+
+    private void loadBooks(BookQuery query, BookPageCursor cursor, BookPageDirection pageDirection, OptionalLong knownTotal) {
         BookQuery effectiveQuery = withFilter(query, filterStateService.current());
         BookTableController activeController = appState.getBookTableController();
         if (activeController != null && !effectiveQuery.onlyInHistory()) {
@@ -59,10 +68,22 @@ public class BookLoaderService {
         BookTableViewModel vm = appState.getBookTable();
         vm.setLoading(true);
         BookQuery submittedQuery = effectiveQuery;
+        boolean titleCursorEligible = supportsTitleCursor(submittedQuery);
+        BookPageCursor submittedCursor = titleCursorEligible ? cursor : null;
+        BookPageDirection submittedPageDirection = titleCursorEligible ? pageDirection : null;
 
         executor.submit(() -> {
-            PageResult<BookDto> result = loadBooksUseCase.execute(submittedQuery);
-            log.info("Завантажено {} книг з {}", result.content().size(), result.totalElements());
+            PageResult<BookDto> result;
+            if (submittedCursor != null && submittedPageDirection != null) {
+                result = loadBooksUseCase.executeTitleCursor(
+                        submittedQuery, submittedCursor, submittedPageDirection, knownTotal.orElseThrow());
+            } else if (knownTotal.isPresent()) {
+                result = loadBooksUseCase.execute(submittedQuery, knownTotal.getAsLong());
+            } else {
+                result = loadBooksUseCase.execute(submittedQuery);
+            }
+            log.info("Завантажено {} книг з {}{}", result.content().size(), result.totalElements(),
+                    submittedCursor == null ? "" : " (keyset)");
             return result;
         }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
             if (!isCurrent(requestId, collectionId)) {
@@ -85,6 +106,16 @@ public class BookLoaderService {
             vm.setTotalElements(result.totalElements());
             vm.setTotalPages(result.totalPages());
             vm.setCurrentPage(result.currentPage());
+
+            if (supportsTitleCursor(submittedQuery) && !result.content().isEmpty()) {
+                BookDto first = result.content().getFirst();
+                BookDto last = result.content().getLast();
+                currentPageFirstCursor = new BookPageCursor(first.getTitle(), first.getId());
+                currentPageLastCursor = new BookPageCursor(last.getTitle(), last.getId());
+            } else {
+                currentPageFirstCursor = null;
+                currentPageLastCursor = null;
+            }
 
             // Loading a page must not implicitly arm single-book commands for the first row.
             // Row selection (current book) and checkbox selection (batch books) are intentionally separate.
@@ -246,18 +277,31 @@ public class BookLoaderService {
 
     public void nextPage() {
         BookTableViewModel vm = appState.getBookTable();
-        if (vm.hasNextPage()) loadBooks(withPagination(lastQuery, vm.getPageSize(), vm.getCurrentPage() + 1));
+        if (!vm.hasNextPage()) return;
+        if (!isCurrentFilterSnapshot()) {
+            loadBooks(withPagination(lastQuery, vm.getPageSize(), 0));
+            return;
+        }
+        BookQuery target = withPagination(lastQuery, vm.getPageSize(), vm.getCurrentPage() + 1);
+        loadBooks(target, currentPageLastCursor, BookPageDirection.AFTER, OptionalLong.of(vm.getTotalElements()));
     }
 
     public void previousPage() {
         BookTableViewModel vm = appState.getBookTable();
-        if (vm.hasPreviousPage()) loadBooks(withPagination(lastQuery, vm.getPageSize(), vm.getCurrentPage() - 1));
+        if (!vm.hasPreviousPage()) return;
+        if (!isCurrentFilterSnapshot()) {
+            loadBooks(withPagination(lastQuery, vm.getPageSize(), 0));
+            return;
+        }
+        BookQuery target = withPagination(lastQuery, vm.getPageSize(), vm.getCurrentPage() - 1);
+        loadBooks(target, currentPageFirstCursor, BookPageDirection.BEFORE, OptionalLong.of(vm.getTotalElements()));
     }
 
     public void setPageSize(int size) {
         BookTableViewModel vm = appState.getBookTable();
         vm.setPageSize(size);
-        loadBooks(withPagination(lastQuery, size, 0));
+        OptionalLong knownTotal = lastQuery == null ? OptionalLong.empty() : OptionalLong.of(vm.getTotalElements());
+        loadBooks(withPagination(lastQuery, size, 0), null, null, knownTotal);
     }
 
     private BookQuery withPagination(BookQuery base, int pageSize, int page) {
@@ -306,12 +350,22 @@ public class BookLoaderService {
                 .withoutSeries(lastQuery.withoutSeries()).withCover(lastQuery.withCover())
                 .filterSpec(filterStateService.current())
                 .build();
-        loadBooks(sorted);
+        loadBooks(sorted, null, null, OptionalLong.of(appState.getBookTable().getTotalElements()));
+    }
+
+    private static boolean supportsTitleCursor(BookQuery query) {
+        return query != null && !query.onlyInHistory() && query.sortBy() == SortBy.TITLE;
+    }
+
+    private boolean isCurrentFilterSnapshot() {
+        return lastQuery != null && Objects.equals(lastQuery.filterSpec(), filterStateService.current());
     }
 
     /** Invalidates all in-flight page loads; useful before destructive workspace/collection changes. */
     public void invalidatePendingRequests() {
         requestGeneration.incrementAndGet();
+        currentPageFirstCursor = null;
+        currentPageLastCursor = null;
     }
 
     private boolean isCurrent(long requestId, String collectionId) {

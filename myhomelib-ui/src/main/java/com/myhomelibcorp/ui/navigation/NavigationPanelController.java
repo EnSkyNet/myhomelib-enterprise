@@ -56,7 +56,8 @@ public class NavigationPanelController {
     private Character authorLetterBeforeSearch;
     private static final int AUTHOR_PAGE_SIZE = 500;
     private static final int AUTHOR_SEARCH_LIMIT = 200;
-    private long authorTotal;
+    private java.util.OptionalLong authorTotal = java.util.OptionalLong.empty();
+    private NavigationQueryService.AuthorCursor authorCursor;
     private boolean loadingMoreAuthors;
     private final PauseTransition authorSearchDebounce = new PauseTransition(Duration.millis(250));
 
@@ -281,9 +282,10 @@ public class NavigationPanelController {
     private void loadAuthorPage(Character initial, boolean append) {
         if (initial == null || loadingMoreAuthors) return;
         long generation = ++loadGeneration;
-        int offset = append ? allNodes.size() : 0;
+        NavigationQueryService.AuthorCursor requestCursor = append ? authorCursor : null;
         if (!append) {
-            authorTotal = 0;
+            authorTotal = java.util.OptionalLong.empty();
+            authorCursor = null;
             allNodes = List.of();
             navigationListView.getItems().clear();
         }
@@ -291,14 +293,17 @@ public class NavigationPanelController {
         navigationListView.setDisable(true);
         updateLoadMoreAuthorsButton();
 
-        navigationQueryService.loadAuthorsPage(initial, AUTHOR_PAGE_SIZE, offset)
+        navigationQueryService.loadAuthorsAfter(initial, AUTHOR_PAGE_SIZE, requestCursor)
                 .thenAccept(page -> UiExecutor.runOnUiThread(() -> {
                     if (generation != loadGeneration || currentMode != NavigationMode.AUTHORS
                             || !java.util.Objects.equals(currentLetter, initial)) {
                         return;
                     }
                     loadingMoreAuthors = false;
-                    authorTotal = page == null ? 0 : page.totalElements();
+                    if (page != null && page.totalElements().isPresent()) {
+                        authorTotal = page.totalElements();
+                    }
+                    authorCursor = page == null ? null : page.nextCursor();
                     List<NavigationNodeDto> incoming = page == null ? List.of() : page.content();
                     if (append && !incoming.isEmpty()) {
                         java.util.ArrayList<NavigationNodeDto> combined = new java.util.ArrayList<>(allNodes.size() + incoming.size());
@@ -311,7 +316,13 @@ public class NavigationPanelController {
                     navigationListView.setDisable(false);
                     filterList();
                     updateLoadMoreAuthorsButton();
-                    log.info("Завантажено {} / {} авторів для літери {}", allNodes.size(), authorTotal, initial);
+                    if (authorTotal.isPresent()) {
+                        log.info("Завантажено {} / {} авторів для літери {} (keyset)",
+                                allNodes.size(), authorTotal.getAsLong(), initial);
+                    } else {
+                        log.info("Завантажено {} авторів для літери {} (keyset, total не рахується)",
+                                allNodes.size(), initial);
+                    }
                 })).exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
                         if (generation != loadGeneration) return;
@@ -370,12 +381,13 @@ public class NavigationPanelController {
     @FXML
     private void onLoadMoreAuthors() {
         if (currentMode != NavigationMode.AUTHORS || currentLetter == null || temporaryAuthorSearch
-                || loadingMoreAuthors || allNodes.size() >= authorTotal) return;
+                || loadingMoreAuthors || authorCursor == null) return;
         loadAuthorPage(currentLetter, true);
     }
 
     private void resetAuthorPaging() {
-        authorTotal = 0;
+        authorTotal = java.util.OptionalLong.empty();
+        authorCursor = null;
         loadingMoreAuthors = false;
         updateLoadMoreAuthorsButton();
     }
@@ -383,13 +395,15 @@ public class NavigationPanelController {
     private void updateLoadMoreAuthorsButton() {
         if (loadMoreAuthorsButton == null) return;
         boolean visible = currentMode == NavigationMode.AUTHORS && !temporaryAuthorSearch
-                && currentLetter != null && allNodes.size() < authorTotal;
+                && currentLetter != null && authorCursor != null;
         loadMoreAuthorsButton.setVisible(visible);
         loadMoreAuthorsButton.setManaged(visible);
         loadMoreAuthorsButton.setDisable(loadingMoreAuthors);
         loadMoreAuthorsButton.setText(loadingMoreAuthors
                 ? "Завантаження…"
-                : "Завантажити ще (" + allNodes.size() + " / " + authorTotal + ")");
+                : authorTotal.isPresent()
+                    ? "Завантажити ще (" + allNodes.size() + " / " + authorTotal.getAsLong() + ")"
+                    : "Завантажити ще (" + allNodes.size() + ")");
     }
 
     private void handleLoadFailure(long generation, NavigationMode mode, Throwable ex) {

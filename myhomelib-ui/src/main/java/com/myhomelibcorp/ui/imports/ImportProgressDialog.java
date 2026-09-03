@@ -190,12 +190,14 @@ public class ImportProgressDialog {
         return switch (stage) {
             case CHECKING_SERVER -> "Перевірка сервера";
             case DOWNLOADING -> "Завантаження";
+            case CREATING_CHECKPOINT -> "Створення точки відновлення";
             case VALIDATING -> "Перевірка даних";
             case READING_CATALOG -> "Читання каталогу";
             case IMPORTING -> "Імпорт каталогу";
             case UPDATING_AUTHORS -> "Оновлення авторів";
             case APPLYING_DELETIONS -> "Обробка DEL";
             case UPDATING_SEARCH_INDEX -> "Оновлення Lucene";
+            case ROLLING_BACK -> "Відкат оновлення";
             case REFRESHING_STATISTICS -> "Перерахунок статистики";
             case INTEGRITY_CHECKS -> "Перевірка цілісності";
             case SYNCHRONIZING_FILES -> "Синхронізація файлів";
@@ -203,6 +205,7 @@ public class ImportProgressDialog {
             case BACKING_UP -> "Резервне копіювання";
             case RESTORING -> "Відновлення";
             case CREATING_COLLECTION -> "Створення колекції";
+            case DELETING_COLLECTION -> "Видалення колекції";
             case FINALIZING -> "Завершення";
             case BOOK_DOWNLOAD -> "Завантаження книги";
             case COMPLETED -> "Завершено";

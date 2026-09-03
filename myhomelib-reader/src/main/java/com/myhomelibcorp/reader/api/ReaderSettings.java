@@ -29,7 +29,8 @@ public record ReaderSettings(
         boolean twoPageMode,
         boolean autoTwoPageLandscape,
         boolean showStatusClock,
-        ReaderInputSettings input
+        ReaderInputSettings input,
+        ReaderStyleSheet styleSheet
 ) {
     public ReaderSettings {
         themeName = blank(themeName) ? "light" : themeName;
@@ -40,6 +41,7 @@ public record ReaderSettings(
         tapCenterAction = blank(tapCenterAction) ? "toggle-toolbar" : tapCenterAction;
         tapRightAction = blank(tapRightAction) ? "next-page" : tapRightAction;
         input = input == null ? ReaderInputSettings.fromLegacy(tapLeftAction, tapCenterAction, tapRightAction) : input;
+        styleSheet = styleSheet == null ? ReaderStyleSheet.defaults() : ReaderStyleSheet.withOverrides(styleSheet.styles());
     }
 
     /** Source-compatible constructor for v7/early-v7.1 callers and tests. */
@@ -55,7 +57,26 @@ public record ReaderSettings(
                 leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode, autoScroll,
                 scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress, showStatusChapter,
                 showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
-                false, true, false, ReaderInputSettings.fromLegacy(tapLeftAction, tapCenterAction, tapRightAction));
+                false, true, false, ReaderInputSettings.fromLegacy(tapLeftAction, tapCenterAction, tapRightAction),
+                ReaderStyleSheet.defaults());
+    }
+
+    /** Source-compatible constructor for callers using the pre-semantic-style full v7.1 signature. */
+    public ReaderSettings(
+            String themeName, String fontFamily, double fontSize, double lineSpacing,
+            double paragraphSpacing, double firstLineIndent, String alignment,
+            double leftMargin, double rightMargin, double topMargin, double bottomMargin,
+            boolean hyphenation, boolean pageMode, boolean autoScroll, int scrollSpeed,
+            boolean showToolbar, String customCss, boolean showStatusBar,
+            boolean showStatusProgress, boolean showStatusChapter, boolean showStatusPage,
+            String tapLeftAction, String tapCenterAction, String tapRightAction,
+            boolean twoPageMode, boolean autoTwoPageLandscape, boolean showStatusClock,
+            ReaderInputSettings input) {
+        this(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent, alignment,
+                leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode, autoScroll,
+                scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress, showStatusChapter,
+                showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
+                twoPageMode, autoTwoPageLandscape, showStatusClock, input, ReaderStyleSheet.defaults());
     }
 
     private static boolean blank(String value) { return value == null || value.isBlank(); }
@@ -67,7 +88,7 @@ public record ReaderSettings(
                 30, 30, 20, 20, true, false, false, 3, true, "",
                 true, true, true, true,
                 input.middleLeft(), input.middleCenter(), input.middleRight(),
-                false, true, false, input);
+                false, true, false, input, ReaderStyleSheet.defaults());
     }
 
     public ReaderSettings withFontSize(double newSize) { return copy(themeName, fontFamily, newSize, input, twoPageMode); }
@@ -86,7 +107,7 @@ public record ReaderSettings(
                 alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
                 autoScroll, scrollSpeed, showToolbar, customCss, enabled, showStatusProgress,
                 showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
-                twoPageMode, autoTwoPageLandscape, showStatusClock, input);
+                twoPageMode, autoTwoPageLandscape, showStatusClock, input, styleSheet);
     }
     public ReaderSettings withTwoPageMode(boolean enabled) {
         return fullCopy(themeName, fontFamily, fontSize, input, enabled, autoTwoPageLandscape,
@@ -98,7 +119,15 @@ public record ReaderSettings(
                 alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
                 autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
                 showStatusChapter, showStatusPage, effective.middleLeft(), effective.middleCenter(), effective.middleRight(),
-                twoPageMode, autoTwoPageLandscape, showStatusClock, effective);
+                twoPageMode, autoTwoPageLandscape, showStatusClock, effective, styleSheet);
+    }
+    public ReaderSettings withStyleSheet(ReaderStyleSheet value) {
+        return new ReaderSettings(themeName, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
+                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
+                autoScroll, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
+                showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
+                twoPageMode, autoTwoPageLandscape, showStatusClock, input,
+                value == null ? ReaderStyleSheet.defaults() : value);
     }
 
     private ReaderSettings copy(String theme, String family, double size, ReaderInputSettings inputs, boolean spread) {
@@ -112,6 +141,6 @@ public record ReaderSettings(
                 alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, legacyPageMode,
                 autoScrollValue, scrollSpeed, showToolbar, customCss, showStatusBar, showStatusProgress,
                 showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction, tapRightAction,
-                spread, autoSpread, clock, inputs);
+                spread, autoSpread, clock, inputs, styleSheet);
     }
 }

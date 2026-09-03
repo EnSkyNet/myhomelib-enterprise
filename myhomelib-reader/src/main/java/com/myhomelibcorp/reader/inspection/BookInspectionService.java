@@ -15,6 +15,7 @@ import com.myhomelibcorp.reader.format.txt.TxtFormat;
 import com.myhomelibcorp.reader.format.zip.ZipFormat;
 
 import javax.xml.stream.XMLInputFactory;
+import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
@@ -155,12 +156,7 @@ public final class BookInspectionService {
     }
 
     private static String scanFb2SourceLanguage(BookSource source) {
-        XMLInputFactory factory = XMLInputFactory.newFactory();
-        try {
-            factory.setProperty(XMLInputFactory.IS_SUPPORTING_EXTERNAL_ENTITIES, false);
-            factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
-        } catch (Exception ignored) {
-        }
+        XMLInputFactory factory = SecureXmlInputFactory.create(false, false);
         try (InputStream in = source.openStream()) {
             XMLStreamReader reader = factory.createXMLStreamReader(in);
             int events = 0;

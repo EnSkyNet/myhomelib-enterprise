@@ -1,11 +1,14 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
@@ -18,6 +21,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
 import java.util.Spliterator;
@@ -33,6 +37,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     private static final int STREAM_PAGE_SIZE = 400;
     private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
+    private final BookListRowMapper bookListRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
     private final BookQueryBuilder queryBuilder;
@@ -51,16 +56,39 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public PageResult<Book> findPage(BookQuery query) {
+        return loadOffsetPage(query, count(query));
+    }
+
+    @Override
+    public PageResult<Book> findPage(BookQuery query, long knownTotal) {
+        if (knownTotal < 0) throw new IllegalArgumentException("knownTotal cannot be negative");
+        return loadOffsetPage(query, knownTotal);
+    }
+
+    private PageResult<Book> loadOffsetPage(BookQuery query, long total) {
         var sqlQuery = queryBuilder.build(query);
-        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookRowMapper, sqlQuery.params());
+        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
         enrichBooks(books);
+        return toPageResult(query, books, total);
+    }
 
-        long total = count(query);
+    @Override
+    public PageResult<Book> findTitlePageByCursor(BookQuery query, BookPageCursor cursor,
+                                                  BookPageDirection pageDirection, long knownTotal) {
+        if (knownTotal < 0) throw new IllegalArgumentException("knownTotal cannot be negative");
+        var sqlQuery = queryBuilder.buildTitleCursor(query, cursor, pageDirection);
+        List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
+        if (pageDirection == BookPageDirection.BEFORE && books.size() > 1) {
+            Collections.reverse(books);
+        }
+        enrichBooks(books);
+        return toPageResult(query, books, knownTotal);
+    }
 
-        int page = query.pagination().offset() / Math.max(1, query.pagination().limit());
-        int size = query.pagination().limit();
+    private static PageResult<Book> toPageResult(BookQuery query, List<Book> books, long total) {
+        int size = Math.max(1, query.pagination().limit());
+        int page = query.pagination().offset() / size;
         int totalPages = (int) Math.ceil((double) total / size);
-
         return new PageResult<>(books, total, totalPages, page, size);
     }
 
@@ -93,6 +121,20 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             String sql = "SELECT * FROM books WHERE id IN (" + SqliteInClauseSupport.placeholders(part.size()) + ")";
             Object[] params = part.stream().map(BookId::asString).toArray();
             books.addAll(getJdbcTemplate().query(sql, bookRowMapper, params));
+        });
+        enrichBooks(books);
+        return books;
+    }
+
+    @Override
+    public List<Book> findListItemsByIds(List<BookId> ids) {
+        if (ids == null || ids.isEmpty()) return List.of();
+        List<Book> books = new ArrayList<>(Math.min(ids.size(), SqliteInClauseSupport.MAX_ITEMS));
+        SqliteInClauseSupport.forEachChunk(ids, part -> {
+            String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION
+                    + " FROM books b WHERE b.id IN (" + SqliteInClauseSupport.placeholders(part.size()) + ")";
+            Object[] params = part.stream().map(BookId::asString).toArray();
+            books.addAll(getJdbcTemplate().query(sql, bookListRowMapper, params));
         });
         enrichBooks(books);
         return books;
@@ -173,45 +215,27 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
     @Override
     public List<Book> findRecent(int limit) {
-        String sql = """
-                SELECT id, title, series, file_name, folder, collection_root,
-                       language, file_size, rate, progress, update_date, created_at
-                FROM books
-                WHERE deleted = 0
-                ORDER BY update_date DESC
-                LIMIT ?
-                """;
-        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
+        String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION + " FROM books b "
+                + "WHERE b.deleted = 0 ORDER BY b.update_date DESC LIMIT ?";
+        List<Book> books = getJdbcTemplate().query(sql, bookListRowMapper, limit);
         enrichBooks(books);
         return books;
     }
 
     @Override
     public List<Book> findRecentlyAdded(int limit) {
-        String sql = """
-                SELECT id, title, series, file_name, folder, collection_root,
-                       language, file_size, rate, progress, update_date, created_at
-                FROM books
-                WHERE deleted = 0
-                ORDER BY created_at DESC
-                LIMIT ?
-                """;
-        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
+        String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION + " FROM books b "
+                + "WHERE b.deleted = 0 ORDER BY b.created_at DESC LIMIT ?";
+        List<Book> books = getJdbcTemplate().query(sql, bookListRowMapper, limit);
         enrichBooks(books);
         return books;
     }
 
     @Override
     public List<Book> findFavoriteAuthors(int limit) {
-        String sql = """
-                SELECT id, title, series, file_name, folder, collection_root,
-                       language, file_size, rate, progress, update_date, created_at
-                FROM books
-                WHERE deleted = 0
-                ORDER BY rate DESC
-                LIMIT ?
-                """;
-        List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, limit);
+        String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION + " FROM books b "
+                + "WHERE b.deleted = 0 ORDER BY b.rate DESC LIMIT ?";
+        List<Book> books = getJdbcTemplate().query(sql, bookListRowMapper, limit);
         enrichBooks(books);
         return books;
     }

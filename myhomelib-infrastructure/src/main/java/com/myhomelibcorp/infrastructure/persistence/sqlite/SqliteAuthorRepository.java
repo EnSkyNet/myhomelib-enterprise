@@ -31,7 +31,7 @@ public class SqliteAuthorRepository implements AuthorRepository {
         return collectionManager.getCurrentJdbcTemplate();
     }
 
-    private static final String SEARCH_NAME_NORMALIZATION_MARKER = "v71_author_search_name_unicode_normalized";
+    private static final String SEARCH_NAME_NORMALIZATION_MARKER = "v71_author_search_name_unicode_nfkc_v2";
     private static final int SEARCH_NAME_BACKFILL_BATCH = 1000;
 
     /**
@@ -135,20 +135,15 @@ public class SqliteAuthorRepository implements AuthorRepository {
     @Override
     public Optional<Author> findByFullName(String firstName, String lastName) {
         String sql = "SELECT * FROM authors WHERE first_name = ? AND last_name = ?";
-        try {
-            List<Author> authors = getJdbcTemplate().query(sql, authorRowMapper, firstName, lastName);
-            if (authors.isEmpty()) {
-                return Optional.empty();
-            } else if (authors.size() == 1) {
-                return Optional.of(authors.get(0));
-            } else {
-                log.warn("Знайдено {} авторів з ім'ям '{}' та прізвищем '{}', повертаємо першого",
-                        authors.size(), firstName, lastName);
-                return Optional.of(authors.get(0));
-            }
-        } catch (Exception e) {
-            log.error("Помилка пошуку автора за іменем: {} {}", firstName, lastName, e);
+        List<Author> authors = getJdbcTemplate().query(sql, authorRowMapper, firstName, lastName);
+        if (authors.isEmpty()) {
             return Optional.empty();
+        } else if (authors.size() == 1) {
+            return Optional.of(authors.get(0));
+        } else {
+            log.warn("Знайдено {} авторів з ім'ям '{}' та прізвищем '{}', повертаємо першого",
+                    authors.size(), firstName, lastName);
+            return Optional.of(authors.get(0));
         }
     }
     @Override
@@ -166,6 +161,30 @@ public class SqliteAuthorRepository implements AuthorRepository {
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
         }
+    }
+
+    @Override
+    public Optional<Author> findEquivalentLocalName(String firstName, String middleName, String lastName) {
+        String first = safe(firstName).trim();
+        String middle = safe(middleName).trim();
+        String last = safe(lastName).trim();
+        String exactKey = AuthorSearchNameNormalizer.normalize(first, middle, last);
+        String swappedKey = AuthorSearchNameNormalizer.normalize(last, middle, first);
+
+        String sql = """
+                SELECT * FROM authors
+                 WHERE COALESCE(search_name, '') IN (?, ?)
+                    OR (first_name = ? AND middle_name = ? AND last_name = ?)
+                    OR (first_name = ? AND middle_name = ? AND last_name = ?)
+                 ORDER BY CASE WHEN COALESCE(search_name, '') = ? THEN 0 ELSE 1 END, id
+                 LIMIT 1
+                """;
+        List<Author> matches = getJdbcTemplate().query(sql, authorRowMapper,
+                exactKey, swappedKey,
+                first, middle, last,
+                last, middle, first,
+                exactKey);
+        return matches.stream().findFirst();
     }
 
     private static String safe(String value) {
@@ -290,12 +309,11 @@ public class SqliteAuthorRepository implements AuthorRepository {
         if (query == null || query.isBlank()) return List.of();
         int safeLimit = Math.max(1, Math.min(limit, 500));
         int safeOffset = Math.max(0, offset);
-        String needle = "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
+        String needle = "%" + escapeLike(AuthorSearchNameNormalizer.normalizeQuery(query)) + "%";
         String sql = """
                 SELECT *
                 FROM authors
-                WHERE COALESCE(search_name, '') LIKE ?
-                   OR LOWER(COALESCE(last_name, '') || ' ' || COALESCE(first_name, '') || ' ' || COALESCE(middle_name, '')) LIKE ?
+                WHERE COALESCE(search_name, '') LIKE ? ESCAPE '\\'
                 ORDER BY
                     COALESCE(last_name, '') COLLATE NOCASE,
                     COALESCE(first_name, '') COLLATE NOCASE,
@@ -303,22 +321,22 @@ public class SqliteAuthorRepository implements AuthorRepository {
                     id
                 LIMIT ? OFFSET ?
                 """;
-        return getJdbcTemplate().query(sql, authorRowMapper, needle, needle, safeLimit, safeOffset);
+        return getJdbcTemplate().query(sql, authorRowMapper, needle, safeLimit, safeOffset);
+    }
+
+    private static String escapeLike(String value) {
+        return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
     }
 
     @Override
     public long countOrphanedAuthors() {
-        try {
-            String sql = """
+        String sql = """
                 SELECT COUNT(*) FROM authors a
                 WHERE NOT EXISTS (
                     SELECT 1 FROM book_authors ba WHERE ba.author_id = a.id
                 )
                 """;
-            return getJdbcTemplate().queryForObject(sql, Long.class);
-        } catch (Exception e) {
-            log.warn("Не вдалося підрахувати кількість авторів без книг", e);
-            return 0;
-        }
+        Long value = getJdbcTemplate().queryForObject(sql, Long.class);
+        return value == null ? 0L : value;
     }
 }

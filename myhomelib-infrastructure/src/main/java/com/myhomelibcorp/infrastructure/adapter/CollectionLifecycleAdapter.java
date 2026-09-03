@@ -6,6 +6,9 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.dao.DataAccessException;
+
+import java.io.IOException;
 
 @Component
 @RequiredArgsConstructor
@@ -48,7 +51,8 @@ public class CollectionLifecycleAdapter implements CollectionLifecyclePort {
             var jdbc = collectionManager.getCurrentJdbcTemplate();
             jdbc.queryForObject("SELECT 1", Integer.class);
             return true;
-        } catch (Exception e) {
+        } catch (DataAccessException e) {
+            log.debug("Активна колекція ще не готова до SQL-запитів: {}", e.getMessage());
             return false;
         }
     }
@@ -65,7 +69,8 @@ public class CollectionLifecycleAdapter implements CollectionLifecyclePort {
         }
         try {
             return java.nio.file.Files.size(java.nio.file.Paths.get(dbPath));
-        } catch (Exception e) {
+        } catch (IOException e) {
+            log.warn("Не вдалося визначити розмір БД {}: {}", dbPath, e.getMessage());
             return 0;
         }
     }

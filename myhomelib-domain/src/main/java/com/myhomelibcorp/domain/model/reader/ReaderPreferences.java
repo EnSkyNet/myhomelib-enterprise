@@ -51,4 +51,7 @@ public class ReaderPreferences {
     @Builder.Default Map<String, String> tapActions = Map.of();
     @Builder.Default Map<String, String> longTapActions = Map.of();
     @Builder.Default Map<String, String> gestureActions = Map.of();
+
+    /** Structured semantic Reader styles keyed by ReaderSemanticElement name. */
+    @Builder.Default Map<String, ReaderElementStylePreferences> semanticStyles = Map.of();
 }

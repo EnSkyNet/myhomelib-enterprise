@@ -20,12 +20,15 @@ if baseline_path.exists():
     for r in data.get('results',[]):
         if int(r['books']) not in {100_000,500_000,1_000_000}: continue
         need(r['queries']['catalog_first_page']['p95_ms'] < 1000, f"first-page regression in stored baseline {r['books']}")
-        need(r['queries']['navigation_authors_A']['p95_ms'] < 3000, f"author facet regression in stored baseline {r['books']}")
+        need(r['queries']['navigation_authors_A_first_keyset_page']['p95_ms'] < 3000, f"author facet regression in stored baseline {r['books']}")
         need(r['queries']['libid_lookup']['p95_ms'] < 100, f"LibID lookup regression in stored baseline {r['books']}")
         plan=' '.join(r.get('plans',{}).get('libid',[]))
         need('idx_books_lib_id' in plan, f"LibID plan missing index at {r['books']}")
-        aplan=' '.join(r.get('plans',{}).get('author_initial',[]))
-        need('idx_authors_navigation_initial' in aplan, f"author initial plan missing index at {r['books']}")
+        aplan=' '.join(r.get('plans',{}).get('author_first_keyset_page',[]))
+        need('idx_authors_navigation_page' in aplan, f"author keyset plan missing index at {r['books']}")
+        need(r['queries']['catalog_exact_count_diagnostic']['p95_ms'] < 100, f"active-book exact count regression in stored baseline {r['books']}")
+        cplan=' '.join(r.get('plans',{}).get('active_count',[]))
+        need('idx_books_active_id' in cplan, f"active-book count plan missing partial covering index at {r['books']}")
 
 suite=text('myhomelib-benchmark/src/test/java/com/myhomelibcorp/benchmark/PerformanceBaselineTest.java')
 for marker in ['EnabledIfSystemProperty','MemoryMXBean','GarbageCollectorMXBean','Fb2StreamingParser','EpubParser','FSDirectory','mhl.performance.sizes','importProbeBooksPerSec','peakHeapDeltaBytes','selectiveDocsPerSec','indexSizeBytes','segmentCount']:

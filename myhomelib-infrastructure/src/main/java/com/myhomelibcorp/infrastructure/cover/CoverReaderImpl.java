@@ -104,7 +104,7 @@ public class CoverReaderImpl implements CoverReader {
         if (title != null && !title.isBlank()) {
             String normalizedTitle = title.toLowerCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
             for (String e : entries) {
-                String name = Path.of(e.replace('\\', '/')).getFileName().toString()
+                String name = FileNameSupport.baseName(e)
                         .toLowerCase(Locale.ROOT).replaceAll("[\\s_\\-]+", "");
                 if (name.contains(normalizedTitle) && isSupportedDocument(FileNameSupport.extension(e))) return e;
             }

@@ -18,6 +18,8 @@ import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookDetailsViewModel;
 import jakarta.annotation.PreDestroy;
@@ -109,7 +111,7 @@ public class BookDetailsController {
     }
 
     private void loadBookDetails(BookDto selected) {
-        long generation = loadGeneration.incrementAndGet();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(loadGeneration, appState);
         closeCurrentSession();
         coverPresenter.clearCover();
 
@@ -122,7 +124,7 @@ public class BookDetailsController {
         backgroundExecutor.submit(() -> analysisService.analyze(selected.getId()))
                 .thenAccept(session -> UiExecutor.runOnUiThread(() -> {
                     BookDto stillSelected = appState.getBookDetails().getCurrentBook();
-                    boolean stale = generation != loadGeneration.get()
+                    boolean stale = !UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)
                             || stillSelected == null
                             || !selected.getId().equals(stillSelected.getId());
                     if (stale) {
@@ -137,7 +139,9 @@ public class BookDetailsController {
                 .exceptionally(ex -> {
                     log.warn("Не вдалося завантажити rich details для {}: {}", selected.getId(), ex.getMessage());
                     UiExecutor.runOnUiThread(() -> {
-                        if (generation == loadGeneration.get()) {
+                        BookDto stillSelected = appState.getBookDetails().getCurrentBook();
+                        if (UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)
+                                && stillSelected != null && selected.getId().equals(stillSelected.getId())) {
                             updateBasicUI(selected);
                             showWarning("Не вдалося завантажити повні відомості");
                         }

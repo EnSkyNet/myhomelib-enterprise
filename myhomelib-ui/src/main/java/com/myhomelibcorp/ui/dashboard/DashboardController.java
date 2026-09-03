@@ -5,6 +5,8 @@ import com.myhomelibcorp.application.dto.DashboardData;
 import com.myhomelibcorp.application.usecase.dashboard.LoadDashboardDataUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
@@ -15,6 +17,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
+
 @Component
 @RequiredArgsConstructor
 @Slf4j
@@ -23,6 +28,7 @@ public class DashboardController {
     private final LoadDashboardDataUseCase loadDashboardDataUseCase;
     private final ApplicationState appState;
     private final NavigationService navigationService;
+    private final AtomicLong loadGeneration = new AtomicLong();
 
     @FXML private VBox continueReadingBox;
     @FXML private Label continueTitle;
@@ -37,14 +43,24 @@ public class DashboardController {
     @FXML
     public void initialize() {
         appState.getDashboard().statisticsProperty().addListener((obs, oldStats, newStats) -> renderStatistics(newStats));
+        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+            String oldId = oldCollection == null ? null : oldCollection.getId();
+            String newId = newCollection == null ? null : newCollection.getId();
+            if (!Objects.equals(oldId, newId)) loadDashboard();
+        });
         loadDashboard();
     }
 
     private void loadDashboard() {
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(loadGeneration, appState);
         loadDashboardDataUseCase.execute()
-                .thenAccept(data -> UiExecutor.runOnUiThread(() -> updateUI(data)))
+                .thenAccept(data -> UiExecutor.runOnUiThread(() -> {
+                    if (UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)) updateUI(data);
+                }))
                 .exceptionally(ex -> {
-                    log.error("Failed to load dashboard", ex);
+                    if (UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)) {
+                        log.error("Failed to load dashboard", ex);
+                    }
                     return null;
                 });
     }

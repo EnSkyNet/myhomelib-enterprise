@@ -113,6 +113,35 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
     }
 
     @Override
+    public java.util.concurrent.CompletableFuture<NavigationQueryService.AuthorPage> loadAuthorsAfter(
+            Character initial, int limit, NavigationQueryService.AuthorCursor after) {
+        return executorPort.submit(() -> {
+            BookFilterSpec filter = filterStateService.current();
+            Character selected = initial;
+            if (selected == null || selected == '*') {
+                selected = navigationFacetRepository.findFirstAuthorInitial(filter).orElse(null);
+            }
+            if (selected == null) return NavigationQueryService.AuthorPage.empty();
+
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            NavigationFacetRepository.AuthorCursor repositoryCursor = after == null ? null
+                    : new NavigationFacetRepository.AuthorCursor(
+                            after.lastName(), after.firstName(), after.middleName(), after.id());
+            var slice = navigationFacetRepository.findAuthorsAfter(selected, filter, safeLimit, repositoryCursor);
+            List<NavigationNodeDto> nodes = slice.content().stream()
+                    .map(facet -> new NavigationNodeDto(
+                            NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
+                    .filter(DefaultNavigationQueryService::hasLabel)
+                    .toList();
+            NavigationQueryService.AuthorCursor next = slice.nextCursor() == null ? null
+                    : new NavigationQueryService.AuthorCursor(
+                            slice.nextCursor().lastName(), slice.nextCursor().firstName(),
+                            slice.nextCursor().middleName(), slice.nextCursor().id());
+            return new NavigationQueryService.AuthorPage(nodes, slice.totalElements(), next);
+        });
+    }
+
+    @Override
     public java.util.concurrent.CompletableFuture<List<NavigationNodeDto>> searchAuthors(String query, int limit) {
         String normalized = query == null ? "" : query.trim();
         if (normalized.isBlank()) return java.util.concurrent.CompletableFuture.completedFuture(List.of());

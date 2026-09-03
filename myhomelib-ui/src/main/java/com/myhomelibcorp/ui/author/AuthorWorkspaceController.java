@@ -23,6 +23,8 @@ import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.table.TableProfileService;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.animation.PauseTransition;
@@ -130,6 +132,14 @@ public class AuthorWorkspaceController {
             updateSelectionStatus();
         });
         updateSelectionStatus();
+        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+            String oldId = oldCollection == null ? null : oldCollection.getId();
+            String newId = newCollection == null ? null : newCollection.getId();
+            if (!java.util.Objects.equals(oldId, newId)) {
+                UiAsyncRequestGuard.invalidate(metadataGeneration);
+                UiAsyncRequestGuard.invalidate(booksGeneration);
+            }
+        });
     }
 
     private void configureSelectionColumn() {
@@ -383,7 +393,7 @@ public class AuthorWorkspaceController {
     }
 
     private void loadAuthorData(AuthorId authorId) {
-        long generation = metadataGeneration.incrementAndGet();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(metadataGeneration, appState);
         setBusy(true);
         executor.submit(() -> {
             AuthorDto author = loadAuthorByIdUseCase.execute(authorId)
@@ -392,7 +402,7 @@ public class AuthorWorkspaceController {
             boolean followed = catalogUpdateService.isAuthorFollowed(authorId);
             return new AuthorWorkspaceMetadata(author, statistics, followed);
         }).thenAccept(data -> UiExecutor.runOnUiThread(() -> {
-            if (generation != metadataGeneration.get() || !authorId.equals(currentAuthorId)) return;
+            if (!UiAsyncRequestGuard.isCurrent(requestToken, metadataGeneration, appState) || !authorId.equals(currentAuthorId)) return;
             currentAuthor = data.author();
             authorStatistics = data.statistics();
             currentAuthorFollowed = data.followed();
@@ -402,7 +412,7 @@ public class AuthorWorkspaceController {
         })).exceptionally(ex -> {
             log.error("Помилка завантаження автора {}", authorId, ex);
             UiExecutor.runOnUiThread(() -> {
-                if (generation == metadataGeneration.get()) {
+                if (UiAsyncRequestGuard.isCurrent(requestToken, metadataGeneration, appState) && authorId.equals(currentAuthorId)) {
                     allBooks.clear();
                     booksTableView.getItems().clear();
                     authorStatistics = AuthorBookStatistics.empty();
@@ -420,7 +430,7 @@ public class AuthorWorkspaceController {
         String filter = filterTextField == null ? "" : filterTextField.getText();
         SortBy sort = currentSort;
         SortDirection direction = currentDirection;
-        long generation = booksGeneration.incrementAndGet();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(booksGeneration, appState);
         setBusy(true);
 
         executor.submit(() -> {
@@ -431,7 +441,7 @@ public class AuthorWorkspaceController {
             }
             return new LoadedBooks(items, physicallyLocal);
         }).thenAccept(loaded -> UiExecutor.runOnUiThread(() -> {
-            if (generation != booksGeneration.get() || !authorId.equals(currentAuthorId)) return;
+            if (!UiAsyncRequestGuard.isCurrent(requestToken, booksGeneration, appState) || !authorId.equals(currentAuthorId)) return;
             allBooks.clear();
             for (BookListItem item : loaded.items()) {
                 BookViewModel row = bookViewModelMapper.toViewModel(item);
@@ -444,7 +454,7 @@ public class AuthorWorkspaceController {
             setBusy(false);
         })).exceptionally(ex -> {
             log.error("Помилка завантаження книг автора {}", authorId, ex);
-            UiExecutor.runOnUiThread(() -> { if (generation == booksGeneration.get()) setBusy(false); });
+            UiExecutor.runOnUiThread(() -> { if (UiAsyncRequestGuard.isCurrent(requestToken, booksGeneration, appState) && authorId.equals(currentAuthorId)) setBusy(false); });
             return null;
         });
     }

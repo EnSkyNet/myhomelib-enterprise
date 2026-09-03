@@ -125,6 +125,7 @@ public class ImportWorkspaceController {
         startImport(() -> {
             ImportContext context = ImportContext.builder()
                     .rootDirectory(dir)
+                    .updateExisting(true)
                     .batchSize(batchSize)
                     .indexAfterSave(true)
                     .cancelFlag(cancelFlag)

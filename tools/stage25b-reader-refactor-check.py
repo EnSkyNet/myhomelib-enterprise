@@ -72,6 +72,9 @@ def compile_line_support():
         rels=(
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSettings.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderInputSettings.java',
+          'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderStyleSheet.java',
+          'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderElementStyle.java',
+          'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSemanticElement.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/TextStyle.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/StyleSpan.java',
           'myhomelib-reader/src/main/java/com/myhomelibcorp/reader/model/TextRunLayout.java',

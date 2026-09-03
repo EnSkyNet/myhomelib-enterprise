@@ -107,7 +107,7 @@ checks={
  ['GlobalSearchResult searchAll', 'List<AuthorDto> searchAuthors', 'authorRepository.searchByName']),
 'Search workspace uses full table with author and highlighted matches': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java',
- ['TableView<BookDto> booksTableView', 'authorColumn', 'highlightedInline(', 'searchService.searchOverview(query)', 'searchService.searchPage(request)']),
+ ['TableView<BookDto> booksTableView', 'authorColumn', 'highlightedInline(', 'searchService.searchOverview(form.freeText())', 'searchService.searchPage(request)']),
 'Search result limits are paged, not hard 20/50 caps': (
  ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/search/SearchService.java',
  ['searchAuthorsAll', 'searchAllBooks', 'chunkSize = 500', 'authorRepository.searchByName(normalizedQuery, chunkSize, offset)']),

@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookFilterSqlAdapter;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
@@ -13,6 +14,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.OptionalLong;
 import java.util.Set;
 
 /** SQLite aggregation queries backing navigation facets and Stage 8 unified filters. */
@@ -97,6 +99,99 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
         return new FacetPage(content, total == null ? 0 : total);
     }
 
+    @Override
+    public AuthorFacetSlice findAuthorsAfter(char initial, BookFilterSpec filter, int limit, AuthorCursor after) {
+        BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
+        AuthorInitialSql initialSql = authorInitialSql(initial);
+        int safeLimit = Math.max(1, Math.min(limit, 1000));
+
+        String cursorCondition = after == null ? "" : """
+                  AND (
+                        COALESCE(a.last_name, '') COLLATE NOCASE,
+                        COALESCE(a.first_name, '') COLLATE NOCASE,
+                        COALESCE(a.middle_name, '') COLLATE NOCASE,
+                        a.id
+                      ) > (?, ?, ?, ?)
+                """;
+
+        // Do not GROUP every author in the selected initial before LIMIT is applied.
+        // The author table is traversed in cursor order and only the bounded page is
+        // checked/count-aggregated against matching books. This keeps first and deep
+        // pages proportional to page size instead of the size of the whole initial.
+        String matchingBookFilter = andFilter(f);
+        String sql = """
+                SELECT a.id,
+                       a.first_name,
+                       a.middle_name,
+                       a.last_name,
+                       (
+                           SELECT COUNT(*)
+                           FROM book_authors count_ba
+                           JOIN books b ON b.id = count_ba.book_id
+                           WHERE count_ba.author_id = a.id
+                             AND b.deleted = 0
+                             %s
+                       ) AS book_count
+                FROM authors a
+                WHERE %s
+                  %s
+                  AND EXISTS (
+                      SELECT 1
+                      FROM book_authors exists_ba
+                      JOIN books b ON b.id = exists_ba.book_id
+                      WHERE exists_ba.author_id = a.id
+                        AND b.deleted = 0
+                        %s
+                  )
+                ORDER BY COALESCE(a.last_name, '') COLLATE NOCASE,
+                         COALESCE(a.first_name, '') COLLATE NOCASE,
+                         COALESCE(a.middle_name, '') COLLATE NOCASE,
+                         a.id
+                LIMIT ?
+                """.formatted(matchingBookFilter, initialSql.condition(), cursorCondition, matchingBookFilter);
+
+        // SQL placeholder order matters: SELECT/count subquery comes before the
+        // outer WHERE, then EXISTS. The filter therefore intentionally appears twice.
+        List<Object> dataParams = new ArrayList<>(f.params());
+        dataParams.addAll(initialSql.params());
+        if (after != null) {
+            dataParams.add(after.lastName());
+            dataParams.add(after.firstName());
+            dataParams.add(after.middleName());
+            dataParams.add(after.id());
+        }
+        dataParams.addAll(f.params());
+        dataParams.add(safeLimit + 1);
+
+        List<AuthorFacetRow> rows = jdbc().query(sql, (rs, rowNum) -> {
+            String id = rs.getString("id");
+            String firstName = nullToEmpty(rs.getString("first_name"));
+            String middleName = nullToEmpty(rs.getString("middle_name"));
+            String lastName = nullToEmpty(rs.getString("last_name"));
+            return new AuthorFacetRow(
+                    new Facet(id, fullName(lastName, firstName, middleName), rs.getLong("book_count")),
+                    new AuthorCursor(lastName, firstName, middleName, id));
+        }, dataParams.toArray());
+
+        boolean hasMore = rows.size() > safeLimit;
+        List<AuthorFacetRow> pageRows = hasMore ? rows.subList(0, safeLimit) : rows;
+        List<Facet> content = pageRows.stream().map(AuthorFacetRow::facet).toList();
+        AuthorCursor nextCursor = hasMore && !pageRows.isEmpty()
+                ? pageRows.getLast().cursor()
+                : null;
+
+        // Exact totals force a full aggregation of the initial and used to roughly
+        // double first-page latency on 500k+ catalogues. Navigation only needs
+        // content + hasMore/cursor, so keep total optional and out of the hot path.
+        return new AuthorFacetSlice(content, OptionalLong.empty(), nextCursor);
+    }
+
+    private static String nullToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
+    private record AuthorFacetRow(Facet facet, AuthorCursor cursor) { }
+
     private AuthorInitialSql authorInitialSql(char initial) {
         List<Object> params = new ArrayList<>();
         String condition;
@@ -120,7 +215,7 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
     public List<Facet> searchAuthors(String query, BookFilterSpec filter, int limit) {
         if (query == null || query.isBlank()) return List.of();
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
-        String normalizedPattern = "%" + escapeLike(query.trim().toLowerCase(Locale.ROOT)) + "%";
+        String normalizedPattern = "%" + escapeLike(AuthorSearchNameNormalizer.normalizeQuery(query)) + "%";
         String originalPattern = "%" + escapeLike(query.trim()) + "%";
         List<Object> params = new ArrayList<>();
         // SQLite LOWER()/NOCASE are ASCII-only without ICU. Author search_name is
@@ -279,18 +374,19 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
     @Override
     public List<Facet> findLanguages(BookFilterSpec filter) {
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
+        String normalizedLanguage = BookFilterSqlAdapter.normalizedLanguageExpression("b");
         String sql = """
-                SELECT LOWER(TRIM(b.language)) AS facet_id,
-                       LOWER(TRIM(b.language)) AS facet_label,
+                SELECT %s AS facet_id,
+                       %s AS facet_label,
                        COUNT(*) AS book_count
                 FROM books b
                 WHERE b.deleted = 0
-                  AND b.language IS NOT NULL
-                  AND TRIM(b.language) <> ''
+                  AND %s <> ''
                   %s
-                GROUP BY LOWER(TRIM(b.language))
-                ORDER BY LOWER(TRIM(b.language))
-                """.formatted(andFilter(f));
+                GROUP BY %s
+                ORDER BY %s
+                """.formatted(normalizedLanguage, normalizedLanguage, normalizedLanguage,
+                andFilter(f), normalizedLanguage, normalizedLanguage);
         return queryFacets(sql, f.params());
     }
 
@@ -321,31 +417,16 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
     public List<Facet> findKeywords(BookFilterSpec filter) {
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
         String sql = """
-                WITH RECURSIVE keyword_source(book_id, rest) AS (
-                    SELECT b.id,
-                           REPLACE(REPLACE(COALESCE(b.keywords, ''), ';', ','), '|', ',') || ','
-                    FROM books b
-                    WHERE b.deleted = 0
-                      AND b.keywords IS NOT NULL
-                      AND TRIM(b.keywords) <> ''
-                      %s
-                ),
-                split(book_id, token, rest) AS (
-                    SELECT book_id, '', rest FROM keyword_source
-                    UNION ALL
-                    SELECT book_id,
-                           TRIM(SUBSTR(rest, 1, INSTR(rest, ',') - 1)),
-                           SUBSTR(rest, INSTR(rest, ',') + 1)
-                    FROM split
-                    WHERE rest <> ''
-                )
-                SELECT LOWER(token) AS facet_id,
-                       MIN(token) AS facet_label,
-                       COUNT(DISTINCT book_id) AS book_count
-                FROM split
-                WHERE token <> ''
-                GROUP BY LOWER(token)
-                ORDER BY LOWER(token)
+                SELECT k.normalized_name AS facet_id,
+                       k.display_name AS facet_label,
+                       COUNT(DISTINCT b.id) AS book_count
+                FROM keywords k
+                JOIN keyword_books kb ON kb.normalized_name = k.normalized_name
+                JOIN books b ON b.id = kb.book_id
+                WHERE b.deleted = 0
+                  %s
+                GROUP BY k.normalized_name, k.display_name
+                ORDER BY k.normalized_name
                 """.formatted(andFilter(f));
         return queryFacets(sql, f.params());
     }

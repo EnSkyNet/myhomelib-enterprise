@@ -3,11 +3,13 @@ package com.myhomelibcorp.infrastructure.image;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.ByteArrayInputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Base64;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -15,6 +17,93 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class RichCoverParsersTest {
     @TempDir Path temp;
+
+
+    @Test
+    void fb2CoverUsesCoverpageReferenceInsteadOfLastBodyImage() {
+        byte[] cover = jpeg(1, 2, 3);
+        byte[] bodyImage = jpeg(9, 8, 7);
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+                             xmlns:l="http://www.w3.org/1999/xlink">
+                  <description><title-info>
+                    <book-title>Cover regression</book-title>
+                    <coverpage><image l:href="#cover.jpg"/></coverpage>
+                  </title-info></description>
+                  <body><section>
+                    <p>Text</p>
+                    <image l:href="#illustration.jpg"/>
+                  </section></body>
+                  <binary id="cover.jpg" content-type="image/jpeg">%s</binary>
+                  <binary id="illustration.jpg" content-type="image/jpeg">%s</binary>
+                </FictionBook>
+                """.formatted(Base64.getEncoder().encodeToString(cover), Base64.getEncoder().encodeToString(bodyImage));
+
+        byte[] extracted = new Fb2CoverParser().parseToBytes(
+                new ByteArrayInputStream(fb2.getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(extracted).containsExactly(cover);
+    }
+
+    @Test
+    void fb2CoverFallsBackToFirstImageWhenCoverpageIsMissing() {
+        byte[] first = jpeg(3, 1, 4);
+        byte[] last = jpeg(2, 7, 1);
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info><book-title>No coverpage</book-title></title-info></description>
+                  <body><section><p>Text</p></section></body>
+                  <binary id="first.jpg" content-type="image/jpeg">%s</binary>
+                  <binary id="last.jpg" content-type="image/jpeg">%s</binary>
+                </FictionBook>
+                """.formatted(Base64.getEncoder().encodeToString(first), Base64.getEncoder().encodeToString(last));
+
+        byte[] extracted = new Fb2CoverParser().parseToBytes(
+                new ByteArrayInputStream(fb2.getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(extracted).containsExactly(first);
+    }
+
+
+    @Test
+    void fb2CoverFallsBackToFirstValidImageWhenEarlierBinaryIsBroken() {
+        byte[] valid = jpeg(4, 2, 1);
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info><book-title>Broken image fallback</book-title></title-info></description>
+                  <body><section><p>Text</p></section></body>
+                  <binary id="broken.jpg" content-type="image/jpeg">not-base64</binary>
+                  <binary id="valid.jpg" content-type="image/jpeg">%s</binary>
+                </FictionBook>
+                """.formatted(Base64.getEncoder().encodeToString(valid));
+
+        byte[] extracted = new Fb2CoverParser().parseToBytes(
+                new ByteArrayInputStream(fb2.getBytes(StandardCharsets.UTF_8)));
+
+        assertThat(extracted).containsExactly(valid);
+    }
+
+    @Test
+    void fb2DeclaredCoverCanBeRecognizedByIdWhenMimeTypeIsMissing() {
+        byte[] cover = jpeg(5, 5, 5);
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+                             xmlns:l="http://www.w3.org/1999/xlink">
+                  <description><title-info><book-title>No MIME</book-title>
+                    <coverpage><image l:href="#cover.jpg"/></coverpage>
+                  </title-info></description>
+                  <body><section><p>Text</p></section></body>
+                  <binary id="cover.jpg">%s</binary>
+                </FictionBook>
+                """.formatted(Base64.getEncoder().encodeToString(cover));
+
+        assertThat(new Fb2CoverParser().parseToBytes(new ByteArrayInputStream(fb2.getBytes(StandardCharsets.UTF_8))))
+                .containsExactly(cover);
+    }
 
     @Test
     void extractsEpubCoverFromOpfCoverImageProperty() throws Exception {
@@ -71,6 +160,14 @@ class RichCoverParsersTest {
         assertThat(bytes).isNotNull().hasSizeGreaterThan(100);
         assertThat(bytes[0]).isEqualTo((byte)0x89);
         assertThat(new String(bytes, 1, 3, StandardCharsets.US_ASCII)).isEqualTo("PNG");
+    }
+
+    private static byte[] jpeg(int... payload) {
+        byte[] bytes = new byte[payload.length + 4];
+        bytes[0] = (byte) 0xFF; bytes[1] = (byte) 0xD8;
+        for (int i = 0; i < payload.length; i++) bytes[i + 2] = (byte) payload[i];
+        bytes[bytes.length - 2] = (byte) 0xFF; bytes[bytes.length - 1] = (byte) 0xD9;
+        return bytes;
     }
 
     private static void entry(ZipOutputStream zip, String name, byte[] bytes) throws Exception {

@@ -29,12 +29,20 @@ public class OperationCenterService {
     private final CopyOnWriteArrayList<Consumer<List<OperationCenterEntry>>> listeners = new CopyOnWriteArrayList<>();
 
     public String start(String title, String collectionId, OperationStage stage, boolean cancellable) {
+        return start(title, collectionId, inferKind(null, title, stage), stage, cancellable);
+    }
+
+    public String start(String title, String collectionId, OperationKind kind, OperationStage stage, boolean cancellable) {
         String id = "ui-operation-" + UUID.randomUUID();
-        accept(title, collectionId, OperationProgress.stage(id, stage, cancellable));
+        accept(title, collectionId, kind, OperationProgress.stage(id, stage, cancellable));
         return id;
     }
 
     public void accept(String title, String collectionId, OperationProgress progress) {
+        accept(title, collectionId, null, progress);
+    }
+
+    public void accept(String title, String collectionId, OperationKind kind, OperationProgress progress) {
         if (progress == null) return;
         Instant now = Instant.now();
         synchronized (lock) {
@@ -48,9 +56,12 @@ public class OperationCenterService {
                     : collectionId;
             Instant finishedAt = terminal(progress.stage()) ? now : null;
             String previousError = previous == null ? "" : previous.errorMessage();
+            OperationKind effectiveKind = kind != null
+                    ? kind
+                    : previous != null ? previous.kind() : inferKind(progress.operationId(), effectiveTitle, progress.stage());
 
             entries.put(progress.operationId(), new OperationCenterEntry(
-                    progress.operationId(), effectiveTitle, effectiveCollection, progress.stage(),
+                    progress.operationId(), effectiveTitle, effectiveCollection, effectiveKind, progress.stage(),
                     progress.processed(), progress.total(), progress.inserted(), progress.updated(), progress.deleted(),
                     progress.skipped(), progress.duplicates(), progress.warnings(), progress.errors(), progress.currentItem(),
                     progress.cancellable(), startedAt, now, finishedAt, previousError));
@@ -114,7 +125,7 @@ public class OperationCenterService {
             OperationCenterEntry previous = entries.get(operationId);
             if (previous == null) return;
             entries.put(operationId, new OperationCenterEntry(
-                    previous.operationId(), previous.title(), previous.collectionId(), stage,
+                    previous.operationId(), previous.title(), previous.collectionId(), previous.kind(), stage,
                     previous.processed(), previous.total(), previous.inserted(), previous.updated(), previous.deleted(),
                     previous.skipped(), previous.duplicates(), previous.warnings(), previous.errors(),
                     detail == null || detail.isBlank() ? previous.currentItem() : detail,
@@ -153,6 +164,22 @@ public class OperationCenterService {
         for (int i = 0; i < removable.size() && remove > 0; i++, remove--) {
             entries.remove(removable.get(i).getKey());
         }
+    }
+
+    private static OperationKind inferKind(String operationId, String title, OperationStage stage) {
+        String id = operationId == null ? "" : operationId.toLowerCase(java.util.Locale.ROOT);
+        String text = title == null ? "" : title.toLowerCase(java.util.Locale.ROOT);
+        if (stage == OperationStage.CREATING_COLLECTION || text.contains("створення колекц")) return OperationKind.COLLECTION_CREATE;
+        if (stage == OperationStage.DELETING_COLLECTION || text.contains("видалення колекц")) return OperationKind.COLLECTION_DELETE;
+        if (id.startsWith("catalog-update-") || text.contains("оновлення каталог") || text.contains("автооновлення каталог")) return OperationKind.CATALOG_UPDATE;
+        if (id.startsWith("file-import-") || id.startsWith("directory-import-") || id.startsWith("catalog-import-")
+                || id.startsWith("legacy-import-") || text.contains("імпорт")) return OperationKind.CATALOG_IMPORT;
+        if (stage == OperationStage.UPDATING_SEARCH_INDEX || text.contains("lucene") || text.contains("індекс")) return OperationKind.INDEX_REBUILD;
+        if (stage == OperationStage.BACKING_UP || text.contains("backup") || text.contains("резерв")) return OperationKind.BACKUP;
+        if (stage == OperationStage.RESTORING || text.contains("відновлення")) return OperationKind.RESTORE;
+        if (stage == OperationStage.INTEGRITY_CHECKS || text.contains("цілісн")) return OperationKind.INTEGRITY_CHECK;
+        if (stage == OperationStage.BOOK_DOWNLOAD) return OperationKind.BOOK_DOWNLOAD;
+        return OperationKind.GENERIC;
     }
 
     private static boolean terminal(OperationStage stage) {

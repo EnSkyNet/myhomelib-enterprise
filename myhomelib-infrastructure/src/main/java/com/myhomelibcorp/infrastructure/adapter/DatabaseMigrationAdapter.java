@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.adapter;
 import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPort;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteAuthorRepository;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.KeywordIndexBackfillService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.flywaydb.core.Flyway;
@@ -18,6 +19,7 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
 
     private final CollectionManager collectionManager;
     private final SqliteAuthorRepository authorRepository;
+    private final KeywordIndexBackfillService keywordIndexBackfillService;
 
     @Override
     public int migrateCurrentCollection() {
@@ -41,6 +43,7 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
 
             MigrateResult result = flyway.migrate();
             authorRepository.normalizeSearchNamesIfNeeded();
+            keywordIndexBackfillService.backfillIfNeeded();
 
             if (result.migrationsExecuted > 0) {
                 log.info("✅ Виконано {} міграцій", result.migrationsExecuted);
@@ -79,8 +82,7 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
 
             return flyway.info().pending().length > 0;
         } catch (Exception e) {
-            log.warn("Помилка перевірки наявності міграцій: {}", e.getMessage());
-            return false;
+            throw new IllegalStateException("Не вдалося визначити стан міграцій БД", e);
         }
     }
 }

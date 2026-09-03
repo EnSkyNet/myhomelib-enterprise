@@ -57,16 +57,17 @@ final class LuceneSearchExecutor {
             int offset = Math.max(0, request.offset());
             int limit = Math.min(MAX_PAGE_SIZE, Math.max(1, request.limit()));
 
-            // IndexSearcher.search(Query,n) only tracks total hits accurately up to a threshold
-            // (1000 in Lucene 9.x). SearchResult promises a total, so count explicitly.
-            int totalHits = searcher.count(query);
-            if (offset >= totalHits) {
+            // The first interactive page needs an exact total for the UI. Continuation pages
+            // already know that total and can skip the full count(query), which is significant
+            // for broad matches in 700k–1M catalogues.
+            int totalHits = request.trackTotalHits() ? searcher.count(query) : -1;
+            if (totalHits >= 0 && offset >= totalHits) {
                 return new SearchResult(List.of(), totalHits, offset / limit, limit,
                         System.currentTimeMillis() - started);
             }
 
             ScoreDoc after = skipToOffset(searcher, query, offset);
-            int pageSize = Math.min(limit, totalHits - offset);
+            int pageSize = totalHits >= 0 ? Math.min(limit, totalHits - offset) : limit;
             TopDocs page = searcher.searchAfter(after, query, pageSize);
             List<BookId> ids = new ArrayList<>(page.scoreDocs.length);
             for (ScoreDoc hit : page.scoreDocs) {

@@ -25,6 +25,8 @@ import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
@@ -54,6 +56,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.concurrent.CancellationException;
 import java.util.concurrent.Future;
@@ -88,6 +91,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private ProgressIndicator loadingIndicator;
     private BookDto currentBook;
     private BookId currentBookId;
+    private String currentBookCollectionId;
     private Path materializedBookFile;
     private volatile boolean isDisposed = false;
     private final AtomicLong openGeneration = new AtomicLong();
@@ -143,7 +147,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
-        long generation = openGeneration.incrementAndGet();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(openGeneration, appState);
         cancelPendingOpen();
         closeCurrentBookForReplacement();
         setLoading(true);
@@ -158,9 +162,9 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                         prepared.closeAbandoned();
                         return null;
                     }
-                    Platform.runLater(() -> applyPreparedOpen(generation, prepared));
+                    Platform.runLater(() -> applyPreparedOpen(requestToken, prepared));
                 } catch (Throwable error) {
-                    Platform.runLater(() -> handleOpenFailure(generation, bookId, error));
+                    Platform.runLater(() -> handleOpenFailure(requestToken, bookId, error));
                 }
                 return null;
             });
@@ -233,14 +237,15 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    private void applyPreparedOpen(long generation, PreparedOpen prepared) {
-        if (isDisposed || generation != openGeneration.get()) {
+    private void applyPreparedOpen(UiAsyncRequestToken requestToken, PreparedOpen prepared) {
+        if (isDisposed || !UiAsyncRequestGuard.isCurrent(requestToken, openGeneration, appState)) {
             prepared.closeAbandoned();
             return;
         }
         try {
             currentBook = prepared.dto();
             currentBookId = prepared.book().getId();
+            currentBookCollectionId = requestToken.collectionId();
             // Reader is also a book workspace. Keep the shared right details panel
             // bound to the currently opened book even if the panel was hidden while opening.
             appState.getBookDetails().setCurrentBook(currentBook);
@@ -266,7 +271,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
             BookId openedId = currentBookId;
             uiBackgroundExecutor.execute(() -> {
-                if (isDisposed || generation != openGeneration.get()) return;
+                if (isDisposed || !UiAsyncRequestGuard.isCurrent(requestToken, openGeneration, appState)) return;
                 try {
                     sessionService.saveLastOpenedBookId(openedId.asString());
                 } catch (RuntimeException error) {
@@ -290,8 +295,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    private void handleOpenFailure(long generation, BookId bookId, Throwable error) {
-        if (generation != openGeneration.get() || isDisposed) return;
+    private void handleOpenFailure(UiAsyncRequestToken requestToken, BookId bookId, Throwable error) {
+        if (isDisposed || !UiAsyncRequestGuard.isCurrent(requestToken, openGeneration, appState)) return;
         setLoading(false);
         Throwable root = unwrap(error);
         if (root instanceof InterruptedException || root instanceof InterruptedIOException
@@ -311,6 +316,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         cleanupMaterializedBookFile();
         currentBook = null;
         currentBookId = null;
+        currentBookCollectionId = null;
         positionChanged = false;
     }
 
@@ -534,7 +540,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void addBookmark() {
-        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) return;
+        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null
+                || !currentBookBelongsToActiveCollection()) return;
 
         TextInputDialog dialog = new TextInputDialog("");
         dialog.setTitle("Додати закладку");
@@ -549,18 +556,18 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         long totalTextLength = readerView.getEngine().getCurrentDocument() == null
                 ? 0L : readerView.getEngine().getCurrentDocument().totalTextLength();
         String bookId = currentBookId.asString();
-        long generation = openGeneration.get();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
 
         uiBackgroundExecutor.submit(() -> persistenceService.saveBookmark(bookId, pos, totalTextLength, title, ""))
                 .thenAccept(bookmark -> Platform.runLater(() -> {
-                    if (!sameOpenBook(generation, bookId)) return;
+                    if (!sameOpenBook(requestToken, bookId)) return;
                     dialogService.showInfo("Успішно", "Закладку додано: " + title);
                     log.info("⭐ Закладку додано: {}", title);
                 }))
                 .exceptionally(error -> {
                     log.error("Не вдалося зберегти закладку", error);
                     Platform.runLater(() -> {
-                        if (sameOpenBook(generation, bookId))
+                        if (sameOpenBook(requestToken, bookId))
                             dialogService.showError("Закладки", "Не вдалося зберегти закладку: " + rootMessage(error));
                     });
                     return null;
@@ -568,26 +575,27 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void showBookmarks() {
-        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null) return;
+        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentBookId == null
+                || !currentBookBelongsToActiveCollection()) return;
         String bookId = currentBookId.asString();
-        long generation = openGeneration.get();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
         appState.getStatusBar().setStatusText("Завантаження закладок…");
         uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
                 .thenAccept(bookmarks -> Platform.runLater(() -> {
-                    if (!sameOpenBook(generation, bookId)) return;
-                    showBookmarksDialog(bookmarks, generation, bookId);
+                    if (!sameOpenBook(requestToken, bookId)) return;
+                    showBookmarksDialog(bookmarks, requestToken, bookId);
                 }))
                 .exceptionally(error -> {
                     log.error("Не вдалося завантажити закладки", error);
                     Platform.runLater(() -> {
-                        if (sameOpenBook(generation, bookId))
+                        if (sameOpenBook(requestToken, bookId))
                             dialogService.showError("Закладки", "Не вдалося завантажити закладки: " + rootMessage(error));
                     });
                     return null;
                 });
     }
 
-    private void showBookmarksDialog(List<Bookmark> bookmarks, long generation, String bookId) {
+    private void showBookmarksDialog(List<Bookmark> bookmarks, UiAsyncRequestToken requestToken, String bookId) {
         if (bookmarks == null || bookmarks.isEmpty()) {
             dialogService.showInfo("Закладки", "У цієї книги ще немає закладок.");
             return;
@@ -598,7 +606,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         dialog.setHeaderText("Виберіть закладку");
         dialog.setContentText("Закладка:");
         Optional<BookmarkChoice> selected = dialog.showAndWait();
-        if (selected.isEmpty() || !sameOpenBook(generation, bookId)) return;
+        if (selected.isEmpty() || !sameOpenBook(requestToken, bookId)) return;
 
         Bookmark bookmark = selected.get().bookmark();
         ButtonType goTo = new ButtonType("Перейти");
@@ -618,11 +626,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 persistenceService.deleteBookmark(bookmark.getId());
                 return true;
             }).thenAccept(ignored -> Platform.runLater(() -> {
-                if (sameOpenBook(generation, bookId)) dialogService.showInfo("Закладки", "Закладку видалено.");
+                if (sameOpenBook(requestToken, bookId)) dialogService.showInfo("Закладки", "Закладку видалено.");
             })).exceptionally(error -> {
                 log.error("Не вдалося видалити закладку", error);
                 Platform.runLater(() -> {
-                    if (sameOpenBook(generation, bookId))
+                    if (sameOpenBook(requestToken, bookId))
                         dialogService.showError("Закладки", "Не вдалося видалити закладку: " + rootMessage(error));
                 });
                 return null;
@@ -630,9 +638,16 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
-    private boolean sameOpenBook(long generation, String bookId) {
-        return !isDisposed && generation == openGeneration.get() && currentBookId != null
+    private boolean sameOpenBook(UiAsyncRequestToken requestToken, String bookId) {
+        return !isDisposed
+                && UiAsyncRequestGuard.isCurrent(requestToken, openGeneration, appState)
+                && Objects.equals(currentBookCollectionId, requestToken.collectionId())
+                && currentBookId != null
                 && currentBookId.asString().equals(bookId);
+    }
+
+    private boolean currentBookBelongsToActiveCollection() {
+        return Objects.equals(currentBookCollectionId, UiAsyncRequestGuard.currentCollectionId(appState));
     }
 
     private record BookmarkChoice(Bookmark bookmark) {
@@ -760,6 +775,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         currentBook = null;
         currentBookId = null;
+        currentBookCollectionId = null;
 
         log.info("🧹 NewReaderWorkspaceController знищено");
     }

@@ -3,9 +3,16 @@ package com.myhomelibcorp.ui.collection;
 import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.usecase.collection.*;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
+import com.myhomelibcorp.ui.operation.OperationCenterEntry;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.operation.OperationKind;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.collections.FXCollections;
@@ -24,7 +31,7 @@ import java.util.concurrent.atomic.AtomicLong;
 @Component
 @RequiredArgsConstructor
 @Slf4j
-public class CollectionWorkspaceController {
+public class CollectionWorkspaceController implements WorkspaceLifecycle {
 
     private final LoadCollectionsUseCase loadCollectionsUseCase;
     private final CreateCollectionUseCase createCollectionUseCase;
@@ -36,6 +43,7 @@ public class CollectionWorkspaceController {
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final UiBackgroundExecutor executor;
+    private final OperationCenterService operationCenter;
 
     @FXML private ListView<CollectionDto> collectionsListView;
     @FXML private Label collectionNameLabel;
@@ -43,6 +51,7 @@ public class CollectionWorkspaceController {
     @FXML private Label rootFolderLabel;
     @FXML private Label dbFileLabel;
     @FXML private Label collectionTypeLabel;
+    @FXML private Label runtimeStateLabel;
     @FXML private Button renameButton;
     @FXML private Button deleteButton;
     @FXML private Button activateButton;
@@ -62,6 +71,8 @@ public class CollectionWorkspaceController {
     private final ObservableList<CollectionDto> collectionList = FXCollections.observableArrayList();
     private final AtomicLong loadGeneration = new AtomicLong();
     private boolean busy;
+    private volatile List<OperationCenterEntry> operationSnapshot = List.of();
+    private AutoCloseable operationSubscription;
 
     @FXML
     public void initialize() {
@@ -78,13 +89,12 @@ public class CollectionWorkspaceController {
                     setText(null);
                     setStyle("");
                 } else {
-                    String prefix = item.isActive() ? "● " : "○ ";
-                    setText(prefix + item.getName());
-                    if (item.isActive()) {
-                        getStyleClass().add("accent-text");
-                    } else {
-                        setStyle("");
-                    }
+                    CollectionRuntimeStatus runtime = CollectionRuntimeStateResolver.resolve(item.getId(), operationSnapshot);
+                    String prefix = item.isActive() ? "★ " : "";
+                    setText(prefix + item.getName() + " — " + runtime.shortText());
+                    getStyleClass().remove("accent-text");
+                    if (item.isActive()) getStyleClass().add("accent-text");
+                    setStyle("");
                 }
             }
         });
@@ -179,7 +189,28 @@ public class CollectionWorkspaceController {
             }
         });
 
+        subscribeToOperationLifecycle();
         loadCollections();
+    }
+
+    private void subscribeToOperationLifecycle() {
+        closeOperationSubscription();
+        operationSubscription = operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> {
+            operationSnapshot = snapshot == null ? List.of() : snapshot;
+            if (collectionsListView != null) collectionsListView.refresh();
+            if (selectedCollection != null) updateCollectionDetails(selectedCollection);
+        }));
+    }
+
+    private void closeOperationSubscription() {
+        AutoCloseable subscription = operationSubscription;
+        operationSubscription = null;
+        if (subscription == null) return;
+        try {
+            subscription.close();
+        } catch (Exception e) {
+            log.debug("Не вдалося закрити Operation Center subscription", e);
+        }
     }
 
     public ObservableList<CollectionDto> getCollectionList() {
@@ -277,6 +308,9 @@ public class CollectionWorkspaceController {
 
     private void updateCollectionDetails(CollectionDto collection) {
         if (collection == null) return;
+        CollectionRuntimeStatus runtime = CollectionRuntimeStateResolver.resolve(collection.getId(), operationSnapshot);
+        if (collectionNameLabel != null) collectionNameLabel.setText(collection.getName());
+        if (runtimeStateLabel != null) runtimeStateLabel.setText("Стан: " + runtime.detailsText());
         if (activeCollectionLabel != null) {
             activeCollectionLabel.setText(collection.isActive() ? "Активна колекція: так" : "Активна колекція: ні");
         }
@@ -313,17 +347,24 @@ public class CollectionWorkspaceController {
                     .importOnCreate(false)
                     .createIndex(false)
                     .build();
+            String operationId = operationCenter.start(
+                    "Створення колекції — " + name, "", OperationKind.COLLECTION_CREATE,
+                    OperationStage.CREATING_COLLECTION, false);
             setBusy(true, "Створення колекції: " + name);
             executor.submit(() -> {
                 var created = createCollectionUseCase.execute(request);
+                operationCenter.accept("Створення колекції — " + name, created.getId(), OperationKind.COLLECTION_CREATE,
+                        OperationProgress.stage(operationId, OperationStage.FINALIZING, false));
                 return switchCollectionUseCase.execute(created.getId());
             }).thenAccept(active -> UiExecutor.runOnUiThread(() -> {
+                operationCenter.complete(operationId, "Колекція готова: " + active.getName());
                 appState.setCurrentLibraryCollection(active);
                 setBusy(false, "Колекцію створено: " + name);
                 loadCollections(active.getId());
                 dialogService.showInfo("Успішно", "Порожню колекцію \"" + name + "\" створено та активовано.");
                 log.info("Порожню колекцію створено й активовано: id={}, name={}", active.getId(), active.getName());
             })).exceptionally(error -> {
+                operationCenter.fail(operationId, error);
                 log.error("Помилка створення колекції", error);
                 UiExecutor.runOnUiThread(() -> {
                     setBusy(false, "Помилка створення колекції");
@@ -394,15 +435,20 @@ public class CollectionWorkspaceController {
         confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             if (busy) return;
+            String operationId = operationCenter.start(
+                    "Видалення колекції — " + selected.getName(), selected.getId(), OperationKind.COLLECTION_DELETE,
+                    OperationStage.DELETING_COLLECTION, false);
             setBusy(true, "Видалення колекції: " + selected.getName());
             executor.submit(() -> {
                 deleteCollectionUseCase.execute(selected.getId());
                 return selected.getId();
             }).thenAccept(deletedId -> UiExecutor.runOnUiThread(() -> {
+                operationCenter.complete(operationId, "Колекцію видалено");
                 setBusy(false, "Колекцію видалено");
                 loadCollections();
                 dialogService.showInfo("Успішно", "Колекцію видалено");
             })).exceptionally(error -> {
+                operationCenter.fail(operationId, error);
                 log.error("Помилка видалення колекції", error);
                 UiExecutor.runOnUiThread(() -> {
                     setBusy(false, "Помилка видалення колекції");
@@ -462,5 +508,11 @@ public class CollectionWorkspaceController {
 
     public void refresh() {
         loadCollections();
+    }
+
+    @Override
+    public void dispose() {
+        UiAsyncRequestGuard.invalidate(loadGeneration);
+        closeOperationSubscription();
     }
 }

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.port.out.repository;
 
+import com.myhomelibcorp.application.query.book.BookPageCursor;
+import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
@@ -14,6 +16,16 @@ public interface BookQueryRepository {
     // ===== Пошук з пагінацією =====
     PageResult<Book> findPage(BookQuery query);
 
+    /** Same page contract, but reuses an already known exact total to avoid COUNT(*) on continuation pages. */
+    PageResult<Book> findPage(BookQuery query, long knownTotal);
+
+    /**
+     * Bidirectional keyset paging for the dominant TITLE sort. The logical page number
+     * is still carried by query.pagination().offset(), but OFFSET is not used by SQL.
+     */
+    PageResult<Book> findTitlePageByCursor(BookQuery query, BookPageCursor cursor,
+                                           BookPageDirection pageDirection, long knownTotal);
+
     long count(BookQuery query);
 
     /** Count the default visible catalog without materializing rows. */
@@ -23,6 +35,12 @@ public interface BookQueryRepository {
     Optional<Book> findById(BookId id);
 
     List<Book> findByIds(List<BookId> ids);
+
+    /**
+     * Lightweight projection for tables/search result lists. Implementations must not
+     * populate the full-book cache with these partial Book objects.
+     */
+    List<Book> findListItemsByIds(List<BookId> ids);
 
 
     /**

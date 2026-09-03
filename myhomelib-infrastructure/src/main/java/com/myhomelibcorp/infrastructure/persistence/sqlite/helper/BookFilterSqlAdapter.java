@@ -21,7 +21,10 @@ public final class BookFilterSqlAdapter {
         List<Object> params = new ArrayList<>();
 
         if (filter.language() != null) {
-            conditions.add("LOWER(TRIM(COALESCE(" + b + ".language, ''))) = LOWER(?)");
+            String language = normalizedLanguageExpression(b);
+            // The explicit non-empty predicate makes the selective partial index
+            // eligible without exposing that index to unrelated title-only scans.
+            conditions.add("(" + language + " <> '' AND " + language + " = LOWER(TRIM(?)))");
             params.add(filter.language());
         }
         if (filter.yearFrom() != null || filter.yearTo() != null) {
@@ -119,6 +122,15 @@ public final class BookFilterSqlAdapter {
         if (conditions.isEmpty()) return FilterSql.empty();
         String joiner = filter.mode() == BookFilterMode.OR ? " OR " : " AND ";
         return new FilterSql("(" + String.join(joiner, conditions) + ")", List.copyOf(params));
+    }
+
+    /**
+     * Canonical SQLite expression used by language filters/facets and the matching
+     * expression index. Keep this exact shape stable so SQLite can use the index.
+     */
+    public static String normalizedLanguageExpression(String alias) {
+        String b = alias == null || alias.isBlank() ? "b" : alias.trim();
+        return "LOWER(TRIM(COALESCE(" + b + ".language, '')))";
     }
 
     private static String escapeLike(String value) {

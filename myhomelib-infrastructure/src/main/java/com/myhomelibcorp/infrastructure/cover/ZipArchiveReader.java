@@ -4,6 +4,7 @@ import com.github.junrar.Archive;
 import com.github.junrar.rarfile.FileHeader;
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry;
 import org.apache.commons.compress.archivers.sevenz.SevenZFile;
@@ -16,8 +17,8 @@ import org.springframework.stereotype.Component;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.io.BufferedInputStream;
-import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -44,14 +45,6 @@ import java.util.zip.ZipFile;
 public class ZipArchiveReader implements ArchiveReader {
 
 
-    private static final Charset[] ZIP_CHARSETS = {
-            Charset.forName("UTF-8"),
-            Charset.forName("CP866"),
-            Charset.forName("Windows-1251"),
-            Charset.forName("IBM-866"),
-            Charset.forName("KOI8-R")
-    };
-
     @Override
     public boolean isArchive(Path file) {
         return file != null && isArchiveName(file.getFileName().toString());
@@ -74,15 +67,19 @@ public class ZipArchiveReader implements ArchiveReader {
 
     @Override
     public List<String> listEntries(Path archivePath) {
+        if (archivePath == null || !Files.isRegularFile(archivePath)) return List.of();
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
             if (lower.endsWith(".7z")) return list7z(archivePath);
             if (lower.endsWith(".rar") || lower.endsWith(".cbr")) return listRar(archivePath);
             if (isStreamArchiveName(lower)) return listStreamArchive(archivePath);
             return listZip(archivePath);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Не вдалося прочитати архів: " + archivePath, e);
+        } catch (RuntimeException e) {
+            throw new IllegalStateException("Не вдалося прочитати архів: " + archivePath, e);
         } catch (Exception e) {
-            log.warn("Не вдалося прочитати архів {}: {}", archivePath, e.getMessage());
-            return List.of();
+            throw new IllegalStateException("Не вдалося прочитати архів: " + archivePath, e);
         }
     }
 
@@ -100,35 +97,36 @@ public class ZipArchiveReader implements ArchiveReader {
         try {
             if (!lower.endsWith(".7z") && !lower.endsWith(".rar") && !lower.endsWith(".cbr")
                     && !isStreamArchiveName(lower)) {
-                for (Charset charset : ZIP_CHARSETS) {
-                    try (ZipFile zip = new ZipFile(archivePath.toFile(), charset)) {
-                        ZipEntry entry = findZipEntry(zip, entryName);
-                        if (entry != null && !entry.isDirectory()) return true;
-                    } catch (Exception ignored) {
-                        // Try the next legacy ZIP charset.
-                    }
+                try (ZipFile zip = ZipCharsetSupport.open(archivePath)) {
+                    ZipEntry entry = findZipEntry(zip, entryName);
+                    return entry != null && !entry.isDirectory();
                 }
-                return false;
             }
             return listEntries(archivePath).stream().anyMatch(name -> sameEntry(name, entryName));
+        } catch (IOException error) {
+            throw new UncheckedIOException("Не вдалося перевірити архів: " + archivePath, error);
         } catch (RuntimeException error) {
-            log.debug("Не вдалося перевірити запис '{}' у {}: {}", entryName, archivePath, error.getMessage());
-            return false;
+            throw error;
         }
     }
 
     @Override
     public Optional<InputStream> readEntry(Path archivePath, String entryName) {
-        if (archivePath == null || entryName == null || entryName.isBlank()) return Optional.empty();
+        if (archivePath == null || entryName == null || entryName.isBlank() || !Files.isRegularFile(archivePath)) {
+            return Optional.empty();
+        }
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
             if (lower.endsWith(".7z")) return read7zEntry(archivePath, entryName);
             if (lower.endsWith(".rar") || lower.endsWith(".cbr")) return readRarEntry(archivePath, entryName);
             if (isStreamArchiveName(lower)) return readStreamArchiveEntry(archivePath, entryName);
             return readZipEntry(archivePath, entryName);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Не вдалося прочитати запис '" + entryName + "' з " + archivePath, e);
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Не вдалося прочитати запис '{}' з {}: {}", entryName, archivePath, e.getMessage());
-            return Optional.empty();
+            throw new IllegalStateException("Не вдалося прочитати запис '" + entryName + "' з " + archivePath, e);
         }
     }
 
@@ -145,52 +143,47 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private List<String> listZip(Path path) throws IOException {
-        Exception last = null;
-        for (Charset charset : ZIP_CHARSETS) {
-            try (ZipFile zip = new ZipFile(path.toFile(), charset)) {
-                List<String> result = new ArrayList<>();
-                Enumeration<? extends ZipEntry> entries = zip.entries();
-                int count = 0;
-                while (entries.hasMoreElements()) {
-                    if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
-                        throw new IOException("ZIP contains too many entries");
-                    }
-                    ZipEntry entry = entries.nextElement();
-                    if (!entry.isDirectory()) result.add(entry.getName());
+        try (ZipFile zip = ZipCharsetSupport.open(path)) {
+            List<String> result = new ArrayList<>();
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            int count = 0;
+            while (entries.hasMoreElements()) {
+                if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                    throw new IOException("ZIP contains too many entries");
                 }
-                return result;
-            } catch (Exception e) {
-                last = e;
+                ZipEntry entry = entries.nextElement();
+                if (!entry.isDirectory()) result.add(entry.getName());
             }
+            return result;
         }
-        throw new IOException("ZIP cannot be opened with supported encodings", last);
     }
 
     private Optional<InputStream> readZipEntry(Path path, String requestedName) throws IOException {
-        Exception last = null;
-        for (Charset charset : ZIP_CHARSETS) {
-            ZipFile zip = null;
-            try {
-                zip = new ZipFile(path.toFile(), charset);
-                ZipEntry entry = findZipEntry(zip, requestedName);
-                if (entry == null || entry.isDirectory()) {
-                    zip.close();
-                    continue;
-                }
-                if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
-                    zip.close();
-                    throw new IOException("ZIP entry is too large: " + entry.getSize());
-                }
-                InputStream delegate = zip.getInputStream(entry);
-                ZipFile owner = zip;
-                return Optional.of(boundedOwnerStream(delegate, owner::close, "ZIP entry"));
-            } catch (Exception e) {
-                last = e;
-                if (zip != null) try { zip.close(); } catch (Exception ignored) { }
+        ZipFile zip = ZipCharsetSupport.open(path);
+        try {
+            ZipEntry entry = findZipEntry(zip, requestedName);
+            if (entry == null || entry.isDirectory()) {
+                zip.close();
+                return Optional.empty();
             }
+            if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
+                zip.close();
+                throw new IOException("ZIP entry is too large: " + entry.getSize());
+            }
+            long compressed = entry.getCompressedSize();
+            long size = entry.getSize();
+            if (compressed > 0 && size > 0
+                    && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+                zip.close();
+                throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
+            }
+            InputStream delegate = zip.getInputStream(entry);
+            ZipFile owner = zip;
+            return Optional.of(boundedOwnerStream(delegate, owner::close, "ZIP entry"));
+        } catch (IOException | RuntimeException e) {
+            try { zip.close(); } catch (Exception ignored) { }
+            throw e;
         }
-        if (last != null) log.debug("ZIP entry lookup failed: {}", last.getMessage());
-        return Optional.empty();
     }
 
     private ZipEntry findZipEntry(ZipFile zip, String requestedName) {

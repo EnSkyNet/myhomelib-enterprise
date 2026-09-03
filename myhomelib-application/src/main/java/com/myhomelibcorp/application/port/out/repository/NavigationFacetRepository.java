@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.filter.BookFilterSpec;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.OptionalLong;
 
 /**
  * Aggregated catalogue facets used by navigation. Implementations must aggregate
@@ -27,6 +28,13 @@ public interface NavigationFacetRepository {
         int end = Math.min(all.size(), safeOffset + safeLimit);
         return new FacetPage(all.subList(safeOffset, end), all.size());
     }
+
+    /**
+     * Keyset page used by the large author navigation. The first request ({@code after == null})
+     * may return an exact total; subsequent requests can omit the total to avoid repeating the
+     * expensive grouped COUNT. Implementations fetch one extra row to determine has-more.
+     */
+    AuthorFacetSlice findAuthorsAfter(char initial, BookFilterSpec filter, int limit, AuthorCursor after);
     List<Facet> findDownloadedAuthors(BookFilterSpec filter);
     List<Facet> searchAuthors(String query, BookFilterSpec filter, int limit);
     Optional<Character> findFirstAuthorInitial(BookFilterSpec filter);
@@ -62,6 +70,25 @@ public interface NavigationFacetRepository {
 
         public static FacetPage empty() {
             return new FacetPage(List.of(), 0);
+        }
+    }
+
+    record AuthorCursor(String lastName, String firstName, String middleName, String id) {
+        public AuthorCursor {
+            lastName = lastName == null ? "" : lastName;
+            firstName = firstName == null ? "" : firstName;
+            middleName = middleName == null ? "" : middleName;
+            if (id == null || id.isBlank()) throw new IllegalArgumentException("author cursor id cannot be blank");
+        }
+    }
+
+    record AuthorFacetSlice(List<Facet> content, OptionalLong totalElements, AuthorCursor nextCursor) {
+        public AuthorFacetSlice {
+            content = content == null ? List.of() : List.copyOf(content);
+            totalElements = totalElements == null ? OptionalLong.empty() : totalElements;
+            if (totalElements.isPresent() && totalElements.getAsLong() < 0) {
+                throw new IllegalArgumentException("totalElements cannot be negative");
+            }
         }
     }
 

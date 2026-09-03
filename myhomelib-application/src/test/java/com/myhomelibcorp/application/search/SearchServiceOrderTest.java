@@ -60,10 +60,52 @@ class SearchServiceOrderTest {
                 .build();
         when(queryService.search(any(SearchRequest.class)))
                 .thenReturn(new SearchResult(List.of(firstId, secondId), 2, 0, 2, 1));
-        when(books.findByIds(List.of(firstId, secondId))).thenReturn(List.of(second, first));
+        when(books.findListItemsByIds(List.of(firstId, secondId))).thenReturn(List.of(second, first));
 
         assertThat(service.search(request))
                 .extracting(BookDto::getTitle)
                 .containsExactly("First relevance", "Second relevance");
     }
+    @Test
+    void continuationPageSkipsRepeatedTotalCountAndKeepsKnownTotal() {
+        SearchQueryService queryService = mock(SearchQueryService.class);
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookMapper mapper = mock(BookMapper.class);
+        BookFilterStateService filters = mock(BookFilterStateService.class);
+        when(filters.current()).thenReturn(BookFilterSpec.empty());
+        SearchService service = new SearchService(
+                queryService,
+                books,
+                mapper,
+                mock(SearchCache.class),
+                mock(GenreRepository.class),
+                mock(SeriesRepository.class),
+                mock(AuthorRepository.class),
+                mock(AuthorMapper.class),
+                mock(GenreMapper.class),
+                filters);
+
+        BookId id = BookId.generate();
+        Book book = mock(Book.class);
+        when(book.getId()).thenReturn(id);
+        BookDto dto = BookDto.builder().id(id.asString()).title("Continuation").build();
+        when(mapper.toDto(book)).thenReturn(dto);
+        when(books.findListItemsByIds(List.of(id))).thenReturn(List.of(book));
+        when(queryService.search(any(SearchRequest.class)))
+                .thenReturn(new SearchResult(List.of(id), -1, 1, 500, 1));
+
+        SearchRequest base = SearchRequest.builder()
+                .text("needle")
+                .filterSpec(BookFilterSpec.empty())
+                .build();
+        var page = service.searchPage(base, 500, 500, 1203);
+
+        var captor = org.mockito.ArgumentCaptor.forClass(SearchRequest.class);
+        verify(queryService).search(captor.capture());
+        assertThat(captor.getValue().trackTotalHits()).isFalse();
+        assertThat(captor.getValue().offset()).isEqualTo(500);
+        assertThat(page.totalElements()).isEqualTo(1203);
+        assertThat(page.content()).containsExactly(dto);
+    }
+
 }

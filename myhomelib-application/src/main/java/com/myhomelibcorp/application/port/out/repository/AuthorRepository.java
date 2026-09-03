@@ -20,6 +20,17 @@ public interface AuthorRepository {
                         a.getMiddleName() == null ? "" : a.getMiddleName(),
                         middleName == null ? "" : middleName));
     }
+
+    /**
+     * Heuristic identity lookup for local document scans where FB2/EPUB metadata may swap
+     * first and last name fields. External/online catalogues must keep using source identity.
+     */
+    default Optional<Author> findEquivalentLocalName(String firstName, String middleName, String lastName) {
+        Optional<Author> exact = findByName(firstName, middleName, lastName);
+        if (exact.isPresent()) return exact;
+        if (firstName == null || firstName.isBlank() || lastName == null || lastName.isBlank()) return Optional.empty();
+        return findByName(lastName, middleName, firstName);
+    }
     List<Author> findFavorites(int limit);
 
     List<Author> findByInitial(char initial);

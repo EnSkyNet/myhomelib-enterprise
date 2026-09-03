@@ -112,6 +112,62 @@ class Fb2StreamingParserTest {
         }
     }
 
+    @Test
+    void preservesSemanticParagraphStylesForReaderThemeOverrides() throws Exception {
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info><book-title>Semantic</book-title><lang>uk</lang></title-info></description>
+                  <body>
+                    <section>
+                      <title><p>Розділ</p></title>
+                      <epigraph><p>Епіграф</p><text-author>Автор епіграфа</text-author></epigraph>
+                      <p>Звичайний <strong>жирний</strong> та <emphasis>курсивний</emphasis> текст.</p>
+                      <poem><stanza><v>Рядок вірша</v></stanza><text-author>Автор вірша</text-author></poem>
+                      <cite><p>Цитата</p></cite>
+                      <annotation><p>Анотація в body</p></annotation>
+                      <section><title><p>Підрозділ</p></title><p>Текст.</p></section>
+                    </section>
+                  </body>
+                  <body name="notes"><section id="n1"><p>Текст примітки</p></section></body>
+                </FictionBook>
+                """;
+
+        ReaderDocument document = new Fb2StreamingParser().parse(
+                new MemoryBookSource(fb2), ParseOptions.defaultOptions());
+
+        assertThat(document.text().getParagraphs())
+                .extracting(paragraph -> paragraph.style())
+                .contains(TextStyle.CHAPTER_TITLE, TextStyle.SECTION_TITLE, TextStyle.EPIGRAPH,
+                        TextStyle.VERSE, TextStyle.POEM_AUTHOR, TextStyle.CITE, TextStyle.ANNOTATION, TextStyle.FOOTNOTE);
+        assertThat(document.text().getSpans(0, document.text().length()))
+                .extracting(span -> span.style())
+                .contains(TextStyle.STRONG, TextStyle.EMPHASIS);
+    }
+
+
+    @Test
+    void namedPrimaryBodyIsNotMistakenForFootnotesWhenInspectionSkipsNotes() throws Exception {
+        String fb2 = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+                  <description><title-info><book-title>Named body</book-title><lang>ru</lang></title-info></description>
+                  <body name="Возвращение Великого">
+                    <section><title><p>Глава</p></title><p>Основной текст книги.</p></section>
+                  </body>
+                  <body name="notes"><section><p>Примечание.</p></section></body>
+                </FictionBook>
+                """;
+
+        ReaderDocument document = new Fb2StreamingParser().parse(
+                new MemoryBookSource(fb2), new ParseOptions(true, false, true, 1024 * 1024, null));
+
+        assertThat(document.text().getFullText())
+                .contains("Основной текст книги")
+                .doesNotContain("Примечание");
+        assertThat(document.toc().entries()).isNotEmpty();
+    }
+
     private static final class MemoryBookSource implements BookSource {
         private final byte[] bytes;
 

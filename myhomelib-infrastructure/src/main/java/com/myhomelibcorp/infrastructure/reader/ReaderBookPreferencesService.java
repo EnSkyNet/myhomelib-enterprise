@@ -11,6 +11,7 @@ import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.shared.util.AppPaths;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataAccessException;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.context.event.EventListener;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -129,10 +130,27 @@ public class ReaderBookPreferencesService implements ReaderBookPreferencesPort {
                     rs -> rs.next() ? rs.getString(1) : null,
                     LEGACY_MIGRATION_MARKER);
             return "1".equals(marker);
-        } catch (Exception e) {
-            // During very early collection startup V42 may not have been applied yet.
-            return false;
+        } catch (DataAccessException persistenceFailure) {
+            // During very early collection startup V42 may not have created the settings table yet.
+            // Only that expected pre-migration state is equivalent to "not migrated". A locked,
+            // corrupt or otherwise unreadable collection must remain a real persistence failure.
+            if (isMissingSettingsTable(persistenceFailure)) return false;
+            throw new IllegalStateException("Не вдалося перевірити стан міграції Reader settings", persistenceFailure);
         }
+    }
+
+    private static boolean isMissingSettingsTable(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            String message = current.getMessage();
+            if (message != null) {
+                String normalized = message.toLowerCase(java.util.Locale.ROOT);
+                if (normalized.contains("no such table") && normalized.contains("settings")) return true;
+            }
+            if (current.getCause() == current) break;
+            current = current.getCause();
+        }
+        return false;
     }
 
     private long migrateLegacyFile(JdbcTemplate jdbc) throws Exception {

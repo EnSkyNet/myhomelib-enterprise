@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
@@ -29,8 +30,11 @@ public class BookAuthorHelper {
     public void saveAuthors(BookId bookId, List<Author> authors) {
         JdbcTemplate jdbcTemplate = getJdbcTemplate();
         jdbcTemplate.update("DELETE FROM book_authors WHERE book_id = ?", bookId.asString());
+        boolean localCollection = isLocalCollection();
         for (Author author : authors) {
-            Author existing = authorRepository.findByFullName(author.getFirstName(), author.getLastName())
+            Author existing = (localCollection
+                    ? authorRepository.findEquivalentLocalName(author.getFirstName(), author.getMiddleName(), author.getLastName())
+                    : authorRepository.findByName(author.getFirstName(), author.getMiddleName(), author.getLastName()))
                     .orElse(null);
             if (existing != null) {
                 author = existing;
@@ -41,6 +45,14 @@ public class BookAuthorHelper {
                     bookId.asString(), author.getId().asString());
         }
         log.debug("Збережено {} авторів для книги {}", authors.size(), bookId.asString());
+    }
+
+
+    private boolean isLocalCollection() {
+        var collection = collectionManager.getCurrentCollection();
+        if (collection == null) return false;
+        CollectionType type = CollectionType.fromCode(collection.getType());
+        return type == CollectionType.FB2_LOCAL || type == CollectionType.GENERIC_LOCAL;
     }
 
     public List<Author> loadAuthors(BookId bookId) {

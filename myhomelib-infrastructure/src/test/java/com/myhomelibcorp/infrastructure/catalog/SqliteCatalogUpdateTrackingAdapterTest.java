@@ -156,13 +156,15 @@ class SqliteCatalogUpdateTrackingAdapterTest {
 
     @Test
     void exactAndGlobalAcknowledgementDoNotDeleteEvents() {
-        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('ack1','A','a.fb2',0)");
-        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES ('ack2','B','b.fb2',0)");
+        String firstBookId = UUID.randomUUID().toString();
+        String secondBookId = UUID.randomUUID().toString();
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES (?,'A','a.fb2',0)", firstBookId);
+        jdbc.update("INSERT INTO books(id,title,file_name,local) VALUES (?,'B','b.fb2',0)", secondBookId);
         jdbc.update("INSERT INTO catalog_sources(source_id,source_key,source_fingerprint) VALUES ('ack-source','ack-source','fixture')");
-        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint) VALUES ('ack1','UPDATED_DOWNLOADED_BOOK','ack-source',1,'a')");
-        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint) VALUES ('ack2','UPDATED_DOWNLOADED_BOOK','ack-source',1,'b')");
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint) VALUES (?,'UPDATED_DOWNLOADED_BOOK','ack-source',1,'a')", firstBookId);
+        jdbc.update("INSERT INTO catalog_update_events(book_id,update_type,source_id,detected_revision,catalog_fingerprint) VALUES (?,'UPDATED_DOWNLOADED_BOOK','ack-source',1,'b')", secondBookId);
 
-        adapter.acknowledgeUpdate(com.myhomelibcorp.domain.model.valueobject.BookId.fromString("ack1"),
+        adapter.acknowledgeUpdate(com.myhomelibcorp.domain.model.valueobject.BookId.fromString(firstBookId),
                 CatalogUpdateType.UPDATED_DOWNLOADED_BOOK);
         assertThat(adapter.countPendingUpdates()).isEqualTo(1);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM catalog_update_events", Integer.class)).isEqualTo(2);

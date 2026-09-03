@@ -173,48 +173,142 @@ def scalar(conn: sqlite3.Connection, sql: str, params=()):
 
 
 def run_queries(conn: sqlite3.Connection, repeats: int = 7) -> dict:
-    author_initial = '''
-        SELECT a.id, a.first_name, a.middle_name, a.last_name, COUNT(DISTINCT b.id)
-        FROM authors a
-        JOIN book_authors ba ON ba.author_id=a.id
-        JOIN books b ON b.id=ba.book_id
-        WHERE b.deleted=0
-          AND SUBSTR((CASE WHEN TRIM(COALESCE(a.last_name,''))<>'' THEN TRIM(a.last_name)
-                           WHEN TRIM(COALESCE(a.first_name,''))<>'' THEN TRIM(a.first_name)
-                           ELSE TRIM(COALESCE(a.middle_name,'')) END),1,1) IN (?,?)
-        GROUP BY a.id,a.first_name,a.middle_name,a.last_name
-        ORDER BY COALESCE(a.last_name,'') COLLATE NOCASE, COALESCE(a.first_name,'') COLLATE NOCASE, a.id
-    '''
-    language_facet = '''
-        SELECT LOWER(TRIM(b.language)), COUNT(*)
+    # Mirror the production author-navigation path: ordered author scan + bounded
+    # per-author existence/count checks. Exact total remains a diagnostic only and
+    # is deliberately not part of the UI hot path.
+    author_initial = r"""
+        SUBSTR((CASE WHEN TRIM(COALESCE(a.last_name,''))<>'' THEN TRIM(a.last_name)
+                     WHEN TRIM(COALESCE(a.first_name,''))<>'' THEN TRIM(a.first_name)
+                     ELSE TRIM(COALESCE(a.middle_name,'')) END),1,1) IN (?,?)
+    """
+    author_order = r"""
+        COALESCE(a.last_name,'') COLLATE NOCASE,
+        COALESCE(a.first_name,'') COLLATE NOCASE,
+        COALESCE(a.middle_name,'') COLLATE NOCASE, a.id
+    """
+
+    def author_page(filter_sql: str = '', cursor_sql: str = '') -> str:
+        return f"""
+            SELECT a.id, a.first_name, a.middle_name, a.last_name,
+                   (SELECT COUNT(*) FROM book_authors count_ba
+                    JOIN books b ON b.id=count_ba.book_id
+                    WHERE count_ba.author_id=a.id AND b.deleted=0 {filter_sql}) AS book_count
+            FROM authors a
+            WHERE {author_initial}
+              {cursor_sql}
+              AND EXISTS (SELECT 1 FROM book_authors exists_ba
+                          JOIN books b ON b.id=exists_ba.book_id
+                          WHERE exists_ba.author_id=a.id AND b.deleted=0 {filter_sql})
+            ORDER BY {author_order}
+            LIMIT ?
+        """
+
+    author_first_page = author_page()
+    author_count = r"""
+        SELECT COUNT(*) FROM (
+            SELECT a.id
+            FROM authors a
+            JOIN book_authors ba ON ba.author_id=a.id
+            JOIN books b ON b.id=ba.book_id
+            WHERE b.deleted=0
+              AND SUBSTR((CASE WHEN TRIM(COALESCE(a.last_name,''))<>'' THEN TRIM(a.last_name)
+                               WHEN TRIM(COALESCE(a.first_name,''))<>'' THEN TRIM(a.first_name)
+                               ELSE TRIM(COALESCE(a.middle_name,'')) END),1,1) IN (?,?)
+            GROUP BY a.id
+        ) matched_authors
+    """
+
+    first_rows = conn.execute(author_first_page, ('A', 'a', 501)).fetchall()
+    cursor_row = first_rows[min(499, len(first_rows) - 1)] if first_rows else None
+    author_next_page = None
+    cursor_params = None
+    if cursor_row is not None:
+        cursor_last = cursor_row[3] or ''
+        cursor_first = cursor_row[1] or ''
+        cursor_middle = cursor_row[2] or ''
+        cursor_id = cursor_row[0]
+        cursor_sql = r"""
+              AND (COALESCE(a.last_name,'') COLLATE NOCASE,
+                   COALESCE(a.first_name,'') COLLATE NOCASE,
+                   COALESCE(a.middle_name,'') COLLATE NOCASE, a.id) > (?, ?, ?, ?)
+        """
+        author_next_page = author_page(cursor_sql=cursor_sql)
+        cursor_params = ('A', 'a', cursor_last, cursor_first, cursor_middle, cursor_id, 501)
+
+    filtered_sql = "AND LOWER(TRIM(COALESCE(b.language,'')))<>'' AND LOWER(TRIM(COALESCE(b.language,'')))=LOWER(?) AND COALESCE(b.local,0)=?"
+    filtered_author_first_page = author_page(filter_sql=filtered_sql)
+    # SELECT/filter placeholders occur before outer initial placeholders and again
+    # inside EXISTS, matching the production repository parameter order.
+    filtered_params = ('uk', 1, 'A', 'a', 'uk', 1, 501)
+
+    language_facet = r"""
+        SELECT LOWER(TRIM(COALESCE(b.language,''))), COUNT(*)
         FROM books b
-        WHERE b.deleted=0 AND b.language IS NOT NULL AND TRIM(b.language)<>''
-        GROUP BY LOWER(TRIM(b.language)) ORDER BY LOWER(TRIM(b.language))
-    '''
-    filtered_author = author_initial.replace('GROUP BY', "AND LOWER(TRIM(b.language))='uk' AND b.local=1 GROUP BY")
+        WHERE b.deleted=0 AND LOWER(TRIM(COALESCE(b.language,'')))<>''
+        GROUP BY LOWER(TRIM(COALESCE(b.language,'')))
+        ORDER BY LOWER(TRIM(COALESCE(b.language,'')))
+    """
     page_title = "SELECT id,title,author_sort FROM books WHERE deleted=0 ORDER BY title ASC,id ASC LIMIT 100 OFFSET 0"
     deep_page = "SELECT id,title,author_sort FROM books WHERE deleted=0 ORDER BY title ASC,id ASC LIMIT 100 OFFSET 50000"
-    filtered_page = "SELECT id,title FROM books WHERE deleted=0 AND LOWER(TRIM(language))='uk' AND local=1 AND year BETWEEN 1990 AND 2026 ORDER BY title,id LIMIT 100"
+    filtered_page = "SELECT id,title FROM books WHERE deleted=0 AND LOWER(TRIM(COALESCE(language,'')))<>'' AND LOWER(TRIM(COALESCE(language,'')))='uk' AND COALESCE(local,0)=1 AND year BETWEEN 1990 AND 2026 ORDER BY title,id LIMIT 100"
     text_like = "SELECT id,title FROM books WHERE deleted=0 AND LOWER(title) LIKE ? ORDER BY title,id LIMIT 100"
     libid = "SELECT id FROM books WHERE lib_id=?"
-    return {
-        'navigation_authors_A': timed(lambda: conn.execute(author_initial, ('A', 'a')).fetchall(), repeats=repeats, warmups=1),
-        'navigation_authors_A_filtered': timed(lambda: conn.execute(filtered_author, ('A', 'a')).fetchall(), repeats=repeats, warmups=1),
+
+    # Cursor is prepared outside the timed section. Production obtains it from the
+    # already-rendered previous page, so cursor acquisition must not be charged to
+    # the continuation query.
+    deep_cursor = conn.execute(
+        "SELECT title,id FROM books WHERE deleted=0 ORDER BY title,id LIMIT 1 OFFSET 50000"
+    ).fetchone()
+    deep_keyset = "SELECT id,title,author_sort FROM books WHERE deleted=0 AND (title,id) > (?,?) ORDER BY title,id LIMIT 100"
+
+    results = {
+        'navigation_authors_A_first_keyset_page': timed(
+            lambda: conn.execute(author_first_page, ('A', 'a', 501)).fetchall(), repeats=repeats, warmups=1),
+        'navigation_authors_A_exact_count_diagnostic': timed(
+            lambda: conn.execute(author_count, ('A', 'a')).fetchone(), repeats=repeats, warmups=1),
+        'navigation_authors_A_filtered_first_keyset_page': timed(
+            lambda: conn.execute(filtered_author_first_page, filtered_params).fetchall(), repeats=repeats, warmups=1),
         'navigation_languages': timed(lambda: conn.execute(language_facet).fetchall(), repeats=repeats, warmups=1),
         'catalog_first_page': timed(lambda: conn.execute(page_title).fetchall(), repeats=repeats, warmups=1),
         'catalog_deep_page_offset_50k': timed(lambda: conn.execute(deep_page).fetchall(), repeats=repeats, warmups=1),
+        'catalog_deep_page_keyset_after_50k': timed(
+            lambda: conn.execute(deep_keyset, deep_cursor).fetchall(), repeats=repeats, warmups=1
+        ) if deep_cursor is not None else {'min_ms': 0.0, 'median_ms': 0.0, 'p95_ms': 0.0, 'max_ms': 0.0},
+        'catalog_exact_count_diagnostic': timed(
+            lambda: conn.execute("SELECT COUNT(*) FROM books WHERE deleted=0").fetchone(), repeats=repeats, warmups=1),
         'catalog_filtered_page': timed(lambda: conn.execute(filtered_page).fetchall(), repeats=repeats, warmups=1),
         'sql_text_fallback_search': timed(lambda: conn.execute(text_like, ('%benchmark token42%',)).fetchall(), repeats=min(repeats, 5), warmups=1),
         'libid_lookup': timed(lambda: conn.execute(libid, ('LIB-000050000',)).fetchall(), repeats=repeats, warmups=1),
     }
+    if author_next_page is not None and cursor_params is not None:
+        results['navigation_authors_A_next_keyset_page'] = timed(
+            lambda: conn.execute(author_next_page, cursor_params).fetchall(), repeats=repeats, warmups=1)
+    return results
 
 
 def plans(conn: sqlite3.Connection) -> dict:
     sqls = {
-        'author_initial': '''SELECT a.id FROM authors a JOIN book_authors ba ON ba.author_id=a.id JOIN books b ON b.id=ba.book_id
+        'author_first_keyset_page': r"""SELECT a.id,
+            (SELECT COUNT(*) FROM book_authors count_ba JOIN books b ON b.id=count_ba.book_id
+             WHERE count_ba.author_id=a.id AND b.deleted=0) AS book_count
+            FROM authors a
+            WHERE SUBSTR((CASE WHEN TRIM(COALESCE(a.last_name,''))<>'' THEN TRIM(a.last_name)
+            WHEN TRIM(COALESCE(a.first_name,''))<>'' THEN TRIM(a.first_name) ELSE TRIM(COALESCE(a.middle_name,'')) END),1,1) IN ('A','a')
+            AND EXISTS (SELECT 1 FROM book_authors exists_ba JOIN books b ON b.id=exists_ba.book_id
+                        WHERE exists_ba.author_id=a.id AND b.deleted=0)
+            ORDER BY COALESCE(a.last_name,'') COLLATE NOCASE, COALESCE(a.first_name,'') COLLATE NOCASE,
+                     COALESCE(a.middle_name,'') COLLATE NOCASE,a.id LIMIT 501""",
+        'author_exact_count_diagnostic': r"""SELECT COUNT(*) FROM (SELECT a.id FROM authors a
+            JOIN book_authors ba ON ba.author_id=a.id JOIN books b ON b.id=ba.book_id
             WHERE b.deleted=0 AND SUBSTR((CASE WHEN TRIM(COALESCE(a.last_name,''))<>'' THEN TRIM(a.last_name)
-            WHEN TRIM(COALESCE(a.first_name,''))<>'' THEN TRIM(a.first_name) ELSE TRIM(COALESCE(a.middle_name,'')) END),1,1) IN ('A','a') GROUP BY a.id''',
+            WHEN TRIM(COALESCE(a.first_name,''))<>'' THEN TRIM(a.first_name) ELSE TRIM(COALESCE(a.middle_name,'')) END),1,1) IN ('A','a')
+            GROUP BY a.id) matched_authors""",
         'title_page': "SELECT id,title FROM books WHERE deleted=0 ORDER BY title,id LIMIT 100",
+        'title_keyset': "SELECT id,title FROM books WHERE deleted=0 AND (title,id) > ('Book title 00500000','b000500000') ORDER BY title,id LIMIT 100",
+        'active_count': "SELECT COUNT(*) FROM books WHERE deleted=0",
+        'language_facet': "SELECT LOWER(TRIM(COALESCE(language,''))),COUNT(*) FROM books WHERE deleted=0 AND LOWER(TRIM(COALESCE(language,'')))<>'' GROUP BY LOWER(TRIM(COALESCE(language,''))) ORDER BY LOWER(TRIM(COALESCE(language,'')))",
+        'language_local_title': "SELECT id,title FROM books WHERE deleted=0 AND LOWER(TRIM(COALESCE(language,'')))<>'' AND LOWER(TRIM(COALESCE(language,'')))='uk' AND COALESCE(local,0)=1 AND year BETWEEN 1990 AND 2026 ORDER BY title,id LIMIT 100",
         'libid': "SELECT id FROM books WHERE lib_id='LIB-000050000'",
     }
     out = {}
@@ -298,7 +392,7 @@ def evaluate_thresholds(results: list[dict]) -> dict:
             continue
         observed = {
             'startup_p95_ms': r['startup_like_open_count']['p95_ms'],
-            'author_A_p95_ms': r['queries']['navigation_authors_A']['p95_ms'],
+            'author_A_p95_ms': r['queries']['navigation_authors_A_first_keyset_page']['p95_ms'],
             'first_page_p95_ms': r['queries']['catalog_first_page']['p95_ms'],
             'libid_p95_ms': r['queries']['libid_lookup']['p95_ms'],
             'min_import_books_s': r['import_write_probe']['books_per_sec'],
@@ -325,7 +419,8 @@ def main() -> None:
         results.append(benchmark_size(size, keep))
         q = results[-1]['queries']
         print(f"  import-probe={results[-1]['import_write_probe']['books_per_sec']:,.0f} books/s, "
-              f"authors(A) p95={q['navigation_authors_A']['p95_ms']:.1f} ms, "
+              f"authors(A first) p95={q['navigation_authors_A_first_keyset_page']['p95_ms']:.1f} ms, "
+              f"count p95={q['navigation_authors_A_exact_count_diagnostic']['p95_ms']:.1f} ms, "
               f"page p95={q['catalog_first_page']['p95_ms']:.1f} ms", flush=True)
 
     report = {

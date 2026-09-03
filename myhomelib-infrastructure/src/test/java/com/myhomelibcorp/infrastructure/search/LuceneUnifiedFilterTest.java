@@ -42,6 +42,9 @@ class LuceneUnifiedFilterTest {
         search.indexSnapshot(snapshot(alpha, "Alpha History", "Writer One", "uk", "alpha.fb2", 2022, 5, 100, true));
         search.indexSnapshot(snapshot(beta, "Beta Space", "Writer Two", "en", "beta.epub", 2025, 2, 10, false));
         search.commit();
+        // Standalone service tests bypass LuceneCollectionIndexLifecycle, which normally
+        // publishes query availability after the collection index is validated/rebuilt.
+        search.setQueryAvailability(true, null);
     }
 
     @AfterEach
