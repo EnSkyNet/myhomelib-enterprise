@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
 import java.text.Normalizer;
+import java.util.List;
 import java.util.Locale;
 import java.util.stream.Stream;
 
@@ -26,6 +27,21 @@ public final class AuthorSearchNameNormalizer {
     /** Normalizes a user-entered author query using the same rules as persisted search_name. */
     public static String normalizeQuery(String query) {
         return normalizePart(query);
+    }
+
+    /**
+     * Returns distinct normalized query tokens in user-entered order. Repositories
+     * match every token independently so first/last-name order does not affect search.
+     */
+    public static List<String> normalizeQueryTokens(String query, int maxTokens) {
+        int safeMax = Math.max(1, Math.min(maxTokens, 32));
+        String normalized = normalizeQuery(query);
+        if (normalized.isBlank()) return List.of();
+        return Stream.of(normalized.split("\\s+"))
+                .filter(token -> !token.isBlank())
+                .distinct()
+                .limit(safeMax)
+                .toList();
     }
 
     private static String normalizePart(String value) {

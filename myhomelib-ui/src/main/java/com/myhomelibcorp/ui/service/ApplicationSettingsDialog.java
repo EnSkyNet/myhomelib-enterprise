@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.util.Locale;
 
 /**
  * Central settings dialog. Values are stored through ApplicationSettingsPort, so
@@ -129,7 +130,7 @@ public class ApplicationSettingsDialog {
         box.getChildren().add(new Label("Команда може містити %FILE%, %TITLE%, %AUTHOR%. Порожнє поле = системна програма."));
         for (String ext : new String[]{"fb2","fbd","epub","txt","pdf","mobi","azw","azw3","djvu","doc","docx","rtf","html","htm"}) {
             TextField command = field(text, "reader.external." + ext, "");
-            box.getChildren().add(commandRow(ext.toUpperCase(), command, Map.of(
+            box.getChildren().add(commandRow(ext.toUpperCase(Locale.ROOT), command, Map.of(
                     "%FILE%", samplePath("book." + ext), "%TITLE%", "Тестова книга", "%AUTHOR%", "Test Author")));
         }
         return scroll(box);

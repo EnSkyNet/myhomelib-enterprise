@@ -43,6 +43,9 @@
                         <ColumnConstraints minWidth="95"/><ColumnConstraints hgrow="ALWAYS" minWidth="150"/>
                     </columnConstraints>
                 </GridPane>
+                <HBox alignment="CENTER_RIGHT">
+                    <Button text="Очистити поля" onAction="#onClearAdvancedFields"/>
+                </HBox>
                 <Label text="Підтримується класичний синтаксис: %текст%, =&quot;точна фраза&quot;, OR; також title:, author:, series:, genre:, file:, lang:." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
             </VBox>
         </content>
@@ -73,8 +76,8 @@
             <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
                 <columns>
                     <TableColumn fx:id="selectColumn" text="" prefWidth="42"/>
-                    <TableColumn fx:id="titleColumn" text="Назва" prefWidth="260"/>
                     <TableColumn fx:id="authorColumn" text="Автор" prefWidth="200"/>
+                    <TableColumn fx:id="titleColumn" text="Назва" prefWidth="260"/>
                     <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="145"/>
                     <TableColumn fx:id="bookGenresColumn" text="Жанри" prefWidth="175"/>
                     <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="45"/>

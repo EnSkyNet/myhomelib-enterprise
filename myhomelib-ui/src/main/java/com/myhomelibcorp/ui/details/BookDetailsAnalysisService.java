@@ -13,6 +13,7 @@ import com.myhomelibcorp.reader.inspection.DocumentInspectionSession;
 import com.myhomelibcorp.ui.details.model.RichBookDetailsSession;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -48,7 +49,7 @@ public class BookDetailsAnalysisService {
         if (name == null || name.isBlank()) name = book.getFileName();
         if (name == null) return "";
         int dot = name.lastIndexOf('.');
-        return dot >= 0 && dot + 1 < name.length() ? name.substring(dot + 1).toUpperCase() : "";
+        return dot >= 0 && dot + 1 < name.length() ? name.substring(dot + 1).toUpperCase(Locale.ROOT) : "";
     }
 
     private static String safeMessage(Exception e) {

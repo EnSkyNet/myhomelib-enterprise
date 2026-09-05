@@ -48,7 +48,7 @@ def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 def check_migrations() -> None:
     files = migration_files(MIGRATIONS)
     versions = [version(p) for p in files]
-    assert versions == list(range(1, 45)), f"expected sequential V1..V44, got {versions}"
+    assert versions == list(range(1, 49)), f"expected sequential V1..V48, got {versions}"
 
     # v7.1 must append migrations only. Compare the immutable v7 migrations byte-for-byte
     # against the retained release hash manifest so this also works from a source ZIP without .git.
@@ -66,7 +66,7 @@ def check_migrations() -> None:
                   "book_identities", "book_artifacts", "catalog_dataset_metadata",
                   "catalog_record_provenance", "book_source_relations", "artifact_occurrences", "reader_book_preferences"):
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        assert row, f"missing table {table} after V44"
+        assert row, f"missing table {table} after V48"
     manifest_cols = table_columns(conn, "catalog_manifests")
     for column in ("manifest_schema", "importer_version", "source_format", "normalization_version",
                    "fingerprint_model", "fingerprint_version", "processing_flags", "features_enabled"):
@@ -110,7 +110,7 @@ def check_upgrade_preserves_data() -> None:
         "groups": conn.execute("SELECT count(*) FROM book_groups WHERE book_id='book-v7-upgrade'").fetchone()[0],
     }
 
-    apply_migrations(conn, [p for p in files if 37 <= version(p) <= 44])
+    apply_migrations(conn, [p for p in files if 37 <= version(p) <= 48])
     after = {
         "book": conn.execute("SELECT title,rate,progress,review,local,lib_id FROM books WHERE id='book-v7-upgrade'").fetchone(),
         "authors": conn.execute("SELECT count(*) FROM book_authors WHERE book_id='book-v7-upgrade'").fetchone()[0],
@@ -119,7 +119,7 @@ def check_upgrade_preserves_data() -> None:
         "bookmark": conn.execute("SELECT book_id,paragraph_id FROM bookmarks WHERE id='bm-v7'").fetchone(),
         "groups": conn.execute("SELECT count(*) FROM book_groups WHERE book_id='book-v7-upgrade'").fetchone()[0],
     }
-    assert before == after, f"v7 user data changed during V37-V44: {before} -> {after}"
+    assert before == after, f"v7 user data changed during V37-V48: {before} -> {after}"
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     conn.close()
 
@@ -242,6 +242,14 @@ def check_source_invariants() -> None:
     require(v34, "CREATE TABLE IF NOT EXISTS author_identities", "external author identity")
     require(v34, "idx_authors_name_lookup", "indexed author fallback")
 
+    migration_guard = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/adapter/LegacyMigrationDataGuard.java")
+    require(migration_guard, "mhl_guard_v7_authors", "pre-V7 duplicate-author preservation")
+    require(migration_guard, "mhl_guard_v26_reading_progress", "V25 reader-field preservation")
+    require(migration_guard, "restoreAfterMigrate", "durable migration-guard resume")
+    migration_adapter = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/adapter/DatabaseMigrationAdapter.java")
+    require(migration_adapter, "captureBeforeMigrate", "migration guard capture before Flyway")
+    require(migration_adapter, "restoreAfterMigrate", "migration guard restore after Flyway")
+
     writer = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/JdbcBatchWriter.java")
     require(writer, "first_name = ? AND middle_name = ? AND last_name = ?", "exact indexed author lookup")
     forbid(writer, "COALESCE(first_name", "non-indexable author lookup")
@@ -279,7 +287,7 @@ def check_source_invariants() -> None:
     lucene_factory = read("myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneIndexWriterFactory.java")
     require(lucene, "rollbackAtomicUpdate", "Lucene rollback")
     require(lucene_factory, "setCommitOnClose(false)", "no hidden close commit")
-    require(lucene, "bookQueryRepository.streamAll()", "bounded/keyset rebuild source")
+    require(lucene, "bookQueryRepository.streamSearchSnapshots()", "bounded/keyset rebuild source")
     require(lucene, "SearchIndexPerformanceReport", "Lucene performance telemetry")
 
     encryption = read("myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/EncryptionUtil.java")
@@ -356,9 +364,9 @@ def check_source_invariants() -> None:
     require(readme, "MyHomeLib Enterprise 7.1.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
     root_md = sorted(p.name for p in ROOT.glob("*.md"))
-    expected_root_md = sorted(["README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md"])
-    if root_md != expected_root_md:
-        errors.append(f"root Markdown documentation drift: expected {expected_root_md}, got {root_md}")
+    expected_root_md = sorted(["README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md", "REFACTORING-REPORT-2026-09-03.md", "REFACTORING_COMPLETION.md"])
+    assert root_md == expected_root_md, \
+        f"root Markdown documentation drift: expected {expected_root_md}, got {root_md}"
     for active_doc in (
             "MYHOMELIB-RELEASE.md",
             "myhomelib-ui/src/main/resources/help/index.md",
@@ -376,8 +384,11 @@ def check_source_invariants() -> None:
         content = read(active_doc)
         forbid(content, "1.0.0", f"stale active release identity in {active_doc}")
 
-    mvnw = read("mvnw")
-    assert mvnw.startswith("#!/bin/sh"), "Unix mvnw is not a shell script"
+    mvnw_path = ROOT / "mvnw"
+    if mvnw_path.exists():
+        mvnw = mvnw_path.read_text(encoding="utf-8-sig")
+        assert mvnw.startswith("#!/bin/sh"), "Unix mvnw is not a shell script"
+    # Code-only handoff checkpoints intentionally omit Maven Wrapper/.mvn; pom.xml remains authoritative.
     assert (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V35__catalog_source_sync_state.sql").exists()
     assert (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V36__catalog_manifest_and_artifacts.sql").exists()
 
@@ -417,7 +428,7 @@ def main() -> int:
     parser.add_argument("--skip-tree-cleanliness", action="store_true", help="allow target/IDE dirs while developing")
     args = parser.parse_args()
     checks = [
-        ("Flyway V1-V44 + immutable V1-V36", check_migrations),
+        ("Flyway V1-V48 + immutable V1-V36", check_migrations),
         ("V41 reading statistics singleton", check_v41_reading_stats_singleton),
         ("V42 reader book preferences", check_v42_reader_book_preferences),
         ("V43 group membership lookup", check_v43_group_membership_index),

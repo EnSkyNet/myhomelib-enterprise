@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -24,7 +25,7 @@ public class CoverLocatorImpl implements CoverLocator {
 
     private final Function<String, String> normalize = s -> {
         if (s == null) return "";
-        return s.toLowerCase()
+        return s.toLowerCase(Locale.ROOT)
                 .replaceAll("[\\s_\\-]+", "")
                 .replaceAll("[^a-zа-я0-9.]", "");
     };
@@ -134,7 +135,7 @@ public class CoverLocatorImpl implements CoverLocator {
 
         // 4. Перший FB2
         Optional<String> firstFb2 = entries.stream()
-                .filter(e -> e.toLowerCase().endsWith(".fb2"))
+                .filter(e -> e.toLowerCase(Locale.ROOT).endsWith(".fb2"))
                 .findFirst();
         if (firstFb2.isPresent()) {
             log.warn("Не вдалося знайти точний FB2 для '{}', використовуємо перший: {}", title, firstFb2.get());

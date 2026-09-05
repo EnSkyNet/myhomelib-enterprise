@@ -34,18 +34,30 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
     @Override
     public void createDatabaseSnapshot(Collection collection, Path targetFile) throws IOException {
         if (!collectionManager.hasActiveCollection()) throw new IOException("No active collection for database snapshot");
-        Files.createDirectories(targetFile.toAbsolutePath().getParent());
-        Files.deleteIfExists(targetFile);
-        String quoted = targetFile.toAbsolutePath().normalize().toString().replace("'", "''");
+        Path target = targetFile.toAbsolutePath().normalize();
+        Files.createDirectories(target.getParent());
+        Path staged = target.resolveSibling(target.getFileName() + ".snapshot.tmp");
+        Files.deleteIfExists(staged);
+        String quoted = staged.toString().replace("'", "''");
         try {
+            // VACUUM INTO creates a transactionally consistent standalone database. Write it to a
+            // staging path first so a power/JVM failure cannot destroy an older valid backup with
+            // the same target name. Only a validated snapshot is atomically published.
             collectionManager.getCurrentJdbcTemplate().execute("VACUUM INTO '" + quoted + "'");
+            validateDatabaseFile(staged);
+            AtomicFileSupport.moveReplacing(staged, target);
         } catch (Exception e) {
+            try { Files.deleteIfExists(staged); } catch (IOException cleanup) { e.addSuppressed(cleanup); }
+            if (e instanceof IOException io) throw io;
             throw new IOException("SQLite VACUUM INTO failed", e);
+        } finally {
+            try { Files.deleteIfExists(staged); }
+            catch (IOException cleanupFailure) { log.debug("Cannot delete snapshot staging file {}", staged, cleanupFailure); }
         }
-        if (!Files.isRegularFile(targetFile) || Files.size(targetFile) == 0) {
-            throw new IOException("SQLite snapshot was not created: " + targetFile);
+        if (!Files.isRegularFile(target) || Files.size(target) == 0) {
+            throw new IOException("SQLite snapshot was not created: " + target);
         }
-        log.info("Created consistent SQLite backup snapshot {}", targetFile);
+        log.info("Created consistent SQLite backup snapshot {}", target);
     }
 
     @Override

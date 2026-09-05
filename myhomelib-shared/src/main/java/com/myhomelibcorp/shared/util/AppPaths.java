@@ -19,6 +19,24 @@ public final class AppPaths {
         if (explicit != null && !explicit.isBlank()) {
             return Paths.get(explicit).toAbsolutePath().normalize();
         }
+
+        // jpackage native launchers do not guarantee that user.dir points at the app image.
+        // Portable-mode semantics are defined relative to the launcher, so when jpackage's
+        // built-in version marker is present prefer the actual process executable directory.
+        String packagedVersion = System.getProperty("jpackage.app-version");
+        if (packagedVersion != null && !packagedVersion.isBlank()) {
+            try {
+                String command = ProcessHandle.current().info().command().orElse(null);
+                if (command != null && !command.isBlank()) {
+                    Path executable = Paths.get(command).toAbsolutePath().normalize();
+                    Path parent = executable.getParent();
+                    if (parent != null) return parent;
+                }
+            } catch (RuntimeException ignored) {
+                // Fall through to the long-standing user.dir behavior when the host cannot
+                // expose a usable executable path (restricted process metadata, invalid path).
+            }
+        }
         return Paths.get(System.getProperty("user.dir", ".")).toAbsolutePath().normalize();
     }
 
@@ -53,6 +71,20 @@ public final class AppPaths {
     public static Path cacheDir() { return dataDir().resolve("cache"); }
     public static Path logsDir() { return dataDir().resolve("logs"); }
     public static Path backupsDir() { return dataDir().resolve("backups"); }
+
+    /** Durable files used to roll back an online catalog update after an abrupt process termination. */
+    public static Path catalogUpdateRecoveryDir() { return cacheDir().resolve("catalog-update-recovery"); }
+
+    /** Pre-update SQLite checkpoint for the collection. Kept while a catalog update is in progress. */
+    public static Path catalogUpdateRecoveryCheckpoint(String collectionId) {
+        return catalogUpdateRecoveryDir().resolve(safePathSegment(collectionId) + ".checkpoint.db");
+    }
+
+    /** Commit marker: its presence means the corresponding catalog update did not finish cleanly. */
+    public static Path catalogUpdateRecoveryMarker(String collectionId) {
+        return catalogUpdateRecoveryDir().resolve(safePathSegment(collectionId) + ".pending");
+    }
+
     public static Path helpDir() { return launchDir().resolve("help"); }
 
     private static String safePathSegment(String value) {

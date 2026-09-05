@@ -12,6 +12,7 @@ public class CollectionWizardViewModel {
     private final ObjectProperty<Path> dbFile = new SimpleObjectProperty<>();
     private final StringProperty sourcePath = new SimpleStringProperty();
     private final StringProperty url = new SimpleStringProperty();
+    private final StringProperty catalogUpdateUrl = new SimpleStringProperty();
     private final StringProperty user = new SimpleStringProperty();
     private final StringProperty password = new SimpleStringProperty();
     private final StringProperty connectionScript = new SimpleStringProperty();
@@ -27,6 +28,7 @@ public class CollectionWizardViewModel {
     public ObjectProperty<Path> dbFileProperty() { return dbFile; }
     public StringProperty sourcePathProperty() { return sourcePath; }
     public StringProperty urlProperty() { return url; }
+    public StringProperty catalogUpdateUrlProperty() { return catalogUpdateUrl; }
     public StringProperty userProperty() { return user; }
     public StringProperty passwordProperty() { return password; }
     public StringProperty connectionScriptProperty() { return connectionScript; }
@@ -50,6 +52,8 @@ public class CollectionWizardViewModel {
     public void setSourcePath(String sourcePath) { this.sourcePath.set(sourcePath); }
     public String getUrl() { return url.get(); }
     public void setUrl(String value) { url.set(value); }
+    public String getCatalogUpdateUrl() { return catalogUpdateUrl.get(); }
+    public void setCatalogUpdateUrl(String value) { catalogUpdateUrl.set(value); }
     public String getUser() { return user.get(); }
     public void setUser(String value) { user.set(value); }
     public String getPassword() { return password.get(); }
@@ -78,6 +82,7 @@ public class CollectionWizardViewModel {
         dbFile.set(null);
         sourcePath.set("");
         url.set("");
+        catalogUpdateUrl.set("");
         user.set("");
         password.set("");
         connectionScript.set("");

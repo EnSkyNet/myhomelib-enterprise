@@ -3,6 +3,7 @@ package com.myhomelibcorp.domain.model.valueobject;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.regex.Pattern;
+import java.util.Locale;
 
 /** ISBN-10/ISBN-13 value object with checksum validation. */
 public record Isbn(String value) {
@@ -38,7 +39,7 @@ public record Isbn(String value) {
     }
 
     private static String normalize(String value) {
-        return value.replaceAll("[\\s-]", "").toUpperCase();
+        return value.replaceAll("[\\s-]", "").toUpperCase(Locale.ROOT);
     }
 
     private static boolean isValid(String isbn) {

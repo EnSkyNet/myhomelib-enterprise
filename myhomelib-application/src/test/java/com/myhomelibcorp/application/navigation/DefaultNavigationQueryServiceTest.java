@@ -7,6 +7,8 @@ import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
+import com.myhomelibcorp.domain.model.author.Author;
+import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
@@ -17,6 +19,7 @@ import java.util.concurrent.CompletableFuture;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -128,13 +131,30 @@ class DefaultNavigationQueryServiceTest {
     }
 
     @Test
-    void authorSearchUsesFilteredFacetRepositoryAndIsBounded() {
-        when(navigationFacetRepository.searchAuthors("алек", filter, 200)).thenReturn(List.of(
-                new NavigationFacetRepository.Facet("a", "Александров", 8)));
+    void authorSearchWithoutBookFilterUsesFastAuthorRepository() {
+        Author author = new Author(AuthorId.fromLong(1), "Иван", null, "Александров");
+        when(authorRepository.searchByName("алек", 200)).thenReturn(List.of(author));
 
         assertThat(service.searchAuthors("алек", 200).join())
-                .extracting(NavigationNodeDto::label).containsExactly("Александров");
-        verify(navigationFacetRepository).searchAuthors("алек", filter, 200);
+                .extracting(NavigationNodeDto::label).containsExactly("Александров Иван");
+        verify(authorRepository).searchByName("алек", 200);
+        verify(navigationFacetRepository, never()).searchAuthors(any(), any(), anyInt());
+    }
+
+    @Test
+    void authorSearchWithActiveBookFilterKeepsFilteredFacetSemantics() {
+        BookFilterSpec englishOnly = new BookFilterSpec(
+                com.myhomelibcorp.application.filter.BookFilterMode.AND, "en", null, null, null,
+                null, null, null, null, false,
+                com.myhomelibcorp.application.filter.BookQuickFilterField.ANY, null);
+        when(filterStateService.current()).thenReturn(englishOnly);
+        when(navigationFacetRepository.searchAuthors("алек", englishOnly, 200)).thenReturn(List.of(
+                new NavigationFacetRepository.Facet("a", "Александров Иван", -1)));
+
+        assertThat(service.searchAuthors("алек", 200).join())
+                .extracting(NavigationNodeDto::label).containsExactly("Александров Иван");
+        verify(navigationFacetRepository).searchAuthors("алек", englishOnly, 200);
+        verify(authorRepository, never()).searchByName("алек", 200);
     }
 
     @Test

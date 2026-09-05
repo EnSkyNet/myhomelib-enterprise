@@ -12,6 +12,7 @@ import com.myhomelibcorp.infrastructure.download.source.DownloadMode;
 import com.myhomelibcorp.infrastructure.download.source.DownloadSourceResolver;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.Sha256Support;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.Base64;
@@ -494,9 +496,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                     ? book.getArchiveEntry() : resolvedArchiveEntry;
             return new DownloadedBook(root, normalized, book.getFileName(), actualEntry, target);
         }
-        Path rel = Path.of(normalized);
-        String folder = rel.getParent() == null ? "" : rel.getParent().toString().replace('\\', '/');
-        return new DownloadedBook(root, folder, rel.getFileName().toString(), "", target);
+        int slash = normalized.lastIndexOf('/');
+        String folder = slash < 0 ? "" : normalized.substring(0, slash);
+        String fileName = slash < 0 ? normalized : normalized.substring(slash + 1);
+        return new DownloadedBook(root, folder, fileName, "", target);
     }
 
     private String normalizeArchiveReference(BookDto book) {
@@ -536,16 +539,90 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
     }
 
     private Path safeResolve(Path root, String relative) {
-        Path target = root.resolve(relative.replace('/', java.io.File.separatorChar)).normalize();
-        if (!target.startsWith(root)) throw new IllegalArgumentException("Небезпечний шлях: " + relative);
+        try {
+            return requireInsideRoot(root, root.resolve(relative.replace('/', java.io.File.separatorChar)).normalize(), relative);
+        } catch (InvalidPathException unmappable) {
+            // Some Unix/JVM combinations still expose an ASCII native filename encoding. Remote
+            // catalog paths are Unicode, so constructing a Path may fail before any HTTP request.
+            // Keep the logical catalog name in DownloadedBook, but use a deterministic ASCII
+            // physical fallback that preserves the extension and cannot collide trivially.
+            String fallback = filesystemSafeFallbackRelative(relative);
+            Path target = root.resolve(fallback.replace('/', java.io.File.separatorChar)).normalize();
+            log.warn("Filesystem cannot represent remote path; using deterministic local fallback {}", fallback);
+            return requireInsideRoot(root, target, relative);
+        }
+    }
+
+    private static Path requireInsideRoot(Path root, Path target, String logicalRelative) {
+        if (!target.startsWith(root)) throw new IllegalArgumentException("Небезпечний шлях: " + logicalRelative);
         return target;
+    }
+
+    static String filesystemSafeFallbackRelative(String relative) {
+        if (relative == null || relative.isBlank()) return "download~" + Sha256Support.utf8("").substring(0, 32);
+        String normalized = relative.replace('\\', '/');
+        StringBuilder out = new StringBuilder(normalized.length() + 32);
+        int start = 0;
+        for (int i = 0; i <= normalized.length(); i++) {
+            if (i < normalized.length() && normalized.charAt(i) != '/') continue;
+            String segment = normalized.substring(start, i);
+            if (!segment.isBlank()) {
+                if (!out.isEmpty()) out.append('/');
+                out.append(filesystemSafeFallbackSegment(segment));
+            }
+            start = i + 1;
+        }
+        if (out.isEmpty()) return "download~" + Sha256Support.utf8(normalized).substring(0, 32);
+        return out.toString();
+    }
+
+    private static String filesystemSafeFallbackSegment(String segment) {
+        boolean asciiSafe = !segment.isBlank() && !segment.equals(".") && !segment.equals("..");
+        for (int i = 0; asciiSafe && i < segment.length(); i++) {
+            char ch = segment.charAt(i);
+            asciiSafe = ch < 128 && (Character.isLetterOrDigit(ch) || ch == '.' || ch == '_' || ch == '-');
+        }
+        if (asciiSafe) return segment;
+
+        int dot = segment.lastIndexOf('.');
+        String extension = "";
+        if (dot > 0 && dot < segment.length() - 1) {
+            String candidate = segment.substring(dot);
+            boolean safeExtension = candidate.length() <= 16;
+            for (int i = 1; safeExtension && i < candidate.length(); i++) {
+                char ch = candidate.charAt(i);
+                safeExtension = ch < 128 && Character.isLetterOrDigit(ch);
+            }
+            if (safeExtension) extension = candidate;
+        }
+
+        String baseSource = extension.isEmpty() ? segment : segment.substring(0, dot);
+        StringBuilder base = new StringBuilder(Math.min(80, baseSource.length()));
+        boolean pendingDash = false;
+        for (int i = 0; i < baseSource.length() && base.length() < 80; i++) {
+            char ch = baseSource.charAt(i);
+            if (ch < 128 && (Character.isLetterOrDigit(ch) || ch == '_' || ch == '-')) {
+                if (pendingDash && !base.isEmpty()) base.append('-');
+                pendingDash = false;
+                base.append(ch);
+            } else {
+                pendingDash = !base.isEmpty();
+            }
+        }
+        if (base.isEmpty()) base.append("download");
+        String hash = Sha256Support.utf8(segment).substring(0, 32);
+        return base + "~" + hash + extension;
     }
 
     private String cleanRelative(String value) {
         if (value == null) return "";
         String v = value.replace('\\', '/').trim();
         while (v.startsWith("/")) v = v.substring(1);
-        if (v.matches("^[A-Za-z]:/.*") || v.contains("../") || v.equals("..")) return Path.of(v).getFileName().toString();
+        if (v.matches("^[A-Za-z]:/.*") || v.contains("../") || v.equals("..")) {
+            int slash = v.lastIndexOf('/');
+            String fileName = slash < 0 ? v : v.substring(slash + 1);
+            return fileName.equals(".") || fileName.equals("..") ? "" : fileName;
+        }
         return v;
     }
 

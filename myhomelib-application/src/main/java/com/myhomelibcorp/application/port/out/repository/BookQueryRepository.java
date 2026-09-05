@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 
 import java.util.List;
@@ -57,9 +58,21 @@ public interface BookQueryRepository {
     List<Book> findByArchiveContainer(String collectionRoot, String relativeArchivePath, String absoluteArchivePath);
 
     /**
-     * Memory-bounded traversal of the catalog.
+     * Memory-bounded traversal of the complete catalog.
      */
     Stream<Book> streamAll();
+
+    /**
+     * Memory-bounded projection dedicated to full-text indexing. Implementations may override
+     * this method to avoid constructing full aggregate Book objects and loading fields that
+     * Lucene never consumes. The default keeps compatibility with alternate repositories.
+     */
+    default Stream<BookSnapshot> streamSearchSnapshots() {
+        return streamAll()
+                .filter(java.util.Objects::nonNull)
+                .filter(book -> !book.isDeleted())
+                .map(BookSnapshot::fromBook);
+    }
 
     // ===== Спеціальні запити =====
     Optional<Book> findByTitleAndAuthor(String title, String authorLastName);

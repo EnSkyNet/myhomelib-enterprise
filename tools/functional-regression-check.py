@@ -47,10 +47,10 @@ checks={
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
  ['seriesSelectionState', 'BookSelectionService.SelectionState.PARTIAL',
   'setSeriesSelected', 'booksInSeries']),
-'Author master checkbox targets visible books only': (
+'Author master checkbox covers all author books even when series are collapsed': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
- ['visibleConcreteBooks()', 'masterSelectionCheckBox.setIndeterminate',
-  'bookSelectionService.state(visible)', 'Пакетно вибрано: ']),
+ ['selectableConcreteBooks()', 'masterSelectionCheckBox.setIndeterminate',
+  'bookSelectionService.state(selectable)', 'Пакетно вибрано: ']),
 'Series SQL sequence order': (
  ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookQueryBuilder.java',
  ['sortBy == SortBy.SERIES', 'b.sequence_number', "TRIM(COALESCE(b.series, ''))"]),

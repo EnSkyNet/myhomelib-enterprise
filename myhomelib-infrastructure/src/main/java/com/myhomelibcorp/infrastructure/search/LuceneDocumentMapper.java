@@ -30,8 +30,8 @@ final class LuceneDocumentMapper {
         doc.add(new TextField("isbn", safe(snapshot.getIsbn()), Field.Store.NO));
         doc.add(new TextField("source", safe(snapshot.getSourceUrl()), Field.Store.NO));
         doc.add(new StringField("language", safe(snapshot.getLanguage()).toLowerCase(Locale.ROOT), Field.Store.NO));
-        for (String id : safe(snapshot.getAuthorIds()).split("\\s+")) if (!id.isBlank()) doc.add(new StringField("author_id", id, Field.Store.NO));
-        for (String id : safe(snapshot.getGenreIds()).split("\\s+")) if (!id.isBlank()) doc.add(new StringField("genre_id", id, Field.Store.NO));
+        addSpaceSeparatedIds(doc, "author_id", snapshot.getAuthorIds());
+        addSpaceSeparatedIds(doc, "genre_id", snapshot.getGenreIds());
 
         int libraryRate = snapshot.getLibraryRate() == null ? 0 : snapshot.getLibraryRate();
         doc.add(new IntPoint("library_rate_num", libraryRate));
@@ -45,7 +45,7 @@ final class LuceneDocumentMapper {
         doc.add(new StringField("format", detectFormat(snapshot.getFileName()), Field.Store.NO));
         int year = snapshot.getYear() == null ? 0 : snapshot.getYear();
         doc.add(new IntPoint("year_num", year));
-        doc.add(new StringField("year", year <= 0 ? "0000" : String.format(Locale.ROOT, "%04d", year), Field.Store.NO));
+        doc.add(new StringField("year", formatYear(year), Field.Store.NO));
         if (snapshot.getCreatedAt() != null) {
             doc.add(new LongPoint("created_day", snapshot.getCreatedAt().toLocalDate().toEpochDay()));
             doc.add(new StringField("created", snapshot.getCreatedAt().toLocalDate().format(DateTimeFormatter.BASIC_ISO_DATE), Field.Store.NO));
@@ -53,6 +53,30 @@ final class LuceneDocumentMapper {
         doc.add(new StringField("local", snapshot.isLocal() ? "1" : "0", Field.Store.NO));
         doc.add(new StringField("deleted", snapshot.isDeleted() ? "1" : "0", Field.Store.NO));
         return doc;
+    }
+
+    private static void addSpaceSeparatedIds(Document doc, String field, String raw) {
+        String value = raw == null ? "" : raw;
+        int start = -1;
+        for (int i = 0; i <= value.length(); i++) {
+            boolean separator = i == value.length() || Character.isWhitespace(value.charAt(i));
+            if (!separator) {
+                if (start < 0) start = i;
+                continue;
+            }
+            if (start >= 0) {
+                doc.add(new StringField(field, value.substring(start, i), Field.Store.NO));
+                start = -1;
+            }
+        }
+    }
+
+    private static String formatYear(int year) {
+        if (year <= 0) return "0000";
+        if (year < 10) return "000" + year;
+        if (year < 100) return "00" + year;
+        if (year < 1000) return "0" + year;
+        return Integer.toString(year);
     }
 
     private String detectFormat(String fileName) {

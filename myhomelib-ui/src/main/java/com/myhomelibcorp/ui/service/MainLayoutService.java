@@ -4,6 +4,8 @@ import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.SimpleBooleanProperty;
 import javafx.scene.Node;
 import javafx.scene.Parent;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.Region;
 import org.springframework.stereotype.Component;
 
 /**
@@ -30,6 +32,7 @@ public class MainLayoutService {
     public void registerSidebars(Node leftSidebar, Node rightSidebar) {
         this.leftSidebar = leftSidebar;
         this.rightSidebar = rightSidebar;
+        allowCenterToShrink(leftSidebar, rightSidebar);
         apply(leftSidebar, leftSidebarVisible.get());
         apply(rightSidebar, rightSidebarVisible.get());
     }
@@ -66,14 +69,49 @@ public class MainLayoutService {
         setRightSidebarVisible(!isRightSidebarVisible());
     }
 
+    /**
+     * BorderPane honours the minimum width of its center node. A workspace with
+     * wide tables/controls can therefore keep the expanded center width after a
+     * sidebar was hidden. Restoring the sidebar would then push the right edge
+     * outside the Scene instead of shrinking the center back into the available
+     * width. The main center is a viewport and must always be shrinkable.
+     */
+    private static void allowCenterToShrink(Node... sidebars) {
+        if (sidebars == null) return;
+        for (Node sidebar : sidebars) {
+            if (sidebar == null) continue;
+            Parent parent = sidebar.getParent();
+            if (parent instanceof BorderPane borderPane) {
+                Node center = borderPane.getCenter();
+                if (center instanceof Region region) {
+                    region.setMinWidth(0);
+                }
+                return;
+            }
+        }
+    }
+
     private static void apply(Node node, boolean visible) {
         if (node == null) return;
         node.setVisible(visible);
         node.setManaged(visible);
         requestLayout(node);
-        // BorderPane recalculates left/right geometry on the next pulse. This is
-        // important when a sidebar is restored while Reader remains the current workspace.
-        javafx.application.Platform.runLater(() -> requestLayout(node));
+        // Force the owning BorderPane to recompute the center/side geometry after
+        // managed state changes. A request alone can leave the previous expanded
+        // center allocation alive until a later pulse, which makes a restored
+        // sidebar extend beyond the Scene bounds.
+        javafx.application.Platform.runLater(() -> relayoutOwner(node));
+    }
+
+    private static void relayoutOwner(Node node) {
+        Parent parent = node == null ? null : node.getParent();
+        if (parent instanceof BorderPane borderPane) {
+            borderPane.applyCss();
+            borderPane.requestLayout();
+            borderPane.layout();
+        } else {
+            requestLayout(node);
+        }
     }
 
     private static void requestLayout(Node node) {

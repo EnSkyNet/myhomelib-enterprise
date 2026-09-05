@@ -23,6 +23,7 @@ import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+import java.util.Locale;
 
 @Component
 @Slf4j
@@ -32,7 +33,7 @@ public class SevenZImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        return file != null && file.getFileName().toString().toLowerCase().endsWith(".7z");
+        return file != null && file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".7z");
     }
 
     @Override public String getFormatName() { return "7Z"; }

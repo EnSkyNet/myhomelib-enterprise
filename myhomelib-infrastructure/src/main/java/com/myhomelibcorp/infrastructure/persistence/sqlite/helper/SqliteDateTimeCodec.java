@@ -5,7 +5,7 @@ import lombok.extern.slf4j.Slf4j;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 
-/** Canonical codec for legacy SQLite timestamp text used by reading state tables. */
+/** Canonical codec for SQLite timestamp text used across persistence mappings. */
 @Slf4j
 public final class SqliteDateTimeCodec {
     private static final DateTimeFormatter FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");

@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import static org.mockito.ArgumentMatchers.*;
@@ -60,6 +61,42 @@ class ImportFileUseCaseFastInpxIndexTest {
         verify(f.search).rebuildIndex();
         verify(f.search, never()).beginAtomicUpdate();
         verify(f.search, never()).commit();
+    }
+
+    @Test
+    void unchangedFastInpxDoesNotTouchLuceneWhenIndexAfterSaveIsTrue() {
+        Fixture f = new Fixture();
+        when(f.fast.importInpx(any(), anyInt(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any()))
+                .thenReturn(new ImportResult(0, 562_307, 0, 0, 1,
+                        ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+
+        f.useCase.execute(context(true));
+
+        verifyNoInteractions(f.search);
+    }
+
+    @Test
+    void recognizesUppercaseInpxIndependentlyOfDefaultLocale() {
+        Locale previous = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+            Fixture f = new Fixture();
+            when(f.fast.importInpx(any(), anyInt(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any()))
+                    .thenReturn(new ImportResult(0, 0, 0, 0, 1,
+                            ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+
+            ImportContext context = ImportContext.builder()
+                    .file(Path.of("CATALOG.INPX"))
+                    .batchSize(1000)
+                    .indexAfterSave(false)
+                    .catalogFullSnapshot(true)
+                    .build();
+            f.useCase.execute(context);
+
+            verify(f.fast).importInpx(any(), anyInt(), any(), any(), any(), any(), anyBoolean(), any(), any(), any(), any());
+        } finally {
+            Locale.setDefault(previous);
+        }
     }
 
     @Test

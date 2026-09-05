@@ -24,6 +24,7 @@ import java.awt.Desktop;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 @RequiredArgsConstructor
@@ -274,6 +275,6 @@ public class DefaultNavigationService implements NavigationService {
 
     private String normalizeSeriesName(String name) {
         if (name == null) return "";
-        return name.trim().toLowerCase().replaceAll("\\s+", " ");
+        return name.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
     }
 }

@@ -17,6 +17,7 @@ import java.nio.file.Paths;
 import java.util.List;
 import java.util.Optional;
 import java.util.function.Predicate;
+import java.util.Locale;
 
 /**
  * Єдиний сервіс для роботи з файлами книг.
@@ -222,7 +223,7 @@ public class BookResourceResolver implements BookResourcePort {
         if (path == null) {
             return false;
         }
-        String lower = path.toLowerCase();
+        String lower = path.toLowerCase(Locale.ROOT);
         return ARCHIVE_EXTENSIONS.stream().anyMatch(lower::endsWith);
     }
 

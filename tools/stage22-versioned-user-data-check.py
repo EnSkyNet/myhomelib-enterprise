@@ -30,7 +30,7 @@ need('version' in adapter and 'ratings' in adapter and 'reading' in adapter, 'v1
 need('ID_CACHE_LIMIT = 50_000' in adapter, 'bounded restore identity cache missing')
 need('CollectionManager' in adapter and 'getCurrentJdbcTemplate()' in adapter, 'portable adapter must follow active collection dynamically')
 need('VACUUM INTO' in backup_adapter, 'live SQLite backup must use VACUUM INTO')
-need('.restore.tmp' in service and 'AtomicFileSupport.moveReplacing(stagedDb, targetDb)' in service and 'ATOMIC_MOVE' in atomic_support, 'restore staging/atomic swap missing')
+need('RestoreRecoveryFiles.staged(targetDb)' in service and 'AtomicFileSupport.moveReplacing(stagedDb, targetDb)' in service and 'ATOMIC_MOVE' in atomic_support, 'restore staging/atomic swap missing')
 need('closeCurrentCollection()' in service and 'openCollection(collection)' in service and 'migrateCurrentCollection()' in service, 'full restore must close/reopen collection and run sequential DB migrations')
 need('Legacy database-only backup detected' in service, 'legacy DB-only backup compatibility missing')
 need('userDataOnly' in service and 'restoreDatabase' in service, 'user-data-only restore mode missing')
@@ -40,6 +40,14 @@ need('collectionManagementService.closeCurrentCollection()' not in restore, 'UI 
 need("value(rs, cols, \"libid\")" in legacy and 'intValue(rs,cols,"rate",0)' in legacy and 'intValue(rs,cols,"progress",0)' in legacy, 'legacy HLC2 attach must preserve LibID/rate/progress')
 need("'old-1','L100'" in test and "'new-77','L100'" in test, 'LibID remap regression fixture missing')
 need('sequentiallyMigratesPreviousV1Manifest' in test, 'v1 manifest compatibility test missing')
+need('validateCurrentManifestStructure' in adapter and 'replaceByPrefix(FILTER_PREFIX' in adapter and 'rollbackExternalState' in adapter, 'portable restore preflight/external-state atomicity missing')
+need('schemaVersion must be an integer' in adapter and 'format is missing for schema v' in adapter and 'Conflicting portable user-data schema versions' in adapter,
+     'portable v2 header validation/anti-downgrade guards missing')
+need('currentSchemaRestoreReplacesFilterSliceAndClearsExplicitNullReaderGlobal' in test and
+     'malformedV2ExternalSectionIsRejectedBeforeDatabaseMutation' in test and
+     'externalSettingsFailureRollsBackDatabaseAndRestoresExternalState' in test and
+     'malformedOrConflictingVersionHeaderIsNeverDowngradedToLegacyV1' in test,
+     'portable restore external-state/header regression fixtures missing')
 
 # Runtime-check the exact SQLite snapshot primitive used by CollectionBackupAdapter.
 try:
@@ -99,4 +107,5 @@ print(' - schema-v2 portable user-data sections + streaming v1 compatibility: PA
 print(' - stable LibID-first remap + bounded identity cache + migrated-schema index lookup: PASS')
 print(' - WAL-safe VACUUM INTO backup + staged atomic DB restore: PASS')
 print(' - full restore + user-data-only UI modes + legacy DB-only compatibility: PASS')
+print(' - exact external-state replacement + preflight/rollback/header anti-downgrade guards: PASS')
 print(' - JUnit fixtures for changed internal IDs/idempotence/v1 manifest: PRESENT')

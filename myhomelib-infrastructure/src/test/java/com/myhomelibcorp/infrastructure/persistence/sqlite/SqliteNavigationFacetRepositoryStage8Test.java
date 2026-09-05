@@ -143,6 +143,10 @@ class SqliteNavigationFacetRepositoryStage8Test {
                 .extracting(f -> f.id()).containsExactly("c1");
         assertThat(repository.searchAuthors("бояр", BookFilterSpec.empty(), 20))
                 .extracting(f -> f.id()).containsExactly("c1");
+        assertThat(repository.searchAuthors("Михаил Боярский", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c1");
+        assertThat(repository.searchAuthors("Боярский Михаил", BookFilterSpec.empty(), 20))
+                .extracting(f -> f.id()).containsExactly("c1");
         assertThat(repository.searchAuthors("ІЇЄҐ", BookFilterSpec.empty(), 20))
                 .extracting(f -> f.id()).containsExactly("c2");
         assertThat(repository.searchAuthors("ЁЙ", BookFilterSpec.empty(), 20))

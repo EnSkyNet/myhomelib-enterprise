@@ -1,43 +1,83 @@
-MyHomeLib Enterprise 7.1.0 — local release validation
-=====================================================
-Date: 2026-08-31
-Documentation/source snapshot: RC4 docs consolidation after RC3 download fix
+MyHomeLib Enterprise 7.1.0 RC3 — current release validation
+===========================================================
+Date: 2026-09-04
+Status: automated/source + Linux packaged-runtime validation advanced; final Windows runtime acceptance is still required.
 
 VERIFIED IN THIS ENVIRONMENT
-- JDK: OpenJDK 21.0.11 / javac 21.0.11.
-- 52/52 current offline regression/static/smoke checks: PASS.
-- tools/build-check-v7.py: PASS.
-  - Flyway collection migrations V1-V43: sequencing/integrity PASS.
-  - V1-V36 immutable baseline check: PASS.
-  - representative existing v7 DB -> v7.1 upgrade: PASS.
-  - metadata migrations: PASS.
-  - XML/FXML and release-tree cleanliness: PASS.
-- tools/static_release_check.py: PASS.
-  - POM/FXML XML files: 38; errors: 0.
-  - FXML workspaces: 25; handler references: 170; missing: 0.
-  - SQLite migrations: 43; integrity_check: ok.
-  - root shell scripts: 9; static issues: 0.
-  - Java sources: 734; Java test sources: 95.
-- tools/v71-standalone-java-smoke.py: PASS using production source units and installed JDK 21.
-- online-book/Flibusta regression gates: PASS, including safe server-renamed FB2 ZIP member resolution and persistence of the actual resolved archive entry.
-- Reader/OPDS standalone smokes: PASS.
-- language catalogues: uk/en/bg schema/key/genre validation PASS.
-- Stage 24 stored 100k/500k/1M SQLite guardrails and performance contract: PASS/PRESENT as recorded by the project checks.
-- cross-platform release workflow/YAML, shell syntax, jpackage/release-smoke contracts: PASS at source/static level.
-- documentation consolidation:
-  - six active root Markdown documents;
-  - three consolidated history Markdown documents;
-  - historical Markdown/text source notes retained under docs/archive/source-notes/;
-  - active Markdown links validated.
+- JDK: OpenJDK 21.0.11; jpackage 21.0.11.
+- Offline Maven production reactor compile/package check:
+  ./.mvn/maven/apache-maven-3.9.6/bin/mvn -o \
+    -Dmaven.repo.local=<provided-offline-repository> -DskipTests verify -Pproduction
+  Result: BUILD SUCCESS for all 13 reactor modules; test sources compile.
+- Full Surefire/JUnit execution is still blocked by the supplied offline repository missing
+  org.apache.maven.surefire:surefire-junit-platform:3.2.5.
+- Release-critical compiled tests were therefore executed directly against the compiled test classes:
+  Result: 37 PASS / 0 FAIL.
+  Coverage includes migration matrix, update rollback + immediate Retry, commit-boundary callback safety,
+  process-start crash recovery, Restore safety, Export crash safety, Lucene rollback point and Reader golden tests.
+- Offline static release check: PASS (40 XML/POM/FXML, 27 workspaces, 198 FXML handler references,
+  48 SQLite migrations with integrity=ok, shell scripts and release packaging/CI checks).
+- Linux jpackage portable artifact:
+  - versioned archive built with bundled runtime;
+  - raw app-image removed before publication checksums;
+  - SHA256SUMS validates only published artifacts;
+  - archive extracted into a fresh directory and packaged launcher executed successfully:
+    MYHOMELIB_RELEASE_SMOKE_OK.
 
-NOT VERIFIED / EXTERNAL RELEASE GATES
-- ./mvnw clean verify -Pproduction: NOT EXECUTED successfully in this isolated environment because Maven Central/DNS access is unavailable.
-- Complete external-dependency Java/JUnit reactor compilation/runtime: NOT CLAIMED here.
-- Real GitHub Actions Ubuntu/Windows/macOS run: NOT RUN from this environment.
-- Real packaged JavaFX/jpackage GUI smoke on all target operating systems: NOT RUN here.
-- Live remote-service behavior can change independently; production acceptance should include a real online catalogue/book download smoke.
+- Historical migration semantic guard:
+  - protects distinct pre-V7 authors sharing first/last name and their book links from V7 collapse;
+  - protects V25 chapter_title/chapter_id/reading_time_seconds from V26 table recreation;
+  - guard tables are durable across process interruption and restored/verified after the final schema;
+  - immutable V1-V36 migration SHA-256 manifest remains valid (no historical migration rewrite).
+
+CRASH / TRANSACTION SAFETY
+- Online update:
+  - deterministic validated pre-update SQLite checkpoint + durable pending marker;
+  - recovery runs before Hikari opens the collection DB;
+  - marker deletion is the strict success commit point after sourceState.recordApplied;
+  - progress listener failures cannot trigger rollback of a successful commit;
+  - failed import rollback followed by immediate Retry is regression-tested.
+- User Restore:
+  - .restore.pending distinguishes interrupted Restore from stale cleanup;
+  - staged database is validated before replacing live data;
+  - multiple backup .db files are rejected unless one matches the active DB filename;
+  - migration failure rolls back the previous DB; successful Restore clears recovery state safely.
+- Export:
+  - conversion occurs into a staging file; failed conversion preserves an existing overwrite target;
+  - successful conversion atomically replaces the final target.
+- Lucene:
+  - dirty activation preserves the last committed index until atomic rebuild commit.
+
+RELEASE PACKAGING / CI
+- Version is derived from pom.xml by desktop/portable/release scripts.
+- Windows EXE/MSI packaging uses a stable upgrade UUID and the JDK 21 option
+  --win-per-user-install, plus Start Menu and desktop shortcuts.
+- Linux/macOS checksum generation is Python-stdlib based (no GNU-only sort/sha256sum dependency),
+  uses deterministic relative paths and atomic SHA256SUMS replacement.
+- Raw app-image directories are intermediate only and are removed before checksums/upload.
+- CI packages Linux/Windows/macOS first; one tag-only publish job waits for all package jobs,
+  verifies tag == pom version, creates collision-free unified artifacts/checksums and publishes once.
+
+OTHER RC3 FIXES PRESENT IN THIS TREE
+- migration matrix V1/V10/V20/V30/V40/V44 -> V48;
+- Reader golden FB2/ZIP fixtures and nested poem-title chapter/TOC fix;
+- faster left-sidebar author search with unordered name tokens;
+- search clear controls and author-first result column;
+- collapsed-series select-all behavior;
+- collection wizard step indication and online INPX update URL field;
+- Reader toolbar/sidebar/menu layout resilience and live theme preview;
+- long-INPX Hikari false-leak threshold hardening and larger/configurable author cache;
+- portable user-data export temp cleanup and ImportBenchmark non-null root.
+
+NOT YET VERIFIED / FINAL RELEASE GATES
+- Native Windows GUI/runtime acceptance: local scan, exact problem FB2/ZIP books, first cover,
+  Book Details/TOC/Images/Metadata, Reader, Followed Authors, Search, author navigation Back/Forward,
+  real online update failure -> rollback -> Retry, Backup/Restore.
+- Windows DPI: 100%, 125%, 150%, 200%.
+- Native Windows portable and EXE installer execution as an ordinary user.
+- Upgrade over the previous installed 7.1.0/older DB and uninstall without loss of user library data.
+- Final Windows-generated installer checksum, changelog/release notes and signed acceptance report.
 
 RELEASE RULE
-A formal production release requires a connected ./mvnw clean verify -Pproduction, green platform CI, final extracted-artifact revalidation, checksum/permission verification, and a real desktop smoke covering collection open, online download, Reader and backup/restore.
-
-This file reports only checks actually executed or source contracts explicitly inspected. Presence of tests is not reported as runtime success.
+Do not rename RC3 to final MyHomeLib Enterprise 7.1.0 until the remaining Windows runtime and
+packaging gates above pass. This record intentionally distinguishes executed checks from pending platform acceptance.

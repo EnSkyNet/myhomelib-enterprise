@@ -37,6 +37,7 @@ import java.util.UUID;
 import java.util.function.Consumer;
 import java.util.function.DoubleConsumer;
 import java.util.stream.Stream;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -68,7 +69,7 @@ public class ImportFileUseCase {
         }
 
         try (var ignored = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
-            String fileName = context.getFile().getFileName().toString().toLowerCase();
+            String fileName = context.getFile().getFileName().toString().toLowerCase(Locale.ROOT);
             if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
                 return executeInpx(context);
             }
@@ -160,6 +161,10 @@ public class ImportFileUseCase {
             emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
                     .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
                             result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
+            // Source-neutral full snapshots do not guarantee an exact ImportChangeSet at the port boundary.
+            // The current JDBC adapter deliberately tracks snapshot membership in SQLite and returns
+            // complete=false rather than retaining every changed ID in memory. Keep full snapshots on
+            // the safe rebuild path until the CatalogImportPort contract itself guarantees exact IDs.
             if (context.isCatalogFullSnapshot() || !result.changes().complete()) {
                 searchIndexer.rebuildIndex();
             } else {

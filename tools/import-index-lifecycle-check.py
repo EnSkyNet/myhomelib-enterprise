@@ -10,7 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 MIGRATIONS = ROOT / 'myhomelib-infrastructure/src/main/resources/db/migration'
 PIPELINE = ROOT / 'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxImportPipeline.java'
 LIFECYCLE = ROOT / 'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/ImportIndexLifecycle.java'
-EXPECTED = ('idx_books_title', 'idx_books_series', 'idx_authors_last_name')
+CORE = ('idx_books_title', 'idx_books_series', 'idx_authors_last_name')
+INITIAL_EXTRA = (
+    'idx_books_language', 'idx_books_created_at', 'idx_books_update_date', 'idx_books_rate',
+    'idx_books_title_lower', 'idx_books_format', 'idx_books_author_sort', 'idx_books_collection_root',
+    'idx_books_publisher', 'idx_books_year', 'idx_books_lib_id', 'idx_books_library_rate',
+    'idx_books_missing_since', 'idx_books_active_language_title', 'idx_books_active_id',
+    'idx_book_authors_author_id', 'idx_book_genres_genre_code',
+)
 
 errors: list[str] = []
 
@@ -24,24 +31,33 @@ def migration_files() -> list[Path]:
         return int(m.group(1)) if m else 10**9
     return sorted(MIGRATIONS.glob('V*__*.sql'), key=version)
 
+def list_literal(source: str, field: str) -> tuple[str, ...]:
+    m = re.search(rf'{field}\s*=\s*List\.of\((.*?)\);', source, re.S)
+    if not m:
+        errors.append(f'{field} list missing')
+        return ()
+    return tuple(re.findall(r'"([^"]+)"', m.group(1)))
+
 pipeline = PIPELINE.read_text(encoding='utf-8')
 source = LIFECYCLE.read_text(encoding='utf-8')
-need('importIndexLifecycle.suspendForFullSnapshot()' in pipeline and 'importIndexLifecycle.restore(suspendedIndexes)' in pipeline, 'pipeline must delegate index lifecycle to focused component')
+need('importIndexLifecycle.suspendForFullSnapshot(fastInitialBaseline)' in pipeline
+     and 'importIndexLifecycle.restore(suspendedIndexes)' in pipeline,
+     'pipeline must delegate index lifecycle with initial-baseline scope')
 need('sqlite_master' in source, 'index lifecycle must capture live definitions from sqlite_master')
 need('definition.createSql()' in source, 'index lifecycle must restore the exact captured CREATE INDEX SQL')
 need('CREATE INDEX IF NOT EXISTS idx_books_title ON books(title)' not in source,
-     'index lifecycle must not hard-code the restore SQL for idx_books_title')
-need('idx_book_authors_book_author' not in source and 'idx_book_genres_book_genre' not in source,
-     'obsolete named relation indexes must not be managed by the import path')
+     'index lifecycle must not hard-code restore SQL')
+need('idx_authors_name_lookup' not in INITIAL_EXTRA,
+     'exact author lookup index must remain live for author-cache eviction fallback')
+need('idx_keyword_books_book_id' not in INITIAL_EXTRA,
+     'keyword book-id index must remain live for idempotent keyword replacement')
 
-# Extract only the explicit bulk-suspend list, not unrelated string occurrences.
-m = re.search(r'BULK_IMPORT_SUSPEND_INDEXES\s*=\s*List\.of\((.*?)\);', source, re.S)
-if not m:
-    errors.append('BULK_IMPORT_SUSPEND_INDEXES list missing')
-    configured: tuple[str, ...] = ()
-else:
-    configured = tuple(re.findall(r'"([^"]+)"', m.group(1)))
-    need(configured == EXPECTED, f'bulk-suspend indexes changed unexpectedly: {configured!r}')
+core = list_literal(source, 'FULL_SNAPSHOT_SUSPEND_INDEXES')
+extra = list_literal(source, 'INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES')
+need(core == CORE, f'full-snapshot suspend indexes changed unexpectedly: {core!r}')
+need(extra == INITIAL_EXTRA, f'initial-baseline extra indexes changed unexpectedly: {extra!r}')
+configured = core + extra
+need(len(configured) == len(set(configured)), 'suspend lists must not contain duplicates')
 
 conn = sqlite3.connect(':memory:')
 try:
@@ -52,11 +68,11 @@ try:
     definitions: dict[str, str] = {}
     for name in configured:
         row = conn.execute("SELECT sql FROM sqlite_master WHERE type='index' AND name=?", (name,)).fetchone()
-        need(row is not None and row[0], f'configured index is absent from migrated V1-V41 schema: {name}')
+        need(row is not None and row[0], f'configured index is absent from migrated V48 schema: {name}')
         if row and row[0]:
             definitions[name] = row[0]
 
-    # Relation PKs are auto-indexed; creating duplicate named book_id-leading indexes is unnecessary.
+    # Composite relation PK auto-indexes remain live while the reverse lookup indexes may be suspended.
     ba = conn.execute("PRAGMA index_list('book_authors')").fetchall()
     bg = conn.execute("PRAGMA index_list('book_genres')").fetchall()
     need(any(str(row[1]).startswith('sqlite_autoindex_book_authors') for row in ba),
@@ -64,7 +80,6 @@ try:
     need(any(str(row[1]).startswith('sqlite_autoindex_book_genres') for row in bg),
          'book_genres PK auto-index missing')
 
-    # Prove that exact sqlite_master SQL can restore every suspended index.
     for name in definitions:
         conn.execute(f'DROP INDEX IF EXISTS "{name}"')
     conn.commit()
@@ -86,6 +101,6 @@ if errors:
     sys.exit(1)
 
 print('IMPORT INDEX LIFECYCLE CHECK: PASS')
-print(' - live sqlite_master definitions are captured/restored exactly')
-print(' - managed indexes exist in migrated V1-V41 schema')
-print(' - redundant named relation indexes are not recreated')
+print(' - existing full snapshots suspend only the conservative 3-index set')
+print(' - empty initial baselines additionally suspend 17 pure write-amplification indexes')
+print(' - author/keyword lookup indexes stay live and all captured definitions restore exactly')

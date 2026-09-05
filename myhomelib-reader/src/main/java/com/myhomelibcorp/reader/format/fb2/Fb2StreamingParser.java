@@ -308,7 +308,7 @@ public class Fb2StreamingParser implements BookParser {
                     continue;
                 }
 
-                if ("title".equals(name) && !sections.isEmpty()) {
+                if ("title".equals(name) && !sections.isEmpty() && semanticContext.isDirectSectionTitleContext()) {
                     inSectionTitle = true;
                     sectionTitleText.setLength(0);
                     continue;

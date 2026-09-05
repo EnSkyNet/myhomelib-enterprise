@@ -8,8 +8,6 @@ search-index/
 *.sqlite
 *.sqlite3
 
-
-
 # IDE/local files
 .idea/
 *.iml
@@ -19,4 +17,3 @@ search-index/
 Thumbs.db
 
 .mvn/maven/
-/maven-offline-repo/

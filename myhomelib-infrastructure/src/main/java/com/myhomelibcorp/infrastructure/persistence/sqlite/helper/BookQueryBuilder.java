@@ -11,6 +11,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 @Component
 public class BookQueryBuilder {
@@ -170,7 +171,7 @@ public class BookQueryBuilder {
 
         // TEXT SEARCH
         if (query.text() != null && !query.text().isBlank()) {
-            String pattern = "%" + query.text().toLowerCase() + "%";
+            String pattern = "%" + query.text().toLowerCase(Locale.ROOT) + "%";
             ctx.conditions.add("(LOWER(b.title) LIKE ? OR LOWER(b.keywords) LIKE ? OR LOWER(b.annotation) LIKE ?)");
             ctx.params.add(pattern);
             ctx.params.add(pattern);

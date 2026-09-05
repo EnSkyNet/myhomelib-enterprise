@@ -7,6 +7,7 @@ mapper = (root / 'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infra
 executor = (root / 'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchExecutor.java').read_text()
 service = (root / 'myhomelib-application/src/main/java/com/myhomelibcorp/application/search/SearchService.java').read_text()
 workspace = (root / 'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java').read_text()
+query_factory = (root / 'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchQueryFactory.java').read_text()
 
 failures = []
 stored_yes = re.findall(r'(?:TextField|StringField)\("([^"]+)"[^\n]*Field\.Store\.YES', mapper)
@@ -20,7 +21,7 @@ if 'Math.min(100_000, offset + limit)' in executor:
     failures.append('legacy 100k offset cap returned')
 if 'ids.stream().map(byId::get)' not in service:
     failures.append('Lucene result order is not restored after repository IN lookup')
-if 'clauses.add("library_rate:["' not in workspace or 'clauses.add("rate:["' in workspace:
+if 'clauses.add("library_rate:["' not in query_factory or 'clauses.add("rate:["' in query_factory:
     failures.append('saved advanced-search library rating is not aligned with live library_rate filter')
 
 if failures:

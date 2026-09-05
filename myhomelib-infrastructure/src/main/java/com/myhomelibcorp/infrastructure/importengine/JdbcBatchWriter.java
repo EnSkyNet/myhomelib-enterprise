@@ -23,6 +23,8 @@ import java.util.Collection;
 @Slf4j
 public class JdbcBatchWriter {
 
+    private static final boolean IMPORT_PHASE_METRICS = Boolean.getBoolean("mhl.import.phase.metrics");
+
     private final CollectionManager collectionManager;
 
     private JdbcTemplate getJdbcTemplate() {
@@ -34,11 +36,17 @@ public class JdbcBatchWriter {
      * ОПТИМІЗОВАНО: зменшено кількість запитів до БД
      */
     public void batchInsertFull(List<Object[]> booksData,
-                                Map<String, String> authorCache) {
+                                Map<String, String> authorResolution) {
         if (booksData.isEmpty()) return;
 
         JdbcTemplate jt = getJdbcTemplate();
         long startTime = System.currentTimeMillis();
+        long phaseStarted = IMPORT_PHASE_METRICS ? System.nanoTime() : 0L;
+        long prepareNs = 0L;
+        long bookUpsertNs = 0L;
+        long keywordNs = 0L;
+        long relationDeleteNs = 0L;
+        long relationInsertNs = 0L;
 
         String insertBookSql = """
             INSERT INTO books (
@@ -83,6 +91,8 @@ public class JdbcBatchWriter {
         List<Object[]> bookBatch = new ArrayList<>(booksData.size());
         List<Object[]> authorLinkBatch = new ArrayList<>(booksData.size() * 2);
         List<Object[]> genreLinkBatch = new ArrayList<>(booksData.size() * 2);
+        List<String> bookIds = new ArrayList<>(booksData.size());
+        Map<String, String> keywordProjection = new LinkedHashMap<>(booksData.size());
 
         for (Object[] row : booksData) {
             Object[] bookRow = new Object[29];
@@ -100,50 +110,47 @@ public class JdbcBatchWriter {
             bookBatch.add(bookRow);
 
             String bookId = (String) row[0];
+            bookIds.add(bookId);
+            keywordProjection.put(bookId, row[9] == null ? "" : row[9].toString());
             appendLinks(authorLinkBatch, bookId, row[19]);
             appendLinks(genreLinkBatch, bookId, row[20]);
+        }
+        if (IMPORT_PHASE_METRICS) {
+            prepareNs = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
         }
 
         // ОПТИМІЗОВАНО: використання batchUpdate з великим розміром батчу
         jt.batchUpdate(insertBookSql, bookBatch);
-        Map<String, String> keywordProjection = new LinkedHashMap<>(bookBatch.size());
-        for (Object[] row : bookBatch) {
-            keywordProjection.put((String) row[0], row[9] == null ? "" : row[9].toString());
+        if (IMPORT_PHASE_METRICS) {
+            bookUpsertNs = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
         }
         KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
+        if (IMPORT_PHASE_METRICS) {
+            keywordNs = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
+        }
 
         // SQLite builds commonly expose a much smaller bind-variable limit than our 10k import batch.
         // Delete relationship rows in bounded chunks instead of producing one huge IN (?, ...).
-        if (!bookBatch.isEmpty()) {
-            List<String> bookIds = new ArrayList<>(bookBatch.size());
-            for (Object[] row : bookBatch) bookIds.add((String) row[0]);
-            deleteLinksByBookIds(jt, "book_authors", bookIds);
-            deleteLinksByBookIds(jt, "book_genres", bookIds);
+        deleteLinksByBookIds(jt, "book_authors", bookIds);
+        deleteLinksByBookIds(jt, "book_genres", bookIds);
+        if (IMPORT_PHASE_METRICS) {
+            relationDeleteNs = System.nanoTime() - phaseStarted;
+            phaseStarted = System.nanoTime();
         }
 
-        // ОПТИМІЗОВАНО: вставка зв'язків з авторами
+        // Resolve only candidate IDs created in this flush. IDs already obtained from the long-lived
+        // author cache are persistent IDs and intentionally do not appear in authorResolution.
         if (!authorLinkBatch.isEmpty()) {
-            List<Object[]> realAuthorLinks = new ArrayList<>(authorLinkBatch.size());
-            java.util.LinkedHashSet<String> missingAuthorKeys = new java.util.LinkedHashSet<>();
             for (Object[] link : authorLinkBatch) {
-                String bookId = (String) link[0];
-                String authorKey = (String) link[1];
-                String realId = authorCache.getOrDefault(authorKey, authorKey);
-                if (realId != null) {
-                    realAuthorLinks.add(new Object[]{bookId, realId});
-                } else {
-                    missingAuthorKeys.add(authorKey);
-                }
+                String authorRef = (String) link[1];
+                String persistentId = authorResolution.get(authorRef);
+                if (persistentId != null) link[1] = persistentId;
             }
-            if (!missingAuthorKeys.isEmpty()) {
-                log.warn("{} author key(s) were not resolved in current batch; first keys: {}",
-                        missingAuthorKeys.size(),
-                        missingAuthorKeys.stream().limit(5).toList());
-            }
-            if (!realAuthorLinks.isEmpty()) {
-                jt.batchUpdate("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
-                        realAuthorLinks);
-            }
+            jt.batchUpdate("INSERT OR IGNORE INTO book_authors (book_id, author_id) VALUES (?, ?)",
+                    authorLinkBatch);
         }
 
         // ОПТИМІЗОВАНО: вставка зв'язків з жанрами
@@ -151,9 +158,18 @@ public class JdbcBatchWriter {
             jt.batchUpdate("INSERT OR IGNORE INTO book_genres (book_id, genre_code) VALUES (?, ?)",
                     genreLinkBatch);
         }
+        if (IMPORT_PHASE_METRICS) {
+            relationInsertNs = System.nanoTime() - phaseStarted;
+            log.info("INPX_WRITER_PHASE books={} prepareMs={} bookUpsertMs={} keywordMs={} relationDeleteMs={} relationInsertMs={}",
+                    bookBatch.size(), ms(prepareNs), ms(bookUpsertNs), ms(keywordNs), ms(relationDeleteNs), ms(relationInsertNs));
+        }
 
         long duration = System.currentTimeMillis() - startTime;
         log.debug("Batch inserted {} books in {} ms", bookBatch.size(), duration);
+    }
+
+    private static long ms(long nanos) {
+        return java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(nanos);
     }
 
     private static final int SQLITE_LINK_DELETE_CHUNK = 400;
@@ -191,23 +207,7 @@ public class JdbcBatchWriter {
      */
     public void batchInsertAuthors(List<Author> authors) {
         if (authors == null || authors.isEmpty()) return;
-        JdbcTemplate jt = getJdbcTemplate();
-        String sql = """
-                INSERT OR IGNORE INTO authors (id, first_name, middle_name, last_name, search_name)
-                VALUES (?, ?, ?, ?, ?)
-                """;
-        List<Object[]> batch = new ArrayList<>(authors.size());
-        for (Author a : authors) {
-            String searchName = buildSearchName(a);
-            batch.add(new Object[]{
-                    a.getId().asString(),
-                    a.getFirstName(),
-                    a.getMiddleName(),
-                    a.getLastName(),
-                    searchName
-            });
-        }
-        jt.batchUpdate(sql, batch);
+        insertAuthors(authors);
         log.debug("Batch inserted {} authors", authors.size());
     }
 
@@ -218,18 +218,14 @@ public class JdbcBatchWriter {
     public Map<String, String> batchInsertAuthorsAndResolveIds(List<Author> authors) {
         if (authors == null || authors.isEmpty()) return Map.of();
 
-        Map<AuthorName, List<Author>> byName = new LinkedHashMap<>();
-        for (Author author : authors) {
-            byName.computeIfAbsent(AuthorName.of(author), ignored -> new ArrayList<>()).add(author);
-        }
-
+        Map<AuthorName, List<Author>> byName = groupAuthorsByName(authors);
         Map<AuthorName, String> existing = findExistingAuthorIds(new ArrayList<>(byName.keySet()));
         Map<String, String> resolved = new HashMap<>();
         List<Author> missing = new ArrayList<>();
         for (Map.Entry<AuthorName, List<Author>> entry : byName.entrySet()) {
             String id = existing.get(entry.getKey());
             if (id == null) {
-                Author first = entry.getValue().get(0);
+                Author first = entry.getValue().getFirst();
                 missing.add(first);
                 id = first.getId().asString();
             }
@@ -240,6 +236,72 @@ public class JdbcBatchWriter {
 
         batchInsertAuthors(missing);
         return resolved;
+    }
+
+    /**
+     * Fast path for a catalog import that started with an empty author table and whose in-memory
+     * author cache has not evicted entries. Under those preconditions every pending name is new,
+     * so the expensive existence lookup can be skipped. Any unexpected INSERT OR IGNORE conflict
+     * falls back to the exact lookup instead of risking a broken book-author relation.
+     */
+    public Map<String, String> batchInsertAuthorsAndResolveIdsAssumingNew(List<Author> authors) {
+        if (authors == null || authors.isEmpty()) return Map.of();
+
+        Map<AuthorName, List<Author>> byName = groupAuthorsByName(authors);
+        List<Map.Entry<AuthorName, List<Author>>> entries = new ArrayList<>(byName.entrySet());
+        List<Author> representatives = entries.stream().map(entry -> entry.getValue().getFirst()).toList();
+        int[] updateCounts = insertAuthors(representatives);
+
+        Map<AuthorName, String> persistentByName = new HashMap<>();
+        List<AuthorName> conflicts = new ArrayList<>();
+        for (int i = 0; i < entries.size(); i++) {
+            var entry = entries.get(i);
+            Author representative = entry.getValue().getFirst();
+            int count = i < updateCounts.length ? updateCounts[i] : java.sql.Statement.SUCCESS_NO_INFO;
+            if (count > 0) persistentByName.put(entry.getKey(), representative.getId().asString());
+            else conflicts.add(entry.getKey());
+        }
+        if (!conflicts.isEmpty()) persistentByName.putAll(findExistingAuthorIds(conflicts));
+
+        Map<String, String> resolved = new HashMap<>();
+        for (var entry : entries) {
+            String persistentId = persistentByName.get(entry.getKey());
+            if (persistentId == null || persistentId.isBlank()) {
+                throw new IllegalStateException("Fast author insert conflicted but persistent author cannot be resolved: "
+                        + entry.getKey());
+            }
+            for (Author candidate : entry.getValue()) {
+                resolved.put(candidate.getId().asString(), persistentId);
+            }
+        }
+        return resolved;
+    }
+
+    private static Map<AuthorName, List<Author>> groupAuthorsByName(List<Author> authors) {
+        Map<AuthorName, List<Author>> byName = new LinkedHashMap<>();
+        for (Author author : authors) {
+            byName.computeIfAbsent(AuthorName.of(author), ignored -> new ArrayList<>()).add(author);
+        }
+        return byName;
+    }
+
+    private int[] insertAuthors(List<Author> authors) {
+        if (authors == null || authors.isEmpty()) return new int[0];
+        String sql = """
+                INSERT OR IGNORE INTO authors (id, first_name, middle_name, last_name, search_name)
+                VALUES (?, ?, ?, ?, ?)
+                """;
+        List<Object[]> batch = new ArrayList<>(authors.size());
+        for (Author a : authors) {
+            batch.add(new Object[]{
+                    a.getId().asString(),
+                    a.getFirstName(),
+                    a.getMiddleName(),
+                    a.getLastName(),
+                    buildSearchName(a)
+            });
+        }
+        return getJdbcTemplate().batchUpdate(sql, batch);
     }
 
     private Map<AuthorName, String> findExistingAuthorIds(List<AuthorName> names) {

@@ -56,7 +56,9 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
                 log.info("Per-collection Lucene {} requires rebuild: {}", indexPath, check.reason());
                 search.setQueryAvailability(false, "Пошуковий індекс перебудовується: " + check.reason());
                 persistDirtyMarker(activeStateFile);
-                if (search.getDocumentCount() > 0) search.clearIndex();
+                // Keep the last committed Lucene index intact until the atomic full rebuild reaches
+                // its final commit. Querying remains disabled while dirty, so the old index cannot
+                // leak stale results, but it remains a crash/failure rollback point.
             } else {
                 search.setQueryAvailability(true, null);
                 log.info("Per-collection Lucene {} is reusable: {} documents", indexPath, search.getDocumentCount());

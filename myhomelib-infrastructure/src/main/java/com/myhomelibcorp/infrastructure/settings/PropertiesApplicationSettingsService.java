@@ -12,6 +12,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Properties;
 
 @Component
@@ -44,7 +45,10 @@ public class PropertiesApplicationSettingsService implements ApplicationSettings
             }
             AtomicFileSupport.moveReplacing(tmp, file);
         } catch (Exception e) {
+            try { Files.deleteIfExists(tmp); }
+            catch (Exception cleanup) { e.addSuppressed(cleanup); }
             log.error("Cannot save application settings to {}", file, e);
+            throw new IllegalStateException("Cannot save application settings: " + file, e);
         }
     }
 
@@ -67,5 +71,31 @@ public class PropertiesApplicationSettingsService implements ApplicationSettings
         properties.stringPropertyNames().stream().sorted().filter(k -> k.startsWith(prefix))
                 .forEach(k -> result.put(k, properties.getProperty(k)));
         return result;
+    }
+
+    @Override
+    public synchronized void replaceByPrefix(String prefix, Map<String, String> values) {
+        Objects.requireNonNull(prefix, "prefix");
+        Objects.requireNonNull(values, "values");
+        for (String key : values.keySet()) {
+            if (key == null || !key.startsWith(prefix)) {
+                throw new IllegalArgumentException("Setting key is outside prefix " + prefix + ": " + key);
+            }
+        }
+
+        Map<String, String> before = findByPrefix(prefix);
+        properties.stringPropertyNames().stream().filter(k -> k.startsWith(prefix)).toList()
+                .forEach(properties::remove);
+        values.forEach((key, value) -> {
+            if (value != null) properties.setProperty(key, value);
+        });
+        try {
+            flush();
+        } catch (RuntimeException failure) {
+            properties.stringPropertyNames().stream().filter(k -> k.startsWith(prefix)).toList()
+                    .forEach(properties::remove);
+            before.forEach(properties::setProperty);
+            throw failure;
+        }
     }
 }

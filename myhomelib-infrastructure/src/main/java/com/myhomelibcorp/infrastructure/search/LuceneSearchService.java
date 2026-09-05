@@ -220,22 +220,21 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             indexWriter.deleteAll();
             indexedSinceLastCommit = 0;
 
-            // Repository stream is a bounded keyset cursor: no OFFSET slowdown,
-            // no COUNT(*) per page, and no List<700000>. Related authors/genres
-            // are fetched in bounded batches instead of N+1 queries.
-            try (var books = bookQueryRepository.streamAll()) {
-                var iterator = books.iterator();
+            // Dedicated repository projection: skips tombstones in SQL, pages 5k active rows at a time
+            // and reads only fields consumed by Lucene. This avoids constructing hundreds of thousands
+            // of full Book/BookMetadata/BookFile aggregates during a full rebuild.
+            try (var snapshots = bookQueryRepository.streamSearchSnapshots()) {
+                var iterator = snapshots.iterator();
                 while (true) {
                     LuceneRebuildSupport.checkCancelled(cancelFlag);
                     long dbStarted = System.nanoTime();
                     boolean hasNext = iterator.hasNext();
-                    Book book = hasNext ? iterator.next() : null;
+                    BookSnapshot snapshot = hasNext ? iterator.next() : null;
                     dbReadNanos += System.nanoTime() - dbStarted;
                     if (!hasNext) break;
-                    if (book == null || book.isDeleted()) continue;
+                    if (snapshot == null) continue;
 
                     long buildStarted = System.nanoTime();
-                    BookSnapshot snapshot = BookSnapshot.fromBook(book);
                     Document document = documentMapper.toDocument(snapshot);
                     documentBuildNanos += System.nanoTime() - buildStarted;
 

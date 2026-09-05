@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.service;
 
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.RestoreRecoveryFiles;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 
@@ -108,10 +109,9 @@ public class BackupRestoreService {
         RestoreSwap swap = null;
         try {
             if (options.restoreDatabase()) {
-                Path dbFile = findDbFile(backupDir);
-                if (dbFile == null) return new RestoreResult(0, "Database file not found in backup");
-
                 Path targetDb = Paths.get(collectionBackupPort.getDatabasePath(collection));
+                Path dbFile = findDbFile(backupDir, targetDb.getFileName() == null ? null : targetDb.getFileName().toString());
+                if (dbFile == null) return new RestoreResult(0, "Database file not found in backup");
                 Files.createDirectories(targetDb.toAbsolutePath().getParent());
                 swap = installDatabaseCandidate(collection, dbFile, targetDb);
                 restoredItems++;
@@ -146,13 +146,18 @@ public class BackupRestoreService {
     }
 
     private RestoreSwap installDatabaseCandidate(Collection collection, Path sourceDb, Path targetDb) throws Exception {
-        Path stagedDb = targetDb.resolveSibling(targetDb.getFileName() + ".restore.tmp");
-        Path previousDb = targetDb.resolveSibling(targetDb.getFileName() + ".restore.previous");
+        Path stagedDb = RestoreRecoveryFiles.staged(targetDb);
+        Path previousDb = RestoreRecoveryFiles.previous(targetDb);
+        Path pendingMarker = RestoreRecoveryFiles.pending(targetDb);
         Files.deleteIfExists(stagedDb);
         Files.copy(sourceDb, stagedDb, StandardCopyOption.REPLACE_EXISTING);
         if (Files.size(stagedDb) <= 0) throw new IOException("Staged database is empty");
-        // Validate before closing the live collection: corrupt input must never disturb the current DB.
+        // Validate before touching the live collection: corrupt input must never disturb the current DB.
         collectionBackupPort.validateDatabaseFile(stagedDb);
+
+        // Durable transaction intent. From this point until commit, a process/OS crash must restore
+        // .restore.previous (when it exists) rather than accept a half-completed Restore.
+        RestoreRecoveryFiles.markPending(targetDb);
 
         collectionBackupPort.closeCurrentCollection();
         boolean previousExisted = Files.isRegularFile(targetDb);
@@ -165,9 +170,9 @@ public class BackupRestoreService {
             collectionBackupPort.openCollection(collection);
             databaseMigrationPort.migrateCurrentCollection();
             collectionBackupPort.validateDatabaseFile(targetDb);
-            return new RestoreSwap(targetDb, previousDb, previousExisted);
+            return new RestoreSwap(targetDb, previousDb, pendingMarker, previousExisted);
         } catch (Exception installFailure) {
-            RestoreSwap failedSwap = new RestoreSwap(targetDb, previousDb, previousExisted);
+            RestoreSwap failedSwap = new RestoreSwap(targetDb, previousDb, pendingMarker, previousExisted);
             rollbackDatabaseSwap(collection, failedSwap, installFailure);
             throw installFailure;
         } finally {
@@ -176,19 +181,26 @@ public class BackupRestoreService {
         }
     }
 
-    private void commitDatabaseSwap(RestoreSwap swap) {
+    /**
+     * Commits the filesystem Restore transaction. Clearing the pending marker is the commit point.
+     * It must succeed before the rollback source is deleted; otherwise the whole Restore is rolled
+     * back by the caller instead of being reported as successful with ambiguous recovery state.
+     */
+    private void commitDatabaseSwap(RestoreSwap swap) throws IOException {
+        RestoreRecoveryFiles.clearPending(swap.targetDb());
         try {
             Files.deleteIfExists(swap.previousDb());
             deleteSqliteSidecars(swap.previousDb());
         } catch (IOException cleanupError) {
-            // The restored database is already validated and active. Keeping the recovery file is safer
-            // than failing a successful restore solely because an old snapshot could not be deleted.
-            log.warn("Restore succeeded, but previous database recovery file could not be removed: {}",
+            // Pending is already gone, therefore a leftover .restore.previous is only stale cleanup
+            // residue. Startup recovery will keep the committed target and remove this file.
+            log.warn("Restore committed, but previous database recovery file could not be removed: {}",
                     swap.previousDb(), cleanupError);
         }
     }
 
     private void rollbackDatabaseSwap(Collection collection, RestoreSwap swap, Exception original) {
+        boolean databaseRollbackCompleted = false;
         try {
             try { collectionBackupPort.closeCurrentCollection(); }
             catch (RuntimeException closeFailure) { original.addSuppressed(closeFailure); }
@@ -202,6 +214,7 @@ public class BackupRestoreService {
             collectionBackupPort.openCollection(collection);
             databaseMigrationPort.migrateCurrentCollection();
             if (swap.previousExisted()) collectionBackupPort.validateDatabaseFile(swap.targetDb());
+            databaseRollbackCompleted = true;
             cacheInvalidationPort.invalidateAll();
             try { statisticsService.refreshStatistics(); }
             catch (RuntimeException statsFailure) { original.addSuppressed(statsFailure); }
@@ -211,6 +224,17 @@ public class BackupRestoreService {
         } catch (Exception rollbackFailure) {
             original.addSuppressed(rollbackFailure);
             log.error("Restore failed and rollback of the previous database also failed", rollbackFailure);
+        } finally {
+            // Clear only after the previous/live database itself is safely back and validated. If this
+            // cleanup fails, keeping the marker is safe: startup recovery is idempotent and will retry.
+            if (databaseRollbackCompleted) {
+                try { RestoreRecoveryFiles.clearPending(swap.targetDb()); }
+                catch (IOException markerCleanupFailure) {
+                    original.addSuppressed(markerCleanupFailure);
+                    log.warn("Previous database is restored, but Restore pending marker remains: {}",
+                            swap.pendingMarker(), markerCleanupFailure);
+                }
+            }
         }
     }
 
@@ -220,20 +244,27 @@ public class BackupRestoreService {
         Files.deleteIfExists(Path.of(database.toString() + "-shm"));
     }
 
-    private record RestoreSwap(Path targetDb, Path previousDb, boolean previousExisted) { }
+    private record RestoreSwap(Path targetDb, Path previousDb, Path pendingMarker, boolean previousExisted) { }
 
     // ==================== Допоміжні методи ====================
 
-    private Path findDbFile(Path backupDir) throws IOException {
+    private Path findDbFile(Path backupDir, String preferredName) throws IOException {
         try (var stream = Files.list(backupDir)) {
-            for (Path path : stream.toList()) {
-                String name = path.getFileName().toString();
-                if (name.endsWith(".db")) {
-                    return path;
+            List<Path> candidates = stream
+                    .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().toLowerCase(java.util.Locale.ROOT).endsWith(".db"))
+                    .sorted(java.util.Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
+                    .toList();
+            if (candidates.isEmpty()) return null;
+            if (preferredName != null && !preferredName.isBlank()) {
+                for (Path candidate : candidates) {
+                    if (candidate.getFileName().toString().equalsIgnoreCase(preferredName)) return candidate;
                 }
             }
+            if (candidates.size() == 1) return candidates.getFirst();
+            throw new IOException("Backup contains multiple SQLite databases and none matches the active collection: "
+                    + candidates.stream().map(path -> path.getFileName().toString()).toList());
         }
-        return null;
     }
 
     private void rebuildIndex() {

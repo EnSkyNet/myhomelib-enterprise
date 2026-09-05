@@ -115,12 +115,26 @@ public class ReaderView extends BorderPane {
     }
 
     private void toggleToolbarVisibility() {
+        ReaderPosition anchor = isBookOpen() ? canvas.getCurrentPosition() : null;
         boolean visible = !toolbar.isVisible();
         toolbar.setVisible(visible);
         toolbar.setManaged(visible);
-        // Зміна висоти toolbar змінює viewport; layout оновиться після pulse.
+
+        // Changing the toolbar height changes the pagination viewport. Re-layout on
+        // the next JavaFX pulse and restore the exact text anchor so showing the
+        // toolbar does not make the current page jump or render with stale geometry.
         Platform.runLater(() -> {
-            if (isBookOpen()) canvas.updateSize();
+            applyCss();
+            // managed changes alter BorderPane's top/center geometry. requestLayout() alone
+            // may leave the old canvas height until a later pulse (visible on Windows when
+            // the toolbar is restored). Layout this ReaderView now, then render against the
+            // final viewport and restore the exact text anchor.
+            requestLayout();
+            layout();
+            if (isBookOpen()) {
+                canvas.updateSize();
+                if (anchor != null) canvas.goToPosition(anchor);
+            }
             canvas.requestFocus();
         });
     }

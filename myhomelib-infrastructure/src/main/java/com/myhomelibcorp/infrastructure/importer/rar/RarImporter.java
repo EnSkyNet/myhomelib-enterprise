@@ -24,6 +24,7 @@ import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+import java.util.Locale;
 
 @Component
 @Slf4j
@@ -33,7 +34,7 @@ public class RarImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        return file != null && file.getFileName().toString().toLowerCase().matches(".*\\.(rar|cbr)$");
+        return file != null && file.getFileName().toString().toLowerCase(Locale.ROOT).matches(".*\\.(rar|cbr)$");
     }
 
     @Override public String getFormatName() { return "RAR"; }

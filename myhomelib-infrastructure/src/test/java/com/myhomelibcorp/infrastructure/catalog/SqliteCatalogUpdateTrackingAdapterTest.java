@@ -229,6 +229,33 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         assertThat(((Number) values.get("local")).intValue()).isEqualTo(1);
     }
 
+    @Test
+    void seenOnlyPathAdvancesRevisionWithoutCreatingUpdateEvents() {
+        insertBook("seen", false);
+        var baseline = adapter.beginSync("remote-collection:c1", null, "source-a");
+        adapter.recordImportedBooks(baseline, List.of(snapshot("seen", "book-a")));
+
+        var next = adapter.beginSync("remote-collection:c1", null, "source-b");
+        adapter.recordSeenBooks(next, List.of(snapshot("seen", "book-a")));
+
+        var state = jdbc.queryForMap("""
+                SELECT catalog_revision, catalog_fingerprint, source_book_key, catalog_file_name,
+                       catalog_folder, catalog_archive_entry, catalog_file_size,
+                       first_seen_revision, last_seen_revision
+                  FROM catalog_book_state WHERE book_id = 'seen'
+                """);
+        assertThat(((Number) state.get("catalog_revision")).longValue()).isEqualTo(2L);
+        assertThat(state.get("catalog_fingerprint")).isEqualTo("book-a");
+        assertThat(state.get("source_book_key")).isEqualTo("libid:seen");
+        assertThat(state.get("catalog_file_name")).isEqualTo("seen.fb2");
+        assertThat(state.get("catalog_folder")).isEqualTo("catalog.zip");
+        assertThat(state.get("catalog_archive_entry")).isEqualTo("seen.fb2");
+        assertThat(((Number) state.get("catalog_file_size")).longValue()).isEqualTo(120L);
+        assertThat(((Number) state.get("first_seen_revision")).longValue()).isEqualTo(1L);
+        assertThat(((Number) state.get("last_seen_revision")).longValue()).isEqualTo(2L);
+        assertThat(adapter.countPendingUpdates()).isZero();
+    }
+
     private void insertBook(String id, boolean local) {
         jdbc.update("""
                 INSERT INTO books(id, title, file_name, folder, archive_entry, file_size, local, deleted)

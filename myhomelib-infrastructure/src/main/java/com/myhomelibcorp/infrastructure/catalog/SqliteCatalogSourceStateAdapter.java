@@ -57,6 +57,18 @@ public class SqliteCatalogSourceStateAdapter implements CatalogSourceStatePort {
     }
 
     @Override
+    public boolean matchesAppliedFingerprint(String sourceKey, String sha256) {
+        if (sourceKey == null || sourceKey.isBlank() || sha256 == null || sha256.isBlank()) return false;
+        String normalizedSha = sha256.trim();
+        Long count = jdbc().queryForObject("""
+                SELECT COUNT(*)
+                  FROM catalog_sources
+                 WHERE source_key = ? AND source_fingerprint = ?
+                """, Long.class, sourceKey.trim(), normalizedSha);
+        return count != null && count > 0;
+    }
+
+    @Override
     public void recordApplied(String sourceKey, String appliedVersion) {
         ensure(sourceKey, "");
         jdbc().update("""

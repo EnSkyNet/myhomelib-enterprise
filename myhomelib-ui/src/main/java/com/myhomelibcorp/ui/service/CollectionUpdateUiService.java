@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -43,7 +44,7 @@ public class CollectionUpdateUiService {
         String current = settings.get(sourceKey, "");
         if (current.isBlank() && collection.getUrl() != null) {
             String collectionUrl = collection.getUrl().trim();
-            String lower = collectionUrl.toLowerCase();
+            String lower = collectionUrl.toLowerCase(Locale.ROOT);
             if (lower.endsWith(".inpx") || lower.endsWith(".zip") || lower.contains("alex80.github.io/mhl")) {
                 current = collectionUrl;
             }

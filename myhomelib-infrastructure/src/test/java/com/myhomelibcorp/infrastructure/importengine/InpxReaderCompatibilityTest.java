@@ -9,6 +9,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
 import java.util.zip.ZipEntry;
@@ -56,6 +57,43 @@ class InpxReaderCompatibilityTest {
         assertThat(record.field("TITLE")).isEqualTo("Title");
         assertThat(record.field("LIBID")).isEqualTo("lib-7");
         assertThat(record.archiveName()).isEqualTo("default.zip");
+    }
+
+    @Test
+    void infersFlibustaLibrateLayoutWhenStructureInfoIsMissing(@TempDir Path dir) throws Exception {
+        Path inpx = dir.resolve("flibusta-no-structure.inpx");
+        String line = String.join(String.valueOf(D),
+                "Author,First,", "sf", "Title", "Series", "7", "book", "123", "lib-7", "0",
+                "fb2", "2020-01-01", "uk", "3230", "space opera,AI") + D + "\n";
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(inpx))) {
+            put(out, "online.inp", line.getBytes(StandardCharsets.UTF_8));
+        }
+
+        InpxRecord record = reader.read(inpx, true).next();
+        assertThat(record.field("LIBRATE")).isEqualTo("3230");
+        assertThat(record.field("KEYWORDS")).isEqualTo("space opera,AI");
+
+        InpxBookNormalizer normalizer = new InpxBookNormalizer(new HashMap<>(), new HashMap<>());
+        var normalized = normalizer.normalize(
+                record, new HashMap<>(), new HashMap<>(), dir, new HashMap<>(), "test-source", true);
+        assertThat(normalized).isNotNull();
+        assertThat(normalized.row()[25]).isEqualTo(3230);
+        assertThat(normalized.row()[9]).isEqualTo("space opera,AI");
+    }
+
+    @Test
+    void keepsClassicNumericKeywordWithTrailingDelimiterWhenStructureInfoIsMissing(@TempDir Path dir) throws Exception {
+        Path inpx = dir.resolve("classic-no-structure.inpx");
+        String line = String.join(String.valueOf(D),
+                "Author,First,", "sf", "Title", "Series", "7", "book", "123", "lib-7", "0",
+                "fb2", "2020-01-01", "uk", "3230") + D + "\n";
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(inpx))) {
+            put(out, "classic.inp", line.getBytes(StandardCharsets.UTF_8));
+        }
+
+        InpxRecord record = reader.read(inpx).next();
+        assertThat(record.field("LIBRATE")).isEmpty();
+        assertThat(record.field("KEYWORDS")).isEqualTo("3230");
     }
 
     @Test

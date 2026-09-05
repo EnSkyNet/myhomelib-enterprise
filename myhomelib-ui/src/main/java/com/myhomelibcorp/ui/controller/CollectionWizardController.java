@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
+import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
@@ -52,6 +53,7 @@ public class CollectionWizardController {
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
+    private final ApplicationSettingsPort applicationSettings;
 
     private final CollectionWizardViewModel model = new CollectionWizardViewModel();
 
@@ -61,6 +63,8 @@ public class CollectionWizardController {
     @FXML private ComboBox<CollectionType> typeComboBox;
     @FXML private TextField sourcePathField;
     @FXML private TextField urlField;
+    @FXML private Label catalogUpdateUrlLabel;
+    @FXML private TextField catalogUpdateUrlField;
     @FXML private TextField userField;
     @FXML private PasswordField passwordField;
     @FXML private Label connectionScriptLabel;
@@ -77,9 +81,13 @@ public class CollectionWizardController {
     @FXML private Label confirmRootFolder;
     @FXML private Label confirmDbFile;
     @FXML private Label confirmSourcePath;
+    @FXML private Label confirmCatalogUpdateUrl;
     @FXML private Label confirmImportOnCreate;
     @FXML private Label confirmCreateIndex;
     @FXML private Label errorLabel2;
+    @FXML private Label step1Indicator;
+    @FXML private Label step2Indicator;
+    @FXML private Label step3Indicator;
 
     private Stage stage;
     private Runnable onComplete;
@@ -128,6 +136,7 @@ public class CollectionWizardController {
         );
         sourcePathField.textProperty().bindBidirectional(model.sourcePathProperty());
         urlField.textProperty().bindBidirectional(model.urlProperty());
+        catalogUpdateUrlField.textProperty().bindBidirectional(model.catalogUpdateUrlProperty());
         userField.textProperty().bindBidirectional(model.userProperty());
         passwordField.textProperty().bindBidirectional(model.passwordProperty());
         connectionScriptArea.textProperty().bindBidirectional(model.connectionScriptProperty());
@@ -142,6 +151,7 @@ public class CollectionWizardController {
         dbPathField.textProperty().addListener((obs, old, val) -> validate());
         sourcePathField.textProperty().addListener((obs, old, val) -> validate());
         urlField.textProperty().addListener((obs, old, val) -> validate());
+        catalogUpdateUrlField.textProperty().addListener((obs, old, val) -> validate());
 
         validate();
         updateStep(0);
@@ -191,6 +201,7 @@ public class CollectionWizardController {
         }
 
         CreateCollectionRequest request = buildRequest();
+        String catalogUpdateUrl = model.getCatalogUpdateUrl() == null ? "" : model.getCatalogUpdateUrl().trim();
         List<String> errors = collectionValidator.validate(request);
         if (!errors.isEmpty()) {
             showError(String.join("\n", errors));
@@ -236,6 +247,9 @@ public class CollectionWizardController {
                             log.info("Колекцію додано до списку UI: {}", dto.getName());
                         }
                         appState.setCurrentLibraryCollection(activated);
+                        if (!catalogUpdateUrl.isBlank() && activated.getId() != null && !activated.getId().isBlank()) {
+                            applicationSettings.put("collection." + activated.getId() + ".inpxUrl", catalogUpdateUrl);
+                        }
                         eventPublisher.publishEvent(new NavigationRefreshEvent());
                         operationCenter.complete(operationId, "Колекція готова: " + activated.getName());
                         appState.getStatusBar().setStatusText("Колекцію '" + activated.getName() + "' створено");
@@ -302,6 +316,7 @@ public class CollectionWizardController {
         errorLabel.setText("");
         errorLabel2.setText("");
 
+        updateStepIndicators(step);
         if (step == 2) {
             updateConfirmation();
         }
@@ -310,6 +325,18 @@ public class CollectionWizardController {
             boolean active = i == step;
             wizardContent.getChildren().get(i).setVisible(active);
             wizardContent.getChildren().get(i).setManaged(active);
+        }
+    }
+
+    private void updateStepIndicators(int activeStep) {
+        Label[] indicators = {step1Indicator, step2Indicator, step3Indicator};
+        for (int i = 0; i < indicators.length; i++) {
+            Label indicator = indicators[i];
+            if (indicator == null) continue;
+            indicator.getStyleClass().remove("wizard-step-active");
+            if (i == activeStep) {
+                indicator.getStyleClass().add("wizard-step-active");
+            }
         }
     }
 
@@ -346,6 +373,14 @@ public class CollectionWizardController {
 
     private void updateOnlineFieldsVisibility(CollectionType type) {
         boolean online = type != null && type.requiresUrl();
+        if (catalogUpdateUrlLabel != null) {
+            catalogUpdateUrlLabel.setVisible(online);
+            catalogUpdateUrlLabel.setManaged(online);
+        }
+        if (catalogUpdateUrlField != null) {
+            catalogUpdateUrlField.setVisible(online);
+            catalogUpdateUrlField.setManaged(online);
+        }
         if (connectionScriptLabel != null) {
             connectionScriptLabel.setVisible(online);
             connectionScriptLabel.setManaged(online);
@@ -368,6 +403,9 @@ public class CollectionWizardController {
         confirmRootFolder.setText(model.getRootFolder() != null ? model.getRootFolder().toString() : "");
         confirmDbFile.setText(model.getDbFile() != null ? model.getDbFile().toString() : "");
         confirmSourcePath.setText(model.getSourcePath() != null ? model.getSourcePath() : "");
+        if (confirmCatalogUpdateUrl != null) {
+            confirmCatalogUpdateUrl.setText(model.getCatalogUpdateUrl() != null ? model.getCatalogUpdateUrl() : "");
+        }
         confirmImportOnCreate.setText(model.isImportOnCreate() ? "Так" : "Ні");
         confirmCreateIndex.setText(model.isCreateIndex() ? "Так" : "Ні");
     }

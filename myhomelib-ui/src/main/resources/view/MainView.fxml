@@ -127,7 +127,7 @@
                 </Menu>
             </MenuBar>
 
-            <FlowPane hgap="4" vgap="4" alignment="CENTER_LEFT" styleClass="main-toolbar-wrap">
+            <ToolBar styleClass="main-toolbar-wrap">
                 <Button fx:id="backButton" text="←" onAction="#handleBack" disable="true"/>
                 <Button fx:id="forwardButton" text="→" onAction="#handleForward" disable="true"/>
                 <Separator orientation="VERTICAL"/>
@@ -135,6 +135,9 @@
                 <Separator orientation="VERTICAL"/>
                 <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="300"/>
                 <Button text="🔍" onAction="#handleSearch"/>
+                <Button text="✕" onAction="#handleClearSearch" focusTraversable="false">
+                    <tooltip><Tooltip text="Очистити пошук"/></tooltip>
+                </Button>
                 <Separator orientation="VERTICAL"/>
                 <Button text="+Імпорт" onAction="#handleImportDirectory"/>
                 <Button text="+Книга" onAction="#handleAddBook"/>
@@ -157,7 +160,7 @@
                 <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
                 <Separator orientation="VERTICAL"/>
                 <Button text="⚙" onAction="#handleSettings"/>
-            </FlowPane>
+            </ToolBar>
         </VBox>
     </top>
 
@@ -168,9 +171,9 @@
     </left>
 
     <center>
-        <VBox VBox.vgrow="ALWAYS" style="-fx-background-color: -mhl-panel;">
+        <VBox VBox.vgrow="ALWAYS" minWidth="0.0" style="-fx-background-color: -mhl-panel;">
             <fx:include source="alphabet-toolbar-view.fxml"/>
-            <StackPane fx:id="workspaceStackPane" VBox.vgrow="ALWAYS"/>
+            <StackPane fx:id="workspaceStackPane" minWidth="0.0" VBox.vgrow="ALWAYS"/>
         </VBox>
     </center>
 

@@ -10,6 +10,7 @@ import java.io.File;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.util.List;
+import java.util.Locale;
 
 @Service
 public class BookListExportService {
@@ -17,7 +18,7 @@ public class BookListExportService {
     public BookListExportService(ApplicationState state,DialogService dialogs){this.state=state;this.dialogs=dialogs;}
     public void export(Window owner,String format){
         List<BookViewModel> books=state.getBookTable().getBooks(); if(books.isEmpty()){dialogs.showWarning("Порожній список","Немає книг для експорту.");return;}
-        String f=format.toLowerCase();FileChooser fc=new FileChooser();fc.setTitle("Експорт поточного списку");fc.setInitialFileName("books."+f);fc.getExtensionFilters().add(new FileChooser.ExtensionFilter(f.toUpperCase(),"*."+f));File file=fc.showSaveDialog(owner);if(file==null)return;
+        String f=format.toLowerCase(Locale.ROOT);FileChooser fc=new FileChooser();fc.setTitle("Експорт поточного списку");fc.setInitialFileName("books."+f);fc.getExtensionFilters().add(new FileChooser.ExtensionFilter(f.toUpperCase(Locale.ROOT),"*."+f));File file=fc.showSaveDialog(owner);if(file==null)return;
         try{String data=switch(f){case "html"->html(books);case "rtf"->rtf(books);default->txt(books);};Files.writeString(file.toPath(),data,StandardCharsets.UTF_8);dialogs.showInfo("Експорт завершено",books.size()+" книг -> "+file);}catch(Exception e){dialogs.showError("Помилка експорту",e.getMessage());}
     }
     private String txt(List<BookViewModel>b){StringBuilder s=new StringBuilder();int i=1;for(var x:b)s.append(i++).append(". ").append(x.getAuthorsText()).append(" — ").append(x.getTitle()).append(x.getSeries()==null||x.getSeries().isBlank()?"":" ["+x.getSeries()+"]").append('\n');return s.toString();}

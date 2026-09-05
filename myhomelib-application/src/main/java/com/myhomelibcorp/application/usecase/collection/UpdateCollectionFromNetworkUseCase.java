@@ -29,6 +29,7 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.CatalogUpdateRecoveryFiles;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 
 import java.nio.file.Files;
@@ -137,7 +138,9 @@ public class UpdateCollectionFromNetworkUseCase {
         }
 
         AtomicBoolean flag = cancel == null ? new AtomicBoolean(false) : cancel;
-        DoubleConsumer sink = progress == null ? p -> { } : progress;
+        DoubleConsumer sink = progress == null ? p -> { } : p -> {
+            try { progress.accept(p); } catch (RuntimeException ignored) { }
+        };
         Consumer<OperationProgress> telemetry = operationProgress == null ? p -> { } : operationProgress;
         String operationId = "catalog-update-" + UUID.randomUUID();
         long operationStartedNanos = System.nanoTime();
@@ -157,6 +160,8 @@ public class UpdateCollectionFromNetworkUseCase {
         List<ImportIssue> issues = new ArrayList<>();
 
         try {
+            recoverPendingUpdateBeforeNewAttempt(active, telemetry, operationId);
+
             currentStage.set(OperationStage.CHECKING_SERVER);
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.CHECKING_SERVER, true)
                     .withCurrentItem(safeSource));
@@ -184,6 +189,24 @@ public class UpdateCollectionFromNetworkUseCase {
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.VALIDATING, true)
                     .withProgress(plan.packages().size(), plan.packages().size()));
 
+            RemoteCatalogPackage unchangedFullSnapshot = unchangedSingleFullSnapshot(plan, sourceKey);
+            if (unchangedFullSnapshot != null) {
+                checkCancelled(flag);
+                downloaded.add(unchangedFullSnapshot.file());
+                sourceState.recordDownloaded(sourceKey, unchangedFullSnapshot.metadata().etag(),
+                        unchangedFullSnapshot.metadata().lastModified(), unchangedFullSnapshot.metadata().sha256(),
+                        unchangedFullSnapshot.metadata().datasetSchema());
+                currentStage.set(OperationStage.FINALIZING);
+                emit(telemetry, OperationProgress.stage(operationId, OperationStage.FINALIZING, false)
+                        .withCounts(0, 0, 0, 0, 0, 0, 0));
+                sourceState.recordApplied(sourceKey, lastVersion(plan));
+                sink.accept(1.0);
+                emit(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
+                        .withCounts(0, 0, 0, 0, 0, 0, 0));
+                return new ImportResult(0, 0, 0, 0, elapsedMillis(operationStartedNanos),
+                        ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of());
+            }
+
             // Each catalog package is committed in bounded DB transactions. A checkpoint is therefore
             // created immediately before the first possible catalog mutation, not before network I/O.
             // This avoids a giant long-lived SQLite transaction while still giving late Lucene/statistics
@@ -195,6 +218,9 @@ public class UpdateCollectionFromNetworkUseCase {
                         .withCurrentItem("SQLite checkpoint"));
                 collectionBackupPort.createDatabaseSnapshot(active, checkpoint);
                 collectionBackupPort.validateDatabaseFile(checkpoint);
+                // The durable marker is the crash boundary: from this point a JVM/OS termination
+                // will cause the next collection open to restore this validated pre-update DB.
+                CatalogUpdateRecoveryFiles.markPending(active.getId(), operationId);
             }
 
             for (int packageIndex = 0; packageIndex < plan.packages().size(); packageIndex++) {
@@ -266,33 +292,40 @@ public class UpdateCollectionFromNetworkUseCase {
             final long indexErrors = errors;
             final long indexWarnings = issues.size();
 
-            sink.accept(0.82);
-            currentStage.set(OperationStage.UPDATING_SEARCH_INDEX);
-            if (!indexChanges.complete()) {
-                searchIndexer.rebuildIndex(flag, p -> {
-                    checkCancelled(flag);
-                    emit(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
-                            .withProgress(p.processed(), p.total())
-                            .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
-                                    indexSkipped, indexDuplicates, indexWarnings, indexErrors));
-                });
-            } else {
-                applyIncrementalIndex(indexChanges, flag, p -> emit(telemetry,
-                        OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
-                                .withProgress(p[0], p[1])
-                                .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
-                                        indexSkipped, indexDuplicates, indexWarnings, indexErrors)));
-            }
-            sink.accept(0.93);
-            checkCancelled(flag);
+            boolean catalogMutated = imported > 0
+                    || indexChanges.insertedCount() > 0
+                    || indexChanges.updatedCount() > 0
+                    || indexChanges.deletedCount() > 0;
 
-            if (statisticsRepository != null) {
-                currentStage.set(OperationStage.REFRESHING_STATISTICS);
-                emit(telemetry, OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false)
-                        .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
-                                skipped, duplicates, issues.size(), errors));
-                statisticsRepository.invalidate();
-                statisticsRepository.refreshStatistics();
+            sink.accept(0.82);
+            if (catalogMutated) {
+                currentStage.set(OperationStage.UPDATING_SEARCH_INDEX);
+                if (!indexChanges.complete()) {
+                    searchIndexer.rebuildIndex(flag, p -> {
+                        checkCancelled(flag);
+                        emit(telemetry, OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                                .withProgress(p.processed(), p.total())
+                                .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
+                                        indexSkipped, indexDuplicates, indexWarnings, indexErrors));
+                    });
+                } else {
+                    applyIncrementalIndex(indexChanges, flag, p -> emit(telemetry,
+                            OperationProgress.stage(operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                                    .withProgress(p[0], p[1])
+                                    .withCounts(indexChanges.insertedCount(), indexChanges.updatedCount(), indexChanges.deletedCount(),
+                                            indexSkipped, indexDuplicates, indexWarnings, indexErrors)));
+                }
+                sink.accept(0.93);
+                checkCancelled(flag);
+
+                if (statisticsRepository != null) {
+                    currentStage.set(OperationStage.REFRESHING_STATISTICS);
+                    emit(telemetry, OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false)
+                            .withCounts(changes.insertedCount(), changes.updatedCount(), changes.deletedCount(),
+                                    skipped, duplicates, issues.size(), errors));
+                    statisticsRepository.invalidate();
+                    statisticsRepository.refreshStatistics();
+                }
             }
             sink.accept(0.98);
 
@@ -302,6 +335,15 @@ public class UpdateCollectionFromNetworkUseCase {
                             skipped, duplicates, issues.size(), errors));
             String applied = lastVersion(plan);
             sourceState.recordApplied(sourceKey, applied);
+
+            // Removing the durable pending marker is the catalog-update commit point. Do not report
+            // success while the marker still exists: a later restart would otherwise interpret the
+            // successful update as interrupted and restore the pre-update checkpoint.
+            if (checkpoint != null) {
+                commitRecoveryCheckpoint(active, checkpoint);
+                checkpoint = null;
+            }
+
             sink.accept(1.0);
             ImportStatus status = errors > 0 || !issues.isEmpty() ? ImportStatus.SUCCESS_WITH_WARNINGS : ImportStatus.SUCCESS;
             emit(telemetry, OperationProgress.stage(operationId, OperationStage.COMPLETED, false)
@@ -369,17 +411,67 @@ public class UpdateCollectionFromNetworkUseCase {
                 }
             }
             if (checkpoint != null && !keepCheckpoint) {
-                try { Files.deleteIfExists(checkpoint); } catch (Exception ignored) { }
+                try { CatalogUpdateRecoveryFiles.clear(active.getId()); } catch (Exception ignored) { }
             }
         }
     }
 
+
+    private static void commitRecoveryCheckpoint(Collection collection, Path checkpoint) throws java.io.IOException {
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) return;
+
+        // Marker deletion is strict because it is the commit boundary. Checkpoint deletion is only
+        // cleanup: once the marker is gone the checkpoint is no longer authoritative and a leftover
+        // file cannot trigger rollback on the next start.
+        CatalogUpdateRecoveryFiles.deleteMarkerOnly(collection.getId());
+        try { Files.deleteIfExists(checkpoint); } catch (java.io.IOException ignored) { }
+    }
+
     private Path updateCheckpointPath(Collection collection, String operationId) {
-        String collectionId = collection == null || collection.getId() == null ? "unknown" : collection.getId();
-        String safeId = collectionId.replaceAll("[^A-Za-z0-9._-]", "_");
-        return AppPaths.cacheDir().resolve("catalog-update-recovery")
-                .resolve(safeId + "-" + operationId + ".db")
-                .toAbsolutePath().normalize();
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) {
+            throw new IllegalArgumentException("Collection id is required for update recovery checkpoint");
+        }
+        // One deterministic checkpoint per collection makes an interrupted update recoverable on
+        // the next process start without having to discover a random operation UUID.
+        return CatalogUpdateRecoveryFiles.checkpoint(collection.getId()).toAbsolutePath().normalize();
+    }
+
+    private void recoverPendingUpdateBeforeNewAttempt(
+            Collection collection,
+            Consumer<OperationProgress> telemetry,
+            String operationId) {
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) return;
+        String collectionId = collection.getId();
+        if (!CatalogUpdateRecoveryFiles.isPending(collectionId)) return;
+        if (collectionBackupPort == null) {
+            throw new IllegalStateException("Знайдено незавершене попереднє оновлення, але recovery adapter недоступний");
+        }
+
+        Path checkpoint = CatalogUpdateRecoveryFiles.checkpoint(collectionId);
+        if (!Files.isRegularFile(checkpoint)) {
+            throw new IllegalStateException("Recovery marker існує, але SQLite checkpoint відсутній: " + checkpoint);
+        }
+
+        emit(telemetry, OperationProgress.stage(operationId, OperationStage.ROLLING_BACK, false)
+                .withCurrentItem("Відновлення після аварійного завершення попереднього update"));
+        try {
+            collectionBackupPort.validateDatabaseFile(checkpoint);
+            collectionBackupPort.restoreDatabaseSnapshot(collection, checkpoint);
+            AtomicBoolean neverCancelRecovery = new AtomicBoolean(false);
+            searchIndexer.rebuildIndex(neverCancelRecovery, p -> emit(telemetry,
+                    OperationProgress.stage(operationId, OperationStage.ROLLING_BACK, false)
+                            .withProgress(p.processed(), p.total())
+                            .withCurrentItem("Відновлення пошукового індексу після crash")));
+            if (statisticsRepository != null) {
+                statisticsRepository.invalidate();
+                statisticsRepository.refreshStatistics();
+            }
+            CatalogUpdateRecoveryFiles.clear(collectionId);
+        } catch (Exception recoveryFailure) {
+            throw new IllegalStateException(
+                    "Не вдалося відновити колекцію після аварійно перерваного online update; checkpoint збережено",
+                    recoveryFailure);
+        }
     }
 
     private RollbackOutcome attemptRollback(
@@ -549,6 +641,15 @@ public class UpdateCollectionFromNetworkUseCase {
     private static boolean isFailure(ImportStatus status) {
         return status == ImportStatus.VALIDATION_FAILURE || status == ImportStatus.DOWNLOAD_FAILURE
                 || status == ImportStatus.FORMAT_FAILURE || status == ImportStatus.IMPORT_FAILURE;
+    }
+
+    private RemoteCatalogPackage unchangedSingleFullSnapshot(RemoteCatalogUpdatePlan plan, String sourceKey) {
+        if (plan == null || plan.packages() == null || plan.packages().size() != 1) return null;
+        RemoteCatalogPackage pkg = plan.packages().getFirst();
+        if (pkg == null || !pkg.fullSnapshot() || pkg.file() == null || pkg.metadata() == null) return null;
+        String sha256 = pkg.metadata().sha256();
+        if (sha256 == null || sha256.isBlank()) return null;
+        return sourceState.matchesAppliedFingerprint(sourceKey, sha256) ? pkg : null;
     }
 
     private static String lastVersion(RemoteCatalogUpdatePlan plan) {

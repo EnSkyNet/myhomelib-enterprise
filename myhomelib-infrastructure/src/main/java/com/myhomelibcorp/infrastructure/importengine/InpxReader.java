@@ -29,6 +29,12 @@ public class InpxReader {
             "AUTHOR", "GENRE", "TITLE", "SERIES", "SERNO", "FILE", "SIZE",
             "LIBID", "DEL", "EXT", "DATE", "LANG", "KEYWORDS"
     );
+    // Common LibRusEc/Flibusta variant used by real online catalogs that omit structure.info.
+    // The only difference from the classic 13-field layout is LIBRATE before KEYWORDS.
+    private static final List<String> DEFAULT_STRUCTURE_WITH_LIBRATE = List.of(
+            "AUTHOR", "GENRE", "TITLE", "SERIES", "SERNO", "FILE", "SIZE",
+            "LIBID", "DEL", "EXT", "DATE", "LANG", "LIBRATE", "KEYWORDS"
+    );
     private static final List<String> ARCHIVE_EXTENSIONS = List.of(
             ".tar.bz2", ".tar.gz", ".tar.xz", ".fb2.zip", ".fb2zip",
             ".tbz2", ".tgz", ".txz", ".zip", ".7z", ".rar", ".cbr", ".cbz", ".cpio", ".jar", ".tar");
@@ -131,7 +137,7 @@ public class InpxReader {
         try {
             BufferedReader br = newDetectedReader(Files.newInputStream(file));
             String base = stripExtension(file.getFileName().toString());
-            return new SingleReaderIterator(br, DEFAULT_STRUCTURE, file.getFileName().toString(), base + ".zip");
+            return new SingleReaderIterator(br, DEFAULT_STRUCTURE, true, file.getFileName().toString(), base + ".zip");
         } catch (IOException e) {
             throw new UncheckedIOException("Failed to read INP: " + file, e);
         }
@@ -141,6 +147,7 @@ public class InpxReader {
         private final ZipFile zip;
         private final List<ZipEntry> inpEntries;
         private final List<String> structure;
+        private final boolean inferFallbackStructure;
         private final Map<String, String> archivesByStem;
         private int entryIndex;
         private BufferedReader currentReader;
@@ -152,7 +159,9 @@ public class InpxReader {
         private ZipInpxIterator(Path path, boolean onlineCollection) throws IOException {
             this.zip = openZip(path);
             validateArchive(this.zip);
-            this.structure = readStructure(zip);
+            StructureInfo structureInfo = readStructure(zip);
+            this.structure = structureInfo.fields();
+            this.inferFallbackStructure = structureInfo.inferred();
             this.archivesByStem = readArchives(zip);
             this.inpEntries = zip.stream()
                     .filter(e -> isCatalogInpMember(e, onlineCollection))
@@ -200,7 +209,7 @@ public class InpxReader {
                     if (line.isBlank()) continue;
                     String inpName = currentEntry.getName();
                     String archive = resolveArchiveName(inpName, archivesByStem);
-                    next = parseLine(line, structure, inpName, archive);
+                    next = parseLine(line, structure, inferFallbackStructure, inpName, archive);
                     recordCount++;
                     if (recordCount % 100_000 == 0 && recordCount > 0) {
                         log.info("Прочитано {} записів з INPX", recordCount);
@@ -233,15 +242,17 @@ public class InpxReader {
     private static final class SingleReaderIterator implements Iterator<InpxRecord>, AutoCloseable {
         private final BufferedReader reader;
         private final List<String> structure;
+        private final boolean inferFallbackStructure;
         private final String inpName;
         private final String archiveName;
         private String nextLine;
         private boolean closed;
         private long recordCount;
 
-        private SingleReaderIterator(BufferedReader reader, List<String> structure, String inpName, String archiveName) {
+        private SingleReaderIterator(BufferedReader reader, List<String> structure, boolean inferFallbackStructure, String inpName, String archiveName) {
             this.reader = reader;
             this.structure = structure;
+            this.inferFallbackStructure = inferFallbackStructure;
             this.inpName = inpName;
             this.archiveName = archiveName;
             advance();
@@ -256,7 +267,7 @@ public class InpxReader {
             if (recordCount % 100_000 == 0 && recordCount > 0) {
                 log.info("Прочитано {} записів з INP", recordCount);
             }
-            return parseLine(line, structure, inpName, archiveName);
+            return parseLine(line, structure, inferFallbackStructure, inpName, archiveName);
         }
         private void advance() {
             try {
@@ -276,27 +287,60 @@ public class InpxReader {
         }
     }
 
-    private static InpxRecord parseLine(String line, List<String> structure, String inpName, String archiveName) {
+    private static InpxRecord parseLine(String line, List<String> structure, boolean inferFallbackStructure, String inpName, String archiveName) {
         char delimiter = line.indexOf(FIELD_DELIMITER) >= 0 ? FIELD_DELIMITER : '|';
-        Map<String, String> fields = new LinkedHashMap<>(Math.max(16, structure.size() * 2));
+        if (inferFallbackStructure) {
+            return parseFallbackLine(line, delimiter, inpName, archiveName);
+        }
+        Map<String, String> fields = InpxRecord.newParsedFields(structure.size());
         int fieldIndex = 0;
         int start = 0;
         for (int i = 0; i <= line.length() && fieldIndex < structure.size(); i++) {
             if (i == line.length() || line.charAt(i) == delimiter) {
-                fields.put(structure.get(fieldIndex++), line.substring(start, i));
+                fields.put(structure.get(fieldIndex++), line.substring(start, i).trim());
                 start = i + 1;
             }
         }
         while (fieldIndex < structure.size()) fields.put(structure.get(fieldIndex++), "");
-        return new InpxRecord(fields, inpName, archiveName);
+        return InpxRecord.parsed(fields, inpName, archiveName);
     }
 
-    private static List<String> readStructure(ZipFile zip) throws IOException {
+    /**
+     * Parses a structure-less INP in one pass. The physical field count selects between the
+     * classic 13-field layout and the common 14-field LibRusEc/Flibusta layout with LIBRATE.
+     * A trailing delimiter terminates the final value and does not create an additional field.
+     */
+    private static InpxRecord parseFallbackLine(String line, char delimiter, String inpName, String archiveName) {
+        String[] values = new String[DEFAULT_STRUCTURE_WITH_LIBRATE.size()];
+        int fieldCount = 0;
+        int start = 0;
+        for (int i = 0; i < line.length(); i++) {
+            if (line.charAt(i) != delimiter) continue;
+            if (fieldCount < values.length) values[fieldCount] = line.substring(start, i).trim();
+            fieldCount++;
+            start = i + 1;
+        }
+        if (start < line.length()) {
+            if (fieldCount < values.length) values[fieldCount] = line.substring(start).trim();
+            fieldCount++;
+        }
+
+        List<String> effectiveStructure = fieldCount == DEFAULT_STRUCTURE_WITH_LIBRATE.size()
+                ? DEFAULT_STRUCTURE_WITH_LIBRATE
+                : DEFAULT_STRUCTURE;
+        Map<String, String> fields = InpxRecord.newParsedFields(effectiveStructure.size());
+        for (int i = 0; i < effectiveStructure.size(); i++) {
+            fields.put(effectiveStructure.get(i), i < values.length && values[i] != null ? values[i] : "");
+        }
+        return InpxRecord.parsed(fields, inpName, archiveName);
+    }
+
+    private static StructureInfo readStructure(ZipFile zip) throws IOException {
         ZipEntry entry = findIgnoreCase(zip, "structure.info");
-        if (entry == null) return DEFAULT_STRUCTURE;
+        if (entry == null) return new StructureInfo(DEFAULT_STRUCTURE, true);
         try (BufferedReader reader = newDetectedReader(boundedEntryStream(zip, entry, MAX_METADATA_BYTES))) {
             String text = readSmallText(reader, 64 * 1024).replace("\uFEFF", "").trim();
-            if (text.isBlank()) return DEFAULT_STRUCTURE;
+            if (text.isBlank()) return new StructureInfo(DEFAULT_STRUCTURE, true);
             String firstLine = text.lines().filter(s -> !s.isBlank()).findFirst().orElse(text);
             String[] names = firstLine.indexOf(FIELD_DELIMITER) >= 0
                     ? firstLine.split(String.valueOf(FIELD_DELIMITER), -1)
@@ -304,8 +348,14 @@ public class InpxReader {
             List<String> result = Arrays.stream(names)
                     .map(String::trim).map(s -> s.toUpperCase(Locale.ROOT))
                     .filter(s -> !s.isBlank()).toList();
-            return result.isEmpty() ? DEFAULT_STRUCTURE : result;
+            return result.isEmpty()
+                    ? new StructureInfo(DEFAULT_STRUCTURE, true)
+                    : new StructureInfo(result, false);
         }
+    }
+
+    private record StructureInfo(List<String> fields, boolean inferred) {
+        private StructureInfo { fields = List.copyOf(fields); }
     }
 
     private static Map<String, String> readArchives(ZipFile zip) throws IOException {

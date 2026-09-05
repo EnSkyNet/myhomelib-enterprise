@@ -77,7 +77,12 @@ class CollectionSourceMonitorAdapterTest {
             Thread.sleep(100);
         }
         assertThat(adapter.findState("c1").orElseThrow().updateAvailable()).isTrue();
-        verify(publisher, times(1)).publish(any(CollectionSourceUpdateAvailableEvent.class));
+        // checkNow() persists update_available before publishing the event. Under a loaded
+        // test reactor the polling thread can observe the DB update a few milliseconds
+        // before the watcher thread invokes the publisher, so wait for that asynchronous
+        // side effect instead of racing it.
+        verify(publisher, timeout(2_000).times(1))
+                .publish(any(CollectionSourceUpdateAvailableEvent.class));
     }
 
     private JdbcTemplate metadataJdbc() {

@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.Locale;
 
 @Slf4j
 public class DefaultBookFormatRegistry implements BookFormatRegistry {
@@ -24,7 +25,7 @@ public class DefaultBookFormatRegistry implements BookFormatRegistry {
         }
         String extension = source.extension();
         if (!extension.isEmpty()) {
-            BookFormat byExt = formatsByExtension.get(extension.toLowerCase());
+            BookFormat byExt = formatsByExtension.get(extension.toLowerCase(Locale.ROOT));
             if (byExt != null && byExt.supports(source)) {
                 return Optional.of(byExt);
             }
@@ -42,7 +43,7 @@ public class DefaultBookFormatRegistry implements BookFormatRegistry {
         if (extension == null || extension.isEmpty()) {
             return Optional.empty();
         }
-        return Optional.ofNullable(formatsByExtension.get(extension.toLowerCase()));
+        return Optional.ofNullable(formatsByExtension.get(extension.toLowerCase(Locale.ROOT)));
     }
 
     @Override
@@ -65,7 +66,7 @@ public class DefaultBookFormatRegistry implements BookFormatRegistry {
         }
         formatsById.put(format.id(), format);
         for (String ext : format.extensions()) {
-            formatsByExtension.put(ext.toLowerCase(), format);
+            formatsByExtension.put(ext.toLowerCase(Locale.ROOT), format);
         }
         log.info("Зареєстровано формат: {} (розширення: {})",
                 format.displayName(), format.extensions());
@@ -81,7 +82,7 @@ public class DefaultBookFormatRegistry implements BookFormatRegistry {
         BookFormat format = formatsById.remove(id);
         if (format != null) {
             for (String ext : format.extensions()) {
-                formatsByExtension.remove(ext.toLowerCase(), format);
+                formatsByExtension.remove(ext.toLowerCase(Locale.ROOT), format);
             }
             log.info("Видалено формат: {}", format.displayName());
         }

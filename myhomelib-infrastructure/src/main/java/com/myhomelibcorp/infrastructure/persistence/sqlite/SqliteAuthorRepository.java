@@ -309,19 +309,30 @@ public class SqliteAuthorRepository implements AuthorRepository {
         if (query == null || query.isBlank()) return List.of();
         int safeLimit = Math.max(1, Math.min(limit, 500));
         int safeOffset = Math.max(0, offset);
-        String needle = "%" + escapeLike(AuthorSearchNameNormalizer.normalizeQuery(query)) + "%";
+        List<String> tokens = AuthorSearchNameNormalizer.normalizeQueryTokens(query, 8);
+        if (tokens.isEmpty()) return List.of();
+
+        // Match every normalized token independently. Besides keeping the lookup
+        // Unicode-aware, this makes both "Дмитрий Дорничев" and "Дорничев Дмитрий"
+        // resolve to the canonical persisted key "дорничев дмитрий".
+        String predicate = String.join(" AND ", java.util.Collections.nCopies(tokens.size(),
+                "COALESCE(search_name, '') LIKE ? ESCAPE '\\'"));
         String sql = """
                 SELECT *
                 FROM authors
-                WHERE COALESCE(search_name, '') LIKE ? ESCAPE '\\'
+                WHERE %s
                 ORDER BY
                     COALESCE(last_name, '') COLLATE NOCASE,
                     COALESCE(first_name, '') COLLATE NOCASE,
                     COALESCE(middle_name, '') COLLATE NOCASE,
                     id
                 LIMIT ? OFFSET ?
-                """;
-        return getJdbcTemplate().query(sql, authorRowMapper, needle, safeLimit, safeOffset);
+                """.formatted(predicate);
+        List<Object> params = new java.util.ArrayList<>(tokens.size() + 2);
+        tokens.forEach(token -> params.add("%" + escapeLike(token) + "%"));
+        params.add(safeLimit);
+        params.add(safeOffset);
+        return getJdbcTemplate().query(sql, authorRowMapper, params.toArray());
     }
 
     private static String escapeLike(String value) {

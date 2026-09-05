@@ -16,11 +16,19 @@ def require(cond, message):
 snapshot = usecase.find('collectionBackupPort.createDatabaseSnapshot')
 mutation = usecase.find('mutationMayHaveCommitted = true')
 import_call = usecase.find('importer.execute(')
-record_applied = usecase.find('sourceState.recordApplied')
+preflight = usecase.find('RemoteCatalogPackage unchangedFullSnapshot')
+preflight_applied = usecase.find('sourceState.recordApplied', preflight) if preflight >= 0 else -1
+preflight_return = usecase.find('return new ImportResult', preflight_applied) if preflight_applied >= 0 else -1
+record_applied = usecase.rfind('sourceState.recordApplied')
 stats = usecase.find('statisticsRepository.refreshStatistics()')
 require(snapshot >= 0 and mutation >= 0 and import_call >= 0 and snapshot < mutation < import_call,
         'SQLite checkpoint must be created before first possible committed catalog mutation')
-require(record_applied > stats >= 0, 'appliedVersion must advance only after statistics refresh')
+require(preflight >= 0 and preflight_applied >= 0 and preflight_return >= 0 and preflight < preflight_applied < preflight_return < snapshot,
+        'unchanged full-snapshot preflight must finish before checkpoint/mutation path')
+require('matchesAppliedFingerprint' in usecase,
+        'unchanged full-snapshot preflight must use the committed applied fingerprint, not download metadata alone')
+require(record_applied > stats >= 0,
+        'mutating path appliedVersion must advance only after statistics refresh')
 require('attemptRollback(active, checkpoint, mutationMayHaveCommitted' in usecase,
         'failure/cancellation path must attempt rollback after possible DB mutation')
 require('collectionBackupPort.restoreDatabaseSnapshot(collection, checkpoint)' in usecase,
@@ -54,6 +62,7 @@ if errors:
     raise SystemExit(1)
 
 print('ONLINE UPDATE ROLLBACK CHECK: PASS')
+print(' - unchanged applied full snapshots bypass checkpoint/import/derived-state work')
 print(' - SQLite checkpoint precedes bounded catalog commits')
 print(' - failure/cancellation restores SQLite and rebuilds Lucene/statistics')
 print(' - failed rollback preserves recovery checkpoint')

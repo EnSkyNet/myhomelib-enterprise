@@ -1,13 +1,14 @@
 package com.myhomelibcorp.reader.api;
 
 import java.util.Set;
+import java.util.Locale;
 
 public interface BookFormat {
 
     String id();
 
     default String displayName() {
-        return id().toUpperCase();
+        return id().toUpperCase(Locale.ROOT);
     }
 
     Set<String> extensions();

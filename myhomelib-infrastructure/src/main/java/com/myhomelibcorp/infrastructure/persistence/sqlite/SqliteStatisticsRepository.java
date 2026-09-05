@@ -124,19 +124,50 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
     @Override
     public void refreshStatistics() {
         JdbcTemplate jt = getJdbcTemplate();
-        long books = queryExecutor.queryForLong("SELECT COUNT(*) FROM books WHERE COALESCE(deleted,0)=0");
+        BookAggregateStatistics aggregate = queryExecutor.queryForObject("""
+                SELECT
+                    COALESCE(SUM(CASE WHEN COALESCE(deleted,0)=0 THEN 1 ELSE 0 END), 0) AS books_count,
+                    COUNT(DISTINCT CASE
+                        WHEN COALESCE(deleted,0)=0 AND language IS NOT NULL AND TRIM(language)<>''
+                        THEN language END) AS languages_count,
+                    COUNT(DISTINCT CASE
+                        WHEN COALESCE(deleted,0)=0 AND publisher IS NOT NULL AND TRIM(publisher)<>''
+                        THEN publisher END) AS publishers_count,
+                    COALESCE(SUM(CASE
+                        WHEN COALESCE(deleted,0)=0 THEN COALESCE(file_size,0) ELSE 0 END), 0) AS total_size_bytes,
+                    COALESCE(SUM(CASE
+                        WHEN COALESCE(deleted,0)=0 AND COALESCE(local,0)=1 THEN 1 ELSE 0 END), 0) AS local_books_count,
+                    COALESCE(SUM(CASE
+                        WHEN COALESCE(deleted,0)=0 AND COALESCE(progress,0)>=100 THEN 1 ELSE 0 END), 0) AS read_books_count,
+                    COALESCE(SUM(CASE WHEN COALESCE(deleted,0)<>0 THEN 1 ELSE 0 END), 0) AS deleted_books_count,
+                    COALESCE(SUM(CASE
+                        WHEN COALESCE(deleted,0)=0 AND TRIM(COALESCE(cover_hash,''))='' THEN 1 ELSE 0 END), 0)
+                        AS missing_covers_count
+                  FROM books
+                """, (rs, rowNum) -> new BookAggregateStatistics(
+                rs.getLong("books_count"),
+                rs.getLong("languages_count"),
+                rs.getLong("publishers_count"),
+                rs.getLong("total_size_bytes"),
+                rs.getLong("local_books_count"),
+                rs.getLong("read_books_count"),
+                rs.getLong("deleted_books_count"),
+                rs.getLong("missing_covers_count")));
+        if (aggregate == null) aggregate = BookAggregateStatistics.empty();
+
+        long books = aggregate.books();
         long authors = queryExecutor.queryForLong("SELECT COUNT(*) FROM authors");
         long series = queryExecutor.queryForLong("SELECT COUNT(*) FROM series");
         long genres = queryExecutor.queryForLong("SELECT COUNT(*) FROM genres");
-        long languages = queryExecutor.queryForLong("SELECT COUNT(DISTINCT language) FROM books WHERE COALESCE(deleted,0)=0 AND language IS NOT NULL AND TRIM(language)<>''");
-        long publishers = queryExecutor.queryForLong("SELECT COUNT(DISTINCT publisher) FROM books WHERE COALESCE(deleted,0)=0 AND publisher IS NOT NULL AND TRIM(publisher)<>''");
-        long totalSize = queryExecutor.queryForLong("SELECT COALESCE(SUM(file_size), 0) FROM books WHERE COALESCE(deleted,0)=0");
-        long local = queryExecutor.queryForLong("SELECT COUNT(*) FROM books WHERE COALESCE(deleted,0)=0 AND COALESCE(local,0)=1");
+        long languages = aggregate.languages();
+        long publishers = aggregate.publishers();
+        long totalSize = aggregate.totalSize();
+        long local = aggregate.local();
         long remote = Math.max(0L, books - local);
-        long read = queryExecutor.queryForLong("SELECT COUNT(*) FROM books WHERE COALESCE(deleted,0)=0 AND COALESCE(progress,0)>=100");
+        long read = aggregate.read();
         long unread = Math.max(0L, books - read);
         long favourites = queryExecutor.queryForLong("SELECT COUNT(*) FROM book_groups bg JOIN groups g ON g.id=bg.group_id JOIN books b ON b.id=bg.book_id WHERE LOWER(g.name)='favorites' AND COALESCE(b.deleted,0)=0");
-        long deleted = queryExecutor.queryForLong("SELECT COUNT(*) FROM books WHERE COALESCE(deleted,0)<>0");
+        long deleted = aggregate.deleted();
         long sources = queryExecutor.queryForLong("SELECT COUNT(*) FROM catalog_sources");
         long duplicates = queryExecutor.queryForLong("""
                 SELECT COALESCE(SUM(cnt - 1), 0)
@@ -153,12 +184,7 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                         HAVING COUNT(*) > 1
                   ) duplicate_groups
                 """);
-        long missingCovers = queryExecutor.queryForLong("""
-                SELECT COUNT(*)
-                  FROM books
-                 WHERE COALESCE(deleted,0)=0
-                   AND TRIM(COALESCE(cover_hash,'')) = ''
-                """);
+        long missingCovers = aggregate.missingCovers();
 
         String sql = """
                 INSERT OR REPLACE INTO library_statistics
@@ -173,5 +199,13 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
                 duplicates, missingCovers, local, remote, read, unread, favourites, deleted, sources);
         log.info("Statistics refreshed: books={}, local={}, remote={}, deleted={}, authors={}",
                 books, local, remote, deleted, authors);
+    }
+
+    private record BookAggregateStatistics(
+            long books, long languages, long publishers, long totalSize,
+            long local, long read, long deleted, long missingCovers) {
+        static BookAggregateStatistics empty() {
+            return new BookAggregateStatistics(0, 0, 0, 0, 0, 0, 0, 0);
+        }
     }
 }

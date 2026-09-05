@@ -208,9 +208,25 @@ class HttpOnlineBookDownloadAdapterTest {
         Collection collection = onlineCollection(null, null, template);
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), archives);
 
-        adapter.download(book("u", "книга.fb2", "Архів книг.zip", "текст/книга.fb2"), collection, null, null);
+        var downloaded = adapter.download(
+                book("u", "книга.fb2", "Архів книг.zip", "текст/книга.fb2"), collection, null, null);
 
-        assertThat(temp.resolve("Архів книг.zip")).exists();
+        assertThat(downloaded.physicalPath()).exists();
+        assertThat(downloaded.folder()).isEqualTo("Архів книг.zip");
+        assertThat(downloaded.archiveEntry()).isEqualTo("текст/книга.fb2");
+    }
+
+    @Test
+    void filesystemFallbackIsAsciiDeterministicAndPreservesArchiveExtension() {
+        String first = HttpOnlineBookDownloadAdapter.filesystemSafeFallbackRelative("Каталог/Архів книг.zip");
+        String second = HttpOnlineBookDownloadAdapter.filesystemSafeFallbackRelative("Каталог/Архів книг.zip");
+        String other = HttpOnlineBookDownloadAdapter.filesystemSafeFallbackRelative("Каталог/Інший архів.zip");
+
+        assertThat(first).isEqualTo(second);
+        assertThat(first).endsWith(".zip");
+        assertThat(first).matches("[\\x00-\\x7F]+");
+        assertThat(other).isNotEqualTo(first);
+        assertThat(first).doesNotContain("..");
     }
 
     @Test

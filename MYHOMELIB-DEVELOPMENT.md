@@ -141,3 +141,38 @@ Historical summaries live in `docs/history/`; original legacy notes live in `doc
 ## Refactoring guardrails (2026-09-02)
 
 For new work, preserve the completed stabilization rules: do not run repository/file/index maintenance on the JavaFX Application Thread; acquire the collection-operation coordinator for mutating/maintenance flows; expose long operations through `OperationProgress`/Operation Center; never translate database/index failures into normal empty results; keep interactive search/navigation bounded; and preserve semantic Reader position when layout changes. `REFACTORING_COMPLETION.md` records the current source-level baseline and release boundary.
+
+## Stage 05 real Online Update phase probes
+
+Real P3 measurements are opt-in and must use user-supplied production-sized data; DB, INPX, Lucene index, JFR and logs are never committed or packaged in a code-only checkpoint.
+
+Available real-data probes in `myhomelib-infrastructure`:
+
+- `RealInpxPerformanceProbeTest` — full INPX production importer, including changed-full classification;
+- `RealSelectiveLucenePerformanceProbeTest` — builds the baseline Lucene index from a pre-change DB and then measures the exact selective change-set stored in `book_search_state` of the changed DB;
+- `RealStatisticsPerformanceProbeTest` — production statistics refresh on a real DB.
+
+For `RealSelectiveLucenePerformanceProbeTest`, pass `-Dmhl.real.seed.db=<pre-change.db>`, `-Dmhl.real.changed.db=<post-change.db>` and optionally `-Dmhl.real.index=<scratch-index-dir>`. The changed DB is expected to contain only the exact changed IDs in `book_search_state`; the probe asserts that the final Lucene document count remains equal to the baseline count.
+
+P3 acceptance must report Download, SHA/preflight, SQLite checkpoint/validation, INPX import, selective/full Lucene, statistics, total duration and peak memory separately. Linux/container results are reproducibility evidence only; the release acceptance numbers still have to be repeated on the target Windows machine.
+
+### Stage 05 P3 comparison probes
+
+The P3 Linux comparison is split into opt-in probes so no benchmark corpus, database or Lucene index is committed:
+
+- `RealOnlineNoOpPerformanceProbeTest` measures only the production orchestration after the downloader has already returned a full snapshot with an applied SHA-256 fingerprint. Network transfer and hashing are intentionally outside this timed region; the test asserts that checkpoint/importer/Lucene/statistics are never called.
+- `RealInpxPerformanceProbeTest` measures initial/full/delta production import paths. A synthetic UTF-8 delta made from the Flibusta fallback corpus must retain the UTF-8 BOM at the start of `online.inp`; otherwise an archive without `structure.info` can legitimately select a legacy encoding fallback and is not comparable with the UTF-8 source corpus.
+- `RealLucenePerformanceProbeTest` and `RealStatisticsPerformanceProbeTest` measure the initial derived-state rebuild on the production-created initial DB.
+
+Representative Linux/JDK 21 measurements on the Stage 05 real Flibusta corpus:
+
+| Scenario / phase | Result |
+| --- | ---: |
+| Initial full importer, 562,307 records | 59.865 s |
+| Initial full Lucene rebuild, 444,779 docs | 21.485 s |
+| Initial statistics refresh | 0.880 s |
+| Identical full snapshot, post-download fingerprint fast-path | median 0.390 ms; p95 0.663 ms (100 runs) |
+| Changed full snapshot, exactly 1,000 title updates | importer median 11.719 s |
+| Small delta containing the same 1,000 title updates | importer 0.509 / 0.582 / 0.444 s; median 0.509 s |
+
+The small-delta runs preserve 562,307 books, 126,317 authors, 675,502 `book_authors`, 796,151 `book_genres`, 117,528 deleted books and report exactly `updated=1000`, `deleted=0`. Using the separately measured checkpoint, selective-Lucene and statistics phases, its assembled post-download phase budget is about 3.43 s; this is a phase sum, not a single wall-clock Online Update measurement.

@@ -99,6 +99,152 @@ class VersionedUserDataTransferAdapterTest {
 
 
     @Test
+    void currentSchemaHeaderRequiresCanonicalFormatBeforeDatabaseMutation() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-header-format").toString());
+        Db target = db(tempDir.resolve("target-header-format.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','HF',3,0,NULL)");
+
+        Path manifest = tempDir.resolve("missing-format.json");
+        Files.writeString(manifest, portableWithBookState(
+                "{\"libId\":\"HF\",\"sourceBookId\":\"new\",\"rate\":9,\"progress\":0,\"review\":\"bad\"}")
+                .replace(",\"format\":\"myhomelib-user-data\"", ""));
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+        assertThatThrownBy(() -> adapter.restoreFrom(manifest))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("format is missing");
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(3);
+    }
+
+    @Test
+    void malformedOrConflictingVersionHeaderIsNeverDowngradedToLegacyV1() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-header-version").toString());
+        Db target = db(tempDir.resolve("target-header-version.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','HV',4,0,NULL)");
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+
+        Path stringVersion = tempDir.resolve("string-schema-version.json");
+        Files.writeString(stringVersion, portableWithBookState(
+                "{\"libId\":\"HV\",\"sourceBookId\":\"new\",\"rate\":8,\"progress\":0,\"review\":\"bad\"}")
+                .replace("\"schemaVersion\":2", "\"schemaVersion\":\"2\""));
+        assertThatThrownBy(() -> adapter.restoreFrom(stringVersion))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("schemaVersion must be an integer");
+
+        Path conflicting = tempDir.resolve("conflicting-version.json");
+        Files.writeString(conflicting, portableWithBookState(
+                "{\"libId\":\"HV\",\"sourceBookId\":\"new\",\"rate\":8,\"progress\":0,\"review\":\"bad\"}")
+                .replace("\"schemaVersion\":2", "\"schemaVersion\":2,\"version\":1"));
+        assertThatThrownBy(() -> adapter.restoreFrom(conflicting))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("Conflicting portable user-data schema versions");
+
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(4);
+    }
+
+    @Test
+    void currentSchemaRestoreReplacesFilterSliceAndClearsExplicitNullReaderGlobal() throws Exception {
+        Path dataDir = tempDir.resolve("appdata-exact-external");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        Files.createDirectories(dataDir.resolve("config"));
+        Path readerFile = dataDir.resolve("config/reader-preferences.json");
+        Files.writeString(readerFile, "{\"fontFamily\":\"Old\"}");
+
+        Db target = db(tempDir.resolve("target-exact-external.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','L1',1,0,NULL)");
+        MapSettings settings = new MapSettings();
+        settings.put("filter.global.language", "ru");
+        settings.put("filter.global.author", "stale");
+        settings.put("unrelated.setting", "keep");
+
+        Path manifest = tempDir.resolve("exact-external.json");
+        String json = portableWithBookState(
+                "{\"libId\":\"L1\",\"sourceBookId\":\"new\",\"rate\":7,\"progress\":0,\"review\":\"ok\"}")
+                .replace("\"filterSettings\":{}", "\"filterSettings\":{\"filter.global.language\":\"uk\"}");
+        Files.writeString(manifest, json);
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), settings, mapper);
+        adapter.restoreFrom(manifest);
+
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(7);
+        assertThat(settings.get("filter.global.language", "")).isEqualTo("uk");
+        assertThat(settings.findByPrefix("filter.global.")).doesNotContainKey("filter.global.author");
+        assertThat(settings.get("unrelated.setting", "")).isEqualTo("keep");
+        assertThat(readerFile).doesNotExist();
+    }
+
+    @Test
+    void malformedV2ExternalSectionIsRejectedBeforeDatabaseMutation() throws Exception {
+        Path dataDir = tempDir.resolve("appdata-preflight");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        Files.createDirectories(dataDir.resolve("config"));
+        Path readerFile = dataDir.resolve("config/reader-preferences.json");
+        Files.writeString(readerFile, "{\"fontFamily\":\"Old\"}");
+
+        Db target = db(tempDir.resolve("target-preflight.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','L2',1,0,NULL)");
+        MapSettings settings = new MapSettings();
+        settings.put("filter.global.language", "ru");
+
+        Path manifest = tempDir.resolve("invalid-filter-section.json");
+        String json = portableWithBookState(
+                "{\"libId\":\"L2\",\"sourceBookId\":\"new\",\"rate\":9,\"progress\":0,\"review\":\"bad\"}")
+                .replace("\"filterSettings\":{}", "\"filterSettings\":[]");
+        Files.writeString(manifest, json);
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), settings, mapper);
+        assertThatThrownBy(() -> adapter.restoreFrom(manifest))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("filterSettings");
+
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(1);
+        assertThat(settings.get("filter.global.language", "")).isEqualTo("ru");
+        assertThat(Files.readString(readerFile)).contains("Old");
+    }
+
+    @Test
+    void externalSettingsFailureRollsBackDatabaseAndRestoresExternalState() throws Exception {
+        Path dataDir = tempDir.resolve("appdata-compensation");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        Files.createDirectories(dataDir.resolve("config"));
+        Path readerFile = dataDir.resolve("config/reader-preferences.json");
+        Files.writeString(readerFile, "{\"fontFamily\":\"Old\"}");
+
+        Db target = db(tempDir.resolve("target-compensation.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','L3',2,0,NULL)");
+        FailOnceReplaceSettings settings = new FailOnceReplaceSettings();
+        settings.put("filter.global.language", "ru");
+        settings.put("filter.global.author", "before");
+
+        Path manifest = tempDir.resolve("compensation.json");
+        String json = portableWithBookState(
+                "{\"libId\":\"L3\",\"sourceBookId\":\"new\",\"rate\":8,\"progress\":0,\"review\":\"new\"}")
+                .replace("\"filterSettings\":{}", "\"filterSettings\":{\"filter.global.language\":\"uk\"}")
+                .replace("\"global\":null", "\"global\":{\"fontFamily\":\"New\"}");
+        Files.writeString(manifest, json);
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), settings, mapper);
+        assertThatThrownBy(() -> adapter.restoreFrom(manifest))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("portable user data");
+
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(2);
+        assertThat(settings.get("filter.global.language", "")).isEqualTo("ru");
+        assertThat(settings.get("filter.global.author", "")).isEqualTo("before");
+        assertThat(Files.readString(readerFile)).contains("Old");
+    }
+
+    @Test
     void exportFailsInsteadOfSilentlyDroppingCorruptReaderPreferences() throws Exception {
         Path dataDir = tempDir.resolve("appdata-corrupt-reader");
         System.setProperty("myhomelib.dataDir", dataDir.toString());
@@ -207,7 +353,7 @@ class VersionedUserDataTransferAdapterTest {
 
     private record Db(SQLiteDataSource dataSource, JdbcTemplate jdbc) { }
 
-    private static final class MapSettings implements ApplicationSettingsPort {
+    private static class MapSettings implements ApplicationSettingsPort {
         private final Map<String,String> values = new LinkedHashMap<>();
         @Override public String get(String key, String defaultValue) { return values.getOrDefault(key, defaultValue); }
         @Override public void put(String key, String value) { if(value==null)values.remove(key); else values.put(key,value); }
@@ -216,6 +362,19 @@ class VersionedUserDataTransferAdapterTest {
             Map<String,String> out = new LinkedHashMap<>();
             values.forEach((k, v) -> { if (k.startsWith(prefix)) out.put(k, v); });
             return out;
+        }
+    }
+
+    private static final class FailOnceReplaceSettings extends MapSettings {
+        private boolean failNextReplace = true;
+
+        @Override
+        public void replaceByPrefix(String prefix, Map<String, String> values) {
+            super.replaceByPrefix(prefix, values);
+            if (failNextReplace) {
+                failNextReplace = false;
+                throw new IllegalStateException("simulated settings persistence failure");
+            }
         }
     }
 }

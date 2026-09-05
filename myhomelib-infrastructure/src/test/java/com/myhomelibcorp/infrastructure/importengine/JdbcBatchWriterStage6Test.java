@@ -65,6 +65,45 @@ class JdbcBatchWriterStage6Test {
     }
 
 
+
+    @Test
+    void resolvesCurrentBatchAuthorCandidatesAndKeepsAlreadyPersistentAuthorIds() {
+        HikariDataSource ds = new HikariDataSource();
+        ds.setJdbcUrl("jdbc:sqlite:file:stage6-author-links-" + UUID.randomUUID() + "?mode=memory&cache=shared");
+        ds.setDriverClassName("org.sqlite.JDBC");
+        ds.setMaximumPoolSize(2);
+        try {
+            Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+            JdbcTemplate jdbc = new JdbcTemplate(ds);
+            CollectionManager manager = mock(CollectionManager.class);
+            when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+            JdbcBatchWriter writer = new JdbcBatchWriter(manager);
+
+            String persistentId = UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name, search_name) VALUES (?, '', '', 'Author', 'author')",
+                    persistentId);
+
+            Object[] candidateRow = stage6Row();
+            candidateRow[0] = "candidate-book";
+            candidateRow[19] = List.of("candidate-author-id");
+            Object[] cachedRow = stage6Row();
+            cachedRow[0] = "cached-book";
+            cachedRow[19] = List.of(persistentId);
+
+            writer.batchInsertFull(List.of(candidateRow, cachedRow),
+                    java.util.Map.of("candidate-author-id", persistentId));
+
+            assertThat(jdbc.queryForObject(
+                    "SELECT author_id FROM book_authors WHERE book_id='candidate-book'", String.class))
+                    .isEqualTo(persistentId);
+            assertThat(jdbc.queryForObject(
+                    "SELECT author_id FROM book_authors WHERE book_id='cached-book'", String.class))
+                    .isEqualTo(persistentId);
+        } finally {
+            ds.close();
+        }
+    }
+
     @Test
     void resolvesAuthorNamesContainingPipeWithoutLosingPersistentId() {
         HikariDataSource ds = new HikariDataSource();
@@ -87,6 +126,33 @@ class JdbcBatchWriterStage6Test {
                     "SELECT id FROM authors WHERE first_name=? AND last_name=?",
                     String.class,
                     "Дамский клуб LADY | переводы", "Группа"));
+        } finally {
+            ds.close();
+        }
+    }
+
+    @Test
+    void resolvesExistingAuthorAfterInsertOrIgnoreConflict() {
+        HikariDataSource ds = new HikariDataSource();
+        ds.setJdbcUrl("jdbc:sqlite:file:stage6-author-conflict-" + UUID.randomUUID() + "?mode=memory&cache=shared");
+        ds.setDriverClassName("org.sqlite.JDBC");
+        ds.setMaximumPoolSize(2);
+        try {
+            Flyway.configure().dataSource(ds).locations("classpath:db/migration").load().migrate();
+            JdbcTemplate jdbc = new JdbcTemplate(ds);
+            CollectionManager manager = mock(CollectionManager.class);
+            when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+            JdbcBatchWriter writer = new JdbcBatchWriter(manager);
+
+            String persistentId = UUID.randomUUID().toString();
+            jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name, search_name) VALUES (?, ?, ?, ?, ?)",
+                    persistentId, "Дмитрий", "Александрович", "Дорничев", "дорничев дмитрий александрович");
+            Author candidate = new Author("Дмитрий", "Александрович", "Дорничев");
+
+            var resolved = writer.batchInsertAuthorsAndResolveIds(List.of(candidate));
+
+            assertThat(resolved.get(candidate.getId().asString())).isEqualTo(persistentId);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM authors", Integer.class)).isEqualTo(1);
         } finally {
             ds.close();
         }

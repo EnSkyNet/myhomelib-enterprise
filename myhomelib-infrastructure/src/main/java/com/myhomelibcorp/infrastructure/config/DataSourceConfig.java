@@ -13,9 +13,10 @@ import java.sql.SQLException;
 public class DataSourceConfig {
 
     // Large INPX imports intentionally keep one SQLite transaction open for atomicity.
-    // Ten seconds reports every healthy import as an apparent leak, so keep leak detection
-    // useful for genuine leaks without flagging normal catalog imports.
-    private static final long LEAK_DETECTION_THRESHOLD_MS = 300_000L;
+    // A 5-minute threshold produced false "Apparent connection leak" warnings for healthy
+    // 700k-record imports that later returned the connection normally. Keep leak detection,
+    // but place it above the expected full-catalog transaction window.
+    private static final long LEAK_DETECTION_THRESHOLD_MS = 1_800_000L; // 30 minutes
 
     /**
      * Створює базовий DataSource для мета-БД (колекції).

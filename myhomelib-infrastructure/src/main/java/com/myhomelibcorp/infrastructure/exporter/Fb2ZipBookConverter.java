@@ -10,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
+import java.util.Locale;
 
 @Component
 @Slf4j
@@ -36,7 +37,7 @@ public class Fb2ZipBookConverter implements BookConverter {
 
         String entryName = book.getArchiveEntry();
         if (entryName == null || entryName.isBlank()) entryName = book.getFileName();
-        if (!entryName.toLowerCase().endsWith(".fb2") && !entryName.toLowerCase().endsWith(".fbd")) {
+        if (!entryName.toLowerCase(Locale.ROOT).endsWith(".fb2") && !entryName.toLowerCase(Locale.ROOT).endsWith(".fbd")) {
             entryName = book.getTitle() + ".fb2";
         }
 

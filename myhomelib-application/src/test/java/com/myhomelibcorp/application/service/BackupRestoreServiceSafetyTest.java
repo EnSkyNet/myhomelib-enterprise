@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.port.out.infrastructure.DatabaseMigrationPo
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.shared.util.RestoreRecoveryFiles;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -51,9 +52,40 @@ class BackupRestoreServiceSafetyTest {
                 new BackupRestoreService.RestoreOptions(backup, false, false, true)));
 
         assertEquals("old", Files.readString(f.targetDb));
+        assertFalse(RestoreRecoveryFiles.isPending(f.targetDb));
         verify(f.backupPort, times(2)).closeCurrentCollection();
         verify(f.backupPort, times(2)).openCollection(f.collection);
         verify(f.backupPort, atLeastOnce()).validateDatabaseFile(f.targetDb);
+    }
+
+
+    @Test
+    void ambiguousBackupFolderIsRejectedBeforeClosingLiveCollection() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path backup = Files.createDirectories(temp.resolve("backup-ambiguous"));
+        Files.writeString(backup.resolve("first.db"), "first");
+        Files.writeString(backup.resolve("second.db"), "second");
+
+        IOException error = assertThrows(IOException.class, () -> f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true)));
+
+        assertTrue(error.getMessage().contains("multiple SQLite databases"));
+        assertEquals("old", Files.readString(f.targetDb));
+        verify(f.backupPort, never()).closeCurrentCollection();
+    }
+
+    @Test
+    void matchingDatabaseNameWinsWhenBackupFolderContainsOtherDatabases() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path backup = Files.createDirectories(temp.resolve("backup-multiple-with-match"));
+        Files.writeString(backup.resolve("other.db"), "wrong");
+        Files.writeString(backup.resolve("current.db"), "right");
+
+        BackupRestoreService.RestoreResult result = f.service.restore(
+                new BackupRestoreService.RestoreOptions(backup, false, false, true));
+
+        assertTrue(result.isSuccess());
+        assertEquals("right", Files.readString(f.targetDb));
     }
 
     @Test
@@ -68,6 +100,7 @@ class BackupRestoreServiceSafetyTest {
         assertTrue(result.isSuccess());
         assertEquals("new", Files.readString(f.targetDb));
         assertFalse(Files.exists(Path.of(f.targetDb + ".restore.previous")));
+        assertFalse(RestoreRecoveryFiles.isPending(f.targetDb));
         verify(f.statistics).refreshStatistics();
     }
 

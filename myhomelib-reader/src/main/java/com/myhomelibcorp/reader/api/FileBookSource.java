@@ -5,6 +5,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.OptionalLong;
+import java.util.Locale;
 
 public class FileBookSource implements BookSource {
 
@@ -44,7 +45,7 @@ public class FileBookSource implements BookSource {
     public String extension() {
         String name = name();
         int dot = name.lastIndexOf('.');
-        return dot > 0 ? name.substring(dot + 1).toLowerCase() : "";
+        return dot > 0 ? name.substring(dot + 1).toLowerCase(Locale.ROOT) : "";
     }
 
     @Override

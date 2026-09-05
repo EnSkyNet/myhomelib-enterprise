@@ -8,13 +8,14 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Locale;
 
 @Component
 public class EpubBookConverter implements BookConverter {
     @Override public boolean supports(Book book) {
         String name = book.getArchiveEntry();
         if (name == null || name.isBlank()) name = book.getFileName();
-        return name != null && name.toLowerCase().endsWith(".epub");
+        return name != null && name.toLowerCase(Locale.ROOT).endsWith(".epub");
     }
     @Override public String getTargetExtension() { return ".epub"; }
     @Override public String getFormatName() { return "EPUB"; }

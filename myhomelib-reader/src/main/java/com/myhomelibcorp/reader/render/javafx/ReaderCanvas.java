@@ -83,6 +83,10 @@ public class ReaderCanvas extends StackPane {
         this.paginationController = new ReaderPaginationController(engine);
         this.renderer = fxRenderer;
         this.canvas = fxRenderer.getCanvas(); // критичний fix: один спільний Canvas
+        // The Canvas size is bound to this Pane. It must not participate in the Pane's
+        // computed preferred size, otherwise toolbar hide/show creates a feedback loop:
+        // the expanded Canvas keeps ReaderCanvas 40px too tall when the toolbar returns.
+        this.canvas.setManaged(false);
         this.zoomBaseFontSize = engine.getSettings().fontSize();
         this.autoScrollController = new AutoScrollController(this::nextPage);
         this.selectionController = new ReaderSelectionController(engine, fxRenderer);

@@ -147,14 +147,15 @@ public class AuthorWorkspaceController {
         selectColumn.setId("select");
         masterSelectionCheckBox = new CheckBox();
         masterSelectionCheckBox.setAllowIndeterminate(true);
-        masterSelectionCheckBox.setTooltip(new Tooltip("Виділити всі видимі книги"));
+        masterSelectionCheckBox.setTooltip(new Tooltip("Виділити всі книги автора"));
         masterSelectionCheckBox.setOnAction(event -> {
             if (updatingMasterSelection) return;
-            List<BookViewModel> visible = visibleConcreteBooks();
-            BookSelectionService.SelectionState before = bookSelectionService.state(visible);
-            // A click on PARTIAL must mean "select all". JavaFX otherwise cycles the
-            // indeterminate checkbox through a state that can look like a no-op/clear.
-            bookSelectionService.setSelected(visible, before != BookSelectionService.SelectionState.ALL);
+            List<BookViewModel> selectable = selectableConcreteBooks();
+            BookSelectionService.SelectionState before = bookSelectionService.state(selectable);
+            // Selection is based on the loaded author result, not on expanded rows.
+            // Otherwise collapsing every series leaves only group headers and makes
+            // "select all" impossible.
+            bookSelectionService.setSelected(selectable, before != BookSelectionService.SelectionState.ALL);
             booksTableView.refresh();
             updateSelectionStatus();
         });
@@ -520,18 +521,24 @@ public class AuthorWorkspaceController {
 
     private void updateMasterSelectionState() {
         if (masterSelectionCheckBox == null) return;
-        List<BookViewModel> visible = visibleConcreteBooks();
-        BookSelectionService.SelectionState state = bookSelectionService.state(visible);
+        List<BookViewModel> selectable = selectableConcreteBooks();
+        BookSelectionService.SelectionState state = bookSelectionService.state(selectable);
         updatingMasterSelection = true;
         try {
-            masterSelectionCheckBox.setDisable(visible.isEmpty());
+            masterSelectionCheckBox.setDisable(selectable.isEmpty());
             masterSelectionCheckBox.setIndeterminate(state == BookSelectionService.SelectionState.PARTIAL);
             masterSelectionCheckBox.setSelected(state == BookSelectionService.SelectionState.ALL);
             masterSelectionCheckBox.setTooltip(new Tooltip(state == BookSelectionService.SelectionState.ALL
-                    ? "Зняти вибір з усіх видимих книг" : "Виділити всі видимі книги"));
+                    ? "Зняти вибір з усіх книг автора" : "Виділити всі книги автора"));
         } finally {
             updatingMasterSelection = false;
         }
+    }
+
+    private List<BookViewModel> selectableConcreteBooks() {
+        return allBooks.stream()
+                .filter(row -> row != null && !row.isGroupHeader() && row.getId() != null && !row.getId().isBlank())
+                .toList();
     }
 
     private BookSelectionService.SelectionState seriesSelectionState(String series) {

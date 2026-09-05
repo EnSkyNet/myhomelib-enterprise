@@ -18,8 +18,14 @@
 
     <Separator/>
 
-    <TextField fx:id="listSearchField" promptText="🔍 Пошук..."
-               style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
+    <HBox spacing="4">
+        <TextField fx:id="listSearchField" promptText="🔍 Пошук..."
+                   HBox.hgrow="ALWAYS"
+                   style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
+        <Button text="✕" onAction="#onClearListSearch" focusTraversable="false">
+            <tooltip><Tooltip text="Очистити пошук"/></tooltip>
+        </Button>
+    </HBox>
 
     <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>
     <Button fx:id="loadMoreAuthorsButton"

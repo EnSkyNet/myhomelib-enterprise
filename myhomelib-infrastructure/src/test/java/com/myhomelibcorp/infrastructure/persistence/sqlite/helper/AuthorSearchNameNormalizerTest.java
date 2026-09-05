@@ -29,4 +29,12 @@ class AuthorSearchNameNormalizerTest {
         assertEquals("иванов", AuthorSearchNameNormalizer.normalizeQuery("Иванов"));
         assertEquals("ff", AuthorSearchNameNormalizer.normalizeQuery("ＦＦ"));
     }
+    @Test
+    void tokenizesNameQueryIndependentlyOfFirstLastNameOrder() {
+        assertEquals(java.util.List.of("дмитрий", "дорничев"),
+                AuthorSearchNameNormalizer.normalizeQueryTokens("Дмитрий Дорничев", 8));
+        assertEquals(java.util.List.of("дорничев", "дмитрий"),
+                AuthorSearchNameNormalizer.normalizeQueryTokens("Дорничев Дмитрий", 8));
+    }
+
 }

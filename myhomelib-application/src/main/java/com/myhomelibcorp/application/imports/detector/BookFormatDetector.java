@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Locale;
 
 @Component
 public class BookFormatDetector {
@@ -24,7 +25,7 @@ public class BookFormatDetector {
     }
 
     public Format detect(Path file) {
-        String fileName = file.getFileName().toString().toLowerCase();
+        String fileName = file.getFileName().toString().toLowerCase(Locale.ROOT);
         String extension = getExtension(fileName);
 
         if (fileName.endsWith(".tar.gz") || fileName.endsWith(".tar.bz2") || fileName.endsWith(".tar.xz")

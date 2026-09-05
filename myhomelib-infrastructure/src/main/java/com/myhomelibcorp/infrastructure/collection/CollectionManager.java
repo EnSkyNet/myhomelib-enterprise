@@ -59,6 +59,18 @@ public class CollectionManager {
             // не закриваємо, доки не впевнимося, що переключення можливе.
             Path path = CollectionDatabasePathResolver.resolve(collection);
 
+            // Crash recovery must happen before Hikari opens the target SQLite file. On Windows an
+            // open datasource would prevent the atomic file swaps used by recovery. A same-DB
+            // reinitialization is already a live session, so its in-process rollback path owns it.
+            Collection currentBeforeSwitch = currentCollection.get();
+            boolean sameDatabaseAlreadyOpen = currentBeforeSwitch != null
+                    && CollectionDatabasePathResolver.resolve(currentBeforeSwitch).toAbsolutePath().normalize()
+                    .equals(path.toAbsolutePath().normalize())
+                    && currentHikariDataSource.get() != null;
+            if (!sameDatabaseAlreadyOpen) {
+                CollectionCrashRecovery.recoverBeforeOpen(collection, path.toAbsolutePath().normalize());
+            }
+
             // Створюємо директорію, якщо її немає
             if (path.toAbsolutePath().getParent() != null) {
                 java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());

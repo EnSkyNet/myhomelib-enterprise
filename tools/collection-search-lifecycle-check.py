@@ -25,7 +25,7 @@ assert 'LuceneCollectionIndexLifecycle implements SearchIndexLifecycle' in index
 assert 'FSDirectory.open(indexPath)' in index_lifecycle, 'collection activation must open a per-collection filesystem index'
 assert 'checkCurrentIndexReusable()' in index_lifecycle and 'freshnessToken(' in index_lifecycle
 assert 'activeBooks=' in index_lifecycle and 'appendWalState' in index_lifecycle, 'freshness marker must cover DB/WAL state and active-book count'
-assert 'if (!reusable)' in index_lifecycle and 'if (search.getDocumentCount() > 0) search.clearIndex();' in index_lifecycle, 'dirty target index must never stay searchable'
+assert 'if (!reusable)' in index_lifecycle and 'search.setQueryAvailability(false' in index_lifecycle and 'search.clearIndex();' not in index_lifecycle.split('if (!reusable)',1)[1].split('} else',1)[0], 'dirty target index must be query-disabled while preserving the last committed rollback point'
 assert 'setCommitObserver' in lucene and 'registerCommitObserver' in index_lifecycle, 'successful Lucene commits must refresh the collection freshness marker'
 assert 'activeIndexDirty' in index_lifecycle and 'lastClosedIndexDirty' in index_lifecycle, 'explicit dirty state must survive close/seal'
 assert 'persistDirtyMarker' in index_lifecycle and 'Files.writeString(tmp, "DIRTY"' in index_lifecycle, 'dirty proof must survive same-size/same-timestamp edge cases and process restart'
@@ -52,7 +52,7 @@ assert 'rebuildSearchIndexAsync()' not in controller, 'UI must not duplicate lif
 
 print('COLLECTION SEARCH LIFECYCLE CHECK: PASS')
 print(' - Lucene storage is per-collection with persisted DB/WAL freshness markers')
-print(' - clean indexes are reused; dirty indexes are not exposed')
+print(' - clean indexes are reused; dirty indexes are query-disabled while the last commit is preserved')
 print(' - WAL marker is sealed only after previous SQLite datasource closes/checkpoints')
 print(' - bootstrap/UI no longer force unconditional rebuilds')
 print(' - failed post-commit Lucene sync remains explicitly dirty across close/seal')

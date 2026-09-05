@@ -749,6 +749,22 @@ public class SearchWorkspaceController {
     @FXML
     public void onClear() {
         setSearchTextWithoutDebounce("");
+        clearAdvancedFields();
+        clearResults();
+        searchField.requestFocus();
+    }
+
+    @FXML
+    public void onClearAdvancedFields() {
+        clearAdvancedFields();
+        if (searchField.getText() != null && !searchField.getText().isBlank()) {
+            performSearch(searchField.getText());
+        } else {
+            clearResults();
+        }
+    }
+
+    private void clearAdvancedFields() {
         for (TextField f : List.of(titleFilter, authorFilter, seriesFilter, genreFilter, keywordFilter,
                 annotationFilter, fileFilter, languageFilter, ratingFromFilter, ratingToFilter, yearFromFilter, yearToFilter)) {
             if (f != null) f.clear();
@@ -756,8 +772,6 @@ public class SearchWorkspaceController {
         if (addedFromPicker != null) addedFromPicker.setValue(null);
         if (addedToPicker != null) addedToPicker.setValue(null);
         if (localOnlyCheck != null) localOnlyCheck.setSelected(false);
-        clearResults();
-        searchField.requestFocus();
     }
 
     private void setSearchTextWithoutDebounce(String value) {

@@ -2,20 +2,17 @@ package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import javafx.geometry.Insets;
-import javafx.geometry.Pos;
 import javafx.scene.control.Button;
 import javafx.scene.control.Separator;
 import javafx.scene.control.Tooltip;
-import javafx.scene.layout.HBox;
-import javafx.scene.layout.Priority;
-import javafx.scene.layout.Region;
+import javafx.scene.control.ToolBar;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.function.Consumer;
 
 @Slf4j
-public class ReaderToolbar extends HBox {
+public class ReaderToolbar extends ToolBar {
 
     private final ReaderCanvas canvas;
 
@@ -60,8 +57,6 @@ public class ReaderToolbar extends HBox {
     public ReaderToolbar(ReaderCanvas canvas) {
         this.canvas = canvas;
 
-        setAlignment(Pos.CENTER_LEFT);
-        setSpacing(5);
         setPadding(new Insets(4, 8, 4, 8));
         setStyle("-fx-background-color: #e0e0e0; -fx-border-color: #cccccc; -fx-border-width: 0 0 1 0;");
         setMinHeight(40);
@@ -96,11 +91,15 @@ public class ReaderToolbar extends HBox {
         tocButton = createButton("📑", "Зміст");
         searchButton = createButton("🔍", "Пошук (Ctrl+F)");
 
-        // ===== ЗБИРАЄМО =====
-        Region spacer = new Region();
-
-        getChildren().addAll(
+        // ToolBar provides a native overflow popup when the Reader becomes narrow
+        // (for example with the right details panel visible or at 150–200% DPI).
+        // Keep sidebar controls close to the start so the user can always restore a
+        // hidden panel without depending on the available reader width.
+        getItems().addAll(
                 backButton,
+                new Separator(),
+                leftSidebarButton,
+                rightSidebarButton,
                 new Separator(),
                 prevChapterButton,
                 prevPageButton,
@@ -117,17 +116,12 @@ public class ReaderToolbar extends HBox {
                 themeButton,
                 settingsButton,
                 fullscreenButton,
-                leftSidebarButton,
-                rightSidebarButton,
                 new Separator(),
                 bookmarkButton,
                 bookmarksButton,
                 tocButton,
-                searchButton,
-                spacer
+                searchButton
         );
-
-        HBox.setHgrow(spacer, Priority.ALWAYS);
 
         setupActions();
         updateState();

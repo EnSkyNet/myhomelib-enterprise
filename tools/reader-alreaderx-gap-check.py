@@ -32,7 +32,7 @@ for marker in ('goToPercent(double percent)','goToPage(int page)','previousChapt
     need(marker in canvas, f'ReaderCanvas parity path missing {marker}')
 need('nextPageAction.run()' in autoscroll and 'AnimationTimer' in autoscroll,
      'expected page-step autoscroll implementation missing')
-for marker in ('Колір фону','Колір тексту','backgroundColor','textColor','mergeReaderColors'):
+for marker in ('Колір фону','Основний текст','backgroundColor','textColor','mergeReaderColors'):
     need(marker in dialog, f'custom reader color UI missing {marker}')
 for marker in ('--reader-background','--reader-foreground'):
     need(marker in theme or marker in dialog, f'custom color persistence missing {marker}')

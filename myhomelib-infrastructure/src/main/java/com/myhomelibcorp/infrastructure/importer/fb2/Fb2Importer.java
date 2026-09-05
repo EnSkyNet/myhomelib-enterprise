@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.util.Locale;
 
 @Component
 @Slf4j
@@ -21,7 +22,7 @@ public class Fb2Importer extends AbstractBookImporter {
 
     @Override
     public boolean supports(Path file) {
-        String name = file.getFileName().toString().toLowerCase();
+        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
         return name.endsWith(".fb2") || name.endsWith(".fbd");
     }
 

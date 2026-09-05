@@ -10,6 +10,7 @@ import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogDownloadPort;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogPackage;
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
+import com.myhomelibcorp.application.port.out.download.RemoteDownloadMetadata;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
@@ -120,6 +121,56 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
     }
 
     @Test
+    void unchangedFullSnapshotFingerprintSkipsCheckpointImporterAndDerivedState(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        Collection collection = collection("c-preflight-noop", tempDir);
+        Path downloaded = tempDir.resolve("catalog.inpx");
+        Files.write(downloaded, new byte[]{1, 2, 3});
+        String sourceKey = "remote-collection:c-preflight-noop";
+        String sha256 = "a5591df1410eb0c73de012824b64425918f9e287368834cda0d3b3e673d0daea";
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get(sourceKey)).thenReturn(new CatalogSourceState(sourceKey, "", "", "20260825", "", "", "", "", "", ""));
+        when(f.state.matchesAppliedFingerprint(sourceKey, sha256)).thenReturn(true);
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), eq("20260825"), any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(List.of(RemoteCatalogPackage.of(
+                        downloaded, "https://example.test/full.zip", "20260905", true,
+                        RemoteDownloadMetadata.of("etag-2", "Sat, 05 Sep 2026 08:00:00 GMT", sha256, 3, "inpx"))), "20260905"));
+
+        ImportResult result = f.useCase.execute(collection, "https://example.test/catalog.inpx", null, null);
+
+        assertThat(result.imported()).isZero();
+        assertThat(result.changes().complete()).isTrue();
+        verifyNoInteractions(f.importer, f.search, f.statistics, f.backup);
+        verify(f.state).recordDownloaded(sourceKey, "etag-2", "Sat, 05 Sep 2026 08:00:00 GMT", sha256, "inpx");
+        verify(f.state).recordApplied(sourceKey, "20260905");
+    }
+
+    @Test
+    void unchangedDownloadedSnapshotSkipsLuceneAndStatisticsFinalization(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        Collection collection = collection("c-noop", tempDir);
+        Path downloaded = tempDir.resolve("catalog.inpx");
+        Files.write(downloaded, new byte[]{1, 2, 3});
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get("remote-collection:c-noop"))
+                .thenReturn(new CatalogSourceState("remote-collection:c-noop", "", "", "20260825", "", "", "", "", "", ""));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), eq("20260825"), any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/full.zip", "20260905", true)), "20260905"));
+        when(f.importer.execute(any())).thenReturn(new ImportResult(0, 562_307, 0, 0, 1,
+                ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+
+        ImportResult result = f.useCase.execute(collection, "https://example.test/catalog.inpx", null, null);
+
+        assertThat(result.imported()).isZero();
+        assertThat(result.skipped()).isEqualTo(562_307);
+        verifyNoInteractions(f.search, f.statistics);
+        verify(f.state).recordApplied("remote-collection:c-noop", "20260905");
+        verify(f.backup).createDatabaseSnapshot(eq(collection), any(Path.class));
+        verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
+    }
+
+    @Test
     void failedIndexDoesNotAdvanceAppliedVersion(@TempDir Path tempDir) throws Exception {
         Fixture f = new Fixture();
         Collection collection = collection("c1", tempDir);
@@ -182,6 +233,65 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         verify(f.statistics, times(2)).refreshStatistics();
         verify(f.state, never()).recordApplied(anyString(), anyString());
         verify(f.state).recordFailure(eq("remote-collection:c1"), anyString());
+    }
+
+
+
+    @Test
+    void failedImportRollsBackAndImmediateRetryCanSucceed(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        Collection collection = collection("c-retry-after-rollback", tempDir);
+        Path downloaded = tempDir.resolve("delta.inpx");
+        Files.write(downloaded, new byte[]{1});
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get("remote-collection:c-retry-after-rollback"))
+                .thenReturn(CatalogSourceState.empty("remote-collection:c-retry-after-rollback"));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(), any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/delta.zip", "20260904", false)), "20260904"));
+        when(f.importer.execute(any()))
+                .thenThrow(new IllegalStateException("simulated import failure"))
+                .thenReturn(new ImportResult(1, 0, 0, 0, 1,
+                        ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+
+        CatalogUpdateFailureException first;
+        try {
+            f.useCase.execute(collection, "https://example.test/catalog.inpx", null, null);
+            throw new AssertionError("First update attempt must fail");
+        } catch (CatalogUpdateFailureException ex) {
+            first = ex;
+        }
+        assertThat(first.rollbackAttempted()).isTrue();
+        assertThat(first.rollbackSucceeded()).isTrue();
+
+        ImportResult retry = f.useCase.execute(collection, "https://example.test/catalog.inpx", null, null);
+
+        assertThat(retry.status()).isEqualTo(ImportStatus.SUCCESS);
+        verify(f.backup, times(1)).restoreDatabaseSnapshot(eq(collection), any(Path.class));
+        verify(f.state).recordApplied("remote-collection:c-retry-after-rollback", "20260904");
+    }
+
+    @Test
+    void progressCallbackFailureAfterCommitCannotRollbackSuccessfulUpdate(@TempDir Path tempDir) throws Exception {
+        Fixture f = new Fixture();
+        Collection collection = collection("c-progress-callback", tempDir);
+        Path downloaded = tempDir.resolve("delta.inpx");
+        Files.write(downloaded, new byte[]{1});
+        when(f.lifecycle.getCurrentCollection()).thenReturn(collection);
+        when(f.state.get("remote-collection:c-progress-callback"))
+                .thenReturn(CatalogSourceState.empty("remote-collection:c-progress-callback"));
+        when(f.downloader.downloadUpdates(eq(collection), anyString(), anyString(), any(AtomicBoolean.class), any(DoubleConsumer.class), any(Consumer.class)))
+                .thenReturn(RemoteCatalogUpdatePlan.of(
+                        List.of(RemoteCatalogPackage.of(downloaded, "https://example.test/delta.zip", "20260904", false)), "20260904"));
+        when(f.importer.execute(any())).thenReturn(new ImportResult(1, 0, 0, 0, 1,
+                ImportStatus.SUCCESS, ImportChangeSet.empty(true), List.of()));
+
+        ImportResult result = f.useCase.execute(collection, "https://example.test/catalog.inpx", null,
+                p -> { if (p >= 1.0) throw new IllegalStateException("UI progress callback failed"); });
+
+        assertThat(result.status()).isEqualTo(ImportStatus.SUCCESS);
+        verify(f.state).recordApplied("remote-collection:c-progress-callback", "20260904");
+        verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
     }
 
     @Test

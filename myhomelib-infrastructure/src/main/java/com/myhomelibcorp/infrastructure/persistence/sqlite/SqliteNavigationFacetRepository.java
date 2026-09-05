@@ -215,39 +215,44 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
     public List<Facet> searchAuthors(String query, BookFilterSpec filter, int limit) {
         if (query == null || query.isBlank()) return List.of();
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
-        String normalizedPattern = "%" + escapeLike(AuthorSearchNameNormalizer.normalizeQuery(query)) + "%";
-        String originalPattern = "%" + escapeLike(query.trim()) + "%";
+        List<String> tokens = AuthorSearchNameNormalizer.normalizeQueryTokens(query, 8);
+        if (tokens.isEmpty()) return List.of();
+
         List<Object> params = new ArrayList<>();
-        // SQLite LOWER()/NOCASE are ASCII-only without ICU. Author search_name is
-        // normalized in Java, so it is the authoritative Unicode-aware search key.
-        params.add(normalizedPattern);
-        // Fallback keeps legacy rows searchable until their search_name backfill runs.
-        params.add(originalPattern);
+        List<String> tokenPredicates = new ArrayList<>();
+        for (String token : tokens) {
+            tokenPredicates.add("COALESCE(a.search_name, '') LIKE ? ESCAPE '\\'");
+            params.add("%" + escapeLike(token) + "%");
+        }
         params.addAll(f.params());
         params.add(Math.max(1, Math.min(limit, 500)));
 
+        // COUNT(DISTINCT b.id)+GROUP BY was needlessly expensive for an interactive
+        // type-ahead. Navigation only needs to know that at least one matching book
+        // exists. The author_id relation is indexed, so the correlated EXISTS stops at
+        // the first eligible book and keeps active global filters semantically intact.
         String sql = """
                 SELECT a.id,
                        a.first_name,
                        a.middle_name,
                        a.last_name,
-                       COUNT(DISTINCT b.id) AS book_count
+                       -1 AS book_count
                 FROM authors a
-                JOIN book_authors ba ON ba.author_id = a.id
-                JOIN books b ON b.id = ba.book_id
-                WHERE b.deleted = 0
-                  AND (
-                        COALESCE(a.search_name, '') LIKE ? ESCAPE '\\'
-                     OR TRIM(COALESCE(a.last_name, '') || ' ' || COALESCE(a.first_name, '') || ' ' || COALESCE(a.middle_name, '')) LIKE ? ESCAPE '\\'
+                WHERE %s
+                  AND EXISTS (
+                      SELECT 1
+                        FROM book_authors ba
+                        JOIN books b ON b.id = ba.book_id
+                       WHERE ba.author_id = a.id
+                         AND b.deleted = 0
+                         %s
                   )
-                  %s
-                GROUP BY a.id, a.first_name, a.middle_name, a.last_name
                 ORDER BY COALESCE(a.last_name, '') COLLATE NOCASE,
                          COALESCE(a.first_name, '') COLLATE NOCASE,
                          COALESCE(a.middle_name, '') COLLATE NOCASE,
                          a.id
                 LIMIT ?
-                """.formatted(andFilter(f));
+                """.formatted(String.join(" AND ", tokenPredicates), andFilter(f));
         return jdbc().query(sql, (rs, rowNum) -> new Facet(
                 rs.getString("id"),
                 fullName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name")),

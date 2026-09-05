@@ -67,6 +67,16 @@ final class Fb2SemanticContext {
         }
     }
 
+
+    /**
+     * A {@code <title>} belongs to the current FB2 section only when it is not nested inside a
+     * semantic child container such as poem/epigraph/cite/annotation. Without this guard a poem
+     * title encountered later in the section overwrote the chapter title and corrupted TOC/chapter
+     * navigation.
+     */
+    boolean isDirectSectionTitleContext() {
+        return poemDepth == 0 && epigraphDepth == 0 && citeDepth == 0 && annotationDepth == 0;
+    }
     TextStyle paragraphStyle(String tag, boolean inTitle, int sectionDepth) {
         return Fb2ParseSupport.styleForParagraph(tag, inTitle, sectionDepth,
                 poemDepth > 0, epigraphDepth > 0, citeDepth > 0, annotationDepth > 0, footnoteBody);

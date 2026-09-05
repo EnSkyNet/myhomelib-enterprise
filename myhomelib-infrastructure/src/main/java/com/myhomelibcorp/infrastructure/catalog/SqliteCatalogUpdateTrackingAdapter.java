@@ -20,7 +20,10 @@ import org.springframework.stereotype.Component;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.Locale;
 
 /** SQLite implementation of the Stage 6 catalog source/book revision model. */
 @Component
@@ -88,55 +91,58 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         if (session == null || books == null || books.isEmpty()) return;
         String detectedAt = now();
 
-        jdbc().batchUpdate("""
-                DELETE FROM catalog_update_events
-                 WHERE book_id = ? AND update_type = 'UPDATED_DOWNLOADED_BOOK'
-                   AND EXISTS (
-                       SELECT 1 FROM catalog_book_state c
-                        WHERE c.book_id = ?
-                          AND c.downloaded_fingerprint IS NOT NULL
-                          AND c.downloaded_fingerprint = ?
-                   )
-                """, books, 1000, (ps, book) -> {
-            ps.setString(1, book.bookId());
-            ps.setString(2, book.bookId());
-            ps.setString(3, book.catalogFingerprint());
-        });
+        if (!session.initialBaseline()) {
+            jdbc().batchUpdate("""
+                    DELETE FROM catalog_update_events
+                     WHERE book_id = ? AND update_type = 'UPDATED_DOWNLOADED_BOOK'
+                       AND EXISTS (
+                           SELECT 1 FROM catalog_book_state c
+                            WHERE c.book_id = ?
+                              AND c.downloaded_fingerprint IS NOT NULL
+                              AND c.downloaded_fingerprint = ?
+                       )
+                    """, books, 1000, (ps, book) -> {
+                ps.setString(1, book.bookId());
+                ps.setString(2, book.bookId());
+                ps.setString(3, book.catalogFingerprint());
+            });
 
-        jdbc().batchUpdate("""
-                INSERT INTO catalog_update_events(
-                    book_id, update_type, source_id, detected_revision,
-                    catalog_fingerprint, detected_at, acknowledged_at
-                )
-                SELECT ?, 'UPDATED_DOWNLOADED_BOOK', ?, ?, ?, ?, NULL
-                 WHERE EXISTS (
-                     SELECT 1
-                       FROM catalog_book_state c
-                       JOIN books b ON b.id = c.book_id
-                      WHERE c.book_id = ?
-                        AND b.local = 1
-                        AND c.downloaded_fingerprint IS NOT NULL
-                        AND c.catalog_fingerprint <> ?
-                        AND c.downloaded_fingerprint <> ?
-                 )
-                ON CONFLICT(book_id, update_type) DO UPDATE SET
-                    source_id = excluded.source_id,
-                    detected_revision = excluded.detected_revision,
-                    catalog_fingerprint = excluded.catalog_fingerprint,
-                    detected_at = excluded.detected_at,
-                    acknowledged_at = NULL
-                WHERE catalog_update_events.catalog_fingerprint <> excluded.catalog_fingerprint
-                """, books, 1000, (ps, book) -> {
-            int i = 1;
-            ps.setString(i++, book.bookId());
-            ps.setString(i++, session.sourceId());
-            ps.setLong(i++, session.sourceRevision());
-            ps.setString(i++, book.catalogFingerprint());
-            ps.setString(i++, detectedAt);
-            ps.setString(i++, book.bookId());
-            ps.setString(i++, book.catalogFingerprint());
-            ps.setString(i, book.catalogFingerprint());
-        });
+            jdbc().batchUpdate("""
+                    INSERT INTO catalog_update_events(
+                        book_id, update_type, source_id, detected_revision,
+                        catalog_fingerprint, detected_at, acknowledged_at
+                    )
+                    SELECT ?, 'UPDATED_DOWNLOADED_BOOK', ?, ?, ?, ?, NULL
+                     WHERE EXISTS (
+                         SELECT 1
+                           FROM catalog_book_state c
+                           JOIN books b ON b.id = c.book_id
+                          WHERE c.book_id = ?
+                            AND b.local = 1
+                            AND c.downloaded_fingerprint IS NOT NULL
+                            AND c.catalog_fingerprint <> ?
+                            AND c.downloaded_fingerprint <> ?
+                     )
+                    ON CONFLICT(book_id, update_type) DO UPDATE SET
+                        source_id = excluded.source_id,
+                        detected_revision = excluded.detected_revision,
+                        catalog_fingerprint = excluded.catalog_fingerprint,
+                        detected_at = excluded.detected_at,
+                        acknowledged_at = NULL
+                    WHERE catalog_update_events.catalog_fingerprint <> excluded.catalog_fingerprint
+                    """, books, 1000, (ps, book) -> {
+                int i = 1;
+                ps.setString(i++, book.bookId());
+                ps.setString(i++, session.sourceId());
+                ps.setLong(i++, session.sourceRevision());
+                ps.setString(i++, book.catalogFingerprint());
+                ps.setString(i++, detectedAt);
+                ps.setString(i++, book.bookId());
+                ps.setString(i++, book.catalogFingerprint());
+                ps.setString(i, book.catalogFingerprint());
+            });
+
+        }
 
         if (!session.initialBaseline()) {
             jdbc().batchUpdate("""
@@ -171,47 +177,119 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
             });
         }
 
+        upsertCatalogState(session, books, detectedAt);
+    }
+
+    @Override
+    public void recordSeenBooks(CatalogSyncSession session, List<CatalogBookSnapshot> books) {
+        if (session == null || books == null || books.isEmpty()) return;
+
+        // The import pipeline calls this only for catalog rows already proven unchanged.
+        // Avoid replaying the full 15-parameter UPSERT for those rows: all catalog metadata
+        // is already identical, so only the revision markers need to advance.
         jdbc().batchUpdate("""
-                INSERT INTO catalog_book_state(
-                    book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
-                    catalog_file_name, catalog_folder, catalog_archive_entry, catalog_file_size,
-                    downloaded_revision, downloaded_fingerprint, downloaded_baseline_at,
-                    first_seen_revision, last_seen_revision
-                )
-                SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                       CASE WHEN b.local = 1 THEN ? ELSE NULL END,
-                       CASE WHEN b.local = 1 THEN ? ELSE NULL END,
-                       CASE WHEN b.local = 1 THEN ? ELSE NULL END,
-                       ?, ?
-                  FROM books b WHERE b.id = ?
-                ON CONFLICT(book_id) DO UPDATE SET
-                    source_id = excluded.source_id,
-                    source_book_key = excluded.source_book_key,
-                    catalog_revision = excluded.catalog_revision,
-                    catalog_fingerprint = excluded.catalog_fingerprint,
-                    catalog_file_name = excluded.catalog_file_name,
-                    catalog_folder = excluded.catalog_folder,
-                    catalog_archive_entry = excluded.catalog_archive_entry,
-                    catalog_file_size = excluded.catalog_file_size,
-                    last_seen_revision = excluded.last_seen_revision
-                """, books, 1000, (ps, book) -> {
-            int i = 1;
-            ps.setString(i++, book.bookId());
-            ps.setString(i++, session.sourceId());
-            ps.setString(i++, book.sourceBookKey());
-            ps.setLong(i++, session.sourceRevision());
-            ps.setString(i++, book.catalogFingerprint());
-            ps.setString(i++, book.fileName());
-            ps.setString(i++, book.folder());
-            ps.setString(i++, book.archiveEntry());
-            ps.setLong(i++, book.fileSize());
-            ps.setLong(i++, session.sourceRevision());
-            ps.setString(i++, book.catalogFingerprint());
-            ps.setString(i++, detectedAt);
-            ps.setLong(i++, session.sourceRevision());
-            ps.setLong(i++, session.sourceRevision());
-            ps.setString(i, book.bookId());
+                UPDATE catalog_book_state
+                   SET catalog_revision = ?,
+                       last_seen_revision = ?
+                 WHERE book_id = ? AND source_id = ?
+                """, books, 5000, (ps, book) -> {
+            ps.setLong(1, session.sourceRevision());
+            ps.setLong(2, session.sourceRevision());
+            ps.setString(3, book.bookId());
+            ps.setString(4, session.sourceId());
         });
+    }
+
+    private void upsertCatalogState(CatalogSyncSession session, List<CatalogBookSnapshot> books, String detectedAt) {
+        if (session.initialBaseline()) {
+            // Initial online catalogs can contain 700k+ rows. The previous INSERT ... SELECT
+            // executed a primary-key lookup in books for every catalog_book_state row. Resolve
+            // the tiny subset of local books in bounded set queries once, then use direct VALUES.
+            Set<String> localBookIds = findLocalBookIds(books);
+            jdbc().batchUpdate("""
+                    INSERT INTO catalog_book_state(
+                        book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
+                        catalog_file_name, catalog_folder, catalog_archive_entry, catalog_file_size,
+                        downloaded_revision, downloaded_fingerprint, downloaded_baseline_at,
+                        first_seen_revision, last_seen_revision
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(book_id) DO UPDATE SET
+                        source_id = excluded.source_id,
+                        source_book_key = excluded.source_book_key,
+                        catalog_revision = excluded.catalog_revision,
+                        catalog_fingerprint = excluded.catalog_fingerprint,
+                        catalog_file_name = excluded.catalog_file_name,
+                        catalog_folder = excluded.catalog_folder,
+                        catalog_archive_entry = excluded.catalog_archive_entry,
+                        catalog_file_size = excluded.catalog_file_size,
+                        last_seen_revision = excluded.last_seen_revision
+                    """, books, 5000, (ps, book) -> {
+                boolean local = localBookIds.contains(book.bookId());
+                int i = 1;
+                ps.setString(i++, book.bookId());
+                ps.setString(i++, session.sourceId());
+                ps.setString(i++, book.sourceBookKey());
+                ps.setLong(i++, session.sourceRevision());
+                ps.setString(i++, book.catalogFingerprint());
+                ps.setString(i++, book.fileName());
+                ps.setString(i++, book.folder());
+                ps.setString(i++, book.archiveEntry());
+                ps.setLong(i++, book.fileSize());
+                if (local) {
+                    ps.setLong(i++, session.sourceRevision());
+                    ps.setString(i++, book.catalogFingerprint());
+                    ps.setString(i++, detectedAt);
+                } else {
+                    ps.setObject(i++, null);
+                    ps.setObject(i++, null);
+                    ps.setObject(i++, null);
+                }
+                ps.setLong(i++, session.sourceRevision());
+                ps.setLong(i, session.sourceRevision());
+            });
+        } else {
+            jdbc().batchUpdate("""
+                    INSERT INTO catalog_book_state(
+                        book_id, source_id, source_book_key, catalog_revision, catalog_fingerprint,
+                        catalog_file_name, catalog_folder, catalog_archive_entry, catalog_file_size,
+                        downloaded_revision, downloaded_fingerprint, downloaded_baseline_at,
+                        first_seen_revision, last_seen_revision
+                    )
+                    SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                           CASE WHEN b.local = 1 THEN ? ELSE NULL END,
+                           CASE WHEN b.local = 1 THEN ? ELSE NULL END,
+                           CASE WHEN b.local = 1 THEN ? ELSE NULL END,
+                           ?, ?
+                      FROM books b WHERE b.id = ?
+                    ON CONFLICT(book_id) DO UPDATE SET
+                        source_id = excluded.source_id,
+                        source_book_key = excluded.source_book_key,
+                        catalog_revision = excluded.catalog_revision,
+                        catalog_fingerprint = excluded.catalog_fingerprint,
+                        catalog_file_name = excluded.catalog_file_name,
+                        catalog_folder = excluded.catalog_folder,
+                        catalog_archive_entry = excluded.catalog_archive_entry,
+                        catalog_file_size = excluded.catalog_file_size,
+                        last_seen_revision = excluded.last_seen_revision
+                    """, books, 1000, (ps, book) -> {
+                int i = 1;
+                ps.setString(i++, book.bookId());
+                ps.setString(i++, session.sourceId());
+                ps.setString(i++, book.sourceBookKey());
+                ps.setLong(i++, session.sourceRevision());
+                ps.setString(i++, book.catalogFingerprint());
+                ps.setString(i++, book.fileName());
+                ps.setString(i++, book.folder());
+                ps.setString(i++, book.archiveEntry());
+                ps.setLong(i++, book.fileSize());
+                ps.setLong(i++, session.sourceRevision());
+                ps.setString(i++, book.catalogFingerprint());
+                ps.setString(i++, detectedAt);
+                ps.setLong(i++, session.sourceRevision());
+                ps.setLong(i++, session.sourceRevision());
+                ps.setString(i, book.bookId());
+            });
+        }
     }
 
     @Override
@@ -470,6 +548,21 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
         return count == null ? 0L : count;
     }
 
+    private Set<String> findLocalBookIds(List<CatalogBookSnapshot> books) {
+        if (books == null || books.isEmpty()) return Set.of();
+        Set<String> result = new HashSet<>();
+        final int chunkSize = 400;
+        for (int from = 0; from < books.size(); from += chunkSize) {
+            int to = Math.min(books.size(), from + chunkSize);
+            List<CatalogBookSnapshot> part = books.subList(from, to);
+            String placeholders = String.join(",", java.util.Collections.nCopies(part.size(), "?"));
+            Object[] ids = part.stream().map(CatalogBookSnapshot::bookId).toArray();
+            jdbc().query("SELECT id FROM books WHERE local = 1 AND id IN (" + placeholders + ")",
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> result.add(rs.getString(1)), ids);
+        }
+        return result;
+    }
+
     private static String now() {
         return LocalDateTime.now().format(TS);
     }
@@ -485,8 +578,8 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
             int port = uri.getPort();
             if (("http".equalsIgnoreCase(uri.getScheme()) && port == 80)
                     || ("https".equalsIgnoreCase(uri.getScheme()) && port == 443)) port = -1;
-            return new URI(uri.getScheme().toLowerCase(), null,
-                    host == null ? null : host.toLowerCase(), port,
+            return new URI(uri.getScheme().toLowerCase(Locale.ROOT), null,
+                    host == null ? null : host.toLowerCase(Locale.ROOT), port,
                     uri.getPath(), null, null).normalize().toString();
         } catch (Exception ignored) {
             return value.replace('\\', '/');

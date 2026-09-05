@@ -6,13 +6,23 @@ on:
       - 'v*'
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  release:
-    runs-on: ${{ matrix.platform }}
+  package:
+    name: Verify + package (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
     strategy:
-      matrix:
-        platform: [ubuntu-latest, windows-latest, macos-latest]
       fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
 
     steps:
       - name: Checkout code
@@ -25,87 +35,221 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
-      - name: Set up Python for offline guards
-        if: matrix.platform == 'linux'
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      - name: Install Python dependencies
+      - name: Install release-check Python dependencies
         if: matrix.platform == 'linux'
         run: |
-          pip install --upgrade pip
-          pip install -r tools/requirements.txt
+          python -m pip install --upgrade pip
+          python -m pip install -r tools/requirements.txt
 
-      - name: Cache Maven dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2
+      - name: Full production Maven verification (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: .\mvnw.cmd clean verify -Pproduction
 
-      - name: Build with Maven
-        run: |
-          mvn clean package -DskipTests
+      - name: Full production Maven verification (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: ./mvnw clean verify -Pproduction
 
-      - name: Run tests
-        run: |
-          mvn test
-
-      - name: Run release smoke check
+      - name: Source/static release validation
         if: matrix.platform == 'linux'
-        run: |
-          java -jar myhomelib-bootstrap/target/myhomelib-bootstrap-*.jar --release-smoke
+        shell: bash
+        run: python3 tools/static_release_check.py
 
-      - name: Run Python release validation
-        if: matrix.platform == 'linux'
-        run: |
-          python tools/stage23-cross-platform-release-check.py
-
-      - name: Prepare distribution artifacts
-        run: |
-          mkdir -p dist
-          cp myhomelib-bootstrap/target/*.jar dist/
-          cp myhomelib-mcp/target/*.jar dist/
-          cp README.md dist/
-          cp LICENSE dist/
-
-      - name: Generate checksums (Windows)
-        if: matrix.platform == 'windows-latest'
+      - name: Package portable app-image (Windows)
+        if: matrix.platform == 'windows'
         shell: pwsh
         run: |
-          Get-ChildItem dist -Recurse -File | 
-            Where-Object { $_.Name -ne 'SHA256SUMS' } | 
-            Sort-Object FullName | 
-            ForEach-Object {
-              $rel = $_.FullName -replace "$(Get-Location | Select-Object -ExpandProperty Path)\\dist\\", ""
-              $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash
-              "$hash  $rel"
-            } | Out-File dist/SHA256SUMS -Encoding UTF8
+          $env:MHL_SKIP_BUILD = "1"
+          .\package-portable.ps1
+
+      - name: Package portable app-image (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: |
+          export MHL_SKIP_BUILD=1
+          ./package-portable.sh
+
+      - name: Smoke packaged launcher (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: .\smoke-desktop.ps1
+
+      - name: Smoke extracted portable archive (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: .\smoke-portable.ps1
+
+      - name: Smoke packaged launcher (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: ./smoke-desktop.sh
+
+      - name: Smoke extracted portable archive (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: ./smoke-portable.sh
+
+      - name: Ensure WiX is available for Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          if (-not (Get-Command candle.exe -ErrorAction SilentlyContinue)) {
+            choco install wixtoolset --no-progress -y
+            $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+            $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+            $env:Path = "$machinePath;$userPath"
+          }
+
+      - name: Windows MSI install / upgrade / uninstall acceptance
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $env:MHL_SKIP_BUILD = "1"
+          .\tools\windows-installer-acceptance.ps1
+
+      - name: Upload Windows installer acceptance logs
+        if: always() && matrix.platform == 'windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer-acceptance-${{ github.run_id }}
+          if-no-files-found: warn
+          path: target/windows-installer-acceptance/*.log
+
+      - name: Package per-user Windows EXE installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $env:MHL_SKIP_BUILD = "1"
+          .\package-desktop.ps1 -Type exe
+
+      - name: Remove intermediate app-image before publication checksums (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: Remove-Item -Recurse -Force "dist\MyHomeLib" -ErrorAction SilentlyContinue
+
+      - name: Remove intermediate app-image before publication checksums (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: rm -rf dist/MyHomeLib dist/MyHomeLib.app
+
+      - name: Add standalone JAR artifacts (Linux release bundle only)
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          VERSION=$(python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root=ET.parse('pom.xml').getroot(); ns={'m':'http://maven.apache.org/POM/4.0.0'}
+          print(root.findtext('m:version', namespaces=ns))
+          PY
+          )
+          cp "myhomelib-bootstrap/target/myhomelib-bootstrap-${VERSION}.jar" dist/
+          cp "myhomelib-mcp/target/myhomelib-mcp-${VERSION}.jar" dist/
+
+      - name: Generate checksums (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: .\checksums.ps1 -Directory dist
 
       - name: Generate checksums (Linux/macOS)
-        if: matrix.platform != 'windows-latest'
-        run: |
-          cd dist
-          for f in *; do
-            if [ "$f" != "SHA256SUMS" ] && [ -f "$f" ]; then
-              sha256sum "$f" >> SHA256SUMS
-            fi
-          done
-          cd ..
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: ./checksums.sh dist
 
-      - name: Upload artifacts
+      - name: Validate release artifacts (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: python tools/stage23-cross-platform-release-check.py --dist dist --require-checksums --require-portable --expect-installer
+
+      - name: Validate release artifacts (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: python3 tools/stage23-cross-platform-release-check.py --dist dist --require-checksums --require-portable
+
+      - name: Upload platform release artifacts
         uses: actions/upload-artifact@v4
         with:
           name: myhomelib-${{ matrix.platform }}
-          path: dist/
+          path: |
+            dist/myhomelib-*.zip
+            dist/myhomelib-*.tar.gz
+            dist/MyHomeLib-*.exe
+            dist/MyHomeLib-*.msi
+            dist/myhomelib-bootstrap-*.jar
+            dist/myhomelib-mcp-*.jar
+            dist/SHA256SUMS
+          if-no-files-found: error
           retention-days: 30
 
-      - name: Create GitHub Release
-        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+  publish:
+    name: Publish tagged release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
+    needs: package
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout source for version guard
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify tag matches pom.xml version
+        shell: bash
+        env:
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          VERSION=$(python3 - <<'PY'
+          import xml.etree.ElementTree as ET
+          root=ET.parse('pom.xml').getroot(); ns={'m':'http://maven.apache.org/POM/4.0.0'}
+          print(root.findtext('m:version', namespaces=ns))
+          PY
+          )
+          [[ "$TAG_NAME" == "v$VERSION" ]] || {
+            echo "Tag $TAG_NAME does not match pom.xml version v$VERSION" >&2
+            exit 1
+          }
+
+      - name: Download all platform artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: myhomelib-*
+          path: release-downloads
+
+      - name: Build one collision-free release directory and unified checksums
+        shell: bash
+        run: |
+          mkdir -p release-files
+          while IFS= read -r -d '' file; do
+            name=$(basename "$file")
+            [[ "$name" == "SHA256SUMS" ]] && continue
+            if [[ -e "release-files/$name" ]]; then
+              echo "Duplicate release filename: $name" >&2
+              exit 1
+            fi
+            cp "$file" "release-files/$name"
+          done < <(find release-downloads -type f -print0)
+          (
+            cd release-files
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | while IFS= read -r -d '' file; do sha256sum "$file"; done > SHA256SUMS
+            sha256sum -c SHA256SUMS
+          )
+
+      - name: Create GitHub Release once
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: release-files/*
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

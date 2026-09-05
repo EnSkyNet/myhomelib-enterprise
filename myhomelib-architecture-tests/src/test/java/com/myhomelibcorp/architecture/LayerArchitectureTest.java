@@ -5,6 +5,10 @@ import com.tngtech.archunit.core.importer.ClassFileImporter;
 import com.tngtech.archunit.core.importer.ImportOption;
 import org.junit.jupiter.api.Test;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.List;
+
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.classes;
 import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
 import static com.tngtech.archunit.library.dependencies.SlicesRuleDefinition.slices;
@@ -34,9 +38,64 @@ class LayerArchitectureTest {
     private static final String MCP = "com.myhomelibcorp.mcp..";
     private static final String OPDS = "com.myhomelibcorp.opds..";
 
-    private final JavaClasses classes = new ClassFileImporter()
-            .withImportOption(new ImportOption.DoNotIncludeTests())
-            .importPackages("com.myhomelibcorp");
+    /**
+     * Import production classes once for the whole suite. JUnit creates a new test
+     * instance per method by default, so an instance field would rescan the complete
+     * product classpath for every architecture rule.
+     */
+    private static final List<String> PRODUCTION_MODULES = List.of(
+            "myhomelib-shared",
+            "myhomelib-domain",
+            "myhomelib-application",
+            "myhomelib-infrastructure",
+            "myhomelib-reader",
+            "myhomelib-ui",
+            "myhomelib-opds",
+            "myhomelib-bootstrap",
+            "myhomelib-mcp"
+    );
+
+    private static final JavaClasses CLASSES = importProductionClasses();
+
+    /**
+     * Import only reactor production output directories. Using importPackages() makes
+     * ArchUnit enumerate the complete Surefire classpath (including the Maven cache),
+     * which can turn this 12-rule suite into a multi-minute scan.
+     */
+    private static JavaClasses importProductionClasses() {
+        Path root = findReactorRoot();
+        List<Path> paths = PRODUCTION_MODULES.stream()
+                .map(module -> root.resolve(module).resolve("target/classes"))
+                .filter(Files::isDirectory)
+                .toList();
+        if (paths.size() != PRODUCTION_MODULES.size()) {
+            throw new IllegalStateException(
+                    "Expected compiled output for all production modules under " + root
+                            + "; found " + paths.size() + " of " + PRODUCTION_MODULES.size());
+        }
+        return new ClassFileImporter()
+                .withImportOption(new ImportOption.DoNotIncludeTests())
+                .importPaths(paths);
+    }
+
+    private static Path findReactorRoot() {
+        String configured = System.getProperty("maven.multiModuleProjectDirectory");
+        if (configured != null && !configured.isBlank()) {
+            Path candidate = Path.of(configured).toAbsolutePath().normalize();
+            if (Files.isDirectory(candidate.resolve("myhomelib-shared"))) {
+                return candidate;
+            }
+        }
+        Path candidate = Path.of("").toAbsolutePath().normalize();
+        while (candidate != null) {
+            if (Files.isDirectory(candidate.resolve("myhomelib-shared"))
+                    && Files.isDirectory(candidate.resolve("myhomelib-architecture-tests"))) {
+                return candidate;
+            }
+            candidate = candidate.getParent();
+        }
+        throw new IllegalStateException("Unable to locate MyHomeLib reactor root");
+    }
 
     @Test
     void sharedIsIndependentFromProductModulesAndFrameworks() {
@@ -55,7 +114,7 @@ class LayerArchitectureTest {
                         "java.sql..",
                         "org.apache.lucene.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -75,7 +134,7 @@ class LayerArchitectureTest {
                         "javax.sql..",
                         "org.apache.lucene.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -94,7 +153,7 @@ class LayerArchitectureTest {
                         "org.springframework.jdbc..",
                         "org.apache.lucene.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -103,7 +162,7 @@ class LayerArchitectureTest {
                 .that().resideInAnyPackage("com.myhomelibcorp.application.port.out..")
                 .and().areTopLevelClasses()
                 .should().beInterfaces()
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -116,7 +175,7 @@ class LayerArchitectureTest {
                         OPDS,
                         "javafx.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -131,7 +190,7 @@ class LayerArchitectureTest {
                         "org.springframework.jdbc..",
                         "org.apache.lucene.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -150,7 +209,7 @@ class LayerArchitectureTest {
                         "javax.sql..",
                         "org.apache.lucene.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -166,7 +225,7 @@ class LayerArchitectureTest {
                         "com.myhomelibcorp.reader.render.api.."
                 )
                 .should().dependOnClassesThat().resideInAnyPackage("javafx..")
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -183,7 +242,7 @@ class LayerArchitectureTest {
                         "org.springframework..",
                         "javafx.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -201,7 +260,7 @@ class LayerArchitectureTest {
                         "org.springframework.jdbc..",
                         "org.apache.lucene.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -214,7 +273,7 @@ class LayerArchitectureTest {
                         "com.myhomelibcorp.domain.model.series..",
                         "com.myhomelibcorp.domain.model.genre.."
                 )
-                .check(classes);
+                .check(CLASSES);
     }
 
     @Test
@@ -222,6 +281,6 @@ class LayerArchitectureTest {
         slices()
                 .matching("com.myhomelibcorp.(*)..")
                 .should().beFreeOfCycles()
-                .check(classes);
+                .check(CLASSES);
     }
 }

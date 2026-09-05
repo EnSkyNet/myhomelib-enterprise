@@ -103,20 +103,101 @@ def shell_checks() -> tuple[int, list[str]]:
     return len(executables), errors
 
 
+
+def packaging_checks() -> list[str]:
+    """Catch release-script regressions that can be proven without the target OS."""
+    errors: list[str] = []
+
+    windows_script = (ROOT / "package-desktop.ps1").read_text(encoding="utf-8")
+    if '"--win-per-user-install"' not in windows_script:
+        errors.append("package-desktop.ps1: missing JDK 21 --win-per-user-install option")
+    if "$PackageVersion" not in windows_script or '"--app-version", $Version' not in windows_script:
+        errors.append("package-desktop.ps1: missing package-version override required for upgrade acceptance")
+    if '"--win-per-user"' in windows_script:
+        errors.append("package-desktop.ps1: invalid jpackage option --win-per-user; use --win-per-user-install")
+    portable_windows = (ROOT / "package-portable.ps1").read_text(encoding="utf-8")
+    portable_unix = (ROOT / "package-portable.sh").read_text(encoding="utf-8")
+    if "myhomelib2.ini" not in portable_windows:
+        errors.append("package-portable.ps1: portable archive must include myhomelib2.ini beside launcher")
+    if "myhomelib2.ini" not in portable_unix:
+        errors.append("package-portable.sh: portable archive must include myhomelib2.ini beside launcher")
+
+    match = re.search(r'"--win-upgrade-uuid"\s*,\s*"([0-9a-fA-F-]{36})"', windows_script)
+    if not match:
+        errors.append("package-desktop.ps1: missing stable --win-upgrade-uuid")
+    else:
+        try:
+            import uuid
+            uuid.UUID(match.group(1))
+        except ValueError:
+            errors.append("package-desktop.ps1: --win-upgrade-uuid is not a valid UUID")
+
+    workflow = (ROOT / ".github/workflows/ci-release.yml").read_text(encoding="utf-8")
+    if "smoke-portable.ps1" not in workflow or "smoke-portable.sh" not in workflow:
+        errors.append("ci-release.yml: every platform must smoke the extracted portable archive")
+    windows_acceptance = ROOT / "tools/windows-installer-acceptance.ps1"
+    if not windows_acceptance.is_file():
+        errors.append("tools/windows-installer-acceptance.ps1: Windows installer lifecycle gate is missing")
+    else:
+        acceptance_text = windows_acceptance.read_text(encoding="utf-8")
+        required_contracts = [
+            "msiexec.exe",
+            "Assert-SingleRegistration",
+            ".myhomelibcorp",
+            "acceptance-library.db",
+            "Desktop MyHomeLib shortcut",
+            "Start Menu MyHomeLib shortcut",
+        ]
+        for contract in required_contracts:
+            if contract not in acceptance_text:
+                errors.append(f"windows-installer-acceptance.ps1: missing acceptance contract {contract!r}")
+    if "windows-installer-acceptance.ps1" not in workflow:
+        errors.append("ci-release.yml: Windows installer lifecycle acceptance is not executed")
+    windows_ui_acceptance = ROOT / "tools/windows-ui-acceptance.ps1"
+    if not windows_ui_acceptance.is_file():
+        errors.append("tools/windows-ui-acceptance.ps1: Windows UI/DPI acceptance runner is missing")
+    else:
+        ui_text = windows_ui_acceptance.read_text(encoding="utf-8")
+        for contract in ["ValidateSet(100, 125, 150, 200)", "дорничев", "Дмитрий Дорничев",
+                         "Reader toolbar", "Collection Wizard", "Backup and Restore",
+                         "Back / Forward", "Followed Authors", "client area",
+                         "GetDpiForSystem", "GetSystemMetrics", "$expectedDpi", "AUTO-0"]:
+            if contract not in ui_text:
+                errors.append(f"windows-ui-acceptance.ps1: missing P4 contract {contract!r}")
+    release_ps1 = (ROOT / "release.ps1").read_text(encoding="utf-8")
+    release_sh = (ROOT / "release.sh").read_text(encoding="utf-8")
+    if "smoke-portable.ps1" not in release_ps1 or "smoke-portable.sh" not in release_sh:
+        errors.append("release scripts: extracted portable archive smoke is missing")
+    release_action_count = workflow.count("softprops/action-gh-release@")
+    if release_action_count != 1:
+        errors.append(
+            f"ci-release.yml: expected exactly one GitHub release publisher, found {release_action_count}"
+        )
+    if "needs: package" not in workflow:
+        errors.append("ci-release.yml: publish job must wait for all package jobs")
+
+    checksum_script = (ROOT / "checksums.sh").read_text(encoding="utf-8")
+    if "sort -z" in checksum_script or 'sha256sum "$rel"' in checksum_script:
+        errors.append("checksums.sh: contains GNU-specific checksum pipeline; macOS portability would be broken")
+
+    return errors
+
 def main() -> int:
     xml_count, xml_errors = xml_checks()
     fxml_count, handler_count, handler_errors = fxml_handler_checks()
     migration_count, migration_errors, integrity = migration_checks()
     shell_count, shell_errors = shell_checks()
+    packaging_errors = packaging_checks()
 
     java_count = sum(1 for _ in ROOT.rglob("*.java"))
     test_count = sum(1 for p in ROOT.rglob("*.java") if "/src/test/" in p.as_posix())
-    all_errors = xml_errors + handler_errors + migration_errors + shell_errors
+    all_errors = xml_errors + handler_errors + migration_errors + shell_errors + packaging_errors
 
     print(f"XML (POM + FXML): {xml_count}; errors: {len(xml_errors)}")
     print(f"FXML workspaces: {fxml_count}; handler references: {handler_count}; missing: {len(handler_errors)}")
     print(f"SQLite migrations: {migration_count}; errors: {len(migration_errors)}; integrity: {integrity}")
     print(f"Root shell scripts: {shell_count}; static issues: {len(shell_errors)}")
+    print(f"Release packaging/CI static issues: {len(packaging_errors)}")
     print(f"Java sources: {java_count}; test sources: {test_count}")
 
     if all_errors:

@@ -13,11 +13,11 @@
 
     <!-- Індикатор кроків -->
     <HBox spacing="5" alignment="CENTER" style="-fx-padding: 0 0 10 0;">
-        <Label text="Крок 1" style="-fx-padding: 5 15; -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; -fx-border-radius: 3; -fx-background-radius: 3;" id="step1Indicator"/>
+        <Label text="Крок 1" styleClass="wizard-step-indicator" fx:id="step1Indicator"/>
         <Label text="→"/>
-        <Label text="Крок 2" style="-fx-padding: 5 15; -fx-background-color: -mhl-panel; -fx-border-radius: 3; -fx-background-radius: 3;" id="step2Indicator"/>
+        <Label text="Крок 2" styleClass="wizard-step-indicator" fx:id="step2Indicator"/>
         <Label text="→"/>
-        <Label text="Крок 3" style="-fx-padding: 5 15; -fx-background-color: -mhl-panel; -fx-border-radius: 3; -fx-background-radius: 3;" id="step3Indicator"/>
+        <Label text="Крок 3" styleClass="wizard-step-indicator" fx:id="step3Indicator"/>
     </HBox>
 
     <!-- Контент кроків -->
@@ -58,12 +58,14 @@
                 </HBox>
                 <Label text="URL online-бібліотеки:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
                 <TextField fx:id="urlField" GridPane.columnIndex="1" GridPane.rowIndex="1" promptText="https://server/books/ або шаблон .../{archive}"/>
-                <Label text="Користувач:" GridPane.columnIndex="0" GridPane.rowIndex="2"/>
-                <TextField fx:id="userField" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
-                <Label text="Пароль:" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
-                <PasswordField fx:id="passwordField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
-                <Label fx:id="connectionScriptLabel" text="Сценарій підключення:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
-                <TextArea fx:id="connectionScriptArea" GridPane.columnIndex="1" GridPane.rowIndex="4" prefRowCount="6" wrapText="false" promptText="GET / POST / ADD / CHECK / REDIR / PAUSE"/>
+                <Label fx:id="catalogUpdateUrlLabel" text="URL INPX для оновлення:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+                <TextField fx:id="catalogUpdateUrlField" GridPane.columnIndex="1" GridPane.rowIndex="2" promptText="https://server/catalog.inpx або endpoint каталогу"/>
+                <Label text="Користувач:" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
+                <TextField fx:id="userField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+                <Label text="Пароль:" GridPane.columnIndex="0" GridPane.rowIndex="4"/>
+                <PasswordField fx:id="passwordField" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+                <Label fx:id="connectionScriptLabel" text="Сценарій підключення:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
+                <TextArea fx:id="connectionScriptArea" GridPane.columnIndex="1" GridPane.rowIndex="5" prefRowCount="6" wrapText="false" promptText="GET / POST / ADD / CHECK / REDIR / PAUSE"/>
             </GridPane>
             <Label text="Для віддаленої колекції вкажіть INPX, базовий URL та, якщо джерело його потребує, ConnectionScript. Підтримуються шаблони {archive}, {file}, {entry}." wrapText="true" style="-fx-text-fill: -mhl-muted-text;"/>
             <CheckBox fx:id="importOnCreateCheck" text="Імпортувати при створенні" selected="true"/>
@@ -91,11 +93,14 @@
                 <Label text="Джерело:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
                 <Label fx:id="confirmSourcePath" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
 
-                <Label text="Імпорт:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
-                <Label fx:id="confirmImportOnCreate" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
+                <Label text="URL INPX:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmCatalogUpdateUrl" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
 
-                <Label text="Індекс:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
-                <Label fx:id="confirmCreateIndex" GridPane.columnIndex="1" GridPane.rowIndex="6"/>
+                <Label text="Імпорт:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmImportOnCreate" GridPane.columnIndex="1" GridPane.rowIndex="6"/>
+
+                <Label text="Індекс:" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
+                <Label fx:id="confirmCreateIndex" GridPane.columnIndex="1" GridPane.rowIndex="7"/>
             </GridPane>
             <Label fx:id="errorLabel2" style="-fx-text-fill: -mhl-danger; -fx-wrap-text: true;"/>
         </VBox>

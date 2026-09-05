@@ -53,6 +53,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
+import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -185,7 +186,7 @@ public class ExportController {
     private Set<ExportRequest.ExportFormat> sourceFormats(BookViewModel book) {
         String source = book.getArchiveEntry();
         if (source == null || source.isBlank()) source = book.getFileName();
-        source = source == null ? "" : source.toLowerCase();
+        source = source == null ? "" : source.toLowerCase(Locale.ROOT);
         if (source.endsWith(".fb2") || source.endsWith(".fbd"))
             return EnumSet.of(ExportRequest.ExportFormat.FB2, ExportRequest.ExportFormat.FB2_ZIP, ExportRequest.ExportFormat.TXT);
         if (source.endsWith(".epub")) return EnumSet.of(ExportRequest.ExportFormat.EPUB);

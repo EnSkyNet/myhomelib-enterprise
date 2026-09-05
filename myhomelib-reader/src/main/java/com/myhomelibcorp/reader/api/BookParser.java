@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.api;
 
 import java.io.IOException;
+import java.util.Locale;
 
 public interface BookParser {
 
@@ -20,6 +21,6 @@ public interface BookParser {
     }
 
     default String formatName() {
-        return getClass().getSimpleName().replace("Parser", "").toLowerCase();
+        return getClass().getSimpleName().replace("Parser", "").toLowerCase(Locale.ROOT);
     }
 }

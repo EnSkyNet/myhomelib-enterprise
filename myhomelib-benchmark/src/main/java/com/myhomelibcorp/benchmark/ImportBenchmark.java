@@ -25,8 +25,8 @@ public class ImportBenchmark {
         memoryMonitor.startMonitoring(1000);
 
         long startTime = System.currentTimeMillis();
-        // Виправлено: передаємо третій параметр null
-        long count = pipeline.importFile(file, batchSize, null);
+        Path root = file.getParent() != null ? file.getParent() : Path.of(".");
+        long count = pipeline.importFile(file, batchSize, root);
         long duration = System.currentTimeMillis() - startTime;
 
         memoryMonitor.stopMonitoring();

@@ -5,7 +5,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -25,11 +24,15 @@ public final class KeywordIndexSupport {
     public static List<KeywordToken> tokenize(String rawKeywords) {
         if (rawKeywords == null || rawKeywords.isBlank()) return List.of();
         LinkedHashMap<String, String> unique = new LinkedHashMap<>();
-        for (String raw : rawKeywords.split("[,;|]")) {
-            String display = normalizeDisplay(raw);
-            if (display.isEmpty()) continue;
-            String normalized = normalizeKeyword(display);
-            if (!normalized.isEmpty()) unique.putIfAbsent(normalized, display);
+        int start = 0;
+        for (int i = 0; i <= rawKeywords.length(); i++) {
+            if (i < rawKeywords.length() && !isKeywordDelimiter(rawKeywords.charAt(i))) continue;
+            String display = normalizeDisplay(rawKeywords.substring(start, i));
+            if (!display.isEmpty()) {
+                String normalized = display.toLowerCase(Locale.ROOT);
+                if (!normalized.isEmpty()) unique.putIfAbsent(normalized, display);
+            }
+            start = i + 1;
         }
         return unique.entrySet().stream()
                 .map(entry -> new KeywordToken(entry.getKey(), entry.getValue()))
@@ -43,8 +46,32 @@ public final class KeywordIndexSupport {
 
     private static String normalizeDisplay(String value) {
         if (value == null || value.isBlank()) return "";
-        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC).trim();
-        return normalized.replaceAll("[\\s\\u00A0]+", " ");
+        String normalized = Normalizer.normalize(value, Normalizer.Form.NFKC);
+        StringBuilder compact = new StringBuilder(normalized.length());
+        boolean pendingSpace = false;
+        for (int i = 0; i < normalized.length(); i++) {
+            char ch = normalized.charAt(i);
+            if (isIndexWhitespace(ch)) {
+                pendingSpace = compact.length() > 0;
+                continue;
+            }
+            if (pendingSpace) {
+                compact.append(' ');
+                pendingSpace = false;
+            }
+            compact.append(ch);
+        }
+        return compact.toString();
+    }
+
+    private static boolean isKeywordDelimiter(char ch) {
+        return ch == ',' || ch == ';' || ch == '|';
+    }
+
+    /** Matches the original regex character class {@code [\s\u00A0]}. */
+    private static boolean isIndexWhitespace(char ch) {
+        return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\u000B'
+                || ch == '\f' || ch == '\r' || ch == '\u00A0';
     }
 
     public static void replaceForBook(JdbcTemplate jdbc, String bookId, String rawKeywords) {
@@ -69,12 +96,10 @@ public final class KeywordIndexSupport {
         LinkedHashMap<String, String> keywordLabels = new LinkedHashMap<>();
         List<Object[]> links = new ArrayList<>();
         for (String bookId : bookIds) {
-            LinkedHashSet<String> seenForBook = new LinkedHashSet<>();
+            // tokenize() already preserves order and de-duplicates normalized names per book.
             for (KeywordToken token : tokenize(keywordsByBookId.get(bookId))) {
                 keywordLabels.putIfAbsent(token.normalizedName(), token.displayName());
-                if (seenForBook.add(token.normalizedName())) {
-                    links.add(new Object[]{token.normalizedName(), bookId});
-                }
+                links.add(new Object[]{token.normalizedName(), bookId});
             }
         }
 

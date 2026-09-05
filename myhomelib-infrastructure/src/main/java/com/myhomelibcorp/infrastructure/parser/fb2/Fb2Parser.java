@@ -13,6 +13,7 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * Єдиний парсер FB2, який збирає всі метадані за один прохід.
@@ -113,7 +114,7 @@ public class Fb2Parser {
                             } catch (NumberFormatException ignored) {}
                         }
                     } else if ("lang".equalsIgnoreCase(localName)) {
-                        String lang = reader.getElementText().trim().toLowerCase();
+                        String lang = reader.getElementText().trim().toLowerCase(Locale.ROOT);
                         if (lang.matches("[a-z]{2}(-[A-Z]{2})?")) {
                             language = lang;
                         }

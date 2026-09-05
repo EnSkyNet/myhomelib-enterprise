@@ -86,7 +86,7 @@ def http_smoke():
         transformed=re.sub(r'import org\.springframework[^;]+;\n','',transformed)
         transformed=re.sub(r'@Component\n|@RequiredArgsConstructor\n|@Slf4j\n','',transformed)
         transformed=re.sub(r'^\s*log\.(?:info|warn)\([^;]*;\n','',transformed,flags=re.M)
-        transformed=transformed.replace('public class JdkOpdsServer implements OpdsServerControl {', '''public class JdkOpdsServer implements OpdsServerControl {\n    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads) { this.catalog = catalog; this.downloads = downloads; }''')
+        transformed=re.sub(r'public class JdkOpdsServer implements (?:com\.myhomelibcorp\.application\.opds\.)?OpdsServerControl \{', '''public class JdkOpdsServer implements OpdsServerControl {\n    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads) { this.catalog = catalog; this.downloads = downloads; }''', transformed)
         (opkg/'JdkOpdsServer.java').write_text(transformed,encoding='utf-8')
         (opkg/'Smoke.java').write_text(textwrap.dedent('''
             package com.myhomelibcorp.opds;

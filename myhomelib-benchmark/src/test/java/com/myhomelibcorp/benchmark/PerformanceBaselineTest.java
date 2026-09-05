@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
 import java.io.BufferedWriter;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -39,6 +40,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.zip.CRC32;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -143,11 +145,21 @@ class PerformanceBaselineTest {
     }
 
     private static void configure(Connection c) throws Exception {
-        c.createStatement().execute("PRAGMA journal_mode=MEMORY");
-        c.createStatement().execute("PRAGMA synchronous=OFF");
-        c.createStatement().execute("PRAGMA temp_store=MEMORY");
-        c.createStatement().execute("PRAGMA cache_size=-65536");
-        c.createStatement().execute("PRAGMA foreign_keys=OFF");
+        // journal_mode is a row-returning PRAGMA. Consume and close its ResultSet
+        // before changing other connection PRAGMAs; otherwise sqlite-jdbc may report
+        // SQLITE_BUSY ("SQL statements in progress") on the next statement.
+        try (var statement = c.createStatement();
+             var rs = statement.executeQuery("PRAGMA journal_mode=MEMORY")) {
+            while (rs.next()) {
+                // Consume the single journal-mode row.
+            }
+        }
+        try (var statement = c.createStatement()) {
+            statement.executeUpdate("PRAGMA synchronous=OFF");
+            statement.executeUpdate("PRAGMA temp_store=MEMORY");
+            statement.executeUpdate("PRAGMA cache_size=-65536");
+            statement.executeUpdate("PRAGMA foreign_keys=OFF");
+        }
     }
 
     private static void generateFixture(Connection c, int books) throws Exception {
@@ -355,11 +367,25 @@ class PerformanceBaselineTest {
             put(zip, "mimetype", "application/epub+zip");
             put(zip, "META-INF/container.xml", "<?xml version=\"1.0\"?><container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" version=\"1.0\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>");
             put(zip, "OEBPS/content.opf", "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>Stage24</dc:title><dc:creator>Benchmark</dc:creator><dc:language>en</dc:language></metadata><manifest><item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c1\"/></spine></package>");
-            zip.putNextEntry(new ZipEntry("OEBPS/c1.xhtml"));
-            zip.write("<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><h1>Benchmark</h1>".getBytes(StandardCharsets.UTF_8));
-            byte[] p = "<p>Large EPUB benchmark paragraph for streaming reader performance and text storage.</p>".getBytes(StandardCharsets.UTF_8);
-            for (int i = 0; i < mb * 1024; i++) zip.write(p);
-            zip.write("</body></html>".getBytes(StandardCharsets.UTF_8));
+            ByteArrayOutputStream xhtml = new ByteArrayOutputStream();
+            xhtml.write("<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><h1>Benchmark</h1>".getBytes(StandardCharsets.UTF_8));
+            byte[] paragraph = "<p>Large EPUB benchmark paragraph for streaming reader performance and text storage.</p>".getBytes(StandardCharsets.UTF_8);
+            for (int i = 0; i < mb * 1024; i++) xhtml.write(paragraph);
+            xhtml.write("</body></html>".getBytes(StandardCharsets.UTF_8));
+            byte[] body = xhtml.toByteArray();
+
+            // The synthetic body is intentionally repetitive and compresses far beyond
+            // the Reader's zip-bomb safety ratio. Store it uncompressed so this fixture
+            // benchmarks parsing instead of tripping the security guard on artificial data.
+            CRC32 crc = new CRC32();
+            crc.update(body);
+            ZipEntry content = new ZipEntry("OEBPS/c1.xhtml");
+            content.setMethod(ZipEntry.STORED);
+            content.setSize(body.length);
+            content.setCompressedSize(body.length);
+            content.setCrc(crc.getValue());
+            zip.putNextEntry(content);
+            zip.write(body);
             zip.closeEntry();
         }
     }

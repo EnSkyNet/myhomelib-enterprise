@@ -66,4 +66,5 @@ public final class BookDenormalizedValues {
     }
 
     private static String safe(String value) { return value == null ? "" : value.trim(); }
+
 }

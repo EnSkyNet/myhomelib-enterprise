@@ -58,7 +58,7 @@ public interface NavigationFacetRepository {
         public Facet {
             id = id == null ? "" : id.trim();
             label = label == null ? id : label.trim();
-            if (bookCount < 0) throw new IllegalArgumentException("bookCount cannot be negative");
+            if (bookCount < -1) throw new IllegalArgumentException("bookCount must be >= -1");
         }
     }
 

@@ -15,19 +15,49 @@ import java.util.List;
 @Component
 @RequiredArgsConstructor
 final class ImportIndexLifecycle {
-    private static final List<String> BULK_IMPORT_SUSPEND_INDEXES = List.of(
+    private static final List<String> FULL_SNAPSHOT_SUSPEND_INDEXES = List.of(
             "idx_books_title",
             "idx_books_series",
             "idx_authors_last_name"
     );
 
+    /**
+     * Additional non-unique indexes that are pure write amplification during the first import into
+     * an empty catalog. They are intentionally not suspended for a refresh of an existing catalog:
+     * rebuilding a large pre-existing index can cost more than maintaining it during UPSERTs.
+     *
+     * The exact author-name lookup index and keyword_books(book_id) stay live because the import
+     * path can need them for safe author-cache fallback and idempotent relation replacement.
+     */
+    private static final List<String> INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES = List.of(
+            "idx_books_language",
+            "idx_books_created_at",
+            "idx_books_update_date",
+            "idx_books_rate",
+            "idx_books_title_lower",
+            "idx_books_format",
+            "idx_books_author_sort",
+            "idx_books_collection_root",
+            "idx_books_publisher",
+            "idx_books_year",
+            "idx_books_lib_id",
+            "idx_books_library_rate",
+            "idx_books_missing_since",
+            "idx_books_active_language_title",
+            "idx_books_active_id",
+            "idx_book_authors_author_id",
+            "idx_book_genres_genre_code"
+    );
+
     private final CollectionManager collectionManager;
 
-    SuspendedIndexes suspendForFullSnapshot() {
+    SuspendedIndexes suspendForFullSnapshot(boolean initialBaseline) {
         if (!collectionManager.hasActiveCollection()) return SuspendedIndexes.empty();
         JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        List<String> indexNames = new ArrayList<>(FULL_SNAPSHOT_SUSPEND_INDEXES);
+        if (initialBaseline) indexNames.addAll(INITIAL_BASELINE_EXTRA_SUSPEND_INDEXES);
         List<IndexDefinition> definitions = new ArrayList<>();
-        for (String name : BULK_IMPORT_SUSPEND_INDEXES) {
+        for (String name : indexNames) {
             definitions.addAll(jdbc.query(
                     "SELECT name, sql FROM sqlite_master WHERE type='index' AND name=? AND sql IS NOT NULL",
                     (rs, rowNum) -> new IndexDefinition(rs.getString(1), rs.getString(2)),

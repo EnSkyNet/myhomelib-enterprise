@@ -379,6 +379,14 @@ public class NavigationPanelController {
     }
 
     @FXML
+    private void onClearListSearch() {
+        if (listSearchField == null) return;
+        authorSearchDebounce.stop();
+        listSearchField.clear();
+        listSearchField.requestFocus();
+    }
+
+    @FXML
     private void onLoadMoreAuthors() {
         if (currentMode != NavigationMode.AUTHORS || currentLetter == null || temporaryAuthorSearch
                 || loadingMoreAuthors || authorCursor == null) return;

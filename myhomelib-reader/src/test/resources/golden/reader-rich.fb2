@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0"
+             xmlns:l="http://www.w3.org/1999/xlink">
+  <description>
+    <title-info>
+      <genre>sf</genre>
+      <genre>adventure</genre>
+      <author>
+        <first-name>Дмитрий</first-name>
+        <last-name>Дорничев</last-name>
+      </author>
+      <author>
+        <first-name>Анна</first-name>
+        <last-name>Тестова</last-name>
+      </author>
+      <book-title>Reader Golden — Rich FB2</book-title>
+      <annotation><p>Стабільний golden-fixture для регресій Reader.</p></annotation>
+      <coverpage><image l:href="#cover.png"/></coverpage>
+      <lang>uk</lang>
+      <sequence name="Golden Cycle" number="7"/>
+    </title-info>
+    <publish-info>
+      <publisher>MyHomeLib Test</publisher>
+      <year>2026</year>
+      <isbn>978-0-00-000000-0</isbn>
+    </publish-info>
+  </description>
+
+  <!-- A named primary body is intentional: it must never be classified as notes. -->
+  <body name="Роман">
+    <title><p>Reader Golden</p></title>
+    <section id="chapter-1">
+      <title><p>Розділ перший</p></title>
+      <epigraph>
+        <p>Епіграф, який має зберегти семантичний стиль.</p>
+        <text-author>Автор епіграфа</text-author>
+      </epigraph>
+      <p>Перший абзац із <strong>жирним</strong> та <emphasis>курсивним</emphasis> текстом.</p>
+      <p>Посилання на примітку <a l:href="#note-1" type="note">[1]</a> має не ламати основний текст.</p>
+      <image l:href="#illustration.png"/>
+      <poem>
+        <title><p>Тестовий вірш</p></title>
+        <stanza>
+          <v>Перший рядок вірша.</v>
+          <v>Другий рядок вірша.</v>
+        </stanza>
+        <text-author>Автор вірша</text-author>
+      </poem>
+      <section id="chapter-1-1">
+        <title><p>Підрозділ один</p></title>
+        <p>Текст підрозділу для перевірки вкладеного TOC.</p>
+      </section>
+    </section>
+    <section id="chapter-2">
+      <title><p>Розділ другий</p></title>
+      <p>Другий розділ завершує стабільний golden-документ.</p>
+    </section>
+  </body>
+
+  <body name="notes">
+    <section id="note-1">
+      <title><p>1</p></title>
+      <p>Текст примітки для regression test.</p>
+    </section>
+  </body>
+
+  <!-- Deliberately declared cover first; body illustration must not become the cover. -->
+  <binary id="cover.png" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=</binary>
+  <binary id="illustration.png" content-type="image/png">iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Z1xQAAAAASUVORK5CYII=</binary>
+</FictionBook>

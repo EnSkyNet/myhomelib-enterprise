@@ -165,3 +165,68 @@ PASS:
 - Windows DPI 100/125/150/200%;
 - package/release scripts.
 
+
+## 6. Stage 05 P3 Linux preflight — 2026-09-05
+
+На реальному Flibusta corpus (562 307 INPX records; 444 779 active; 117 528 deleted) після прийнятого Stage 05 P2 checkpoint виконано фазовий preflight changed-full Online Update. Це Linux/JDK 21 evidence, а не заміна Windows acceptance.
+
+Фактичні виміри в цьому середовищі:
+
+- INPX count + SHA preflight: приблизно 0.43 с (типовий run 371 ms + 59 ms);
+- validated SQLite recovery checkpoint: 1.791 с (VACUUM INTO 1.139 с + quick_check 0.652 с);
+- changed-full importer, exactly 1000 title changes: stable P2 median 11.719 с; контрольний peak-memory run 11.915 с;
+- selective Lucene update for exact 1000 IDs: 0.259 с (DB enrichment 0.185 с, Lucene writes 0.044 с, final commit 0.027 с);
+- statistics invalidate + refresh: 0.761 с;
+- measured post-download phase budget including INPX count/SHA: approximately 14.96 с;
+- conservative process peak for the importer probe executed in the Maven JVM (`forkCount=0`): 1 221 276 KiB RSS (~1.165 GiB). This includes Maven/test-harness overhead and therefore is not a pure application-heap measurement.
+
+`UpdateCollectionFromNetworkUseCaseStage6Test` remains green (10/10) and verifies that an unchanged downloaded full snapshot takes the fingerprint no-op path without SQLite checkpoint, importer replay, Lucene transaction or statistics refresh.
+
+Network Download was not timed in the Linux container because outbound DNS/network access is unavailable there. P3 remains incomplete until Download and the same phase split are measured on the target Windows machine. The permanent opt-in `RealSelectiveLucenePerformanceProbeTest` was added so the selective Lucene phase can be reproduced without embedding benchmark DB/index artifacts in the repository.
+
+### P3 scenario comparison — Linux/JDK 21
+
+Після фазового changed-full preflight додано порівняння інших P3 сценаріїв на тому самому Flibusta corpus:
+
+- **initial full**: production importer — **59.865 с** для 562 307 records (`inserted=444779`, `deleted state=117528`), після чого clean production-created DB дає full Lucene rebuild **21.485 с** для 444 779 docs і statistics refresh **0.880 с**;
+- **identical no-op full snapshot**: новий opt-in `RealOnlineNoOpPerformanceProbeTest` вимірює production orchestration після того, як downloader уже повернув файл та SHA metadata; 100 runs — median **390 µs**, p95 **663 µs**, max **850 µs**, при цьому checkpoint/importer/Lucene/statistics не викликаються;
+- **changed-full / 1000 title changes**: importer median **11.719 с**, selective Lucene ~0.26–0.29 с, statistics ~0.76–0.82 с;
+- **small delta / ті самі 1000 title changes**: importer **0.509 / 0.582 / 0.444 с**, median **0.509 с**. У всіх трьох runs `updated=1000`, `deleted=0`; books/authors/relations залишаються точними. З використанням окремо виміряних checkpoint + selective Lucene + statistics assembled post-download budget становить близько **3.43 с**.
+
+Synthetic delta не входить до code-only archive. Для коректного fallback-parsing `online.inp` у такому UTF-8 delta має зберігати BOM; перший diagnostic fixture без BOM був відкинутий, оскільки він змінював encoding detection і не був еквівалентний production corpus.
+
+Download як і раніше не входить до Linux цифр через відсутність outbound DNS/network у runtime; фінальний end-to-end Online Update і peak-memory acceptance треба повторити на Windows.
+
+## Stage 05 P5 preflight — packaged portable launch directory (2026-09-05)
+
+- Reproduced a real `jpackage` portable-mode defect: with `myhomelib2.ini` beside the native launcher, starting the packaged app from a different working directory used `user.dir` and wrote to the normal profile data directory instead of portable `data/`.
+- Hardened `AppPaths.launchDir()` for packaged runtimes: explicit `myhomelib.launchDir` still wins; a jpackage runtime now resolves the native process executable directory; ordinary JVM launches retain the previous `user.dir` fallback.
+- Added `AppPathsLaunchDirTest` for explicit override, ordinary JVM fallback and jpackage-process-directory semantics.
+- Real Linux JDK 21 app-image probe: launcher started from an unrelated working directory with `myhomelib2.ini` beside it created `bin/data/{libraries,config,downloads,cache,logs,backups}` and did not create the normal profile data directory.
+- This is a Linux packaging preflight only. Native Windows portable/EXE upgrade/uninstall and DPI acceptance remain release gates.
+
+
+## Stage 05 P5 Windows installer lifecycle preflight — 2026-09-05
+
+- Added a Windows-only `tools/windows-installer-acceptance.ps1` gate for disposable CI/VM profiles.
+- `package-desktop.ps1` now supports a package-version override independent of the compiled JAR version, allowing CI to build a synthetic lower-version MSI without mutating the Maven project version. Normal release packaging is unchanged.
+- CI builds a synthetic previous MSI and the current MSI with the same stable `--win-upgrade-uuid`, installs/upgrades/reinstalls/uninstalls them with `msiexec`, verifies one product registration, per-user launcher, Desktop + Start Menu shortcuts and `--release-smoke`.
+- The harness writes deterministic user-data/library sentinels under `.myhomelibcorp` and requires them to remain byte-identical across upgrade, repeated current-package installation and uninstall. It then removes only those synthetic acceptance files because the runner started clean.
+- MSI verbose logs are uploaded by the Windows CI job. The published EXE installer is still built separately.
+- Synthetic installer upgrade proves packaging/Windows Installer mechanics only; a real previous-version MSI and real user database must still be exercised before final release. DPI 100/125/150/200% and interactive GUI/EXE installer acceptance also remain Windows-only manual gates.
+
+
+## Stage 05 P4 Windows UI/DPI acceptance runner — 2026-09-05
+
+- Added `tools/windows-ui-acceptance.ps1` for the mandatory 100/125/150/200% Windows runtime passes.
+- The runner intentionally does not modify Windows DPI/scaling; the operator selects the scale in Windows Settings and records explicit PASS/FAIL/BLOCKED results.
+- The protocol covers the handoff P4 list: repeated left/right sidebar cycles, Main Window/Search/Book Details/Reader, Reader toolbar and right sidebar, Collection Wizard, Backup/Restore, `дорничев`, `дорб`, `Дмитрий Дорничев`, `Дорничев Дмитрий`, case/space/Cyrillic variants, Back/Forward and Followed Authors.
+- Each run records a packaged-launcher `--release-smoke` and the final geometry rule that no sidebar/toolbar/content pane may expand beyond the client area.
+- This is acceptance tooling only. No Windows UI/DPI PASS is claimed until the four generated reports are completed on an actual Windows desktop.
+
+## Stage 05 P4 Windows DPI acceptance hardening — 2026-09-05
+
+- `tools/windows-ui-acceptance.ps1` now cross-checks the requested 100/125/150/200% run against `GetDpiForSystem()` (96/120/144/192 DPI).
+- On a single-monitor acceptance machine, a known system-DPI mismatch is an automatic `AUTO-0 = FAIL`; an unavailable API observation is `BLOCKED`, so the report cannot silently claim PASS.
+- On multi-monitor Windows, a system-DPI mismatch is `BLOCKED` rather than a false FAIL because the monitor hosting MyHomeLib can use different per-monitor scaling; P4-01 must confirm that monitor explicitly.
+- This is acceptance-tooling hardening only; production Java code is unchanged.

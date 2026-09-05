@@ -100,7 +100,12 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             throw portableExportFailure(e);
         }
 
-        AtomicFileSupport.moveReplacing(tmp, targetFile);
+        try {
+            AtomicFileSupport.moveReplacing(tmp, targetFile);
+        } catch (IOException e) {
+            Files.deleteIfExists(tmp);
+            throw portableExportFailure(e);
+        }
         return new ExportResult(CURRENT_SCHEMA_VERSION, bookRecords.get(), groupMemberships.get(), bookmarks.get(),
                 history.get(), savedSearches.get(), readerOverrides.get());
     }
@@ -130,15 +135,21 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         RestoreCounters counters = new RestoreCounters();
         BoundedIdentityCache identities = new BoundedIdentityCache();
         ReaderSettingsRestoreState readerSettings = new ReaderSettingsRestoreState();
-        runDatabaseRestore(() -> {
-            try {
-                restoreLegacyV1DatabaseStreaming(sourceFile, identities, counters, readerSettings);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        });
-        restoreNonDatabaseSectionsStreaming(sourceFile);
-        restoreReaderGlobal(readerSettings.global());
+        ExternalStateSnapshot externalState = snapshotExternalState();
+        try {
+            runDatabaseRestore(() -> {
+                try {
+                    restoreLegacyV1DatabaseStreaming(sourceFile, identities, counters, readerSettings);
+                    restoreNonDatabaseSectionsStreaming(sourceFile);
+                    restoreReaderGlobal(readerSettings);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (IOException failure) {
+            rollbackExternalState(externalState, failure);
+            throw failure;
+        }
         return importResult(1, CURRENT_SCHEMA_VERSION, counters);
     }
 
@@ -189,9 +200,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private ManifestHeader inspectManifest(Path sourceFile) throws IOException {
-        int version = 1;
-        boolean schemaVersionSeen = false;
+        Integer schemaVersion = null;
+        Integer legacyVersion = null;
         String format = null;
+        boolean schemaVersionSeen = false;
+        boolean legacyVersionSeen = false;
+        boolean formatSeen = false;
+
         try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Portable user-data manifest must be a JSON object");
@@ -199,39 +214,191 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             while (parser.nextToken() != JsonToken.END_OBJECT) {
                 String field = parser.currentName();
                 JsonToken valueToken = parser.nextToken();
-                if ("schemaVersion".equals(field) && valueToken != null && valueToken.isNumeric()) {
-                    version = parser.getIntValue();
+                if ("schemaVersion".equals(field)) {
+                    if (schemaVersionSeen) throw new IOException("Duplicate portable user-data field: schemaVersion");
                     schemaVersionSeen = true;
-                } else if (!schemaVersionSeen && "version".equals(field) && valueToken != null && valueToken.isNumeric()) {
-                    version = parser.getIntValue();
-                } else if ("format".equals(field) && valueToken == JsonToken.VALUE_STRING) {
+                    if (valueToken != JsonToken.VALUE_NUMBER_INT) {
+                        throw new IOException("Portable user-data schemaVersion must be an integer");
+                    }
+                    schemaVersion = parser.getIntValue();
+                } else if ("version".equals(field)) {
+                    if (legacyVersionSeen) throw new IOException("Duplicate portable user-data field: version");
+                    legacyVersionSeen = true;
+                    if (valueToken != JsonToken.VALUE_NUMBER_INT) {
+                        throw new IOException("Portable user-data version must be an integer");
+                    }
+                    legacyVersion = parser.getIntValue();
+                } else if ("format".equals(field)) {
+                    if (formatSeen) throw new IOException("Duplicate portable user-data field: format");
+                    formatSeen = true;
+                    if (valueToken != JsonToken.VALUE_STRING) {
+                        throw new IOException("Portable user-data format must be a string");
+                    }
                     format = parser.getValueAsString();
                 }
                 parser.skipChildren();
             }
         }
+
+        if (schemaVersionSeen && legacyVersionSeen && !Objects.equals(schemaVersion, legacyVersion)) {
+            throw new IOException("Conflicting portable user-data schema versions: schemaVersion="
+                    + schemaVersion + ", version=" + legacyVersion);
+        }
+        if (!schemaVersionSeen && formatSeen) {
+            throw new IOException("Portable user-data schemaVersion is required when format is present");
+        }
+
+        int version = schemaVersionSeen ? schemaVersion : legacyVersionSeen ? legacyVersion : 1;
         if (version < 1 || version > CURRENT_SCHEMA_VERSION) {
             throw new IOException("Unsupported portable user-data schema version: " + version);
         }
-        if (version == CURRENT_SCHEMA_VERSION && format != null && !"myhomelib-user-data".equals(format)) {
-            throw new IOException("Unsupported portable user-data format: " + format);
+        if (version == CURRENT_SCHEMA_VERSION && !"myhomelib-user-data".equals(format)) {
+            throw new IOException(format == null
+                    ? "Portable user-data format is missing for schema v" + CURRENT_SCHEMA_VERSION
+                    : "Unsupported portable user-data format: " + format);
         }
         return new ManifestHeader(version, format);
     }
 
+    /**
+     * Performs a cheap streaming preflight of the v2 manifest before any user data is changed.
+     * Large arrays are skipped rather than materialized, but all required top-level sections and
+     * reader-settings containers must have the expected shape.
+     */
+    private void validateCurrentManifestStructure(Path sourceFile) throws IOException {
+        Map<String, JsonToken> required = new LinkedHashMap<>();
+        for (String name : List.of("bookState", "readingProgress", "readingHistory", "readingStats",
+                "bookmarks", "groups", "groupMemberships", "savedSearches")) {
+            required.put(name, JsonToken.START_ARRAY);
+        }
+        required.put("filterSettings", JsonToken.START_OBJECT);
+        required.put("readerSettings", JsonToken.START_OBJECT);
+        Set<String> seen = new HashSet<>();
+
+        try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
+            if (parser.nextToken() != JsonToken.START_OBJECT) {
+                throw new IOException("Portable user-data manifest must be a JSON object");
+            }
+            while (parser.nextToken() != JsonToken.END_OBJECT) {
+                String field = parser.currentName();
+                JsonToken token = parser.nextToken();
+                JsonToken expected = required.get(field);
+                if (expected == null) {
+                    parser.skipChildren();
+                    continue;
+                }
+                if (!seen.add(field)) throw new IOException("Duplicate portable user-data section: " + field);
+                if (token != expected) {
+                    throw new IOException("Portable user-data section has invalid type: " + field);
+                }
+                if ("readerSettings".equals(field)) {
+                    validateReaderSettingsStructure(parser);
+                } else {
+                    parser.skipChildren();
+                }
+            }
+        }
+        Set<String> missing = new LinkedHashSet<>(required.keySet());
+        missing.removeAll(seen);
+        if (!missing.isEmpty()) throw new IOException("Portable user-data sections are missing: " + missing);
+    }
+
+    private void validateReaderSettingsStructure(JsonParser parser) throws IOException {
+        Set<String> seen = new HashSet<>();
+        while (parser.nextToken() != JsonToken.END_OBJECT) {
+            String field = parser.currentName();
+            JsonToken token = parser.nextToken();
+            if (!seen.add(field)) throw new IOException("Duplicate readerSettings field: " + field);
+            if ("global".equals(field)) {
+                if (token != JsonToken.VALUE_NULL && token != JsonToken.START_OBJECT) {
+                    throw new IOException("readerSettings.global must be an object or null");
+                }
+                parser.skipChildren();
+            } else if ("perBook".equals(field)) {
+                if (token != JsonToken.START_ARRAY) throw new IOException("readerSettings.perBook must be an array");
+                parser.skipChildren();
+            } else {
+                parser.skipChildren();
+            }
+        }
+        if (!seen.contains("global")) throw new IOException("readerSettings.global is missing");
+        if (!seen.contains("perBook")) throw new IOException("readerSettings.perBook is missing");
+    }
+
+    private ExternalStateSnapshot snapshotExternalState() throws IOException {
+        Map<String, String> filterSnapshot = new LinkedHashMap<>(settings.findByPrefix(FILTER_PREFIX));
+        fileLock.readLock().lock();
+        try {
+            if (!Files.isRegularFile(readerPreferencesFile)) {
+                return new ExternalStateSnapshot(filterSnapshot, new ReaderPreferencesSnapshot(false, new byte[0]));
+            }
+            long size = Files.size(readerPreferencesFile);
+            if (size > MAX_READER_PREFERENCES_JSON_BYTES) {
+                throw new IOException("Reader preferences exceed safety limit (" + size + " bytes): " + readerPreferencesFile);
+            }
+            return new ExternalStateSnapshot(filterSnapshot,
+                    new ReaderPreferencesSnapshot(true, Files.readAllBytes(readerPreferencesFile)));
+        } finally {
+            fileLock.readLock().unlock();
+        }
+    }
+
+    private void rollbackExternalState(ExternalStateSnapshot snapshot, IOException original) {
+        try {
+            settings.replaceByPrefix(FILTER_PREFIX, snapshot.filterSettings());
+        } catch (RuntimeException settingsFailure) {
+            original.addSuppressed(settingsFailure);
+        }
+        try {
+            restoreReaderPreferencesSnapshot(snapshot.readerPreferences());
+        } catch (IOException readerFailure) {
+            original.addSuppressed(readerFailure);
+        }
+    }
+
+    private void restoreReaderPreferencesSnapshot(ReaderPreferencesSnapshot snapshot) throws IOException {
+        fileLock.writeLock().lock();
+        try {
+            Path tmp = readerPreferencesFile.resolveSibling(readerPreferencesFile.getFileName() + ".rollback.tmp");
+            if (!snapshot.existed()) {
+                Files.deleteIfExists(readerPreferencesFile);
+                Files.deleteIfExists(tmp);
+                return;
+            }
+            Files.createDirectories(readerPreferencesFile.toAbsolutePath().getParent());
+            try {
+                Files.write(tmp, snapshot.bytes());
+                AtomicFileSupport.moveReplacing(tmp, readerPreferencesFile);
+            } catch (IOException failure) {
+                try { Files.deleteIfExists(tmp); }
+                catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
+            }
+        } finally {
+            fileLock.writeLock().unlock();
+        }
+    }
+
     private ImportResult restoreCurrentSchemaStreaming(Path sourceFile, ManifestHeader header) throws IOException {
+        validateCurrentManifestStructure(sourceFile);
         RestoreCounters counters = new RestoreCounters();
         BoundedIdentityCache identities = new BoundedIdentityCache();
         ReaderSettingsRestoreState readerSettings = new ReaderSettingsRestoreState();
-        runDatabaseRestore(() -> {
-            try {
-                restoreDatabaseSectionsStreaming(sourceFile, identities, counters, readerSettings);
-            } catch (IOException e) {
-                throw new UncheckedIOException(e);
-            }
-        });
-        restoreNonDatabaseSectionsStreaming(sourceFile);
-        restoreReaderGlobal(readerSettings.global());
+        ExternalStateSnapshot externalState = snapshotExternalState();
+        try {
+            runDatabaseRestore(() -> {
+                try {
+                    restoreDatabaseSectionsStreaming(sourceFile, identities, counters, readerSettings);
+                    restoreNonDatabaseSectionsStreaming(sourceFile);
+                    restoreReaderGlobal(readerSettings);
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            });
+        } catch (IOException failure) {
+            rollbackExternalState(externalState, failure);
+            throw failure;
+        }
         return importResult(header.sourceVersion(), CURRENT_SCHEMA_VERSION, counters);
     }
 
@@ -304,14 +471,20 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private void restoreNonDatabaseSectionsStreaming(Path sourceFile) throws IOException {
+        boolean filterSettingsSeen = false;
         try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
                 throw new IOException("Portable user-data manifest must be a JSON object");
             }
             while (parser.nextToken() != JsonToken.END_OBJECT) {
                 String field = parser.currentName();
-                parser.nextToken();
+                JsonToken token = parser.nextToken();
                 if ("filterSettings".equals(field)) {
+                    if (filterSettingsSeen) throw new IOException("Duplicate portable user-data section: filterSettings");
+                    filterSettingsSeen = true;
+                    if (token != JsonToken.START_OBJECT) {
+                        throw new IOException("Portable user-data section is not an object: filterSettings");
+                    }
                     JsonNode node = mapper.readTree(parser);
                     restoreFilterSettings(node);
                 } else {
@@ -379,11 +552,17 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         return node;
     }
 
-    private void restoreReaderGlobal(JsonNode global) throws IOException {
-        if (global == null || global.isNull()) return;
+    private void restoreReaderGlobal(ReaderSettingsRestoreState state) throws IOException {
+        if (!state.globalSeen()) return;
         fileLock.writeLock().lock();
         try {
-            writeJsonAtomic(readerPreferencesFile, global);
+            JsonNode global = state.global();
+            if (global == null || global.isNull()) {
+                Files.deleteIfExists(readerPreferencesFile);
+                Files.deleteIfExists(readerPreferencesFile.resolveSibling(readerPreferencesFile.getFileName() + ".tmp"));
+            } else {
+                writeJsonAtomic(readerPreferencesFile, global);
+            }
         } finally {
             fileLock.writeLock().unlock();
         }
@@ -396,11 +575,15 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private record ManifestHeader(int sourceVersion, String format) { }
+    private record ReaderPreferencesSnapshot(boolean existed, byte[] bytes) { }
+    private record ExternalStateSnapshot(Map<String, String> filterSettings, ReaderPreferencesSnapshot readerPreferences) { }
 
     private static final class ReaderSettingsRestoreState {
         private JsonNode global;
+        private boolean globalSeen;
         JsonNode global() { return global; }
-        void global(JsonNode value) { this.global = value; }
+        boolean globalSeen() { return globalSeen; }
+        void global(JsonNode value) { this.global = value; this.globalSeen = true; }
     }
 
 
@@ -521,13 +704,23 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
 
-    private void restoreFilterSettings(JsonNode node) {
-        if (!node.isObject()) return;
-        node.fields().forEachRemaining(e -> {
-            if (!e.getKey().startsWith(FILTER_PREFIX)) return;
-            String value = e.getValue().isNull() ? null : truncate(e.getValue().asText());
-            if (value == null) settings.remove(e.getKey()); else settings.put(e.getKey(), value);
-        });
+    private void restoreFilterSettings(JsonNode node) throws IOException {
+        if (node == null || !node.isObject()) {
+            throw new IOException("filterSettings must be an object");
+        }
+        Map<String, String> restored = new LinkedHashMap<>();
+        var fields = node.fields();
+        while (fields.hasNext()) {
+            var entry = fields.next();
+            if (!entry.getKey().startsWith(FILTER_PREFIX)) continue;
+            JsonNode valueNode = entry.getValue();
+            if (valueNode == null || valueNode.isNull()) continue;
+            if (!valueNode.isValueNode()) {
+                throw new IOException("filterSettings value must be scalar: " + entry.getKey());
+            }
+            restored.put(entry.getKey(), truncate(valueNode.asText()));
+        }
+        settings.replaceByPrefix(FILTER_PREFIX, restored);
     }
 
 
@@ -750,8 +943,14 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     private void writeJsonAtomic(Path file, JsonNode value) throws IOException {
         Files.createDirectories(file.toAbsolutePath().getParent());
         Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
-        mapper.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), value);
-        AtomicFileSupport.moveReplacing(tmp, file);
+        try {
+            mapper.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), value);
+            AtomicFileSupport.moveReplacing(tmp, file);
+        } catch (IOException failure) {
+            try { Files.deleteIfExists(tmp); }
+            catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     private JsonNode readJsonUnlocked(Path file) throws IOException {

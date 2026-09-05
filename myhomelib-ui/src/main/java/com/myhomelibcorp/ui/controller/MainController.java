@@ -243,6 +243,12 @@ public class MainController {
     }
 
     @FXML
+    public void handleClearSearch() {
+        searchField.clear();
+        searchField.requestFocus();
+    }
+
+    @FXML
     public void handleRefresh() {
         eventPublisher.publishEvent(new NavigationRefreshEvent());
         navigationPanelController.refreshAll();

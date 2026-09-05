@@ -14,6 +14,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
+import java.util.Locale;
 
 @Component
 @Slf4j
@@ -27,7 +28,7 @@ public class TxtBookConverter implements BookConverter {
     public boolean supports(Book book) {
         String name = book.getArchiveEntry();
         if (name == null || name.isBlank()) name = book.getFileName();
-        name = name == null ? "" : name.toLowerCase();
+        name = name == null ? "" : name.toLowerCase(Locale.ROOT);
         return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".txt") || name.endsWith(".text");
     }
 
@@ -45,7 +46,7 @@ public class TxtBookConverter implements BookConverter {
     public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
         String sourceName = book.getArchiveEntry();
         if (sourceName == null || sourceName.isBlank()) sourceName = book.getFileName();
-        sourceName = sourceName == null ? "" : sourceName.toLowerCase();
+        sourceName = sourceName == null ? "" : sourceName.toLowerCase(Locale.ROOT);
         if (sourceName.endsWith(".txt") || sourceName.endsWith(".text")) {
             Files.copy(sourceStream, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
             return;

@@ -190,7 +190,13 @@ final class ReaderSettingsDialog {
         Button reset=new Button("Скинути всі кольори");
         reset.setOnAction(e -> c.resetColors(ReaderSettings.defaultSettings()));
         grid.add(new HBox(8, inherit, reset),0,r,2,1);
-        ScrollPane scroll = new ScrollPane(grid);
+        Label previewTitle = new Label("Попередній перегляд");
+        previewTitle.getStyleClass().add("section-title");
+        VBox content = new VBox(10, previewTitle, c.colorPreview, grid);
+        content.setPadding(new Insets(8));
+        c.installColorPreviewListeners();
+        c.refreshColorPreview();
+        ScrollPane scroll = new ScrollPane(content);
         scroll.setFitToWidth(true);
         return scroll;
     }
@@ -324,6 +330,12 @@ final class ReaderSettingsDialog {
         final ColorPicker textColor=new ColorPicker();
         final Map<ReaderSemanticElement, ColorPicker> semanticColors=new EnumMap<>(ReaderSemanticElement.class);
         final Set<ReaderSemanticElement> explicitSemanticColors=EnumSet.noneOf(ReaderSemanticElement.class);
+        final VBox colorPreview = new VBox(5);
+        final Label previewBookTitle = new Label("Моя домашня бібліотека");
+        final Label previewChapterTitle = new Label("Розділ 1. Приклад оформлення");
+        final Label previewText = new Label("Це фрагмент тексту книги. Він показує фон, основний колір і базову типографіку.");
+        final Label previewQuote = new Label("«Приклад цитати та семантичного кольору.»");
+        final Label previewFootnote = new Label("¹ Приклад виноски");
         ReaderStyleSheet styleSheet=ReaderStyleSheet.defaults();
         final ComboBox<ReaderSemanticElement> semanticElement = new ComboBox<>(FXCollections.observableArrayList(COLOR_ELEMENTS));
         final ComboBox<String> semanticFontFamily = new ComboBox<>(FXCollections.observableArrayList(Font.getFamilies()));
@@ -369,6 +381,14 @@ final class ReaderSettingsDialog {
         boolean legacyPageMode;
 
         Controls(ReaderSettings settings,boolean bookOverride){
+            colorPreview.setPadding(new Insets(14));
+            colorPreview.setMinHeight(175);
+            colorPreview.setMaxWidth(Double.MAX_VALUE);
+            previewText.setWrapText(true);
+            previewQuote.setWrapText(true);
+            previewFootnote.setWrapText(true);
+            colorPreview.getChildren().addAll(previewBookTitle, previewChapterTitle, previewText, previewQuote, previewFootnote);
+
             fontFamily.setEditable(true); fontFamily.setPrefWidth(230);
             semanticFontFamily.setEditable(true); semanticFontFamily.setPrefWidth(230);
             semanticElement.setCellFactory(v -> semanticElementCell());
@@ -568,6 +588,50 @@ final class ReaderSettingsDialog {
                 default -> foreground;
             };
         }
+        void installColorPreviewListeners() {
+            InvalidationListener listener = obs -> refreshColorPreview();
+            theme.valueProperty().addListener(listener);
+            backgroundColor.valueProperty().addListener(listener);
+            textColor.valueProperty().addListener(listener);
+            fontFamily.valueProperty().addListener(listener);
+            fontFamily.getEditor().textProperty().addListener(listener);
+            fontSize.valueProperty().addListener(listener);
+            semanticColors.values().forEach(picker -> picker.valueProperty().addListener(listener));
+        }
+
+        void refreshColorPreview() {
+            ReaderTheme currentTheme = ReaderTheme.fromName(theme.getValue());
+            Color background = backgroundColor.getValue() != null
+                    ? backgroundColor.getValue() : Color.web(currentTheme.background());
+            Color foreground = textColor.getValue() != null
+                    ? textColor.getValue() : Color.web(currentTheme.foreground());
+
+            colorPreview.setStyle("-fx-background-color: " + toHex(background)
+                    + "; -fx-border-color: #80808066; -fx-border-radius: 4; -fx-background-radius: 4;");
+
+            String family = fontFamily.getEditor().getText();
+            if (family == null || family.isBlank()) family = "Georgia";
+            double baseSize = fontSize.getValue() == null ? 18.0 : fontSize.getValue();
+
+            previewBookTitle.setFont(Font.font(family, Math.min(34, baseSize * 1.45)));
+            previewChapterTitle.setFont(Font.font(family, Math.min(30, baseSize * 1.22)));
+            previewText.setFont(Font.font(family, baseSize));
+            previewQuote.setFont(Font.font(family, baseSize));
+            previewFootnote.setFont(Font.font(family, Math.max(9, baseSize * 0.82)));
+
+            previewBookTitle.setTextFill(previewColor(ReaderSemanticElement.BOOK_TITLE, foreground, currentTheme));
+            previewChapterTitle.setTextFill(previewColor(ReaderSemanticElement.CHAPTER_TITLE, foreground, currentTheme));
+            previewText.setTextFill(foreground);
+            previewQuote.setTextFill(previewColor(ReaderSemanticElement.QUOTE, foreground, currentTheme));
+            previewFootnote.setTextFill(previewColor(ReaderSemanticElement.FOOTNOTE, foreground, currentTheme));
+        }
+
+        private Color previewColor(ReaderSemanticElement element, Color foreground, ReaderTheme currentTheme) {
+            ColorPicker picker = semanticColors.get(element);
+            if (picker != null && picker.getValue() != null) return picker.getValue();
+            return Color.web(semanticFallback(element, currentTheme, toHex(foreground)));
+        }
+
         void resetLayout(ReaderSettings d){set(left,d.leftMargin());set(right,d.rightMargin());set(top,d.topMargin());set(bottom,d.bottomMargin());showToolbar.setSelected(d.showToolbar());}
         void resetNavigation(ReaderSettings d){twoPageMode.setSelected(d.twoPageMode());autoTwoPageLandscape.setSelected(d.autoTwoPageLandscape());autoScroll.setSelected(d.autoScroll());scrollSpeed.getValueFactory().setValue(d.scrollSpeed());setFromInput(d.input());}
         void setFromInput(ReaderInputSettings i){pinchZoom.setSelected(i.pinchZoom());setActions(tapControls(),new String[]{i.topLeft(),i.topCenter(),i.topRight(),i.middleLeft(),i.middleCenter(),i.middleRight(),i.bottomLeft(),i.bottomCenter(),i.bottomRight()});setActions(longTapControls(),new String[]{i.longTopLeft(),i.longTopCenter(),i.longTopRight(),i.longMiddleLeft(),i.longMiddleCenter(),i.longMiddleRight(),i.longBottomLeft(),i.longBottomCenter(),i.longBottomRight()});swipeLeft.setValue(i.swipeLeft());swipeRight.setValue(i.swipeRight());swipeUp.setValue(i.swipeUp());swipeDown.setValue(i.swipeDown());}

@@ -20,6 +20,7 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
     private final CollectionManager collectionManager;
     private final SqliteAuthorRepository authorRepository;
     private final KeywordIndexBackfillService keywordIndexBackfillService;
+    private final LegacyMigrationDataGuard legacyMigrationDataGuard;
 
     @Override
     public int migrateCurrentCollection() {
@@ -41,7 +42,15 @@ public class DatabaseMigrationAdapter implements DatabaseMigrationPort {
                     .baselineOnMigrate(true)
                     .load();
 
+            var current = flyway.info().current();
+            String currentVersion = current == null || current.getVersion() == null
+                    ? null : current.getVersion().getVersion();
+            legacyMigrationDataGuard.captureBeforeMigrate(dataSource, currentVersion);
+
             MigrateResult result = flyway.migrate();
+            // This also resumes an interrupted prior run: guard tables are durable and are only
+            // removed after the final schema has been verified to contain all protected data.
+            legacyMigrationDataGuard.restoreAfterMigrate(dataSource);
             authorRepository.normalizeSearchNamesIfNeeded();
             keywordIndexBackfillService.backfillIfNeeded();
 

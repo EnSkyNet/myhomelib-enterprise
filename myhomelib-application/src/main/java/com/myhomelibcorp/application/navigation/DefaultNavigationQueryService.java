@@ -145,8 +145,30 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
     public java.util.concurrent.CompletableFuture<List<NavigationNodeDto>> searchAuthors(String query, int limit) {
         String normalized = query == null ? "" : query.trim();
         if (normalized.isBlank()) return java.util.concurrent.CompletableFuture.completedFuture(List.of());
+        int safeLimit = Math.max(1, Math.min(limit, 500));
+        var filter = filterStateService.current();
+
+        // The common sidebar path has no active book filter. Searching the normalized
+        // authors table directly avoids joining/aggregating hundreds of thousands of
+        // books for every keystroke. This is the same fast author lookup used by the
+        // main Search workspace.
+        if (filter == null || !filter.isActive()) {
+            return executorPort.submit(() -> authorRepository
+                    .searchByName(normalized, safeLimit)
+                    .stream()
+                    .map(author -> NavigationNodeDto.of(
+                            NavigationMode.AUTHORS,
+                            author.getId().asString(),
+                            author.getFullName()))
+                    .filter(DefaultNavigationQueryService::hasLabel)
+                    .toList());
+        }
+
+        // With a global book filter active we must preserve navigation semantics. The
+        // repository uses EXISTS (not COUNT/GROUP BY) and therefore still avoids the
+        // previous full aggregation hot path.
         return executorPort.submit(() -> navigationFacetRepository
-                .searchAuthors(normalized, filterStateService.current(), Math.max(1, Math.min(limit, 500)))
+                .searchAuthors(normalized, filter, safeLimit)
                 .stream()
                 .map(facet -> new NavigationNodeDto(
                         NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))

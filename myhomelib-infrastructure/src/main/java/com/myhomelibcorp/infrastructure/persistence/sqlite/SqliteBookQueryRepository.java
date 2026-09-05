@@ -6,6 +6,7 @@ import com.myhomelibcorp.application.query.book.BookPageDirection;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookSnapshot;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
@@ -14,18 +15,15 @@ import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelp
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteDateTimeCodec;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.List;
-import java.util.Optional;
-import java.util.Spliterator;
-import java.util.Spliterators;
+import java.time.LocalDateTime;
+import java.util.*;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
@@ -35,6 +33,7 @@ import java.util.stream.StreamSupport;
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
     private static final int STREAM_PAGE_SIZE = 400;
+    private static final int SEARCH_STREAM_PAGE_SIZE = 5_000;
     private final CollectionManager collectionManager;
     private final BookRowMapper bookRowMapper;
     private final BookListRowMapper bookListRowMapper;
@@ -185,6 +184,23 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return findAllStreaming();
     }
 
+    /**
+     * Dedicated Lucene projection. A 700k-row rebuild previously materialized full Book,
+     * BookMetadata and BookFile aggregates in 400-row pages and then discarded most fields.
+     * This path reads only searchable columns, skips tombstones in SQL and enriches relations
+     * with two bounded range scans per 5k page.
+     */
+    @Override
+    public Stream<BookSnapshot> streamSearchSnapshots() {
+        return StreamSupport.stream(
+                Spliterators.spliteratorUnknownSize(
+                        new SearchSnapshotIterator(SEARCH_STREAM_PAGE_SIZE),
+                        Spliterator.ORDERED | Spliterator.NONNULL
+                ),
+                false
+        );
+    }
+
     private static String safe(String value) {
         return value == null ? "" : value;
     }
@@ -297,6 +313,196 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             lastId = currentPage.get(currentPage.size() - 1).getId().asString();
             endReached = currentPage.size() < pageSize;
         }
+    }
+
+    private class SearchSnapshotIterator implements Iterator<BookSnapshot> {
+        private final int pageSize;
+        private String lastId = "";
+        private List<BookSnapshot> currentPage = List.of();
+        private int currentIndex;
+        private boolean endReached;
+
+        private SearchSnapshotIterator(int pageSize) {
+            this.pageSize = Math.max(100, Math.min(10_000, pageSize));
+        }
+
+        @Override
+        public boolean hasNext() {
+            if (currentIndex < currentPage.size()) return true;
+            if (endReached) return false;
+            loadNextPage();
+            return currentIndex < currentPage.size();
+        }
+
+        @Override
+        public BookSnapshot next() {
+            if (!hasNext()) throw new NoSuchElementException();
+            return currentPage.get(currentIndex++);
+        }
+
+        private void loadNextPage() {
+            String sql = """
+                    SELECT id, title, series, keywords, annotation, file_name, language,
+                           rate, progress, year, publisher, lib_id, library_rate, translators,
+                           city, source_url, isbn, created_at, local
+                      FROM books
+                     WHERE deleted = 0 AND id > ?
+                     ORDER BY id
+                     LIMIT ?
+                    """;
+            List<SearchBaseRow> baseRows = getJdbcTemplate().query(sql, (rs, rowNum) -> {
+                Integer year = rs.getInt("year");
+                if (rs.wasNull()) year = null;
+                return new SearchBaseRow(
+                        rs.getString("id"), value(rs.getString("title")), value(rs.getString("series")),
+                        value(rs.getString("keywords")), value(rs.getString("annotation")),
+                        value(rs.getString("file_name")), value(rs.getString("language")),
+                        rs.getInt("rate"), rs.getInt("progress"), year,
+                        value(rs.getString("publisher")), value(rs.getString("lib_id")),
+                        rs.getInt("library_rate"), value(rs.getString("translators")),
+                        value(rs.getString("city")), value(rs.getString("source_url")),
+                        value(rs.getString("isbn")), SqliteDateTimeCodec.parse(rs.getString("created_at")),
+                        rs.getInt("local") == 1);
+            }, lastId, pageSize);
+
+            currentIndex = 0;
+            if (baseRows.isEmpty()) {
+                currentPage = List.of();
+                endReached = true;
+                return;
+            }
+
+            String first = baseRows.getFirst().id();
+            String last = baseRows.getLast().id();
+            Set<String> pageIds = new HashSet<>(baseRows.size() * 2);
+            for (SearchBaseRow row : baseRows) pageIds.add(row.id());
+
+            Map<String, RelatedText> authors = loadSearchAuthors(first, last, pageIds);
+            Map<String, RelatedText> genres = loadSearchGenres(first, last, pageIds);
+            List<BookSnapshot> snapshots = new ArrayList<>(baseRows.size());
+            for (SearchBaseRow row : baseRows) {
+                RelatedText author = authors.get(row.id());
+                RelatedText genre = genres.get(row.id());
+                snapshots.add(BookSnapshot.builder()
+                        .id(BookId.fromString(row.id()))
+                        .title(row.title())
+                        .authorsText(author == null || author.text().isBlank() ? "Невідомий Автор" : author.text())
+                        .authorIds(author == null ? "" : author.ids())
+                        .series(row.series())
+                        .genresText(genre == null ? "" : genre.text())
+                        .genreIds(genre == null ? "" : genre.ids())
+                        .keywords(row.keywords())
+                        .annotation(row.annotation())
+                        .fileName(row.fileName())
+                        .language(row.language())
+                        .rate(row.rate())
+                        .progress(row.progress())
+                        .year(row.year())
+                        .publisher(row.publisher())
+                        .libId(row.libId())
+                        .libraryRate(row.libraryRate())
+                        .translators(row.translators())
+                        .city(row.city())
+                        .sourceUrl(row.sourceUrl())
+                        .isbn(row.isbn())
+                        .createdAt(row.createdAt())
+                        .deleted(false)
+                        .local(row.local())
+                        .build());
+            }
+            currentPage = snapshots;
+            lastId = last;
+            endReached = baseRows.size() < pageSize;
+        }
+    }
+
+    private Map<String, RelatedText> loadSearchAuthors(String firstId, String lastId, Set<String> pageIds) {
+        Map<String, RelatedText> result = new HashMap<>();
+        String sql = """
+                SELECT ba.book_id, a.id, a.first_name, a.middle_name, a.last_name
+                  FROM book_authors ba
+                  JOIN authors a ON a.id = ba.author_id
+                 WHERE ba.book_id >= ? AND ba.book_id <= ?
+                 ORDER BY ba.book_id, ba.author_id
+                """;
+        getJdbcTemplate().query(sql, rs -> {
+            String bookId = rs.getString("book_id");
+            if (!pageIds.contains(bookId)) return;
+            String fullName = joinName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name"));
+            result.computeIfAbsent(bookId, ignored -> new RelatedText(", ", " "))
+                    .add(fullName, rs.getString("id"));
+        }, firstId, lastId);
+        return result;
+    }
+
+    private Map<String, RelatedText> loadSearchGenres(String firstId, String lastId, Set<String> pageIds) {
+        Map<String, RelatedText> result = new HashMap<>();
+        String sql = """
+                SELECT bg.book_id, g.code, g.name
+                  FROM book_genres bg
+                  JOIN genres g ON g.code = bg.genre_code
+                 WHERE bg.book_id >= ? AND bg.book_id <= ?
+                 ORDER BY bg.book_id, bg.genre_code
+                """;
+        getJdbcTemplate().query(sql, rs -> {
+            String bookId = rs.getString("book_id");
+            if (!pageIds.contains(bookId)) return;
+            result.computeIfAbsent(bookId, ignored -> new RelatedText(", ", " "))
+                    .add(value(rs.getString("name")), rs.getString("code"));
+        }, firstId, lastId);
+        return result;
+    }
+
+    private static String joinName(String last, String first, String middle) {
+        StringBuilder out = new StringBuilder();
+        appendNamePart(out, last);
+        appendNamePart(out, first);
+        appendNamePart(out, middle);
+        return out.toString();
+    }
+
+    private static void appendNamePart(StringBuilder out, String value) {
+        if (value == null || value.isBlank()) return;
+        if (!out.isEmpty()) out.append(' ');
+        out.append(value);
+    }
+
+    private static String value(String value) {
+        return value == null ? "" : value;
+    }
+
+
+    private record SearchBaseRow(
+            String id, String title, String series, String keywords, String annotation, String fileName,
+            String language, Integer rate, Integer progress, Integer year, String publisher, String libId,
+            Integer libraryRate, String translators, String city, String sourceUrl, String isbn,
+            LocalDateTime createdAt, boolean local) { }
+
+    private static final class RelatedText {
+        private final String textSeparator;
+        private final String idSeparator;
+        private final StringBuilder text = new StringBuilder();
+        private final StringBuilder ids = new StringBuilder();
+
+        private RelatedText(String textSeparator, String idSeparator) {
+            this.textSeparator = textSeparator;
+            this.idSeparator = idSeparator;
+        }
+
+        private RelatedText add(String label, String id) {
+            if (label != null && !label.isBlank()) {
+                if (!text.isEmpty()) text.append(textSeparator);
+                text.append(label);
+            }
+            if (id != null && !id.isBlank()) {
+                if (!ids.isEmpty()) ids.append(idSeparator);
+                ids.append(id);
+            }
+            return this;
+        }
+
+        private String text() { return text.toString(); }
+        private String ids() { return ids.toString(); }
     }
 
 }

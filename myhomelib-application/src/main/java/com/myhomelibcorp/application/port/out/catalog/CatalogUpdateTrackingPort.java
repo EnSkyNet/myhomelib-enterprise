@@ -18,8 +18,14 @@ public interface CatalogUpdateTrackingPort {
     /** Mark rows previously seen from this source as absent before the new revision is replayed. */
     void markTrackedBooksMissing(CatalogSyncSession session);
 
-    /** Called after books and their author links have been UPSERTed for the current batch. */
+    /** Called after books and their author links have been UPSERTed for rows whose catalog/local state changed. */
     void recordImportedBooks(CatalogSyncSession session, List<CatalogBookSnapshot> books);
+
+    /**
+     * Advance catalog revision/last-seen state for rows already proven unchanged by the import pipeline.
+     * This deliberately skips update-event evaluation but preserves catalog_book_state semantics.
+     */
+    void recordSeenBooks(CatalogSyncSession session, List<CatalogBookSnapshot> books);
 
     /** Capture the current catalog revision/fingerprint after a successful download. */
     void markDownloadedBaseline(BookId bookId);

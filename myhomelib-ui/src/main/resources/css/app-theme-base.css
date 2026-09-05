@@ -51,6 +51,18 @@
     -fx-padding: 4 6 4 6;
     -fx-border-width: 0 0 1 0;
 }
+.wizard-step-indicator {
+    -fx-padding: 5 15 5 15;
+    -fx-background-color: -mhl-panel;
+    -fx-text-fill: -mhl-text;
+    -fx-border-radius: 3;
+    -fx-background-radius: 3;
+}
+.wizard-step-indicator.wizard-step-active {
+    -fx-background-color: -mhl-accent;
+    -fx-text-fill: -mhl-on-accent;
+}
+
 .button {
     -fx-background-color: derive(-mhl-panel, -4%);
     -fx-text-fill: -mhl-text;

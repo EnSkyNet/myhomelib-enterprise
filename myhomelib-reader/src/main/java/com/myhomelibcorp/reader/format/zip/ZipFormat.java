@@ -5,6 +5,7 @@ import com.myhomelibcorp.reader.api.BookParser;
 import com.myhomelibcorp.reader.api.BookSource;
 
 import java.util.Set;
+import java.util.Locale;
 
 public class ZipFormat implements BookFormat {
 
@@ -28,7 +29,7 @@ public class ZipFormat implements BookFormat {
     @Override
     public boolean supports(BookSource source) {
         String ext = source.extension();
-        return EXTENSIONS.contains(ext.toLowerCase());
+        return EXTENSIONS.contains(ext.toLowerCase(Locale.ROOT));
     }
 
     @Override
