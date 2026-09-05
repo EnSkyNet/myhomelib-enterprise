@@ -132,3 +132,22 @@
     -fx-border-color: derive(-mhl-accent, -20%);
     -fx-border-width: 2;
 }
+
+/* Main action strip is intentionally a wrapping FlowPane: at normal widths it stays on one row;
+   when actions no longer fit it flows into a second row instead of disappearing past the client area. */
+.main-toolbar-wrap.flow-pane {
+    -fx-alignment: center-left;
+    -fx-column-halignment: left;
+    -fx-row-valignment: center;
+}
+
+/* Keep the complete action set visible even at the supported 800px minimum window width.
+   Compact controls plus FlowPane wrapping fit into two rows instead of a clipped third row. */
+.main-toolbar-wrap .button {
+    -fx-font-size: 11px;
+    -fx-padding: 4px 5px 4px 5px;
+}
+.main-toolbar-wrap .text-field {
+    -fx-font-size: 11px;
+    -fx-padding: 4px 5px 4px 5px;
+}

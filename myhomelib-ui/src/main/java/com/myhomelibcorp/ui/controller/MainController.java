@@ -59,6 +59,7 @@ public class MainController {
     private final MainLayoutService mainLayoutService;
     private final CatalogUpdateService catalogUpdateService;
     private final UiBackgroundExecutor uiBackgroundExecutor;
+    private final ApplicationThemeService applicationThemeService;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -83,6 +84,7 @@ public class MainController {
     @FXML private TextField searchField;
     @FXML private Button backButton;
     @FXML private Button forwardButton;
+    @FXML private Button themeButton;
     @FXML private StackPane workspaceStackPane;
     @FXML private StackPane leftSidebarContainer;
     @FXML private Pane rightSidebarContainer;
@@ -129,10 +131,15 @@ public class MainController {
         if (viewMenu != null) viewMenu.setOnShowing(event -> refreshUpdateBadge());
         appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> refreshUpdateBadge());
         Platform.runLater(this::refreshUpdateBadge);
+        updateThemeButtonTooltip();
 
         configureActionRegistry();
         updateNavigationButtons();
-        appState.getBookTable().selectedBookProperty().addListener((obs, oldBook, newBook) -> actionRegistry.refreshContexts());
+        // Book commands use BookDetailsViewModel as the canonical current-book source across
+        // the classic table, Search, Author and Reader workspaces. Refreshing from BookTableViewModel
+        // was too early (before BookDetails was updated) and did not run at all for non-classic tables,
+        // leaving “Open in Reader / external reader” permanently disabled.
+        bookCommandCoordinator.selectedBookProperty().addListener((obs, oldBook, newBook) -> actionRegistry.refreshContexts());
         mainPane.sceneProperty().addListener((obs, oldScene, scene) -> { if (scene != null) actionRegistry.attach(scene); });
         if (mainPane.getScene() != null) actionRegistry.attach(mainPane.getScene());
 
@@ -246,6 +253,24 @@ public class MainController {
     public void handleClearSearch() {
         searchField.clear();
         searchField.requestFocus();
+    }
+
+    @FXML
+    public void handleCycleApplicationTheme() {
+        applicationThemeService.cyclePreset();
+        updateThemeButtonTooltip();
+    }
+
+    private void updateThemeButtonTooltip() {
+        if (themeButton == null) return;
+        String name = switch (applicationThemeService.current().mode()) {
+            case SYSTEM -> "Системна";
+            case LIGHT -> "Світла";
+            case DARK -> "Темна";
+            case AMOLED -> "AMOLED";
+            case CUSTOM -> "Власна";
+        };
+        themeButton.setTooltip(new javafx.scene.control.Tooltip("Тема програми: " + name + ". Натисніть для перемикання"));
     }
 
     @FXML

@@ -108,6 +108,26 @@ public class ApplicationThemeService {
         return lightPreset(ThemeMode.CUSTOM);
     }
 
+    /** Cycles the application chrome through visible presets and persists the result. */
+    public ThemeConfig cyclePreset() {
+        ThemeMode next = switch (current.mode()) {
+            case LIGHT -> ThemeMode.DARK;
+            case DARK -> ThemeMode.AMOLED;
+            case AMOLED -> ThemeMode.LIGHT;
+            case SYSTEM -> systemDarkHint() ? ThemeMode.AMOLED : ThemeMode.DARK;
+            case CUSTOM -> ThemeMode.LIGHT;
+        };
+        ThemeConfig preset = switch (next) {
+            case LIGHT -> lightPreset(ThemeMode.LIGHT);
+            case DARK -> darkPreset(ThemeMode.DARK);
+            case AMOLED -> amoledPreset(ThemeMode.AMOLED);
+            case SYSTEM -> defaults();
+            case CUSTOM -> customDefaults();
+        };
+        save(preset);
+        return current;
+    }
+
     private void applyToScene(Scene scene) {
         if (scene == null) return;
         try {
@@ -125,11 +145,12 @@ public class ApplicationThemeService {
         }
     }
 
-    private ThemeConfig effective(ThemeConfig config) {
+    ThemeConfig effective(ThemeConfig config) {
         ThemeConfig source = config == null ? defaults() : config.normalized();
         return switch (source.mode()) {
             case LIGHT -> lightPreset(ThemeMode.LIGHT);
             case DARK -> darkPreset(ThemeMode.DARK);
+            case AMOLED -> amoledPreset(ThemeMode.AMOLED);
             case SYSTEM -> systemDarkHint() ? darkPreset(ThemeMode.SYSTEM) : lightPreset(ThemeMode.SYSTEM);
             case CUSTOM -> source;
         };
@@ -208,6 +229,11 @@ public class ApplicationThemeService {
                 "#303b4f", "#25272b", "#23442e", 13.0);
     }
 
+    private ThemeConfig amoledPreset(ThemeMode mode) {
+        return new ThemeConfig(mode, "#000000", "#050505", "#f2f2f2", "#64b5f6",
+                "#0b1220", "#000000", "#06130a", 13.0);
+    }
+
     private boolean systemDarkHint() {
         String forced = System.getProperty("myhomelib.theme.systemDark");
         if (forced != null) return Boolean.parseBoolean(forced);
@@ -249,7 +275,7 @@ public class ApplicationThemeService {
         } catch (Exception ignored) { return false; }
     }
 
-    public enum ThemeMode { SYSTEM, LIGHT, DARK, CUSTOM }
+    public enum ThemeMode { SYSTEM, LIGHT, DARK, AMOLED, CUSTOM }
 
     public record ThemeConfig(ThemeMode mode, String background, String panel, String text, String accent,
                               String seriesRow, String bookRow, String downloadedRow, double fontSize) {

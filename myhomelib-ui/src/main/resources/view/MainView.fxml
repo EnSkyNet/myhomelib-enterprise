@@ -127,13 +127,13 @@
                 </Menu>
             </MenuBar>
 
-            <ToolBar styleClass="main-toolbar-wrap">
+            <FlowPane fx:id="mainToolbar" styleClass="main-toolbar-wrap" hgap="3.0" vgap="3.0" rowValignment="CENTER">
                 <Button fx:id="backButton" text="←" onAction="#handleBack" disable="true"/>
                 <Button fx:id="forwardButton" text="→" onAction="#handleForward" disable="true"/>
                 <Separator orientation="VERTICAL"/>
                 <Button text="🏠" onAction="#handleHome"/>
                 <Separator orientation="VERTICAL"/>
-                <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="300"/>
+                <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="170" minWidth="120"/>
                 <Button text="🔍" onAction="#handleSearch"/>
                 <Button text="✕" onAction="#handleClearSearch" focusTraversable="false">
                     <tooltip><Tooltip text="Очистити пошук"/></tooltip>
@@ -145,7 +145,9 @@
                 <Button text="⭐ Оцінити" onAction="#handleBatchRate" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-text;"/>
                 <Button text="📊 Прогрес" onAction="#handleBatchProgress" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
                 <Button text="📖 Прочитано" onAction="#handleBatchMarkRead" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="📂 Додати до групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
+                <Button text="📂 До групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;">
+                    <tooltip><Tooltip text="Додати вибрані книги до групи"/></tooltip>
+                </Button>
                 <Button text="✖ Зняти вибір" onAction="#handleClearSelection" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
                 <Button text="🌳" onAction="#handleToggleView" style="-fx-background-color: -mhl-accent-secondary; -fx-text-fill: -mhl-on-accent;"/>
                 <Separator orientation="VERTICAL"/>
@@ -154,13 +156,22 @@
                 <Separator orientation="VERTICAL"/>
                 <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
                 <Separator orientation="VERTICAL"/>
-                <Button text="⬇ Завантажити вибрані" onAction="#handleDownloadBook"/>
-                <Button text="⌫ Видалити локальну" onAction="#handleRemoveLocalCopy"/>
-                <Button text="✕ Скасувати завантаження" onAction="#handleCancelDownload"/>
+                <Button text="⬇ Завантажити" onAction="#handleDownloadBook">
+                    <tooltip><Tooltip text="Завантажити вибрані книги"/></tooltip>
+                </Button>
+                <Button text="⌫ Локальна копія" onAction="#handleRemoveLocalCopy">
+                    <tooltip><Tooltip text="Видалити локальну копію вибраної книги"/></tooltip>
+                </Button>
+                <Button text="✕ Скасувати" onAction="#handleCancelDownload">
+                    <tooltip><Tooltip text="Скасувати активне завантаження"/></tooltip>
+                </Button>
                 <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
                 <Separator orientation="VERTICAL"/>
+                <Button fx:id="themeButton" text="◐" onAction="#handleCycleApplicationTheme">
+                    <tooltip><Tooltip text="Змінити тему програми"/></tooltip>
+                </Button>
                 <Button text="⚙" onAction="#handleSettings"/>
-            </ToolBar>
+            </FlowPane>
         </VBox>
     </top>
 

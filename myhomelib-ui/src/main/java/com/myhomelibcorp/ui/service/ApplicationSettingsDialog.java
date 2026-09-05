@@ -207,7 +207,8 @@ public class ApplicationSettingsDialog {
                 @Override public String toString(ApplicationThemeService.ThemeMode value) {
                     if (value == null) return "";
                     return switch (value) {
-                        case SYSTEM -> "Системна"; case LIGHT -> "Світла"; case DARK -> "Темна"; case CUSTOM -> "Власна";
+                        case SYSTEM -> "Системна"; case LIGHT -> "Світла"; case DARK -> "Темна";
+                        case AMOLED -> "AMOLED"; case CUSTOM -> "Власна";
                     };
                 }
                 @Override public ApplicationThemeService.ThemeMode fromString(String value) { return mode.getValue(); }

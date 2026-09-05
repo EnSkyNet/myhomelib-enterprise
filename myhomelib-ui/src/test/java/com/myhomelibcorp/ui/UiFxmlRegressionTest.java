@@ -12,15 +12,19 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class UiFxmlRegressionTest {
 
     @Test
-    void mainToolbarMustRemainSingleRowAndExposeSearchClearAction() throws IOException {
+    void mainToolbarMustWrapWhenActionsDoNotFitAndExposeSearchClearAction() throws IOException {
         String fxml = resource("/view/MainView.fxml");
 
-        assertTrue(fxml.contains("<ToolBar styleClass=\"main-toolbar-wrap\">"),
-                "Main toolbar must use JavaFX ToolBar so sidebar width changes cannot wrap it to another row");
-        assertFalse(fxml.contains("<FlowPane hgap=\"4\" vgap=\"4\" alignment=\"CENTER_LEFT\" styleClass=\"main-toolbar-wrap\">"),
-                "Wrapping FlowPane reintroduces top-toolbar height jumps when the right sidebar is toggled");
+        assertTrue(fxml.contains("<FlowPane fx:id=\"mainToolbar\""),
+                "Main toolbar must use a wrapping pane so actions can flow to a second row instead of leaving the client area");
+        assertTrue(fxml.contains("styleClass=\"main-toolbar-wrap\""),
+                "Wrapping toolbar must keep the dedicated styling contract");
+        assertFalse(fxml.contains("<ToolBar styleClass=\"main-toolbar-wrap\">"),
+                "A single-line ToolBar can push actions beyond the visible client width");
         assertTrue(fxml.contains("onAction=\"#handleClearSearch\""),
                 "Global search must expose an explicit clear button");
+        assertTrue(fxml.contains("fx:id=\"themeButton\""),
+                "Whole-application theme switch must remain reachable from the main toolbar");
     }
 
     @Test

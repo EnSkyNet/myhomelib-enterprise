@@ -230,3 +230,11 @@ Download як і раніше не входить до Linux цифр через
 - On a single-monitor acceptance machine, a known system-DPI mismatch is an automatic `AUTO-0 = FAIL`; an unavailable API observation is `BLOCKED`, so the report cannot silently claim PASS.
 - On multi-monitor Windows, a system-DPI mismatch is `BLOCKED` rather than a false FAIL because the monitor hosting MyHomeLib can use different per-monitor scaling; P4-01 must confirm that monitor explicitly.
 - This is acceptance-tooling hardening only; production Java code is unchanged.
+
+## Stage 05 UI regression hardening — theme/menu/toolbar — 2026-09-05
+
+- Fixed Reader theme cycling when persisted `--reader-background` / `--reader-foreground` overrides masked preset changes. Preset switching now removes only those color overrides and preserves unrelated custom CSS.
+- Added a whole-application AMOLED preset, application-theme toolbar button and Settings entry. Application chrome now cycles through visible light/dark/AMOLED presets independently of Reader content theme.
+- Replaced the single-line main `ToolBar` with a wrapping action strip. At the supported 800 px minimum window width an Xvfb JavaFX layout regression proves the complete action set uses exactly two rows; long button captions were compacted with full tooltips so no third row is needed.
+- Fixed `Book -> Open in Reader` and `Book -> Open in external reader` remaining disabled after selection. Action context refresh now listens to the canonical `BookDetailsViewModel` selection used by the commands themselves, so classic book table, Search and Author workspaces share the same enable/disable source.
+- Added regressions for Reader preset override cleanup, application AMOLED/cycling, two-row toolbar geometry and both book-open menu action contexts.

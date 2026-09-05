@@ -119,3 +119,10 @@ Desktop Reader behavior is intentionally not a claim of complete Android/iOS or 
 - Explicit local-file availability (`available`, `missing`, `remote-only`) without conflating it with online DEL/tombstones.
 - Reader layout-based page index and reflow-safe semantic position.
 - Explicit stale statistics and guarded Lucene rebuild/search lifecycle.
+
+## UI theme and responsive toolbar hardening — 2026-09-05
+
+- Whole-application Light / Dark / AMOLED presets with immediate persisted switching from the main toolbar; Reader theme remains independent.
+- Reader theme preset cycling cannot be visually masked by stale explicit foreground/background CSS overrides.
+- Main action toolbar wraps into two rows at the supported 800 px minimum desktop width instead of clipping actions outside the client area.
+- `Book -> Open in Reader` and `Book -> Open in external reader` follow the canonical selected-book state across classic, Search and Author workspaces.

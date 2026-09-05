@@ -1,6 +1,7 @@
 package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.ReaderSettings;
+import com.myhomelibcorp.reader.api.ReaderTheme;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
 import javafx.scene.control.Separator;
@@ -239,6 +240,10 @@ public class ReaderToolbar extends ToolBar {
         autoScrollButton.setStyle(canvas.isAutoScrollRunning() ?
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6; -fx-background-color: #FF9800; -fx-text-fill: white;" :
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6;");
+
+        String currentTheme = canvas.getEngine().getSettings().themeName();
+        String displayTheme = ReaderTheme.fromName(currentTheme).displayName();
+        themeButton.setTooltip(new Tooltip("Змінити тему (T). Поточна: " + displayTheme));
     }
 
     // ==================== КОЛБЕКИ ====================

@@ -5,6 +5,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
+import javafx.beans.property.ObjectProperty;
 import javafx.stage.Window;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -23,6 +24,11 @@ public class MainBookCommandCoordinator {
 
     public boolean hasSelectedBook() {
         return currentBook() != null;
+    }
+
+    /** Canonical current-book observable used by menu/shortcut context refresh across all workspaces. */
+    public ObjectProperty<BookDto> selectedBookProperty() {
+        return appState.getBookDetails().currentBookProperty();
     }
 
     public void editMetadata(Window owner, Runnable refresh) {

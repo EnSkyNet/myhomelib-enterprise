@@ -408,7 +408,7 @@ public class ReaderCanvas extends StackPane {
             case "dark" -> "amoled";
             default -> "light";
         };
-        ReaderSettings themed = engine.getSettings().withTheme(next);
+        ReaderSettings themed = engine.getSettings().withThemePreset(next);
         renderer.applySettings(themed);
         engine.applySettings(themed);
         render();
@@ -416,7 +416,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     public void updateTheme(String themeName) {
-        ReaderSettings themed = engine.getSettings().withTheme(themeName);
+        ReaderSettings themed = engine.getSettings().withThemePreset(themeName);
         renderer.applySettings(themed);
         engine.applySettings(themed);
         render();

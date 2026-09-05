@@ -81,6 +81,16 @@ public record ReaderSettings(
 
     private static boolean blank(String value) { return value == null || value.isBlank(); }
 
+    private static String withoutThemeColorOverrides(String css) {
+        if (css == null || css.isBlank()) return "";
+        return css
+                .replaceAll("(?i)--reader-background\\s*:\\s*#[0-9a-f]{6,8}\\s*;?", "")
+                .replaceAll("(?i)--reader-foreground\\s*:\\s*#[0-9a-f]{6,8}\\s*;?", "")
+                .replaceAll("[ \t]+(?=\\R|$)", "")
+                .replaceAll("(?m)^\\s*$\\R?", "")
+                .trim();
+    }
+
     public static ReaderSettings defaultSettings() {
         ReaderInputSettings input = ReaderInputSettings.defaults();
         return new ReaderSettings(
@@ -93,6 +103,20 @@ public record ReaderSettings(
 
     public ReaderSettings withFontSize(double newSize) { return copy(themeName, fontFamily, newSize, input, twoPageMode); }
     public ReaderSettings withTheme(String newTheme) { return copy(newTheme, fontFamily, fontSize, input, twoPageMode); }
+
+    /**
+     * Switches to a named Reader preset and removes only explicit foreground/background CSS overrides.
+     * Otherwise a color override saved by the settings dialog can mask the preset completely, making the
+     * toolbar theme button appear to do nothing. Unrelated custom CSS is preserved.
+     */
+    public ReaderSettings withThemePreset(String newTheme) {
+        return new ReaderSettings(newTheme, fontFamily, fontSize, lineSpacing, paragraphSpacing, firstLineIndent,
+                alignment, leftMargin, rightMargin, topMargin, bottomMargin, hyphenation, pageMode,
+                autoScroll, scrollSpeed, showToolbar, withoutThemeColorOverrides(customCss), showStatusBar,
+                showStatusProgress, showStatusChapter, showStatusPage, tapLeftAction, tapCenterAction,
+                tapRightAction, twoPageMode, autoTwoPageLandscape, showStatusClock, input, styleSheet);
+    }
+
     public ReaderSettings withFontFamily(String newFamily) { return copy(themeName, newFamily, fontSize, input, twoPageMode); }
     public ReaderSettings withPageMode(boolean enabled) {
         return fullCopy(themeName, fontFamily, fontSize, input, twoPageMode, autoTwoPageLandscape,
