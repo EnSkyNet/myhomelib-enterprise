@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.resource;
 
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.archive.ArchiveEntryNameSupport;
 import com.myhomelibcorp.infrastructure.cover.ZipArchiveReader;
 import lombok.RequiredArgsConstructor;
@@ -12,10 +13,13 @@ import java.io.InputStream;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.Locale;
 
@@ -243,11 +247,127 @@ public class BookResourceResolver implements BookResourcePort {
     }
 
     @Override
-    public boolean deletePhysicalFile(Path path) throws java.io.IOException {
-        if (path == null) return false;
-        Path normalized = path.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(normalized)) return false;
-        return Files.deleteIfExists(normalized);
+    public StagedDeletion stagePhysicalFileForDeletion(Path path, Path managedRoot, String collectionId, List<BookId> affectedBookIds) throws IOException {
+        if (path == null) throw new IllegalArgumentException("Path is required");
+        if (managedRoot == null) throw new SecurityException("Managed root is required for physical deletion");
+
+        Path normalizedRoot = managedRoot.toAbsolutePath().normalize();
+        if (normalizedRoot.getParent() == null) {
+            throw new SecurityException("Filesystem root cannot be used as a managed deletion root: " + normalizedRoot);
+        }
+        if (!Files.exists(normalizedRoot)) {
+            throw new SecurityException("Managed root does not exist: " + normalizedRoot);
+        }
+
+        Path normalizedPath = path.toAbsolutePath().normalize();
+        if (Files.isSymbolicLink(normalizedPath)) {
+            throw new SecurityException("Refusing to delete a symbolic-link book resource: " + normalizedPath);
+        }
+        if (!Files.isRegularFile(normalizedPath, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("Book resource is not a regular file: " + normalizedPath);
+        }
+
+        // Resolve parent symlinks on both sides before comparing. This prevents a path that
+        // is textually inside the collection root from escaping through a symlinked directory.
+        Path canonicalRoot = normalizedRoot.toRealPath();
+        Path canonicalFile = normalizedPath.toRealPath();
+        if (!canonicalFile.startsWith(canonicalRoot) || canonicalFile.equals(canonicalRoot)) {
+            throw new SecurityException("Refusing to delete a file outside the managed root: " + canonicalFile);
+        }
+
+        if (collectionId == null || collectionId.isBlank()) {
+            throw new IllegalArgumentException("Stable collection id is required for crash-safe deletion");
+        }
+        if (affectedBookIds == null || affectedBookIds.isEmpty()) {
+            throw new IllegalArgumentException("Affected book ids are required for crash-safe deletion");
+        }
+
+        Path recovery = recoverySibling(canonicalFile);
+        // Persist intent before touching the visible book path. If the process terminates after
+        // this point, startup recovery reconciles the marker with the committed books.local flags.
+        Path marker = LocalCopyDeletionRecoveryStore.prepare(canonicalFile, recovery, canonicalRoot, collectionId, affectedBookIds);
+        boolean removed = false;
+        try {
+            createRecoveryCopy(canonicalFile, recovery);
+            removed = Files.deleteIfExists(canonicalFile);
+            if (!removed) throw new IOException("Book resource disappeared before staged deletion: " + canonicalFile);
+            return new FileStagedDeletion(canonicalFile, recovery, marker);
+        } catch (IOException | RuntimeException error) {
+            if (!removed) {
+                try { Files.deleteIfExists(recovery); }
+                catch (IOException cleanup) { error.addSuppressed(cleanup); }
+                try { LocalCopyDeletionRecoveryStore.clear(marker); }
+                catch (IOException cleanup) { error.addSuppressed(cleanup); }
+            }
+            throw error;
+        }
+    }
+
+    private static Path recoverySibling(Path original) {
+        String fileName = original.getFileName() == null ? "book" : original.getFileName().toString();
+        return original.resolveSibling("." + fileName + ".mhl-delete-" + UUID.randomUUID() + ".recovery");
+    }
+
+    private static void createRecoveryCopy(Path original, Path recovery) throws IOException {
+        try {
+            Files.createLink(recovery, original);
+            return;
+        } catch (UnsupportedOperationException | IOException hardLinkFailure) {
+            try {
+                Files.copy(original, recovery, StandardCopyOption.COPY_ATTRIBUTES);
+            } catch (IOException copyFailure) {
+                copyFailure.addSuppressed(hardLinkFailure);
+                throw copyFailure;
+            }
+        }
+    }
+
+    private static final class FileStagedDeletion implements StagedDeletion {
+        private final Path original;
+        private final Path recovery;
+        private final Path marker;
+        private boolean finished;
+
+        private FileStagedDeletion(Path original, Path recovery, Path marker) {
+            this.original = original;
+            this.recovery = recovery;
+            this.marker = marker;
+        }
+
+        @Override
+        public Path originalPath() { return original; }
+
+        @Override
+        public Path recoveryPath() { return recovery; }
+
+        @Override
+        public synchronized void commit() throws IOException {
+            if (finished) return;
+            Files.deleteIfExists(recovery);
+            LocalCopyDeletionRecoveryStore.clear(marker);
+            finished = true;
+        }
+
+        @Override
+        public synchronized void rollback() throws IOException {
+            if (finished) return;
+            if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)) {
+                Files.deleteIfExists(recovery);
+                LocalCopyDeletionRecoveryStore.clear(marker);
+                finished = true;
+                return;
+            }
+            if (!Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("Recovery copy is missing for staged deletion: " + original);
+            }
+            try {
+                Files.move(recovery, original, StandardCopyOption.ATOMIC_MOVE);
+            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
+                Files.move(recovery, original);
+            }
+            LocalCopyDeletionRecoveryStore.clear(marker);
+            finished = true;
+        }
     }
 
     // ==================== Побудова шляхів ====================

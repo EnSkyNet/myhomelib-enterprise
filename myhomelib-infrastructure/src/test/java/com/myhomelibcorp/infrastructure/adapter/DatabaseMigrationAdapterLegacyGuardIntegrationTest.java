@@ -32,15 +32,15 @@ class DatabaseMigrationAdapterLegacyGuardIntegrationTest {
         jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('b1','a1')");
         jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('b2','a2')");
 
+        int pendingBefore = flyway(ds).info().pending().length;
         DatabaseMigrationAdapter adapter = adapter(ds);
-        assertThat(adapter.migrateCurrentCollection()).isEqualTo(47);
+        assertThat(adapter.migrateCurrentCollection()).isEqualTo(pendingBefore);
 
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM authors WHERE first_name='Dana' AND last_name='Stone'", Integer.class))
                 .isEqualTo(2);
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_authors WHERE book_id IN ('b1','b2')", Integer.class))
                 .isEqualTo(2);
-        assertThat(Flyway.configure().dataSource(ds).locations("classpath:db/migration").load()
-                .info().current().getVersion().getVersion()).isEqualTo("48");
+        assertThat(flyway(ds).info().pending()).isEmpty();
     }
 
     @Test
@@ -55,8 +55,9 @@ class DatabaseMigrationAdapterLegacyGuardIntegrationTest {
                 ) VALUES ('reader','p5',3,12.0,'Chapter Five','ch5','2026-09-04T00:00:00Z',1234)
                 """);
 
+        int pendingBefore = flyway(ds).info().pending().length;
         DatabaseMigrationAdapter adapter = adapter(ds);
-        assertThat(adapter.migrateCurrentCollection()).isEqualTo(23);
+        assertThat(adapter.migrateCurrentCollection()).isEqualTo(pendingBefore);
 
         assertThat(jdbc.queryForObject("SELECT chapter_title FROM reading_progress WHERE book_id='reader'", String.class))
                 .isEqualTo("Chapter Five");
@@ -82,6 +83,10 @@ class DatabaseMigrationAdapterLegacyGuardIntegrationTest {
     private static void migrateTo(DriverManagerDataSource ds, int version) {
         Flyway.configure().dataSource(ds).locations("classpath:db/migration")
                 .target(MigrationVersion.fromVersion(Integer.toString(version))).load().migrate();
+    }
+
+    private static Flyway flyway(DriverManagerDataSource ds) {
+        return Flyway.configure().dataSource(ds).locations("classpath:db/migration").load();
     }
 
     private static void insertBook(JdbcTemplate jdbc, String id) {

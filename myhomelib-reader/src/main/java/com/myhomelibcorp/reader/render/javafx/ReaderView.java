@@ -21,6 +21,7 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /** Готовий JavaFX-компонент читалки. */
 @Slf4j
@@ -48,6 +49,10 @@ public class ReaderView extends BorderPane {
     private Runnable onBackClick;
 
     public ReaderView() {
+        this(key -> key);
+    }
+
+    public ReaderView(Function<String, String> text) {
         formatRegistry = new DefaultBookFormatRegistry();
         formatRegistry.register(new Fb2Format());
         formatRegistry.register(new EpubFormat());
@@ -67,8 +72,8 @@ public class ReaderView extends BorderPane {
                 .build();
 
         canvas = new ReaderCanvas(engine, renderer);
-        toolbar = new ReaderToolbar(canvas);
-        statusBar = new ReaderStatusBar(canvas);
+        toolbar = new ReaderToolbar(canvas, text);
+        statusBar = new ReaderStatusBar(canvas, text);
 
         setTop(toolbar);
         setCenter(canvas);

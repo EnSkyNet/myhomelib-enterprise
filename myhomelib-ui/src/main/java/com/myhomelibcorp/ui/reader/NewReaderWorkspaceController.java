@@ -25,9 +25,12 @@ import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.shared.format.SupportedFormat;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
 import javafx.fxml.FXMLLoader;
@@ -83,6 +86,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final UiBackgroundExecutor uiBackgroundExecutor;
     private final ApplicationState appState;
     private final MainLayoutService mainLayoutService;
+    private final LocalizationService i18n;
 
     @FXML
     private StackPane readerContainer;
@@ -109,7 +113,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void initializeReaderView() {
-        readerView = new ReaderView();
+        readerView = new ReaderView(i18n::text);
         readerView.setOnBackClick(this::onBack);
         readerView.setOnSettingsClick(this::showSettings);
         readerView.setOnSettingsChanged(this::persistReaderSettings);
@@ -170,7 +174,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             });
         } catch (RejectedExecutionException e) {
             setLoading(false);
-            dialogService.showError("Помилка", "Черга фонових операцій переповнена. Спробуйте ще раз.");
+            dialogService.showError(i18n.text("common.error"), i18n.text("ui.reader.error.background_queue_full"));
         }
     }
 
@@ -197,17 +201,17 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private PreparedOpen prepareOpen(BookId bookId, ReaderEngine engine) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Reader open cancelled");
 
-        showDownloadProgress(-1, "📖 Завантаження метаданих книги...");
+        showDownloadProgress(-1, i18n.text("ui.reader.progress.loading_metadata"));
 
         BookDto dto = loadBookByIdUseCase.execute(bookId)
-                .orElseThrow(() -> new IOException("Книгу не знайдено: " + bookId));
+                .orElseThrow(() -> new IOException(i18n.format("ui.reader.error.book_not_found", bookId)));
         Book book = bookMapper.toDomain(dto);
 
-        showDownloadProgress(0.1, "📁 Пошук файлу книги...");
+        showDownloadProgress(0.1, i18n.text("ui.reader.progress.finding_file"));
         Path filePath = bookResourcePort.locateBookFile(book)
-                .orElseThrow(() -> new IOException("Файл книги не знайдено: " + book.getFileName()));
+                .orElseThrow(() -> new IOException(i18n.format("ui.reader.error.file_not_found", book.getFileName())));
 
-        showDownloadProgress(0.3, "📦 Підготовка файлу для читання...");
+        showDownloadProgress(0.3, i18n.text("ui.reader.progress.preparing_file"));
         MaterializedReaderSource materialized = materializeReaderEntryIfNeeded(book, filePath);
         PreparedBook preparedBook = null;
         try {
@@ -220,14 +224,14 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             } catch (RuntimeException persistenceError) {
                 log.warn("Не вдалося завантажити позицію читання для {}", book.getId(), persistenceError);
                 savedPosition = Optional.empty();
-                persistenceWarning = "⚠ Книгу відкрито, але позицію читання не вдалося завантажити";
+                persistenceWarning = i18n.text("ui.reader.warning.position_load_failed");
             }
             BookSource source = new FileBookSource(materialized.readerPath(), book.getId().asString());
 
-            showDownloadProgress(0.6, "📄 Аналіз структури книги...");
+            showDownloadProgress(0.6, i18n.text("ui.reader.progress.analyzing_structure"));
             preparedBook = engine.prepare(source);
 
-            showDownloadProgress(1.0, "✅ Готово до читання!");
+            showDownloadProgress(1.0, i18n.text("ui.reader.progress.ready"));
             return new PreparedOpen(dto, book, preparedBook, materialized.temporaryPath(),
                     settings, state.bookOverride(), savedPosition, persistenceWarning);
         } catch (Throwable e) {
@@ -291,7 +295,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             materializedBookFile = null;
             setLoading(false);
             log.error("❌ Помилка підключення підготовленої книги", error);
-            dialogService.showError("Помилка", "Не вдалося відкрити книгу: " + rootMessage(error));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.error.open_failed", rootMessage(error)));
         }
     }
 
@@ -305,7 +309,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
         log.error("❌ Помилка відкриття книги {}", bookId, root);
-        dialogService.showError("Помилка", "Не вдалося відкрити книгу: " + rootMessage(root));
+        dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.error.open_failed", rootMessage(root)));
     }
 
     private void closeCurrentBookForReplacement() {
@@ -355,7 +359,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         Optional<InputStream> stream = physicalArchive
                 ? bookResourcePort.readArchiveEntry(physicalPath, selectedEntry)
                 : bookResourcePort.readBookData(book);
-        if (stream.isEmpty()) throw new IOException("Не вдалося прочитати запис архіву: " + selectedEntry);
+        if (stream.isEmpty()) throw new IOException(i18n.format("ui.reader.error.archive_entry_read", selectedEntry));
 
         Path temp = Files.createTempFile("myhomelib-reader-book-", readerSuffix(selectedEntry));
         boolean success = false;
@@ -368,7 +372,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 if (read == 0) continue;
                 total += read;
                 if (total > ArchiveSafetyLimits.MAX_ENTRY_BYTES)
-                    throw new IOException("Книга в архіві перевищує безпечний ліміт Reader");
+                    throw new IOException(i18n.text("ui.reader.error.archive_entry_too_large"));
                 out.write(buffer, 0, read);
             }
             success = true;
@@ -411,9 +415,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private boolean isReaderEntry(String name) {
-        String lower = name == null ? "" : name.toLowerCase(Locale.ROOT);
-        return lower.endsWith(".fb2") || lower.endsWith(".fbd") || lower.endsWith(".epub")
-                || lower.endsWith(".txt") || lower.endsWith(".text") || lower.endsWith(".md");
+        return SupportedFormatRegistry.standard().detect(name)
+                .filter(format -> format.family() == SupportedFormat.Family.BOOK)
+                .map(SupportedFormat::readerSupported)
+                .orElse(false);
     }
 
     private String readerSuffix(String name) {
@@ -447,7 +452,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                     saved = persistenceService.savePosition(currentBookId.asString(), pos, currentDocumentLength());
                 }
                 if (!saved) {
-                    appState.getStatusBar().setStatusText("⚠ Позицію читання не вдалося зберегти; буде повторна спроба");
+                    appState.getStatusBar().setStatusText(i18n.text("ui.reader.warning.position_save_retry"));
                 }
             }
         } catch (Exception e) {
@@ -520,7 +525,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             }
         } catch (RuntimeException error) {
             log.error("Не вдалося зберегти налаштування Reader", error);
-            appState.getStatusBar().setStatusText("Налаштування Reader застосовано, але не вдалося зберегти");
+            appState.getStatusBar().setStatusText(i18n.text("ui.reader.warning.settings_save_failed"));
         }
     }
 
@@ -532,7 +537,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 ? readerContainer.getScene().getWindow()
                 : null;
 
-        ReaderSettingsDialog.show(owner, settings, currentBookOverride, readerView::applySettings)
+        ReaderSettingsDialog.show(owner, settings, currentBookOverride, readerView::applySettings, i18n)
                 .ifPresent(result -> {
                     readerView.applySettings(result.settings());
                     persistReaderSettings(result.settings(), result.bookOverride());
@@ -544,13 +549,13 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 || !currentBookBelongsToActiveCollection()) return;
 
         TextInputDialog dialog = new TextInputDialog("");
-        dialog.setTitle("Додати закладку");
-        dialog.setHeaderText("Введіть назву закладки");
-        dialog.setContentText("Назва:");
+        dialog.setTitle(i18n.text("ui.reader.bookmark.add.title"));
+        dialog.setHeaderText(i18n.text("ui.reader.bookmark.add.header"));
+        dialog.setContentText(i18n.text("common.name.label"));
         Optional<String> result = dialog.showAndWait();
         if (result.isEmpty()) return;
 
-        String title = result.get() == null || result.get().isBlank() ? "Закладка" : result.get().trim();
+        String title = result.get() == null || result.get().isBlank() ? i18n.text("ui.reader.bookmark.default_title") : result.get().trim();
         ReaderPosition pos = readerView.getCurrentPosition();
         if (pos == null) return;
         long totalTextLength = readerView.getEngine().getCurrentDocument() == null
@@ -561,14 +566,14 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         uiBackgroundExecutor.submit(() -> persistenceService.saveBookmark(bookId, pos, totalTextLength, title, ""))
                 .thenAccept(bookmark -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
-                    dialogService.showInfo("Успішно", "Закладку додано: " + title);
+                    dialogService.showInfo(i18n.text("common.success"), i18n.format("ui.reader.bookmark.add.success", title));
                     log.info("⭐ Закладку додано: {}", title);
                 }))
                 .exceptionally(error -> {
                     log.error("Не вдалося зберегти закладку", error);
                     Platform.runLater(() -> {
                         if (sameOpenBook(requestToken, bookId))
-                            dialogService.showError("Закладки", "Не вдалося зберегти закладку: " + rootMessage(error));
+                            dialogService.showError(i18n.text("ui.reader.bookmarks.title"), i18n.format("ui.reader.bookmark.save_error", rootMessage(error)));
                     });
                     return null;
                 });
@@ -579,7 +584,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 || !currentBookBelongsToActiveCollection()) return;
         String bookId = currentBookId.asString();
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
-        appState.getStatusBar().setStatusText("Завантаження закладок…");
+        appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
         uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
                 .thenAccept(bookmarks -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
@@ -589,7 +594,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                     log.error("Не вдалося завантажити закладки", error);
                     Platform.runLater(() -> {
                         if (sameOpenBook(requestToken, bookId))
-                            dialogService.showError("Закладки", "Не вдалося завантажити закладки: " + rootMessage(error));
+                            dialogService.showError(i18n.text("ui.reader.bookmarks.title"), i18n.format("ui.reader.bookmarks.load_error", rootMessage(error)));
                     });
                     return null;
                 });
@@ -597,24 +602,24 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void showBookmarksDialog(List<Bookmark> bookmarks, UiAsyncRequestToken requestToken, String bookId) {
         if (bookmarks == null || bookmarks.isEmpty()) {
-            dialogService.showInfo("Закладки", "У цієї книги ще немає закладок.");
+            dialogService.showInfo(i18n.text("ui.reader.bookmarks.title"), i18n.text("ui.reader.bookmarks.empty"));
             return;
         }
-        List<BookmarkChoice> choices = bookmarks.stream().map(BookmarkChoice::new).toList();
+        List<BookmarkChoice> choices = bookmarks.stream().map(bookmark -> new BookmarkChoice(bookmark, i18n.text("ui.reader.bookmark.default_title"))).toList();
         ChoiceDialog<BookmarkChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
-        dialog.setTitle("Закладки");
-        dialog.setHeaderText("Виберіть закладку");
-        dialog.setContentText("Закладка:");
+        dialog.setTitle(i18n.text("ui.reader.bookmarks.title"));
+        dialog.setHeaderText(i18n.text("ui.reader.bookmarks.select_header"));
+        dialog.setContentText(i18n.text("ui.reader.bookmarks.label"));
         Optional<BookmarkChoice> selected = dialog.showAndWait();
         if (selected.isEmpty() || !sameOpenBook(requestToken, bookId)) return;
 
         Bookmark bookmark = selected.get().bookmark();
-        ButtonType goTo = new ButtonType("Перейти");
-        ButtonType delete = new ButtonType("Видалити");
+        ButtonType goTo = new ButtonType(i18n.text("ui.reader.bookmark.go_to"));
+        ButtonType delete = new ButtonType(i18n.text("common.delete"));
         Alert action = new Alert(Alert.AlertType.CONFIRMATION);
-        action.setTitle("Закладка");
+        action.setTitle(i18n.text("ui.reader.bookmark.title"));
         action.setHeaderText(selected.get().toString());
-        action.setContentText("Що зробити із закладкою?");
+        action.setContentText(i18n.text("ui.reader.bookmark.action_prompt"));
         action.getButtonTypes().setAll(goTo, delete, ButtonType.CANCEL);
         Optional<ButtonType> actionResult = action.showAndWait();
         if (actionResult.filter(goTo::equals).isPresent()) {
@@ -626,12 +631,12 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 persistenceService.deleteBookmark(bookmark.getId());
                 return true;
             }).thenAccept(ignored -> Platform.runLater(() -> {
-                if (sameOpenBook(requestToken, bookId)) dialogService.showInfo("Закладки", "Закладку видалено.");
+                if (sameOpenBook(requestToken, bookId)) dialogService.showInfo(i18n.text("ui.reader.bookmarks.title"), i18n.text("ui.reader.bookmark.deleted"));
             })).exceptionally(error -> {
                 log.error("Не вдалося видалити закладку", error);
                 Platform.runLater(() -> {
                     if (sameOpenBook(requestToken, bookId))
-                        dialogService.showError("Закладки", "Не вдалося видалити закладку: " + rootMessage(error));
+                        dialogService.showError(i18n.text("ui.reader.bookmarks.title"), i18n.format("ui.reader.bookmark.delete_error", rootMessage(error)));
                 });
                 return null;
             });
@@ -650,11 +655,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         return Objects.equals(currentBookCollectionId, UiAsyncRequestGuard.currentCollectionId(appState));
     }
 
-    private record BookmarkChoice(Bookmark bookmark) {
+    private record BookmarkChoice(Bookmark bookmark, String defaultTitle) {
         @Override
         public String toString() {
             String title = bookmark.getChapterTitle();
-            if (title == null || title.isBlank()) title = "Закладка";
+            if (title == null || title.isBlank()) title = defaultTitle;
             return String.format(Locale.ROOT, "%s — %.1f%%", title, bookmark.getPosition());
         }
     }
@@ -667,7 +672,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         try {
             var document = readerView.getEngine().getCurrentDocument();
             if (document == null || document.toc() == null || document.toc().isEmpty()) {
-                dialogService.showInfo("Зміст", "У книги немає розділів");
+                dialogService.showInfo(i18n.text("ui.reader.toc.title"), i18n.text("ui.reader.toc.empty"));
                 return;
             }
 
@@ -688,7 +693,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             });
 
             Stage stage = new Stage();
-            stage.setTitle("Зміст");
+            stage.setTitle(i18n.text("ui.reader.toc.title"));
             stage.setScene(new Scene(root, 400, 500));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(readerContainer.getScene().getWindow());
@@ -696,7 +701,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         } catch (Exception e) {
             log.error("Помилка відкриття змісту", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити зміст: " + e.getMessage());
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.toc.open_error", e.getMessage()));
         }
     }
 
@@ -722,7 +727,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             });
 
             Stage stage = new Stage();
-            stage.setTitle("Пошук");
+            stage.setTitle(i18n.text("ui.reader.search.title"));
             stage.setScene(new Scene(root, 500, 450));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(readerContainer.getScene().getWindow());
@@ -730,7 +735,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         } catch (Exception e) {
             log.error("Помилка відкриття пошуку", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити пошук: " + e.getMessage());
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.search.open_error", e.getMessage()));
         }
     }
 

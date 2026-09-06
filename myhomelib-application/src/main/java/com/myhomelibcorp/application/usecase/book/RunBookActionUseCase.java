@@ -24,6 +24,7 @@ public class RunBookActionUseCase {
     private final ResolveBookContentUseCase resolveBookContentUseCase;
     private final BookActionProfileService profileService;
     private final BookActionExecutionService executionService;
+    private final ExternalReaderMaterializationCache externalReaderCache;
 
     public CompletableFuture<BookActionRunResult> execute(BookId bookId, String profileId) {
         return executorPort.submit(() -> run(bookId, profileId));
@@ -36,23 +37,28 @@ public class RunBookActionUseCase {
         if (book == null) return BookActionRunResult.failure(0, "Книга не знайдена");
 
         ResolvedBookContent content = null;
+        ExternalReaderMaterializationCache.Lease lease = null;
         try {
             content = resolveBookContentUseCase.execute(book, ResolveBookContentUseCase.DETAILS_EXTENSIONS);
-            Path file = content.path().toAbsolutePath().normalize();
-            Map<String, String> placeholders = placeholders(book, file);
-            BookActionRunResult result = executionService.execute(profile, placeholders);
-
-            // A detached process may still need the extracted archive entry after ProcessBuilder.start().
-            // Retain only that temporary materialization until JVM exit; waited profiles can clean immediately.
-            boolean detached = profile.commands().stream().anyMatch(c -> !c.waitForExit());
-            if (content.temporary() && detached) {
-                file.toFile().deleteOnExit();
+            Path file;
+            if (content.temporary()) {
+                lease = externalReaderCache.adopt(content.path());
+                content.close(); // the source path has been moved into the managed cache
                 content = null;
+                file = lease.path().toAbsolutePath().normalize();
+            } else {
+                file = content.path().toAbsolutePath().normalize();
             }
-            return result;
+
+            Map<String, String> placeholders = placeholders(book, file);
+            ExternalReaderMaterializationCache.Lease processLease = lease;
+            return executionService.execute(profile, placeholders, process -> {
+                if (processLease != null) processLease.retainUntil(process);
+            });
         } catch (Exception e) {
             return BookActionRunResult.failure(0, e.getMessage());
         } finally {
+            if (lease != null) lease.close();
             if (content != null) content.close();
         }
     }

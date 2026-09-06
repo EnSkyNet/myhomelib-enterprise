@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.usecase.book;
 
 import com.myhomelibcorp.shared.util.FileNameSupport;
+import com.myhomelibcorp.shared.format.SupportedFormat;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
@@ -22,9 +24,11 @@ import java.util.Set;
 @Component
 @RequiredArgsConstructor
 public class ResolveBookContentUseCase {
-    public static final Set<String> READER_EXTENSIONS = Set.of("fb2", "fbd", "epub", "txt", "text", "md");
-    public static final Set<String> DETAILS_EXTENSIONS = Set.of(
-            "fb2", "fbd", "epub", "txt", "text", "md", "mobi", "azw", "azw3", "pdf", "djvu", "djv");
+    private static final SupportedFormatRegistry FORMATS = SupportedFormatRegistry.standard();
+    public static final Set<String> READER_EXTENSIONS = FORMATS.extensions(
+            f -> f.family() == SupportedFormat.Family.BOOK && f.readerSupported());
+    public static final Set<String> DETAILS_EXTENSIONS = FORMATS.extensions(
+            f -> f.family() == SupportedFormat.Family.BOOK && (f.readerSupported() || f.coverSupported()));
 
     private final BookResourcePort resourcePort;
 

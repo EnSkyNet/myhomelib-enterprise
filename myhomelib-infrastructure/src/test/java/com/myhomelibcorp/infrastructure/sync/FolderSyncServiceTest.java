@@ -6,10 +6,9 @@ import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
-import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
+import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
@@ -43,8 +42,7 @@ class FolderSyncServiceTest {
         Files.writeString(file, "changed-content");
 
         BookQueryRepository queries = mock(BookQueryRepository.class);
-        BookCommandRepository commands = mock(BookCommandRepository.class);
-        SearchIndexer indexer = mock(SearchIndexer.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
@@ -68,12 +66,12 @@ class FolderSyncServiceTest {
         when(registry.findImporter(absolute)).thenReturn(importer);
         when(importer.importBooks(absolute)).thenReturn(Stream.of(parsed));
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, mutations, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().updateChanged(true).build());
 
         assertThat(result.getUpdated()).isEqualTo(1);
         ArgumentCaptor<Book> saved = ArgumentCaptor.forClass(Book.class);
-        verify(commands).save(saved.capture());
+        verify(mutations).save(saved.capture());
         Book value = saved.getValue();
         assertThat(value.getId()).isEqualTo(id);
         assertThat(value.getTitle()).isEqualTo("New title");
@@ -82,8 +80,6 @@ class FolderSyncServiceTest {
         assertThat(value.getProgress()).isEqualTo(63);
         assertThat(value.getReview()).isEqualTo("my review");
         assertThat(value.getLibId()).isEqualTo("LIB-42");
-        verify(indexer).indexBook(value);
-        verify(indexer).commit();
         verifyNoInteractions(inpx);
     }
 
@@ -93,8 +89,7 @@ class FolderSyncServiceTest {
         Files.writeString(file, "A title\nBody");
 
         BookQueryRepository queries = mock(BookQueryRepository.class);
-        BookCommandRepository commands = mock(BookCommandRepository.class);
-        SearchIndexer indexer = mock(SearchIndexer.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
@@ -110,11 +105,11 @@ class FolderSyncServiceTest {
         when(registry.findImporter(absolute)).thenReturn(importer);
         when(importer.importBooks(absolute)).thenReturn(Stream.of(parsed));
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, mutations, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().build());
 
         assertThat(result.getAdded()).isEqualTo(1);
-        verify(commands).save(any(Book.class));
+        verify(mutations).save(any(Book.class));
         verifyNoInteractions(inpx);
     }
 
@@ -122,8 +117,7 @@ class FolderSyncServiceTest {
     @Test
     void scannerFailureIsCountedOnce() throws Exception {
         BookQueryRepository queries = mock(BookQueryRepository.class);
-        BookCommandRepository commands = mock(BookCommandRepository.class);
-        SearchIndexer indexer = mock(SearchIndexer.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
@@ -133,12 +127,12 @@ class FolderSyncServiceTest {
         when(scanner.streamSupportedFiles(eq(root), anyBoolean(), anyInt(), anyLong()))
                 .thenThrow(new java.io.IOException("scan failed"));
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, mutations, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().build());
 
         assertThat(result.getErrors()).isEqualTo(1);
         assertThat(result.getErrorMessages()).hasSize(1);
-        verifyNoInteractions(commands, indexer, registry, inpx);
+        verifyNoInteractions(mutations, registry, inpx);
     }
 
 
@@ -150,8 +144,7 @@ class FolderSyncServiceTest {
         Files.writeString(second, "fixture");
 
         BookQueryRepository queries = mock(BookQueryRepository.class);
-        BookCommandRepository commands = mock(BookCommandRepository.class);
-        SearchIndexer indexer = mock(SearchIndexer.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
@@ -173,16 +166,15 @@ class FolderSyncServiceTest {
                 .thenReturn(secondResult);
         when(synchronizer.synchronizeSafelyNow(anyList())).thenReturn(true);
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        FolderSyncService service = new FolderSyncService(queries, mutations, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().build());
 
         assertThat(result.getAdded()).isEqualTo(1);
         assertThat(result.getUpdated()).isEqualTo(1);
         verify(synchronizer, times(1)).synchronizeSafelyNow(argThat(ids ->
                 ids.size() == 2 && ids.contains(inserted) && ids.contains(updated)));
-        verify(indexer, never()).rebuildIndex();
-        verify(indexer, never()).commit();
-        verifyNoInteractions(commands, registry);
+        verify(synchronizer, never()).rebuildSafelyNow();
+        verifyNoInteractions(mutations, registry);
     }
 
     @Test
@@ -193,8 +185,7 @@ class FolderSyncServiceTest {
         Files.writeString(second, "fixture");
 
         BookQueryRepository queries = mock(BookQueryRepository.class);
-        BookCommandRepository commands = mock(BookCommandRepository.class);
-        SearchIndexer indexer = mock(SearchIndexer.class);
+        CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         SearchIndexSynchronizer synchronizer = mock(SearchIndexSynchronizer.class);
         LibraryScanner scanner = mock(LibraryScanner.class);
         ImporterRegistry registry = mock(ImporterRegistry.class);
@@ -208,13 +199,13 @@ class FolderSyncServiceTest {
         when(inpx.importFileWithResult(any(Path.class), eq(1000), eq(root), any(), isNull(), isNull(), isNull(), isNull()))
                 .thenReturn(large);
 
-        FolderSyncService service = new FolderSyncService(queries, commands, indexer, synchronizer, scanner, registry, inpx);
+        when(synchronizer.rebuildSafelyNow()).thenReturn(true);
+        FolderSyncService service = new FolderSyncService(queries, mutations, synchronizer, scanner, registry, inpx);
         var result = service.syncFolder(temp, SyncOptions.builder().build());
 
         assertThat(result.getAdded()).isEqualTo(120_000);
-        verify(indexer, times(1)).rebuildIndex();
-        verifyNoInteractions(synchronizer);
-        verify(indexer, never()).commit();
+        verify(synchronizer, times(1)).rebuildSafelyNow();
+        verify(synchronizer, never()).synchronizeSafelyNow(anyList());
     }
 
     private Book book(BookId id, String title, BookMetadata metadata, BookFile file, LocalDateTime update) {

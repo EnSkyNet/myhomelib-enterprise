@@ -2,7 +2,6 @@ package com.myhomelibcorp.application.service;
 
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
-import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -13,7 +12,7 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class DatabaseToolsService {
 
-    private final IndexRebuilder indexRebuilder;
+    private final CollectionLifecycleService collectionLifecycleService;
     private final CollectionStorageManager collectionStorageManager;
     private final LibraryOperationCoordinator operationCoordinator;
 
@@ -21,19 +20,19 @@ public class DatabaseToolsService {
      * Перебудовує пошуковий індекс.
      */
     public void rebuildIndex() {
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.INDEX)) {
-            log.info("Rebuilding search index...");
-            indexRebuilder.rebuildIndex();
-            int count = indexRebuilder.getIndexedDocumentCount();
-            log.info("Index rebuilt. {} documents indexed.", count);
-        }
+        collectionLifecycleService.rebuildSearchIndex();
+    }
+
+    /** Manual background rebuild routed through the same collection-bound coordinator as auto rebuilds. */
+    public java.util.concurrent.CompletableFuture<Void> rebuildIndexAsync() {
+        return collectionLifecycleService.rebuildSearchIndexAsync();
     }
 
     /**
      * Отримує кількість проіндексованих документів.
      */
     public int getIndexedDocumentCount() {
-        return indexRebuilder.getIndexedDocumentCount();
+        return collectionLifecycleService.getIndexedDocumentCount();
     }
 
     /**

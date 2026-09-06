@@ -1,13 +1,10 @@
 package com.myhomelibcorp;
 
 import com.myhomelibcorp.application.session.SessionService;
-import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.infrastructure.collection.CollectionManager;
-import com.myhomelibcorp.infrastructure.importer.inpx.InpxImporter;
-import com.myhomelibcorp.infrastructure.persistence.sqlite.SqliteCollectionRepository;
+import com.myhomelibcorp.startup.StartupOrchestrator;
+import com.myhomelibcorp.startup.StartupReport;
 import com.myhomelibcorp.shared.util.AppPaths;
-import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.service.ApplicationThemeService;
 import com.myhomelibcorp.ui.controller.MainController;
 import javafx.application.Application;
@@ -26,9 +23,6 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.ConfigurableApplicationContext;
 import org.springframework.scheduling.annotation.EnableAsync;
 
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 @SpringBootApplication(scanBasePackages = "com.myhomelibcorp")
@@ -65,18 +59,16 @@ public class MyHomeLibApp extends Application {
         splashStage = buildSplashStage();
         splashStage.show();
 
-        CompletableFuture.supplyAsync(() -> {
-            try {
-                return initializeBackend();
-            } catch (Exception e) {
-                log.error("Помилка ініціалізації бекенду", e);
-                throw new RuntimeException(e);
-            }
-        }).thenAccept(collectionManager -> {
+        var startupExecutor = context.getBean(com.myhomelibcorp.application.port.out.executor.ExecutorPort.class);
+        StartupOrchestrator startupOrchestrator = context.getBean(StartupOrchestrator.class);
+        startupExecutor.submit(startupOrchestrator::run).thenAccept(report -> {
             Platform.runLater(() -> {
                 splashStage.close();
                 try {
-                    showMainWindow(primaryStage, collectionManager);
+                    if (report.degraded()) {
+                        log.warn("Startup completed in degraded mode: {}", report.outcomes());
+                    }
+                    showMainWindow(primaryStage, report);
                 } catch (Exception e) {
                     log.error("Помилка показу головного вікна", e);
                     showErrorAndExit(e);
@@ -107,68 +99,7 @@ public class MyHomeLibApp extends Application {
         return splash;
     }
 
-    private CollectionManager initializeBackend() {
-        CollectionManager collectionManager = context.getBean(CollectionManager.class);
-        SqliteCollectionRepository collectionRepository = context.getBean(SqliteCollectionRepository.class);
-        SwitchCollectionUseCase switchCollectionUseCase = context.getBean(SwitchCollectionUseCase.class);
-
-        // ОТРИМУЄМО ВСІ КОЛЕКЦІЇ З МЕТА-БД
-        List<Collection> collections = collectionRepository.findAll();
-        log.info("Знайдено {} колекцій при старті", collections.size());
-
-        Collection active;
-        if (collections.isEmpty()) {
-            log.info("Колекцій не знайдено, створюємо стандартну...");
-            String dbPath = AppPaths.librariesDir().resolve(UUID.randomUUID() + ".db").toString();
-            active = collectionRepository.save(new Collection(
-                    null,
-                    "Моя бібліотека",
-                    null,
-                    dbPath,
-                    0,
-                    null,
-                    null,
-                    null,
-                    null
-            ));
-            log.info("Створено стандартну колекцію: id={}, dbFile={}", active.getId(), active.getDbFile());
-        } else {
-            SessionService sessionService = context.getBean(SessionService.class);
-            String lastCollectionId = sessionService.isRestoreEnabled() ? sessionService.getLastCollectionId() : null;
-            active = lastCollectionId == null ? collections.get(0) : collections.stream()
-                    .filter(c -> lastCollectionId.equals(c.getId()))
-                    .findFirst()
-                    .orElse(collections.get(0));
-            log.info("Використовуємо колекцію при старті: id={}, name={}, dbFile={}, restored={}",
-                    active.getId(), active.getName(), active.getDbFile(), lastCollectionId != null && lastCollectionId.equals(active.getId()));
-
-            // Логуємо всі знайдені колекції
-            for (Collection c : collections) {
-                log.info("  - Колекція: {} (id={}, dbFile={})", c.getName(), c.getId(), c.getDbFile());
-            }
-        }
-
-        // 1. Переключаємо колекцію
-        switchCollectionUseCase.execute(active, true);
-        context.getBean(ApplicationState.class).setCurrentLibraryCollection(active);
-
-        // 2. Lifecycle уже виконав Flyway, series sync і dictionary-cache refresh.
-
-        // 3. Не перераховуємо статистику на startup critical path.
-        // library_statistics є persistent cache; повний COUNT/SUM/GROUP BY виконується лише
-        // після явного refresh (наприклад, у вікні статистики або після імпорту).
-        InpxImporter inpxImporter = context.getBean(InpxImporter.class);
-        inpxImporter.initialize();
-
-        // 4. Per-collection Lucene lifecycle already reused a clean index or started a bounded
-        // background rebuild when the target index was absent/dirty. No unconditional startup rebuild.
-        log.info("Колекція та пошуковий індекс ініціалізовані; dirty index оновлюється у фоні за потреби");
-
-        log.info("Всі кеші та компоненти готові до роботи");
-        return collectionManager;
-    }
-
-    private void showMainWindow(Stage primaryStage, CollectionManager collectionManager) throws Exception {
+    private void showMainWindow(Stage primaryStage, StartupReport startupReport) throws Exception {
         FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
         if (loader.getLocation() == null) {
             throw new RuntimeException("MainView.fxml не знайдено у ресурсах");
@@ -180,9 +111,8 @@ public class MyHomeLibApp extends Application {
         MainController mainController = loader.getController();
         if (restoreState != null) mainController.restoreSessionWorkspace(restoreState);
 
-        String collectionName = collectionManager.getCurrentCollection() != null
-                ? collectionManager.getCurrentCollection().getName()
-                : "Без колекції";
+        Collection activeCollection = startupReport.activeCollection();
+        String collectionName = activeCollection != null ? activeCollection.getName() : "Без колекції";
         primaryStage.setTitle("MyHomeLib — " + collectionName);
         primaryStage.setScene(new Scene(root, 1100, 750));
         context.getBean(ApplicationThemeService.class).start();
@@ -241,23 +171,9 @@ public class MyHomeLibApp extends Application {
             log.warn("Не вдалося закрити UiBackgroundExecutor", e);
         }
 
-        // 4. Закриваємо BackgroundExecutor
-        try {
-            var bgExecutor = context.getBean(com.myhomelibcorp.infrastructure.executor.BackgroundExecutor.class);
-            bgExecutor.shutdown();
-        } catch (Exception e) {
-            log.warn("Не вдалося закрити BackgroundExecutor", e);
-        }
+        // 4. Shared task/io/import/search executors are owned and stopped by AsyncConfig.
 
-        // 5. Закриваємо SpringExecutorAdapter
-        try {
-            var executorAdapter = context.getBean(com.myhomelibcorp.infrastructure.executor.SpringExecutorAdapter.class);
-            executorAdapter.shutdown();
-        } catch (Exception e) {
-            log.warn("Не вдалося закрити SpringExecutorAdapter", e);
-        }
-
-        // 6. Закриваємо активну колекцію через єдиний lifecycle:
+        // 5. Закриваємо активну колекцію через єдиний lifecycle:
         // Lucene commit/close -> SQLite close/checkpoint -> freshness seal.
         if (context != null) {
             try {

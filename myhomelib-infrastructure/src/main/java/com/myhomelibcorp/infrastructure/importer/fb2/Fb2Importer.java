@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import com.myhomelibcorp.infrastructure.parser.fb2.Fb2Parser;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -22,8 +23,7 @@ public class Fb2Importer extends AbstractBookImporter {
 
     @Override
     public boolean supports(Path file) {
-        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.endsWith(".fb2") || name.endsWith(".fbd");
+        return SupportedFormatRegistry.standard().isFormat(file, "fb2");
     }
 
     @Override

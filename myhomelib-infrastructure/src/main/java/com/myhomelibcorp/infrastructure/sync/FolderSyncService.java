@@ -6,17 +6,17 @@ import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.infrastructure.FolderSyncPort;
-import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
+import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
 import com.myhomelibcorp.infrastructure.importengine.InpxImportPipeline;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
@@ -31,21 +31,22 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class FolderSyncService implements FolderSyncPort {
 
     private final BookQueryRepository bookQueryRepository;
-    private final BookCommandRepository bookCommandRepository;
-    private final SearchIndexer searchIndexer;
+    private final CommittedCatalogMutationService catalogMutations;
     private final SearchIndexSynchronizer searchIndexSynchronizer;
     private final LibraryScanner libraryScanner;
     private final ImporterRegistry importerRegistry;
     private final InpxImportPipeline inpxImportPipeline;
+    private final Executor ioExecutor;
     private final FolderSyncBookSupport syncSupport = new FolderSyncBookSupport();
     private final FolderSyncAvailabilitySupport availabilitySupport = new FolderSyncAvailabilitySupport();
 
@@ -54,6 +55,36 @@ public class FolderSyncService implements FolderSyncPort {
 
     private final AtomicBoolean isSyncing = new AtomicBoolean(false);
     private final AtomicBoolean cancelFlag = new AtomicBoolean(false);
+
+    @Autowired
+    public FolderSyncService(
+            BookQueryRepository bookQueryRepository,
+            CommittedCatalogMutationService catalogMutations,
+            SearchIndexSynchronizer searchIndexSynchronizer,
+            LibraryScanner libraryScanner,
+            ImporterRegistry importerRegistry,
+            InpxImportPipeline inpxImportPipeline,
+            @Qualifier("ioExecutor") Executor ioExecutor) {
+        this.bookQueryRepository = bookQueryRepository;
+        this.catalogMutations = catalogMutations;
+        this.searchIndexSynchronizer = searchIndexSynchronizer;
+        this.libraryScanner = libraryScanner;
+        this.importerRegistry = importerRegistry;
+        this.inpxImportPipeline = inpxImportPipeline;
+        this.ioExecutor = ioExecutor;
+    }
+
+    // Package-private compatibility constructor for focused unit tests.
+    FolderSyncService(
+            BookQueryRepository bookQueryRepository,
+            CommittedCatalogMutationService catalogMutations,
+            SearchIndexSynchronizer searchIndexSynchronizer,
+            LibraryScanner libraryScanner,
+            ImporterRegistry importerRegistry,
+            InpxImportPipeline inpxImportPipeline) {
+        this(bookQueryRepository, catalogMutations, searchIndexSynchronizer, libraryScanner,
+                importerRegistry, inpxImportPipeline, Runnable::run);
+    }
 
     @Override
     public SyncResult syncFolder(Path directory, SyncOptions options) {
@@ -72,7 +103,6 @@ public class FolderSyncService implements FolderSyncPort {
 
         Counters counters = new Counters();
         List<String> errorMessages = new ArrayList<>();
-        boolean indexDirty = false;
         ImportChangeAccumulator inpxChanges = new ImportChangeAccumulator(
                 ImportChangeAccumulator.normalizeLimit(changeTrackingLimit));
 
@@ -100,7 +130,6 @@ public class FolderSyncService implements FolderSyncPort {
                     try {
                         FileResult result = processPhysicalFile(file, root, effective, inpxChanges);
                         counters.add(result);
-                        indexDirty |= result.indexDirty();
                     } catch (Exception e) {
                         counters.errors++;
                         String message = file + ": " + syncSupport.safeMessage(e);
@@ -116,27 +145,20 @@ public class FolderSyncService implements FolderSyncPort {
 
             if (effective.isDeleteOrphans() && !cancelFlag.get()) {
                 var missing = availabilitySupport.markMissingPhysicalFiles(
-                        root, cancelFlag, bookQueryRepository, bookCommandRepository, searchIndexer, syncSupport);
-                FileResult orphanResult = new FileResult(0, missing.updated(), 0, missing.errors(), missing.indexDirty());
+                        root, cancelFlag, bookQueryRepository, catalogMutations, syncSupport);
+                FileResult orphanResult = new FileResult(0, missing.updated(), 0, missing.errors());
                 counters.add(orphanResult);
-                indexDirty |= orphanResult.indexDirty();
             }
 
             var inpxFinalization = FolderSyncInpxSupport.finalizeIndex(
-                    inpxChanges.snapshot(), searchIndexer, searchIndexSynchronizer);
+                    inpxChanges.snapshot(), searchIndexSynchronizer);
             if (inpxFinalization.performed()) {
-                // Selective synchronization/full rebuild commits earlier ordinary-file mutations too.
-                indexDirty = false;
                 if (!inpxFinalization.success()) {
                     counters.errors++;
                     errorMessages.add(inpxFinalization.errorMessage());
                 }
             }
 
-            if (indexDirty) {
-                searchIndexer.commit();
-                log.info("✅ Пошуковий індекс синхронізації зафіксовано");
-            }
         } catch (IOException e) {
             counters.errors++;
             errorMessages.add("Помилка сканування: " + syncSupport.safeMessage(e));
@@ -163,7 +185,28 @@ public class FolderSyncService implements FolderSyncPort {
 
     @Override
     public CompletableFuture<SyncResult> syncFolderAsync(Path directory, SyncOptions options) {
-        return CompletableFuture.supplyAsync(() -> syncFolder(directory, options));
+        SyncFuture future = new SyncFuture();
+        try {
+            ioExecutor.execute(() -> {
+                if (future.isCancelled()) return;
+                try {
+                    future.complete(syncFolder(directory, options));
+                } catch (Throwable error) {
+                    future.completeExceptionally(error);
+                }
+            });
+        } catch (RejectedExecutionException rejected) {
+            future.completeExceptionally(rejected);
+        }
+        return future;
+    }
+
+    private final class SyncFuture extends CompletableFuture<SyncResult> {
+        @Override
+        public boolean cancel(boolean mayInterruptIfRunning) {
+            cancelSync();
+            return super.cancel(mayInterruptIfRunning);
+        }
     }
 
     @Override
@@ -182,7 +225,7 @@ public class FolderSyncService implements FolderSyncPort {
         if (syncSupport.isInpx(lower)) {
             var changes = FolderSyncInpxSupport.importAndAccumulate(
                     inpxImportPipeline, file, root, cancelFlag, inpxChanges);
-            return new FileResult(changes.added(), changes.updated(), changes.deleted(), changes.errors(), false);
+            return new FileResult(changes.added(), changes.updated(), changes.deleted(), changes.errors());
         }
 
         if (syncSupport.isArchive(lower)) {
@@ -194,9 +237,9 @@ public class FolderSyncService implements FolderSyncPort {
             if (existing.isEmpty()) {
                 return importNewFile(file, root);
             }
-            int restored = availabilitySupport.restore(existing, bookCommandRepository, searchIndexer);
+            int restored = availabilitySupport.restore(existing, catalogMutations);
             if (!options.isUpdateChanged() || !syncSupport.archiveChanged(file, existing)) {
-                return restored > 0 ? new FileResult(0, restored, 0, 0, true) : FileResult.skipped();
+                return restored > 0 ? new FileResult(0, restored, 0, 0) : FileResult.skipped();
             }
             return reconcileArchive(file, root, existing, options.isDeleteOrphans());
         }
@@ -207,9 +250,9 @@ public class FolderSyncService implements FolderSyncPort {
             return importNewFile(file, root);
         }
         Book current = existing.get();
-        boolean restored = availabilitySupport.restore(current, bookCommandRepository, searchIndexer);
+        boolean restored = availabilitySupport.restore(current, catalogMutations);
         if (!options.isUpdateChanged() || !syncSupport.fileChanged(file, current)) {
-            return restored ? new FileResult(0, 1, 0, 0, true) : FileResult.skipped();
+            return restored ? new FileResult(0, 1, 0, 0) : FileResult.skipped();
         }
         return updateLooseBook(file, root, current);
     }
@@ -237,12 +280,11 @@ public class FolderSyncService implements FolderSyncPort {
                 Book parsed = iterator.next();
                 if (parsed == null) continue;
                 Book normalized = syncSupport.normalizeStorage(parsed, file, root, parsed.getArchiveEntry());
-                bookCommandRepository.save(normalized);
-                searchIndexer.indexBook(normalized);
+                catalogMutations.save(normalized);
                 added++;
             }
         }
-        return added > 0 ? new FileResult(added, 0, 0, 0, true) : FileResult.skipped();
+        return added > 0 ? new FileResult(added, 0, 0, 0) : FileResult.skipped();
     }
 
     /**
@@ -258,10 +300,9 @@ public class FolderSyncService implements FolderSyncPort {
         }
         Book normalized = syncSupport.normalizeStorage(parsed, file, root, "");
         Book merged = ImportBookMergePolicy.mergePreservingUserState(existing, normalized);
-        bookCommandRepository.save(merged);
-        searchIndexer.indexBook(merged);
+        catalogMutations.save(merged);
         log.debug("🔄 Оновлено метадані зміненого файлу: {}", file);
-        return new FileResult(0, 1, 0, 0, true);
+        return new FileResult(0, 1, 0, 0);
     }
 
     private FileResult reconcileArchive(Path file, Path root, List<Book> existing, boolean deleteRemoved) throws Exception {
@@ -290,13 +331,11 @@ public class FolderSyncService implements FolderSyncPort {
 
                 if (old != null) {
                     Book merged = ImportBookMergePolicy.mergePreservingUserState(old, normalized);
-                    bookCommandRepository.save(merged);
-                    searchIndexer.indexBook(merged);
+                    catalogMutations.save(merged);
                     matchedIds.add(old.getId().asString());
                     updated++;
                 } else {
-                    bookCommandRepository.save(normalized);
-                    searchIndexer.indexBook(normalized);
+                    catalogMutations.save(normalized);
                     added++;
                 }
             }
@@ -306,15 +345,15 @@ public class FolderSyncService implements FolderSyncPort {
         if (deleteRemoved && !cancelFlag.get()) {
             for (Book old : existing) {
                 if (matchedIds.contains(old.getId().asString())) continue;
-                availabilitySupport.mark(old, false, bookCommandRepository, searchIndexer);
+                availabilitySupport.mark(old, false, catalogMutations);
                 unavailable++;
             }
         }
-        return new FileResult(added, updated + unavailable, 0, 0, added + updated + unavailable > 0);
+        return new FileResult(added, updated + unavailable, 0, 0);
     }
 
-    private record FileResult(int added, int updated, int deleted, int errors, boolean indexDirty) {
-        static FileResult skipped() { return new FileResult(0, 0, 0, 0, false); }
+    private record FileResult(int added, int updated, int deleted, int errors) {
+        static FileResult skipped() { return new FileResult(0, 0, 0, 0); }
     }
 
     private static final class Counters {

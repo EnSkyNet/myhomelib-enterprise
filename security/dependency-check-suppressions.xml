@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<suppressions xmlns="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.4.xsd"
+              xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+              xsi:schemaLocation="https://jeremylong.github.io/DependencyCheck/dependency-suppression.1.4.xsd https://dependency-check.github.io/DependencyCheck/dependency-suppression.1.4.xsd">
+    <!--
+      No active suppressions at baseline.
+
+      Policy for every future <suppress> entry:
+      - it MUST have an `until="YYYY-MM-DDZ"` expiry;
+      - <notes> MUST explain the false-positive/accepted-risk rationale and link an issue;
+      - it MUST target a narrow GAV/package/CVE, never a blanket severity suppression.
+
+      tools/supply-chain-policy-check.py enforces the first two requirements and rejects
+      broad cvssBelow/cvssScore suppressions.
+    -->
+</suppressions>

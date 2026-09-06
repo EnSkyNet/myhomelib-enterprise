@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.compress.archivers.ArchiveEntry;
 import org.apache.commons.compress.archivers.ArchiveInputStream;
@@ -28,10 +29,7 @@ public class StreamArchiveImporter implements BookImporterPort {
     @Lazy @Autowired private ImporterRegistry registry;
 
     @Override public boolean supports(Path file) {
-        if (file == null) return false;
-        String n=file.getFileName().toString().toLowerCase(Locale.ROOT);
-        return n.endsWith(".tar")||n.endsWith(".tar.gz")||n.endsWith(".tgz")||n.endsWith(".tar.bz2")||n.endsWith(".tbz2")
-                ||n.endsWith(".tar.xz")||n.endsWith(".txz")||n.endsWith(".cpio");
+        return SupportedFormatRegistry.standard().isFormat(file, "tar", "cpio");
     }
     @Override public String getFormatName(){return "TAR/CPIO";}
 

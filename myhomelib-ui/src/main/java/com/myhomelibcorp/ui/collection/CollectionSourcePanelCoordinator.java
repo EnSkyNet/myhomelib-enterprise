@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.collection;
 
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.collection.CollectionSourceState;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.usecase.collection.CollectionAutoUpdateUseCase;
@@ -7,6 +8,7 @@ import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.imports.ImportFileChooserFilters;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -25,6 +27,7 @@ import java.util.Optional;
 @Component
 @RequiredArgsConstructor
 final class CollectionSourcePanelCoordinator {
+    private final LocalizationService localizationService;
     private final CollectionAutoUpdateUseCase autoUpdateUseCase;
     private final ApplicationState appState;
     private final DialogService dialogService;
@@ -65,7 +68,7 @@ final class CollectionSourcePanelCoordinator {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Виберіть локальний INPX/ZIP для автооновлення");
         chooser.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("INPX / ZIP", "*.inpx", "*.zip"),
+                ImportFileChooserFilters.catalogAndZipSources(localizationService),
                 new FileChooser.ExtensionFilter("Усі файли", "*.*"));
         configureInitialDirectory(chooser);
 

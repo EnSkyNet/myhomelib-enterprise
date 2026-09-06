@@ -193,6 +193,11 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     }
 
     @Override
+    public synchronized void rebuildIndex(AtomicBoolean cancelFlag) {
+        rebuildIndex(cancelFlag, null);
+    }
+
+    @Override
     public synchronized void rebuildIndex(AtomicBoolean cancelFlag, Consumer<SearchIndexProgress> progressListener) {
         if (isClosed.get()) return;
         if (indexWriter == null) {

@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
 import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
@@ -23,7 +24,7 @@ import java.util.Locale;
 public class TxtImporter extends AbstractBookImporter {
     @Override
     public boolean supports(Path file) {
-        return file != null && file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".txt");
+        return SupportedFormatRegistry.standard().isFormat(file, "txt");
     }
 
     @Override public String getFormatName() { return "TXT"; }

@@ -14,6 +14,8 @@ lucene = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastr
 index_lifecycle = text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneCollectionIndexLifecycle.java')
 paths = text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AppPaths.java')
 boot = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java')
+migration_startup = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/MigrationStartupTask.java')
+search_startup = text('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/SearchStartupTask.java')
 controller = text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/CollectionController.java')
 
 assert 'activateCollectionIndex(Collection collection)' in lifecycle_port
@@ -45,7 +47,8 @@ assert 'bookCommandRepository.repairTransientRemoteStorageRoots' not in lifecycl
 assert 'boolean shouldRebuild = rebuildIndex && !reusableIndex;' in lifecycle
 assert 'if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();' in lifecycle
 
-assert 'switchCollectionUseCase.execute(active, true);' in boot
+assert 'executeWithStatus(context.activeCollection(), false)' in migration_startup, 'startup migration phase must not hide index rebuild scheduling'
+assert 'if (context.reusableSearchIndex())' in search_startup and 'rebuildSearchIndexAsync()' in search_startup
 assert 'luceneService.rebuildIndex();' not in boot, 'startup must not unconditionally rebuild a reusable 1M index'
 assert 'switchCollectionUseCase.execute(collection, true)' in controller
 assert 'rebuildSearchIndexAsync()' not in controller, 'UI must not duplicate lifecycle rebuild policy'

@@ -42,7 +42,8 @@ public class ApplicationServiceConfig {
             IndexRebuilder indexRebuilder,
             SearchIndexLifecycle searchIndexLifecycle,
             DomainEventPublisher eventPublisher,
-            ExecutorPort executorPort
+            ExecutorPort executorPort,
+            LibraryOperationCoordinator operationCoordinator
     ) {
         return new CollectionLifecycleService(
                 collectionLifecyclePort,
@@ -51,7 +52,8 @@ public class ApplicationServiceConfig {
                 indexRebuilder,
                 searchIndexLifecycle,
                 eventPublisher,
-                executorPort
+                executorPort,
+                operationCoordinator
         );
     }
 

@@ -48,7 +48,7 @@ def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 def check_migrations() -> None:
     files = migration_files(MIGRATIONS)
     versions = [version(p) for p in files]
-    assert versions == list(range(1, 49)), f"expected sequential V1..V48, got {versions}"
+    assert versions == list(range(1, 50)), f"expected sequential V1..V49, got {versions}"
 
     # v7.1 must append migrations only. Compare the immutable v7 migrations byte-for-byte
     # against the retained release hash manifest so this also works from a source ZIP without .git.
@@ -66,7 +66,7 @@ def check_migrations() -> None:
                   "book_identities", "book_artifacts", "catalog_dataset_metadata",
                   "catalog_record_provenance", "book_source_relations", "artifact_occurrences", "reader_book_preferences"):
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        assert row, f"missing table {table} after V48"
+        assert row, f"missing table {table} after V49"
     manifest_cols = table_columns(conn, "catalog_manifests")
     for column in ("manifest_schema", "importer_version", "source_format", "normalization_version",
                    "fingerprint_model", "fingerprint_version", "processing_flags", "features_enabled"):
@@ -110,7 +110,7 @@ def check_upgrade_preserves_data() -> None:
         "groups": conn.execute("SELECT count(*) FROM book_groups WHERE book_id='book-v7-upgrade'").fetchone()[0],
     }
 
-    apply_migrations(conn, [p for p in files if 37 <= version(p) <= 48])
+    apply_migrations(conn, [p for p in files if 37 <= version(p) <= 49])
     after = {
         "book": conn.execute("SELECT title,rate,progress,review,local,lib_id FROM books WHERE id='book-v7-upgrade'").fetchone(),
         "authors": conn.execute("SELECT count(*) FROM book_authors WHERE book_id='book-v7-upgrade'").fetchone()[0],
@@ -119,7 +119,7 @@ def check_upgrade_preserves_data() -> None:
         "bookmark": conn.execute("SELECT book_id,paragraph_id FROM bookmarks WHERE id='bm-v7'").fetchone(),
         "groups": conn.execute("SELECT count(*) FROM book_groups WHERE book_id='book-v7-upgrade'").fetchone()[0],
     }
-    assert before == after, f"v7 user data changed during V37-V48: {before} -> {after}"
+    assert before == after, f"v7 user data changed during V37-V49: {before} -> {after}"
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     conn.close()
 
@@ -291,9 +291,12 @@ def check_source_invariants() -> None:
     require(lucene, "SearchIndexPerformanceReport", "Lucene performance telemetry")
 
     encryption = read("myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/EncryptionUtil.java")
+    master_key = read("myhomelib-shared/src/main/java/com/myhomelibcorp/shared/security/CredentialMasterKeyManager.java")
     require(encryption, "AES/GCM/NoPadding", "AES-GCM credentials")
-    require(encryption, "refusing plaintext credential storage", "fail-closed credential storage")
+    require(encryption, "CredentialMasterKeyManager.loadOrCreateDefault", "credential master-key manager delegation")
     require(encryption, "private static final SecretKey secretKey = initializeKey();", "eager fail-closed credential key")
+    require(master_key, "refusing plaintext credential storage", "fail-closed local credential storage")
+    require(master_key, "refusing insecure master-key fallback", "native SecretStore fail-closed policy")
     forbid(encryption, "isFallbackMode()", "legacy fallback sentinel API")
     forbid(encryption, "plaintext fallback", "plaintext encryption fallback")
 
@@ -364,9 +367,11 @@ def check_source_invariants() -> None:
     require(readme, "MyHomeLib Enterprise 7.1.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
     root_md = sorted(p.name for p in ROOT.glob("*.md"))
-    expected_root_md = sorted(["README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md", "REFACTORING-REPORT-2026-09-03.md", "REFACTORING_COMPLETION.md"])
-    assert root_md == expected_root_md, \
-        f"root Markdown documentation drift: expected {expected_root_md}, got {root_md}"
+    expected_root_md = {"README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md", "REFACTORING-REPORT-2026-09-03.md", "REFACTORING_COMPLETION.md"}
+    missing_root_md = sorted(expected_root_md - set(root_md))
+    unexpected_root_md = sorted(name for name in root_md if name not in expected_root_md and not re.fullmatch(r"ITERATION-[0-9]{2}-[A-Z0-9-]+\.md", name))
+    assert not missing_root_md and not unexpected_root_md, \
+        f"root Markdown documentation drift: missing={missing_root_md}, unexpected={unexpected_root_md}"
     for active_doc in (
             "MYHOMELIB-RELEASE.md",
             "myhomelib-ui/src/main/resources/help/index.md",
@@ -428,7 +433,7 @@ def main() -> int:
     parser.add_argument("--skip-tree-cleanliness", action="store_true", help="allow target/IDE dirs while developing")
     args = parser.parse_args()
     checks = [
-        ("Flyway V1-V48 + immutable V1-V36", check_migrations),
+        ("Flyway V1-V49 + immutable V1-V36", check_migrations),
         ("V41 reading statistics singleton", check_v41_reading_stats_singleton),
         ("V42 reader book preferences", check_v42_reader_book_preferences),
         ("V43 group membership lookup", check_v43_group_membership_index),

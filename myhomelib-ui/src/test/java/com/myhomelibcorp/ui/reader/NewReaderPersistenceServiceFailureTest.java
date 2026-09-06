@@ -3,6 +3,7 @@ package com.myhomelibcorp.ui.reader;
 import com.myhomelibcorp.application.port.out.repository.BookmarkRepository;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import com.myhomelibcorp.reader.api.ReaderPosition;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -15,7 +16,17 @@ class NewReaderPersistenceServiceFailureTest {
 
     private final ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
     private final BookmarkRepository bookmarks = mock(BookmarkRepository.class);
-    private final NewReaderPersistenceService service = new NewReaderPersistenceService(progress, bookmarks);
+    private final LocalizationService i18n = mock(LocalizationService.class);
+    private final NewReaderPersistenceService service = new NewReaderPersistenceService(progress, bookmarks, i18n);
+
+    NewReaderPersistenceServiceFailureTest() {
+        when(i18n.format("ui.reader.persistence.position_load_error", "book-1"))
+                .thenReturn("Не вдалося завантажити позицію читання для book-1");
+        when(i18n.format("ui.reader.persistence.bookmarks_load_error", "book-1"))
+                .thenReturn("Не вдалося завантажити закладки для book-1");
+        when(i18n.format("ui.reader.persistence.bookmark_count_error", "book-1"))
+                .thenReturn("Не вдалося підрахувати закладки для book-1");
+    }
 
     @Test
     void positionReadFailureIsNotReportedAsNoSavedPosition() {

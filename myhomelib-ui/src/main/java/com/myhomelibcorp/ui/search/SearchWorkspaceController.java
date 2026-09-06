@@ -11,6 +11,7 @@ import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
+import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
@@ -18,12 +19,14 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.ui.controller.SavedSearchesController;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
+import com.myhomelibcorp.ui.util.UiSubscriptions;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.animation.PauseTransition;
 import javafx.fxml.FXML;
@@ -40,7 +43,8 @@ import javafx.stage.Stage;
 import javafx.util.Duration;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationContext;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -49,14 +53,15 @@ import java.util.function.Function;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
-public class SearchWorkspaceController {
+public class SearchWorkspaceController implements WorkspaceLifecycle {
 
     private final SearchService searchService;
     private final NavigationService navigationService;
     private final ApplicationState appState;
-    private final ApplicationContext springContext;
+    private final FxmlLoaderFactory fxmlLoaderFactory;
     private final DialogService dialogService;
     private final SaveSearchUseCase saveSearchUseCase;
     private final UiBackgroundExecutor executor;
@@ -129,6 +134,7 @@ public class SearchWorkspaceController {
     private boolean loadingMoreBooks;
 
     private final PauseTransition debounce = new PauseTransition(Duration.millis(300));
+    private final UiSubscriptions subscriptions = new UiSubscriptions();
 
     @FXML
     public void initialize() {
@@ -141,7 +147,7 @@ public class SearchWorkspaceController {
         setSectionVisible(genresSection, false);
         setSectionVisible(booksSection, false);
         updateFilterIndicator();
-        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+        subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, oldCollection, newCollection) -> {
             String oldId = oldCollection == null ? null : oldCollection.getId();
             String newId = newCollection == null ? null : newCollection.getId();
             if (!java.util.Objects.equals(oldId, newId)) {
@@ -173,8 +179,8 @@ public class SearchWorkspaceController {
         if (filterIndicatorLabel == null) return;
         var spec = filterStateService.current();
         filterIndicatorLabel.setText(spec.isActive()
-                ? i18n.tr("Фільтр активний") + " (" + spec.activeCriteriaCount() + ")"
-                : i18n.tr("Фільтр вимкнено"));
+                ? i18n.text("ui.search.filter.active") + " (" + spec.activeCriteriaCount() + ")"
+                : i18n.text("ui.search.filter.disabled"));
     }
 
     // ==================== НАЛАШТУВАННЯ СПИСКІВ ====================
@@ -242,7 +248,7 @@ public class SearchWorkspaceController {
     private void configureSelectionColumn() {
         masterSelectionCheckBox = new CheckBox();
         masterSelectionCheckBox.setAllowIndeterminate(true);
-        masterSelectionCheckBox.setTooltip(new Tooltip("Вибрати всі книги з результату пошуку"));
+        masterSelectionCheckBox.setTooltip(new Tooltip(i18n.text("ui.search.select_all.tooltip")));
         masterSelectionCheckBox.setOnAction(event -> {
             List<BookId> ids = resultBookIds();
             BookSelectionService.SelectionState state = bookSelectionService.stateIds(ids);
@@ -273,7 +279,7 @@ public class SearchWorkspaceController {
                 setGraphic(checkBox);
             }
         });
-        bookSelectionService.selectedCountProperty().addListener((obs, oldValue, newValue) -> {
+        subscriptions.listen(bookSelectionService.selectedCountProperty(), (obs, oldValue, newValue) -> {
             refreshMasterSelection();
             booksTableView.refresh();
         });
@@ -416,11 +422,11 @@ public class SearchWorkspaceController {
         resetBookPaging();
         if (form.freeText().isBlank() && !advanced && !filterStateService.current().isActive()) {
             clearResults();
-            statusLabel.setText("Введіть запит або задайте фільтри");
+            statusLabel.setText(i18n.text("ui.search.status.enter_query_or_filters"));
             return;
         }
 
-        statusLabel.setText("Пошук…");
+        statusLabel.setText(i18n.text("ui.search.status.searching"));
         if (!advanced) {
             SearchRequest request = SearchQueryFactory.basic(form.freeText(), BOOK_PAGE_SIZE, 0);
             executor.submit(() -> new SearchUiPage(
@@ -435,7 +441,7 @@ public class SearchWorkspaceController {
                     })).exceptionally(ex -> {
                 log.error("Search failed", ex);
                 UiExecutor.runOnUiThread(() -> {
-                    if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText("Помилка пошуку: " + ex.getMessage());
+                    if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText(i18n.format("ui.search.status.error", ex.getMessage()));
                 });
                 return null;
             });
@@ -462,7 +468,7 @@ public class SearchWorkspaceController {
                 })).exceptionally(ex -> {
             log.error("Advanced search failed", ex);
             UiExecutor.runOnUiThread(() -> {
-                if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText("Помилка пошуку: " + ex.getMessage());
+                if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText(i18n.format("ui.search.status.error", ex.getMessage()));
             });
             return null;
         });
@@ -501,8 +507,8 @@ public class SearchWorkspaceController {
         appState.getBookDetails().setCurrentBook(null);
         updateBookPagingUi(page);
         statusLabel.setText(hasBooks
-                ? "Розширений пошук: завантажено " + books.size() + " з " + page.totalElements() + " книг"
-                : "Книги не знайдено");
+                ? i18n.format("ui.search.status.advanced_loaded", books.size(), page.totalElements())
+                : i18n.text("ui.search.status.books_not_found"));
     }
 
     private String text(TextField field) {
@@ -556,9 +562,8 @@ public class SearchWorkspaceController {
         long bookTotal = bookPage == null ? 0 : bookPage.totalElements();
         long total = results.authors().size() + series.size() + genres.size() + bookTotal;
         statusLabel.setText(total > 0
-                ? "Результати пошуку для: \"" + lastQuery + "\" — книг: " + books.size() + " / " + bookTotal
-                    + ", авторів (показано): " + results.authors().size()
-                : "Нічого не знайдено");
+                ? i18n.format("ui.search.status.results_summary", lastQuery, books.size(), bookTotal, results.authors().size())
+                : i18n.text("ui.search.status.nothing_found"));
     }
 
     @FXML
@@ -572,7 +577,7 @@ public class SearchWorkspaceController {
         final SearchRequest requestSnapshot = activeBookRequest;
         loadingMoreBooks = true;
         updateLoadMoreButton();
-        statusLabel.setText("Завантаження наступних результатів…");
+        statusLabel.setText(i18n.text("ui.search.status.loading_next"));
 
         executor.submit(() -> searchService.searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, activeBookTotal)).thenAccept(page ->
                 UiExecutor.runOnUiThread(() -> {
@@ -587,14 +592,14 @@ public class SearchWorkspaceController {
                             ? PageResult.of(List.copyOf(booksTableView.getItems()), activeBookTotal, 0, BOOK_PAGE_SIZE)
                             : page);
                     long loaded = booksTableView.getItems().size();
-                    statusLabel.setText("Книги: завантажено " + loaded + " з " + activeBookTotal);
+                    statusLabel.setText(i18n.format("ui.search.status.books_loaded", loaded, activeBookTotal));
                 })).exceptionally(ex -> {
             log.error("Loading next search page failed", ex);
             UiExecutor.runOnUiThread(() -> {
                 if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
                 loadingMoreBooks = false;
                 updateLoadMoreButton();
-                statusLabel.setText("Не вдалося завантажити наступну сторінку: " + ThrowableMessages.rootMessage(ex, "невідома помилка"));
+                statusLabel.setText(i18n.format("ui.search.status.next_page_error", ThrowableMessages.rootMessage(ex, i18n.text("common.error.unknown"))));
             });
             return null;
         });
@@ -615,7 +620,7 @@ public class SearchWorkspaceController {
         loadMoreBooksButton.setVisible(visible);
         loadMoreBooksButton.setManaged(visible);
         loadMoreBooksButton.setDisable(loadingMoreBooks);
-        loadMoreBooksButton.setText(loadingMoreBooks ? "Завантаження…" : "Завантажити ще");
+        loadMoreBooksButton.setText(loadingMoreBooks ? i18n.text("ui.search.load_more.loading") : i18n.text("ui.search.load_more.action"));
     }
 
     private void resetBookPaging() {
@@ -645,7 +650,7 @@ public class SearchWorkspaceController {
         booksTableView.getItems().clear();
         refreshMasterSelection();
         appState.getBookDetails().setCurrentBook(null);
-        statusLabel.setText("Введіть запит для пошуку");
+        statusLabel.setText(i18n.text("ui.search.status.enter_query"));
     }
 
     /** Re-run the current query after a storage/download change without leaving Search Workspace. */
@@ -674,13 +679,13 @@ public class SearchWorkspaceController {
             setSectionVisible(authorsSection, false);
             setSectionVisible(seriesSection, false);
             setSectionVisible(genresSection, false);
-            statusLabel.setText("Знайдено книг: " + results.size());
+            statusLabel.setText(i18n.format("ui.search.status.found_books", results.size()));
             appState.getBookDetails().setCurrentBook(null);
         } else {
             setSectionVisible(booksSection, false);
             booksTableView.getItems().clear();
             appState.getBookDetails().setCurrentBook(null);
-            statusLabel.setText("Книги не знайдено");
+            statusLabel.setText(i18n.text("ui.search.status.books_not_found"));
         }
     }
 
@@ -690,14 +695,14 @@ public class SearchWorkspaceController {
     private void onSaveSearch() {
         String query = SearchQueryFactory.savedQuery(currentSearchForm(searchField.getText()));
         if (query == null || query.isBlank()) {
-            dialogService.showWarning("Увага", "Введіть запит або задайте фільтри для збереження");
+            dialogService.showWarning(i18n.text("common.warning"), i18n.text("ui.search.save.requires_query"));
             return;
         }
 
         String name = dialogService.showTextInput(
-                "Зберегти пошук",
-                "Введіть назву для пошуку",
-                "Назва:",
+                i18n.text("ui.search.save.title"),
+                i18n.text("ui.search.save.header"),
+                i18n.text("common.name.label"),
                 query.length() > 30 ? query.substring(0, 30) + "..." : query
         ).orElse(null);
 
@@ -707,10 +712,10 @@ public class SearchWorkspaceController {
 
         try {
             saveSearchUseCase.execute(name, query, null);
-            dialogService.showInfo("Успішно", "Пошук '" + name + "' збережено");
+            dialogService.showInfo(i18n.text("common.success"), i18n.format("ui.search.save.success", name));
         } catch (Exception e) {
             log.error("Помилка збереження пошуку", e);
-            dialogService.showError("Помилка", "Не вдалося зберегти пошук: " + e.getMessage());
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.save.error", e.getMessage()));
         }
     }
 
@@ -719,7 +724,7 @@ public class SearchWorkspaceController {
         try {
             FXMLLoader loader = new FXMLLoader(
                     getClass().getResource("/view/saved-searches.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
 
             SavedSearchesController controller = loader.getController();
@@ -729,7 +734,7 @@ public class SearchWorkspaceController {
             });
 
             Stage stage = new Stage();
-            stage.setTitle("Збережені пошуки");
+            stage.setTitle(i18n.text("ui.search.saved.title"));
             stage.setScene(new Scene(root, 450, 500));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(searchField.getScene().getWindow());
@@ -737,7 +742,7 @@ public class SearchWorkspaceController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття збережених пошуків", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.saved.open_error", e.getMessage()));
         }
     }
 
@@ -797,4 +802,11 @@ public class SearchWorkspaceController {
             authors = authors == null ? List.of() : List.copyOf(authors);
         }
     }
+    @Override
+    public void dispose() {
+        UiAsyncRequestGuard.invalidate(searchGeneration);
+        debounce.stop();
+        subscriptions.close();
+    }
+
 }

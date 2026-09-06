@@ -2,6 +2,9 @@ package com.myhomelibcorp.infrastructure.collection;
 
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.config.DataSourceConfig;
+import com.myhomelibcorp.infrastructure.cover.ZipArchiveReader;
+import com.myhomelibcorp.infrastructure.resource.BookResourceResolver;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.shared.util.CatalogUpdateRecoveryFiles;
 import com.myhomelibcorp.shared.util.RestoreRecoveryFiles;
 import org.junit.jupiter.api.AfterEach;
@@ -14,8 +17,10 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
 
 class CollectionManagerCrashRecoveryTest {
 
@@ -89,6 +94,31 @@ class CollectionManagerCrashRecoveryTest {
         assertThat(Files.exists(previous)).isFalse();
     }
 
+
+    @Test
+    void reconcilesInterruptedLocalCopyDeletionBeforeCollectionDatabaseIsOpened() throws Exception {
+        BookId bookId = BookId.generate();
+        Path target = temp.resolve("local-copy-crash.db");
+        createDatabaseWithBook(target, "catalog-still-local", bookId, true);
+
+        Path root = Files.createDirectories(temp.resolve("managed-library"));
+        Path book = root.resolve("book.fb2");
+        Files.writeString(book, "durable book bytes");
+        BookResourceResolver resolver = new BookResourceResolver(mock(ZipArchiveReader.class));
+        var staged = resolver.stagePhysicalFileForDeletion(book, root, "local-copy-crash", List.of(bookId));
+        assertThat(book).doesNotExist();
+        assertThat(staged.recoveryPath()).exists();
+
+        // Simulate process death by dropping the in-memory staged handle without commit/rollback.
+        manager = newManager();
+        manager.switchToCollection(collection("local-copy-crash", target));
+
+        assertThat(readState(manager.getCurrentJdbcTemplate())).isEqualTo("catalog-still-local");
+        assertThat(book).exists();
+        assertThat(Files.readString(book)).isEqualTo("durable book bytes");
+        assertThat(staged.recoveryPath()).doesNotExist();
+    }
+
     @Test
     void completesFirstTimeRestoreFromValidatedStagedDatabaseWhenTargetIsMissing() throws Exception {
         Path target = temp.resolve("first-restore.db");
@@ -120,6 +150,20 @@ class CollectionManagerCrashRecoveryTest {
             statement.execute("CREATE TABLE recovery_state(value TEXT NOT NULL)");
             try (var prepared = connection.prepareStatement("INSERT INTO recovery_state(value) VALUES (?)")) {
                 prepared.setString(1, state);
+                prepared.executeUpdate();
+            }
+        }
+    }
+
+
+    private static void createDatabaseWithBook(Path file, String state, BookId bookId, boolean local) throws Exception {
+        createDatabase(file, state);
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + file.toAbsolutePath());
+             var statement = connection.createStatement()) {
+            statement.execute("CREATE TABLE books (id TEXT PRIMARY KEY, local INTEGER NOT NULL)");
+            try (var prepared = connection.prepareStatement("INSERT INTO books(id, local) VALUES (?, ?)")) {
+                prepared.setString(1, bookId.asString());
+                prepared.setInt(2, local ? 1 : 0);
                 prepared.executeUpdate();
             }
         }

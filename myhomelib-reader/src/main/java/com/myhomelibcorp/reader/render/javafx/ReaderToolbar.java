@@ -11,11 +11,13 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 @Slf4j
 public class ReaderToolbar extends ToolBar {
 
     private final ReaderCanvas canvas;
+    private final Function<String, String> text;
 
     // Навігація
     @Getter private final Button backButton;
@@ -55,8 +57,9 @@ public class ReaderToolbar extends ToolBar {
     private Runnable onToggleLeftSidebarClick;
     private Runnable onToggleRightSidebarClick;
 
-    public ReaderToolbar(ReaderCanvas canvas) {
+    public ReaderToolbar(ReaderCanvas canvas, Function<String, String> text) {
         this.canvas = canvas;
+        this.text = text == null ? Function.identity() : text;
 
         setPadding(new Insets(4, 8, 4, 8));
         setStyle("-fx-background-color: #e0e0e0; -fx-border-color: #cccccc; -fx-border-width: 0 0 1 0;");
@@ -64,33 +67,33 @@ public class ReaderToolbar extends ToolBar {
         setPrefHeight(40);
 
         // ===== НАВІГАЦІЯ =====
-        backButton = createButton("←", "Назад (Esc)");
-        prevPageButton = createButton("◀", "Попередня сторінка (←)");
-        nextPageButton = createButton("▶", "Наступна сторінка (→)");
-        prevChapterButton = createButton("⇤", "Попередній розділ (↑)");
-        nextChapterButton = createButton("⇥", "Наступний розділ (↓)");
+        backButton = createButton("←", "ui.reader.toolbar.back");
+        prevPageButton = createButton("◀", "ui.reader.toolbar.previous_page");
+        nextPageButton = createButton("▶", "ui.reader.toolbar.next_page");
+        prevChapterButton = createButton("⇤", "ui.reader.toolbar.previous_chapter");
+        nextChapterButton = createButton("⇥", "ui.reader.toolbar.next_chapter");
 
         // ===== РЕЖИМИ =====
-        pageModeButton = createButton("▥", "Одна / дві сторінки (P)");
-        autoScrollButton = createButton("▶▶", "Автопрокрутка (A)");
+        pageModeButton = createButton("▥", "ui.reader.toolbar.page_mode");
+        autoScrollButton = createButton("▶▶", "ui.reader.toolbar.auto_scroll");
 
         // ===== ЗУМ =====
-        zoomOutButton = createButton("🔍−", "Зменшити масштаб (Ctrl+-)");
-        zoomInButton = createButton("🔍+", "Збільшити масштаб (Ctrl++)");
-        zoomResetButton = createButton("100%", "Скинути масштаб (Ctrl+0)");
+        zoomOutButton = createButton("🔍−", "ui.reader.toolbar.zoom_out");
+        zoomInButton = createButton("🔍+", "ui.reader.toolbar.zoom_in");
+        zoomResetButton = createButton("100%", "ui.reader.toolbar.zoom_reset");
 
         // ===== ВИГЛЯД =====
-        themeButton = createButton("🎨", "Змінити тему (T)");
-        settingsButton = createButton("⚙️", "Налаштування");
-        fullscreenButton = createButton("⛶", "Повноекранний режим (F11)");
-        leftSidebarButton = createButton("◧", "Показати / сховати ліву панель");
-        rightSidebarButton = createButton("◨", "Показати / сховати праву панель");
+        themeButton = createButton("🎨", "ui.reader.toolbar.theme");
+        settingsButton = createButton("⚙️", "ui.reader.toolbar.settings");
+        fullscreenButton = createButton("⛶", "ui.reader.toolbar.fullscreen");
+        leftSidebarButton = createButton("◧", "ui.reader.toolbar.left_sidebar");
+        rightSidebarButton = createButton("◨", "ui.reader.toolbar.right_sidebar");
 
         // ===== ФУНКЦІЇ =====
-        bookmarkButton = createButton("⭐", "Додати закладку");
-        bookmarksButton = createButton("🔖", "Закладки");
-        tocButton = createButton("📑", "Зміст");
-        searchButton = createButton("🔍", "Пошук (Ctrl+F)");
+        bookmarkButton = createButton("⭐", "ui.reader.toolbar.add_bookmark");
+        bookmarksButton = createButton("🔖", "ui.reader.toolbar.bookmarks");
+        tocButton = createButton("📑", "ui.reader.toolbar.toc");
+        searchButton = createButton("🔍", "ui.reader.toolbar.search");
 
         // ToolBar provides a native overflow popup when the Reader becomes narrow
         // (for example with the right details panel visible or at 150–200% DPI).
@@ -130,9 +133,9 @@ public class ReaderToolbar extends ToolBar {
         log.info("✅ ReaderToolbar створено");
     }
 
-    private Button createButton(String text, String tooltip) {
-        Button btn = new Button(text);
-        btn.setTooltip(new Tooltip(tooltip));
+    private Button createButton(String label, String tooltipKey) {
+        Button btn = new Button(label);
+        btn.setTooltip(new Tooltip(text.apply(tooltipKey)));
         btn.setStyle("-fx-font-size: 13px; -fx-padding: 2 6 2 6;");
         return btn;
     }
@@ -242,8 +245,8 @@ public class ReaderToolbar extends ToolBar {
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6;");
 
         String currentTheme = canvas.getEngine().getSettings().themeName();
-        String displayTheme = ReaderTheme.fromName(currentTheme).displayName();
-        themeButton.setTooltip(new Tooltip("Змінити тему (T). Поточна: " + displayTheme));
+        String displayTheme = text.apply("ui.reader.theme." + ReaderTheme.fromName(currentTheme).name());
+        themeButton.setTooltip(new Tooltip(String.format(java.util.Locale.ROOT, text.apply("ui.reader.toolbar.theme_current"), displayTheme)));
     }
 
     // ==================== КОЛБЕКИ ====================

@@ -1,0 +1,64 @@
+name: GitHub connected acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      min_pr_runs:
+        description: "Minimum successful PR Fast gate samples for median"
+        required: false
+        default: "5"
+      release_run_id:
+        description: "Optional successful CI Release run id; blank = latest successful"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  actions: read
+  security-events: read
+
+jobs:
+  connected-acceptance:
+    name: MHL-010 / 017 / 018 / 019 connected acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Offline policy regression
+        run: python3 tools/github-connected-acceptance-test.py
+
+      - name: Collect live GitHub acceptance evidence
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MIN_PR_RUNS: ${{ inputs.min_pr_runs }}
+          RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          CANDIDATE_SHA: ${{ github.sha }}
+        run: |
+          args=(
+            --repo "$GITHUB_REPOSITORY"
+            --min-pr-runs "$MIN_PR_RUNS"
+            --expected-sha "$CANDIDATE_SHA"
+            --out-dir target/github-connected-acceptance
+          )
+          if [[ -n "$RELEASE_RUN_ID" ]]; then
+            args+=(--release-run-id "$RELEASE_RUN_ID")
+          fi
+          python3 tools/github-connected-acceptance.py "${args[@]}"
+
+      - name: Upload connected acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: github-connected-acceptance-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: error
+          retention-days: 30
+          path: target/github-connected-acceptance/**

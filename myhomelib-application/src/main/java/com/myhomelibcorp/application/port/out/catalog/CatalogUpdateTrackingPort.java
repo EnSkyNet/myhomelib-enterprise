@@ -30,6 +30,12 @@ public interface CatalogUpdateTrackingPort {
     /** Capture the current catalog revision/fingerprint after a successful download. */
     void markDownloadedBaseline(BookId bookId);
 
+    /**
+     * Provenance signal for destructive local-copy operations. A true value means this
+     * catalog row has a durable baseline created by a successful application download.
+     */
+    boolean hasDownloadedBaseline(BookId bookId);
+
     /** Clear download baseline when the local bytes are explicitly removed. */
     void clearDownloadedBaseline(BookId bookId);
 

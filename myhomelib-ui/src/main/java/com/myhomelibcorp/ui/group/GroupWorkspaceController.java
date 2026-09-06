@@ -10,7 +10,11 @@ import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
+import com.myhomelibcorp.ui.util.UiSubscriptions;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.collections.FXCollections;
@@ -21,17 +25,21 @@ import javafx.scene.input.ContextMenuEvent;
 import javafx.scene.layout.VBox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
-public class GroupWorkspaceController {
+public class GroupWorkspaceController implements WorkspaceLifecycle {
 
     private static final int PAGE_SIZE = 100;
 
@@ -61,13 +69,17 @@ public class GroupWorkspaceController {
     @FXML private Button nextPageButton;
     @FXML private Label pageLabel;
     @FXML private VBox groupDetailsBox;
+    @FXML private Label groupsStateLabel;
 
     private final ObservableList<GroupDto> groupList = FXCollections.observableArrayList();
     private final ObservableList<BookViewModel> books = FXCollections.observableArrayList();
     private final AtomicLong pageGeneration = new AtomicLong();
+    private final AtomicLong groupListGeneration = new AtomicLong();
+    private final UiSubscriptions subscriptions = new UiSubscriptions();
     private GroupDto currentGroup;
     private int currentPage;
     private OptionalLong currentGroupTotal = OptionalLong.empty();
+    private Long requestedGroupId;
 
     @FXML
     public void initialize() {
@@ -110,6 +122,20 @@ public class GroupWorkspaceController {
             }
         });
         updatePageControls(PageResult.empty());
+        subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, oldCollection, newCollection) -> {
+            String oldId = oldCollection == null ? null : oldCollection.getId();
+            String newId = newCollection == null ? null : newCollection.getId();
+            if (!Objects.equals(oldId, newId)) {
+                UiAsyncRequestGuard.invalidate(groupListGeneration);
+                pageGeneration.incrementAndGet();
+                currentGroup = null;
+                currentGroupTotal = OptionalLong.empty();
+                groupList.clear();
+                books.clear();
+                groupDetailsBox.setVisible(false);
+                loadGroups();
+            }
+        });
         loadGroups();
     }
 
@@ -126,15 +152,54 @@ public class GroupWorkspaceController {
     }
 
     public void loadGroups() {
-        try {
-            List<GroupDto> groups = loadGroupsUseCase.execute();
-            groupList.setAll(groups);
-            if (!groups.isEmpty()) groupsListView.getSelectionModel().selectFirst();
-            else groupDetailsBox.setVisible(false);
-        } catch (Exception e) {
-            log.error("Помилка завантаження груп", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити групи: " + e.getMessage());
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(groupListGeneration, appState);
+        setGroupsState("Завантаження…", true, true);
+        executor.submit(loadGroupsUseCase::execute).whenComplete((groups, error) ->
+                UiExecutor.runOnUiThread(() -> {
+                    if (!UiAsyncRequestGuard.isCurrent(requestToken, groupListGeneration, appState)) return;
+                    if (error != null) {
+                        log.error("Помилка завантаження груп", error);
+                        groupList.clear();
+                        books.clear();
+                        currentGroup = null;
+                        groupDetailsBox.setVisible(false);
+                        setGroupsState("Не вдалося завантажити групи. Натисніть «Оновити», щоб повторити.", true, false);
+                        return;
+                    }
+                    List<GroupDto> safeGroups = groups == null ? List.of() : groups;
+                    groupList.setAll(safeGroups);
+                    if (safeGroups.isEmpty()) {
+                        currentGroup = null;
+                        books.clear();
+                        groupDetailsBox.setVisible(false);
+                        setGroupsState("Груп немає", true, false);
+                        return;
+                    }
+                    setGroupsState(null, false, false);
+                    if (!selectRequestedGroup()) {
+                        groupsListView.getSelectionModel().selectFirst();
+                    }
+                }));
+    }
+
+    private boolean selectRequestedGroup() {
+        if (requestedGroupId == null) return false;
+        for (GroupDto candidate : groupList) {
+            if (Objects.equals(candidate.getId(), requestedGroupId)) {
+                groupsListView.getSelectionModel().select(candidate);
+                return true;
+            }
         }
+        return false;
+    }
+
+    private void setGroupsState(String text, boolean visible, boolean loading) {
+        if (groupsStateLabel != null) {
+            groupsStateLabel.setText(text == null ? "" : text);
+            groupsStateLabel.setVisible(visible);
+            groupsStateLabel.setManaged(visible);
+        }
+        if (groupsListView != null) groupsListView.setDisable(loading);
     }
 
     private void loadGroupBooks(GroupDto group) {
@@ -353,11 +418,16 @@ public class GroupWorkspaceController {
 
     public void setGroup(Group group) {
         if (group == null) return;
-        for (GroupDto candidate : groupList) {
-            if (candidate.getId().equals(group.getId().asLong())) {
-                groupsListView.getSelectionModel().select(candidate);
-                break;
-            }
-        }
+        requestedGroupId = group.getId().asLong();
+        selectRequestedGroup();
+    }
+
+    @Override
+    public void dispose() {
+        UiAsyncRequestGuard.invalidate(groupListGeneration);
+        pageGeneration.incrementAndGet();
+        subscriptions.close();
+        currentGroup = null;
+        appState.setCurrentGroup(null);
     }
 }

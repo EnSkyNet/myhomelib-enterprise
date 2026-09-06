@@ -4,7 +4,6 @@ import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.imports.statistics.ImportStatus;
-import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.importengine.InpxImportPipeline;
@@ -35,20 +34,17 @@ final class FolderSyncInpxSupport {
                 boundedInt(changes.deletedCount()), boundedInt(imported.errors()));
     }
 
-    static Finalization finalizeIndex(ImportChangeSet changes, SearchIndexer indexer,
-                                      SearchIndexSynchronizer synchronizer) {
+    static Finalization finalizeIndex(ImportChangeSet changes, SearchIndexSynchronizer synchronizer) {
         long changed = totalChanges(changes);
         if (changed == 0) return Finalization.notPerformed();
 
         if (!changes.complete()) {
-            try {
-                indexer.rebuildIndex();
+            boolean success = synchronizer.rebuildSafelyNow();
+            if (success) {
                 log.info("Folder sync: one full Lucene rebuild after bounded INPX overflow ({} changes)", changed);
                 return Finalization.succeeded();
-            } catch (RuntimeException error) {
-                log.error("Lucene rebuild failed after INPX folder sync", error);
-                return Finalization.failed("Не вдалося перебудувати пошуковий індекс після INPX sync: " + safeMessage(error));
             }
+            return Finalization.failed("Не вдалося перебудувати пошуковий індекс після INPX sync");
         }
 
         LinkedHashSet<BookId> ids = new LinkedHashSet<>();

@@ -16,6 +16,7 @@ import com.myhomelibcorp.infrastructure.importengine.InpxReader;
 import com.myhomelibcorp.infrastructure.importengine.InpxRecord;
 import com.myhomelibcorp.shared.exception.BusinessException;
 import com.myhomelibcorp.shared.exception.ErrorCode;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -81,9 +82,7 @@ public class InpxImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        if (file == null || file.getFileName() == null) return false;
-        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.endsWith(".inpx") || name.endsWith(".inp");
+        return SupportedFormatRegistry.standard().isFormat(file, "inpx");
     }
 
     @Override

@@ -153,6 +153,8 @@ def packaging_checks() -> list[str]:
                 errors.append(f"windows-installer-acceptance.ps1: missing acceptance contract {contract!r}")
     if "windows-installer-acceptance.ps1" not in workflow:
         errors.append("ci-release.yml: Windows installer lifecycle acceptance is not executed")
+    if "--expect-windows-msi" not in workflow or "--expect-windows-exe" not in workflow:
+        errors.append("ci-release.yml: Windows release validation must require both MSI and EXE candidates")
     windows_ui_acceptance = ROOT / "tools/windows-ui-acceptance.ps1"
     if not windows_ui_acceptance.is_file():
         errors.append("tools/windows-ui-acceptance.ps1: Windows UI/DPI acceptance runner is missing")
@@ -175,6 +177,45 @@ def packaging_checks() -> list[str]:
         )
     if "needs: package" not in workflow:
         errors.append("ci-release.yml: publish job must wait for all package jobs")
+
+    connected_script = ROOT / "tools/github-connected-acceptance.py"
+    connected_test = ROOT / "tools/github-connected-acceptance-test.py"
+    ingest_script = ROOT / "tools/github-acceptance-artifact-ingest.py"
+    ingest_test = ROOT / "tools/github-acceptance-artifact-ingest-test.py"
+    harness_binding = ROOT / "tools/windows-acceptance-harness-binding.py"
+    harness_binding_test = ROOT / "tools/windows-acceptance-harness-binding-test.py"
+    windows_host_binding = ROOT / "tools/windows-acceptance-host.ps1"
+    desktop_acceptance = ROOT / "tools/windows-release-desktop-acceptance.ps1"
+    final_external = ROOT / "tools/v71-final-external-acceptance-check.py"
+    final_external_test = ROOT / "tools/v71-final-external-acceptance-check-test.py"
+    connected_workflow = ROOT / ".github/workflows/github-acceptance.yml"
+    for path in (connected_script, connected_test, ingest_script, ingest_test, harness_binding, harness_binding_test, windows_host_binding, desktop_acceptance, final_external, final_external_test, connected_workflow):
+        if not path.is_file():
+            errors.append(f"{path.relative_to(ROOT)}: connected GitHub acceptance contract is missing")
+    if connected_script.is_file():
+        connected_text = connected_script.read_text(encoding="utf-8")
+        for contract in ["/rules/branches/", "Fast gate", "ci-release.yml", "bom.json",
+                         "dependency-check-report.json", "/code-scanning/analyses",
+                         "--codeql-release-gate-only", "--expected-sha", "myhomelib-windows",
+                         "windowsMsiSha256", "windowsExeSha256", "windowsPortableSha256", "candidate-windows",
+                         "acceptanceHarnessManifestSha256", "acceptance-harness.sha256"]:
+            if contract not in connected_text:
+                errors.append(f"github-connected-acceptance.py: missing acceptance contract {contract!r}")
+    if windows_host_binding.is_file():
+        host_text = windows_host_binding.read_text(encoding="utf-8")
+        for contract in ["MachineGuid", "acceptanceSessionId", "hostFingerprintSha256", "userFingerprintSha256", "windows-acceptance-host-binding"]:
+            if contract not in host_text:
+                errors.append(f"windows-acceptance-host.ps1: missing host/session contract {contract!r}")
+    if final_external.is_file():
+        final_text = final_external.read_text(encoding="utf-8")
+        for contract in ["MHL-010-A", "MHL-017/MHL-018", "verify_installer",
+                         "verify_portable", "verify_dpi", "verify_release_desktop",
+                         "verify_github_ingest", "windows-final-acceptance-evidence.zip",
+                         "schemaVersion must be 2", "candidate-binding", "windowsExeSha256",
+                         "windowsPortableSha256", "verify_harness_binding", "acceptanceHarnessManifestSha256",
+                         "verify_host_cohesion", "acceptanceSessionId", "hostFingerprintSha256"]:
+            if contract not in final_text:
+                errors.append(f"v71-final-external-acceptance-check.py: missing final acceptance contract {contract!r}")
 
     checksum_script = (ROOT / "checksums.sh").read_text(encoding="utf-8")
     if "sort -z" in checksum_script or 'sha256sum "$rel"' in checksum_script:

@@ -90,15 +90,19 @@ Desktop Reader behavior is intentionally not a claim of complete Android/iOS or 
 
 - Separate OPDS sidecar integrated into the desktop lifecycle.
 - Default OPDS bind `127.0.0.1:8088`, configurable from the UI.
-- Optional Basic authentication and autostart.
+- HTTP is loopback-only; LAN exposure requires TLS/HTTPS with PKCS12/JKS key material.
+- OPDS settings can generate/regenerate a managed self-signed certificate or import X.509 PEM + unencrypted PKCS#8 private key, display the SHA-256 fingerprint and explain self-signed trust requirements.
+- Managed keystore passwords are stored only through the explicit `mhlenc:v1:` authenticated-encryption envelope; authenticated pre-envelope ciphertext is upgraded on persistence.
+- Optional Basic authentication and autostart, with per-client failed-auth throttling and bounded request concurrency.
 - Authors/series/genres/search/book metadata and streamed local-book downloads.
-- `/health` lifecycle probe.
+- `/health` lifecycle probe with a stricter default policy when exposed beyond loopback.
 - Separate read-only MCP runtime for supported library access scenarios.
 
 ## Localization and context help
 
 - File-based `Lang/<code>.json` localization.
 - Bundled Ukrainian, English and Bulgarian UI catalogues.
+- Search, Reader, Import, OPDS and Backup programmatic UI text uses stable localization keys with synchronized UK/EN/BG values and format placeholders.
 - Compatible external language files are discovered without recompilation.
 - Stable genre codes are independent of translated labels.
 - Context-sensitive F1 help through a central topic registry.
@@ -126,3 +130,10 @@ Desktop Reader behavior is intentionally not a claim of complete Android/iOS or 
 - Reader theme preset cycling cannot be visually masked by stale explicit foreground/background CSS overrides.
 - Main action toolbar wraps into two rows at the supported 800 px minimum desktop width instead of clipping actions outside the client area.
 - `Book -> Open in Reader` and `Book -> Open in external reader` follow the canonical selected-book state across classic, Search and Author workspaces.
+
+## JavaFX workspace lifecycle hardening — 2026-09-06
+
+- Reloadable FXML views receive a fresh Spring-autowired controller instance on every load.
+- Dashboard, statistics, search, book table and group views dispose subscriptions to long-lived application state when closed/replaced.
+- Book workspace database loading is asynchronous, cancellable and protected from stale A → B / collection-switch completions.
+- Group-list loading is asynchronous with loading/empty/error states and preserves a requested group until the current list load completes.

@@ -1,9 +1,11 @@
 package com.myhomelibcorp.ui.presenter;
 
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.usecase.imports.ImportDirectoryUseCase;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.imports.ImportFileChooserFilters;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -24,6 +26,7 @@ import java.util.function.DoubleConsumer;
 @Slf4j
 public class BookImportPresenter {
 
+    private final LocalizationService localizationService;
     private final ImportFileUseCase importFileUseCase;
     private final ImportDirectoryUseCase importDirectoryUseCase;
     private final UiBackgroundExecutor executor;
@@ -39,9 +42,7 @@ public class BookImportPresenter {
 
     public void importFb2(Runnable onComplete) {
         Stage stage = new Stage();
-        File file = fileChooserService.chooseFile(stage, "Виберіть книгу або архів",
-                List.of(new javafx.stage.FileChooser.ExtensionFilter("Книги й архіви",
-                        "*.fb2", "*.fbd", "*.epub", "*.txt", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz")));
+        File file = fileChooserService.chooseFile(stage, localizationService.text("ui.import.choose_book_or_archive.title"), ImportFileChooserFilters.booksAndArchives(localizationService));
         if (file != null) {
             importFile(file.toPath(), onComplete);
         }
@@ -53,8 +54,7 @@ public class BookImportPresenter {
 
     public void importInpx(Runnable onComplete) {
         Stage stage = new Stage();
-        File file = fileChooserService.chooseFile(stage, "Виберіть INPX файл",
-                List.of(new javafx.stage.FileChooser.ExtensionFilter("INPX файли", "*.inpx", "*.inp")));
+        File file = fileChooserService.chooseFile(stage, localizationService.text("ui.import.choose_inpx.title"), ImportFileChooserFilters.catalogs(localizationService));
         if (file != null) {
             importFile(file.toPath(), onComplete);
         }
@@ -62,7 +62,7 @@ public class BookImportPresenter {
 
     public void importDirectory(Path directory, Runnable onComplete) {
         var statusBar = appState.getStatusBar();
-        statusBar.setStatusText("Імпорт каталогу: " + directory.getFileName());
+        statusBar.setStatusText(localizationService.format("ui.import.presenter.directory_started", directory.getFileName()));
         statusBar.setProgressVisible(true);
         AtomicBoolean cancelFlag = new AtomicBoolean(false);
         DoubleConsumer progressConsumer = progress -> UiExecutor.runOnUiThread(() ->
@@ -81,13 +81,13 @@ public class BookImportPresenter {
         executor.submit(() -> importDirectoryUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     statusBar.setProgressVisible(false);
-                    statusBar.setStatusText("Імпорт каталогу завершено. Додано " + result.imported() + " книг");
+                    statusBar.setStatusText(localizationService.format("ui.import.presenter.directory_completed", result.imported()));
                     if (onComplete != null) onComplete.run();
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
                         statusBar.setProgressVisible(false);
-                        statusBar.setStatusText("Помилка імпорту: " + ex.getMessage());
+                        statusBar.setStatusText(localizationService.format("ui.import.presenter.error", ex.getMessage()));
                     });
                     log.error("Directory import failed", ex);
                     return null;
@@ -100,7 +100,7 @@ public class BookImportPresenter {
 
     public void importFile(Path file, Runnable onComplete) {
         var statusBar = appState.getStatusBar();
-        statusBar.setStatusText("Імпорт файлу: " + file.getFileName());
+        statusBar.setStatusText(localizationService.format("ui.import.presenter.file_started", file.getFileName()));
         statusBar.setProgressVisible(true);
 
         ImportContext context = ImportContext.builder()
@@ -114,13 +114,13 @@ public class BookImportPresenter {
         executor.submit(() -> importFileUseCase.execute(context))
                 .thenAccept(result -> UiExecutor.runOnUiThread(() -> {
                     statusBar.setProgressVisible(false);
-                    statusBar.setStatusText("Імпорт завершено. Додано " + result.imported() + " книг");
+                    statusBar.setStatusText(localizationService.format("ui.import.presenter.file_completed", result.imported()));
                     if (onComplete != null) onComplete.run();
                 }))
                 .exceptionally(ex -> {
                     UiExecutor.runOnUiThread(() -> {
                         statusBar.setProgressVisible(false);
-                        statusBar.setStatusText("Помилка імпорту: " + ex.getMessage());
+                        statusBar.setStatusText(localizationService.format("ui.import.presenter.error", ex.getMessage()));
                     });
                     log.error("File import failed", ex);
                     return null;

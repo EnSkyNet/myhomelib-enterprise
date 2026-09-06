@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Consumer;
 
 /** Builds and optionally executes safe ProcessBuilder plans; never invokes a shell. */
 @Component
@@ -27,7 +28,18 @@ public class BookActionExecutionService {
     }
 
     public BookActionRunResult execute(BookActionProfile profile, Map<String, String> placeholders) {
+        return execute(profile, placeholders, ignored -> { });
+    }
+
+    /**
+     * Executes a profile and exposes detached process handles to the caller so temporary materializations can be
+     * retained until those processes exit. The callback runs immediately after ProcessBuilder.start().
+     */
+    public BookActionRunResult execute(BookActionProfile profile,
+                                       Map<String, String> placeholders,
+                                       Consumer<Process> detachedProcessObserver) {
         if (profile == null || !profile.enabled()) return BookActionRunResult.failure(0, "Профіль вимкнений або не знайдений");
+        Consumer<Process> observer = detachedProcessObserver == null ? ignored -> { } : detachedProcessObserver;
         int started = 0;
         try {
             for (BookActionCommand command : profile.commands()) {
@@ -52,6 +64,8 @@ public class BookActionExecutionService {
                     if (process.exitValue() != 0) {
                         return BookActionRunResult.failure(started, "Команда завершилась з кодом " + process.exitValue());
                     }
+                } else {
+                    observer.accept(process);
                 }
             }
             return BookActionRunResult.success(started);

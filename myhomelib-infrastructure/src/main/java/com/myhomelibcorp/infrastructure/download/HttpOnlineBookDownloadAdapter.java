@@ -428,6 +428,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             throw new SecurityException("Не вдалося дешифрувати credentials online-колекції");
         }
         if (user != null && !user.isBlank()) {
+            CredentialTransportPolicy.requireHttpsWhenCredentialsPresent(uri, user);
             String token = Base64.getEncoder().encodeToString(
                     (user + ":" + (password == null ? "" : password)).getBytes(StandardCharsets.UTF_8));
             request.header("Authorization", "Basic " + token);

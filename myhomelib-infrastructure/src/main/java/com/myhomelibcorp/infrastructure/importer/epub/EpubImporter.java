@@ -11,6 +11,7 @@ import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
 import com.myhomelibcorp.infrastructure.parser.author.LocalAuthorNameParser;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -37,7 +38,7 @@ public class EpubImporter extends AbstractBookImporter {
 
     @Override
     public boolean supports(Path file) {
-        return file != null && file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".epub");
+        return SupportedFormatRegistry.standard().isFormat(file, "epub");
     }
 
     @Override public String getFormatName() { return "EPUB"; }

@@ -313,6 +313,18 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
     }
 
     @Override
+    public boolean hasDownloadedBaseline(BookId bookId) {
+        if (bookId == null) return false;
+        Integer count = jdbc().queryForObject("""
+                SELECT COUNT(*)
+                  FROM catalog_book_state
+                 WHERE book_id = ?
+                   AND downloaded_baseline_at IS NOT NULL
+                """, Integer.class, bookId.asString());
+        return count != null && count > 0;
+    }
+
+    @Override
     public void clearDownloadedBaseline(BookId bookId) {
         if (bookId == null) return;
         String now = now();

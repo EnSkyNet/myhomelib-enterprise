@@ -51,4 +51,16 @@ class LuceneDocumentMapperStorageTest {
         assertThat(doc.getField("annotation").fieldType().indexOptions())
                 .isNotEqualTo(org.apache.lucene.index.IndexOptions.NONE);
     }
+
+    @Test
+    void indexesCanonicalFormatFromSharedRegistry() {
+        for (String[] sample : new String[][]{
+                {"book.docx", "docx"}, {"book.txt", "txt"}, {"book.html", "html"},
+                {"book.pdf", "pdf"}, {"book.mobi", "mobi"}, {"book.azw3", "azw3"}, {"book.djvu", "djvu"}}) {
+            var snapshot = BookSnapshot.builder()
+                    .id(BookId.generate()).fileName(sample[0]).build();
+            var doc = new LuceneDocumentMapper().toDocument(snapshot);
+            assertThat(doc.getField("format").stringValue()).isEqualTo(sample[1]);
+        }
+    }
 }

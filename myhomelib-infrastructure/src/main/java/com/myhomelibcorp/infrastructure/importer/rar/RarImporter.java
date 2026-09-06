@@ -7,6 +7,7 @@ import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -34,7 +35,7 @@ public class RarImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        return file != null && file.getFileName().toString().toLowerCase(Locale.ROOT).matches(".*\\.(rar|cbr)$");
+        return SupportedFormatRegistry.standard().isFormat(file, "rar", "cbr");
     }
 
     @Override public String getFormatName() { return "RAR"; }

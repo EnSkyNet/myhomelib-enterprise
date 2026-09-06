@@ -39,6 +39,9 @@
         <testcontainers.version>1.19.7</testcontainers.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
+        <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
+        <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
+        <jna.version>5.13.0</jna.version>
     </properties>
 
     <modules>
@@ -131,6 +134,18 @@
                 <groupId>com.github.luben</groupId>
                 <artifactId>zstd-jni</artifactId>
                 <version>${zstd-jni.version}</version>
+            </dependency>
+
+            <!-- Native OS credential storage (Windows DPAPI; platform helpers) -->
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna</artifactId>
+                <version>${jna.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>net.java.dev.jna</groupId>
+                <artifactId>jna-platform</artifactId>
+                <version>${jna.version}</version>
             </dependency>
 
             <!-- Lucene -->
@@ -325,5 +340,77 @@
                 </plugins>
             </build>
         </profile>
+
+        <profile>
+            <id>sbom</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.cyclonedx</groupId>
+                        <artifactId>cyclonedx-maven-plugin</artifactId>
+                        <version>${cyclonedx-maven-plugin.version}</version>
+                        <executions>
+                            <execution>
+                                <id>release-sbom</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>makeAggregateBom</goal>
+                                </goals>
+                                <configuration>
+                                    <projectType>application</projectType>
+                                    <includeCompileScope>true</includeCompileScope>
+                                    <includeRuntimeScope>true</includeRuntimeScope>
+                                    <includeProvidedScope>false</includeProvidedScope>
+                                    <includeSystemScope>true</includeSystemScope>
+                                    <includeTestScope>false</includeTestScope>
+                                    <outputFormat>all</outputFormat>
+                                    <outputName>bom</outputName>
+                                    <outputReactorProjects>false</outputReactorProjects>
+                                    <schemaVersion>1.6</schemaVersion>
+                                    <skipNotDeployed>false</skipNotDeployed>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
+        <profile>
+            <id>dependency-check</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.owasp</groupId>
+                        <artifactId>dependency-check-maven</artifactId>
+                        <version>${dependency-check-maven.version}</version>
+                        <executions>
+                            <execution>
+                                <id>dependency-vulnerability-policy</id>
+                                <phase>verify</phase>
+                                <goals>
+                                    <goal>aggregate</goal>
+                                </goals>
+                                <configuration>
+                                    <failBuildOnCVSS>7.0</failBuildOnCVSS>
+                                    <formats>
+                                        <format>HTML</format>
+                                        <format>JSON</format>
+                                        <format>SARIF</format>
+                                    </formats>
+                                    <suppressionFiles>
+                                        <suppressionFile>${maven.multiModuleProjectDirectory}/security/dependency-check-suppressions.xml</suppressionFile>
+                                    </suppressionFiles>
+                                    <nvdApiKey>${env.NVD_API_KEY}</nvdApiKey>
+                                    <skipTestScope>true</skipTestScope>
+                                    <ossindexAnalyzerEnabled>false</ossindexAnalyzerEnabled>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+
 </profiles>
 </project>

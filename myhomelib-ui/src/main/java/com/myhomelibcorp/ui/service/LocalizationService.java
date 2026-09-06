@@ -54,6 +54,23 @@ public class LocalizationService {
         return languageCatalogs.availableLanguages();
     }
 
+    /**
+     * Resolves a stable UI localization key. Stable keys are the preferred API for
+     * programmatic JavaFX text; {@link #tr(String)} remains for legacy/FXML source-text
+     * translation during the incremental migration.
+     */
+    public String text(String key) {
+        if (key == null) return null;
+        return languageCatalogs.translations(language())
+                .map(map -> map.getOrDefault(key, key))
+                .orElse(key);
+    }
+
+    /** Formats a stable localization key using Locale.ROOT for deterministic placeholders. */
+    public String format(String key, Object... args) {
+        return String.format(java.util.Locale.ROOT, text(key), args);
+    }
+
     public String tr(String text) {
         if (text == null) return null;
         return languageCatalogs.translations(language())

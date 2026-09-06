@@ -77,7 +77,7 @@ infrastructure  -> shared, domain, application
 ui              -> shared, domain, application, reader
 bootstrap       -> shared, domain, application, infrastructure, ui, opds
 mcp             -> shared
-opds            -> application
+opds            -> shared, application
 ```
 
 The graph must remain acyclic.
@@ -114,7 +114,7 @@ MCP is a separate sidecar and deliberately owns its direct SQLite/archive access
 
 ### OPDS
 
-OPDS depends on Application only. SQL lives behind an application port in Infrastructure; desktop lifecycle/settings use `OpdsServerControl`. OPDS list endpoints are bounded/paginated and downloads are streamed. Default bind is loopback.
+OPDS depends on Application contracts plus low-level Shared utilities. SQL lives behind an application port in Infrastructure; desktop lifecycle/settings use `OpdsServerControl`. OPDS list endpoints are bounded/paginated and downloads are streamed. Default bind is loopback. Plain HTTP is restricted to loopback; non-loopback binds require JDK HTTPS/TLS. Managed self-signed certificates are generated inside the JVM and stored as PKCS12; imported PEM certificate/private-key material is converted to the same managed store. The sidecar applies bounded listen/request concurrency, per-client authentication throttling and an explicit health-endpoint exposure policy.
 
 ## 5. Persistence and collection lifecycle
 
@@ -215,11 +215,19 @@ config/language-diagnostics.txt
 
 Bundled defaults are Ukrainian, English and Bulgarian. Additional compatible catalogues (for example `ru.json`) are discovered dynamically without recompilation. Stable language/genre codes are stored in data; translated labels remain a UI concern.
 
+Programmatic JavaFX text on critical screens uses stable `ui.*` / `common.*` keys through `LocalizationService.text(...)` and `format(...)`. Legacy `tr(sourceText)` remains only for incremental FXML/source-text compatibility outside the critical migrated surfaces. `tools/check-critical-ui-localization.py` is the source-level ratchet: it rejects new user-facing Cyrillic literals and legacy `tr(...)` on the guarded Search/Reader/Import/OPDS/Backup code paths, verifies every referenced key in UK/EN/BG, and verifies `%`-format signatures across languages.
+
 Context help uses `HelpTopicRegistry` and bundled Markdown pages with legacy TXT/HTML fallback. Runtime help Markdown is not project-history documentation and remains in UI resources.
 
 ## 12. Startup, shutdown and threading
 
-`MyHomeLibApp` owns startup/shutdown orchestration. Blocking database, network, file and index work runs outside the JavaFX Application Thread. Startup must not perform unnecessary catalogue-wide scans. Resource close order covers workspaces/Reader, executors, Lucene, collection resources and Spring context.
+`MyHomeLibApp` is the JavaFX composition entry point, but backend startup policy is owned by `StartupOrchestrator`. The explicit ordered pipeline is `RecoveryStartupTask -> MigrationStartupTask -> SearchStartupTask -> BackupStartupTask -> OPDSStartupTask`. Recovery and migration are `REQUIRED`; search, backup cleanup and OPDS autostart are `BEST_EFFORT`. Required failure aborts the remaining sequence with the failing task identity; best-effort failure is recorded as degraded startup and the sequence continues.
+
+Blocking startup work is submitted through the managed application executor before the main JavaFX window is shown. Recovery runs before SQLite open; migration/collection activation does not hide a Lucene rebuild; search reuse/rebuild policy is a separate phase. Startup must not perform unnecessary catalogue-wide scans. Resource close order covers workspaces/Reader, executors, Lucene, collection resources and Spring context.
+
+Backend asynchronous work uses bounded managed executor roles from `AsyncConfig`: `task`, `io`, `import`, and `search`; UI background work uses the bounded `UiBackgroundExecutor`. Production `CompletableFuture.supplyAsync/runAsync` calls must always provide an explicit executor. `CallerRunsPolicy` is forbidden because overload must never move blocking background work onto the FX/caller thread. Saturation is an explicit rejection with queue-depth telemetry; callers that return futures convert admission rejection into failed futures where practical. `FolderSyncService` is routed through the managed I/O executor and its returned future propagates cooperative cancellation.
+
+`MemoryMonitor` owns only a daemon scheduler, validates its interval before state changes, supports `start -> stop -> start`, and closes through Spring/`AutoCloseable`. Shared application executors are stopped centrally by `AsyncConfig`; compatibility facades do not own duplicate pools.
 
 ## 13. Architecture verification
 
@@ -243,7 +251,7 @@ Current intentional debt is limited and guarded:
 
 - some UI classes still consume application output ports directly;
 - some UI classes still use larger domain model types rather than application view DTOs;
-- bootstrap still contains substantial startup orchestration;
+- bootstrap remains the desktop composition root, but startup policy is decomposed into explicit task components;
 - Reader portable and JavaFX packages are separated by package rule, not yet by physical Maven modules.
 
 Do not create a parallel framework merely to hide these items. Refactor debt only when the related feature is being changed, and tighten the ratchet when violations are removed.
@@ -255,3 +263,22 @@ Prefer application use cases/queries over direct adapter access, keep technology
 ## 16. 2026-09-02 stabilization baseline
 
 The current architecture now treats collection-changing work as coordinated lifecycle operations. `LibraryOperationCoordinator` prevents incompatible import/update/index/backup/restore/VACUUM/switch/delete flows from overlapping, while `OperationCenterService` provides UI-visible runtime telemetry. Search index reads are gated while Lucene is dirty/rebuilding, statistics carry explicit stale state, and large interactive result sets use bounded paging rather than full materialization. Local file availability is distinct from remote catalogue tombstones (`missing_since`, Flyway V44), so a temporarily unavailable disk/NAS does not destroy book/user metadata.
+
+## 17. JavaFX view-instance lifecycle and async workspace loads
+
+FXML controllers are view instances, not application singletons. `FxmlLoaderFactory` creates a fresh Spring-autowired controller for each FXML load with `AutowireCapableBeanFactory.createBean(...)`. Reloadable workspaces/dialogs that subscribe to long-lived application state implement `WorkspaceLifecycle`; `WorkspaceManager` or the owning window calls `dispose()` when the view is replaced/closed.
+
+`UiSubscriptions` is the shared listener registry for long-lived JavaFX/application observables. Controllers register external listeners through it and close the registry during `dispose()`. Self-owned scene-node listeners do not require a second global registry because the node/controller graph becomes unreachable together.
+
+Potentially blocking workspace loads use the bounded `UiBackgroundExecutor`. `BookWorkspaceController` and `GroupWorkspaceController` use `UiAsyncRequestGuard` generation + collection tokens so late completions cannot mutate a newer view or a view for a different active collection. Pending book loads are cancellable; group-list loads expose explicit loading/empty/error states and preserve a requested group across asynchronous population.
+
+## Iteration 11 — catalog edit consistency
+
+Classic metadata editing crosses the UI/application boundary through `EditBookUseCase`. UI code must not issue `BookCommandRepository` writes or Lucene commits directly. Authoritative book mutations use `CommittedCatalogMutationService`; derived search state is synchronized after commit by `SearchIndexSynchronizer`, leaving the index dirty when synchronization cannot be completed. `Book` relationship collections are immutable to callers and may be populated only through aggregate methods during reconstruction.\n\n## Iteration 12 — diagnostics privacy and external-reader materialization\n\nSupport-bundle generation is a privacy boundary. `SupportBundleService` never copies logs or release text directly into the archive: text entries pass through `SupportBundleSanitizer`, known secrets are replaced, user/home/application paths are pseudonymized, and absolute settings paths are redacted as whole values. `environment.txt` exposes stable aliases instead of physical `dataDir`/`launchDir`, while the application version is resolved from packaged build metadata. The UI presents a preview/options dialog before export so optional logs, thread dump and release documents are explicit user choices.\n\nExternal-reader temporary books are owned by `ExternalReaderMaterializationCache` in the application layer. Materialized files use opaque names, per-file/total-size and age bounds, startup crash cleanup and active lease protection. A detached `Process` retains its lease until `onExit`; `Desktop.open` has no reliable process handle, so its lease is deliberately preserved for the remainder of the session and removed on the next startup rather than risking premature deletion while another process is reading the file. Application shutdown does not blindly delete active external-reader files.\n
+
+
+## Iteration 15 — startup orchestration
+
+Desktop startup is modeled as testable tasks implementing `StartupTask`. `StartupCollectionResolver` resolves the target collection once and `StartupContext` carries the active collection plus reusable-search state between phases. `RecoveryStartupTask` invokes filesystem/crash recovery before any SQLite open. `MigrationStartupTask` activates/migrates the collection without forcing a search rebuild and closes a partially opened collection if a post-switch startup component fails. `SearchStartupTask` independently reuses a valid index or schedules a managed background rebuild. `BackupStartupTask` removes only interrupted `.snapshot.tmp` staging files. `OPDSStartupTask` applies optional autostart as a best-effort phase.
+
+`StartupOrchestrator` is the single source of task order and failure policy. Do not move migration, search rebuild, backup cleanup or OPDS autostart back into `MyHomeLibApp`.

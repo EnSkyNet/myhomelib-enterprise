@@ -83,7 +83,8 @@ public class SqliteCollectionRepository implements CollectionRepository {
         log.info("Збереження колекції: name={}, id={}", collection.getName(), collection.getId());
 
         String password = collection.getPassword();
-        if (password != null && !password.isEmpty() && !EncryptionUtil.isEncrypted(password)) {
+        if (password != null && !password.isEmpty()) {
+            // encrypt() is idempotent for the current envelope and upgrades authenticated legacy ciphertext.
             password = EncryptionUtil.encrypt(password);
         }
 
@@ -198,10 +199,10 @@ public class SqliteCollectionRepository implements CollectionRepository {
         log.info("Колекцію з ID {} видалено, rowsDeleted={}", id, deleted);
     }
 
-    /** Lazily upgrades legacy plaintext credentials without changing collection identity/metadata. */
+    /** Lazily upgrades plaintext and authenticated pre-envelope credentials without changing collection identity/metadata. */
     private Collection migrateLegacyCredential(Collection collection) {
         if (collection == null || collection.getPassword() == null || collection.getPassword().isEmpty()
-                || EncryptionUtil.isEncrypted(collection.getPassword())) {
+                || EncryptionUtil.isCurrentEnvelope(collection.getPassword())) {
             return collection;
         }
         String encrypted = EncryptionUtil.encrypt(collection.getPassword());

@@ -10,8 +10,81 @@ permissions:
   contents: read
 
 jobs:
+  supply-chain:
+    name: Supply-chain release gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12 for release security gate
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Block release on open High/Critical code-scanning alerts
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >-
+          python3 tools/github-connected-acceptance.py
+          --repo "$GITHUB_REPOSITORY"
+          --expected-sha "$GITHUB_SHA"
+          --codeql-release-gate-only
+          --out-dir target/github-release-codeql-gate
+
+      - name: Set up JDK 21 with Maven cache
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Cache Dependency-Check vulnerability data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-utils
+          key: dependency-check-${{ runner.os }}-${{ hashFiles('pom.xml', 'security/dependency-check-suppressions.xml') }}
+          restore-keys: |
+            dependency-check-${{ runner.os }}-
+
+      - name: Ensure Maven wrapper is executable
+        run: chmod +x mvnw
+
+      - name: Validate supply-chain policy
+        run: python3 tools/supply-chain-policy-check.py
+
+      - name: Generate CycloneDX SBOM and scan dependencies
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: ./mvnw -B -ntp -DskipTests -Psbom,dependency-check verify
+
+      - name: Require both release SBOM formats
+        shell: bash
+        run: test -s target/bom.json && test -s target/bom.xml
+
+      - name: Upload release supply-chain artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: myhomelib-supply-chain
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            target/bom.json
+            target/bom.xml
+            target/github-release-codeql-gate/**
+            **/target/dependency-check-report.html
+            **/target/dependency-check-report.json
+            **/target/dependency-check-report.sarif
+
   package:
     name: Verify + package (${{ matrix.platform }})
+    needs: supply-chain
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -60,6 +133,11 @@ jobs:
         if: matrix.platform == 'linux'
         shell: bash
         run: python3 tools/static_release_check.py
+
+      - name: Windows acceptance harness structure
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: python tools/windows-acceptance-harness-check.py
 
       - name: Package portable app-image (Windows)
         if: matrix.platform == 'windows'
@@ -113,13 +191,24 @@ jobs:
           $env:MHL_SKIP_BUILD = "1"
           .\tools\windows-installer-acceptance.ps1
 
+      - name: Validate automated Windows acceptance evidence
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: python tools/windows-acceptance-evidence-check.py --root target
+
       - name: Upload Windows installer acceptance logs
         if: always() && matrix.platform == 'windows'
         uses: actions/upload-artifact@v4
         with:
-          name: windows-installer-acceptance-${{ github.run_id }}
+          name: windows-acceptance-evidence-${{ github.run_id }}
           if-no-files-found: warn
-          path: target/windows-installer-acceptance/*.log
+          path: |
+            target/windows-installer-acceptance/**
+            target/windows-portable-acceptance/**
+            target/windows-ui-acceptance-*.md
+            target/windows-ui-acceptance-*.json
+            target/*-evidence/*.png
+            target/windows-final-acceptance-evidence.zip*
 
       - name: Package per-user Windows EXE installer
         if: matrix.platform == 'windows'
@@ -164,7 +253,7 @@ jobs:
       - name: Validate release artifacts (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: python tools/stage23-cross-platform-release-check.py --dist dist --require-checksums --require-portable --expect-installer
+        run: python tools/stage23-cross-platform-release-check.py --dist dist --require-checksums --require-portable --expect-installer --expect-windows-msi --expect-windows-exe
 
       - name: Validate release artifacts (Linux/macOS)
         if: matrix.platform != 'windows'

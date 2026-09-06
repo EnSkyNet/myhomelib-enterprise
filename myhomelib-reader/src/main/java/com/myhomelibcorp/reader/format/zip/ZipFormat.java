@@ -3,13 +3,14 @@ package com.myhomelibcorp.reader.format.zip;
 import com.myhomelibcorp.reader.api.BookFormat;
 import com.myhomelibcorp.reader.api.BookParser;
 import com.myhomelibcorp.reader.api.BookSource;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 
 import java.util.Set;
 import java.util.Locale;
 
 public class ZipFormat implements BookFormat {
 
-    private static final Set<String> EXTENSIONS = Set.of("zip", "fb2zip", "fb2.zip");
+    private static final Set<String> EXTENSIONS = SupportedFormatRegistry.standard().byId("zip").orElseThrow().extensions();
 
     @Override
     public String id() {

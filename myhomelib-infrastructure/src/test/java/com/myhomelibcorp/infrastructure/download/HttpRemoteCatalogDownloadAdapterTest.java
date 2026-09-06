@@ -22,6 +22,7 @@ import java.util.Arrays;
 import java.util.Properties;
 import java.util.HexFormat;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -141,6 +142,24 @@ class HttpRemoteCatalogDownloadAdapterTest {
         assertThat(Files.readAllBytes(plan.packages().getFirst().file())).isEqualTo(archive);
         assertThat(part).doesNotExist();
         assertThat(part.resolveSibling(part.getFileName() + ".meta")).doesNotExist();
+    }
+
+    @Test
+    void blocksCatalogCredentialsOnHttpBeforeNetworkRequest() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, validInpx("20260906"));
+        });
+        String url = baseUrl() + "catalog.inpx";
+        Collection collection = new Collection("c1", "Online", temp, null, 1, "reader", null, url, "")
+                .withEncryptedPassword("secret");
+
+        assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter().downloadUpdates(
+                collection, url, "", new AtomicBoolean(false), ignored -> {}))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("HTTPS");
+        assertThat(requests.get()).isZero();
     }
 
     @Test

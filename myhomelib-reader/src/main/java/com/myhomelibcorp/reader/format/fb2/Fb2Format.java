@@ -3,13 +3,14 @@ package com.myhomelibcorp.reader.format.fb2;
 import com.myhomelibcorp.reader.api.BookFormat;
 import com.myhomelibcorp.reader.api.BookParser;
 import com.myhomelibcorp.reader.api.BookSource;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 
 import java.util.Set;
 import java.util.Locale;
 
 public class Fb2Format implements BookFormat {
 
-    private static final Set<String> EXTENSIONS = Set.of("fb2", "fbd");
+    private static final Set<String> EXTENSIONS = SupportedFormatRegistry.standard().byId("fb2").orElseThrow().extensions();
 
     @Override
     public String id() {

@@ -12,7 +12,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Release-acceptance matrix: representative historical schemas must reach V48 without data loss. */
+/** Release-acceptance matrix: representative historical schemas must reach V49 without data loss. */
 class DatabaseMigrationMatrixTest {
 
     private static final List<Integer> SOURCE_VERSIONS = List.of(1, 10, 20, 30, 40, 44);
@@ -21,7 +21,7 @@ class DatabaseMigrationMatrixTest {
     Path tempDir;
 
     @Test
-    void migratesRepresentativeHistoricalSchemasToV48AndPreservesCoreAndUserData() {
+    void migratesRepresentativeHistoricalSchemasToV49AndPreservesCoreAndUserData() {
         for (int sourceVersion : SOURCE_VERSIONS) {
             Path db = tempDir.resolve("migration-v" + sourceVersion + ".db");
             var ds = new DriverManagerDataSource("jdbc:sqlite:" + db.toAbsolutePath());
@@ -42,7 +42,7 @@ class DatabaseMigrationMatrixTest {
                     .load();
             flyway.migrate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("48");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("49");
             assertThat(jdbc.queryForObject("SELECT title FROM books WHERE id='book-matrix'", String.class))
                     .isEqualTo("Migration Matrix Book V" + sourceVersion);
             assertThat(jdbc.queryForObject("SELECT keywords FROM books WHERE id='book-matrix'", String.class))

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.search;
 
 import com.myhomelibcorp.domain.model.book.BookSnapshot;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.Field;
 import org.apache.lucene.document.IntPoint;
@@ -80,15 +81,7 @@ final class LuceneDocumentMapper {
     }
 
     private String detectFormat(String fileName) {
-        String name = safe(fileName).toLowerCase(Locale.ROOT);
-        if (name.endsWith(".fb2.zip")) return "fb2zip";
-        int dot = name.lastIndexOf('.');
-        if (dot < 0 || dot == name.length() - 1) return "unknown";
-        String ext = name.substring(dot + 1);
-        return switch (ext) {
-            case "fb2", "epub", "pdf", "mobi", "inpx", "zip" -> ext;
-            default -> "unknown";
-        };
+        return SupportedFormatRegistry.standard().searchFormat(fileName).toLowerCase(Locale.ROOT);
     }
 
     private String safe(String value) {

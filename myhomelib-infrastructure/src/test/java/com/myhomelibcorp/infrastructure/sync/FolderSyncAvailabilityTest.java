@@ -2,10 +2,9 @@ package com.myhomelibcorp.infrastructure.sync;
 
 import com.myhomelibcorp.application.imports.scanner.LibraryScanner;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
-import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
-import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
+import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
@@ -39,9 +38,7 @@ class FolderSyncAvailabilityTest {
 
         f.service.syncFolder(temp, SyncOptions.builder().deleteOrphans(true).build());
 
-        verify(f.commands, never()).deleteById(any());
-        verify(f.commands).markStorageMissing(local.getId());
-        verify(f.index).indexBook(argThat(book -> book.getId().equals(local.getId()) && !book.isLocal()));
+        verify(f.mutations).updateAvailability(local, false);
     }
 
     @Test
@@ -56,8 +53,7 @@ class FolderSyncAvailabilityTest {
 
         f.service.syncFolder(temp, SyncOptions.builder().updateChanged(false).build());
 
-        verify(f.commands).updateStorage(remoteMarked.getId(), temp.toString(), "", "back.fb2", "", true);
-        verify(f.index).indexBook(argThat(book -> book.getId().equals(remoteMarked.getId()) && book.isLocal()));
+        verify(f.mutations).updateAvailability(remoteMarked, true);
         verifyNoInteractions(f.importers);
     }
 
@@ -73,13 +69,12 @@ class FolderSyncAvailabilityTest {
 
     private static final class Fixture {
         final BookQueryRepository books = mock(BookQueryRepository.class);
-        final BookCommandRepository commands = mock(BookCommandRepository.class);
-        final SearchIndexer index = mock(SearchIndexer.class);
+        final CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         final SearchIndexSynchronizer searchSync = mock(SearchIndexSynchronizer.class);
         final LibraryScanner scanner = mock(LibraryScanner.class);
         final ImporterRegistry importers = mock(ImporterRegistry.class);
         final InpxImportPipeline inpx = mock(InpxImportPipeline.class);
         final FolderSyncService service = new FolderSyncService(
-                books, commands, index, searchSync, scanner, importers, inpx);
+                books, mutations, searchSync, scanner, importers, inpx);
     }
 }

@@ -8,8 +8,9 @@ import javafx.stage.Stage;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 
+import java.awt.GraphicsEnvironment;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -17,11 +18,11 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /** Runtime regression: a sidebar hidden from Reader must be restorable. */
-@EnabledIfEnvironmentVariable(named = "DISPLAY", matches = ".+")
 class MainLayoutServiceFxTest {
 
     @BeforeAll
     static void startToolkit() throws Exception {
+        assumeDisplayReachable();
         try {
             CountDownLatch started = new CountDownLatch(1);
             Platform.startup(started::countDown);
@@ -262,4 +263,19 @@ class MainLayoutServiceFxTest {
         assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
         if (error.get() != null) throw new AssertionError(error.get());
     }
+    /** Avoid poisoning the JavaFX singleton when CI exposes a stale/unreachable DISPLAY. */
+    private static void assumeDisplayReachable() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (!os.contains("linux")) return;
+
+        String display = System.getenv("DISPLAY");
+        Assumptions.assumeTrue(display != null && !display.isBlank(),
+                "JavaFX runtime test requires DISPLAY on Linux");
+        try {
+            GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
+        } catch (Throwable unreachableDisplay) {
+            Assumptions.abort("JavaFX DISPLAY is not reachable: " + unreachableDisplay.getMessage());
+        }
+    }
+
 }

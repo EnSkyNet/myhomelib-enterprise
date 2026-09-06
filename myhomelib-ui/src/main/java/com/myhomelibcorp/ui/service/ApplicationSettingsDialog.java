@@ -5,6 +5,8 @@ import com.myhomelibcorp.application.util.CommandTemplate;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import com.myhomelibcorp.shared.util.EncryptionUtil;
+import com.myhomelibcorp.shared.format.SupportedFormat;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
@@ -128,7 +130,8 @@ public class ApplicationSettingsDialog {
     private Node externalReadersPane(Map<String, TextField> text) {
         VBox box = section();
         box.getChildren().add(new Label("Команда може містити %FILE%, %TITLE%, %AUTHOR%. Порожнє поле = системна програма."));
-        for (String ext : new String[]{"fb2","fbd","epub","txt","pdf","mobi","azw","azw3","djvu","doc","docx","rtf","html","htm"}) {
+        for (String ext : SupportedFormatRegistry.standard().extensions(
+                f -> f.family() == SupportedFormat.Family.BOOK && f.importSupported())) {
             TextField command = field(text, "reader.external." + ext, "");
             box.getChildren().add(commandRow(ext.toUpperCase(Locale.ROOT), command, Map.of(
                     "%FILE%", samplePath("book." + ext), "%TITLE%", "Тестова книга", "%AUTHOR%", "Test Author")));
@@ -310,6 +313,34 @@ public class ApplicationSettingsDialog {
     }
 
     private void createSupportBundle(Window owner) {
+        CheckBox logs = new CheckBox("Додати санітизовані логи");
+        CheckBox threads = new CheckBox("Додати санітизований thread dump");
+        CheckBox releaseDocs = new CheckBox("Додати release/architecture документи");
+        logs.setSelected(true);
+        threads.setSelected(true);
+        releaseDocs.setSelected(true);
+
+        TextArea preview = new TextArea();
+        preview.setEditable(false);
+        preview.setWrapText(false);
+        preview.setPrefSize(720, 300);
+        Runnable refresh = () -> preview.setText(supportBundleService.preview(new SupportBundleOptions(
+                logs.isSelected(), threads.isSelected(), releaseDocs.isSelected())).displayText());
+        logs.selectedProperty().addListener((obs, oldValue, newValue) -> refresh.run());
+        threads.selectedProperty().addListener((obs, oldValue, newValue) -> refresh.run());
+        releaseDocs.selectedProperty().addListener((obs, oldValue, newValue) -> refresh.run());
+        refresh.run();
+
+        Dialog<ButtonType> contents = new Dialog<>();
+        contents.setTitle("Склад діагностичного ZIP");
+        contents.setHeaderText("Перевірте склад bundle перед експортом. Приватні шляхи, URL, секрети та metadata полів очищуються.");
+        if (owner != null) contents.initOwner(owner);
+        contents.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        contents.getDialogPane().setContent(new VBox(8, logs, threads, releaseDocs, preview));
+        if (contents.showAndWait().filter(ButtonType.OK::equals).isEmpty()) return;
+
+        SupportBundleOptions options = new SupportBundleOptions(
+                logs.isSelected(), threads.isSelected(), releaseDocs.isSelected());
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Зберегти діагностичний ZIP");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ZIP archive", "*.zip"));
@@ -317,7 +348,7 @@ public class ApplicationSettingsDialog {
         var selected = chooser.showSaveDialog(owner);
         if (selected == null) return;
         try {
-            Path output = supportBundleService.create(selected.toPath());
+            Path output = supportBundleService.create(selected.toPath(), options);
             alert(Alert.AlertType.INFORMATION, "Діагностика", "Створено:\n" + output);
         } catch (Exception ex) {
             alert(Alert.AlertType.ERROR, "Діагностика", "Не вдалося створити ZIP: " + ex.getMessage());

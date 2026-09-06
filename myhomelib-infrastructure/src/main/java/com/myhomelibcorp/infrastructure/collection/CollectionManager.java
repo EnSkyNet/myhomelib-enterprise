@@ -27,14 +27,22 @@ public class CollectionManager {
 
     private final JdbcTemplate metadataJdbcTemplate;
     private final DataSourceConfig dataSourceConfig;
+    private final CollectionStartupRecoveryService startupRecoveryService;
 
     @Autowired
     public CollectionManager(
             @Qualifier("metadataJdbcTemplate") JdbcTemplate metadataJdbcTemplate,
-            DataSourceConfig dataSourceConfig
+            DataSourceConfig dataSourceConfig,
+            CollectionStartupRecoveryService startupRecoveryService
     ) {
         this.metadataJdbcTemplate = metadataJdbcTemplate;
         this.dataSourceConfig = dataSourceConfig;
+        this.startupRecoveryService = startupRecoveryService;
+    }
+
+    /** Test/backwards-compatible constructor; production Spring wiring uses the recovery-aware one above. */
+    public CollectionManager(JdbcTemplate metadataJdbcTemplate, DataSourceConfig dataSourceConfig) {
+        this(metadataJdbcTemplate, dataSourceConfig, new CollectionStartupRecoveryService());
     }
 
     /**
@@ -68,7 +76,7 @@ public class CollectionManager {
                     .equals(path.toAbsolutePath().normalize())
                     && currentHikariDataSource.get() != null;
             if (!sameDatabaseAlreadyOpen) {
-                CollectionCrashRecovery.recoverBeforeOpen(collection, path.toAbsolutePath().normalize());
+                startupRecoveryService.recoverBeforeOpen(collection);
             }
 
             // Створюємо директорію, якщо її немає

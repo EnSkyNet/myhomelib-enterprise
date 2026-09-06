@@ -7,6 +7,7 @@ import lombok.Getter;
 
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -33,8 +34,8 @@ public class Book {
         if (this.title.isBlank()) {
             throw new IllegalArgumentException("Book title cannot be blank");
         }
-        this.authors = Objects.requireNonNullElse(builder.authors, new ArrayList<>());
-        this.genres = Objects.requireNonNullElse(builder.genres, new ArrayList<>());
+        this.authors = new ArrayList<>(Objects.requireNonNullElse(builder.authors, List.of()));
+        this.genres = new ArrayList<>(Objects.requireNonNullElse(builder.genres, List.of()));
         this.metadata = Objects.requireNonNull(builder.metadata, "BookMetadata cannot be null");
         this.file = Objects.requireNonNull(builder.file, "BookFile cannot be null");
         this.cover = Objects.requireNonNullElse(builder.cover, Cover.empty());
@@ -46,6 +47,13 @@ public class Book {
         this.local = builder.local;
         this.missingSince = builder.missingSince;
     }
+
+    /**
+     * Exposes relationship collections as immutable views. Repository mappers may still populate the
+     * aggregate through addAuthor/addGenre, but callers cannot bypass domain mutation methods.
+     */
+    public List<Author> getAuthors() { return Collections.unmodifiableList(authors); }
+    public List<Genre> getGenres() { return Collections.unmodifiableList(genres); }
 
     // === ДЕЛЕГУЮЧІ МЕТОДИ ДЛЯ ЗРУЧНОСТІ (не порушують інкапсуляцію) ===
     public String getFileName() { return file != null ? file.getFileName() : ""; }

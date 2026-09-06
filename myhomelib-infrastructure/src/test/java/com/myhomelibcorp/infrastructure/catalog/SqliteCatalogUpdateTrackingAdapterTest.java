@@ -205,14 +205,21 @@ class SqliteCatalogUpdateTrackingAdapterTest {
         adapter.recordImportedBooks(revision2, List.of(snapshot(bookId, "book-new")));
         assertThat(adapter.countPendingUpdates()).isEqualTo(1);
 
-        jdbc.update("UPDATE books SET local = 1 WHERE id = ?", bookId);
-        adapter.markDownloadedBaseline(com.myhomelibcorp.domain.model.valueobject.BookId.fromString(bookId));
+        var typedBookId = com.myhomelibcorp.domain.model.valueobject.BookId.fromString(bookId);
+        assertThat(adapter.hasDownloadedBaseline(typedBookId)).isFalse();
 
+        jdbc.update("UPDATE books SET local = 1 WHERE id = ?", bookId);
+        adapter.markDownloadedBaseline(typedBookId);
+
+        assertThat(adapter.hasDownloadedBaseline(typedBookId)).isTrue();
         assertThat(adapter.countPendingUpdates()).isZero();
         var baseline = jdbc.queryForMap(
                 "SELECT downloaded_revision, downloaded_fingerprint FROM catalog_book_state WHERE book_id = ?", bookId);
         assertThat(((Number) baseline.get("downloaded_revision")).longValue()).isEqualTo(revision2.sourceRevision());
         assertThat(baseline.get("downloaded_fingerprint")).isEqualTo("book-new");
+
+        adapter.clearDownloadedBaseline(typedBookId);
+        assertThat(adapter.hasDownloadedBaseline(typedBookId)).isFalse();
     }
 
     @Test

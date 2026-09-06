@@ -4,8 +4,10 @@ param(
     [int]$Scale,
     [string]$Launcher = "",
     [string]$ReportPath = "",
+    [string]$EvidenceDir = "",
     [switch]$ChecklistOnly,
-    [switch]$SkipLauncherSmoke
+    [switch]$SkipLauncherSmoke,
+    [string]$HostBindingPath = "target\windows-host-binding\windows-host-binding.json"
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,7 +15,9 @@ Set-StrictMode -Version Latest
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-if (-not $IsWindows) { throw "Windows UI/DPI acceptance must run on Windows." }
+if ($env:OS -ne "Windows_NT") { throw "Windows UI/DPI acceptance must run on Windows." }
+. .\tools\windows-acceptance-host.ps1
+$hostBinding = Get-VerifiedMyHomeLibWindowsAcceptanceHostBinding -Path $HostBindingPath
 if ([string]::IsNullOrWhiteSpace($Launcher)) {
     $Launcher = Join-Path $env:LOCALAPPDATA "MyHomeLib\MyHomeLib.exe"
 }
@@ -23,6 +27,9 @@ if ([string]::IsNullOrWhiteSpace($ReportPath)) {
 }
 $ReportPath = [System.IO.Path]::GetFullPath($ReportPath)
 New-Item -ItemType Directory -Force (Split-Path -Parent $ReportPath) | Out-Null
+if ([string]::IsNullOrWhiteSpace($EvidenceDir)) { $EvidenceDir = Join-Path (Split-Path -Parent $ReportPath) "dpi-$Scale-evidence" }
+$EvidenceDir = [System.IO.Path]::GetFullPath($EvidenceDir)
+New-Item -ItemType Directory -Force $EvidenceDir | Out-Null
 
 $observedDpi = "unavailable"
 $observedDpiValue = $null
@@ -51,10 +58,24 @@ catch {
     $observedDpi = "unavailable: $($_.Exception.Message)"
 }
 
+
+function Get-RelativeEvidencePath {
+    param(
+        [Parameter(Mandatory=$true)][string]$BaseDirectory,
+        [Parameter(Mandatory=$true)][string]$TargetPath
+    )
+    $baseFull = [System.IO.Path]::GetFullPath($BaseDirectory).TrimEnd([char[]]@('\', '/')) + [System.IO.Path]::DirectorySeparatorChar
+    $targetFull = [System.IO.Path]::GetFullPath($TargetPath)
+    $baseUri = New-Object System.Uri -ArgumentList $baseFull
+    $targetUri = New-Object System.Uri -ArgumentList $targetFull
+    $relative = [System.Uri]::UnescapeDataString($baseUri.MakeRelativeUri($targetUri).ToString())
+    return $relative.Replace('/', [System.IO.Path]::DirectorySeparatorChar)
+}
+
 $results = New-Object System.Collections.Generic.List[object]
 function Add-Result {
     param([string]$Id, [string]$Check, [string]$Outcome, [string]$Note)
-    $results.Add([pscustomobject]@{ Id=$Id; Check=$Check; Outcome=$Outcome; Note=$Note }) | Out-Null
+    $results.Add([pscustomobject]@{ Id=$Id; Check=$Check; Outcome=$Outcome; Note=$Note; Evidence="" }) | Out-Null
 }
 
 # Guard against an accidentally mislabelled DPI run.  GetDpiForSystem is an
@@ -75,17 +96,50 @@ else {
     Add-Result -Id "AUTO-0" -Check "Observed Windows system DPI matches requested $Scale% ($expectedDpi DPI)" -Outcome "FAIL" -Note "Observed $observedDpi. Change Windows Display scaling and sign out/restart the test session if Windows requires it, then rerun this scale."
 }
 
+function Save-DesktopScreenshot {
+    param([Parameter(Mandatory=$true)][string]$Id)
+    Add-Type -AssemblyName System.Drawing
+    Add-Type -AssemblyName System.Windows.Forms
+    $bounds = [System.Windows.Forms.SystemInformation]::VirtualScreen
+    $bitmap = New-Object System.Drawing.Bitmap $bounds.Width, $bounds.Height
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size)
+        $file = Join-Path $EvidenceDir ("{0}-{1}.png" -f $Scale, $Id)
+        $bitmap.Save($file, [System.Drawing.Imaging.ImageFormat]::Png)
+        return Get-RelativeEvidencePath -BaseDirectory (Split-Path -Parent $ReportPath) -TargetPath $file
+    }
+    finally {
+        $graphics.Dispose()
+        $bitmap.Dispose()
+    }
+}
+
 function Invoke-ManualCheck {
     param([string]$Id, [string]$Check)
     if ($ChecklistOnly) {
         Add-Result -Id $Id -Check $Check -Outcome "PENDING" -Note ""
         return
     }
+    Write-Host ""
+    Write-Host "$Id $Check"
+    Read-Host "Prepare the exact UI state for this check, then press Enter to capture screenshot evidence" | Out-Null
+    $evidence = Save-DesktopScreenshot -Id $Id
     do {
-        $answer = (Read-Host "$Id $Check [PASS/FAIL/BLOCKED]").Trim().ToUpperInvariant()
+        $answer = (Read-Host "$Id result [PASS/FAIL/BLOCKED]").Trim().ToUpperInvariant()
     } while ($answer -notin @("PASS", "FAIL", "BLOCKED"))
     $note = Read-Host "Note (optional)"
-    Add-Result -Id $Id -Check $Check -Outcome $answer -Note $note
+    $row = [pscustomobject]@{ Id=$Id; Check=$Check; Outcome=$answer; Note=$note; Evidence=$evidence }
+    $results.Add($row) | Out-Null
+    if ($answer -eq "PASS") {
+        # Save-DesktopScreenshot records a path relative to the report directory so the
+        # evidence bundle stays portable. Resolve it against that same directory here;
+        # resolving from $Root would incorrectly reject the default target\dpi-*-evidence path.
+        $evidencePath = [System.IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $ReportPath) $evidence))
+        if (-not (Test-Path $evidencePath -PathType Leaf)) {
+            throw "$Id cannot PASS without screenshot evidence: $evidencePath"
+        }
+    }
 }
 
 if (-not $SkipLauncherSmoke) {
@@ -100,6 +154,19 @@ if (-not $SkipLauncherSmoke) {
 }
 
 Invoke-ManualCheck "P4-01" "Windows Display scaling for the tested monitor is exactly $Scale%."
+
+# GetDpiForSystem reports the system DPI, not necessarily the DPI of the monitor that
+# hosts MyHomeLib. On a multi-monitor setup, allow the screenshot-backed P4-01 check
+# to resolve the automatic BLOCKED diagnostic. A single-monitor mismatch remains FAIL.
+$autoDpiRow = $results | Where-Object { $_.Id -eq "AUTO-0" } | Select-Object -First 1
+$p4ScaleRow = $results | Where-Object { $_.Id -eq "P4-01" } | Select-Object -First 1
+if ($null -ne $autoDpiRow -and $autoDpiRow.Outcome -eq "BLOCKED" -and
+    $null -ne $monitorCount -and $monitorCount -gt 1 -and
+    $null -ne $p4ScaleRow -and $p4ScaleRow.Outcome -eq "PASS") {
+    $autoDpiRow.Outcome = "PASS"
+    $autoDpiRow.Note = "$($autoDpiRow.Note) P4-01 supplied screenshot-backed confirmation for the monitor hosting MyHomeLib."
+}
+
 Invoke-ManualCheck "P4-02" "Main Window opens fully inside the client area; no sidebar/toolbar extends beyond the window."
 Invoke-ManualCheck "P4-03" "Main Window left sidebar OFF -> ON repeated at least 3 times; center shrinks correctly and geometry does not grow."
 Invoke-ManualCheck "P4-04" "Main Window right sidebar OFF -> ON repeated at least 3 times; center shrinks correctly and geometry does not grow."
@@ -133,12 +200,13 @@ $lines.Add("- GetDpiForSystem observation: $observedDpi")
 $lines.Add("- Active monitor count (SM_CMONITORS): $(if ($null -eq $monitorCount) { 'unavailable' } else { $monitorCount })")
 $lines.Add("- Launcher: ``$Launcher``")
 $lines.Add("")
-$lines.Add("| ID | Result | Check | Note |")
-$lines.Add("|---|---|---|---|")
+$lines.Add("| ID | Result | Check | Evidence | Note |")
+$lines.Add("|---|---|---|---|---|")
 foreach ($row in $results) {
     $check = ([string]$row.Check).Replace("|", "\\|")
     $note = ([string]$row.Note).Replace("|", "\\|").Replace("`r", " ").Replace("`n", " ")
-    $lines.Add("| $($row.Id) | $($row.Outcome) | $check | $note |")
+    $evidence = ([string]$row.Evidence).Replace("|", "\|")
+    $lines.Add("| $($row.Id) | $($row.Outcome) | $check | $evidence | $note |")
 }
 $lines.Add("")
 $failed = @($results | Where-Object { $_.Outcome -eq "FAIL" }).Count
@@ -147,6 +215,28 @@ $pending = @($results | Where-Object { $_.Outcome -eq "PENDING" }).Count
 $overall = if ($failed -eq 0 -and $blocked -eq 0 -and $pending -eq 0) { "PASS" } elseif ($ChecklistOnly) { "PENDING" } else { "FAIL" }
 $lines.Add("**Overall: $overall** (FAIL=$failed, BLOCKED=$blocked, PENDING=$pending)")
 [System.IO.File]::WriteAllLines($ReportPath, $lines, [System.Text.UTF8Encoding]::new($false))
+$jsonPath = [System.IO.Path]::ChangeExtension($ReportPath, ".json")
+[ordered]@{
+    schemaVersion = 1
+    scenario = "windows-ui-dpi-acceptance"
+    timestamp = $timestamp
+    host = $env:COMPUTERNAME
+    user = [Environment]::UserName
+    acceptanceSessionId = [string]$hostBinding.acceptanceSessionId
+    hostFingerprintSha256 = [string]$hostBinding.hostFingerprintSha256
+    userFingerprintSha256 = [string]$hostBinding.userFingerprintSha256
+    osVersion = [string]$hostBinding.osVersion
+    osBuild = [string]$hostBinding.osBuild
+    osArchitecture = [string]$hostBinding.osArchitecture
+    os = $osCaption
+    scale = $Scale
+    observedDpi = $observedDpi
+    observedDpiValue = $observedDpiValue
+    monitorCount = $monitorCount
+    launcher = $Launcher
+    overall = $overall
+    results = $results
+} | ConvertTo-Json -Depth 8 | Set-Content -Path $jsonPath -Encoding utf8
 Write-Host "Windows UI/DPI acceptance report: $ReportPath"
 Write-Host "Overall: $overall"
 

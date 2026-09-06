@@ -6,9 +6,12 @@ import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.layout.FlowPane;
 import javafx.stage.Stage;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import java.awt.GraphicsEnvironment;
+import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -20,12 +23,15 @@ class MainToolbarWrapFxTest {
 
     @BeforeAll
     static void startFx() throws Exception {
+        assumeDisplayReachable();
         if (Platform.isFxApplicationThread()) return;
         CountDownLatch started = new CountDownLatch(1);
         try {
             Platform.startup(started::countDown);
         } catch (IllegalStateException alreadyStarted) {
             started.countDown();
+        } catch (UnsupportedOperationException noDisplay) {
+            Assumptions.abort("JavaFX runtime is not reachable: " + noDisplay.getMessage());
         }
         assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
     }
@@ -74,4 +80,19 @@ class MainToolbarWrapFxTest {
         assertThat(done.await(15, TimeUnit.SECONDS)).isTrue();
         if (failure.get() != null) throw new AssertionError(failure.get());
     }
+    /** Avoid poisoning the JavaFX singleton when CI exposes a stale/unreachable DISPLAY. */
+    private static void assumeDisplayReachable() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        if (!os.contains("linux")) return;
+
+        String display = System.getenv("DISPLAY");
+        Assumptions.assumeTrue(display != null && !display.isBlank(),
+                "JavaFX runtime test requires DISPLAY on Linux");
+        try {
+            GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
+        } catch (Throwable unreachableDisplay) {
+            Assumptions.abort("JavaFX DISPLAY is not reachable: " + unreachableDisplay.getMessage());
+        }
+    }
+
 }

@@ -21,6 +21,8 @@
                     <Button text="↻" onAction="#onRefresh" prefWidth="30"/>
                     <Region HBox.hgrow="ALWAYS"/>
                 </HBox>
+                <Label fx:id="groupsStateLabel" text="Завантаження…" visible="false" managed="false" wrapText="true"
+                       style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
                 <ListView fx:id="groupsListView" VBox.vgrow="ALWAYS"/>
             </VBox>
 

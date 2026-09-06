@@ -140,6 +140,8 @@ def main() -> int:
     parser.add_argument("--dist", default="dist")
     parser.add_argument("--require-checksums", action="store_true")
     parser.add_argument("--expect-installer", action="store_true")
+    parser.add_argument("--expect-windows-msi", action="store_true")
+    parser.add_argument("--expect-windows-exe", action="store_true")
     parser.add_argument("--require-portable", action="store_true")
     args = parser.parse_args()
 
@@ -169,6 +171,18 @@ def main() -> int:
             if installer.stat().st_size <= 0:
                 raise RuntimeError(f"Installer is empty: {installer.name}")
         print("PASS installer(s): " + ", ".join(p.name for p in installers))
+
+    if args.expect_windows_msi:
+        msi = dist / f"MyHomeLib-{version}.msi"
+        if not msi.is_file() or msi.stat().st_size <= 0:
+            raise RuntimeError(f"Windows MSI release candidate is required but missing/empty: {msi.name}")
+        print(f"PASS Windows MSI candidate: {msi.name}")
+
+    if args.expect_windows_exe:
+        exe = dist / f"MyHomeLib-{version}.exe"
+        if not exe.is_file() or exe.stat().st_size <= 0:
+            raise RuntimeError(f"Windows EXE release candidate is required but missing/empty: {exe.name}")
+        print(f"PASS Windows EXE candidate: {exe.name}")
 
     if not app_image and portable_count == 0 and not bootstrap.is_file():
         raise RuntimeError("No desktop app-image, portable archive, or bootstrap JAR found")

@@ -61,6 +61,27 @@ public final class LibraryOperationCoordinator {
         }
     }
 
+    /**
+     * Waits until the current lifecycle operation is fully released, then acquires a detached lease.
+     * Intended for queued background maintenance started while a synchronous SWITCH/CREATE flow still owns the coordinator.
+     */
+    public Lease acquireDetachedAwait(LibraryOperationType operation) {
+        Objects.requireNonNull(operation, "operation");
+        synchronized (monitor) {
+            while (active != null) {
+                try {
+                    monitor.wait();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting for library operation lease", interrupted);
+                }
+            }
+            UUID sessionId = UUID.randomUUID();
+            active = new ActiveSession(sessionId, operation, 1);
+            return new Lease(this, sessionId, operation, true);
+        }
+    }
+
     public LibraryOperationType activeOperation() {
         synchronized (monitor) {
             return active == null ? null : active.rootOperation;
@@ -70,6 +91,14 @@ public final class LibraryOperationCoordinator {
     public boolean isBusy() {
         synchronized (monitor) {
             return active != null;
+        }
+    }
+
+    /** Returns true only when the current thread owns the active synchronous operation session. */
+    public boolean isHeldByCurrentThread() {
+        synchronized (monitor) {
+            LocalSession current = local.get();
+            return active != null && current != null && current.sessionId.equals(active.sessionId);
         }
     }
 
@@ -102,7 +131,10 @@ public final class LibraryOperationCoordinator {
             }
 
             active.depth--;
-            if (active.depth <= 0) active = null;
+            if (active.depth <= 0) {
+                active = null;
+                monitor.notifyAll();
+            }
         }
     }
 

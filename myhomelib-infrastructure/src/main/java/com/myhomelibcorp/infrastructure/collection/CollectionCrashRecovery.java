@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.collection;
 
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.infrastructure.resource.LocalCopyDeletionRecoveryStore;
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.shared.util.CatalogUpdateRecoveryFiles;
 import com.myhomelibcorp.shared.util.RestoreRecoveryFiles;
@@ -33,6 +34,7 @@ final class CollectionCrashRecovery {
         if (collection == null || targetDatabase == null) return;
         recoverInterruptedRestore(targetDatabase);
         recoverInterruptedCatalogUpdate(collection, targetDatabase);
+        LocalCopyDeletionRecoveryStore.recoverForDatabase(collection.getId(), targetDatabase);
         cleanupAbandonedSwapFiles(targetDatabase);
     }
 

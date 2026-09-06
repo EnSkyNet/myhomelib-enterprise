@@ -48,13 +48,17 @@ public class UiBackgroundExecutor {
     }
 
     public <T> CompletableFuture<T> submit(Callable<T> task) {
-        return CompletableFuture.supplyAsync(() -> {
+        try {
+            return CompletableFuture.supplyAsync(() -> {
             try {
                 return task.call();
             } catch (Exception e) {
                 throw new CompletionException(e);
             }
         }, executor);
+        } catch (RejectedExecutionException rejected) {
+            return CompletableFuture.failedFuture(rejected);
+        }
     }
 
     /** Submit a task whose Future cancellation interrupts the worker thread. */

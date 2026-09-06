@@ -5,9 +5,11 @@ import com.myhomelibcorp.application.dto.DashboardData;
 import com.myhomelibcorp.application.usecase.dashboard.LoadDashboardDataUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.UiSubscriptions;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
@@ -15,20 +17,24 @@ import javafx.scene.control.ProgressBar;
 import javafx.scene.layout.VBox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;
 import java.util.concurrent.atomic.AtomicLong;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
-public class DashboardController {
+public class DashboardController implements WorkspaceLifecycle {
 
     private final LoadDashboardDataUseCase loadDashboardDataUseCase;
     private final ApplicationState appState;
     private final NavigationService navigationService;
     private final AtomicLong loadGeneration = new AtomicLong();
+    private final UiSubscriptions subscriptions = new UiSubscriptions();
 
     @FXML private VBox continueReadingBox;
     @FXML private Label continueTitle;
@@ -42,8 +48,9 @@ public class DashboardController {
 
     @FXML
     public void initialize() {
-        appState.getDashboard().statisticsProperty().addListener((obs, oldStats, newStats) -> renderStatistics(newStats));
-        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+        subscriptions.listen(appState.getDashboard().statisticsProperty(),
+                (obs, oldStats, newStats) -> renderStatistics(newStats));
+        subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, oldCollection, newCollection) -> {
             String oldId = oldCollection == null ? null : oldCollection.getId();
             String newId = newCollection == null ? null : newCollection.getId();
             if (!Objects.equals(oldId, newId)) loadDashboard();
@@ -119,4 +126,10 @@ public class DashboardController {
             navigationService.navigateToBook(BookId.fromString(book.getId()));
         }
     }
+    @Override
+    public void dispose() {
+        UiAsyncRequestGuard.invalidate(loadGeneration);
+        subscriptions.close();
+    }
+
 }

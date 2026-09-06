@@ -4,6 +4,7 @@ import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.service.ReaderSearchService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import javafx.fxml.FXML;
 import javafx.scene.control.Button;
 import javafx.scene.control.Label;
@@ -41,6 +42,7 @@ public class SearchDialogController {
     private Label statusLabel;
 
     private final UiBackgroundExecutor backgroundExecutor;
+    private final LocalizationService i18n;
     private ReaderDocument currentDocument;
     private Consumer<ReaderPosition> onResultSelected;
     private final AtomicLong searchGeneration = new AtomicLong();
@@ -96,7 +98,7 @@ public class SearchDialogController {
 
         String query = searchField.getText();
         if (query == null || query.isBlank()) {
-            statusLabel.setText("Введіть текст для пошуку");
+            statusLabel.setText(i18n.text("ui.reader.search.enter_text"));
             resultsListView.getItems().clear();
             return;
         }
@@ -104,7 +106,7 @@ public class SearchDialogController {
         long generation = searchGeneration.incrementAndGet();
         cancelSearch();
         searchButton.setDisable(true);
-        statusLabel.setText("Пошук…");
+        statusLabel.setText(i18n.text("ui.reader.search.searching"));
         ReaderDocument document = currentDocument;
         try {
             searchTask = backgroundExecutor.submitCancellable(() -> {
@@ -118,7 +120,7 @@ public class SearchDialogController {
             });
         } catch (RejectedExecutionException e) {
             searchButton.setDisable(false);
-            statusLabel.setText("Фонова черга зайнята. Спробуйте ще раз.");
+            statusLabel.setText(i18n.text("ui.reader.search.queue_busy"));
         }
     }
 
@@ -127,15 +129,15 @@ public class SearchDialogController {
         searchButton.setDisable(false);
         if (error != null) {
             if (error instanceof java.util.concurrent.CancellationException) return;
-            statusLabel.setText(error.getMessage() == null ? "Помилка пошуку" : error.getMessage());
+            statusLabel.setText(error.getMessage() == null ? i18n.text("ui.reader.search.error") : error.getMessage());
             resultsListView.getItems().clear();
             return;
         }
         if (results.isEmpty()) {
-            statusLabel.setText("Нічого не знайдено");
+            statusLabel.setText(i18n.text("ui.reader.search.nothing_found"));
             resultsListView.getItems().clear();
         } else {
-            statusLabel.setText("Знайдено " + results.size() + " збігів");
+            statusLabel.setText(i18n.format("ui.reader.search.matches_found", results.size()));
             resultsListView.getItems().setAll(results);
         }
     }

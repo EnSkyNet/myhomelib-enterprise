@@ -53,6 +53,10 @@ The checks are intentionally independent where practical so important invariants
 
 ## Cross-platform CI
 
+`.github/workflows/ci-pr.yml` is the fast pull-request gate. It compiles production/test sources and runs bounded core unit tests, migration/security regressions, ArchUnit, ten E2E journeys, XML/archive security checks and language-catalogue consistency. The job is named `Fast gate`, uses Maven caching and has a hard 10-minute timeout. Failed runs upload Surefire/Failsafe diagnostics.
+
+To make a failed PR gate actually block merge, repository branch protection / a GitHub ruleset must require the `Fast gate` status check on protected branches. This is repository administration state and cannot be enforced by workflow YAML alone.
+
 `.github/workflows/ci-release.yml` runs JDK 21 verification on:
 
 - Ubuntu;
@@ -62,6 +66,15 @@ The checks are intentionally independent where practical so important invariants
 The release workflow requires the Maven verification matrix before packaging/publishing. Platform packaging uses JDK `jpackage --type app-image`, then exercises a headless `--release-smoke` path before accepting the artifact. Tagged releases include SHA-256 checksums.
 
 Normal application startup does not download Maven artifacts; dependency resolution is a build-time concern only.
+
+### Supply-chain CI
+
+- `./mvnw -Psbom -DskipTests verify` generates aggregate CycloneDX `target/bom.json` and `target/bom.xml` for runtime/compile dependencies.
+- `./mvnw -Pdependency-check -DskipTests verify` runs OWASP Dependency-Check; CVSS **7.0+** is blocking. `NVD_API_KEY` should be configured in GitHub secrets for reliable/rate-friendly NVD updates.
+- `security/dependency-check-suppressions.xml` is reviewed policy, not a permanent allowlist. Every future suppression must have an expiry and substantive issue-linked rationale; `tools/supply-chain-policy-check.py` enforces this offline.
+- `.github/workflows/codeql.yml` runs Java/Kotlin CodeQL on PR, `main`/`master`, schedule and manual dispatch. The release workflow additionally refuses to proceed while open High/Critical code-scanning alerts exist.
+
+The fast PR unit/E2E job stays bounded; dependency scanning is a separate parallel required check because vulnerability-database refresh time is not suitable for the 10-minute fast-gate budget.
 
 ## Performance baseline
 
@@ -107,9 +120,15 @@ The release gates verify the migration chain and historical baseline integrity.
 
 - JavaFX scene-graph work stays on the FX thread;
 - network/filesystem/large SQL/index work stays off the FX thread;
+- production `CompletableFuture.supplyAsync/runAsync` always receives an explicit managed executor;
+- use the bounded roles `task`, `io`, `import`, `search`, or `UiBackgroundExecutor` rather than creating private fixed/cached pools;
+- never use `CallerRunsPolicy` for background work: saturation must reject explicitly so the FX/caller thread cannot inherit blocking work;
+- when an async API returns `CompletableFuture`, convert executor admission rejection into an exceptional future where feasible;
 - no `Thread.sleep()` in JavaFX UI flows;
 - row selection and batch checkbox selection are distinct concepts;
 - use one application/coordinator entry point for actions such as download/open rather than duplicating UI-specific flows.
+
+Run `python3 tools/managed-executor-check.py` when changing asynchronous execution or executor configuration.
 
 ## Reader rules
 
@@ -176,3 +195,42 @@ Representative Linux/JDK 21 measurements on the Stage 05 real Flibusta corpus:
 | Small delta containing the same 1,000 title updates | importer 0.509 / 0.582 / 0.444 s; median 0.509 s |
 
 The small-delta runs preserve 562,307 books, 126,317 authors, 675,502 `book_authors`, 796,151 `book_genres`, 117,528 deleted books and report exactly `updated=1000`, `deleted=0`. Using the separately measured checkpoint, selective-Lucene and statistics phases, its assembled post-download phase budget is about 3.43 s; this is a phase sum, not a single wall-clock Online Update measurement.
+
+### Reloadable JavaFX controller lifecycle
+
+- FXML controllers must be created per load through `FxmlLoaderFactory`; do not switch controller factories back to `ApplicationContext.getBean(...)` for reloadable views.
+- Controllers that subscribe to `ApplicationState`, shared ViewModels or long-lived services must implement `WorkspaceLifecycle` and release those subscriptions in `dispose()`.
+- Use `UiSubscriptions` for long-lived observable/list registrations; `close()` is idempotent and registration after close is an error.
+- Database/network/file work initiated from `setBookId`, `loadGroups` or equivalent UI methods must execute through `UiBackgroundExecutor`, not directly on the JavaFX Application Thread.
+- Async UI completions must use `UiAsyncRequestGuard` (generation + collection identity) when a newer request or collection switch can make a result stale.
+- For user-visible async loads provide distinct loading, empty/not-found and error states. Preserve navigation intent when a target is requested before an async list finishes loading.
+
+Regression gates: `UiSubscriptionsLifecycleTest`, `FxmlLoaderFactoryLifecycleTest`, `AsyncWorkspaceControllerContractTest`, `UiAsyncRequestGuardTest`.
+
+## Iteration 11 regression rules
+
+- Classic book metadata edit belongs to `EditBookUseCase`; do not reintroduce direct repository/Lucene writes in JavaFX services.
+- Book author/genre lists are read-only to callers. Use aggregate/repository population methods rather than mutating getter results.
+- PR CI includes transactional edit fault injection and async Classic edit contract tests.\n\n## Iteration 12 privacy/filesystem regression rules\n\n- Never add raw log/release-file copying back to `SupportBundleService`; text content must pass through the sanitizer and bounded-input path.\n- New sensitive setting names or diagnostic fields require a sanitizer/golden-bundle regression case. Absolute settings paths must be redacted as whole values, not merely prefixed with an alias that leaves private suffixes visible.\n- External-reader materialization must use `ExternalReaderMaterializationCache`; do not reintroduce `deleteOnExit` for book content.\n- If a real `Process` handle exists, retain the materialized-file lease until process exit. If no handle exists, prefer next-startup cleanup over premature deletion.\n- PR CI runs `SupportBundleServicePrivacyTest`, `ExternalReaderMaterializationCacheTest`, `RunBookActionMaterializationLifecycleTest` and `tools/privacy-temp-lifecycle-check.py`.\n
+
+## Critical UI localization gate
+
+Critical Search/Reader/Import/OPDS/Backup JavaFX code must use stable `ui.*` / `common.*` keys for user-facing programmatic text. Before committing localization changes run:
+
+```bash
+python3 tools/check-critical-ui-localization.py
+python3 tools/validate-language-catalogs.py
+```
+
+The critical gate rejects user-facing Cyrillic string literals and legacy `LocalizationService.tr(...)` calls on the guarded files, requires every referenced stable key in Ukrainian/English/Bulgarian, requires root and bundled catalogues to be identical, and rejects cross-language `%` placeholder-signature drift. Keep internal log messages out of the UI contract; do not silence genuine UI text with scanner exclusions.
+
+
+
+## Iteration 15 startup regression rules
+
+- Keep desktop backend startup behind `StartupOrchestrator`; `MyHomeLibApp` should only submit the orchestrator and marshal completion back to JavaFX.
+- The guarded order is `RecoveryStartupTask`, `MigrationStartupTask`, `SearchStartupTask`, `BackupStartupTask`, `OPDSStartupTask`.
+- Recovery/migration are `REQUIRED`; search/backup/OPDS are `BEST_EFFORT`. A required failure stops later tasks; a best-effort failure must be visible as degraded startup.
+- Recovery must execute before SQLite is opened. Migration/collection activation must not hide a Lucene rebuild; search reuse/rebuild remains a separate task.
+- If startup fails after a collection was opened, close the collection through `CollectionLifecycleService`; do not leave a half-started datasource/index behind.
+- Run `python3 tools/startup-orchestration-check.py` and `python3 tools/startup-nonblocking-check.py` with the startup tests before changing this pipeline.

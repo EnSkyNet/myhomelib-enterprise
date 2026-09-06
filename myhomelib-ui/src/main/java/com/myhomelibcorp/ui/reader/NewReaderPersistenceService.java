@@ -23,6 +23,7 @@ public class NewReaderPersistenceService {
 
     private final ReadingProgressRepository readingProgressRepository;
     private final BookmarkRepository bookmarkRepository;
+    private final com.myhomelibcorp.ui.service.LocalizationService i18n;
 
     // Кеш останніх збережених позицій для перевірки змін
     private final ConcurrentMap<String, ReaderPosition> lastSavedPositions = new ConcurrentHashMap<>();
@@ -87,7 +88,7 @@ public class NewReaderPersistenceService {
                 return Optional.of(position);
             }
         } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося завантажити позицію читання для " + bookId, e);
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.position_load_error", bookId), e);
         }
         return Optional.empty();
     }
@@ -117,7 +118,7 @@ public class NewReaderPersistenceService {
                     .paragraphId(paragraphId)
                     .charOffset(position.charOffset())
                     .position(posPercent)
-                    .chapterTitle(title != null ? title : "Розділ " + (position.chapterIndex() + 1))
+                    .chapterTitle(title != null ? title : i18n.format("ui.reader.persistence.chapter_fallback", position.chapterIndex() + 1))
                     .context(context != null ? context : "")
                     .createdAt(LocalDateTime.now())
                     .build();
@@ -127,7 +128,7 @@ public class NewReaderPersistenceService {
             return saved;
 
         } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося зберегти закладку для " + bookId, e);
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.bookmark_save_error", bookId), e);
         }
     }
 
@@ -139,7 +140,7 @@ public class NewReaderPersistenceService {
         try {
             return bookmarkRepository.findByBookId(bookId);
         } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося завантажити закладки для " + bookId, e);
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.bookmarks_load_error", bookId), e);
         }
     }
 
@@ -152,7 +153,7 @@ public class NewReaderPersistenceService {
             bookmarkRepository.deleteById(bookmarkId);
             log.debug("🗑️ Закладку видалено з БД: id={}", bookmarkId);
         } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося видалити закладку " + bookmarkId, e);
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.bookmark_delete_error", bookmarkId), e);
         }
     }
 
@@ -165,7 +166,7 @@ public class NewReaderPersistenceService {
         try {
             return bookmarkRepository.countByBookId(bookId);
         } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося підрахувати закладки для " + bookId, e);
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.bookmark_count_error", bookId), e);
         }
     }
 

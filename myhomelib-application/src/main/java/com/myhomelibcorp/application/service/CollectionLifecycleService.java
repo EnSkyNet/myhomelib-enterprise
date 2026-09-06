@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.service;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
@@ -12,8 +14,12 @@ import com.myhomelibcorp.shared.event.DomainEventPublisher;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 @RequiredArgsConstructor
 @Slf4j
@@ -26,8 +32,11 @@ public class CollectionLifecycleService {
     private final SearchIndexLifecycle searchIndexLifecycle;
     private final DomainEventPublisher eventPublisher;
     private final ExecutorPort executorPort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     private final AtomicBoolean isInitializing = new AtomicBoolean(false);
+    private final AtomicLong rebuildGeneration = new AtomicLong();
+    private final AtomicReference<RebuildTask> activeRebuild = new AtomicReference<>();
 
     /**
      * Повна ініціалізація колекції: переключення, міграція, кеші, індекс (асинхронно).
@@ -101,6 +110,16 @@ public class CollectionLifecycleService {
      * Перебудова індексу (синхронно). Використовується зовнішніми use cases.
      */
     public void rebuildSearchIndex() {
+        if (operationCoordinator.isHeldByCurrentThread()) {
+            rebuildSearchIndexLocked();
+            return;
+        }
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.INDEX)) {
+            rebuildSearchIndexLocked();
+        }
+    }
+
+    private void rebuildSearchIndexLocked() {
         log.info("🔄 Перебудова індексу...");
         long startTime = System.currentTimeMillis();
         indexRebuilder.rebuildIndex();
@@ -110,52 +129,145 @@ public class CollectionLifecycleService {
     }
 
     /**
-     * Асинхронна перебудова індексу зі статусом у логах.
+     * Queues a collection-bound rebuild. The executor waits until the initiating SWITCH/CREATE
+     * lease is released, then owns a detached INDEX lease for the complete rebuild lifecycle.
      */
     private void rebuildIndexAsync(Collection collection) {
-        log.info("🔄 Запуск фонової перебудови індексу для колекції: {}", collection.getName());
-
-        executorPort.execute(() -> {
-            try {
-                long startTime = System.currentTimeMillis();
-                log.info("🔄 Початок перебудови індексу (фоново)...");
-
-                indexRebuilder.rebuildIndex();
-
-                long duration = System.currentTimeMillis() - startTime;
-                int count = indexRebuilder.getIndexedDocumentCount();
-                log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів",
-                        duration, count);
-
-            } catch (Exception e) {
-                log.error("❌ Помилка фонової перебудови індексу для колекції {}",
-                        collection.getName(), e);
-            }
-        });
+        startAsyncRebuild(collection, false);
     }
 
     /**
-     * Асинхронна перебудова індексу з CompletableFuture.
+     * Manual async rebuild. INDEX is acquired before the Future is returned, so no IMPORT/SYNC/SWITCH
+     * can slip into the scheduling gap between the UI request and the executor actually starting work.
      */
     public CompletableFuture<Void> rebuildSearchIndexAsync() {
-        log.info("🔄 Запуск асинхронної перебудови індексу...");
+        return startAsyncRebuild(collectionLifecyclePort.getCurrentCollection(), true);
+    }
+
+    /**
+     * Invalidates and cooperatively cancels the current background rebuild, waiting until its
+     * detached INDEX lease is released. SWITCH calls this before acquiring its own lease.
+     */
+    public void cancelBackgroundRebuildAndAwait() {
+        rebuildGeneration.incrementAndGet();
+        RebuildTask task = activeRebuild.get();
+        if (task == null) return;
+        task.cancelFlag().set(true);
+        try {
+            task.future().join();
+        } catch (CancellationException | java.util.concurrent.CompletionException expected) {
+            log.debug("Попередню фонову перебудову індексу завершено/скасовано перед lifecycle operation");
+        }
+    }
+
+    private CompletableFuture<Void> startAsyncRebuild(Collection expectedCollection, boolean acquireImmediately) {
+        RebuildTask previous = activeRebuild.get();
+        // Repeated manual requests are idempotent while the same coordinated rebuild is already running.
+        // Cancelling the first task before acquiring its still-held INDEX lease would otherwise make the
+        // second request fail with a conflict and leave no rebuild in progress at all.
+        if (acquireImmediately && previous != null && !previous.future().isDone()) {
+            return previous.future();
+        }
+
+        long generation = rebuildGeneration.incrementAndGet();
+        if (previous != null) previous.cancelFlag().set(true);
 
         CompletableFuture<Void> future = new CompletableFuture<>();
-        executorPort.execute(() -> {
+        RebuildTask task = new RebuildTask(generation, collectionKey(expectedCollection), new AtomicBoolean(false), future);
+
+        // Publish the task before acquiring the detached INDEX lease. A SWITCH observes the
+        // coordinator lease to know that INDEX is active, and it must always be able to find the
+        // matching task/cancel flag at that point. Publishing after acquireDetached() left a tiny
+        // race where SWITCH saw INDEX but cancelBackgroundRebuildAndAwait() still saw no task.
+        activeRebuild.set(task);
+
+        LibraryOperationCoordinator.Lease preAcquiredLease = null;
+        if (acquireImmediately) {
             try {
-                long startTime = System.currentTimeMillis();
-                indexRebuilder.rebuildIndex();
-                long duration = System.currentTimeMillis() - startTime;
-                log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів",
-                        duration, indexRebuilder.getIndexedDocumentCount());
-                future.complete(null);
-            } catch (Exception e) {
-                log.error("❌ Помилка асинхронної перебудови індексу", e);
-                future.completeExceptionally(e);
+                preAcquiredLease = operationCoordinator.acquireDetached(LibraryOperationType.INDEX);
+            } catch (RuntimeException leaseFailure) {
+                activeRebuild.compareAndSet(task, null);
+                future.completeExceptionally(leaseFailure);
+                throw leaseFailure;
             }
-        });
+        }
+
+        log.info("🔄 Заплановано coordinated Lucene rebuild для колекції {} (generation={}, immediateLease={})",
+                expectedCollection == null ? "<current>" : expectedCollection.getName(), generation, acquireImmediately);
+
+        LibraryOperationCoordinator.Lease leaseForTask = preAcquiredLease;
+        try {
+            executorPort.execute(() -> runAsyncRebuild(task, leaseForTask));
+        } catch (RuntimeException schedulingFailure) {
+            activeRebuild.compareAndSet(task, null);
+            if (preAcquiredLease != null) preAcquiredLease.close();
+            future.completeExceptionally(schedulingFailure);
+        }
         return future;
     }
+
+    private void runAsyncRebuild(RebuildTask task, LibraryOperationCoordinator.Lease preAcquiredLease) {
+        LibraryOperationCoordinator.Lease lease = preAcquiredLease;
+        RuntimeException failure = null;
+        boolean cancelled = false;
+        try {
+            if (lease == null) {
+                lease = operationCoordinator.acquireDetachedAwait(LibraryOperationType.INDEX);
+            }
+            if (!isRebuildStillValid(task)) {
+                cancelled = true;
+            } else {
+                long startTime = System.currentTimeMillis();
+                indexRebuilder.rebuildIndex(task.cancelFlag());
+                if (!isRebuildStillValid(task) || task.cancelFlag().get()) {
+                    cancelled = true;
+                } else {
+                    long duration = System.currentTimeMillis() - startTime;
+                    log.info("✅ Coordinated Lucene rebuild завершено за {} мс; документів {}",
+                            duration, indexRebuilder.getIndexedDocumentCount());
+                }
+            }
+        } catch (RuntimeException rebuildFailure) {
+            if (task.cancelFlag().get() || task.generation() != rebuildGeneration.get()) {
+                cancelled = true;
+            } else {
+                log.error("❌ Помилка coordinated Lucene rebuild", rebuildFailure);
+                failure = rebuildFailure;
+            }
+        } finally {
+            // The Future is the public completion barrier for lifecycle callers. Release the
+            // detached INDEX lease first, otherwise join() may return while the coordinator still
+            // reports INDEX and an immediately following SWITCH can fail spuriously.
+            if (lease != null) {
+                try {
+                    lease.close();
+                } catch (RuntimeException releaseFailure) {
+                    if (failure == null && !cancelled) failure = releaseFailure;
+                    log.error("❌ Не вдалося звільнити coordinated INDEX lease", releaseFailure);
+                }
+            }
+            activeRebuild.compareAndSet(task, null);
+            if (failure != null) {
+                task.future().completeExceptionally(failure);
+            } else if (cancelled) {
+                task.future().cancel(false);
+            } else {
+                task.future().complete(null);
+            }
+        }
+    }
+
+    private boolean isRebuildStillValid(RebuildTask task) {
+        if (task.cancelFlag().get() || task.generation() != rebuildGeneration.get()) return false;
+        return Objects.equals(task.collectionKey(), collectionKey(collectionLifecyclePort.getCurrentCollection()));
+    }
+
+    private static String collectionKey(Collection collection) {
+        return collection == null || collection.getId() == null ? "" : collection.getId();
+    }
+
+    private record RebuildTask(long generation, String collectionKey, AtomicBoolean cancelFlag,
+                               CompletableFuture<Void> future) { }
 
     /**
      * Best-effort rollback after a failed migration/cache/index initialization.
@@ -198,6 +310,10 @@ public class CollectionLifecycleService {
      */
     public Collection getCurrentCollection() {
         return collectionLifecyclePort.getCurrentCollection();
+    }
+
+    public int getIndexedDocumentCount() {
+        return indexRebuilder.getIndexedDocumentCount();
     }
 
     /**

@@ -8,6 +8,7 @@ import com.myhomelibcorp.reader.api.ReaderInputSettings;
 import com.myhomelibcorp.reader.api.ReaderSettingsPreset;
 import com.myhomelibcorp.reader.api.ReaderSettingsPresets;
 import com.myhomelibcorp.reader.api.ReaderTheme;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import javafx.beans.InvalidationListener;
 import javafx.collections.FXCollections;
 import javafx.geometry.Insets;
@@ -47,23 +48,23 @@ final class ReaderSettingsDialog {
     private ReaderSettingsDialog() {}
 
     static Optional<Result> show(Window owner, ReaderSettings current, boolean currentBookOverride,
-                                 Consumer<ReaderSettings> livePreview) {
+                                 Consumer<ReaderSettings> livePreview, LocalizationService i18n) {
         ReaderSettings original = current != null ? current : ReaderSettings.defaultSettings();
-        Controls c = new Controls(original, currentBookOverride);
+        Controls c = new Controls(original, currentBookOverride, i18n);
 
         Dialog<Result> dialog = new Dialog<>();
-        dialog.setTitle("Налаштування читання");
-        dialog.setHeaderText("Reader — профілі, вигляд, навігація та статус");
+        dialog.setTitle(i18n.text("ui.reader.settings.title"));
+        dialog.setHeaderText(i18n.text("ui.reader.settings.header"));
         if (owner != null) dialog.initOwner(owner);
 
-        ButtonType apply = new ButtonType("Застосувати", ButtonBar.ButtonData.OK_DONE);
+        ButtonType apply = new ButtonType(i18n.text("common.apply"), ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(apply, ButtonType.CANCEL);
 
         ComboBox<ReaderSettingsPreset> preset = new ComboBox<>(FXCollections.observableArrayList(ReaderSettingsPresets.builtIns()));
         preset.setCellFactory(v -> presetCell());
         preset.setButtonCell(presetCell());
-        preset.setPromptText("Оберіть preset…");
-        Button applyPreset = new Button("Застосувати preset");
+        preset.setPromptText(i18n.text("ui.reader.settings.preset.prompt"));
+        Button applyPreset = new Button(i18n.text("ui.reader.settings.preset.apply"));
         applyPreset.setOnAction(e -> {
             ReaderSettingsPreset selected = preset.getValue();
             if (selected != null) {
@@ -73,20 +74,20 @@ final class ReaderSettingsDialog {
         });
 
         CheckBox perBook = c.perBook;
-        Label scopeHelp = new Label("Вимкніть, щоб зробити ці налаштування глобальними за замовчуванням.");
+        Label scopeHelp = new Label(i18n.text("ui.reader.settings.scope.help"));
         scopeHelp.getStyleClass().addAll("muted-text", "small-text");
 
-        HBox presetRow = new HBox(8, new Label("Preset:"), preset, applyPreset);
+        HBox presetRow = new HBox(8, new Label(i18n.text("ui.reader.settings.preset.label")), preset, applyPreset);
         VBox header = new VBox(6, presetRow, perBook, scopeHelp);
         header.setPadding(new Insets(0, 0, 8, 0));
 
         TabPane tabs = new TabPane(
-                tab("Типографіка", typographyPane(c)),
-                tab("Стилі елементів", semanticTypographyPane(c)),
-                tab("Кольори", colorsPane(c)),
-                tab("Макет", layoutPane(c)),
-                tab("Навігація", navigationPane(c)),
-                tab("Статус", statusPane(c))
+                tab(i18n.text("ui.reader.settings.tab.typography"), typographyPane(c)),
+                tab(i18n.text("ui.reader.settings.tab.element_styles"), semanticTypographyPane(c)),
+                tab(i18n.text("ui.reader.settings.tab.colors"), colorsPane(c)),
+                tab(i18n.text("ui.reader.settings.tab.layout"), layoutPane(c)),
+                tab(i18n.text("ui.reader.settings.tab.navigation"), navigationPane(c)),
+                tab(i18n.text("ui.reader.settings.tab.status"), statusPane(c))
         );
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
 
@@ -130,14 +131,14 @@ final class ReaderSettingsDialog {
     private static Node typographyPane(Controls c) {
         GridPane grid = grid();
         int r=0;
-        row(grid,r++,"Шрифт",c.fontFamily);
-        row(grid,r++,"Розмір",c.fontSize);
-        row(grid,r++,"Міжрядковий інтервал",c.lineSpacing);
-        row(grid,r++,"Відстань між абзацами",c.paragraphSpacing);
-        row(grid,r++,"Відступ першого рядка (em)",c.indent);
-        row(grid,r++,"Вирівнювання",c.alignment);
+        row(grid,r++,c.t("ui.reader.settings.font"),c.fontFamily);
+        row(grid,r++,c.t("ui.reader.settings.font_size"),c.fontSize);
+        row(grid,r++,c.t("ui.reader.settings.line_spacing"),c.lineSpacing);
+        row(grid,r++,c.t("ui.reader.settings.paragraph_spacing"),c.paragraphSpacing);
+        row(grid,r++,c.t("ui.reader.settings.first_line_indent"),c.indent);
+        row(grid,r++,c.t("ui.reader.settings.alignment"),c.alignment);
         grid.add(c.hyphenation,0,r++,2,1);
-        Button reset = new Button("Скинути типографіку");
+        Button reset = new Button(c.t("ui.reader.settings.reset_typography"));
         reset.setOnAction(e -> c.resetTypography(ReaderSettings.defaultSettings()));
         grid.add(reset,0,r,2,1);
         return grid;
@@ -146,24 +147,23 @@ final class ReaderSettingsDialog {
     private static Node semanticTypographyPane(Controls c) {
         GridPane grid = grid();
         int r = 0;
-        row(grid, r++, "Елемент", c.semanticElement);
+        row(grid, r++, c.t("ui.reader.settings.element"), c.semanticElement);
         grid.add(new Separator(), 0, r++, 2, 1);
-        row(grid, r++, "Шрифт (порожньо = успадкувати)", c.semanticFontFamily);
+        row(grid, r++, c.t("ui.reader.settings.semantic_font"), c.semanticFontFamily);
         grid.add(c.semanticAbsoluteSize, 0, r, 1, 1);
         grid.add(c.semanticFontSize, 1, r++, 1, 1);
-        row(grid, r++, "Масштаб від базового", c.semanticFontScale);
-        row(grid, r++, "Насиченість / курсив", c.semanticWeight);
-        row(grid, r++, "Вирівнювання", c.semanticAlignment);
+        row(grid, r++, c.t("ui.reader.settings.scale_from_base"), c.semanticFontScale);
+        row(grid, r++, c.t("ui.reader.settings.weight_italic"), c.semanticWeight);
+        row(grid, r++, c.t("ui.reader.settings.alignment"), c.semanticAlignment);
         grid.add(c.semanticSpacingBeforeEnabled, 0, r, 1, 1);
         grid.add(c.semanticSpacingBefore, 1, r++, 1, 1);
         grid.add(c.semanticSpacingAfterEnabled, 0, r, 1, 1);
         grid.add(c.semanticSpacingAfter, 1, r++, 1, 1);
-        Label hint = new Label("Порожній шрифт, 'inherit' та вимкнені відступи успадковують глобальні налаштування. " +
-                "Абсолютний розмір має пріоритет над масштабом.");
+        Label hint = new Label(c.t("ui.reader.settings.semantic_typography_hint"));
         hint.setWrapText(true);
         hint.getStyleClass().add("muted-text");
         grid.add(hint, 0, r++, 2, 1);
-        Button reset = new Button("Скинути типографіку вибраного елемента");
+        Button reset = new Button(c.t("ui.reader.settings.reset_selected_typography"));
         reset.setOnAction(e -> c.resetSelectedSemanticTypography());
         grid.add(reset, 0, r, 2, 1);
         return grid;
@@ -171,26 +171,26 @@ final class ReaderSettingsDialog {
 
     private static Node colorsPane(Controls c) {
         GridPane grid=grid(); int r=0;
-        row(grid,r++,"Тема",c.theme);
-        row(grid,r++,"Колір фону",c.backgroundColor);
-        row(grid,r++,"Основний текст",c.textColor);
+        row(grid,r++,c.t("ui.reader.settings.theme"),c.theme);
+        row(grid,r++,c.t("ui.reader.settings.background_color"),c.backgroundColor);
+        row(grid,r++,c.t("ui.reader.settings.main_text"),c.textColor);
         grid.add(new Separator(),0,r++,2,1);
-        Label semantic = new Label("Кольори семантичних елементів");
+        Label semantic = new Label(c.t("ui.reader.settings.semantic_colors"));
         semantic.getStyleClass().add("section-title");
         grid.add(semantic,0,r++,2,1);
         for (ReaderSemanticElement element : COLOR_ELEMENTS) {
-            row(grid, r++, semanticLabel(element), c.semanticColor(element));
+            row(grid, r++, semanticLabel(c, element), c.semanticColor(element));
         }
-        Label hint = new Label("Елементи без власного кольору успадковують поточну тему. Зміна ColorPicker робить колір індивідуальним.");
+        Label hint = new Label(c.t("ui.reader.settings.colors_hint"));
         hint.setWrapText(true);
         hint.getStyleClass().add("muted-text");
         grid.add(hint,0,r++,2,1);
-        Button inherit=new Button("Успадковувати кольори елементів від теми");
+        Button inherit=new Button(c.t("ui.reader.settings.inherit_colors"));
         inherit.setOnAction(e -> c.clearSemanticColors());
-        Button reset=new Button("Скинути всі кольори");
+        Button reset=new Button(c.t("ui.reader.settings.reset_colors"));
         reset.setOnAction(e -> c.resetColors(ReaderSettings.defaultSettings()));
         grid.add(new HBox(8, inherit, reset),0,r,2,1);
-        Label previewTitle = new Label("Попередній перегляд");
+        Label previewTitle = new Label(c.t("ui.reader.settings.preview"));
         previewTitle.getStyleClass().add("section-title");
         VBox content = new VBox(10, previewTitle, c.colorPreview, grid);
         content.setPadding(new Insets(8));
@@ -201,35 +201,18 @@ final class ReaderSettingsDialog {
         return scroll;
     }
 
-    private static String semanticLabel(ReaderSemanticElement element) {
-        return switch (element) {
-            case BOOK_TITLE -> "Назва книги";
-            case CHAPTER_TITLE -> "Назва розділу";
-            case SECTION_TITLE -> "Назва секції";
-            case SUBTITLE -> "Підзаголовок";
-            case EPIGRAPH -> "Епіграф";
-            case QUOTE -> "Цитата";
-            case POEM -> "Вірш";
-            case POEM_AUTHOR -> "Автор вірша";
-            case TEXT_AUTHOR -> "Автор тексту";
-            case ANNOTATION -> "Анотація";
-            case LINK -> "Посилання";
-            case FOOTNOTE -> "Виноска";
-            case STRONG -> "Strong / жирний";
-            case EMPHASIS -> "Emphasis / курсив";
-            case CODE -> "Код / preformatted";
-            default -> "Основний текст";
-        };
+    private static String semanticLabel(Controls c, ReaderSemanticElement element) {
+        return c.t("ui.reader.semantic." + element.name().toLowerCase(java.util.Locale.ROOT));
     }
 
     private static Node layoutPane(Controls c) {
         GridPane grid=grid(); int r=0;
-        row(grid,r++,"Поле ліворуч",c.left);
-        row(grid,r++,"Поле праворуч",c.right);
-        row(grid,r++,"Поле зверху",c.top);
-        row(grid,r++,"Поле знизу",c.bottom);
+        row(grid,r++,c.t("ui.reader.settings.margin_left"),c.left);
+        row(grid,r++,c.t("ui.reader.settings.margin_right"),c.right);
+        row(grid,r++,c.t("ui.reader.settings.margin_top"),c.top);
+        row(grid,r++,c.t("ui.reader.settings.margin_bottom"),c.bottom);
         grid.add(c.showToolbar,0,r++,2,1);
-        Button reset=new Button("Скинути макет");
+        Button reset=new Button(c.t("ui.reader.settings.reset_layout"));
         reset.setOnAction(e -> c.resetLayout(ReaderSettings.defaultSettings()));
         grid.add(reset,0,r,2,1);
         return grid;
@@ -239,22 +222,22 @@ final class ReaderSettingsDialog {
         VBox box = new VBox(12);
         box.setPadding(new Insets(12));
         box.getChildren().addAll(c.twoPageMode, c.autoTwoPageLandscape, c.autoScroll,
-                labeled("Швидкість автопрокрутки", c.scrollSpeed), c.pinchZoom);
+                labeled(c.t("ui.reader.settings.auto_scroll_speed"), c.scrollSpeed), c.pinchZoom);
 
-        GridPane taps = inputGrid("Коротке натискання", c.tapControls());
-        GridPane longTaps = inputGrid("Довге натискання", c.longTapControls());
+        GridPane taps = inputGrid(c, c.t("ui.reader.settings.tap.short"), c.tapControls());
+        GridPane longTaps = inputGrid(c, c.t("ui.reader.settings.tap.long"), c.longTapControls());
         GridPane gestures = grid();
         int r = 0;
-        row(gestures, r++, "Swipe ліворуч", c.swipeLeft);
-        row(gestures, r++, "Swipe праворуч", c.swipeRight);
-        row(gestures, r++, "Swipe вгору", c.swipeUp);
-        row(gestures, r++, "Swipe вниз", c.swipeDown);
+        row(gestures, r++, c.t("ui.reader.settings.swipe_left"), c.swipeLeft);
+        row(gestures, r++, c.t("ui.reader.settings.swipe_right"), c.swipeRight);
+        row(gestures, r++, c.t("ui.reader.settings.swipe_up"), c.swipeUp);
+        row(gestures, r++, c.t("ui.reader.settings.swipe_down"), c.swipeDown);
         box.getChildren().addAll(new Separator(), taps, new Separator(), longTaps, new Separator(), gestures);
 
-        Label hint = new Label("9 зон = 3×3 площі Reader. Довге натискання ≈0,52 с. Shift+drag залишено для виділення тексту.");
+        Label hint = new Label(c.t("ui.reader.settings.navigation_hint"));
         hint.setWrapText(true);
         hint.getStyleClass().add("muted-text");
-        Button reset = new Button("Скинути навігацію");
+        Button reset = new Button(c.t("ui.reader.settings.reset_navigation"));
         reset.setOnAction(e -> c.resetNavigation(ReaderSettings.defaultSettings()));
         box.getChildren().addAll(hint, reset);
         ScrollPane scroll = new ScrollPane(box);
@@ -266,11 +249,11 @@ final class ReaderSettingsDialog {
         return new HBox(8, new Label(text + ':'), control);
     }
 
-    private static GridPane inputGrid(String title, ComboBox<String>[] controls) {
+    private static GridPane inputGrid(Controls owner, String title, ComboBox<String>[] controls) {
         GridPane grid = grid();
         grid.add(new Label(title), 0, 0, 4, 1);
-        String[] rows = {"Верх", "Середина", "Низ"};
-        String[] cols = {"Ліворуч", "Центр", "Праворуч"};
+        String[] rows = {owner.t("ui.reader.settings.zone.top"), owner.t("ui.reader.settings.zone.middle"), owner.t("ui.reader.settings.zone.bottom")};
+        String[] cols = {owner.t("ui.reader.settings.zone.left"), owner.t("ui.reader.settings.zone.center"), owner.t("ui.reader.settings.zone.right")};
         for (int c = 0; c < 3; c++) grid.add(new Label(cols[c]), c + 1, 1);
         for (int r = 0; r < 3; r++) {
             grid.add(new Label(rows[r]), 0, r + 2);
@@ -282,7 +265,7 @@ final class ReaderSettingsDialog {
     private static Node statusPane(Controls c) {
         VBox box=new VBox(8,c.showStatusBar,c.showStatusProgress,c.showStatusChapter,c.showStatusPage,c.showStatusClock);
         box.setPadding(new Insets(12));
-        Button reset=new Button("Скинути статус");
+        Button reset=new Button(c.t("ui.reader.settings.reset_status"));
         reset.setOnAction(e -> c.resetStatus(ReaderSettings.defaultSettings()));
         box.getChildren().add(reset);
         return box;
@@ -325,30 +308,31 @@ final class ReaderSettingsDialog {
     }
 
     private static final class Controls {
+        final LocalizationService i18n;
         final ComboBox<String> theme=new ComboBox<>(FXCollections.observableArrayList("light","sepia","dark","amoled"));
         final ColorPicker backgroundColor=new ColorPicker();
         final ColorPicker textColor=new ColorPicker();
         final Map<ReaderSemanticElement, ColorPicker> semanticColors=new EnumMap<>(ReaderSemanticElement.class);
         final Set<ReaderSemanticElement> explicitSemanticColors=EnumSet.noneOf(ReaderSemanticElement.class);
         final VBox colorPreview = new VBox(5);
-        final Label previewBookTitle = new Label("Моя домашня бібліотека");
-        final Label previewChapterTitle = new Label("Розділ 1. Приклад оформлення");
-        final Label previewText = new Label("Це фрагмент тексту книги. Він показує фон, основний колір і базову типографіку.");
-        final Label previewQuote = new Label("«Приклад цитати та семантичного кольору.»");
-        final Label previewFootnote = new Label("¹ Приклад виноски");
+        final Label previewBookTitle = new Label();
+        final Label previewChapterTitle = new Label();
+        final Label previewText = new Label();
+        final Label previewQuote = new Label();
+        final Label previewFootnote = new Label();
         ReaderStyleSheet styleSheet=ReaderStyleSheet.defaults();
         final ComboBox<ReaderSemanticElement> semanticElement = new ComboBox<>(FXCollections.observableArrayList(COLOR_ELEMENTS));
         final ComboBox<String> semanticFontFamily = new ComboBox<>(FXCollections.observableArrayList(Font.getFamilies()));
-        final CheckBox semanticAbsoluteSize = new CheckBox("Абсолютний розмір");
+        final CheckBox semanticAbsoluteSize = new CheckBox();
         final Spinner<Double> semanticFontSize = doubleSpinner(6, 96, 18, .5);
         final Spinner<Double> semanticFontScale = doubleSpinner(.5, 3.0, 1.0, .05);
         final ComboBox<String> semanticWeight = new ComboBox<>(FXCollections.observableArrayList(
                 "inherit", "normal", "bold", "semibold", "light", "italic", "bold italic"));
         final ComboBox<String> semanticAlignment = new ComboBox<>(FXCollections.observableArrayList(
                 "inherit", "left", "justify", "center", "right"));
-        final CheckBox semanticSpacingBeforeEnabled = new CheckBox("Відступ перед");
+        final CheckBox semanticSpacingBeforeEnabled = new CheckBox();
         final Spinner<Double> semanticSpacingBefore = doubleSpinner(0, 120, 0, 1);
-        final CheckBox semanticSpacingAfterEnabled = new CheckBox("Відступ після");
+        final CheckBox semanticSpacingAfterEnabled = new CheckBox();
         final Spinner<Double> semanticSpacingAfter = doubleSpinner(0, 120, 0, 1);
         boolean semanticEditorLoading;
         final ComboBox<String> fontFamily=new ComboBox<>(FXCollections.observableArrayList(Font.getFamilies()));
@@ -358,18 +342,18 @@ final class ReaderSettingsDialog {
         final Spinner<Double> indent=doubleSpinner(0,4,1.5,.1);
         final ComboBox<String> alignment=new ComboBox<>(FXCollections.observableArrayList("left","justify","center"));
         final Spinner<Double> left=doubleSpinner(0,120,30,1),right=doubleSpinner(0,120,30,1),top=doubleSpinner(0,120,20,1),bottom=doubleSpinner(0,120,20,1);
-        final CheckBox hyphenation=new CheckBox("Переноси слів");
-        final CheckBox twoPageMode=new CheckBox("Дві сторінки");
-        final CheckBox autoTwoPageLandscape=new CheckBox("Автоматично дві сторінки у широкому вікні");
-        final CheckBox autoScroll=new CheckBox("Автопрокрутка");
+        final CheckBox hyphenation=new CheckBox();
+        final CheckBox twoPageMode=new CheckBox();
+        final CheckBox autoTwoPageLandscape=new CheckBox();
+        final CheckBox autoScroll=new CheckBox();
         final Spinner<Integer> scrollSpeed=new Spinner<>(1,5,3);
-        final CheckBox pinchZoom=new CheckBox("Масштаб шрифту жестом pinch");
-        final CheckBox showToolbar=new CheckBox("Показувати панель інструментів");
-        final CheckBox showStatusBar=new CheckBox("Показувати нижній status bar");
-        final CheckBox showStatusProgress=new CheckBox("Прогрес");
-        final CheckBox showStatusChapter=new CheckBox("Назва розділу");
-        final CheckBox showStatusPage=new CheckBox("Номер сторінки");
-        final CheckBox showStatusClock=new CheckBox("Годинник");
+        final CheckBox pinchZoom=new CheckBox();
+        final CheckBox showToolbar=new CheckBox();
+        final CheckBox showStatusBar=new CheckBox();
+        final CheckBox showStatusProgress=new CheckBox();
+        final CheckBox showStatusChapter=new CheckBox();
+        final CheckBox showStatusPage=new CheckBox();
+        final CheckBox showStatusClock=new CheckBox();
         final ComboBox<String> tapTopLeft=actionBox(),tapTopCenter=actionBox(),tapTopRight=actionBox();
         final ComboBox<String> tapMiddleLeft=actionBox(),tapMiddleCenter=actionBox(),tapMiddleRight=actionBox();
         final ComboBox<String> tapBottomLeft=actionBox(),tapBottomCenter=actionBox(),tapBottomRight=actionBox();
@@ -377,10 +361,31 @@ final class ReaderSettingsDialog {
         final ComboBox<String> longMiddleLeft=actionBox(),longMiddleCenter=actionBox(),longMiddleRight=actionBox();
         final ComboBox<String> longBottomLeft=actionBox(),longBottomCenter=actionBox(),longBottomRight=actionBox();
         final ComboBox<String> swipeLeft=actionBox(),swipeRight=actionBox(),swipeUp=actionBox(),swipeDown=actionBox();
-        final CheckBox perBook=new CheckBox("Лише для цієї книги");
+        final CheckBox perBook=new CheckBox();
         boolean legacyPageMode;
 
-        Controls(ReaderSettings settings,boolean bookOverride){
+        Controls(ReaderSettings settings,boolean bookOverride, LocalizationService i18n){
+            this.i18n = java.util.Objects.requireNonNull(i18n, "i18n");
+            previewBookTitle.setText(t("ui.reader.settings.preview.book_title"));
+            previewChapterTitle.setText(t("ui.reader.settings.preview.chapter_title"));
+            previewText.setText(t("ui.reader.settings.preview.text"));
+            previewQuote.setText(t("ui.reader.settings.preview.quote"));
+            previewFootnote.setText(t("ui.reader.settings.preview.footnote"));
+            semanticAbsoluteSize.setText(t("ui.reader.settings.absolute_size"));
+            semanticSpacingBeforeEnabled.setText(t("ui.reader.settings.spacing_before"));
+            semanticSpacingAfterEnabled.setText(t("ui.reader.settings.spacing_after"));
+            hyphenation.setText(t("ui.reader.settings.hyphenation"));
+            twoPageMode.setText(t("ui.reader.settings.two_pages"));
+            autoTwoPageLandscape.setText(t("ui.reader.settings.auto_two_pages_landscape"));
+            autoScroll.setText(t("ui.reader.settings.auto_scroll"));
+            pinchZoom.setText(t("ui.reader.settings.pinch_zoom"));
+            showToolbar.setText(t("ui.reader.settings.show_toolbar"));
+            showStatusBar.setText(t("ui.reader.settings.show_status_bar"));
+            showStatusProgress.setText(t("ui.reader.settings.show_status_progress"));
+            showStatusChapter.setText(t("ui.reader.settings.show_status_chapter"));
+            showStatusPage.setText(t("ui.reader.settings.show_status_page"));
+            showStatusClock.setText(t("ui.reader.settings.show_status_clock"));
+            perBook.setText(t("ui.reader.settings.per_book"));
             colorPreview.setPadding(new Insets(14));
             colorPreview.setMinHeight(175);
             colorPreview.setMaxWidth(Double.MAX_VALUE);
@@ -419,11 +424,13 @@ final class ReaderSettingsDialog {
             textColor.setOnAction(e -> refreshInheritedSemanticColors());
         }
 
-        static ListCell<ReaderSemanticElement> semanticElementCell() {
+        String t(String key) { return i18n.text(key); }
+
+        ListCell<ReaderSemanticElement> semanticElementCell() {
             return new ListCell<>() {
                 @Override protected void updateItem(ReaderSemanticElement item, boolean empty) {
                     super.updateItem(item, empty);
-                    setText(empty || item == null ? null : semanticLabel(item));
+                    setText(empty || item == null ? null : semanticLabel(Controls.this, item));
                 }
             };
         }

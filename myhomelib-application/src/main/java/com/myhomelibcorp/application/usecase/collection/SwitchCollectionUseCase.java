@@ -37,12 +37,24 @@ public class SwitchCollectionUseCase {
     }
 
     public Collection execute(Collection collection, boolean rebuildIndex) {
+        return executeWithStatus(collection, rebuildIndex).collection();
+    }
+
+    /**
+     * Switch variant used by bootstrap orchestration. Besides the authoritative collection descriptor
+     * it exposes whether the per-collection Lucene index was reusable after SQLite migration. This
+     * lets startup schedule a rebuild in a separate SearchStartupTask instead of hiding search policy
+     * inside the migration phase.
+     */
+    public SwitchResult executeWithStatus(Collection collection, boolean rebuildIndex) {
+        // A collection-specific rebuild must never survive into a different collection context.
+        collectionLifecycleService.cancelBackgroundRebuildAndAwait();
         try (var ignored = operationCoordinator.acquire(LibraryOperationType.SWITCH)) {
             return executeLocked(collection, rebuildIndex);
         }
     }
 
-    private Collection executeLocked(Collection collection, boolean rebuildIndex) {
+    private SwitchResult executeLocked(Collection collection, boolean rebuildIndex) {
         if (collection == null) {
             throw new IllegalArgumentException("Колекція не може бути null");
         }
@@ -57,18 +69,16 @@ public class SwitchCollectionUseCase {
 
         log.info("🔄 Переключення на колекцію: {}", target.getName());
 
-        // Перевіряємо, чи це вже поточна колекція
         Collection current = collectionLifecycleService.getCurrentCollection();
         if (current != null && current.getId() != null && current.getId().equals(target.getId())) {
-            // Репозиторій міг бути оновлений (rename/properties), тому освіжаємо
-            // descriptor без перестворення DataSource.
             collectionLifecycleService.updateCurrentCollection(target);
             log.info("Колекція {} вже активна; metadata синхронізовано", target.getName());
-            return target;
+            return new SwitchResult(target, true);
         }
 
-        // Виконуємо повну ініціалізацію з передачею прапорця перебудови індексу
-        collectionLifecycleService.initializeCollection(target, rebuildIndex);
-        return target;
+        boolean reusableSearchIndex = collectionLifecycleService.initializeCollection(target, rebuildIndex);
+        return new SwitchResult(target, reusableSearchIndex);
     }
+
+    public record SwitchResult(Collection collection, boolean reusableSearchIndex) { }
 }

@@ -143,9 +143,20 @@ A failed rebuild must not replace the previously committed healthy index. Startu
 
 ## 9. OPDS operation
 
-Default bind: `127.0.0.1:8088`.
+Default bind: `127.0.0.1:8088`. Loopback may use HTTP. A bind beyond loopback is rejected unless TLS is enabled, so LAN exposure is HTTPS-only.
 
-Use **Tools -> OPDS server...** to configure bind/port, optional Basic authentication and autostart. Binding beyond loopback exposes the catalogue to the network and should be treated as an explicit security decision.
+Use **Tools -> OPDS server...** to configure bind/port, optional Basic authentication, autostart and TLS. The same dialog can:
+
+- create or regenerate a managed self-signed PKCS12 certificate;
+- import an X.509 PEM certificate/chain plus a matching unencrypted PKCS#8 PEM private key;
+- show the SHA-256 certificate fingerprint, subject and validity window;
+- warn that self-signed certificates are not automatically trusted on client devices.
+
+Managed certificate material is stored under the application configuration directory. Its generated keystore password is persisted only as authenticated ciphertext using the explicit `mhlenc:v1:` envelope; plaintext is not written to application settings. Authenticated pre-envelope ciphertext is upgraded to the current envelope on persistence/read-migration without changing the secret.
+
+For a manually managed external PKCS12/JKS keystore, the existing runtime password fallback remains available through `-Dmyhomelib.opds.tls.keyStorePassword=...` or `MYHOMELIB_OPDS_TLS_KEYSTORE_PASSWORD`. Imported encrypted PKCS#8, PKCS#1 and SEC1 private-key files are intentionally rejected; convert them to unencrypted PKCS#8 before import.
+
+Default sidecar limits are 64 concurrently executing requests, listen backlog 64, 8 failed authentication attempts per 60 seconds and a 120-second per-client block. They can be tuned under `opds.limits.*`. `/health` remains public on loopback; when OPDS is exposed beyond loopback it requires Basic Auth by default and otherwise returns 403.
 
 ## 10. Logs and troubleshooting
 
@@ -172,13 +183,44 @@ Support bundles redact known secret keys and include bounded logs plus current r
 Before treating a build as production-ready:
 
 1. run offline/static gates;
-2. run `./mvnw clean verify -Pproduction` on a connected machine or populated Maven cache;
-3. run the Windows/Linux/macOS CI matrix;
-4. create the final source/binary archive;
-5. extract it into a clean directory and rerun release checks there;
-6. verify checksum and executable permissions for Unix launch scripts;
-7. smoke-test a real collection, online download, Reader and backup/restore.
+2. confirm protected branches require the PR CI `Fast gate` status check in GitHub branch protection/rulesets;
+3. run `./mvnw clean verify -Pproduction` on a connected machine or populated Maven cache;
+4. run the Windows/Linux/macOS CI matrix;
+5. create the final source/binary archive;
+6. extract it into a clean directory and rerun release checks there;
+7. verify checksum and executable permissions for Unix launch scripts;
+8. smoke-test a real collection, online download, Reader and backup/restore.
 
 ## 12. Coordinated operation lifecycle
 
 Collection-changing and maintenance operations use `LibraryOperationCoordinator`; incompatible operations must not overlap. User-visible long work is registered in Operation Center and should publish authoritative stage/progress rather than synthetic percentages. Online update completion order is SQLite/import → Lucene → statistics refresh → applied source version → completed UI state. Restore uses staged validation and preserves the previous database until the replacement has opened, migrated and passed integrity validation.
+
+## 13. Executor saturation and lifecycle
+
+Managed backend executor thread prefixes are `app-task-`, `app-io-`, `app-import-`, and `app-search-`; UI background threads use `ui-bg-`. Queues are bounded. When a queue is full the task is rejected instead of running on the submitting thread; logs include executor role, queue depth, active threads and pool size. Repeated rejections indicate sustained overload and should be investigated rather than hidden by increasing queues without measurement.
+
+`FolderSyncService` runs asynchronous scans through the managed I/O executor. Cancelling its returned future also raises the service cancellation flag so long scans stop cooperatively. `MemoryMonitor` uses a daemon scheduler and can be stopped/restarted safely. During application shutdown `AsyncConfig` stops the shared backend pools before the collection/database context is closed.
+
+## 14. JavaFX workspace lifecycle diagnostics
+
+Reloadable workspaces now use per-load controller instances and explicit disposal of long-lived listeners. Repeated navigation between Dashboard/Search/Groups/Book views should not multiply callbacks or retain stale workspace state.
+
+Book-details and group-list database reads run on the bounded UI background executor. During normal operation the UI may briefly show `Завантаження…`; empty/not-found and load-error states are explicit. Rapid A → B navigation or a collection switch must not allow a late A result to overwrite B. If UI background saturation occurs, investigate the bounded executor/queue rather than moving work back onto the FX thread.
+
+## Search recovery after metadata edit
+
+SQLite remains authoritative for Classic metadata edits. If Lucene selective synchronization and fallback rebuild both fail after a committed edit, the edit remains committed and the collection search index stays marked dirty. The normal search-index recovery/rebuild path must run before the index is treated as reusable.\n\n## 15. Support bundle privacy and external-reader cache\n\nBefore exporting a support bundle, the settings dialog shows the planned contents and lets the user include/exclude sanitized logs, the thread dump and release/architecture documents. Mandatory environment/settings entries remain sanitized. Known credentials, URLs, e-mail addresses, book/author fields and user-home/application paths are redacted line-by-line; exact `dataDir` and `launchDir` are not written to `environment.txt`. Oversized logs remain excluded by the existing per-file/total bundle limits. The version shown in diagnostics comes from packaged runtime/build metadata rather than a hard-coded release string.\n\nTemporary books opened by an external reader live under the managed external-reader cache, not in unbounded `deleteOnExit` files. The cache enforces age/size limits and deletes stale crash leftovers on the next application startup. Files associated with a tracked detached process remain available until that process exits. `Desktop.open` does not provide a portable process handle, so those files intentionally survive the current MyHomeLib session and are reclaimed on the next startup. If the cache repeatedly reaches its size limit, close stale external readers first; do not disable the bound.\n
+
+## 16. Localization diagnostics
+
+Built-in Ukrainian, English and Bulgarian catalogues are synchronized between root `Lang/` files and packaged UI resources. Critical Search/Reader/Import/OPDS/Backup programmatic text resolves stable keys rather than Ukrainian source text. If a critical label renders as a raw `ui.*` key, treat it as a missing/invalid catalogue entry and run `python3 tools/check-critical-ui-localization.py` plus `python3 tools/validate-language-catalogs.py`. External compatible language catalogues remain discoverable, but built-in release acceptance is defined for UK/EN/BG.
+
+
+
+## 17. Startup recovery and degraded mode
+
+Desktop startup executes recovery, collection migration/activation, search-index policy, backup-staging cleanup and optional OPDS autostart in that order. Recovery and migration are mandatory. If either fails, startup stops and the error identifies the failed startup task.
+
+Search rebuild, stale backup-staging cleanup and OPDS autostart are best-effort. Failure in one of these phases allows the application to continue in degraded mode and is written to the logs/startup report. A dirty or non-reusable search index is rebuilt asynchronously; do not treat a failed rebuild as a reason to rewrite or discard authoritative SQLite data.
+
+Interrupted backup staging is limited to `.snapshot.tmp` cleanup during startup; a full automatic backup is not performed on every launch.

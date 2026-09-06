@@ -444,6 +444,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 .header("Accept", "application/zip, application/octet-stream, text/plain;q=0.9, */*;q=0.1")
                 .GET();
         if (collection != null && collection.getUser() != null && !collection.getUser().isBlank()) {
+            CredentialTransportPolicy.requireHttpsWhenCredentialsPresent(uri, collection.getUser());
             String password = "";
             String decrypted = collection.getDecryptedPassword();
             if (decrypted != null) password = decrypted;

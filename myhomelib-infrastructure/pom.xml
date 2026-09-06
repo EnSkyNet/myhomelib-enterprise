@@ -31,6 +31,16 @@
             <version>${project.parent.version}</version>
         </dependency>
 
+        <!-- Windows DPAPI implementation for SecretStore SPI. -->
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>net.java.dev.jna</groupId>
+            <artifactId>jna-platform</artifactId>
+        </dependency>
+
         <!-- LUCENE -->
         <dependency>
             <groupId>org.apache.lucene</groupId>

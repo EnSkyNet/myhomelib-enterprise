@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
@@ -13,6 +14,7 @@ import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
+import com.myhomelibcorp.ui.imports.ImportFileChooserFilters;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
@@ -42,6 +44,7 @@ import java.util.List;
 @Slf4j
 public class CollectionWizardController {
 
+    private final LocalizationService localizationService;
     private final CreateCollectionUseCase createCollectionUseCase;
     private final CollectionValidatorPort collectionValidator;
     private final DialogService dialogService;
@@ -295,12 +298,7 @@ public class CollectionWizardController {
     private void onSelectSourcePath() {
         File file = fileChooserService.chooseFile(stage,
                 "Виберіть файл джерела",
-                List.of(
-                        new javafx.stage.FileChooser.ExtensionFilter("Всі підтримувані", "*.inpx", "*.inp", "*.fb2", "*.fbd", "*.epub", "*.txt", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz"),
-                        new javafx.stage.FileChooser.ExtensionFilter("INPX/INP", "*.inpx", "*.inp"),
-                        new javafx.stage.FileChooser.ExtensionFilter("Книги", "*.fb2", "*.fbd", "*.epub", "*.txt"),
-                        new javafx.stage.FileChooser.ExtensionFilter("Архіви", "*.zip", "*.fb2zip", "*.7z", "*.rar", "*.cbz")
-                ));
+                ImportFileChooserFilters.standardGroups(localizationService));
         if (file != null) {
             model.setSourcePath(file.getAbsolutePath());
         }

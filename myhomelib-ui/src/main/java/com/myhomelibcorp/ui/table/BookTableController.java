@@ -10,11 +10,13 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.action.BookActionUiService;
 import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
+import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.util.UiSubscriptions;
 import com.myhomelibcorp.ui.viewmodel.BookTableViewModel;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.animation.PauseTransition;
@@ -26,6 +28,8 @@ import javafx.util.Duration;
 import javafx.util.StringConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.config.ConfigurableBeanFactory;
+import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -33,9 +37,10 @@ import java.util.LinkedHashMap;
 import java.util.List;
 
 @Component
+@Scope(ConfigurableBeanFactory.SCOPE_PROTOTYPE)
 @RequiredArgsConstructor
 @Slf4j
-public class BookTableController {
+public class BookTableController implements WorkspaceLifecycle {
 
     private final ApplicationState appState;
     private final NavigationService navigationService;
@@ -75,6 +80,7 @@ public class BookTableController {
     private boolean applyingProfile;
     private CheckBox masterSelectionCheckBox;
     private boolean updatingMasterSelection;
+    private final UiSubscriptions subscriptions = new UiSubscriptions();
 
     @FXML
     public void initialize() {
@@ -240,8 +246,10 @@ public class BookTableController {
     private void installSelectionStatusTracking(BookTableViewModel vm) {
         // BookSelectionService is the sole batch-selection source, so one count listener is enough.
         // Per-row listeners caused Select All on large pages to recalculate master state repeatedly.
-        bookSelectionService.selectedCountProperty().addListener((obs, oldValue, newValue) -> updateSelectionStatus());
-        vm.getBooks().addListener((ListChangeListener<BookViewModel>) change -> updateSelectionStatus());
+        subscriptions.listen(bookSelectionService.selectedCountProperty(),
+                (obs, oldValue, newValue) -> updateSelectionStatus());
+        subscriptions.listen(vm.getBooks(),
+                (ListChangeListener<BookViewModel>) change -> updateSelectionStatus());
         if (currentBookLabel != null) {
             currentBookLabel.setMaxWidth(280);
             currentBookLabel.setTextOverrun(OverrunStyle.ELLIPSIS);
@@ -312,9 +320,9 @@ public class BookTableController {
         });
         prevPageButton.setOnAction(e -> bookLoaderService.previousPage());
         nextPageButton.setOnAction(e -> bookLoaderService.nextPage());
-        vm.currentPageProperty().addListener((obs, old, page) -> updatePaginationState(vm));
-        vm.totalPagesProperty().addListener((obs, old, pages) -> updatePaginationState(vm));
-        vm.totalElementsProperty().addListener((obs, old, count) -> updateFilterIndicator());
+        subscriptions.listen(vm.currentPageProperty(), (obs, old, page) -> updatePaginationState(vm));
+        subscriptions.listen(vm.totalPagesProperty(), (obs, old, pages) -> updatePaginationState(vm));
+        subscriptions.listen(vm.totalElementsProperty(), (obs, old, count) -> updateFilterIndicator());
         updatePaginationState(vm);
     }
 
@@ -509,6 +517,15 @@ public class BookTableController {
     /** Refreshes row context menus after Stage 15 profile customization. */
     public void refreshRows() {
         if (bookTableView != null) bookTableView.refresh();
+    }
+
+    @Override
+    public void dispose() {
+        profileSaveDelay.stop();
+        subscriptions.close();
+        if (appState.getBookTableController() == this) {
+            appState.setBookTableController(null);
+        }
     }
 
 }

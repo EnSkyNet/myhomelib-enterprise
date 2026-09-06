@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Lazy;
@@ -40,9 +41,7 @@ public class ZipImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        if (file == null || file.getFileName() == null) return false;
-        String name = file.getFileName().toString().toLowerCase(Locale.ROOT);
-        return name.endsWith(".zip") || name.endsWith(".fb2zip") || name.endsWith(".fb2.zip") || name.endsWith(".cbz") || name.endsWith(".jar");
+        return SupportedFormatRegistry.standard().isFormat(file, "zip", "cbz", "jar");
     }
 
     @Override

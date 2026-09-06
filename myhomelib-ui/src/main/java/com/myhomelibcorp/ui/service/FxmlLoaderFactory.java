@@ -29,7 +29,7 @@ public class FxmlLoaderFactory {
     public Pane loadWorkspace(String fxmlPath) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource(fxmlPath));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
 
             Object controller = loader.getController();
@@ -51,7 +51,7 @@ public class FxmlLoaderFactory {
     public Pane loadAuthorWorkspace(AuthorId authorId, boolean downloadedOnly) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/author-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
 
             AuthorWorkspaceController controller = loader.getController();
@@ -72,7 +72,7 @@ public class FxmlLoaderFactory {
     public Pane loadBookWorkspace(BookId bookId) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/book-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
             BookWorkspaceController controller = loader.getController();
             controller.setBookId(bookId);
@@ -87,7 +87,7 @@ public class FxmlLoaderFactory {
     public Pane loadGroupWorkspace(Group group) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/groups-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
             GroupWorkspaceController controller = loader.getController();
             if (group != null) {
@@ -107,7 +107,7 @@ public class FxmlLoaderFactory {
     public Pane loadNewReaderWorkspace(BookId bookId) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/new-reader-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
 
             NewReaderWorkspaceController controller = loader.getController();
@@ -126,7 +126,7 @@ public class FxmlLoaderFactory {
     public Pane loadSearchWorkspace(String query) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
             SearchWorkspaceController controller = loader.getController();
             controller.setInitialQuery(query);
@@ -141,7 +141,7 @@ public class FxmlLoaderFactory {
     public Pane loadSearchWorkspace(List<BookDto> results) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-workspace.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            configureControllerFactory(loader);
             Pane pane = loader.load();
             SearchWorkspaceController controller = loader.getController();
             controller.setResults(results);
@@ -152,4 +152,16 @@ public class FxmlLoaderFactory {
             throw new RuntimeException(e);
         }
     }
+    /**
+     * Configures an FXMLLoader so every FXML load receives a fresh, Spring-autowired controller.
+     * UI controllers are view instances and must never be reused as Spring singletons across loads.
+     */
+    public void configureControllerFactory(FXMLLoader loader) {
+        loader.setControllerFactory(this::createController);
+    }
+
+    Object createController(Class<?> controllerType) {
+        return springContext.getAutowireCapableBeanFactory().createBean(controllerType);
+    }
+
 }

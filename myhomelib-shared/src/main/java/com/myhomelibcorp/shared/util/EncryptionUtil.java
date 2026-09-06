@@ -1,37 +1,31 @@
 package com.myhomelibcorp.shared.util;
 
-import lombok.extern.slf4j.Slf4j;
+import com.myhomelibcorp.shared.security.CredentialMasterKeyManager;
 
+import javax.crypto.AEADBadTagException;
 import javax.crypto.Cipher;
-import javax.crypto.KeyGenerator;
 import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
-import java.nio.file.attribute.PosixFilePermission;
 import java.security.SecureRandom;
 import java.util.Base64;
-import java.util.Set;
+import java.util.Optional;
 
 /** AES-256-GCM credential encryption with fail-closed key management. */
-@Slf4j
 public final class EncryptionUtil {
     private static final String ALGORITHM = "AES";
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
-    private static final int KEY_SIZE = 256;
     private static final int GCM_TAG_LENGTH = 128;
     private static final int GCM_NONCE_LENGTH = 12;
     private static final byte CURRENT_VERSION = 1;
+    private static final String ENVELOPE_PREFIX = "mhlenc:v1:";
     private static final String MASTER_KEY_ENV = "MYHOMELIB_ENCRYPTION_KEY";
     private static final String MASTER_KEY_PROPERTY = "myhomelib.encryption.key";
-    private static final String LOCAL_KEY_FILE = "credential-key.aes256";
 
     private static final SecretKey secretKey = initializeKey();
+    private static final SecureRandom RANDOM = new SecureRandom();
 
     private EncryptionUtil() { }
 
@@ -45,49 +39,8 @@ public final class EncryptionUtil {
     }
 
     private static SecretKey loadOrCreateLocalKey() {
-        try {
-            Path dir = AppPaths.configDir();
-            Files.createDirectories(dir);
-            Path keyFile = dir.resolve(LOCAL_KEY_FILE);
-            if (Files.isRegularFile(keyFile)) {
-                return decodeKey(Files.readString(keyFile, StandardCharsets.US_ASCII).trim(), keyFile.toString());
-            }
-
-            String generated = generateKey();
-            Path temp = Files.createTempFile(dir, ".credential-key-", ".tmp");
-            try {
-                Files.writeString(temp, generated + System.lineSeparator(), StandardCharsets.US_ASCII,
-                        StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-                restrictPermissions(temp);
-                try {
-                    Files.move(temp, keyFile, StandardCopyOption.ATOMIC_MOVE);
-                } catch (java.nio.file.FileAlreadyExistsException race) {
-                    // Another process won initialization; use its stable key.
-                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                    if (!Files.exists(keyFile)) Files.move(temp, keyFile);
-                }
-                if (Files.exists(temp)) Files.deleteIfExists(temp);
-                restrictPermissions(keyFile);
-                String persisted = Files.readString(keyFile, StandardCharsets.US_ASCII).trim();
-                log.info("Local credential encryption key initialized at {}", keyFile);
-                return decodeKey(persisted, keyFile.toString());
-            } finally {
-                Files.deleteIfExists(temp);
-            }
-        } catch (Exception e) {
-            throw new IllegalStateException(
-                    "Credential encryption key is unavailable; refusing plaintext credential storage", e);
-        }
-    }
-
-    private static void restrictPermissions(Path path) {
-        try {
-            if (Files.getFileStore(path).supportsFileAttributeView("posix")) {
-                Files.setPosixFilePermissions(path, Set.of(PosixFilePermission.OWNER_READ, PosixFilePermission.OWNER_WRITE));
-            }
-        } catch (Exception e) {
-            log.warn("Could not restrict credential-key permissions on {}: {}", path, e.getMessage());
-        }
+        String encoded = CredentialMasterKeyManager.loadOrCreateDefault(AppPaths.configDir(), AppPaths.portableMode());
+        return decodeKey(encoded, "credential master key");
     }
 
     private static SecretKey decodeKey(String base64, String source) {
@@ -100,60 +53,104 @@ public final class EncryptionUtil {
         }
     }
 
-    private static String generateKey() throws Exception {
-        KeyGenerator keyGen = KeyGenerator.getInstance(ALGORITHM);
-        keyGen.init(KEY_SIZE, new SecureRandom());
-        return Base64.getEncoder().encodeToString(keyGen.generateKey().getEncoded());
-    }
-
-
+    /**
+     * Encrypts plaintext into an explicit, versioned envelope. Existing v1 envelopes are left
+     * unchanged. Authenticated legacy ciphertext (the pre-envelope Base64 format) is decrypted and
+     * immediately re-encrypted into the current envelope so normal save paths migrate it safely.
+     */
     public static String encrypt(String plainText) {
         if (plainText == null || plainText.isEmpty()) return plainText;
-        // Idempotence is intentional for repository save paths.
-        if (isEncrypted(plainText)) return plainText;
+        if (isCurrentEnvelope(plainText)) return plainText;
+
+        String value = tryDecryptLegacy(plainText).orElse(plainText);
         try {
             byte[] nonce = new byte[GCM_NONCE_LENGTH];
-            new SecureRandom().nextBytes(nonce);
+            RANDOM.nextBytes(nonce);
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
             cipher.init(Cipher.ENCRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, nonce));
-            byte[] ciphertext = cipher.doFinal(plainText.getBytes(StandardCharsets.UTF_8));
+            byte[] ciphertext = cipher.doFinal(value.getBytes(StandardCharsets.UTF_8));
             ByteBuffer buffer = ByteBuffer.allocate(1 + nonce.length + ciphertext.length);
             buffer.put(CURRENT_VERSION).put(nonce).put(ciphertext);
-            return Base64.getEncoder().encodeToString(buffer.array());
+            return ENVELOPE_PREFIX + Base64.getEncoder().encodeToString(buffer.array());
         } catch (Exception e) {
             throw new SecurityException("Encryption failed", e);
         }
     }
 
     /**
-     * Decrypts AES-GCM ciphertext. Legacy plaintext is returned unchanged so existing installations
-     * remain readable; repositories migrate it to ciphertext on read/save.
+     * Decrypts the current explicit envelope. Legacy authenticated ciphertext remains readable and
+     * ordinary legacy plaintext is returned unchanged. A malformed/tampered current envelope fails
+     * closed instead of being mistaken for plaintext.
      */
     public static String decrypt(String encryptedText) {
         if (encryptedText == null || encryptedText.isEmpty()) return encryptedText;
-        if (!isEncrypted(encryptedText)) return encryptedText;
-        try {
-            byte[] combined = Base64.getDecoder().decode(encryptedText);
-            byte[] nonce = new byte[GCM_NONCE_LENGTH];
-            System.arraycopy(combined, 1, nonce, 0, GCM_NONCE_LENGTH);
-            byte[] ciphertext = new byte[combined.length - 1 - GCM_NONCE_LENGTH];
-            System.arraycopy(combined, 1 + GCM_NONCE_LENGTH, ciphertext, 0, ciphertext.length);
-            Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, nonce));
-            return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
-        } catch (Exception e) {
-            throw new SecurityException("Decryption failed", e);
+        if (isCurrentEnvelope(encryptedText)) {
+            return decryptCurrentEnvelope(encryptedText);
         }
+        return tryDecryptLegacy(encryptedText).orElse(encryptedText);
     }
 
+    /**
+     * Returns true only for an explicit current envelope or legacy ciphertext that authenticates
+     * successfully with this installation's key. Merely looking like Base64 is no longer enough.
+     */
     public static boolean isEncrypted(String text) {
         if (text == null || text.isEmpty()) return false;
+        if (isCurrentEnvelope(text)) return true;
+        return tryDecryptLegacy(text).isPresent();
+    }
+
+    /** Returns true only for the current explicit envelope marker; no decryption is attempted. */
+    public static boolean isCurrentEnvelope(String value) {
+        return value != null && value.startsWith(ENVELOPE_PREFIX);
+    }
+
+    private static String decryptCurrentEnvelope(String value) {
+        String payload = value.substring(ENVELOPE_PREFIX.length());
+        final byte[] combined;
         try {
-            byte[] data = Base64.getDecoder().decode(text);
-            return data.length >= 1 + GCM_NONCE_LENGTH + 16 && data[0] == CURRENT_VERSION;
+            combined = Base64.getDecoder().decode(payload);
         } catch (IllegalArgumentException e) {
-            return false;
+            throw new SecurityException("Encrypted value has an invalid v1 envelope", e);
+        }
+        if (!isStructurallyValidCiphertext(combined)) {
+            throw new SecurityException("Encrypted value has an invalid v1 payload");
+        }
+        try {
+            return decryptCombined(combined);
+        } catch (Exception e) {
+            throw new SecurityException("Decryption failed; encrypted value may be corrupted or tampered", e);
         }
     }
 
+    private static Optional<String> tryDecryptLegacy(String value) {
+        final byte[] combined;
+        try {
+            combined = Base64.getDecoder().decode(value);
+        } catch (IllegalArgumentException notBase64) {
+            return Optional.empty();
+        }
+        if (!isStructurallyValidCiphertext(combined)) return Optional.empty();
+        try {
+            return Optional.of(decryptCombined(combined));
+        } catch (AEADBadTagException notOurCiphertext) {
+            return Optional.empty();
+        } catch (Exception invalidLegacyCiphertext) {
+            return Optional.empty();
+        }
+    }
+
+    private static boolean isStructurallyValidCiphertext(byte[] combined) {
+        return combined.length >= 1 + GCM_NONCE_LENGTH + 16 && combined[0] == CURRENT_VERSION;
+    }
+
+    private static String decryptCombined(byte[] combined) throws Exception {
+        byte[] nonce = new byte[GCM_NONCE_LENGTH];
+        System.arraycopy(combined, 1, nonce, 0, GCM_NONCE_LENGTH);
+        byte[] ciphertext = new byte[combined.length - 1 - GCM_NONCE_LENGTH];
+        System.arraycopy(combined, 1 + GCM_NONCE_LENGTH, ciphertext, 0, ciphertext.length);
+        Cipher cipher = Cipher.getInstance(TRANSFORMATION);
+        cipher.init(Cipher.DECRYPT_MODE, secretKey, new GCMParameterSpec(GCM_TAG_LENGTH, nonce));
+        return new String(cipher.doFinal(ciphertext), StandardCharsets.UTF_8);
+    }
 }

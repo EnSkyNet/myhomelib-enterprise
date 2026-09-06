@@ -15,12 +15,14 @@ import javafx.util.Duration;
 
 import java.time.LocalTime;
 import java.time.format.DateTimeFormatter;
+import java.util.function.Function;
 
 /** Lightweight reader status line controlled by ReaderSettings. */
 public final class ReaderStatusBar extends HBox {
     private static final DateTimeFormatter CLOCK_FORMAT = DateTimeFormatter.ofPattern("HH:mm");
 
     private final ReaderCanvas canvas;
+    private final Function<String, String> text;
     private final Label chapter = new Label();
     private final Label page = new Label();
     private final Label progressText = new Label();
@@ -29,8 +31,9 @@ public final class ReaderStatusBar extends HBox {
     private final Timeline clockTimer;
     private ReaderSettings settings = ReaderSettings.defaultSettings();
 
-    public ReaderStatusBar(ReaderCanvas canvas) {
+    public ReaderStatusBar(ReaderCanvas canvas, Function<String, String> text) {
         this.canvas = canvas;
+        this.text = text == null ? Function.identity() : text;
         setAlignment(Pos.CENTER_LEFT);
         setSpacing(8);
         setPadding(new Insets(3, 10, 3, 10));
@@ -78,12 +81,12 @@ public final class ReaderStatusBar extends HBox {
             return;
         }
         String title = canvas.getCurrentChapterTitle();
-        chapter.setText(title == null || title.isBlank() ? "Розділ 1" : title);
+        chapter.setText(title == null || title.isBlank() ? text.apply("ui.reader.status.default_chapter") : title);
         if (settings.showStatusPage()) {
             int currentPage = canvas.getCurrentPageNumber();
             int totalPages = canvas.getTotalPages();
             page.setText((currentPage > 0 ? Integer.toString(currentPage) : "…") + "/"
-                    + (totalPages > 0 ? Integer.toString(totalPages) : "…") + " стор.");
+                    + (totalPages > 0 ? Integer.toString(totalPages) : "…") + text.apply("ui.reader.status.pages_suffix"));
         } else {
             page.setText("");
         }

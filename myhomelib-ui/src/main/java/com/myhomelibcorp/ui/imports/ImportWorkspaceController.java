@@ -8,6 +8,7 @@ import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -43,6 +44,7 @@ public class ImportWorkspaceController {
     private final FileChooserService fileChooserService;
     private final DialogService dialogService;
     private final ApplicationState appState;
+    private final LocalizationService i18n;
 
     @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
@@ -77,7 +79,7 @@ public class ImportWorkspaceController {
     @FXML
     private void onChooseDirectory() {
         Stage stage = new Stage();
-        File dir = fileChooserService.chooseDirectory(stage, "Виберіть папку з книгами");
+        File dir = fileChooserService.chooseDirectory(stage, i18n.text("ui.import.choose_directory.title"));
         if (dir != null) {
             directoryField.setText(dir.getAbsolutePath());
         }
@@ -86,13 +88,7 @@ public class ImportWorkspaceController {
     @FXML
     private void onChooseFile() {
         Stage stage = new Stage();
-        File file = fileChooserService.chooseFile(stage, "Виберіть файл для імпорту",
-                List.of(
-                        new FileChooser.ExtensionFilter("Всі підтримувані", "*.fb2", "*.fbd", "*.epub", "*.txt", "*.inpx", "*.inp", "*.zip", "*.fb2zip", "*.fb2.zip", "*.7z", "*.rar", "*.cbz"),
-                        new FileChooser.ExtensionFilter("Книги", "*.fb2", "*.fbd", "*.epub", "*.txt"),
-                        new FileChooser.ExtensionFilter("INPX/INP", "*.inpx", "*.inp"),
-                        new FileChooser.ExtensionFilter("Архіви", "*.zip", "*.fb2zip", "*.fb2.zip", "*.7z", "*.rar", "*.cbz")
-                ));
+        File file = fileChooserService.chooseFile(stage, i18n.text("ui.import.choose_file.title"), ImportFileChooserFilters.standardGroups(i18n));
         if (file != null) {
             fileField.setText(file.getAbsolutePath());
         }
@@ -102,23 +98,23 @@ public class ImportWorkspaceController {
     private void onImportDirectory() {
         String path = directoryField.getText();
         if (path == null || path.isBlank()) {
-            dialogService.showError("Помилка", "Виберіть папку для імпорту");
+            dialogService.showError(i18n.text("common.error"), i18n.text("ui.import.error.choose_directory"));
             return;
         }
         Path dir = Paths.get(path);
         if (!dir.toFile().exists() || !dir.toFile().isDirectory()) {
-            dialogService.showError("Помилка", "Папка не існує");
+            dialogService.showError(i18n.text("common.error"), i18n.text("ui.import.error.directory_missing"));
             return;
         }
 
         // Не робимо Files.walk() у JavaFX thread лише заради попереднього count.
         // Для великих локальних/NAS бібліотек діалог має з'явитися одразу; authoritative
         // X/Y надходить через OperationProgress, а до появи total показуємо indeterminate state.
-        progressDialog = new ImportProgressDialog("Імпорт каталогу");
+        progressDialog = new ImportProgressDialog(i18n, i18n.text("ui.import.progress.catalog_title"));
         progressDialog.setIndeterminate(true);
         progressDialog.setOnCancel(() -> {
             cancelFlag.set(true);
-            progressDialog.updateStatus("Скасування...");
+            progressDialog.updateStatus(i18n.text("ui.import.status.cancelling"));
         });
         progressDialog.show();
 
@@ -142,20 +138,20 @@ public class ImportWorkspaceController {
     private void onImportFile() {
         String path = fileField.getText();
         if (path == null || path.isBlank()) {
-            dialogService.showError("Помилка", "Виберіть файл для імпорту");
+            dialogService.showError(i18n.text("common.error"), i18n.text("ui.import.error.choose_file"));
             return;
         }
         Path file = Paths.get(path);
         if (!file.toFile().exists()) {
-            dialogService.showError("Помилка", "Файл не існує");
+            dialogService.showError(i18n.text("common.error"), i18n.text("ui.import.error.file_missing"));
             return;
         }
 
-        progressDialog = new ImportProgressDialog("Імпорт файлу");
+        progressDialog = new ImportProgressDialog(i18n, i18n.text("ui.import.progress.file_title"));
         progressDialog.setIndeterminate(true);
         progressDialog.setOnCancel(() -> {
             cancelFlag.set(true);
-            progressDialog.updateStatus("Скасування...");
+            progressDialog.updateStatus(i18n.text("ui.import.status.cancelling"));
         });
         progressDialog.show();
 
@@ -176,7 +172,7 @@ public class ImportWorkspaceController {
 
     private void startImport(java.util.concurrent.Callable<ImportResult> task) {
         if (importRunning) {
-            dialogService.showWarning("Увага", "Імпорт вже виконується", "Зачекайте завершення поточного імпорту");
+            dialogService.showWarning(i18n.text("common.warning"), i18n.text("ui.import.warning.already_running"), i18n.text("ui.import.warning.wait_current"));
             if (progressDialog != null) progressDialog.show();
             return;
         }
@@ -187,7 +183,7 @@ public class ImportWorkspaceController {
         }
         updateStats(0, 0, 0);
         appState.getStatusBar().setProgressVisible(true);
-        setStatus("Імпорт розпочато...");
+        setStatus(i18n.text("ui.import.status.started"));
         setProgress(0);
 
         long startTime = System.currentTimeMillis();
@@ -203,17 +199,17 @@ public class ImportWorkspaceController {
 
                     if (progressDialog != null) {
                         if (cancelFlag.get()) {
-                            progressDialog.updateStatus("Імпорт скасовано");
-                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), "Скасовано");
+                            progressDialog.updateStatus(i18n.text("ui.import.status.cancelled"));
+                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), i18n.text("ui.import.status.cancelled_short"));
                         } else {
-                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), "Завершено!");
+                            progressDialog.updateProgress(result.imported(), result.imported() + result.skipped() + result.duplicates() + result.errors(), i18n.text("ui.import.status.completed"));
                         }
 
                         closeProgressDialogAfter(Duration.seconds(1));
                     }
 
                     if (cancelFlag.get()) {
-                        setStatus("Імпорт скасовано. Незавершені зміни не збережено.");
+                        setStatus(i18n.text("ui.import.status.cancelled_rollback"));
                         setProgress(0);
                     } else {
                         long total = result.imported() + result.skipped() + result.duplicates() + result.errors();
@@ -222,7 +218,7 @@ public class ImportWorkspaceController {
                         String summary = formatImportSummary(result, total);
                         setStatus(summary);
                         appState.getStatusBar().setStatusText(
-                                String.format("Імпорт завершено: %,d книг, помилок %,d",
+                                i18n.format("ui.import.status.completed_summary",
                                         result.imported(), result.errors()));
                     }
                 }))
@@ -235,15 +231,15 @@ public class ImportWorkspaceController {
                         appState.getStatusBar().setProgressVisible(false);
 
                         if (progressDialog != null) {
-                            progressDialog.updateStatus("Помилка: " + ex.getMessage());
+                            progressDialog.updateStatus(i18n.format("common.error.with_message", ex.getMessage()));
                             closeProgressDialogAfter(Duration.seconds(1.5));
                         }
 
                         if (cancelFlag.get()) {
-                            setStatus("Імпорт скасовано");
+                            setStatus(i18n.text("ui.import.status.cancelled"));
                         } else {
-                            setStatus("Помилка імпорту: " + ex.getMessage());
-                            dialogService.showError("Помилка", "Не вдалося виконати імпорт: " + ex.getMessage());
+                            setStatus(i18n.format("ui.import.status.error", ex.getMessage()));
+                            dialogService.showError(i18n.text("common.error"), i18n.format("ui.import.error.failed", ex.getMessage()));
                         }
                     });
                     log.error("Import failed", ex);
@@ -258,11 +254,11 @@ public class ImportWorkspaceController {
             if (cancelButton != null) {
                 cancelButton.setDisable(true);
             }
-            setStatus("Скасування...");
+            setStatus(i18n.text("ui.import.status.cancelling"));
 
             if (progressDialog != null) {
                 progressDialog.cancel();
-                progressDialog.updateStatus("Скасування...");
+                progressDialog.updateStatus(i18n.text("ui.import.status.cancelling"));
             }
         }
     }
@@ -270,17 +266,17 @@ public class ImportWorkspaceController {
     @FXML
     private void onSettings() {
         TextInputDialog dialog = new TextInputDialog(String.valueOf(batchSize));
-        dialog.setTitle("Налаштування імпорту");
-        dialog.setHeaderText("Розмір пакета імпорту");
-        dialog.setContentText("Книг у пакеті (50–10000):");
+        dialog.setTitle(i18n.text("ui.import.settings.title"));
+        dialog.setHeaderText(i18n.text("ui.import.settings.batch_header"));
+        dialog.setContentText(i18n.text("ui.import.settings.batch_label"));
         dialog.showAndWait().ifPresent(value -> {
             try {
                 int parsed = clampBatchSize(Integer.parseInt(value.trim()));
                 batchSize = parsed;
                 preferences.putInt("import.batchSize", parsed);
-                dialogService.showInfo("Налаштування", "Збережено", "Розмір пакета: " + parsed);
+                dialogService.showInfo(i18n.text("ui.import.settings.title"), i18n.text("common.saved"), i18n.format("ui.import.settings.batch_saved", parsed));
             } catch (NumberFormatException e) {
-                dialogService.showError("Помилка", "Введіть ціле число від 50 до 10000");
+                dialogService.showError(i18n.text("common.error"), i18n.text("ui.import.settings.batch_invalid"));
             }
         });
     }
@@ -328,7 +324,7 @@ public class ImportWorkspaceController {
     private void updateOperationProgress(OperationProgress progress) {
         if (progress == null) return;
         var collection = appState.getCurrentLibraryCollection();
-        operationCenter.accept("Імпорт книг", collection == null ? "" : collection.getId(), progress);
+        operationCenter.accept(i18n.text("ui.import.operation.title"), collection == null ? "" : collection.getId(), progress);
         double fraction = progress.fraction();
         setProgress(fraction);
         ImportProgressDialog dialog = progressDialog;
@@ -340,7 +336,7 @@ public class ImportWorkspaceController {
 
     private String formatImportSummary(ImportResult result, long total) {
         return String.format(
-                "Імпорт завершено%n%nОброблено: %,d%nІмпортовано: %,d%nДодано: %,d%nОновлено: %,d%nЗаписи, позначені джерелом як видалені (DEL): %,d%nБез автора: %,d%nБез жанру: %,d%nПропущено: %,d%nДублікатів: %,d%nПомилок: %,d%n%nЧас: %s",
+                i18n.text("ui.import.summary.full"),
                 total,
                 result.imported(),
                 result.changes().insertedCount(),

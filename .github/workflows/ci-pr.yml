@@ -1,0 +1,250 @@
+name: PR CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fast-gate:
+    name: Fast gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 with Maven cache
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Ensure Maven wrapper is executable
+        shell: bash
+        run: chmod +x mvnw
+
+      - name: Compile production and test sources
+        shell: bash
+        run: ./mvnw -B -ntp -DskipTests test-compile
+
+      - name: Fast core unit tests
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-shared,myhomelib-domain,myhomelib-application,myhomelib-opds
+          test
+
+      - name: Migration and security regression tests
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-infrastructure -am
+          -Dtest=DatabaseMigrationMatrixTest,DatabaseMigrationAdapterLegacyGuardIntegrationTest,LegacyMigrationDataGuardTest,OnlineHttpPolicyTest,SqliteCollectionRepositoryCredentialsV7Test,ArchiveImportSupportTest,ZipArchiveReaderTransparencyTest,LocalCopyDeletionRecoveryStoreTest,SimpleEventBusTest,AsyncConfigTest,MemoryMonitorTest,FolderSyncAsyncExecutorTest,SpringExecutorAdapterTest,EditBookTransactionalConsistencyTest,PlatformSecretStoreProviderTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+      - name: JavaFX lifecycle and async workspace regression
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-ui -am
+          -Dtest=UiSubscriptionsLifecycleTest,FxmlLoaderFactoryLifecycleTest,AsyncWorkspaceControllerContractTest,UiAsyncRequestGuardTest,ClassicEditAsyncContractTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+      - name: Privacy and external-reader temp lifecycle regression
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-ui -am
+          -Dtest=ExternalReaderMaterializationCacheTest,RunBookActionMaterializationLifecycleTest,SupportBundleServicePrivacyTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+      - name: Startup orchestration regression
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-bootstrap -am
+          -Dtest=com.myhomelibcorp.startup.*Test
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+      - name: Startup orchestration policy ratchet
+        shell: bash
+        run: python3 tools/startup-orchestration-check.py
+
+      - name: Privacy and temp-file policy ratchet
+        shell: bash
+        run: python3 tools/privacy-temp-lifecycle-check.py
+
+      - name: Native SecretStore policy ratchet
+        shell: bash
+        run: python3 tools/secret-store-policy-check.py
+
+      - name: Architecture boundaries
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-architecture-tests -am
+          -Dtest=LayerArchitectureTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+      - name: End-to-end regression journeys
+        shell: bash
+        run: >-
+          ./mvnw -B -ntp
+          -pl myhomelib-e2e-tests -am
+          -Dtest=ImportSearchReaderJourneyE2ETest,BackupRestoreJourneyE2ETest,CollectionRollbackJourneyE2ETest,OpdsJourneyE2ETest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+      - name: Static XML/archive security gate
+        shell: bash
+        run: python3 tools/xml-archive-security-check.py
+
+      - name: Language catalogue format consistency
+        shell: bash
+        run: python3 tools/validate-language-catalogs.py
+
+      - name: Critical UI localization literals and stable keys
+        shell: bash
+        run: python3 tools/check-critical-ui-localization.py
+
+      - name: Managed executor and backpressure policy
+        shell: bash
+        run: python3 tools/managed-executor-check.py
+
+      - name: Windows acceptance harness structure
+        shell: bash
+        run: python3 tools/windows-acceptance-harness-check.py
+
+      - name: Windows acceptance evidence validator regression
+        shell: bash
+        run: python3 tools/windows-acceptance-evidence-check-test.py
+
+      - name: Supply-chain policy structure
+        shell: bash
+        run: python3 tools/supply-chain-policy-check.py
+
+      - name: GitHub connected acceptance policy regression
+        shell: bash
+        run: python3 tools/github-connected-acceptance-test.py
+
+      - name: GitHub acceptance artifact ingest regression
+        shell: bash
+        run: python3 tools/github-acceptance-artifact-ingest-test.py
+
+      - name: Windows acceptance harness candidate-binding regression
+        shell: bash
+        run: python3 tools/windows-acceptance-harness-binding-test.py
+
+      - name: Final 7.1 external evidence aggregator regression
+        shell: bash
+        run: python3 tools/v71-final-external-acceptance-check-test.py
+
+      - name: Final 7.1 reviewer bundle integrity regression
+        shell: bash
+        run: python3 tools/v71-final-evidence-bundle-check-test.py
+
+      - name: Upload test diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ci-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            **/target/surefire-reports/**
+            **/target/failsafe-reports/**
+            **/target/*.log
+            target/diagnostics/**
+
+  windows-secret-store:
+    name: Windows DPAPI secret-store gate
+    runs-on: windows-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 with Maven cache
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: SecretStore migration + real DPAPI tests
+        shell: pwsh
+        run: >-
+          .\mvnw.cmd -B -ntp
+          -pl myhomelib-infrastructure -am
+          -Dtest=CredentialMasterKeyManagerTest,PlatformSecretStoreProviderTest,WindowsDpapiSecretStoreIntegrationTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
+  dependency-scan:
+    name: Dependency vulnerability scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21 with Maven cache
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: Cache Dependency-Check vulnerability data
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/owasp/dependency-check-utils
+          key: dependency-check-${{ runner.os }}-${{ hashFiles('pom.xml', 'security/dependency-check-suppressions.xml') }}
+          restore-keys: |
+            dependency-check-${{ runner.os }}-
+
+      - name: Ensure Maven wrapper is executable
+        run: chmod +x mvnw
+
+      - name: Scan dependencies (CVSS 7+ blocks)
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: ./mvnw -B -ntp -DskipTests -Pdependency-check verify
+
+      - name: Upload dependency scan report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-check-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            **/target/dependency-check-report.html
+            **/target/dependency-check-report.json
+            **/target/dependency-check-report.sarif

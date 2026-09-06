@@ -46,6 +46,24 @@ class LibraryOperationCoordinatorTest {
     }
 
     @Test
+    void detachedAwaitStartsOnlyAfterCurrentLifecycleLeaseIsReleased() throws Exception {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        var switchLease = coordinator.acquire(LibraryOperationType.SWITCH);
+
+        CompletableFuture<LibraryOperationCoordinator.Lease> waiting =
+                CompletableFuture.supplyAsync(() -> coordinator.acquireDetachedAwait(LibraryOperationType.INDEX));
+        Thread.sleep(30);
+        assertFalse(waiting.isDone());
+        assertEquals(LibraryOperationType.SWITCH, coordinator.activeOperation());
+
+        switchLease.close();
+        var indexLease = waiting.get(2, TimeUnit.SECONDS);
+        assertEquals(LibraryOperationType.INDEX, coordinator.activeOperation());
+        indexLease.close();
+        assertFalse(coordinator.isBusy());
+    }
+
+    @Test
     void anotherThreadCannotEnterActiveOperation() throws Exception {
         LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         try (var ignored = coordinator.acquire(LibraryOperationType.IMPORT)) {

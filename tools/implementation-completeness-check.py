@@ -217,9 +217,10 @@ if "sessionRepository.clearSession(collectionId)" not in session:
 settings_dialog = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java")
 session_service = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/session/SessionService.java")
 bootstrap_app = read("myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java")
+startup_resolver = read("myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/StartupCollectionResolver.java")
 if '"ui.restoreSession"' not in settings_dialog or 'getBoolean("ui.restoreSession"' not in session_service:
     fail("ui.restoreSession is exposed but not consumed at runtime")
-if "getLastCollectionId()" not in bootstrap_app or "restoreSessionWorkspace" not in bootstrap_app:
+if "getLastCollectionId()" not in startup_resolver or "restoreSessionWorkspace" not in bootstrap_app:
     fail("restore-session setting does not reach startup collection/workspace restoration")
 
 for rel in [

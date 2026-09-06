@@ -67,6 +67,17 @@ After verification, platform packaging creates `jpackage --type app-image` artif
 
 A normal packaged application does not download Maven dependencies at runtime.
 
+### Release supply-chain artifacts
+
+Before the cross-platform package matrix starts, the release workflow runs a dedicated supply-chain gate:
+
+1. the exact release-candidate commit must already have a successful CodeQL analysis on the default branch, and open High/Critical code-scanning alerts block the release;
+2. OWASP Dependency-Check blocks dependencies at CVSS 7.0 or higher unless a narrow, justified and unexpired suppression exists;
+3. CycloneDX aggregate SBOM generation must succeed;
+4. both `bom.json` and `bom.xml`, Dependency-Check HTML/JSON/SARIF reports, and the candidate-bound CodeQL gate JSON/Markdown are retained as release artifacts.
+
+The formal source-release archive contains `mvnw`, `mvnw.cmd`, `.mvn/wrapper/maven-wrapper.jar`, wrapper properties and a SHA-256 file for the bundled wrapper JAR. The embedded `.mvn/maven/apache-maven-3.9.6` distribution is intentionally part of the formal source release, so `./mvnw -v` works directly from the extracted archive without downloading Maven itself. Project dependencies are still external; a fully offline build therefore additionally requires the prepared offline Maven repository.
+
 Versioned **portable** archives include an empty `myhomelib2.ini` beside the native launcher.
 Therefore an extracted portable archive uses its local `data/` directory immediately, even when
 launched from another working directory. Native installers do not include this marker and keep
@@ -114,7 +125,7 @@ The synthetic previous package proves installer identity, upgrade, shortcut, rep
   -PreviousVersion <previous-version>
 ```
 
-The current MSI is built from the checked-out source automatically. Real application data migration, DPI 100/125/150/200%, GUI sidebar/Reader cycles, backup/restore and EXE installer UI remain manual Windows release gates.
+The final candidate is now consumed from the digest-verified GitHub connected-acceptance artifact. Real application-data migration, interactive EXE installer UI, collection/online-download/Reader/backup-restore smoke and DPI 100/125/150/200% remain interactive Windows release gates, but they are no longer undocumented manual checks: `tools/windows-release-desktop-acceptance.ps1` and `tools/windows-ui-acceptance.ps1` capture screenshot-backed JSON/Markdown evidence and bind it to the exact GitHub candidate EXE/MSI/portable hashes.
 
 ### Manual Windows UI/DPI acceptance runner
 
@@ -157,3 +168,34 @@ The Linux JDK 21 `jpackage` acceptance probe places `myhomelib2.ini` beside `dis
 - On a single-monitor acceptance machine, a known system-DPI mismatch is an automatic `AUTO-0 = FAIL`; an unavailable API observation is `BLOCKED`, so the report cannot silently claim PASS.
 - On multi-monitor Windows, a system-DPI mismatch is `BLOCKED` rather than a false FAIL because the monitor hosting MyHomeLib can use different per-monitor scaling; P4-01 must confirm that monitor explicitly.
 - This is acceptance-tooling hardening only; production Java code is unchanged.
+
+## 2026-09-06 connected GitHub acceptance
+
+The remaining repository-side 7.1 Final evidence for PR enforcement/performance and supply-chain security is collected by `.github/workflows/github-acceptance.yml` using `tools/github-connected-acceptance.py`.
+
+The workflow fails closed unless the default branch actively requires the `Fast gate` status check, at least five successful hosted PR samples have a `Fast gate` median no greater than 600 seconds, and the selected successful `ci-release.yml` run is the exact candidate commit. Its non-expired `myhomelib-supply-chain` and `myhomelib-windows` artifact ZIPs must match the SHA-256 digests declared by the GitHub Actions API. The supply-chain artifact must contain CycloneDX 1.6 JSON/XML, Dependency-Check JSON/SARIF/HTML, and a PASS CodeQL release-gate record for that exact candidate. The same candidate must also have a recent successful CodeQL analysis on the default branch with no open High/Critical code-scanning alerts.
+
+Release CI invokes the same tested CodeQL implementation with `--codeql-release-gate-only --expected-sha "$GITHUB_SHA"`; it fails closed when the exact release candidate has no successful CodeQL analysis yet. Its JSON/Markdown evidence is retained inside the release supply-chain artifact. An offline source archive still cannot claim this connected PASS: the authoritative evidence is produced by real GitHub workflow/API state.
+
+### Final 7.1 external evidence decision
+
+For the final Windows handoff, prefer `tools/v71-windows-acceptance-start.ps1`. Given the repository name, the exact successful **GitHub connected acceptance** run id, a real previous-release MSI and its version, it downloads the acceptance artifact through the GitHub Actions API, verifies the API-declared SHA-256 digest, safely stages the exact MSI/EXE/portable candidate set, runs the real-previous MSI + portable lifecycle, and launches the interactive real-desktop acceptance. A merely copied local ZIP is insufficient for final PASS because the final gate requires `github-connected-acceptance-ingest.json` with `remoteDigestVerified=true`.
+
+After the four 100/125/150/200% DPI passes exist, run `tools/v71-finalize-external-acceptance.ps1`. The flow revalidates all four GitHub connected checks, the digest-verified GitHub artifact ingest, the strict standard-user/real-previous-MSI/portable lifecycle, the exact candidate EXE desktop smoke, all four DPI reports and the nested Windows evidence ZIP. `tools/v71-final-external-acceptance-check.py` reruns the strict Windows validator against the ZIP payload itself, so a detached or altered reviewer archive cannot pass merely because the live `target` tree passed.
+
+The finalizer then creates `myhomelib-7.1-final-external-evidence.zip` and immediately runs `tools/v71-final-evidence-bundle-check.py`. That last gate verifies the outer sidecar, exact manifest/member set, connected GitHub JSON, GitHub ingest record, three-entry bound candidate manifest (MSI/EXE/portable), nested Windows ZIP + sidecar, desktop/DPI evidence and the consolidated decision record. Only a finalizer run ending in `MyHomeLib 7.1 final external evidence: PASS` is sufficient to reconcile the six externally evidenced 7.1 Final backlog items as complete.
+
+## 7.1 final acceptance harness binding
+
+The final Windows acceptance harness is itself candidate-bound. `GitHub connected acceptance` writes `acceptance-harness.sha256` from the exact dispatched candidate checkout. The manifest covers every script that can influence the Windows MHL-011/MHL-012 decision, including ingest, installer/portable, desktop/DPI, evidence validators and final reviewer-bundle checks.
+
+`tools/v71-windows-acceptance-start.ps1` must verify the local checkout against that manifest before any Windows acceptance scenario runs and writes `target/windows-harness-binding/windows-harness-binding.json`. A different/newer/older harness checkout is therefore a hard failure even when the MSI/EXE/portable candidate hashes are correct. The final external gate and reviewer bundle revalidate the manifest hash, the binding record and the exact manifest file/member hash set.
+
+The desktop acceptance runner also launches the already SHA-256-verified bound EXE itself for P5-01; the tester no longer manually chooses an installer executable.
+
+### Candidate-bound Windows host/session evidence
+
+Final Windows evidence must belong to one machine, one Windows user and one acceptance session. `tools/v71-windows-acceptance-start.ps1` clears stale Windows/DPI outputs and creates `target/windows-host-binding/windows-host-binding.json` before installer/portable/desktop evidence is produced. The binding stores a random session id plus one-way SHA-256 fingerprints derived from Windows MachineGuid and the current user SID; raw MachineGuid/SID values are not written to evidence.
+
+Installer, portable, desktop and all four DPI reports carry the same session/host/user fingerprints. `windows-acceptance-evidence-check.py --require-host-binding` fails closed if reports from different machines, users or sessions are combined. The nested Windows evidence ZIP and the final reviewer bundle both retain and independently cross-check this binding against the exact GitHub candidate and connected-acceptance run. Re-running `v71-windows-acceptance-start.ps1` creates a new session and intentionally invalidates any earlier DPI reports.
+

@@ -41,6 +41,9 @@ public class SearchIndexSynchronizer {
 
         if (TransactionSynchronizationManager.isSynchronizationActive()
                 && TransactionSynchronizationManager.isActualTransactionActive()) {
+            // Persist stale intent BEFORE the DB commit. If the process dies after SQLite commits but before
+            // afterCommit executes, restart validation will still reject/rebuild the derived Lucene index.
+            searchIndexLifecycle.markCurrentIndexDirty();
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
@@ -79,6 +82,19 @@ public class SearchIndexSynchronizer {
                 log.error("Full Lucene rebuild also failed after committed catalog mutation", rebuildFailure);
                 return false;
             }
+        }
+    }
+
+    /** Full rebuild with freshness marker semantics. A failed rebuild intentionally leaves the index dirty. */
+    public boolean rebuildSafelyNow() {
+        searchIndexLifecycle.markCurrentIndexDirty();
+        try {
+            searchIndexer.rebuildIndex();
+            searchIndexLifecycle.markCurrentIndexSynchronized();
+            return true;
+        } catch (RuntimeException failure) {
+            log.error("Full Lucene rebuild failed; index remains marked stale for restart recovery", failure);
+            return false;
         }
     }
 

@@ -34,7 +34,7 @@ public class MainBookCommandCoordinator {
     public void editMetadata(Window owner, Runnable refresh) {
         BookDto selected = requireBook();
         if (selected == null) return;
-        if (classicActions.editBook(owner, BookId.fromString(selected.getId()))) refresh.run();
+        classicActions.editBook(owner, BookId.fromString(selected.getId()), refresh);
     }
 
     public void deleteBook(Runnable refresh) {

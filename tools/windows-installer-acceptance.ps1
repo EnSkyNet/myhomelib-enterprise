@@ -3,7 +3,10 @@ param(
     [string]$CurrentMsi = "",
     [string]$PreviousVersion = "",
     [string]$SyntheticPreviousVersion = "7.0.99",
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [switch]$RequireStandardUser,
+    [string]$HostBindingPath = "",
+    [string]$ReportPath = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,8 +14,21 @@ Set-StrictMode -Version Latest
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
 
-if (-not $IsWindows) {
+if ($env:OS -ne "Windows_NT") {
     throw "Windows installer acceptance must run on Windows."
+}
+
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$principal = [Security.Principal.WindowsPrincipal]::new($identity)
+$isAdministrator = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($RequireStandardUser -and $isAdministrator) {
+    throw "MHL-012 non-admin acceptance requires a standard/non-elevated Windows user. Current token is elevated/admin."
+}
+
+$hostBinding = $null
+if (-not [string]::IsNullOrWhiteSpace($HostBindingPath)) {
+    . .\tools\windows-acceptance-host.ps1
+    $hostBinding = Get-VerifiedMyHomeLibWindowsAcceptanceHostBinding -Path $HostBindingPath
 }
 
 [xml]$rootPom = Get-Content -Raw "pom.xml"
@@ -26,10 +42,48 @@ if ($SyntheticPreviousVersion -eq $CurrentVersion) {
 if (-not [string]::IsNullOrWhiteSpace($PreviousMsi) -and [string]::IsNullOrWhiteSpace($PreviousVersion)) {
     throw "-PreviousVersion is required when -PreviousMsi is supplied"
 }
-$ExpectedPreviousVersion = if ([string]::IsNullOrWhiteSpace($PreviousMsi)) { $SyntheticPreviousVersion } else { $PreviousVersion }
+$PreviousPackageSource = if ([string]::IsNullOrWhiteSpace($PreviousMsi)) { "synthetic" } else { "external" }
+$ExpectedPreviousVersion = if ($PreviousPackageSource -eq "synthetic") { $SyntheticPreviousVersion } else { $PreviousVersion }
 
 $Work = Join-Path $Root "target\windows-installer-acceptance"
 New-Item -ItemType Directory -Force $Work | Out-Null
+if ([string]::IsNullOrWhiteSpace($ReportPath)) { $ReportPath = Join-Path $Work "installer-acceptance.json" }
+$ReportPath = [System.IO.Path]::GetFullPath($ReportPath)
+$MarkdownReportPath = [System.IO.Path]::ChangeExtension($ReportPath, ".md")
+$osCaption = try { (Get-CimInstance Win32_OperatingSystem).Caption } catch { [Environment]::OSVersion.VersionString }
+$acceptance = [ordered]@{
+    schemaVersion = 1
+    scenario = "windows-installer-lifecycle"
+    timestamp = (Get-Date).ToString("o")
+    host = $env:COMPUTERNAME
+    os = $osCaption
+    user = [Environment]::UserName
+    acceptanceSessionId = $(if ($null -ne $hostBinding) { [string]$hostBinding.acceptanceSessionId } else { "" })
+    hostFingerprintSha256 = $(if ($null -ne $hostBinding) { [string]$hostBinding.hostFingerprintSha256 } else { "" })
+    userFingerprintSha256 = $(if ($null -ne $hostBinding) { [string]$hostBinding.userFingerprintSha256 } else { "" })
+    osVersion = $(if ($null -ne $hostBinding) { [string]$hostBinding.osVersion } else { [Environment]::OSVersion.Version.ToString() })
+    osBuild = $(if ($null -ne $hostBinding) { [string]$hostBinding.osBuild } else { [Environment]::OSVersion.Version.Build.ToString() })
+    osArchitecture = $(if ($null -ne $hostBinding) { [string]$hostBinding.osArchitecture } else { $(if ([Environment]::Is64BitOperatingSystem) { "x64" } else { "x86" }) })
+    isAdministrator = $isAdministrator
+    requireStandardUser = [bool]$RequireStandardUser
+    previousVersion = $null
+    currentVersion = $CurrentVersion
+    previousPackageSource = $PreviousPackageSource
+    previousMsi = $null
+    currentMsi = $null
+    previousMsiSha256 = $null
+    currentMsiSha256 = $null
+    msiexecLogs = @()
+    installPrevious = "PENDING"
+    upgradeCurrent = "PENDING"
+    repeatCurrent = "PENDING"
+    uninstall = "PENDING"
+    shortcutsRemoved = "PENDING"
+    userDataPreserved = "PENDING"
+    overall = "FAIL"
+    note = ""
+}
+$acceptance.previousVersion = $ExpectedPreviousVersion
 $script:MsiInvocation = 0
 
 function Invoke-Msi {
@@ -42,6 +96,7 @@ function Invoke-Msi {
     $script:MsiInvocation++
     $log = Join-Path $Work ("msiexec-{0:D2}-{1}.log" -f $script:MsiInvocation, $Action)
     $arguments = "$verb `"$Path`" /qn /norestart /L*v `"$log`""
+    $acceptance.msiexecLogs += (Split-Path -Leaf $log)
     $process = Start-Process -FilePath "msiexec.exe" -ArgumentList $arguments -Wait -PassThru
     if ($process.ExitCode -notin @(0, 3010)) {
         throw "msiexec $Action failed for $Path with exit code $($process.ExitCode)"
@@ -147,7 +202,9 @@ try {
             $builtCurrent = Join-Path $Root "dist\MyHomeLib-$CurrentVersion.msi"
             if (-not (Test-Path $builtCurrent -PathType Leaf)) { throw "Current MSI not produced: $builtCurrent" }
             $CurrentMsi = Join-Path $Work (Split-Path $builtCurrent -Leaf)
-            Move-Item -Force $builtCurrent $CurrentMsi
+            # Keep the release-candidate MSI in dist for publication while using an
+            # immutable acceptance copy under target for lifecycle evidence.
+            Copy-Item -Force $builtCurrent $CurrentMsi
         }
     }
 
@@ -155,10 +212,18 @@ try {
     $CurrentMsi = [System.IO.Path]::GetFullPath($CurrentMsi)
     if (-not (Test-Path $PreviousMsi -PathType Leaf)) { throw "Previous MSI not found: $PreviousMsi" }
     if (-not (Test-Path $CurrentMsi -PathType Leaf)) { throw "Current MSI not found: $CurrentMsi" }
+    $acceptance.previousMsi = $PreviousMsi
+    $acceptance.currentMsi = $CurrentMsi
+    $acceptance.previousMsiSha256 = (Get-FileHash -Algorithm SHA256 $PreviousMsi).Hash.ToLowerInvariant()
+    $acceptance.currentMsiSha256 = (Get-FileHash -Algorithm SHA256 $CurrentMsi).Hash.ToLowerInvariant()
+    if ($acceptance.previousMsiSha256 -eq $acceptance.currentMsiSha256) {
+        throw "Previous and current MSI hashes are identical; upgrade acceptance requires two distinct packages"
+    }
 
-    Write-Host "[1/6] Install previous package"
+    Write-Host "[1/6] Install previous package ($PreviousPackageSource)"
     Invoke-Msi -Action install -Path $PreviousMsi
     Assert-InstalledShape -ExpectedVersion $ExpectedPreviousVersion | Out-Null
+    $acceptance.installPrevious = "PASS"
 
     # Create deterministic user-data sentinels only after the installed launcher has selected
     # the normal profile path. Uninstall/upgrade must never remove or alter these files.
@@ -177,6 +242,7 @@ try {
         (Get-FileHash -Algorithm SHA256 $librarySentinel).Hash -ne $libraryHash) {
         throw "User data changed during upgrade"
     }
+    $acceptance.upgradeCurrent = "PASS"
 
     Write-Host "[3/6] Repeat current-package installation (repair/idempotency)"
     Invoke-Msi -Action install -Path $CurrentMsi
@@ -185,6 +251,7 @@ try {
         (Get-FileHash -Algorithm SHA256 $librarySentinel).Hash -ne $libraryHash) {
         throw "User data changed during repeated current-package installation"
     }
+    $acceptance.repeatCurrent = "PASS"
 
     Write-Host "[4/6] Uninstall current package"
     Invoke-Msi -Action uninstall -Path $CurrentMsi
@@ -195,6 +262,7 @@ try {
     if (Test-Path (Join-Path $installDir "MyHomeLib.exe") -PathType Leaf) {
         throw "Installed launcher remains after uninstall"
     }
+    $acceptance.uninstall = "PASS"
 
     Write-Host "[5/6] Verify shortcuts removed and user data preserved"
     $desktopShortcut = Find-Shortcut -RootPath ([Environment]::GetFolderPath("Desktop"))
@@ -202,6 +270,7 @@ try {
     if ($null -ne $desktopShortcut -or $null -ne $startShortcut) {
         throw "MyHomeLib shortcut remains after uninstall"
     }
+    $acceptance.shortcutsRemoved = "PASS"
     if (-not (Test-Path $sentinel -PathType Leaf) -or -not (Test-Path $librarySentinel -PathType Leaf)) {
         throw "Uninstall deleted MyHomeLib user data"
     }
@@ -210,13 +279,50 @@ try {
         throw "Uninstall modified MyHomeLib user data"
     }
 
+    $acceptance.userDataPreserved = "PASS"
+    $acceptance.overall = "PASS"
     Write-Host "[6/6] Windows installer lifecycle acceptance: PASS"
     Write-Host "Previous -> current upgrade: PASS"
     Write-Host "Repeated current install: PASS"
     Write-Host "Desktop + Start Menu shortcuts: PASS"
     Write-Host "Uninstall preserves .myhomelibcorp: PASS"
 }
+catch {
+    $acceptance.note = $_.Exception.Message
+    throw
+}
 finally {
+    New-Item -ItemType Directory -Force (Split-Path -Parent $ReportPath) | Out-Null
+    $acceptance | ConvertTo-Json -Depth 6 | Set-Content -Path $ReportPath -Encoding utf8
+    @(
+        "# MyHomeLib Windows installer acceptance",
+        "",
+        "- Overall: **$($acceptance.overall)**",
+        "- Host: $($acceptance.host)",
+        "- OS: $($acceptance.os)",
+        "- User: $($acceptance.user)",
+        "- Administrator/elevated: $($acceptance.isAdministrator)",
+        "- Standard user required: $($acceptance.requireStandardUser)",
+        "- Previous version: $($acceptance.previousVersion)",
+        "- Current version: $($acceptance.currentVersion)",
+        "- Previous package source: $($acceptance.previousPackageSource)",
+        "- Previous MSI: ``$($acceptance.previousMsi)``",
+        "- Current MSI: ``$($acceptance.currentMsi)``",
+        "- Previous MSI SHA-256: ``$($acceptance.previousMsiSha256)``",
+        "- Current MSI SHA-256: ``$($acceptance.currentMsiSha256)``",
+        "- msiexec logs: $([string]::Join(", ", @($acceptance.msiexecLogs)))",
+        "",
+        "| Check | Result |",
+        "|---|---|",
+        "| Install previous | $($acceptance.installPrevious) |",
+        "| Upgrade to current | $($acceptance.upgradeCurrent) |",
+        "| Repeat current install | $($acceptance.repeatCurrent) |",
+        "| Uninstall | $($acceptance.uninstall) |",
+        "| Shortcuts removed | $($acceptance.shortcutsRemoved) |",
+        "| User data preserved | $($acceptance.userDataPreserved) |",
+        "",
+        "Note: $($acceptance.note)"
+    ) | Set-Content -Path $MarkdownReportPath -Encoding utf8
     if ($null -eq $originalSkipBuild) { Remove-Item Env:MHL_SKIP_BUILD -ErrorAction SilentlyContinue }
     else { $env:MHL_SKIP_BUILD = $originalSkipBuild }
 

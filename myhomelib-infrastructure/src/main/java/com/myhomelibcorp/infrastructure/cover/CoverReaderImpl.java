@@ -10,6 +10,7 @@ import com.myhomelibcorp.infrastructure.image.Fb2CoverParser;
 import com.myhomelibcorp.infrastructure.image.MobiCoverParser;
 import com.myhomelibcorp.infrastructure.image.PdfCoverParser;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -125,17 +126,13 @@ public class CoverReaderImpl implements CoverReader {
     }
 
     private static boolean isSupportedDocument(String ext) {
-        return switch (ext) {
-            case "fb2", "fbd", "epub", "mobi", "azw", "azw3", "pdf", "djvu", "djv" -> true;
-            default -> false;
-        };
+        return SupportedFormatRegistry.standard().detect("book." + ext)
+                .map(format -> format.coverSupported())
+                .orElse(false);
     }
 
     private static boolean isExtraDocument(String ext) {
-        return switch (ext) {
-            case "epub", "mobi", "azw", "azw3", "pdf", "djvu", "djv" -> true;
-            default -> false;
-        };
+        return isSupportedDocument(ext) && !SupportedFormatRegistry.standard().isFormat(Path.of("book." + ext), "fb2");
     }
 
     private static boolean isImageExtension(String ext) {

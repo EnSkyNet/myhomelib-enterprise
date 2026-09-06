@@ -90,14 +90,33 @@ class SearchIndexSynchronizerTest {
         TransactionSynchronizationManager.setActualTransactionActive(true);
         synchronizer.synchronizeAfterCommit(List.of(id));
 
-        verifyNoInteractions(indexer, lifecycle);
+        verifyNoInteractions(indexer);
+        verify(lifecycle).markCurrentIndexDirty();
         TransactionSynchronizationManager.getSynchronizations().forEach(sync -> sync.afterCommit());
 
-        verify(lifecycle).markCurrentIndexDirty();
+        verify(lifecycle, times(2)).markCurrentIndexDirty();
         verify(indexer).beginAtomicUpdate();
         verify(indexer).indexBook(book);
         verify(indexer).commit();
         verify(lifecycle).markCurrentIndexSynchronized();
+    }
+
+    @Test
+    void transactionalRollbackLeavesPersistentDirtyIntentAndNeverTouchesLucene() {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexLifecycle lifecycle = mock(SearchIndexLifecycle.class);
+        SearchIndexSynchronizer synchronizer = new SearchIndexSynchronizer(repository, indexer, lifecycle);
+        BookId id = BookId.generate();
+
+        TransactionSynchronizationManager.initSynchronization();
+        TransactionSynchronizationManager.setActualTransactionActive(true);
+        synchronizer.synchronizeAfterCommit(List.of(id));
+
+        // Simulate transaction rollback: Spring never invokes afterCommit(). Dirty is conservative and
+        // intentionally survives so restart cannot silently trust an index after an uncertain DB outcome.
+        verify(lifecycle).markCurrentIndexDirty();
+        verifyNoInteractions(indexer);
     }
 
     @Test
@@ -133,6 +152,31 @@ class SearchIndexSynchronizerTest {
 
         org.assertj.core.api.Assertions.assertThat(recovered).isFalse();
         verify(lifecycle).markCurrentIndexDirty();
+        verify(lifecycle, never()).markCurrentIndexSynchronized();
+    }
+
+    @Test
+    void luceneCommitFailureRollsBackAndLeavesFreshnessDirtyWhenFallbackRebuildAlsoFails() {
+        BookQueryRepository repository = mock(BookQueryRepository.class);
+        SearchIndexer indexer = mock(SearchIndexer.class);
+        SearchIndexLifecycle lifecycle = mock(SearchIndexLifecycle.class);
+        SearchIndexSynchronizer synchronizer = new SearchIndexSynchronizer(repository, indexer, lifecycle);
+        BookId id = BookId.generate();
+        Book book = mock(Book.class);
+        when(book.getId()).thenReturn(id);
+        when(repository.findByIds(List.of(id))).thenReturn(List.of(book));
+        doThrow(new IllegalStateException("commit failure")).when(indexer).commit();
+        doThrow(new IllegalStateException("rebuild failure")).when(indexer).rebuildIndex();
+
+        boolean recovered = synchronizer.synchronizeSafelyNow(List.of(id));
+
+        org.assertj.core.api.Assertions.assertThat(recovered).isFalse();
+        verify(indexer).beginAtomicUpdate();
+        verify(indexer).indexBook(book);
+        verify(indexer).commit();
+        verify(indexer).rollbackAtomicUpdate();
+        verify(indexer).rebuildIndex();
+        verify(lifecycle, atLeastOnce()).markCurrentIndexDirty();
         verify(lifecycle, never()).markCurrentIndexSynchronized();
     }
 }

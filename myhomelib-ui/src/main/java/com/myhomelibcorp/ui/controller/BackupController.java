@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
@@ -34,6 +35,7 @@ public class BackupController {
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
     private final ApplicationState appState;
+    private final LocalizationService i18n;
 
     @FXML private TextField backupPathField;
     @FXML private CheckBox includeMetadataCheckBox;
@@ -54,7 +56,7 @@ public class BackupController {
 
         progressBar.setVisible(false);
         logArea.setVisible(false);
-        statusLabel.setText("Готово до резервного копіювання");
+        statusLabel.setText(i18n.text("ui.backup.status.ready"));
     }
 
     public void setStage(Stage stage) {
@@ -64,7 +66,7 @@ public class BackupController {
     @FXML
     public void onSelectPath() {
         DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("Виберіть папку для резервної копії");
+        chooser.setTitle(i18n.text("ui.backup.choose_folder.title"));
         chooser.setInitialDirectory(AppPaths.backupsDir().toFile());
         File dir = chooser.showDialog(stage);
         if (dir != null) {
@@ -76,24 +78,24 @@ public class BackupController {
     public void onBackup() {
         String backupPath = backupPathField.getText().trim();
         if (backupPath.isEmpty()) {
-            dialogService.showError("Помилка", "Виберіть папку для резервної копії.");
+            dialogService.showError(i18n.text("common.error"), i18n.text("ui.backup.error.choose_folder"));
             return;
         }
 
         Path backupDir = Paths.get(backupPath);
         if (Files.exists(backupDir)) {
             if (!dialogService.showConfirmation(
-                    "Папка існує",
-                    "Папка \"" + backupPath + "\" вже існує.",
-                    "Бажаєте перезаписати її?")) {
+                    i18n.text("ui.backup.confirm.exists.title"),
+                    i18n.format("ui.backup.confirm.exists.header", backupPath),
+                    i18n.text("ui.backup.confirm.exists.content"))) {
                 return;
             }
         }
 
         if (!dialogService.showConfirmation(
-                "Резервне копіювання",
-                "Створити резервну копію поточної колекції?",
-                "Папка: " + backupPath)) {
+                i18n.text("ui.backup.confirm.start.title"),
+                i18n.text("ui.backup.confirm.start.header"),
+                i18n.format("ui.backup.path", backupPath))) {
             return;
         }
 
@@ -115,43 +117,41 @@ public class BackupController {
             logArea.clear();
             progressBar.setVisible(true);
             progressBar.setProgress(ProgressIndicator.INDETERMINATE_PROGRESS);
-            statusLabel.setText("Створення резервної копії...");
+            statusLabel.setText(i18n.text("ui.backup.status.running"));
         });
 
         BackupRestoreService.BackupOptions options = new BackupRestoreService.BackupOptions(
                 backupDir, includeMetadataCheckBox.isSelected());
         var collection = appState.getCurrentLibraryCollection();
         String operationId = operationCenter.start(
-                "Резервна копія", collection == null ? "" : collection.getId(), OperationStage.BACKING_UP, false);
+                i18n.text("ui.backup.operation.title"), collection == null ? "" : collection.getId(), OperationStage.BACKING_UP, false);
 
-        addLog("Початок резервного копіювання...");
-        addLog("Папка: " + backupDir);
+        addLog(i18n.text("ui.backup.log.start"));
+        addLog(i18n.format("ui.backup.path", backupDir));
         executor.submit(() -> backupRestoreService.backup(options))
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
                         log.error("Помилка резервного копіювання", cause);
-                        statusLabel.setText("Помилка: " + cause.getMessage());
-                        addLog("\n❌ Помилка: " + cause.getMessage());
-                        dialogService.showError("Помилка", "Не вдалося створити резервну копію: " + cause.getMessage());
+                        statusLabel.setText(i18n.format("common.error.with_message", cause.getMessage()));
+                        addLog("\n" + i18n.format("ui.backup.log.error", cause.getMessage()));
+                        dialogService.showError(i18n.text("common.error"), i18n.format("ui.backup.error.failed", cause.getMessage()));
                     } else if (result != null && result.isSuccess()) {
-                        operationCenter.complete(operationId, "Скопійовано елементів: " + result.itemsCopied());
-                        statusLabel.setText("Резервне копіювання завершено успішно!");
+                        operationCenter.complete(operationId, i18n.format("ui.backup.items_copied", result.itemsCopied()));
+                        statusLabel.setText(i18n.text("ui.backup.status.success"));
                         progressBar.setProgress(1.0);
-                        addLog("\n✅ Резервне копіювання завершено успішно!");
-                        addLog("📁 Папка: " + backupDir);
-                        addLog("📄 Скопійовано елементів: " + result.itemsCopied());
-                        dialogService.showInfo("Успішно",
-                                "Резервне копіювання завершено успішно!\n\n" +
-                                        "📁 Папка: " + backupDir + "\n" +
-                                        "📄 Скопійовано елементів: " + result.itemsCopied());
+                        addLog("\n" + i18n.text("ui.backup.log.success"));
+                        addLog(i18n.format("ui.backup.log.folder", backupDir));
+                        addLog(i18n.format("ui.backup.log.items_copied", result.itemsCopied()));
+                        dialogService.showInfo(i18n.text("common.success"),
+                                i18n.format("ui.backup.success.details", backupDir, result.itemsCopied()));
                     } else {
-                        String message = result == null ? "Невідомий результат" : result.error();
+                        String message = result == null ? i18n.text("common.result.unknown") : result.error();
                         operationCenter.fail(operationId, new IllegalStateException(message));
-                        statusLabel.setText("Помилка: " + message);
-                        addLog("\n❌ Помилка: " + message);
-                        dialogService.showError("Помилка", "Не вдалося створити резервну копію: " + message);
+                        statusLabel.setText(i18n.format("common.error.with_message", message));
+                        addLog("\n" + i18n.format("ui.backup.log.error", message));
+                        dialogService.showError(i18n.text("common.error"), i18n.format("ui.backup.error.failed", message));
                     }
                     resetUI();
                 }));

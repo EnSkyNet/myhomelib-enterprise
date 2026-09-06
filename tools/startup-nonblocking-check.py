@@ -12,8 +12,9 @@ cred=(ROOT/'myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastruct
 assert 'connection_script TEXT' in cred, 'credentials test schema must include connection_script'
 
 bootstrap=(ROOT/'myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java').read_text()
-bootstrap_init=bootstrap.split('private CollectionManager initializeBackend()',1)[1].split('private void showMainWindow',1)[0]
-assert 'statisticsService.refreshStatistics()' not in bootstrap_init, 'full statistics refresh must not block startup'
+migration_task=(ROOT/'myhomelib-bootstrap/src/main/java/com/myhomelibcorp/startup/MigrationStartupTask.java').read_text()
+assert 'startupExecutor.submit(startupOrchestrator::run)' in bootstrap, 'startup orchestration must stay off the JavaFX thread'
+assert 'statisticsService.refreshStatistics()' not in bootstrap and 'statisticsService.refreshStatistics()' not in migration_task, 'full statistics refresh must not block startup'
 status=(ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/statusbar/StatusBarController.java').read_text()
 assert status.count('statisticsService.getStatistics()') == 1, 'status bar must read cached statistics once during initialize'
 assert 'executor.submit(() -> statisticsService.getStatistics())' in status, 'status bar cache read must stay off the JavaFX thread'

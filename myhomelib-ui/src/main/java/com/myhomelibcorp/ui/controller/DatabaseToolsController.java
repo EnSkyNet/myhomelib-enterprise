@@ -1,10 +1,10 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.service.DatabaseToolsService;
-import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
@@ -18,7 +18,6 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -26,11 +25,10 @@ import org.springframework.stereotype.Component;
 @Slf4j
 public class DatabaseToolsController {
 
-    private final ApplicationContext springContext;
+    private final FxmlLoaderFactory fxmlLoaderFactory;
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final DatabaseToolsService databaseToolsService;
-    private final CollectionLifecycleService collectionLifecycleService;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
 
@@ -39,7 +37,7 @@ public class DatabaseToolsController {
         try {
             FXMLLoader loader = new FXMLLoader(
                     getClass().getResource("/view/integrity-check.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
 
             Stage stage = new Stage();
@@ -111,7 +109,7 @@ public class DatabaseToolsController {
         String operationId = operationCenter.start(
                 "Перебудова Lucene", collection == null ? "" : collection.getId(),
                 OperationStage.UPDATING_SEARCH_INDEX, false);
-        collectionLifecycleService.rebuildSearchIndexAsync()
+        databaseToolsService.rebuildIndexAsync()
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     appState.getStatusBar().setProgressVisible(false);
                     if (error != null) {
@@ -134,7 +132,7 @@ public class DatabaseToolsController {
         try {
             FXMLLoader loader = new FXMLLoader(
                     getClass().getResource("/view/backup-dialog.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
 
             BackupController controller = loader.getController();
@@ -159,7 +157,7 @@ public class DatabaseToolsController {
         try {
             FXMLLoader loader = new FXMLLoader(
                     getClass().getResource("/view/restore-dialog.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
 
             RestoreController controller = loader.getController();
@@ -184,14 +182,16 @@ public class DatabaseToolsController {
         try {
             FXMLLoader loader = new FXMLLoader(
                     getClass().getResource("/view/statistics.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            StatisticsController controller = loader.getController();
 
             Stage stage = new Stage();
             stage.setTitle("Статистика колекції");
             stage.setScene(new Scene(root, 600, 400));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
+            stage.setOnHidden(event -> controller.dispose());
             stage.show();
 
         } catch (Exception e) {

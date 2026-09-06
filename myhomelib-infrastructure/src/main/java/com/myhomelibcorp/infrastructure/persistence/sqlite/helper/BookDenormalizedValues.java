@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.author.AuthorNameKey;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 
 import java.util.Collection;
 import java.util.Comparator;
@@ -13,19 +14,7 @@ public final class BookDenormalizedValues {
     private BookDenormalizedValues() { }
 
     public static String format(String fileName) {
-        String name = fileName == null ? "" : fileName.trim().toLowerCase(Locale.ROOT);
-        if (name.endsWith(".fb2.zip")) return "FB2ZIP";
-        int dot = name.lastIndexOf('.');
-        if (dot < 0 || dot == name.length() - 1) return "UNKNOWN";
-        return switch (name.substring(dot + 1)) {
-            case "fb2" -> "FB2";
-            case "epub" -> "EPUB";
-            case "pdf" -> "PDF";
-            case "mobi" -> "MOBI";
-            case "inpx" -> "INPX";
-            case "zip" -> "ZIP";
-            default -> "UNKNOWN";
-        };
+        return SupportedFormatRegistry.standard().searchFormat(fileName);
     }
 
     public static String authorSort(Book book) {

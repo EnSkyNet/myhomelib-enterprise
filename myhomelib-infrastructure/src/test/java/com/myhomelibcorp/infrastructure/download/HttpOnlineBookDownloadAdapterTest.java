@@ -153,18 +153,21 @@ class HttpOnlineBookDownloadAdapterTest {
     }
 
     @Test
-    void sendsBasicAuthCredentials() throws Exception {
+    void blocksBasicAuthCredentialsOnHttpBeforeNetworkRequest() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
         server = server(exchange -> {
-            String expected = "Basic " + Base64.getEncoder().encodeToString("reader:secret".getBytes(StandardCharsets.UTF_8));
-            assertThat(exchange.getRequestHeaders().getFirst("Authorization")).isEqualTo(expected);
-            respond(exchange, 200, "ok");
+            requests.incrementAndGet();
+            respond(exchange, 200, "should-not-be-reached");
         });
 
         Collection collection = onlineCollection("reader", "secret", baseUrl());
         HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
-        adapter.download(book("auth", "auth.txt", "", ""), collection, null, null);
 
-        assertThat(Files.readString(temp.resolve("auth.txt"))).isEqualTo("ok");
+        assertThatThrownBy(() -> adapter.download(book("auth", "auth.txt", "", ""), collection, null, null))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("HTTPS");
+        assertThat(requests.get()).isZero();
+        assertThat(temp.resolve("auth.txt")).doesNotExist();
     }
 
     @Test

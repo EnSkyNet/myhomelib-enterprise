@@ -8,6 +8,11 @@ import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import javax.crypto.Cipher;
+import javax.crypto.spec.GCMParameterSpec;
+import javax.crypto.spec.SecretKeySpec;
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Base64;
 
@@ -75,4 +80,38 @@ class SqliteCollectionRepositoryCredentialsV7Test {
         assertThat(loaded.getNotes()).isEqualTo("keep-notes");
         assertThat(loaded.getDbFile()).endsWith("legacy.db");
     }
+    @Test
+    void readingAuthenticatedLegacyCiphertextMigratesToCurrentEnvelopeIdempotently() throws Exception {
+        String legacyCiphertext = legacyCiphertext("legacy-encrypted-secret");
+        jdbc.update("""
+                INSERT INTO collections(id,name,root_folder,db_file,type,user,password,url,notes)
+                VALUES (?,?,?,?,?,?,?,?,?)
+                """, "legacy-enc", "Legacy encrypted", temp.toString(), temp.resolve("legacy-enc.db").toString(), 2,
+                "login", legacyCiphertext, "https://example.invalid/legacy-encrypted", "keep-notes");
+
+        Collection loaded = repository.findById("legacy-enc").orElseThrow();
+        String migrated = jdbc.queryForObject("SELECT password FROM collections WHERE id='legacy-enc'", String.class);
+
+        assertThat(migrated).startsWith("mhlenc:v1:").isNotEqualTo(legacyCiphertext);
+        assertThat(loaded.getPassword()).isEqualTo(migrated);
+        assertThat(loaded.getDecryptedPassword()).isEqualTo("legacy-encrypted-secret");
+
+        Collection loadedAgain = repository.findById("legacy-enc").orElseThrow();
+        String migratedAgain = jdbc.queryForObject("SELECT password FROM collections WHERE id='legacy-enc'", String.class);
+        assertThat(migratedAgain).isEqualTo(migrated);
+        assertThat(loadedAgain.getPassword()).isEqualTo(migrated);
+    }
+
+    private static String legacyCiphertext(String plaintext) throws Exception {
+        byte[] key = new byte[32];
+        byte[] nonce = new byte[12];
+        for (int i = 0; i < nonce.length; i++) nonce[i] = (byte) (0x20 + i);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, nonce));
+        byte[] ciphertext = cipher.doFinal(plaintext.getBytes(StandardCharsets.UTF_8));
+        ByteBuffer buffer = ByteBuffer.allocate(1 + nonce.length + ciphertext.length);
+        buffer.put((byte) 1).put(nonce).put(ciphertext);
+        return Base64.getEncoder().encodeToString(buffer.array());
+    }
+
 }

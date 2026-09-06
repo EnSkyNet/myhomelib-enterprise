@@ -69,6 +69,7 @@ def offline_checks(tree: Path) -> None:
     run([sys.executable, "tools/stage8-9-filter-table-check.py"], tree)
     run([sys.executable, "tools/stage24-performance-check.py"], tree)
     run([sys.executable, "tools/stage25c-search-sync-refactor-check.py"], tree)
+    run([sys.executable, "tools/supply-chain-policy-check.py"], tree)
 
     yaml_code = r'''
 from pathlib import Path
@@ -129,9 +130,25 @@ def create_patch(baseline: Path, current_clean: Path, patch: Path) -> None:
         run(["git", "commit", "-qm", "MyHomeLib Enterprise v7 baseline"], repo)
         # rsync --delete gives Git a precise view of additions, edits and deletions while preserving .git.
         run(["rsync", "-a", "--delete", "--exclude=.git/", f"{current_clean}/", f"{repo}/"], repo)
+        # Preserve the Maven distribution bytes exactly. Some Maven launcher/config files
+        # ship with CRLF endings; treating them as Git text would normalize them in the
+        # generated patch and break patch<->ZIP byte equivalence (and can alter Windows
+        # launcher semantics). Use repository-local attributes that never enter the patch.
+        info_attrs = repo / ".git" / "info" / "attributes"
+        info_attrs.write_text(
+            ".mvn/maven/** -text -diff\n.mvn/wrapper/** -text -diff\n",
+            encoding="utf-8",
+        )
+        run(["git", "config", "core.autocrlf", "false"], repo)
         # Stage the complete resulting tree so the patch includes additions/deletions as well as edits.
         # Plain `git diff HEAD` omits untracked v7.1 files and can silently produce an incomplete upgrade patch.
         run(["git", "add", "-A"], repo)
+        # The formal v7.1 source release intentionally carries the Maven wrapper and
+        # embedded Maven runtime. The project .gitignore excludes .mvn/maven for
+        # developer convenience, so force-stage the release toolchain or the generated
+        # upgrade patch would silently omit files that are present in the source ZIP.
+        if (repo / ".mvn").exists():
+            run(["git", "add", "-f", ".mvn"], repo)
         cp = run(["git", "diff", "--binary", "--cached", "HEAD", "--", "."], repo, capture=True, accepted={0})
         patch.write_text(cp.stdout or "", encoding="utf-8")
         if patch.stat().st_size == 0:
@@ -203,6 +220,36 @@ def verify_patch_matches_archive(baseline: Path, patch: Path, archive: Path, top
         print(f"[release] PATCH <-> ZIP equivalence PASS ({len(zip_manifest)} files)", flush=True)
 
 
+def verify_source_launcher(root: Path) -> None:
+    """Require the formal source release to contain its documented Maven launcher contract."""
+    required = [
+        root / "mvnw",
+        root / "mvnw.cmd",
+        root / ".mvn/wrapper/maven-wrapper.jar",
+        root / ".mvn/wrapper/maven-wrapper.properties",
+        root / ".mvn/wrapper/maven-wrapper.jar.sha256",
+    ]
+    missing = [str(p.relative_to(root)) for p in required if not p.is_file()]
+    if missing:
+        raise RuntimeError(f"source release is missing Maven wrapper files: {missing}")
+    embedded = root / ".mvn/maven/apache-maven-3.9.6/bin/mvn"
+    if not embedded.is_file():
+        raise RuntimeError("source release is missing embedded Maven 3.9.6")
+    expected = (root / ".mvn/wrapper/maven-wrapper.jar.sha256").read_text(encoding="ascii").split()[0].lower()
+    actual = sha256(root / ".mvn/wrapper/maven-wrapper.jar")
+    if expected != actual:
+        raise RuntimeError("source release Maven wrapper JAR checksum mismatch")
+    with zipfile.ZipFile(root / ".mvn/wrapper/maven-wrapper.jar") as zf:
+        if "org/apache/maven/wrapper/MavenWrapperMain.class" not in zf.namelist():
+            raise RuntimeError("invalid Maven wrapper JAR in source release")
+    launcher = root / "mvnw"
+    launcher.chmod(launcher.stat().st_mode | stat.S_IXUSR)
+    cp = run([str(launcher), "-v"], root, capture=True)
+    text = cp.stdout or ""
+    if "Apache Maven 3.9.6" not in text:
+        raise RuntimeError("extracted source release did not start embedded Maven 3.9.6 through ./mvnw")
+
+
 def verify_archive(archive: Path, top_dir: str) -> None:
     with tempfile.TemporaryDirectory(prefix="mhl-v71-extracted-") as td:
         td_path = Path(td)
@@ -214,11 +261,17 @@ def verify_archive(archive: Path, top_dir: str) -> None:
         root = td_path / top_dir
         if not root.is_dir():
             raise RuntimeError(f"ZIP top-level directory missing: {top_dir}")
+        verify_source_launcher(root)
         for forbidden in EXCLUDED_DIRS:
             found = list(root.rglob(forbidden))
             if found:
                 raise RuntimeError(f"forbidden generated directory in ZIP: {found[0].relative_to(root)}")
-        offline_checks(root)
+        # The full offline suite already ran against the clean staging tree used to create
+        # this ZIP. Re-running every behavioral/static probe here is redundant and slow.
+        # Revalidate the archive-specific contract plus critical release/source policies;
+        # patch<->ZIP manifest equivalence below proves the extracted bytes match staging.
+        run([sys.executable, "tools/build-check-v7.py"], root)
+        run([sys.executable, "tools/supply-chain-policy-check.py"], root)
 
 
 def main() -> int:
@@ -238,9 +291,8 @@ def main() -> int:
     checksum = out / "myhomelib-enterprise-v7.1.zip.sha256"
     report = out / "RELEASE-ARTIFACT-VALIDATION-v7.1.txt"
 
-    # Verify the source tree before copying; this prevents packaging a known-bad workspace.
-    offline_checks(ROOT)
-
+    # Validate a clean staging tree, not the developer workspace: Maven/test runs may leave
+    # target/ and __pycache__ directories that are intentionally excluded from the release.
     with tempfile.TemporaryDirectory(prefix="mhl-v71-clean-") as td:
         clean = Path(td) / top
         copy_clean(ROOT, clean)
@@ -258,7 +310,7 @@ def main() -> int:
         "Status: OFFLINE SOURCE ARTIFACT CHECKS PASS\n"
         f"ZIP: {archive.name}\n"
         f"SHA-256: {digest}\n"
-        "Verification: source tree PASS; clean copied tree PASS; freshly extracted ZIP PASS; patch↔ZIP equivalence PASS.\n"
+        "Verification: clean staged tree full offline suite PASS; extracted ZIP safety/launcher/source-policy PASS; patch↔ZIP equivalence PASS.\n"
         "Included gates: migration immutability/upgrade, metadata migrations, XML/FXML, source invariants,\n"
         "static release checks, architecture/lifecycle regression, standalone JDK v7.1 runtime smoke,\n"
         "Stage 8+9, Stage 24 contract, Stage 25C, workflow YAML and root shell syntax.\n"

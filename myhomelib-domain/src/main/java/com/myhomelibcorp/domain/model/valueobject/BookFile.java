@@ -2,9 +2,6 @@ package com.myhomelibcorp.domain.model.valueobject;
 
 import lombok.Value;
 
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
 @Value
 public class BookFile {
     String fileName;
@@ -17,19 +14,50 @@ public class BookFile {
         return new BookFile("", "", "", 0, "");
     }
 
+    /**
+     * Resolves the physical book path without ever dropping {@code fileName}.
+     * Windows drive/UNC paths are recognized even when the application is tested on a non-Windows host.
+     */
     public String getFullPath() {
-        if (folder == null || folder.isBlank()) {
-            return fileName;
-        }
-        Path folderPath = Paths.get(folder);
-        if (folderPath.isAbsolute()) {
-            return folderPath.toString();
-        }
-        if (collectionRoot != null && !collectionRoot.isBlank()) {
-            return Paths.get(collectionRoot, folder).toString();
-        }
-        return folder;
+        String name = safe(fileName);
+        if (name.isBlank()) return resolveBase();
+        if (isAbsoluteLike(name)) return name;
+        String base = resolveBase();
+        return base.isBlank() ? name : join(base, name);
     }
+
+    private String resolveBase() {
+        String dir = safe(folder);
+        String root = safe(collectionRoot);
+        if (!dir.isBlank() && isAbsoluteLike(dir)) return dir;
+        if (!root.isBlank()) return dir.isBlank() ? root : join(root, dir);
+        return dir;
+    }
+
+    private static String join(String base, String child) {
+        if (base == null || base.isBlank()) return safe(child);
+        String cleanChild = safe(child).replaceFirst("^[\\\\/]+", "");
+        if (cleanChild.isBlank()) return base;
+        if (isWindowsLike(base)) {
+            String cleanBase = base.replaceAll("[\\\\/]+$", "");
+            return cleanBase + "\\" + cleanChild.replace('/', '\\');
+        }
+        String cleanBase = base.replaceAll("[\\/]+$", "");
+        return cleanBase + "/" + cleanChild.replace('\\', '/');
+    }
+
+    private static boolean isAbsoluteLike(String value) {
+        if (value == null || value.isBlank()) return false;
+        return value.startsWith("/") || value.startsWith("\\\\") || value.startsWith("//")
+                || value.matches("^[A-Za-z]:[\\\\/].*");
+    }
+
+    private static boolean isWindowsLike(String value) {
+        return value != null && (value.startsWith("\\\\") || value.matches("^[A-Za-z]:[\\\\/].*")
+                || (value.indexOf('\\') >= 0 && value.indexOf('/') < 0));
+    }
+
+    private static String safe(String value) { return value == null ? "" : value.trim(); }
 
     public boolean hasArchiveEntry() {
         return archiveEntry != null && !archiveEntry.isBlank();

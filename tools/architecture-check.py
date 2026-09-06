@@ -58,7 +58,7 @@ EXPECTED_INTERNAL_DEPS = {
         "myhomelib-opds",
     },
     "myhomelib-mcp": {"myhomelib-shared"},
-    "myhomelib-opds": {"myhomelib-application"},
+    "myhomelib-opds": {"myhomelib-application", "myhomelib-shared"},
 }
 
 # Existing debt is a ceiling, not a requirement. Removing an item is always OK;

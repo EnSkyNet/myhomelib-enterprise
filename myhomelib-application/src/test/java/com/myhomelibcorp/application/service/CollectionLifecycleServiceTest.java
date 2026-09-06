@@ -1,5 +1,8 @@
 package com.myhomelibcorp.application.service;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.cache.CacheInvalidationPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
@@ -10,6 +13,9 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
+
+import java.util.concurrent.CompletionException;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.*;
@@ -79,6 +85,68 @@ class CollectionLifecycleServiceTest {
         verify(f.index).rebuildIndex();
     }
 
+    @Test
+    void manualAsyncRebuildOwnsIndexLeaseBeforeExecutorStartsAndUntilCompletion() {
+        Fixture f = new Fixture();
+        Collection current = collection("a", "A");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(current);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        doAnswer(invocation -> { scheduled.set(invocation.getArgument(0)); return null; })
+                .when(f.executor).execute(any(Runnable.class));
+
+        var future = f.service.rebuildSearchIndexAsync();
+
+        org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
+        assertThrows(LibraryOperationConflictException.class,
+                () -> f.coordinator.acquire(LibraryOperationType.SYNC));
+        org.junit.jupiter.api.Assertions.assertFalse(future.isDone());
+
+        scheduled.get().run();
+        future.join();
+
+        verify(f.index).rebuildIndex(any(java.util.concurrent.atomic.AtomicBoolean.class));
+        org.junit.jupiter.api.Assertions.assertFalse(f.coordinator.isBusy());
+    }
+
+    @Test
+    void failedAsyncRebuildReleasesDetachedLease() {
+        Fixture f = new Fixture();
+        Collection current = collection("a", "A");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(current);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        doAnswer(invocation -> { scheduled.set(invocation.getArgument(0)); return null; })
+                .when(f.executor).execute(any(Runnable.class));
+        doThrow(new IllegalStateException("boom"))
+                .when(f.index).rebuildIndex(any(java.util.concurrent.atomic.AtomicBoolean.class));
+
+        var future = f.service.rebuildSearchIndexAsync();
+        scheduled.get().run();
+
+        assertThrows(CompletionException.class, future::join);
+        org.junit.jupiter.api.Assertions.assertFalse(f.coordinator.isBusy());
+    }
+
+    @Test
+    void repeatedManualAsyncRequestReusesActiveRebuildInsteadOfCancellingIt() {
+        Fixture f = new Fixture();
+        Collection current = collection("a", "A");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(current);
+        AtomicReference<Runnable> scheduled = new AtomicReference<>();
+        doAnswer(invocation -> { scheduled.set(invocation.getArgument(0)); return null; })
+                .when(f.executor).execute(any(Runnable.class));
+
+        var first = f.service.rebuildSearchIndexAsync();
+        var second = f.service.rebuildSearchIndexAsync();
+
+        org.junit.jupiter.api.Assertions.assertSame(first, second);
+        org.junit.jupiter.api.Assertions.assertEquals(LibraryOperationType.INDEX, f.coordinator.activeOperation());
+        verify(f.executor, times(1)).execute(any(Runnable.class));
+
+        scheduled.get().run();
+        first.join();
+        org.junit.jupiter.api.Assertions.assertFalse(f.coordinator.isBusy());
+    }
+
     private static Collection collection(String id, String name) {
         Collection c = mock(Collection.class);
         when(c.getId()).thenReturn(id);
@@ -94,8 +162,9 @@ class CollectionLifecycleServiceTest {
         final SearchIndexLifecycle searchLifecycle = mock(SearchIndexLifecycle.class);
         final DomainEventPublisher events = mock(DomainEventPublisher.class);
         final ExecutorPort executor = mock(ExecutorPort.class);
+        final LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
         final CollectionLifecycleService service = new CollectionLifecycleService(
                 lifecycle, migrations, cacheInvalidation,
-                index, searchLifecycle, events, executor);
+                index, searchLifecycle, events, executor, coordinator);
     }
 }
