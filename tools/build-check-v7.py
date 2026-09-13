@@ -48,7 +48,10 @@ def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
 def check_migrations() -> None:
     files = migration_files(MIGRATIONS)
     versions = [version(p) for p in files]
-    assert versions == list(range(1, 50)), f"expected sequential V1..V49, got {versions}"
+    assert versions, "no catalog migrations found"
+    assert versions[-1] >= 49, f"expected at least the v7.1 baseline through V49, got {versions}"
+    assert versions == list(range(1, versions[-1] + 1)), \
+        f"expected sequential V1..V{versions[-1]}, got {versions}"
 
     # v7.1 must append migrations only. Compare the immutable v7 migrations byte-for-byte
     # against the retained release hash manifest so this also works from a source ZIP without .git.
@@ -66,7 +69,7 @@ def check_migrations() -> None:
                   "book_identities", "book_artifacts", "catalog_dataset_metadata",
                   "catalog_record_provenance", "book_source_relations", "artifact_occurrences", "reader_book_preferences"):
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone()
-        assert row, f"missing table {table} after V49"
+        assert row, f"missing table {table} after V{versions[-1]}"
     manifest_cols = table_columns(conn, "catalog_manifests")
     for column in ("manifest_schema", "importer_version", "source_format", "normalization_version",
                    "fingerprint_model", "fingerprint_version", "processing_flags", "features_enabled"):
@@ -176,7 +179,11 @@ def check_v43_group_membership_index() -> None:
 
 def check_metadata_migrations() -> None:
     files = migration_files(META_MIGRATIONS)
-    assert [version(p) for p in files] == list(range(1, 6)), "expected metadata V1..V5"
+    versions = [version(p) for p in files]
+    assert versions, "no metadata migrations found"
+    assert versions[-1] >= 5, f"expected at least metadata baseline V1..V5, got {versions}"
+    assert versions == list(range(1, versions[-1] + 1)), \
+        f"expected sequential metadata V1..V{versions[-1]}, got {versions}"
     legacy = json.loads((ROOT / "tools/v7-legacy-migration-sha256.json").read_text(encoding="utf-8"))
     for path in files:
         if version(path) <= 3:
@@ -187,6 +194,9 @@ def check_metadata_migrations() -> None:
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='collections'").fetchone()
     assert "connection_script" in table_columns(conn, "collections")
     assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='online_download_queue'").fetchone()
+    if versions[-1] >= 6:
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='incoming_folder_watch'").fetchone()
+        assert conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='incoming_folder_file'").fetchone()
     assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     conn.close()
 
@@ -358,7 +368,8 @@ def check_source_invariants() -> None:
             "docs/history/MYHOMELIB-HISTORY-STAGES.md",
             "docs/history/MYHOMELIB-HISTORY-FIXES.md",
             "docs/history/MYHOMELIB-HISTORY-AUDITS.md",
-            "RELEASE_VALIDATION-v7.1.txt"):
+            "docs/history/MYHOMELIB-HISTORY-ITERATIONS.md",
+            "docs/release/CURRENT-VALIDATION.md"):
         read(required_doc)
 
     pom = read("pom.xml")
@@ -367,11 +378,14 @@ def check_source_invariants() -> None:
     require(readme, "MyHomeLib Enterprise 7.1.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
     root_md = sorted(p.name for p in ROOT.glob("*.md"))
-    expected_root_md = {"README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md", "REFACTORING-REPORT-2026-09-03.md", "REFACTORING_COMPLETION.md"}
+    expected_root_md = {"README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md"}
     missing_root_md = sorted(expected_root_md - set(root_md))
-    unexpected_root_md = sorted(name for name in root_md if name not in expected_root_md and not re.fullmatch(r"ITERATION-[0-9]{2}-[A-Z0-9-]+\.md", name))
+    unexpected_root_md = sorted(name for name in root_md if name not in expected_root_md)
     assert not missing_root_md and not unexpected_root_md, \
         f"root Markdown documentation drift: missing={missing_root_md}, unexpected={unexpected_root_md}"
+    historical_root_globs = ("ITERATION-*", "CONTINUATION-*", "TASKS-*", "AUDIT-*", "REFACTORING-*")
+    historical_root_files = sorted({path.name for pattern in historical_root_globs for path in ROOT.glob(pattern) if path.is_file()})
+    assert not historical_root_files, f"historical files must live under docs/history, not repository root: {historical_root_files}"
     for active_doc in (
             "MYHOMELIB-RELEASE.md",
             "myhomelib-ui/src/main/resources/help/index.md",
@@ -433,7 +447,7 @@ def main() -> int:
     parser.add_argument("--skip-tree-cleanliness", action="store_true", help="allow target/IDE dirs while developing")
     args = parser.parse_args()
     checks = [
-        ("Flyway V1-V49 + immutable V1-V36", check_migrations),
+        ("Flyway sequential baseline + immutable V1-V36", check_migrations),
         ("V41 reading statistics singleton", check_v41_reading_stats_singleton),
         ("V42 reader book preferences", check_v42_reader_book_preferences),
         ("V43 group membership lookup", check_v43_group_membership_index),

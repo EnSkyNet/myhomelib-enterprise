@@ -84,7 +84,8 @@ require("workspaceManager.showColumnChooserForCurrentWorkspace()" in main,
 # Reader right sidebar must restore in-place and retain current book details.
 require("node.setManaged(visible)" in layout and "Platform.runLater" in layout and "requestLayout" in layout,
         "sidebar restore does not force BorderPane relayout")
-require("appState.getBookDetails().setCurrentBook(currentBook)" in reader,
+require(("appState.getBookDetails().setCurrentBook(currentBook)" in reader
+         or "appState.getBookDetails().setCurrentBookIfDifferentId(currentBook)" in reader),
         "Reader does not keep right book-details pane bound to the current book")
 
 # Export must prepare remote books automatically before starting physical export.

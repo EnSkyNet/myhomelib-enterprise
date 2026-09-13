@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns:fx="http://javafx.com/fxml/1"
+            fx:id="root"
+            fx:controller="com.myhomelibcorp.ui.annotation.AnnotationManagerWorkspaceController"
+            style="-fx-background-color: -mhl-panel;">
+    <top>
+        <VBox spacing="8.0">
+            <padding><Insets top="12" right="12" bottom="8" left="12"/></padding>
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label text="ui.annotations.title" styleClass="workspace-title"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <ProgressIndicator fx:id="progressIndicator" prefWidth="22" prefHeight="22" visible="false" managed="false"/>
+                <Button text="ui.annotations.refresh" onAction="#refresh"/>
+            </HBox>
+            <FlowPane hgap="8" vgap="8" rowValignment="CENTER">
+                <TextField fx:id="searchField" promptText="ui.annotations.search_prompt" prefWidth="220" onAction="#applyFilters"/>
+                <ComboBox fx:id="bookFilter" prefWidth="220" promptText="ui.annotations.book_filter"/>
+                <ComboBox fx:id="typeFilter" prefWidth="145" promptText="ui.annotations.type_filter"/>
+                <ComboBox fx:id="colorFilter" prefWidth="135" promptText="ui.annotations.color_filter"/>
+                <ComboBox fx:id="tagFilter" prefWidth="160" promptText="ui.annotations.tag_filter"/>
+                <DatePicker fx:id="dateFromFilter" prefWidth="145" promptText="ui.annotations.date_from"/>
+                <DatePicker fx:id="dateToFilter" prefWidth="145" promptText="ui.annotations.date_to"/>
+                <Button text="ui.annotations.apply_filters" onAction="#applyFilters"/>
+                <Button text="ui.annotations.clear_filters" onAction="#clearFilters"/>
+            </FlowPane>
+        </VBox>
+    </top>
+    <center>
+        <TableView fx:id="table">
+            <columns>
+                <TableColumn fx:id="typeColumn" text="ui.annotations.column.type" prefWidth="90"/>
+                <TableColumn fx:id="bookColumn" text="ui.annotations.column.book" prefWidth="190"/>
+                <TableColumn fx:id="textColumn" text="ui.annotations.column.text" prefWidth="260"/>
+                <TableColumn fx:id="chapterColumn" text="ui.annotations.column.chapter" prefWidth="150"/>
+                <TableColumn fx:id="tagsColumn" text="ui.annotations.column.tags" prefWidth="140"/>
+                <TableColumn fx:id="updatedColumn" text="ui.annotations.column.updated" prefWidth="140"/>
+            </columns>
+            <placeholder><Label text="ui.annotations.empty"/></placeholder>
+        </TableView>
+    </center>
+    <bottom>
+        <VBox spacing="8">
+            <padding><Insets top="8" right="12" bottom="12" left="12"/></padding>
+            <Label fx:id="statusLabel" text="" wrapText="true"/>
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Button fx:id="openButton" text="ui.annotations.open" onAction="#openSelected" disable="true"/>
+                <Button fx:id="editButton" text="ui.annotations.edit" onAction="#editSelected" disable="true"/>
+                <Button fx:id="deleteButton" text="ui.annotations.delete" onAction="#deleteSelected" disable="true"/>
+                <Button fx:id="undoButton" text="ui.annotations.undo" onAction="#undoDelete" disable="true"/>
+                <Button text="ui.annotations.export_csv" onAction="#exportFilteredCsv"/>
+                <Button text="ui.annotations.export_rich" onAction="#exportRich"/>
+                <Button text="ui.annotations.knowledge_export" onAction="#exportKnowledgeMarkdown"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button fx:id="previousButton" text="ui.annotations.previous" onAction="#previousPage" disable="true"/>
+                <Label fx:id="pageLabel" text=""/>
+                <Button fx:id="nextButton" text="ui.annotations.next" onAction="#nextPage" disable="true"/>
+            </HBox>
+        </VBox>
+    </bottom>
+</BorderPane>

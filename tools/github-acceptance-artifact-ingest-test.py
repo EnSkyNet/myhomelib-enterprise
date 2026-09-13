@@ -43,6 +43,9 @@ def make_blob(*, tamper_msi: bool = False, traversal: bool = False) -> bytes:
         f"{fixture.PORTABLE_SHA}  myhomelib-7.1.0-windows-amd64.zip\n"
     ).encode()
     files[prefix + "candidate-windows/candidate-windows.sha256"] = manifest
+    files[prefix + "candidate-windows/release-windows-SHA256SUMS"] = fixture.RELEASE_SUMS
+    files[prefix + "candidate-windows/release-candidate-integrity-windows.json"] = fixture.INTEGRITY_BYTES
+    files[prefix + "candidate-windows/release-candidate-integrity-windows.json.sha256"] = fixture.INTEGRITY_SIDECAR
     if traversal:
         files["../escape.txt"] = b"bad"
     out = Path(tempfile.mkstemp(suffix=".zip")[1])
@@ -76,7 +79,12 @@ def main() -> int:
         assert (out / "acceptance-harness.sha256").read_bytes() == fixture.HARNESS_MANIFEST
         staged = json.loads((out / "github-connected-acceptance-ingest.json").read_text())
         assert staged["windowsExeSha256"] == fixture.EXE_SHA
+        assert staged["windowsIntegritySha256"] == fixture.INTEGRITY_SHA
+        assert staged["windowsIntegritySourceTreeSha256"] == fixture.SOURCE_TREE_SHA
+        assert staged["windowsChecksumsSha256"] == fixture.RELEASE_SUMS_SHA
         assert staged["acceptanceHarnessManifestSha256"] == fixture.HARNESS_SHA
+        assert (out / "candidate-windows/release-candidate-integrity-windows.json").read_bytes() == fixture.INTEGRITY_BYTES
+        assert (out / "candidate-windows/release-windows-SHA256SUMS").read_bytes() == fixture.RELEASE_SUMS
 
         remote = {
             "acceptanceRunId": 456,
@@ -93,6 +101,25 @@ def main() -> int:
         assert record["acceptanceRunId"] == 456
 
         expect_fail(lambda: mod.validate_and_stage(make_blob(tamper_msi=True), root / "bad"), "SHA-256 mismatch")
+
+        bad_integrity_blob = make_blob()
+        tampered_zip = root / "bad-integrity.zip"
+        # Rebuild the artifact with a manifest-consistent outer ZIP but a tampered integrity record.
+        with zipfile.ZipFile(__import__("io").BytesIO(bad_integrity_blob)) as src:
+            entries = {name: src.read(name) for name in src.namelist()}
+        integrity_key = "target/github-connected-acceptance/candidate-windows/release-candidate-integrity-windows.json"
+        bad = json.loads(entries[integrity_key].decode())
+        bad["sourceTreeSha256"] = "9" * 64
+        bad_bytes = (json.dumps(bad, indent=2, sort_keys=True) + "\n").encode()
+        entries[integrity_key] = bad_bytes
+        entries[integrity_key + ".sha256"] = (
+            f"{hashlib.sha256(bad_bytes).hexdigest()}  release-candidate-integrity-windows.json\n"
+        ).encode()
+        with zipfile.ZipFile(tampered_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, data in entries.items():
+                zf.writestr(name, data)
+        expect_fail(lambda: mod.validate_and_stage(tampered_zip.read_bytes(), root / "bad-integrity"), "hash does not match GitHub evidence")
+
         expect_fail(lambda: mod.validate_and_stage(make_blob(traversal=True), root / "bad2"), "parent traversal")
         bad_remote = dict(remote, declaredDigest="sha256:" + "0" * 64)
         expect_fail(lambda: mod.validate_and_stage(blob, root / "bad3", remote=bad_remote), "declared digest")

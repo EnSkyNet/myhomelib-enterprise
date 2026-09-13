@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from pathlib import Path
 import sys
+import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
 errors=[]
@@ -17,6 +18,7 @@ input_settings=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api
 canvas=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderCanvas.java')
 autoscroll=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/AutoScrollController.java')
 dialog=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderSettingsDialog.java')
+dialog=runpy.run_path(str(ROOT/'tools/localization-contract-support.py'))['localized_source'](dialog)
 reader_view=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderView.java')
 reader_controller=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java')
 theme=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderTheme.java')
@@ -45,7 +47,7 @@ need('readerView.setOnSettingsChanged(this::persistReaderSettings);' in reader_c
      'Reader workspace must persist quick settings changes')
 for marker in ('Шрифт','Розмір','Міжрядковий інтервал','Відступ першого рядка (em)','Вирівнювання','Тема',
                'Дві сторінки','Автопрокрутка','Швидкість автопрокрутки','Показувати панель інструментів',
-               'Показувати нижній status bar'):
+               'ui.reader.settings.show_status_bar'):
     need(marker in dialog, f'Reader settings GUI missing reachable control: {marker}')
 for marker in ('Desktop Reader behavior is intentionally not a claim of complete Android/iOS or AlReaderX feature parity',
                'Ukrainian/English/Bulgarian/Russian hyphenation dictionaries',

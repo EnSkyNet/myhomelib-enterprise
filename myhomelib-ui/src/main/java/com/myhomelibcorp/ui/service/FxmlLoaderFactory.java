@@ -105,12 +105,22 @@ public class FxmlLoaderFactory {
      * НОВИЙ МЕТОД: завантажує новий Reader Workspace (без WebView, на Canvas).
      */
     public Pane loadNewReaderWorkspace(BookId bookId) {
+        return loadNewReaderWorkspace(bookId, null);
+    }
+
+    public Pane loadNewReaderWorkspace(BookId bookId, String annotationId) {
+        return loadNewReaderWorkspace(bookId, annotationId, null, null);
+    }
+
+    public Pane loadNewReaderWorkspace(BookId bookId, String annotationId, String artifactId, Long contentOffset) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/new-reader-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
 
             NewReaderWorkspaceController controller = loader.getController();
+            controller.setAnnotationTargetId(annotationId);
+            controller.setContentSearchTarget(artifactId, contentOffset);
             if (bookId != null) {
                 controller.setBookId(bookId);
             }

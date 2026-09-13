@@ -10,6 +10,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_ROOTS = [
     ROOT / "myhomelib-application/src/main/java",
+    ROOT / "myhomelib-plugin-api/src/main/java",
     ROOT / "myhomelib-domain/src/main/java",
     ROOT / "myhomelib-infrastructure/src/main/java",
     ROOT / "myhomelib-ui/src/main/java",

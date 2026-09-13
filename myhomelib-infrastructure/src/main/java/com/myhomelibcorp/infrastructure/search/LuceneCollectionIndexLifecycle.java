@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.search;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
+import com.myhomelibcorp.application.search.SearchIndexHealth;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.util.AppPaths;
 import jakarta.annotation.PostConstruct;
@@ -23,6 +24,8 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     private final LuceneSearchService search;
     private final BookQueryRepository books;
 
+    // Search callbacks and lifecycle transitions share one monitor; never acquire this
+    // object and then search in the opposite order to a commit callback.
     private String activeCollectionId;
     private Path activeDatabasePath;
     private Path activeStateFile;
@@ -39,84 +42,108 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     }
 
     @Override
-    public synchronized boolean activateCollectionIndex(Collection collection) {
-        requireId(collection);
-        try {
-            Path indexPath = AppPaths.collectionSearchIndexDir(collection.getId());
-            Files.createDirectories(indexPath);
-            activeCollectionId = collection.getId();
-            activeDatabasePath = resolveDatabasePath(collection);
-            activeStateFile = AppPaths.collectionSearchIndexStateFile(collection.getId());
-            search.switchDirectory(FSDirectory.open(indexPath));
+    public boolean activateCollectionIndex(Collection collection) {
+        synchronized (search) {
+            requireId(collection);
+            try {
+                Path indexPath = AppPaths.collectionSearchIndexDir(collection.getId());
+                Files.createDirectories(indexPath);
+                activeCollectionId = collection.getId();
+                activeDatabasePath = resolveDatabasePath(collection);
+                activeStateFile = AppPaths.collectionSearchIndexStateFile(collection.getId());
+                search.switchDirectory(FSDirectory.open(indexPath));
 
-            ReuseCheck check = checkCurrentIndexReusable();
-            boolean reusable = check.reusable();
-            activeIndexDirty = !reusable;
-            if (!reusable) {
-                log.info("Per-collection Lucene {} requires rebuild: {}", indexPath, check.reason());
-                search.setQueryAvailability(false, "Пошуковий індекс перебудовується: " + check.reason());
-                persistDirtyMarker(activeStateFile);
-                // Keep the last committed Lucene index intact until the atomic full rebuild reaches
-                // its final commit. Querying remains disabled while dirty, so the old index cannot
-                // leak stale results, but it remains a crash/failure rollback point.
-            } else {
-                search.setQueryAvailability(true, null);
-                log.info("Per-collection Lucene {} is reusable: {} documents", indexPath, search.getDocumentCount());
+                ReuseCheck check = checkCurrentIndexReusable();
+                boolean reusable = check.reusable();
+                activeIndexDirty = !reusable;
+                if (!reusable) {
+                    log.info("Per-collection Lucene {} requires rebuild: {}", indexPath, check.reason());
+                    search.setQueryAvailability(false, "Пошуковий індекс перебудовується: " + check.reason());
+                    persistDirtyMarker(activeStateFile);
+                    // Keep the last committed Lucene index intact until the atomic full rebuild reaches
+                    // its final commit. Querying remains disabled while dirty, so the old index cannot
+                    // leak stale results, but it remains a crash/failure rollback point.
+                } else {
+                    search.setQueryAvailability(true, null);
+                    log.info("Per-collection Lucene {} is reusable: {} documents", indexPath, search.getDocumentCount());
+                }
+                return reusable;
+            } catch (IOException e) {
+                clearActiveState();
+                throw new IllegalStateException("Cannot activate Lucene index for collection " + collection.getId(), e);
             }
-            return reusable;
-        } catch (IOException e) {
+        }
+    }
+
+    @Override
+    public SearchIndexHealth currentHealth() {
+        synchronized (search) {
+            if (activeCollectionId == null || activeDatabasePath == null || activeStateFile == null) {
+                return SearchIndexHealth.unknown("active collection index is not initialized");
+            }
+            if (activeIndexDirty) {
+                return new SearchIndexHealth(false, "freshness marker is DIRTY while DB/search synchronization is pending");
+            }
+            ReuseCheck check = checkCurrentIndexReusable();
+            return new SearchIndexHealth(check.reusable(), check.reason());
+        }
+    }
+
+    @Override
+    public void markCurrentIndexDirty() {
+        synchronized (search) {
+            if (activeCollectionId == null) return;
+            activeIndexDirty = true;
+            search.setQueryAvailability(false, "Пошуковий індекс синхронізується з каталогом");
+            if (activeStateFile != null) persistDirtyMarker(activeStateFile);
+        }
+    }
+
+    @Override
+    public void markCurrentIndexSynchronized() {
+        synchronized (search) {
+            if (activeCollectionId == null || activeDatabasePath == null || activeStateFile == null) return;
+            activeIndexDirty = false;
+            persistMarker(activeStateFile, activeDatabasePath, search.getDocumentCount());
+            search.setQueryAvailability(true, null);
+        }
+    }
+
+    @Override
+    public void closeCurrentIndex() {
+        synchronized (search) {
+            if (activeCollectionId != null) {
+                search.commit();
+                lastClosedCollectionId = activeCollectionId;
+                lastClosedDatabasePath = activeDatabasePath;
+                lastClosedDocumentCount = search.getDocumentCount();
+                lastClosedIndexDirty = activeIndexDirty;
+            }
+            search.closeIndexForSwitch();
             clearActiveState();
-            throw new IllegalStateException("Cannot activate Lucene index for collection " + collection.getId(), e);
         }
     }
 
     @Override
-    public synchronized void markCurrentIndexDirty() {
-        if (activeCollectionId == null) return;
-        activeIndexDirty = true;
-        search.setQueryAvailability(false, "Пошуковий індекс синхронізується з каталогом");
-        if (activeStateFile != null) persistDirtyMarker(activeStateFile);
-    }
-
-    @Override
-    public synchronized void markCurrentIndexSynchronized() {
-        if (activeCollectionId == null || activeDatabasePath == null || activeStateFile == null) return;
-        activeIndexDirty = false;
-        persistMarker(activeStateFile, activeDatabasePath, search.getDocumentCount());
-        search.setQueryAvailability(true, null);
-    }
-
-    @Override
-    public synchronized void closeCurrentIndex() {
-        if (activeCollectionId != null) {
-            search.commit();
-            lastClosedCollectionId = activeCollectionId;
-            lastClosedDatabasePath = activeDatabasePath;
-            lastClosedDocumentCount = search.getDocumentCount();
-            lastClosedIndexDirty = activeIndexDirty;
+    public void sealClosedIndex(Collection collection) {
+        synchronized (search) {
+            if (collection == null || collection.getId() == null) return;
+            if (!collection.getId().equals(lastClosedCollectionId) || lastClosedDatabasePath == null) return;
+            Path stateFile = AppPaths.collectionSearchIndexStateFile(collection.getId());
+            if (lastClosedIndexDirty) {
+                persistDirtyMarker(stateFile);
+            } else {
+                persistMarker(stateFile, lastClosedDatabasePath, lastClosedDocumentCount);
+            }
+            lastClosedCollectionId = null;
+            lastClosedDatabasePath = null;
+            lastClosedDocumentCount = 0;
+            lastClosedIndexDirty = false;
         }
-        search.closeIndexForSwitch();
-        clearActiveState();
-    }
-
-    @Override
-    public synchronized void sealClosedIndex(Collection collection) {
-        if (collection == null || collection.getId() == null) return;
-        if (!collection.getId().equals(lastClosedCollectionId) || lastClosedDatabasePath == null) return;
-        Path stateFile = AppPaths.collectionSearchIndexStateFile(collection.getId());
-        if (lastClosedIndexDirty) {
-            persistDirtyMarker(stateFile);
-        } else {
-            persistMarker(stateFile, lastClosedDatabasePath, lastClosedDocumentCount);
-        }
-        lastClosedCollectionId = null;
-        lastClosedDatabasePath = null;
-        lastClosedDocumentCount = 0;
-        lastClosedIndexDirty = false;
     }
 
     private void onLuceneCommit(int documentCount) {
-        synchronized (this) {
+        synchronized (search) {
             if (!activeIndexDirty && activeDatabasePath != null && activeStateFile != null) {
                 persistMarker(activeStateFile, activeDatabasePath, documentCount);
             }
@@ -185,7 +212,8 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     }
 
     private static String freshnessToken(Path databasePath, long activeBooks) throws IOException {
-        StringBuilder token = new StringBuilder(192);
+        StringBuilder token = new StringBuilder(224);
+        token.append("schema=").append(LuceneDocumentMapper.SCHEMA_VERSION);
         appendFileState(token, databasePath);
         appendWalState(token, Path.of(databasePath + "-wal"));
         token.append("|activeBooks=").append(Math.max(0L, activeBooks));

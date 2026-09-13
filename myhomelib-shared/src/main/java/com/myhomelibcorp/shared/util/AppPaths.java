@@ -56,6 +56,17 @@ public final class AppPaths {
     public static Path metadataDb() { return dataDir().resolve("meta.db"); }
     public static Path librariesDir() { return dataDir().resolve("libraries"); }
     public static Path searchIndexDir() { return dataDir().resolve("search-index"); }
+    public static Path contentIndexDir() { return dataDir().resolve("content-index"); }
+    public static Path contentIndexQueueDir() { return cacheDir().resolve("content-index-queue"); }
+
+    public static Path contentIndexQueueStateFile(String collectionId) {
+        return contentIndexQueueDir().resolve(safePathSegment(collectionId) + ".properties");
+    }
+
+    /** Full-text content index is physically separate from the catalogue metadata index. */
+    public static Path collectionContentIndexDir(String collectionId) {
+        return contentIndexDir().resolve(safePathSegment(collectionId));
+    }
 
     /** Per-collection Lucene index directory. Collection ids are restricted to filesystem-safe characters. */
     public static Path collectionSearchIndexDir(String collectionId) {

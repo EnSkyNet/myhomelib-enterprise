@@ -45,7 +45,7 @@ public class ExportProfileService {
     public ExportProfile newProfile(String name) {
         return new ExportProfile(UUID.randomUUID().toString(), normalizeName(name),
                 ExportRequest.ExportFormat.FB2, "", ExportRequest.CollisionPolicy.RENAME,
-                false, "%n2 - %t", "%a/%s", "");
+                false, "%n2 - %t", "%a/%s", "", DeviceProfileService.GENERIC_FOLDER_ID);
     }
 
     public synchronized void save(ExportProfile profile) {
@@ -59,6 +59,7 @@ public class ExportProfileService {
         settings.put(base + ".filenameTemplate", profile.filenameTemplate());
         settings.put(base + ".subfolderTemplate", profile.subfolderTemplate());
         settings.put(base + ".postActionProfileId", profile.postActionProfileId());
+        settings.put(base + ".deviceProfileId", profile.deviceProfileId());
         List<String> order = splitIds(settings.get(ORDER, ""));
         if (!order.contains(profile.id())) order.add(profile.id());
         settings.put(ORDER, String.join(",", order));
@@ -86,7 +87,8 @@ public class ExportProfileService {
                 settings.getBoolean(base + ".extractOnly", false),
                 settings.get(base + ".filenameTemplate", "%n2 - %t"),
                 settings.get(base + ".subfolderTemplate", "%a/%s"),
-                settings.get(base + ".postActionProfileId", "")));
+                settings.get(base + ".postActionProfileId", ""),
+                settings.get(base + ".deviceProfileId", DeviceProfileService.GENERIC_FOLDER_ID)));
     }
 
     /** Converts the old global export settings into one editable profile once. */
@@ -99,7 +101,7 @@ public class ExportProfileService {
                         "default-export", "Default export", ExportRequest.ExportFormat.FB2, "",
                         ExportRequest.CollisionPolicy.RENAME, false,
                         settings.get("export.filenameTemplate", "%n2 - %t"),
-                        settings.get("export.subfolderTemplate", "%a/%s"), postAction);
+                        settings.get("export.subfolderTemplate", "%a/%s"), postAction, DeviceProfileService.GENERIC_FOLDER_ID);
                 save(profile);
             }
         } finally {

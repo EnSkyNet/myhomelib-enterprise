@@ -60,6 +60,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         AtomicLong bookRecords = new AtomicLong();
         AtomicLong groupMemberships = new AtomicLong();
         AtomicLong bookmarks = new AtomicLong();
+        AtomicLong annotations = new AtomicLong();
         AtomicLong history = new AtomicLong();
         AtomicLong savedSearches = new AtomicLong();
         AtomicLong readerOverrides = new AtomicLong();
@@ -76,9 +77,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             exportReadingHistory(g, history);
             exportReadingStats(g, null);
             exportBookmarks(g, bookmarks);
+            exportAnnotations(g, annotations);
+            exportAnnotationTags(g);
             exportGroups(g, null);
             exportGroupMemberships(g, groupMemberships);
             exportSavedSearches(g, savedSearches);
+            exportCustomFieldDefinitions(g);
+            exportCustomFieldValues(g);
 
             g.writeFieldName("filterSettings");
             Map<String, String> filterSettings = settings.findByPrefix(FILTER_PREFIX);
@@ -107,7 +112,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             throw portableExportFailure(e);
         }
         return new ExportResult(CURRENT_SCHEMA_VERSION, bookRecords.get(), groupMemberships.get(), bookmarks.get(),
-                history.get(), savedSearches.get(), readerOverrides.get());
+                annotations.get(), history.get(), savedSearches.get(), readerOverrides.get());
     }
 
 
@@ -122,7 +127,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     public ImportResult restoreFrom(Path sourceFile) throws IOException {
         Objects.requireNonNull(sourceFile, "sourceFile");
         ManifestHeader header = inspectManifest(sourceFile);
-        if (header.sourceVersion() == CURRENT_SCHEMA_VERSION) {
+        if (header.sourceVersion() >= 2 && header.sourceVersion() <= CURRENT_SCHEMA_VERSION) {
             return restoreCurrentSchemaStreaming(sourceFile, header);
         }
         return restoreLegacyManifest(sourceFile, header.sourceVersion());
@@ -252,24 +257,32 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         if (version < 1 || version > CURRENT_SCHEMA_VERSION) {
             throw new IOException("Unsupported portable user-data schema version: " + version);
         }
-        if (version == CURRENT_SCHEMA_VERSION && !"myhomelib-user-data".equals(format)) {
+        if (version >= 2 && !"myhomelib-user-data".equals(format)) {
             throw new IOException(format == null
-                    ? "Portable user-data format is missing for schema v" + CURRENT_SCHEMA_VERSION
+                    ? "Portable user-data format is missing for schema v" + version
                     : "Unsupported portable user-data format: " + format);
         }
         return new ManifestHeader(version, format);
     }
 
     /**
-     * Performs a cheap streaming preflight of the v2 manifest before any user data is changed.
+     * Performs a cheap streaming preflight of the current (v2+) manifest before any user data is changed.
      * Large arrays are skipped rather than materialized, but all required top-level sections and
      * reader-settings containers must have the expected shape.
      */
-    private void validateCurrentManifestStructure(Path sourceFile) throws IOException {
+    private void validateCurrentManifestStructure(Path sourceFile, int sourceVersion) throws IOException {
         Map<String, JsonToken> required = new LinkedHashMap<>();
         for (String name : List.of("bookState", "readingProgress", "readingHistory", "readingStats",
                 "bookmarks", "groups", "groupMemberships", "savedSearches")) {
             required.put(name, JsonToken.START_ARRAY);
+        }
+        if (sourceVersion >= 3) {
+            required.put("customFieldDefinitions", JsonToken.START_ARRAY);
+            required.put("customFieldValues", JsonToken.START_ARRAY);
+        }
+        if (sourceVersion >= 4) {
+            required.put("annotations", JsonToken.START_ARRAY);
+            required.put("annotationTags", JsonToken.START_ARRAY);
         }
         required.put("filterSettings", JsonToken.START_OBJECT);
         required.put("readerSettings", JsonToken.START_OBJECT);
@@ -380,7 +393,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private ImportResult restoreCurrentSchemaStreaming(Path sourceFile, ManifestHeader header) throws IOException {
-        validateCurrentManifestStructure(sourceFile);
+        validateCurrentManifestStructure(sourceFile, header.sourceVersion());
         RestoreCounters counters = new RestoreCounters();
         BoundedIdentityCache identities = new BoundedIdentityCache();
         ReaderSettingsRestoreState readerSettings = new ReaderSettingsRestoreState();
@@ -388,7 +401,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         try {
             runDatabaseRestore(() -> {
                 try {
-                    restoreDatabaseSectionsStreaming(sourceFile, identities, counters, readerSettings);
+                    restoreDatabaseSectionsStreaming(sourceFile, identities, counters, readerSettings, header.sourceVersion());
                     restoreNonDatabaseSectionsStreaming(sourceFile);
                     restoreReaderGlobal(readerSettings);
                 } catch (IOException e) {
@@ -416,9 +429,11 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void restoreDatabaseSectionsStreaming(Path sourceFile, BoundedIdentityCache ids,
                                                   RestoreCounters counters,
-                                                  ReaderSettingsRestoreState readerSettings) throws IOException {
+                                                  ReaderSettingsRestoreState readerSettings, int sourceVersion) throws IOException {
         Set<String> required = new LinkedHashSet<>(List.of("bookState", "readingProgress", "readingHistory",
                 "readingStats", "bookmarks", "groups", "groupMemberships", "savedSearches", "readerSettings"));
+        if (sourceVersion >= 3) { required.add("customFieldDefinitions"); required.add("customFieldValues"); }
+        if (sourceVersion >= 4) { required.add("annotations"); required.add("annotationTags"); }
         Set<String> seen = new HashSet<>();
         try (JsonParser parser = mapper.getFactory().createParser(sourceFile.toFile())) {
             if (parser.nextToken() != JsonToken.START_OBJECT) {
@@ -448,9 +463,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     case "readingHistory" -> row -> restoreReadingHistoryRow(row, ids, counters);
                     case "readingStats" -> row -> restoreReadingStatsRow(row, ids, counters);
                     case "bookmarks" -> row -> restoreBookmarkRow(row, ids, counters);
+                    case "annotations" -> row -> restoreAnnotationRow(row, ids, counters);
+                    case "annotationTags" -> this::restoreAnnotationTagRow;
                     case "groups" -> row -> restoreGroupRow(row, counters);
                     case "groupMemberships" -> row -> restoreGroupMembershipRow(row, ids, counters);
                     case "savedSearches" -> row -> restoreSavedSearchRow(row, counters);
+                    case "customFieldDefinitions" -> this::restoreCustomFieldDefinitionRow;
+                    case "customFieldValues" -> row -> restoreCustomFieldValueRow(row, ids, counters);
                     default -> throw new IllegalStateException("Unexpected section " + field);
                 };
                 streamArrayRows(parser, field, rowConsumer);
@@ -570,7 +589,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private ImportResult importResult(int sourceVersion, int current, RestoreCounters counters) {
         return new ImportResult(sourceVersion, current, counters.matchedBooks, counters.unmatchedBooks,
-                counters.groups, counters.groupMemberships, counters.bookmarks, counters.historyEntries,
+                counters.groups, counters.groupMemberships, counters.bookmarks, counters.annotations, counters.historyEntries,
                 counters.savedSearches, counters.readerOverrides, counters.searchChanges.snapshot());
     }
 
@@ -600,13 +619,15 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private void restoreReadingProgressRow(JsonNode n, BoundedIdentityCache ids, RestoreCounters c) {
         resolveBookId(n, ids, c).ifPresent(bookId -> jdbc().update("""
-                INSERT INTO reading_progress(book_id,paragraph_id,char_offset,percent,updated_at,anchor_id,paragraph_index)
-                VALUES(?,?,?,?,?,?,?)
+                INSERT INTO reading_progress(book_id,paragraph_id,char_offset,percent,updated_at,anchor_id,paragraph_index,last_device)
+                VALUES(?,?,?,?,?,?,?,?)
                 ON CONFLICT(book_id) DO UPDATE SET paragraph_id=excluded.paragraph_id,char_offset=excluded.char_offset,
-                    percent=excluded.percent,updated_at=excluded.updated_at,anchor_id=excluded.anchor_id,paragraph_index=excluded.paragraph_index
+                    percent=excluded.percent,updated_at=excluded.updated_at,anchor_id=excluded.anchor_id,
+                    paragraph_index=excluded.paragraph_index,last_device=excluded.last_device
                 """, bookId, limitedText(n, "paragraphId", ""), safeInt(n, "charOffset", 0),
                 safeDouble(n, "percent", 0), limitedText(n, "updatedAt", Instant.EPOCH.toString()),
-                safeNullableLimitedText(n, "anchorId"), safeInt(n, "paragraphIndex", 0)));
+                safeNullableLimitedText(n, "anchorId"), safeInt(n, "paragraphIndex", 0),
+                limitedText(n, "lastDevice", "desktop")));
     }
 
 
@@ -658,6 +679,88 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
 
 
+    private void restoreAnnotationRow(JsonNode n, BoundedIdentityCache ids, RestoreCounters c) {
+        if (!hasTableColumn("annotations", "id") || !hasTableColumn("annotation_anchors", "annotation_id")) {
+            throw new IllegalStateException("Target database must be migrated to V57 before restoring annotations");
+        }
+        resolveBookId(n, ids, c).ifPresent(bookId -> {
+            String id = limitedText(n, "id", UUID.randomUUID().toString()).trim();
+            if (id.isEmpty()) id = UUID.randomUUID().toString();
+            String type = limitedText(n, "type", "").trim().toUpperCase(Locale.ROOT);
+            if (!type.equals("HIGHLIGHT") && !type.equals("NOTE")) {
+                throw new IllegalArgumentException("Unsupported restored annotation type: " + type);
+            }
+            String color = limitedText(n, "color", "#FFF59D").trim().toUpperCase(Locale.ROOT);
+            if (!color.matches("#[0-9A-F]{6}([0-9A-F]{2})?")) {
+                throw new IllegalArgumentException("Invalid restored annotation color");
+            }
+            String note = limitedText(n, "note", "");
+            String artifactId = safeNullableLimitedText(n, "artifactId");
+            if (artifactId != null) {
+                Integer linked = jdbc().queryForObject(
+                        "SELECT COUNT(*) FROM book_artifacts WHERE book_id=? AND artifact_id=?", Integer.class,
+                        bookId, artifactId);
+                if (linked == null || linked != 1) artifactId = null;
+            }
+            long start = Math.max(0L, safeLong(n, "startOffset", 0L));
+            long end = Math.max(start, safeLong(n, "endOffset", start));
+            if ("HIGHLIGHT".equals(type) && end == start) {
+                throw new IllegalArgumentException("Restored highlight requires a non-empty text range");
+            }
+            String quote = limitedText(n, "quote", "");
+            if ("HIGHLIGHT".equals(type) && quote.isBlank()) {
+                throw new IllegalArgumentException("Restored highlight requires selected quote text");
+            }
+            if ("NOTE".equals(type) && note.isBlank()) {
+                throw new IllegalArgumentException("Restored note annotation requires note text");
+            }
+            double position = Math.max(0.0, Math.min(1.0, safeDouble(n, "position", 0.0)));
+            String createdAt = limitedText(n, "createdAt", Instant.EPOCH.toString());
+            String updatedAt = limitedText(n, "updatedAt", createdAt);
+            Instant createdInstant = Instant.parse(createdAt);
+            Instant updatedInstant = Instant.parse(updatedAt);
+            if (updatedInstant.isBefore(createdInstant)) {
+                throw new IllegalArgumentException("Restored annotation updatedAt cannot precede createdAt");
+            }
+            // annotationTags is an exact snapshot, not an append-only stream. Clearing here makes
+            // repeated restore idempotent and removes tags that were deleted in the exported state.
+            jdbc().update("DELETE FROM annotation_tags WHERE annotation_id=?", id);
+            jdbc().update("""
+                    INSERT INTO annotations(id,book_id,artifact_id,annotation_type,color,note,created_at,updated_at)
+                    VALUES(?,?,?,?,?,?,?,?)
+                    ON CONFLICT(id) DO UPDATE SET book_id=excluded.book_id,artifact_id=excluded.artifact_id,
+                        annotation_type=excluded.annotation_type,color=excluded.color,note=excluded.note,
+                        created_at=excluded.created_at,updated_at=excluded.updated_at
+                    """, id, bookId, artifactId, type, color, note, createdAt, updatedAt);
+            jdbc().update("""
+                    INSERT INTO annotation_anchors(annotation_id,chapter_id,chapter_title,paragraph_id,start_offset,end_offset,
+                        position,quote_text,prefix_text,suffix_text)
+                    VALUES(?,?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(annotation_id) DO UPDATE SET chapter_id=excluded.chapter_id,
+                        chapter_title=excluded.chapter_title,paragraph_id=excluded.paragraph_id,
+                        start_offset=excluded.start_offset,end_offset=excluded.end_offset,position=excluded.position,
+                        quote_text=excluded.quote_text,prefix_text=excluded.prefix_text,suffix_text=excluded.suffix_text
+                    """, id, safeNullableLimitedText(n, "chapterId"), safeNullableLimitedText(n, "chapterTitle"),
+                    safeNullableLimitedText(n, "paragraphId"), start, end, position,
+                    quote, limitedText(n, "prefix", ""), limitedText(n, "suffix", ""));
+            c.annotations++;
+        });
+    }
+
+    private void restoreAnnotationTagRow(JsonNode n) {
+        if (!hasTableColumn("annotation_tags", "annotation_id")) {
+            throw new IllegalStateException("Target database must be migrated to V57 before restoring annotation tags");
+        }
+        String annotationId = limitedText(n, "annotationId", "").trim();
+        String tag = limitedText(n, "tag", "").trim();
+        if (annotationId.isEmpty() || tag.isEmpty()) return;
+        jdbc().update("""
+                INSERT OR IGNORE INTO annotation_tags(annotation_id,tag)
+                SELECT ?,? WHERE EXISTS(SELECT 1 FROM annotations WHERE id=?)
+                """, annotationId, tag, annotationId);
+    }
+
+
     private void restoreGroupRow(JsonNode n, RestoreCounters c) {
         String name = limitedText(n, "name", "").trim();
         if (name.isEmpty()) return;
@@ -693,16 +796,66 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         if (existing.isEmpty() && !jdbc().queryForList("SELECT id FROM saved_searches WHERE id=?", String.class, id).isEmpty()) {
             id = UUID.randomUUID().toString();
         }
-        jdbc().update("""
-                INSERT INTO saved_searches(id,name,query,filters,created_at,last_used,use_count) VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(name) DO UPDATE SET query=excluded.query,filters=excluded.filters,
-                    created_at=excluded.created_at,last_used=excluded.last_used,use_count=excluded.use_count
-                """, id, name, limitedText(n, "query", ""), safeNullableLimitedText(n, "filters"),
-                limitedText(n, "createdAt", Instant.EPOCH.toString()),
-                limitedText(n, "lastUsed", Instant.EPOCH.toString()), safeInt(n, "useCount", 0));
+        String kind = limitedText(n, "kind", "SEARCH").trim();
+        if (!kind.equals("SEARCH") && !kind.equals("SMART_COLLECTION")) kind = "SEARCH";
+        int pinned = safeInt(n, "pinned", 0) == 0 ? 0 : 1;
+        boolean smartSchema = hasTableColumn("saved_searches", "kind")
+                && hasTableColumn("saved_searches", "pinned");
+        if (!smartSchema) {
+            if (kind.equals("SMART_COLLECTION")) {
+                throw new IllegalStateException("Target database must be migrated to V54 before restoring smart collections");
+            }
+            jdbc().update("""
+                    INSERT INTO saved_searches(id,name,query,filters,created_at,last_used,use_count) VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(name) DO UPDATE SET query=excluded.query,filters=excluded.filters,
+                        created_at=excluded.created_at,last_used=excluded.last_used,use_count=excluded.use_count
+                    """, id, name, limitedText(n, "query", ""), safeNullableLimitedText(n, "filters"),
+                    limitedText(n, "createdAt", Instant.EPOCH.toString()),
+                    limitedText(n, "lastUsed", Instant.EPOCH.toString()), safeInt(n, "useCount", 0));
+        } else {
+            jdbc().update("""
+                    INSERT INTO saved_searches(id,name,query,filters,created_at,last_used,use_count,kind,pinned) VALUES(?,?,?,?,?,?,?,?,?)
+                    ON CONFLICT(name) DO UPDATE SET query=excluded.query,filters=excluded.filters,
+                        created_at=excluded.created_at,last_used=excluded.last_used,use_count=excluded.use_count,
+                        kind=excluded.kind,pinned=excluded.pinned
+                    """, id, name, limitedText(n, "query", ""), safeNullableLimitedText(n, "filters"),
+                    limitedText(n, "createdAt", Instant.EPOCH.toString()),
+                    limitedText(n, "lastUsed", Instant.EPOCH.toString()), safeInt(n, "useCount", 0), kind, pinned);
+        }
         c.savedSearches++;
     }
 
+
+    private void restoreCustomFieldDefinitionRow(JsonNode n) {
+        String name = limitedText(n, "name", "").trim();
+        String type = limitedText(n, "fieldType", "TEXT").trim();
+        String options = safeNullableLimitedText(n, "enumOptionsJson");
+        if (name.isEmpty()) return;
+        if (!Set.of("TEXT","NUMBER","BOOL","DATE","ENUM").contains(type)) {
+            throw new IllegalArgumentException("Unsupported custom field type in backup: " + type);
+        }
+        if (options == null || options.isBlank()) options = "[]";
+        jdbc().update("""
+                INSERT INTO custom_field_definitions(name,field_type,enum_options_json,updated_at)
+                VALUES(?,?,?,CURRENT_TIMESTAMP)
+                ON CONFLICT(name) DO UPDATE SET field_type=excluded.field_type,enum_options_json=excluded.enum_options_json,updated_at=CURRENT_TIMESTAMP
+                """, name, type, options);
+    }
+
+    private void restoreCustomFieldValueRow(JsonNode n, BoundedIdentityCache ids, RestoreCounters c) {
+        resolveBookId(n, ids, c).ifPresent(bookId -> {
+            String fieldName = limitedText(n, "fieldName", "").trim();
+            String value = limitedText(n, "value", "");
+            if (fieldName.isEmpty() || value.isBlank()) return;
+            List<Long> definitionIds = jdbc().queryForList(
+                    "SELECT id FROM custom_field_definitions WHERE name=? COLLATE NOCASE", Long.class, fieldName);
+            if (definitionIds.isEmpty()) throw new IllegalStateException("Custom field definition missing during restore: " + fieldName);
+            jdbc().update("""
+                    INSERT INTO custom_field_values(book_id,definition_id,value_text,updated_at) VALUES(?,?,?,CURRENT_TIMESTAMP)
+                    ON CONFLICT(book_id,definition_id) DO UPDATE SET value_text=excluded.value_text,updated_at=CURRENT_TIMESTAMP
+                    """, bookId, definitionIds.getFirst(), value);
+        });
+    }
 
     private void restoreFilterSettings(JsonNode node) throws IOException {
         if (node == null || !node.isObject()) {
@@ -770,7 +923,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
 
     private static final class RestoreCounters {
         long matchedBooks; long unmatchedBooks; long groups; long groupMemberships;
-        long bookmarks; long historyEntries; long savedSearches; long readerOverrides;
+        long bookmarks; long annotations; long historyEntries; long savedSearches; long readerOverrides;
         final ImportChangeAccumulator searchChanges = ImportChangeAccumulator.withDefaultLimit();
     }
 
@@ -791,7 +944,8 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 "SELECT b.lib_id AS libId, b.id AS sourceBookId, " +
                         "rp.paragraph_id AS paragraphId, rp.char_offset AS charOffset, " +
                         "rp.percent AS percent, rp.updated_at AS updatedAt, " +
-                        "rp.anchor_id AS anchorId, COALESCE(rp.paragraph_index,0) AS paragraphIndex " +
+                        "rp.anchor_id AS anchorId, COALESCE(rp.paragraph_index,0) AS paragraphIndex, " +
+                        "COALESCE(NULLIF(TRIM(rp.last_device),''),'desktop') AS lastDevice " +
                         "FROM reading_progress rp JOIN books b ON b.id=rp.book_id " +
                         "ORDER BY rp.updated_at, b.id",
                 counter);
@@ -832,6 +986,32 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 counter);
     }
 
+    private void exportAnnotations(JsonGenerator g, AtomicLong counter) throws IOException {
+        if (!hasTableColumn("annotations", "id") || !hasTableColumn("annotation_anchors", "annotation_id")) {
+            g.writeArrayFieldStart("annotations"); g.writeEndArray(); return;
+        }
+        writeRows(g, "annotations",
+                "SELECT a.id AS id, b.lib_id AS libId, b.id AS sourceBookId, a.artifact_id AS artifactId, " +
+                        "a.annotation_type AS type, a.color AS color, a.note AS note, " +
+                        "x.chapter_id AS chapterId, x.chapter_title AS chapterTitle, x.paragraph_id AS paragraphId, " +
+                        "x.start_offset AS startOffset, x.end_offset AS endOffset, x.position AS position, " +
+                        "x.quote_text AS quote, x.prefix_text AS prefix, x.suffix_text AS suffix, " +
+                        "a.created_at AS createdAt, a.updated_at AS updatedAt " +
+                        "FROM annotations a JOIN annotation_anchors x ON x.annotation_id=a.id " +
+                        "JOIN books b ON b.id=a.book_id ORDER BY a.created_at,a.id",
+                counter);
+    }
+
+    private void exportAnnotationTags(JsonGenerator g) throws IOException {
+        if (!hasTableColumn("annotation_tags", "annotation_id")) {
+            g.writeArrayFieldStart("annotationTags"); g.writeEndArray(); return;
+        }
+        writeRows(g, "annotationTags",
+                "SELECT annotation_id AS annotationId, tag FROM annotation_tags ORDER BY annotation_id,tag COLLATE NOCASE",
+                null);
+    }
+
+
     private void exportGroups(JsonGenerator g, AtomicLong counter) throws IOException {
         writeRows(g, "groups",
                 "SELECT name, COALESCE(allow_delete,1) AS allowDelete " +
@@ -850,11 +1030,37 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private void exportSavedSearches(JsonGenerator g, AtomicLong counter) throws IOException {
+        boolean hasKind = hasTableColumn("saved_searches", "kind");
+        boolean hasPinned = hasTableColumn("saved_searches", "pinned");
+        String kind = hasKind ? "COALESCE(kind,'SEARCH')" : "'SEARCH'";
+        String pinned = hasPinned ? "COALESCE(pinned,0)" : "0";
+        String order = hasPinned ? "pinned DESC, name" : "name";
         writeRows(g, "savedSearches",
                 "SELECT id, name, query, filters, created_at AS createdAt, " +
-                        "last_used AS lastUsed, COALESCE(use_count,0) AS useCount " +
-                        "FROM saved_searches ORDER BY name",
+                        "last_used AS lastUsed, COALESCE(use_count,0) AS useCount, " +
+                        kind + " AS kind, " + pinned + " AS pinned " +
+                        "FROM saved_searches ORDER BY " + order,
                 counter);
+    }
+
+    private void exportCustomFieldDefinitions(JsonGenerator g) throws IOException {
+        if (!hasTableColumn("custom_field_definitions", "id")) {
+            g.writeArrayFieldStart("customFieldDefinitions"); g.writeEndArray(); return;
+        }
+        writeRows(g, "customFieldDefinitions",
+                "SELECT name, field_type AS fieldType, enum_options_json AS enumOptionsJson FROM custom_field_definitions ORDER BY name COLLATE NOCASE,id",
+                null);
+    }
+
+    private void exportCustomFieldValues(JsonGenerator g) throws IOException {
+        if (!hasTableColumn("custom_field_values", "book_id")) {
+            g.writeArrayFieldStart("customFieldValues"); g.writeEndArray(); return;
+        }
+        writeRows(g, "customFieldValues",
+                "SELECT b.lib_id AS libId, b.id AS sourceBookId, d.name AS fieldName, v.value_text AS value " +
+                        "FROM custom_field_values v JOIN books b ON b.id=v.book_id " +
+                        "JOIN custom_field_definitions d ON d.id=v.definition_id ORDER BY b.id,d.id",
+                null);
     }
 
     private void exportReaderSettings(JsonGenerator g, AtomicLong counter) throws IOException {
@@ -972,6 +1178,14 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             throw new IllegalStateException("No active collection");
         }
         return collectionManager.getCurrentJdbcTemplate();
+    }
+
+    private boolean hasTableColumn(String table, String column) {
+        return jdbc().queryForList("PRAGMA table_info(" + table + ")").stream()
+                .map(row -> row.get("name"))
+                .filter(Objects::nonNull)
+                .map(Object::toString)
+                .anyMatch(column::equalsIgnoreCase);
     }
 
     private static String safeText(JsonNode n, String field, String fallback) {

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
@@ -29,6 +30,7 @@ public interface NavigationService {
     void navigateToBook(BookId bookId);
     void showSearchResults(List<BookDto> results);
     void openBookFile(BookDto book);
+    void openBookArtifact(BookDto book, BookArtifactDto artifact);
     void openBookFolder(BookDto book);
     void readBook(BookDto book);
     void navigateToPublisher(String publisherName);

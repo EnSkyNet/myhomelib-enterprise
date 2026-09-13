@@ -93,6 +93,9 @@ require(
     "desktop EXE binding mismatch",
     "mixed Windows host evidence accepted",
     "mixed Windows acceptance session accepted",
+    "pre-session Windows evidence accepted",
+    "timezone-free Windows evidence accepted",
+    "unreferenced Windows evidence file accepted",
 )
 require(
     "tools/windows-final-evidence-pack.ps1",
@@ -175,10 +178,24 @@ require(
     "verify_manifest",
     "windows-acceptance-harness-binding",
     "tools/windows-acceptance-host.ps1",
+    "tools/zip_evidence_safety.py",
 )
 require(
     "tools/windows-acceptance-harness-binding-test.py",
     "tampered local acceptance harness unexpectedly passed",
+)
+require(
+    "tools/windows-acceptance-evidence-check.py",
+    "parse_acceptance_timestamp",
+    "timestamp predates windows-host-binding",
+    "verify_evidence_closure",
+    "contains unreferenced file(s)",
+)
+require(
+    "tools/zip_evidence_safety.py",
+    "MAX_EVIDENCE_FILES",
+    "encrypted ZIP member is not allowed",
+    "non-regular ZIP member is not allowed",
 )
 require(
     "tools/github-acceptance-artifact-ingest-test.py",

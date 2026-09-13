@@ -11,6 +11,7 @@
 
     <HBox spacing="8">
         <TextField fx:id="searchField" promptText="Назва, автор, серія, жанр..." HBox.hgrow="ALWAYS" onAction="#onSearch"/>
+        <ChoiceBox fx:id="searchModeChoice" prefWidth="145"/>
         <Button text="Шукати" onAction="#onSearch" defaultButton="true"/>
         <Button text="Очистити" onAction="#onClear"/>
         <Button text="Фільтри…" onAction="#onGlobalFilters"/>
@@ -70,6 +71,22 @@
                 <ListView fx:id="genresListView" prefHeight="90"/>
             </VBox>
         </HBox>
+
+        <VBox fx:id="annotationsSection" spacing="4" visible="false" managed="false" maxHeight="170">
+            <HBox spacing="6">
+                <Label fx:id="annotationsTitleLabel" text="Нотатки та виділення" style="-fx-font-weight: bold;"/>
+                <Label fx:id="annotationsCountLabel" text="(0)"/>
+            </HBox>
+            <ListView fx:id="annotationsListView" prefHeight="125"/>
+        </VBox>
+
+        <VBox fx:id="contentSection" spacing="4" visible="false" managed="false" maxHeight="230">
+            <HBox spacing="6">
+                <Label fx:id="contentTitleLabel" text="Збіги у тексті" style="-fx-font-weight: bold;"/>
+                <Label fx:id="contentCountLabel" text="(0)"/>
+            </HBox>
+            <ListView fx:id="contentListView" prefHeight="185"/>
+        </VBox>
 
         <VBox fx:id="booksSection" spacing="4" VBox.vgrow="ALWAYS">
             <HBox spacing="6"><Label text="Книги" style="-fx-font-weight: bold;"/><Label fx:id="booksCountLabel" text="(0)"/></HBox>

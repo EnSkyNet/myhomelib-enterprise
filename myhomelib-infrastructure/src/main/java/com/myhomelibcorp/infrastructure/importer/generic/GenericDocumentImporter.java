@@ -24,7 +24,7 @@ public class GenericDocumentImporter extends AbstractBookImporter {
     @Override public boolean supports(Path file) {
         return FORMATS.detect(file).map(f -> f.importMode() == SupportedFormat.ImportMode.GENERIC).orElse(false);
     }
-    @Override public String getFormatName() { return "OTHER (PDF/DJVU/MOBI/AZW/DOC/RTF/HTML/...)"; }
+    @Override public String getFormatName() { return "OTHER (PDF/MP3/M4B/DJVU/MOBI/AZW/DOC/RTF/HTML/...)"; }
     @Override protected Book parseBook(Path file) throws Exception {
         String name=file.getFileName().toString(); int dot=name.lastIndexOf('.'); String title=dot>0?name.substring(0,dot):name;
         BookMetadata metadata=BookMetadata.builder().annotation("").keywords("").language(LanguageCode.of("und")).rate(0).progress(0).build();

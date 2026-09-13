@@ -1,0 +1,9 @@
+README.md
+docs/history/MYHOMELIB-HISTORY-FIXES.md
+docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+docs/history/records/ITERATION-62-ANNOTATION-FTS-HARDENING-CHECKPOINT.md
+docs/history/records/ITERATION-62-CHANGED-FILES.txt
+myhomelib-infrastructure/src/main/resources/db/migration/V60__annotation_search_stable_rowids.sql
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/DatabaseMigrationMatrixTest.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationManagerQueryAdapterIntegrationTest.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationRepositoryIntegrationTest.java

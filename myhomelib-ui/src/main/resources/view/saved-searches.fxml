@@ -1,30 +1,30 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<?import javafx.geometry.Insets?>
 <?import javafx.scene.control.*?>
 <?import javafx.scene.layout.*?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.SavedSearchesController"
       spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;"
-      prefWidth="400" prefHeight="450">
+      prefWidth="500" prefHeight="540">
 
-    <Label text="💾 Збережені пошуки" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
-
-    <Separator/>
-
-    <Label text="Зберегти поточний пошук:" style="-fx-font-weight: bold;"/>
-    <HBox spacing="5">
-        <TextField fx:id="searchNameField" promptText="Назва..." HBox.hgrow="ALWAYS"/>
-    </HBox>
-    <HBox spacing="5">
-        <TextField fx:id="searchQueryField" promptText="Запит..." HBox.hgrow="ALWAYS"/>
-        <Button text="💾 Зберегти" onAction="#onSaveSearch" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
+    <HBox spacing="8" alignment="CENTER_LEFT">
+        <Label text="💾 Saved searches" style="-fx-font-size: 16px; -fx-font-weight: bold;" HBox.hgrow="ALWAYS"/>
+        <Button text="◈ Smart Collection" onAction="#onNewSmartCollection"/>
     </HBox>
 
     <Separator/>
 
-    <Label text="Список збережених пошуків:" style="-fx-font-weight: bold;"/>
+    <Label text="Save classic search:" style="-fx-font-weight: bold;"/>
+    <TextField fx:id="searchNameField" promptText="Name..."/>
+    <HBox spacing="5">
+        <TextField fx:id="searchQueryField" promptText="Query..." HBox.hgrow="ALWAYS"/>
+        <Button text="💾 Save" onAction="#onSaveSearch"/>
+    </HBox>
+
+    <Separator/>
     <ListView fx:id="savedSearchesListView" VBox.vgrow="ALWAYS"/>
-
+    <HBox alignment="CENTER_RIGHT">
+        <Button text="Close" onAction="#onClose"/>
+    </HBox>
 </VBox>

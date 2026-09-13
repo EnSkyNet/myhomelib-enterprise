@@ -1,11 +1,14 @@
 package com.myhomelibcorp.ui.details;
 
 import com.myhomelibcorp.application.dto.AuthorDto;
+import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.application.dto.GroupDto;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.usecase.book.SelectPreferredBookArtifactUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
+import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.reader.inspection.DocumentImageInfo;
@@ -29,9 +32,11 @@ import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.ButtonType;
+import javafx.scene.control.ComboBox;
 import javafx.scene.control.Dialog;
 import javafx.scene.control.Hyperlink;
 import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
 import javafx.scene.control.Pagination;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextArea;
@@ -67,6 +72,7 @@ public class BookDetailsController {
     private final LocalizationService localizationService;
     private final BookDetailsAnalysisService analysisService;
     private final UiBackgroundExecutor backgroundExecutor;
+    private final SelectPreferredBookArtifactUseCase selectPreferredBookArtifactUseCase;
 
     @FXML private ImageView coverImageView;
     @FXML private Label titleLabel;
@@ -81,6 +87,11 @@ public class BookDetailsController {
     @FXML private Label translatorsLabel;
     @FXML private Label formatLabel;
     @FXML private Label fileSizeLabel;
+    @FXML private FlowPane artifactBadgesPane;
+    @FXML private ComboBox<BookArtifactDto> artifactComboBox;
+    @FXML private Label artifactLocationLabel;
+    @FXML private Button setPreferredArtifactButton;
+    @FXML private Button openArtifactButton;
     @FXML private Label textStatsLabel;
     @FXML private Label localStatusLabel;
     @FXML private Label ratingLabel;
@@ -107,6 +118,7 @@ public class BookDetailsController {
         BookDetailsViewModel vm = appState.getBookDetails();
         bookChangeListener = (obs, old, bookDto) -> loadBookDetails(bookDto);
         vm.currentBookProperty().addListener(bookChangeListener);
+        configureArtifactPicker();
         loadBookDetails(vm.getCurrentBook());
     }
 
@@ -174,6 +186,7 @@ public class BookDetailsController {
         translatorsLabel.setText("Перекладачі: " + value(book.getTranslators(), "—"));
         formatLabel.setText("Формат: " + value(document.format(), detectFormat(book)));
         fileSizeLabel.setText("Розмір файла: " + value(book.getFileSizeFormatted(), "—"));
+        renderArtifacts(book);
         textStatsLabel.setText(formatTextStats(document));
         localStatusLabel.setText("Статус: " + book.getLocalStatus());
         ratingLabel.setText("Оцінка: " + value(book.getRateStars(), "—"));
@@ -208,6 +221,7 @@ public class BookDetailsController {
         reviewArea.setText(value(book.getReview(), ""));
         formatLabel.setText("Формат: " + detectFormat(book));
         fileSizeLabel.setText("Розмір файла: " + value(book.getFileSizeFormatted(), "—"));
+        renderArtifacts(book);
         localStatusLabel.setText("Статус: " + book.getLocalStatus());
         ratingLabel.setText("Оцінка: " + value(book.getRateStars(), "—"));
         progressLabel.setText("Прочитано: " + book.getProgressFormatted());
@@ -224,6 +238,105 @@ public class BookDetailsController {
         documentWarningLabel.setText("Завантаження відомостей…");
         documentWarningLabel.setVisible(true);
         documentWarningLabel.setManaged(true);
+    }
+
+    private void configureArtifactPicker() {
+        artifactComboBox.setCellFactory(list -> new ListCell<>() {
+            @Override protected void updateItem(BookArtifactDto artifact, boolean empty) {
+                super.updateItem(artifact, empty);
+                setText(empty || artifact == null ? null : artifactChoiceText(artifact));
+                setDisable(!empty && artifact != null && !isArtifactOpenable(artifact));
+            }
+        });
+        artifactComboBox.setButtonCell(new ListCell<>() {
+            @Override protected void updateItem(BookArtifactDto artifact, boolean empty) {
+                super.updateItem(artifact, empty);
+                setText(empty || artifact == null ? null : artifactChoiceText(artifact));
+            }
+        });
+        artifactComboBox.valueProperty().addListener((obs, old, selected) -> updateArtifactActions(selected));
+    }
+
+    private void renderArtifacts(BookDto book) {
+        List<BookArtifactDto> artifacts = book == null ? List.of() : book.getArtifacts();
+        artifactBadgesPane.getChildren().clear();
+        artifactComboBox.getItems().setAll(artifacts);
+        if (artifacts.isEmpty()) {
+            artifactBadgesPane.getChildren().add(new Label("—"));
+            artifactComboBox.setDisable(true);
+            artifactLocationLabel.setText("Джерело/розташування: —");
+            updateArtifactActions(null);
+            return;
+        }
+        artifactComboBox.setDisable(false);
+        for (BookArtifactDto artifact : artifacts) {
+            Label badge = new Label(artifactBadgeText(book, artifact));
+            badge.getStyleClass().add("artifact-badge");
+            if (artifact.getId() != null && artifact.getId().equals(book.getPreferredArtifactId())) {
+                badge.getStyleClass().add("artifact-badge-preferred");
+            }
+            if (!isArtifactOpenable(artifact)) badge.getStyleClass().add("artifact-badge-unavailable");
+            artifactBadgesPane.getChildren().add(badge);
+        }
+        BookArtifactDto preferred = book.getPreferredArtifact();
+        artifactComboBox.getSelectionModel().select(preferred != null ? preferred : artifacts.getFirst());
+        updateArtifactActions(artifactComboBox.getValue());
+    }
+
+    private void updateArtifactActions(BookArtifactDto artifact) {
+        BookDto book = currentBook();
+        boolean valid = artifact != null && book != null;
+        boolean preferred = valid && artifact.getId() != null && artifact.getId().equals(book.getPreferredArtifactId());
+        setPreferredArtifactButton.setDisable(!valid || preferred);
+        openArtifactButton.setDisable(!valid || !isArtifactOpenable(artifact));
+        artifactLocationLabel.setText(valid ? "Джерело/розташування: " + artifactLocation(artifact) : "Джерело/розташування: —");
+    }
+
+    private static boolean isArtifactOpenable(BookArtifactDto artifact) {
+        return artifact != null && artifact.isLocal() && "AVAILABLE".equalsIgnoreCase(artifact.getState());
+    }
+
+    private static String artifactBadgeText(BookDto book, BookArtifactDto artifact) {
+        String format = value(artifact.getFormat(), "FILE").toUpperCase(Locale.ROOT);
+        String preferred = artifact.getId() != null && artifact.getId().equals(book.getPreferredArtifactId()) ? " ★" : "";
+        String unavailable = isArtifactOpenable(artifact) ? "" : " · " + value(artifact.getState(), "UNAVAILABLE");
+        return format + preferred + unavailable;
+    }
+
+    private static String artifactChoiceText(BookArtifactDto artifact) {
+        if (artifact == null) return "—";
+        String suffix = isArtifactOpenable(artifact) ? "" : " [" + value(artifact.getState(), "UNAVAILABLE") + "]";
+        return artifact.getDisplayName() + suffix;
+    }
+
+    private static String artifactLocation(BookArtifactDto artifact) {
+        String source = value(artifact.getSourceId(), "локальне джерело");
+        String entry = firstNonBlank(artifact.getArchiveEntry(), artifact.getFileName());
+        String base = firstNonBlank(artifact.getCollectionRoot(), artifact.getFolder());
+        String location = base.isBlank() ? entry : (entry.isBlank() ? base : base + "/" + entry);
+        return source + " · " + value(location, "—");
+    }
+
+    @FXML
+    private void onSetPreferredArtifact() {
+        BookDto book = currentBook();
+        BookArtifactDto artifact = artifactComboBox.getValue();
+        if (book == null || artifact == null || artifact.getId() == null || artifact.getId().isBlank()) return;
+        setPreferredArtifactButton.setDisable(true);
+        backgroundExecutor.submit(() -> selectPreferredBookArtifactUseCase.execute(BookId.fromString(book.getId()), artifact.getId()))
+                .thenAccept(refreshed -> UiExecutor.runOnUiThread(() -> appState.getBookDetails().setCurrentBook(refreshed)))
+                .exceptionally(ex -> {
+                    log.warn("Не вдалося змінити preferred artifact {}: {}", artifact.getId(), ex.getMessage());
+                    UiExecutor.runOnUiThread(() -> setPreferredArtifactButton.setDisable(false));
+                    return null;
+                });
+    }
+
+    @FXML
+    private void onOpenSelectedArtifact() {
+        BookDto book = currentBook();
+        BookArtifactDto artifact = artifactComboBox.getValue();
+        if (book != null && isArtifactOpenable(artifact)) navigationService.openBookArtifact(book, artifact);
     }
 
     private void renderAuthorLinks(List<AuthorDto> authors, String fallback) {
@@ -476,6 +589,12 @@ public class BookDetailsController {
         translatorsLabel.setText("Перекладачі: —");
         formatLabel.setText("Формат: —");
         fileSizeLabel.setText("Розмір файла: —");
+        artifactBadgesPane.getChildren().setAll(new Label("—"));
+        artifactComboBox.getItems().clear();
+        artifactComboBox.setDisable(true);
+        artifactLocationLabel.setText("Джерело/розташування: —");
+        setPreferredArtifactButton.setDisable(true);
+        openArtifactButton.setDisable(true);
         textStatsLabel.setText("Текст: —");
         localStatusLabel.setText("Статус: —");
         ratingLabel.setText("Оцінка: —");

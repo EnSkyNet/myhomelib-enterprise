@@ -21,11 +21,12 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from evidence_contracts import current_schema, validate_record
+
+from zip_evidence_safety import inspect_open_zip
+
 ROOT = Path(__file__).resolve().parents[1]
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-MAX_FILES = 50
-MAX_MEMBER_BYTES = 1024 * 1024 * 1024
-MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 
 
 class IngestError(RuntimeError):
@@ -50,17 +51,6 @@ def load_module(name: str, path: Path):
     return module
 
 
-def safe_member_name(info: zipfile.ZipInfo) -> str:
-    raw = info.filename.replace("\\", "/")
-    p = PurePosixPath(raw)
-    need(raw and not raw.startswith("/") and not p.is_absolute(), f"unsafe absolute ZIP member: {raw!r}")
-    need(".." not in p.parts, f"unsafe parent traversal ZIP member: {raw!r}")
-    # Unix symlink bit in external attributes; reject links instead of following them.
-    mode = (info.external_attr >> 16) & 0o170000
-    need(mode != 0o120000, f"symlink ZIP member is not allowed: {raw!r}")
-    return str(p)
-
-
 def parse_manifest(text: str) -> dict[str, str]:
     result: dict[str, str] = {}
     for line_no, raw in enumerate(text.splitlines(), 1):
@@ -77,24 +67,93 @@ def parse_manifest(text: str) -> dict[str, str]:
     return result
 
 
+def validate_integrity_evidence(
+    zf: zipfile.ZipFile,
+    candidate_prefix: str,
+    candidate_files: list[str],
+    manifest: dict[str, str],
+    github: dict[str, Any],
+) -> None:
+    integrity_name = "release-candidate-integrity-windows.json"
+    sidecar_name = integrity_name + ".sha256"
+    sums_name = "release-windows-SHA256SUMS"
+    expected = set(manifest) | {"candidate-windows.sha256", sums_name, integrity_name, sidecar_name}
+    need(set(candidate_files) == expected, "candidate-windows member set does not match exact evidence contract")
+
+    integrity_blob = zf.read(candidate_prefix + integrity_name)
+    sidecar_parts = zf.read(candidate_prefix + sidecar_name).decode("utf-8-sig").strip().split(None, 1)
+    need(len(sidecar_parts) == 2 and sidecar_parts[1].lstrip("*") == integrity_name,
+         "candidate integrity sidecar is invalid")
+    integrity_sha = sha256_bytes(integrity_blob)
+    need(sidecar_parts[0].lower() == integrity_sha, "candidate integrity sidecar digest mismatch")
+    need(integrity_sha == github["windowsIntegritySha256"], "candidate integrity hash does not match GitHub evidence")
+    try:
+        record = json.loads(integrity_blob.decode("utf-8-sig"))
+    except Exception as exc:  # noqa: BLE001
+        raise IngestError(f"candidate integrity JSON invalid: {exc}") from exc
+    need(isinstance(record, dict), "candidate integrity JSON root must be an object")
+    try:
+        validate_record(record, "release-candidate-integrity", label="candidate integrity record")
+    except ValueError as exc:
+        raise IngestError(str(exc)) from exc
+    need(record.get("overall") == "PASS", "candidate integrity record is not PASS")
+    need(record.get("platform") == "windows", "candidate integrity platform must be windows")
+    need(record.get("projectVersion") == github["windowsIntegrityProjectVersion"],
+         "candidate integrity project version mismatch")
+    need(str(record.get("candidateSha") or "").lower() == github["candidateSha"] == github["windowsIntegrityCandidateSha"],
+         "candidate integrity Git SHA mismatch")
+    need(str(record.get("sourceTreeSha256") or "").lower() == github["windowsIntegritySourceTreeSha256"],
+         "candidate integrity source-tree digest mismatch")
+    need(str(record.get("distManifestSha256") or "").lower() == github["windowsIntegrityDistManifestSha256"],
+         "candidate integrity dist-manifest digest mismatch")
+
+    sums_blob = zf.read(candidate_prefix + sums_name)
+    sums_sha = sha256_bytes(sums_blob)
+    need(sums_sha == github["windowsChecksumsSha256"], "release Windows SHA256SUMS digest mismatch vs GitHub evidence")
+    need(str(record.get("sha256sSha256") or "").lower() == sums_sha, "candidate integrity SHA256SUMS digest mismatch")
+    release_sums = parse_manifest(sums_blob.decode("utf-8-sig"))
+    rows = record.get("distFiles")
+    need(isinstance(rows, list) and rows, "candidate integrity distFiles missing")
+    need(record.get("distFileCount") == len(rows), "candidate integrity distFileCount mismatch")
+    dist: dict[str, dict[str, Any]] = {}
+    aggregate = hashlib.sha256()
+    for row in rows:
+        need(isinstance(row, dict), "candidate integrity distFiles row invalid")
+        rel = str(row.get("path") or "").replace("\\", "/")
+        digest = str(row.get("sha256") or "").lower()
+        size = row.get("size")
+        need(rel and "/" not in rel and ".." not in PurePosixPath(rel).parts, f"candidate integrity dist path invalid: {rel!r}")
+        need(SHA256_RE.fullmatch(digest) is not None, f"candidate integrity dist digest invalid: {rel}")
+        need(isinstance(size, int) and size >= 0, f"candidate integrity dist size invalid: {rel}")
+        need(rel not in dist, f"candidate integrity duplicate dist path: {rel}")
+        dist[rel] = row
+        aggregate.update(f"{digest}  {rel}  {size}\n".encode("utf-8"))
+    need(set(dist) == set(release_sums), "candidate integrity dist file set does not match release SHA256SUMS")
+    need(aggregate.hexdigest() == github["windowsIntegrityDistManifestSha256"],
+         "candidate integrity dist aggregate mismatch")
+    for rel, digest in release_sums.items():
+        need(str(dist[rel]["sha256"]).lower() == digest, f"candidate integrity/release sums digest mismatch for {rel}")
+    for rel, digest in manifest.items():
+        need(rel in release_sums and release_sums[rel] == digest, f"candidate manifest is not bound by release SHA256SUMS: {rel}")
+        payload = zf.read(candidate_prefix + rel)
+        need(len(payload) == int(dist[rel]["size"]), f"candidate integrity size mismatch for {rel}")
+
+
 def inspect_zip(blob: bytes) -> tuple[zipfile.ZipFile, dict[str, zipfile.ZipInfo]]:
     need(blob, "GitHub acceptance artifact ZIP is empty")
     try:
         zf = zipfile.ZipFile(__import__("io").BytesIO(blob))
     except zipfile.BadZipFile as exc:
         raise IngestError("GitHub acceptance artifact is not a valid ZIP") from exc
-    infos = [x for x in zf.infolist() if not x.is_dir()]
-    need(1 <= len(infos) <= MAX_FILES, f"unexpected GitHub acceptance artifact file count: {len(infos)}")
-    names: dict[str, zipfile.ZipInfo] = {}
-    total = 0
-    for info in infos:
-        name = safe_member_name(info)
-        need(name not in names, f"duplicate normalized ZIP member: {name}")
-        need(info.file_size <= MAX_MEMBER_BYTES, f"ZIP member is too large: {name}")
-        total += info.file_size
-        need(total <= MAX_TOTAL_BYTES, "GitHub acceptance artifact uncompressed size exceeds safety limit")
-        names[name] = info
-    return zf, names
+    infos = inspect_open_zip(
+        zf,
+        label="GitHub acceptance artifact",
+        error_type=IngestError,
+        max_files=50,
+        max_member_bytes=1024 * 1024 * 1024,
+        max_total_bytes=2 * 1024 * 1024 * 1024,
+    )
+    return zf, infos
 
 
 def locate_root(names: set[str]) -> str:
@@ -126,7 +185,6 @@ def validate_and_stage(blob: bytes, destination: Path, *, remote: dict[str, Any]
         need(manifest_name in candidate_files, "candidate-windows.sha256 missing")
         manifest = parse_manifest(zf.read(candidate_prefix + manifest_name).decode("utf-8-sig"))
         need(len(manifest) == 3, "candidate-windows.sha256 must contain exactly MSI, EXE and portable entries")
-        need(set(candidate_files) == set(manifest) | {manifest_name}, "candidate-windows member set does not match manifest")
         msi = [n for n in manifest if n.lower().endswith(".msi")]
         exe = [n for n in manifest if n.lower().endswith(".exe")]
         portable = [n for n in manifest if n.lower().endswith(".zip")]
@@ -140,6 +198,7 @@ def validate_and_stage(blob: bytes, destination: Path, *, remote: dict[str, Any]
             gh_json = temp / "github-connected-acceptance.json"
             gh_json.write_bytes(zf.read(prefix + "github-connected-acceptance.json"))
             gh = github_mod.verify_github_json(gh_json).details
+            validate_integrity_evidence(zf, candidate_prefix, candidate_files, manifest, gh)
             harness_blob = zf.read(prefix + "acceptance-harness.sha256")
             harness_sha = sha256_bytes(harness_blob)
             need(harness_sha == gh["acceptanceHarnessManifestSha256"], "acceptance harness manifest hash does not match GitHub evidence")
@@ -162,7 +221,7 @@ def validate_and_stage(blob: bytes, destination: Path, *, remote: dict[str, Any]
                 (stage / "candidate-windows" / name).write_bytes(zf.read(candidate_prefix + name))
 
             record = {
-                "schemaVersion": 1,
+                "schemaVersion": current_schema("github-connected-acceptance-artifact-ingest"),
                 "scenario": "github-connected-acceptance-artifact-ingest",
                 "overall": "PASS",
                 "candidateSha": gh["candidateSha"],
@@ -179,6 +238,12 @@ def validate_and_stage(blob: bytes, destination: Path, *, remote: dict[str, Any]
                 "windowsMsiSha256": gh["windowsMsiSha256"],
                 "windowsExeSha256": gh["windowsExeSha256"],
                 "windowsPortableSha256": gh["windowsPortableSha256"],
+                "windowsChecksumsSha256": gh["windowsChecksumsSha256"],
+                "windowsIntegrityProjectVersion": gh["windowsIntegrityProjectVersion"],
+                "windowsIntegrityCandidateSha": gh["windowsIntegrityCandidateSha"],
+                "windowsIntegritySha256": gh["windowsIntegritySha256"],
+                "windowsIntegritySourceTreeSha256": gh["windowsIntegritySourceTreeSha256"],
+                "windowsIntegrityDistManifestSha256": gh["windowsIntegrityDistManifestSha256"],
                 "acceptanceHarnessManifestSha256": gh["acceptanceHarnessManifestSha256"],
             }
             (stage / "github-connected-acceptance-ingest.json").write_text(

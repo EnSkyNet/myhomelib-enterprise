@@ -6,6 +6,13 @@ import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.usecase.book.EditBookUseCase;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.ui.metadata.MetadataMergeUiService;
+import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
+import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.util.UiExceptionMessages;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -20,6 +27,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 @Service
 public class ClassicLibraryActionsService {
@@ -30,10 +38,16 @@ public class ClassicLibraryActionsService {
     private final DialogService dialogs;
     private final EditBookUseCase editBookUseCase;
     private final UiBackgroundExecutor backgroundExecutor;
+    private final MetadataMergeUiService metadataMergeUi;
+    private final LibraryOperationCoordinator operations;
+    private final ApplicationState state;
+    private final AtomicLong editGeneration = new AtomicLong();
 
     public ClassicLibraryActionsService(BookQueryRepository query, BookMapper mapper, BookSaver bookSaver,
                                         ApplicationSettingsPort settings, DialogService dialogs,
-                                        EditBookUseCase editBookUseCase, UiBackgroundExecutor backgroundExecutor) {
+                                        EditBookUseCase editBookUseCase, UiBackgroundExecutor backgroundExecutor,
+                                        MetadataMergeUiService metadataMergeUi,
+                                        LibraryOperationCoordinator operations, ApplicationState state) {
         this.query = query;
         this.mapper = mapper;
         this.bookSaver = bookSaver;
@@ -41,6 +55,9 @@ public class ClassicLibraryActionsService {
         this.dialogs = dialogs;
         this.editBookUseCase = editBookUseCase;
         this.backgroundExecutor = backgroundExecutor;
+        this.metadataMergeUi = metadataMergeUi;
+        this.operations = operations;
+        this.state = state;
     }
 
     public List<BookDto> newBooks(int limit) {
@@ -53,26 +70,47 @@ public class ClassicLibraryActionsService {
      */
     public void editBook(Window owner, BookId id, Runnable onSuccess) {
         if (id == null) return;
+        LibraryOperationCoordinator.Lease lease;
+        try {
+            lease = operations.acquireDetached(LibraryOperationType.UPDATE);
+        } catch (RuntimeException conflict) {
+            dialogs.showError("Помилка редагування", UiExceptionMessages.root(conflict));
+            return;
+        }
+        var token = UiAsyncRequestGuard.next(editGeneration, state);
         backgroundExecutor.submit(() -> query.findById(id).orElse(null))
                 .whenComplete((book, loadError) -> Platform.runLater(() -> {
+                    if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) {
+                        lease.close();
+                        return;
+                    }
                     if (loadError != null) {
-                        dialogs.showError("Помилка редагування", rootMessage(loadError));
+                        lease.close();
+                        dialogs.showError("Помилка редагування", UiExceptionMessages.root(loadError));
                         return;
                     }
                     if (book == null) {
+                        lease.close();
                         dialogs.showWarning("Книгу не знайдено", "Запис уже відсутній у колекції.");
                         return;
                     }
-                    showEditDialog(owner, book, onSuccess);
+                    try {
+                        showEditDialog(owner, book, onSuccess, lease, token);
+                    } catch (RuntimeException failure) {
+                        lease.close();
+                        dialogs.showError("Помилка редагування", UiExceptionMessages.root(failure));
+                    }
                 }));
     }
 
-    private void showEditDialog(Window owner, Book book, Runnable onSuccess) {
+    private void showEditDialog(Window owner, Book book, Runnable onSuccess,
+                                LibraryOperationCoordinator.Lease lease, UiAsyncRequestToken token) {
         Dialog<ButtonType> d = new Dialog<>();
         d.setTitle("Редагування книги");
         d.setHeaderText(book.getTitle());
         if (owner != null) d.initOwner(owner);
-        d.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
+        ButtonType onlineMetadata = new ButtonType("Онлайн-метадані…", ButtonBar.ButtonData.LEFT);
+        d.getDialogPane().getButtonTypes().addAll(onlineMetadata, ButtonType.OK, ButtonType.CANCEL);
 
         GridPane g = new GridPane();
         g.setHgap(10); g.setVgap(7); g.setPadding(new Insets(12));
@@ -95,8 +133,15 @@ public class ClassicLibraryActionsService {
         d.getDialogPane().setContent(g);
         d.setResizable(true);
 
-        if (d.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
+        ButtonType result = d.showAndWait().orElse(ButtonType.CANCEL);
+        if (result == onlineMetadata) {
+            lease.close();
+            metadataMergeUi.lookupAndReview(owner, book.getId(), onSuccess);
+            return;
+        }
+        if (result != ButtonType.OK) { lease.close(); return; }
         if (title.getText() == null || title.getText().isBlank()) {
+            lease.close();
             dialogs.showWarning("Некоректні дані", "Назва не може бути порожньою.");
             return;
         }
@@ -115,13 +160,17 @@ public class ClassicLibraryActionsService {
                 review.getText());
 
         backgroundExecutor.submit(() -> editBookUseCase.execute(request))
-                .whenComplete((updated, saveError) -> Platform.runLater(() -> {
-                    if (saveError != null) {
-                        dialogs.showError("Помилка редагування", rootMessage(saveError));
-                        return;
-                    }
-                    if (onSuccess != null) onSuccess.run();
-                }));
+                .whenComplete((updated, saveError) -> {
+                    lease.close();
+                    Platform.runLater(() -> {
+                        if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) return;
+                        if (saveError != null) {
+                            dialogs.showError("Помилка редагування", UiExceptionMessages.root(saveError));
+                            return;
+                        }
+                        if (onSuccess != null) onSuccess.run();
+                    });
+                });
     }
 
     public boolean deleteBook(BookId id) {
@@ -146,13 +195,6 @@ public class ClassicLibraryActionsService {
             else result.add(new Author(w[1], String.join(" ", java.util.Arrays.copyOfRange(w, 2, w.length)), w[0]));
         }
         return result.isEmpty() ? fallback : result;
-    }
-
-    private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current.getCause() != null) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
     }
 
     private static TextField f(String s) { return new TextField(s == null ? "" : s); }

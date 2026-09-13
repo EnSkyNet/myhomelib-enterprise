@@ -11,7 +11,7 @@ import java.util.Collections;
 import java.util.List;
 
 @Data
-@Builder
+@Builder(toBuilder = true)
 @NoArgsConstructor
 @AllArgsConstructor
 public class BookDto {
@@ -38,6 +38,8 @@ public class BookDto {
     private boolean local;
     private LocalDateTime missingSince;
     private String collectionRoot;
+    private List<BookArtifactDto> artifacts;
+    private String preferredArtifactId;
     private String review;
     private LocalDateTime createdAt;
 
@@ -73,6 +75,37 @@ public class BookDto {
      */
     public List<String> getGenres() {
         return genres != null ? genres : Collections.emptyList();
+    }
+
+    public List<BookArtifactDto> getArtifacts() {
+        return artifacts != null ? Collections.unmodifiableList(artifacts) : Collections.emptyList();
+    }
+
+    public BookArtifactDto getPreferredArtifact() {
+        if (artifacts == null || artifacts.isEmpty()) return null;
+        if (preferredArtifactId != null && !preferredArtifactId.isBlank()) {
+            for (BookArtifactDto artifact : artifacts) {
+                if (artifact != null && preferredArtifactId.equals(artifact.getId())) return artifact;
+            }
+        }
+        for (BookArtifactDto artifact : artifacts) {
+            if (artifact != null && artifact.isLocal() && "AVAILABLE".equalsIgnoreCase(artifact.getState())) return artifact;
+        }
+        return artifacts.stream().filter(java.util.Objects::nonNull).findFirst().orElse(null);
+    }
+
+    /** Returns a DTO whose legacy storage fields point at the selected representation. */
+    public BookDto projectArtifact(BookArtifactDto artifact) {
+        if (artifact == null) throw new IllegalArgumentException("Artifact is required");
+        return toBuilder()
+                .fileName(artifact.getFileName())
+                .folder(artifact.getFolder())
+                .collectionRoot(artifact.getCollectionRoot())
+                .archiveEntry(artifact.getArchiveEntry())
+                .fileSize(artifact.getFileSize())
+                .local(artifact.isLocal())
+                .missingSince(artifact.isLocal() ? null : missingSince)
+                .build();
     }
 
     public String getFileSizeFormatted() {

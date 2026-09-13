@@ -267,6 +267,7 @@ public class CollectionUpdateUiService {
             case ROLLING_BACK -> "відкат";
             case FINALIZING -> "фіналізація source state";
             case INTEGRITY_CHECKS -> "перевірка цілісності";
+            case SCANNING_DUPLICATES -> "пошук дублікатів";
             case SYNCHRONIZING_FILES -> "синхронізація файлів";
             case OPTIMIZING_DATABASE -> "оптимізація БД";
             case BACKING_UP -> "резервне копіювання";

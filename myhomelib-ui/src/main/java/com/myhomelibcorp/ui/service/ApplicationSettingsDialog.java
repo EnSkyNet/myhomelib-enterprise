@@ -1,6 +1,9 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.content.indexing.IndexingPerformanceSettings;
+import com.myhomelibcorp.application.content.indexing.IndexingPerformanceSettingsService;
+import com.myhomelibcorp.application.content.indexing.IndexingResourceProfile;
 import com.myhomelibcorp.application.util.CommandTemplate;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.BoundedIoSupport;
@@ -39,15 +42,18 @@ public class ApplicationSettingsDialog {
     private final SupportBundleService supportBundleService;
     private final LocalizationService localizationService;
     private final ApplicationThemeService themeService;
+    private final IndexingPerformanceSettingsService indexingPerformanceSettingsService;
 
     public ApplicationSettingsDialog(ApplicationSettingsPort settings,
                                      SupportBundleService supportBundleService,
                                      LocalizationService localizationService,
-                                     ApplicationThemeService themeService) {
+                                     ApplicationThemeService themeService,
+                                     IndexingPerformanceSettingsService indexingPerformanceSettingsService) {
         this.settings = settings;
         this.supportBundleService = supportBundleService;
         this.localizationService = localizationService;
         this.themeService = themeService;
+        this.indexingPerformanceSettingsService = indexingPerformanceSettingsService;
     }
 
     public void show(Window owner) {
@@ -64,11 +70,13 @@ public class ApplicationSettingsDialog {
 
         ApplicationThemeService.ThemeConfig originalTheme = themeService.current();
         ThemeEditor themeEditor = new ThemeEditor(originalTheme);
+        IndexingSettingsEditor indexingEditor = new IndexingSettingsEditor(indexingPerformanceSettingsService.load());
 
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getTabs().add(tab("Загальні", generalPane(bool)));
         tabs.getTabs().add(tab("Тема", themeEditor.pane()));
+        tabs.getTabs().add(tab("Індексування", indexingEditor.pane()));
         tabs.getTabs().add(tab("Зовнішнє читання", externalReadersPane(text)));
         tabs.getTabs().add(tab("Конвертери", convertersPane(text)));
         tabs.getTabs().add(tab("Пристрій / експорт", devicePane(text)));
@@ -96,6 +104,7 @@ public class ApplicationSettingsDialog {
         });
         bool.forEach((key, check) -> settings.putBoolean(key, check.isSelected()));
         themeService.save(themeEditor.config());
+        indexingPerformanceSettingsService.save(indexingEditor.value());
     }
 
     private Tab tab(String title, Node content) { return new Tab(title, content); }
@@ -116,6 +125,7 @@ public class ApplicationSettingsDialog {
         });
         CheckBox confirmDelete = checkbox(bool, "ui.confirmDelete", "Підтверджувати видалення книг", true);
         CheckBox restoreSession = checkbox(bool, "ui.restoreSession", "Відновлювати останню сесію", true);
+        CheckBox reducedMotion = checkbox(bool, "ui.accessibility.reducedMotion", "Зменшити рух та автоматичну прокрутку", false);
         Label paths = new Label("Каталог даних: " + AppPaths.dataDir() + "\nPortable mode: " + (AppPaths.portableMode() ? "увімкнено" : "вимкнено"));
         paths.setWrapText(true);
         Button languageDiagnostics = new Button("Діагностика мов...");
@@ -123,7 +133,7 @@ public class ApplicationSettingsDialog {
         Button diagnostics = new Button("Створити діагностичний ZIP...");
         diagnostics.setOnAction(e -> createSupportBundle(diagnostics.getScene() == null ? null : diagnostics.getScene().getWindow()));
         HBox diagnosticActions = new HBox(8, languageDiagnostics, diagnostics);
-        box.getChildren().addAll(row("Мова інтерфейсу", lang), confirmDelete, restoreSession, new Separator(), paths, diagnosticActions);
+        box.getChildren().addAll(row("Мова інтерфейсу", lang), confirmDelete, restoreSession, reducedMotion, new Separator(), paths, diagnosticActions);
         return scroll(box);
     }
 
@@ -399,6 +409,51 @@ public class ApplicationSettingsDialog {
         Alert alert = new Alert(type); alert.setTitle(title); alert.setHeaderText(null);
         TextArea area = new TextArea(content == null ? "" : content); area.setEditable(false); area.setWrapText(true);
         area.setPrefSize(720, 320); alert.getDialogPane().setContent(area); alert.showAndWait();
+    }
+
+    private static final class IndexingSettingsEditor {
+        private final ComboBox<IndexingResourceProfile> profile = new ComboBox<>();
+        private final CheckBox pauseOnBattery = new CheckBox("Призупиняти повнотекстове індексування при роботі від батареї");
+        private final Label summary = new Label();
+
+        IndexingSettingsEditor(IndexingPerformanceSettings current) {
+            profile.getItems().setAll(IndexingResourceProfile.values());
+            profile.setValue(current.profile());
+            profile.setAccessibleText("Профіль ресурсів повнотекстового індексування");
+            pauseOnBattery.setSelected(current.pauseOnBattery());
+            pauseOnBattery.setAccessibleText("Призупиняти повнотекстове індексування при роботі від батареї");
+            profile.valueProperty().addListener((obs, oldValue, newValue) -> updateSummary());
+            updateSummary();
+        }
+
+        Node pane() {
+            VBox box = new VBox(10);
+            box.setPadding(new Insets(12));
+            Label explanation = new Label("Eco мінімізує навантаження, Balanced — рекомендований режим, Fast використовує більше CPU та I/O.");
+            explanation.setWrapText(true);
+            summary.setWrapText(true);
+            GridPane row = new GridPane();
+            row.setHgap(10);
+            Label label = new Label("Профіль ресурсів");
+            label.setMinWidth(170);
+            row.add(label, 0, 0);
+            row.add(profile, 1, 0);
+            box.getChildren().addAll(explanation, row, pauseOnBattery, summary);
+            return new ScrollPane(box);
+        }
+
+        IndexingPerformanceSettings value() {
+            IndexingResourceProfile selected = profile.getValue() == null ? IndexingResourceProfile.BALANCED : profile.getValue();
+            return new IndexingPerformanceSettings(selected, pauseOnBattery.isSelected());
+        }
+
+        private void updateSummary() {
+            IndexingPerformanceSettings value = value();
+            int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
+            long io = value.ioBytesPerSecond();
+            String ioLabel = io <= 0 ? "без програмного I/O-ліміту" : (io / 1024 / 1024) + " МБ/с";
+            summary.setText("Worker threads: " + value.workerThreads(processors) + "; I/O: " + ioLabel + ".");
+        }
     }
 
     private record LanguageOption(String code, String name) {

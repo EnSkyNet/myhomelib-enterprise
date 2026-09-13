@@ -1,0 +1,17 @@
+Iteration 81 changed files relative to Iteration 80
+
+Modified:
+- MYHOMELIB-RELEASE.md
+- README.md
+- docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+- docs/release/CURRENT-VALIDATION.md
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java
+- myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseDeviceProfileTest.java
+- myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java
+- tools/external-acceptance-readiness.py
+
+Added:
+- docs/history/records/ITERATION-81-CHANGED-FILES.txt
+- docs/history/records/ITERATION-81-WINDOWS-EXPORT-TTS-HOTFIX.md
+- myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/exporter/Fb2ZipBookConverterTest.java
+- myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/TtsVoicePresentationTest.java

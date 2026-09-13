@@ -25,6 +25,38 @@ def load(name: str, path: Path):
 bundle_mod = load("v71bundle", HERE / "v71-final-evidence-bundle-check.py")
 fixture_mod = load("v71fixture", HERE / "v71-final-external-acceptance-check-test.py")
 final_mod = load("v71final_for_fixture", HERE / "v71-final-external-acceptance-check.py")
+github_writer_mod = load("github_connected_writer_for_bundle", HERE / "github-connected-acceptance.py")
+
+
+def assert_producer_markdown_contract(root: Path) -> None:
+    payload = fixture_mod.github_payload()
+    checks = [
+        github_writer_mod.Check(
+            str(row["id"]), str(row["status"]), str(row["summary"]), dict(row.get("details") or {})
+        )
+        for row in payload["checks"]
+    ]
+    github_out = root / "producer-github"
+    github_writer_mod.write_evidence(
+        github_out,
+        str(payload["repository"]),
+        str(payload["branch"]),
+        checks,
+        str(payload["overall"]),
+        str(payload["candidateSha"]),
+        str(payload["acceptanceHarnessManifestSha256"]),
+    )
+    generated_github = json.loads((github_out / "github-connected-acceptance.json").read_text(encoding="utf-8"))
+    assert (github_out / "github-connected-acceptance.md").read_text(encoding="utf-8") == bundle_mod.render_github_markdown(generated_github)
+
+    final_out = root / "producer-final"
+    evidence = [
+        final_mod.Evidence("github", "PASS", {}),
+        final_mod.Evidence("windows", "PASS", {}),
+    ]
+    final_mod.write_result(final_out, "PASS", evidence)
+    generated_final = json.loads((final_out / "v71-final-external-acceptance.json").read_text(encoding="utf-8"))
+    assert (final_out / "v71-final-external-acceptance.md").read_text(encoding="utf-8") == bundle_mod.render_final_markdown(generated_final)
 
 
 def make_bundle(root: Path) -> Path:
@@ -52,6 +84,12 @@ def make_bundle(root: Path) -> Path:
         "windowsMsiSha256": gh["windowsMsiSha256"],
         "windowsExeSha256": gh["windowsExeSha256"],
         "windowsPortableSha256": gh["windowsPortableSha256"],
+        "windowsChecksumsSha256": gh["windowsChecksumsSha256"],
+        "windowsIntegrityProjectVersion": gh["windowsIntegrityProjectVersion"],
+        "windowsIntegrityCandidateSha": gh["windowsIntegrityCandidateSha"],
+        "windowsIntegritySha256": gh["windowsIntegritySha256"],
+        "windowsIntegritySourceTreeSha256": gh["windowsIntegritySourceTreeSha256"],
+        "windowsIntegrityDistManifestSha256": gh["windowsIntegrityDistManifestSha256"],
         "acceptanceHarnessManifestSha256": gh["acceptanceHarnessManifestSha256"],
     }
     ingest_bytes = json.dumps(ingest, indent=2).encode()
@@ -138,6 +176,12 @@ def make_bundle(root: Path) -> Path:
                 "windowsMsiSha256": gh["windowsMsiSha256"],
                 "windowsExeSha256": gh["windowsExeSha256"],
                 "windowsPortableSha256": gh["windowsPortableSha256"],
+                "windowsChecksumsSha256": gh["windowsChecksumsSha256"],
+                "windowsIntegrityProjectVersion": gh["windowsIntegrityProjectVersion"],
+                "windowsIntegrityCandidateSha": gh["windowsIntegrityCandidateSha"],
+                "windowsIntegritySha256": gh["windowsIntegritySha256"],
+                "windowsIntegritySourceTreeSha256": gh["windowsIntegritySourceTreeSha256"],
+                "windowsIntegrityDistManifestSha256": gh["windowsIntegrityDistManifestSha256"],
                 "releaseRunId": gh["releaseRunId"],
                 "releaseRunUrl": gh["releaseRunUrl"],
                 "acceptanceRunId": ingest_ev.details["acceptanceRunId"],
@@ -152,16 +196,19 @@ def make_bundle(root: Path) -> Path:
     }
     files = {
         "github/github-connected-acceptance.json": gh_bytes,
-        "github/github-connected-acceptance.md": b"# GitHub connected acceptance\n\nOverall: **PASS**\n",
+        "github/github-connected-acceptance.md": bundle_mod.render_github_markdown(gh_payload).encode("utf-8"),
         "github/github-connected-acceptance-ingest.json": ingest_bytes,
         "github/acceptance-harness.sha256": fixture_mod.HARNESS_MANIFEST,
         "github/candidate-windows.sha256": candidate_manifest,
+        "github/release-windows-SHA256SUMS": fixture_mod.RELEASE_SUMS,
+        "github/release-candidate-integrity-windows.json": fixture_mod.INTEGRITY_BYTES,
+        "github/release-candidate-integrity-windows.json.sha256": fixture_mod.INTEGRITY_SIDECAR,
         "windows/windows-harness-binding.json": harness_binding_bytes,
         "windows/windows-host-binding.json": host_binding_bytes,
         "windows/windows-final-acceptance-evidence.zip": windows.read_bytes(),
         "windows/windows-final-acceptance-evidence.zip.sha256": windows_sidecar,
         "final/v71-final-external-acceptance.json": json.dumps(decision, indent=2).encode(),
-        "final/v71-final-external-acceptance.md": b"# Final external acceptance\n\nOverall: **PASS**\n",
+        "final/v71-final-external-acceptance.md": bundle_mod.render_final_markdown(decision).encode("utf-8"),
     }
     manifest = "".join(f"{hashlib.sha256(data).hexdigest()}  {name}\n" for name, data in sorted(files.items())).encode()
     bundle = root / "myhomelib-7.1-final-external-evidence.zip"
@@ -178,9 +225,25 @@ def expect_fail(path: Path) -> None:
     assert bundle_mod.main([str(path)]) == 1
 
 
+def rewrite_bundle(source: Path, target: Path, mutate) -> None:
+    with zipfile.ZipFile(source) as src:
+        data = {n: src.read(n) for n in src.namelist() if n != "manifest.sha256"}
+    mutate(data)
+    manifest = "".join(
+        f"{hashlib.sha256(blob).hexdigest()}  {name}\n" for name, blob in sorted(data.items())
+    ).encode()
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+        for name, blob in data.items():
+            zf.writestr(name, blob)
+        zf.writestr("manifest.sha256", manifest)
+    digest = hashlib.sha256(target.read_bytes()).hexdigest()
+    Path(str(target) + ".sha256").write_text(f"{digest}  {target.name}\n", encoding="utf-8")
+
+
 def main() -> int:
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
+        assert_producer_markdown_contract(root)
         good = make_bundle(root)
         assert bundle_mod.main([str(good)]) == 0
 
@@ -209,6 +272,28 @@ def main() -> int:
         Path(str(tampered) + ".sha256").write_text(f"{tdigest}  {tampered.name}\n", encoding="utf-8")
         expect_fail(tampered)
 
+        # Candidate-integrity tampering must fail even with a valid sidecar and recomputed outer manifest.
+        tampered_integrity = root / "tampered-integrity.zip"
+        with zipfile.ZipFile(good) as src:
+            data = {n: src.read(n) for n in src.namelist() if n != "manifest.sha256"}
+        bad_integrity = json.loads(data["github/release-candidate-integrity-windows.json"].decode())
+        bad_integrity["sourceTreeSha256"] = "9" * 64
+        bad_integrity_bytes = (json.dumps(bad_integrity, indent=2, sort_keys=True) + "\n").encode()
+        data["github/release-candidate-integrity-windows.json"] = bad_integrity_bytes
+        data["github/release-candidate-integrity-windows.json.sha256"] = (
+            f"{hashlib.sha256(bad_integrity_bytes).hexdigest()}  release-candidate-integrity-windows.json\n"
+        ).encode()
+        manifest = "".join(f"{hashlib.sha256(blob).hexdigest()}  {name}\n" for name, blob in sorted(data.items())).encode()
+        with zipfile.ZipFile(tampered_integrity, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, blob in data.items():
+                zf.writestr(name, blob)
+            zf.writestr("manifest.sha256", manifest)
+        idigest = hashlib.sha256(tampered_integrity.read_bytes()).hexdigest()
+        Path(str(tampered_integrity) + ".sha256").write_text(
+            f"{idigest}  {tampered_integrity.name}\n", encoding="utf-8"
+        )
+        expect_fail(tampered_integrity)
+
         # Host/session binding tampering must fail even when the outer ZIP/manifest are recomputed.
         tampered_host = root / "tampered-host.zip"
         with zipfile.ZipFile(good) as src:
@@ -224,6 +309,38 @@ def main() -> int:
         hdigest = hashlib.sha256(tampered_host.read_bytes()).hexdigest()
         Path(str(tampered_host) + ".sha256").write_text(f"{hdigest}  {tampered_host.name}\n", encoding="utf-8")
         expect_fail(tampered_host)
+
+        # Human-readable GitHub Markdown must be a canonical projection of the JSON evidence.
+        tampered_github_md = root / "tampered-github-md.zip"
+        def mutate_github_md(data):
+            blob = data["github/github-connected-acceptance.md"].decode("utf-8")
+            data["github/github-connected-acceptance.md"] = blob.replace("- Overall: **PASS**", "- Overall: **FAIL**").encode("utf-8")
+        rewrite_bundle(good, tampered_github_md, mutate_github_md)
+        expect_fail(tampered_github_md)
+
+        # Human-readable final Markdown must also match the machine-readable final decision exactly.
+        tampered_final_md = root / "tampered-final-md.zip"
+        def mutate_final_md(data):
+            blob = data["final/v71-final-external-acceptance.md"].decode("utf-8")
+            data["final/v71-final-external-acceptance.md"] = blob.replace("Overall: **PASS**", "Overall: **FAIL**").encode("utf-8")
+        rewrite_bundle(good, tampered_final_md, mutate_final_md)
+        expect_fail(tampered_final_md)
+
+        # A manifest-consistent extra outer member is still forbidden: the reviewer bundle is exact.
+        extra = root / "extra-member.zip"
+        with zipfile.ZipFile(good) as src:
+            data = {n: src.read(n) for n in src.namelist() if n != "manifest.sha256"}
+        data["debug/unexpected.txt"] = b"unexpected payload"
+        manifest = "".join(
+            f"{hashlib.sha256(blob).hexdigest()}  {name}\n" for name, blob in sorted(data.items())
+        ).encode()
+        with zipfile.ZipFile(extra, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, blob in data.items():
+                zf.writestr(name, blob)
+            zf.writestr("manifest.sha256", manifest)
+        edigest = hashlib.sha256(extra.read_bytes()).hexdigest()
+        Path(str(extra) + ".sha256").write_text(f"{edigest}  {extra.name}\n", encoding="utf-8")
+        expect_fail(extra)
 
     print("7.1 final evidence bundle regression tests: PASS")
     return 0

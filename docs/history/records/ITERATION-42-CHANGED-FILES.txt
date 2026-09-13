@@ -1,0 +1,24 @@
+Iteration 42 changed files vs formal Iteration 41 source baseline
+Baseline: MyHomeLib-7.3-WIP-Iteration41-2026-09-11-source
+Count: 20
+
+MODIFIED .github/workflows/ci-pr.yml
+MODIFIED CONTINUATION-ITERATION-20-FINAL-LIVE-ACCEPTANCE.md
+ADDED    ITERATION-42-EXTERNAL-ACCEPTANCE-HARDENING-CHECKPOINT.md
+MODIFIED MYHOMELIB-RELEASE.md
+MODIFIED README.md
+ADDED    TASKS-ITERATION-42.md
+MODIFIED tools/github-acceptance-artifact-ingest.py
+MODIFIED tools/static_release_check.py
+MODIFIED tools/supply-chain-policy-check.py
+MODIFIED tools/v71-final-evidence-bundle-check-test.py
+MODIFIED tools/v71-final-evidence-bundle-check.py
+MODIFIED tools/v71-final-external-acceptance-check-test.py
+MODIFIED tools/v71-final-external-acceptance-check.py
+MODIFIED tools/windows-acceptance-evidence-check-test.py
+MODIFIED tools/windows-acceptance-evidence-check.py
+MODIFIED tools/windows-acceptance-harness-binding.py
+MODIFIED tools/windows-acceptance-harness-check.py
+ADDED    tools/zip-evidence-safety-test.py
+ADDED    tools/zip_evidence_safety.py
+ADDED    ITERATION-42-CHANGED-FILES.txt

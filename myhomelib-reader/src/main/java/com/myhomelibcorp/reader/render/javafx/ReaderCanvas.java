@@ -1,25 +1,35 @@
 package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.PageDimensions;
+import com.myhomelibcorp.reader.api.ReaderAnnotationOverlay;
 import com.myhomelibcorp.reader.api.ReaderPosition;
+import com.myhomelibcorp.reader.api.ReaderSelection;
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.api.ReaderTheme;
 import com.myhomelibcorp.reader.core.ReaderEngine;
+import com.myhomelibcorp.reader.model.LineLayout;
 import com.myhomelibcorp.reader.model.PageLayout;
 import com.myhomelibcorp.reader.render.api.ReaderRenderer;
 import javafx.animation.PauseTransition;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.canvas.Canvas;
+import javafx.scene.control.ContextMenu;
+import javafx.scene.control.MenuItem;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.SwipeEvent;
 import javafx.scene.input.ZoomEvent;
 import javafx.scene.layout.StackPane;
+import javafx.scene.paint.Color;
 import javafx.util.Duration;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
+import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * JavaFX viewport reader-а. Важливо: використовує ТОЙ САМИЙ Canvas, який
@@ -37,6 +47,11 @@ public class ReaderCanvas extends StackPane {
     private final ReaderPaginationController paginationController;
     private final ReaderSelectionController selectionController;
     private final ReaderKeyboardScrollController keyboardScrollController;
+    private final Function<String, String> text;
+    private final ContextMenu selectionContextMenu = new ContextMenu();
+    private List<ReaderAnnotationOverlay> annotationOverlays = List.of();
+    private long speechHighlightStart = -1L;
+    private long speechHighlightEnd = -1L;
 
     @Getter
     private double zoom = 1.0;
@@ -53,6 +68,7 @@ public class ReaderCanvas extends StackPane {
     private boolean dragging;
     private boolean swipeHandled;
     private boolean longPressHandled;
+    private boolean selectionGestureHandled;
     private double dragStartX;
     private double dragStartY;
     private final PauseTransition longPressTimer = new PauseTransition(Duration.millis(LONG_PRESS_MS));
@@ -70,8 +86,13 @@ public class ReaderCanvas extends StackPane {
     private Runnable onToggleToolbarRequested;
     private Runnable onSearchRequested;
     private Consumer<ReaderSettings> onSettingsChanged;
+    private Consumer<ReaderSelection> onHighlightRequested;
+    private Consumer<ReaderSelection> onNoteRequested;
+    private Consumer<ReaderSelection> onDictionaryRequested;
+    private Consumer<ReaderSelection> onTranslationRequested;
+    private Consumer<Optional<ReaderSelection>> onSelectionChanged;
 
-    public ReaderCanvas(ReaderEngine engine, ReaderRenderer renderer) {
+    public ReaderCanvas(ReaderEngine engine, ReaderRenderer renderer, Function<String, String> text) {
         if (engine == null) {
             throw new IllegalArgumentException("engine is required");
         }
@@ -80,6 +101,7 @@ public class ReaderCanvas extends StackPane {
         }
 
         this.engine = engine;
+        this.text = text == null ? Function.identity() : text;
         this.paginationController = new ReaderPaginationController(engine);
         this.renderer = fxRenderer;
         this.canvas = fxRenderer.getCanvas(); // критичний fix: один спільний Canvas
@@ -91,6 +113,7 @@ public class ReaderCanvas extends StackPane {
         this.autoScrollController = new AutoScrollController(this::nextPage);
         this.selectionController = new ReaderSelectionController(engine, fxRenderer);
         this.keyboardScrollController = new ReaderKeyboardScrollController(this);
+        configureSelectionContextMenu();
 
         canvas.setFocusTraversable(true);
         getChildren().add(canvas);
@@ -112,6 +135,12 @@ public class ReaderCanvas extends StackPane {
         setOnSwipeUp(this::onSwipeUp);
         setOnSwipeDown(this::onSwipeDown);
         setOnZoom(this::onZoom);
+        setOnContextMenuRequested(event -> {
+            if (hasSelection()) {
+                selectionContextMenu.show(this, event.getScreenX(), event.getScreenY());
+                event.consume();
+            }
+        });
         setPadding(Insets.EMPTY);
     }
 
@@ -174,6 +203,8 @@ public class ReaderCanvas extends StackPane {
             } else {
                 engine.renderPage(currentDimensions);
             }
+            renderAnnotationOverlays();
+            renderSpeechHighlight();
             renderSelectionOverlay();
             notifyPageChanged();
         } finally {
@@ -363,6 +394,18 @@ public class ReaderCanvas extends StackPane {
         return autoScrollController.isRunning();
     }
 
+    public void setReducedMotion(boolean reducedMotion) {
+        autoScrollController.setMotionAllowed(!reducedMotion);
+        if (reducedMotion && engine.isOpen() && engine.getSettings().autoScroll()) {
+            engine.applySettings(engine.getSettings().withAutoScroll(false));
+            notifySettingsChanged();
+        }
+    }
+
+    public boolean isAutoScrollAllowed() {
+        return autoScrollController.isMotionAllowed();
+    }
+
     public void setAutoScrollSpeed(double speed) {
         autoScrollController.setSpeed(speed);
     }
@@ -454,9 +497,10 @@ public class ReaderCanvas extends StackPane {
             requestFocus();
             return;
         }
-        if (swipeHandled || longPressHandled) {
+        if (swipeHandled || longPressHandled || selectionGestureHandled) {
             swipeHandled = false;
             longPressHandled = false;
+            selectionGestureHandled = false;
             event.consume();
             requestFocus();
             return;
@@ -503,17 +547,30 @@ public class ReaderCanvas extends StackPane {
     private void onMousePressed(MouseEvent event) {
         if (!event.isPrimaryButtonDown()) return;
         longPressTimer.stop();
+        selectionContextMenu.hide();
         longPressHandled = false;
+        if (engine.isOpen() && hasSelection() && ensureDimensions()) {
+            SelectionPage handlePage = selectionPageAt(event.getX());
+            if (selectionController.beginHandleDrag(event.getX(), event.getY(), handlePage.page(), handlePage.xOffset())) {
+                dragging = false;
+                selectionGestureHandled = true;
+                render();
+                event.consume();
+                return;
+            }
+        }
         if (event.isShiftDown() && engine.isOpen() && ensureDimensions()) {
             dragging = false;
             SelectionPage selectionPage = selectionPageAt(event.getX());
             selectionController.begin(event.getX(), event.getY(), selectionPage.page(), selectionPage.xOffset());
+            selectionGestureHandled = true;
+            notifySelectionChanged();
             render();
             event.consume();
             return;
         }
         dragging = true;
-        selectionController.clear();
+        clearSelection(false);
         swipeHandled = false;
         dragStartX = event.getX();
         dragStartY = event.getY();
@@ -557,6 +614,8 @@ public class ReaderCanvas extends StackPane {
         if (selectionController.isSelecting()) {
             SelectionPage selectionPage = selectionPageAt(event.getX());
             selectionController.finish(event.getX(), event.getY(), selectionPage.page(), selectionPage.xOffset());
+            selectionGestureHandled = true;
+            notifySelectionChanged();
             render();
             event.consume();
             requestFocus();
@@ -575,8 +634,88 @@ public class ReaderCanvas extends StackPane {
     private boolean hasSelection() { return selectionController.hasSelection(); }
 
     private void clearSelection(boolean renderNow) {
+        boolean hadSelection = selectionController.hasSelection();
         selectionController.clear();
+        selectionContextMenu.hide();
+        if (hadSelection) notifySelectionChanged();
         if (renderNow && engine.isOpen()) render();
+    }
+
+    private void renderAnnotationOverlays() {
+        if (annotationOverlays.isEmpty()) return;
+        for (ReaderAnnotationOverlay overlay : annotationOverlays) {
+            renderAnnotationOverlay(overlay, renderedLeftPage, 0.0);
+            if (twoPageActive && renderedRightPage != null && !renderedRightPage.isEmpty()) {
+                renderAnnotationOverlay(overlay, renderedRightPage, renderedRightOffset);
+            }
+        }
+    }
+
+    private void renderAnnotationOverlay(ReaderAnnotationOverlay overlay, PageLayout page, double xOffset) {
+        if (overlay == null || page == null || page.isEmpty()) return;
+        var gc = renderer.getGraphicsContext();
+        long from = overlay.startOffset();
+        long to = overlay.endOffset();
+        gc.setFill(Color.web(overlay.color(), overlay.note() ? 0.22 : 0.30));
+        boolean painted = false;
+        for (LineLayout line : page.getLines()) {
+            long lineStart = line.textOffset();
+            long lineEnd = lineStart + Math.max(1, line.charLength());
+            long a = Math.max(from, lineStart);
+            long b = Math.min(to, lineEnd);
+            if (b <= a) continue;
+            double span = Math.max(1, lineEnd - lineStart);
+            double x1 = xOffset + line.x() + line.width() * ((a - lineStart) / span);
+            double x2 = xOffset + line.x() + line.width() * ((b - lineStart) / span);
+            gc.fillRoundRect(x1, line.y(), Math.max(2, x2 - x1), Math.max(2, line.height()), 3, 3);
+            painted = true;
+        }
+        if (overlay.note()) {
+            renderNoteMarker(overlay, page, xOffset, painted);
+        }
+    }
+
+    private void renderNoteMarker(ReaderAnnotationOverlay overlay, PageLayout page, double xOffset, boolean rangePainted) {
+        long offset = overlay.startOffset();
+        for (LineLayout line : page.getLines()) {
+            long lineStart = line.textOffset();
+            long lineEnd = lineStart + Math.max(1, line.charLength());
+            if (offset < lineStart || offset > lineEnd) continue;
+            double span = Math.max(1, lineEnd - lineStart);
+            double ratio = Math.max(0.0, Math.min(1.0, (offset - lineStart) / span));
+            double x = xOffset + line.x() + line.width() * ratio;
+            double y = line.y() + 2;
+            var gc = renderer.getGraphicsContext();
+            gc.setFill(Color.web(overlay.color(), 0.88));
+            double diameter = rangePainted ? 6 : 8;
+            gc.fillOval(x - diameter / 2, y - diameter / 2, diameter, diameter);
+            return;
+        }
+    }
+
+    private void renderSpeechHighlight() {
+        if (speechHighlightStart < 0 || speechHighlightEnd <= speechHighlightStart) return;
+        renderOffsetRange(speechHighlightStart, speechHighlightEnd, renderedLeftPage, 0.0, "#64B5F6", 0.28);
+        if (twoPageActive && renderedRightPage != null && !renderedRightPage.isEmpty()) {
+            renderOffsetRange(speechHighlightStart, speechHighlightEnd, renderedRightPage, renderedRightOffset, "#64B5F6", 0.28);
+        }
+    }
+
+    private void renderOffsetRange(long from, long to, PageLayout page, double xOffset, String color, double opacity) {
+        if (page == null || page.isEmpty()) return;
+        var gc = renderer.getGraphicsContext();
+        gc.setFill(Color.web(color, opacity));
+        for (LineLayout line : page.getLines()) {
+            long lineStart = line.textOffset();
+            long lineEnd = lineStart + Math.max(1, line.charLength());
+            long a = Math.max(from, lineStart);
+            long b = Math.min(to, lineEnd);
+            if (b <= a) continue;
+            double span = Math.max(1, lineEnd - lineStart);
+            double x1 = xOffset + line.x() + line.width() * ((a - lineStart) / span);
+            double x2 = xOffset + line.x() + line.width() * ((b - lineStart) / span);
+            gc.fillRoundRect(x1, line.y(), Math.max(2, x2 - x1), Math.max(2, line.height()), 3, 3);
+        }
     }
 
     private void renderSelectionOverlay() {
@@ -586,7 +725,51 @@ public class ReaderCanvas extends StackPane {
         }
     }
 
+    private void configureSelectionContextMenu() {
+        MenuItem highlight = new MenuItem(text.apply("ui.reader.selection.highlight"));
+        highlight.setOnAction(event -> selectionController.snapshot().ifPresent(selection -> {
+            if (onHighlightRequested != null) onHighlightRequested.accept(selection);
+        }));
+        MenuItem note = new MenuItem(text.apply("ui.reader.selection.note"));
+        note.setOnAction(event -> selectionController.snapshot().ifPresent(selection -> {
+            if (onNoteRequested != null) onNoteRequested.accept(selection);
+        }));
+        MenuItem dictionary = new MenuItem(text.apply("ui.reader.selection.dictionary"));
+        dictionary.setOnAction(event -> selectionController.snapshot().ifPresent(selection -> {
+            if (onDictionaryRequested != null) onDictionaryRequested.accept(selection);
+        }));
+        MenuItem translate = new MenuItem(text.apply("ui.reader.selection.translate"));
+        translate.setOnAction(event -> selectionController.snapshot().ifPresent(selection -> {
+            if (onTranslationRequested != null) onTranslationRequested.accept(selection);
+        }));
+        MenuItem copy = new MenuItem(text.apply("ui.reader.selection.copy"));
+        copy.setOnAction(event -> selectionController.copyToClipboard());
+        MenuItem clear = new MenuItem(text.apply("ui.reader.selection.clear"));
+        clear.setOnAction(event -> clearSelection(true));
+        selectionContextMenu.getItems().setAll(
+                highlight, note, new SeparatorMenuItem(), dictionary, translate, new SeparatorMenuItem(), copy, clear);
+    }
+
     void copySelectionFromInput() { selectionController.copyToClipboard(); }
+
+    void extendSelectionFromInput(int delta) {
+        if (selectionController.extendByCharacters(delta)) {
+            notifySelectionChanged();
+            render();
+        }
+    }
+
+    void requestHighlightFromInput() {
+        selectionController.snapshot().ifPresent(selection -> {
+            if (onHighlightRequested != null) onHighlightRequested.accept(selection);
+        });
+    }
+
+    void requestNoteFromInput() {
+        selectionController.snapshot().ifPresent(selection -> {
+            if (onNoteRequested != null) onNoteRequested.accept(selection);
+        });
+    }
 
     void notifyPageChangedFromInput() { notifyPageChanged(); }
 
@@ -645,6 +828,9 @@ public class ReaderCanvas extends StackPane {
         pageHistory.clear();
         paginationController.close();
         clearSelection(false);
+        annotationOverlays = List.of();
+        speechHighlightStart = -1L;
+        speechHighlightEnd = -1L;
         sizeUpdated = false;
         if (onBookClosed != null) onBookClosed.run();
     }
@@ -681,6 +867,43 @@ public class ReaderCanvas extends StackPane {
 
     public void setOnSettingsChanged(Consumer<ReaderSettings> listener) { this.onSettingsChanged = listener; }
 
+    public void setOnHighlightRequested(Consumer<ReaderSelection> listener) { this.onHighlightRequested = listener; }
+
+    public void setOnNoteRequested(Consumer<ReaderSelection> listener) { this.onNoteRequested = listener; }
+
+    public void setOnDictionaryRequested(Consumer<ReaderSelection> listener) { this.onDictionaryRequested = listener; }
+
+    public void setOnTranslationRequested(Consumer<ReaderSelection> listener) { this.onTranslationRequested = listener; }
+
+    public void setOnSelectionChanged(Consumer<Optional<ReaderSelection>> listener) { this.onSelectionChanged = listener; }
+
+    public Optional<ReaderSelection> getSelection() { return selectionController.snapshot(); }
+
+    public void clearTextSelection() { clearSelection(true); }
+
+    public void setAnnotationOverlays(List<ReaderAnnotationOverlay> overlays) {
+        annotationOverlays = overlays == null ? List.of() : List.copyOf(overlays);
+        if (engine.isOpen()) render();
+    }
+
+    public List<ReaderAnnotationOverlay> getAnnotationOverlays() { return annotationOverlays; }
+
+    public void setSpeechHighlight(long startOffset, long endOffset) {
+        speechHighlightStart = Math.max(-1L, startOffset);
+        speechHighlightEnd = Math.max(-1L, endOffset);
+        if (engine.isOpen()) render();
+    }
+
+    public void clearSpeechHighlight() {
+        speechHighlightStart = -1L;
+        speechHighlightEnd = -1L;
+        if (engine.isOpen()) render();
+    }
+
+    private void notifySelectionChanged() {
+        if (onSelectionChanged != null) onSelectionChanged.accept(selectionController.snapshot());
+    }
+
     private void notifySettingsChanged() {
         if (onSettingsChanged != null) {
             onSettingsChanged.accept(engine.getSettings());
@@ -707,6 +930,8 @@ public class ReaderCanvas extends StackPane {
         renderer.clearImageCache();
         pageHistory.clear();
         paginationController.close();
+        annotationOverlays = List.of();
+        selectionContextMenu.hide();
         sizeUpdated = false;
     }
 }

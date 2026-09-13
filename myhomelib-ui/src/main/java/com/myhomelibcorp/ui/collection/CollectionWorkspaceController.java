@@ -39,6 +39,7 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     private final DeleteCollectionUseCase deleteCollectionUseCase;
     private final SwitchCollectionUseCase switchCollectionUseCase;
     private final CollectionSourcePanelCoordinator sourcePanel;
+    private final IncomingFolderPanelCoordinator incomingFolderPanel;
     private final CollectionMaintenancePanelCoordinator maintenancePanel;
     private final ApplicationState appState;
     private final DialogService dialogService;
@@ -60,6 +61,10 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     @FXML private CheckBox autoUpdateEnabledCheckBox;
     @FXML private Label sourceStatusLabel;
     @FXML private Button sourceCheckButton;
+    @FXML private TextField incomingFolderField;
+    @FXML private CheckBox incomingFolderEnabledCheckBox;
+    @FXML private Label incomingFolderStatusLabel;
+    @FXML private Button incomingFolderScanButton;
     @FXML private Button maintenanceAnalyzeButton;
     @FXML private Button maintenanceDryRunButton;
     @FXML private Button maintenanceApplyButton;
@@ -77,6 +82,7 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     @FXML
     public void initialize() {
         sourcePanel.attach(sourceFileField, autoUpdateEnabledCheckBox, sourceStatusLabel, sourceCheckButton, collectionsListView);
+        incomingFolderPanel.attach(incomingFolderField, incomingFolderEnabledCheckBox, incomingFolderStatusLabel, incomingFolderScanButton, collectionsListView);
         maintenancePanel.attach(maintenanceAnalyzeButton, maintenanceDryRunButton, maintenanceApplyButton,
                 maintenanceStatusLabel, maintenanceReportArea);
 
@@ -169,6 +175,7 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
                 selectedCollection = selected;
                 updateCollectionDetails(selected);
                 sourcePanel.show(selected);
+                incomingFolderPanel.show(selected);
                 maintenancePanel.show(selected);
                 collectionDetailsBox.setVisible(true);
                 updateActivateButton(selected);
@@ -473,6 +480,15 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     private void onCheckSourceNow() {
         sourcePanel.checkNow(selectedCollection);
     }
+
+    @FXML
+    private void onBrowseIncomingFolder() { incomingFolderPanel.browse(selectedCollection); }
+
+    @FXML
+    private void onSaveIncomingFolder() { incomingFolderPanel.save(selectedCollection); }
+
+    @FXML
+    private void onScanIncomingFolder() { incomingFolderPanel.scanNow(selectedCollection); }
 
     @FXML
     private void onAnalyzeMaintenance() {

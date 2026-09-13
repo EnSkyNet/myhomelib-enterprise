@@ -1,0 +1,10 @@
+generated_at,documents,index_dir,scenario,runs,max_results,reported_total_hits,total_hits_relation,min_us,median_us,max_us,heap_peak_bytes,rss_peak_bytes,gc_collections,gc_time_ms
+2026-09-09T16:04:30.641100256Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",cold_first_page,1,100,500000,GREATER_THAN_OR_EQUAL_TO,63259,63259,63259,76119592,314347520,0,0
+2026-09-09T16:04:30.642522298Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",warm_first_page,7,100,500000,GREATER_THAN_OR_EQUAL_TO,6958,8100,18621,77168168,314740736,0,0
+2026-09-09T16:04:30.642573072Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",and_5_rules,7,100,1445,GREATER_THAN_OR_EQUAL_TO,5991,7279,37986,83459624,316338176,0,0
+2026-09-09T16:04:30.642603708Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",or_5_rules,7,100,37152,GREATER_THAN_OR_EQUAL_TO,5713,6923,24833,86605352,316796928,0,0
+2026-09-09T16:04:30.642624648Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",and_20_rules,7,100,1445,GREATER_THAN_OR_EQUAL_TO,8829,9912,16715,98139688,317247488,0,0
+2026-09-09T16:04:30.642643005Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",or_20_rules,7,100,37152,GREATER_THAN_OR_EQUAL_TO,6465,7614,8901,109674024,317603840,0,0
+2026-09-09T16:04:30.642659429Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",numeric_range,7,100,1001,GREATER_THAN_OR_EQUAL_TO,2163,3343,18753,111771176,318644224,0,0
+2026-09-09T16:04:30.642675283Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",docvalues_sort,7,100,500000,GREATER_THAN_OR_EQUAL_TO,5259,7663,36847,111771176,319049728,0,0
+2026-09-09T16:04:30.642690345Z,500000,"/mnt/data/mhl_work/myhomelib-benchmark/target/iteration34-500k-index",bounded_max_results,7,10000,500000,GREATER_THAN_OR_EQUAL_TO,7805,12008,21574,126451240,319213568,0,0

@@ -1,0 +1,28 @@
+MyHomeLib Iteration 25 — delta vs MyHomeLib-7.2-WIP-Iteration24-2026-09-07-source.zip
+Date: 2026-09-07
+
+NEW
+---
+CONTINUATION-ITERATION-25-OPEN-LIBRARY-PROVIDER.md
+ITERATION-25-METADATA-PROVIDER-SPI-CHECKPOINT.md
+ITERATION-25-CHANGED-FILES.txt
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataCandidate.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataLookupResult.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataLookupService.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataProvider.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataProviderErrorKind.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataProviderException.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataProviderIssue.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataQuery.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataRequestContext.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/metadata/MetadataSource.java
+myhomelib-application/src/test/java/com/myhomelibcorp/application/metadata/MetadataLookupServiceTest.java
+myhomelib-application/src/test/java/com/myhomelibcorp/application/metadata/MetadataProviderContractTest.java
+
+CHANGED
+-------
+(none)
+
+DELETED
+-------
+(none)

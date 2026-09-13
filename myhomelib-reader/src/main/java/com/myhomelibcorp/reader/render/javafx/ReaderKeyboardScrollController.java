@@ -19,7 +19,19 @@ final class ReaderKeyboardScrollController {
 
     void onKeyPressed(KeyEvent event) {
         KeyCode code = event.getCode();
-        if (code == KeyCode.C && event.isControlDown()) {
+        if (event.isShiftDown() && code == KeyCode.LEFT) {
+            event.consume();
+            host.extendSelectionFromInput(-1);
+        } else if (event.isShiftDown() && code == KeyCode.RIGHT) {
+            event.consume();
+            host.extendSelectionFromInput(1);
+        } else if (code == KeyCode.H && event.isControlDown() && event.isShiftDown()) {
+            event.consume();
+            host.requestHighlightFromInput();
+        } else if (code == KeyCode.N && event.isControlDown() && event.isShiftDown()) {
+            event.consume();
+            host.requestNoteFromInput();
+        } else if (code == KeyCode.C && event.isControlDown()) {
             event.consume();
             host.copySelectionFromInput();
         } else if (code == KeyCode.PAGE_DOWN || code == KeyCode.RIGHT || code == KeyCode.SPACE) {

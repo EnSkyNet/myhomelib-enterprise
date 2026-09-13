@@ -70,6 +70,21 @@ public class BookCache {
         bytes += stringBytes(book.getSourceUrl());
         for (var author : book.getAuthors()) if (author != null) bytes += 128 + stringBytes(author.getFullName());
         for (var genre : book.getGenres()) if (genre != null) bytes += 96 + stringBytes(genre.getName());
+        for (var artifact : book.getArtifacts()) {
+            if (artifact == null) continue;
+            bytes += 192 + stringBytes(artifact.getId()) + stringBytes(artifact.getName())
+                    + stringBytes(artifact.getFormat()) + stringBytes(artifact.getMediaType())
+                    + stringBytes(artifact.getSha256()) + stringBytes(artifact.getContentFingerprint());
+            if (artifact.getFile() != null) {
+                bytes += stringBytes(artifact.getFile().getFileName())
+                        + stringBytes(artifact.getFile().getFolder())
+                        + stringBytes(artifact.getFile().getArchiveEntry())
+                        + stringBytes(artifact.getFile().getCollectionRoot());
+            }
+            for (var entry : artifact.getMetadata().entrySet()) {
+                bytes += 64 + stringBytes(entry.getKey()) + stringBytes(entry.getValue());
+            }
+        }
         if (book.getCover() != null && book.getCover().getData() != null) bytes += book.getCover().getData().length;
         long kib = Math.max(1L, (bytes + 1023L) / 1024L);
         return (int) Math.min(MAX_WEIGHT_KIB, kib);

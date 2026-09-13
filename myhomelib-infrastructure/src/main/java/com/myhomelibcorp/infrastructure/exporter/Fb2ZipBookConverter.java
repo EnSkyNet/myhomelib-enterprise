@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.exporter;
 
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
+import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -11,14 +12,25 @@ import java.nio.file.Path;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import java.util.Locale;
+import java.util.Set;
 
 @Component
 @Slf4j
 public class Fb2ZipBookConverter implements BookConverter {
 
     @Override
+    public Set<BookConversionCapability> capabilities() {
+        return Set.of(new BookConversionCapability(Set.of("fb2"), "FB2_ZIP", ".fb2.zip"));
+    }
+
+    @Override
     public boolean supports(Book book) {
         return Fb2ConversionSupport.supports(book);
+    }
+
+    @Override
+    public boolean supports(Book book, String sourceFormat) {
+        return "fb2".equals(BookConversionCapability.normalizeFormat(sourceFormat));
     }
 
     @Override

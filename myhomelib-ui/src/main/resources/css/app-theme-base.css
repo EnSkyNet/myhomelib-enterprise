@@ -12,7 +12,7 @@
     -mhl-book-row: #ffffff;
     -mhl-downloaded-row: #e6f4ea;
     -mhl-success: #2e7d32;
-    -mhl-warning: #ed8b00;
+    -mhl-warning: #b45309;
     -mhl-danger: #c62828;
     -mhl-on-accent: #ffffff;
     -mhl-warning-bg: #fff3cd;
@@ -123,7 +123,7 @@
 }
 .alphabet-button.alphabet-non-alpha {
     -fx-background-color: -mhl-warning;
-    -fx-text-fill: -mhl-warning-text;
+    -fx-text-fill: -mhl-on-accent;
 }
 .alphabet-button.alphabet-selected,
 .alphabet-button.alphabet-selected:hover {
@@ -150,4 +150,22 @@
 .main-toolbar-wrap .text-field {
     -fx-font-size: 11px;
     -fx-padding: 4px 5px 4px 5px;
+}
+
+
+.artifact-badge {
+    -fx-padding: 2 6 2 6;
+    -fx-background-color: derive(-mhl-panel, -4%);
+    -fx-border-color: -mhl-border;
+    -fx-border-radius: 8;
+    -fx-background-radius: 8;
+    -fx-font-size: 11px;
+}
+.artifact-badge-preferred {
+    -fx-border-color: -mhl-accent;
+    -fx-font-weight: bold;
+}
+.artifact-badge-unavailable {
+    -fx-text-fill: -mhl-muted-text;
+    -fx-opacity: 0.72;
 }

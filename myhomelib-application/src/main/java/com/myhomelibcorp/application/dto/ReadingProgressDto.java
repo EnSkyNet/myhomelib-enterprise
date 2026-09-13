@@ -30,4 +30,8 @@ public class ReadingProgressDto {
 
     private LocalDateTime updatedAt;
     private long readingTimeSeconds;
+
+    /** Human/device identifier of the last writer; persisted for cross-device Continue Reading UX. */
+    @Builder.Default
+    private String lastDevice = "";
 }

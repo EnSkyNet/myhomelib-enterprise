@@ -17,7 +17,7 @@ class BookMenuActionContextTest {
     @Test
     void openReaderMenuActionFollowsCanonicalSelectedBook() {
         ApplicationState state = new ApplicationState();
-        MainBookCommandCoordinator coordinator = new MainBookCommandCoordinator(state, null, null, null, null, null);
+        MainBookCommandCoordinator coordinator = new MainBookCommandCoordinator(state, null, null, null, null, null, null, null, null, null);
         ActionSettingsService settings = mock(ActionSettingsService.class);
         when(settings.load(anyString(), anyString(), anyBoolean()))
                 .thenAnswer(invocation -> new ActionPreference(invocation.getArgument(1), invocation.getArgument(2)));

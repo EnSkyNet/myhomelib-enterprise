@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.cache.BookCache;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -192,6 +193,175 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                  WHERE id = ?
                 """, bookId.asString()));
         bookCache.evict(bookId);
+    }
+
+    @Override
+    public void selectPreferredArtifact(BookId bookId, String artifactId) {
+        if (bookId == null) throw new IllegalArgumentException("Book id is required");
+        if (artifactId == null || artifactId.isBlank()) {
+            throw new IllegalArgumentException("Artifact id is required");
+        }
+        busyRetry.run("preferred artifact update", () -> {
+            int selected = getJdbcTemplate().update("""
+                    INSERT INTO book_artifact_preferences(book_id, preferred_artifact_id, updated_at)
+                    SELECT ?, ba.artifact_id, CURRENT_TIMESTAMP
+                      FROM book_artifacts ba
+                     WHERE ba.book_id = ? AND ba.artifact_id = ?
+                    ON CONFLICT(book_id) DO UPDATE SET
+                        preferred_artifact_id = excluded.preferred_artifact_id,
+                        updated_at = CURRENT_TIMESTAMP
+                    """, bookId.asString(), bookId.asString(), artifactId);
+            if (selected == 0) {
+                throw new IllegalArgumentException("Artifact does not belong to book: " + artifactId);
+            }
+
+            getJdbcTemplate().update("""
+                    UPDATE books
+                       SET file_name = COALESCE((
+                               SELECT COALESCE(NULLIF(ba.archive_name, ''), ba.file_name, '')
+                                 FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), file_name),
+                           folder = COALESCE((
+                               SELECT ba.folder FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), ''),
+                           archive_entry = COALESCE((
+                               SELECT ba.archive_entry FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), ''),
+                           file_size = COALESCE((
+                               SELECT ba.size_bytes FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), 0),
+                           collection_root = COALESCE((
+                               SELECT ba.collection_root FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), ''),
+                           local = COALESCE((
+                               SELECT ba.local FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), 0),
+                           missing_since = CASE
+                               WHEN COALESCE((SELECT ba.local FROM book_artifacts ba
+                                              WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0) = 1
+                               THEN NULL
+                               ELSE COALESCE(missing_since, CURRENT_TIMESTAMP)
+                           END,
+                           format = COALESCE((
+                               SELECT NULLIF(ba.file_format, '') FROM book_artifacts ba
+                                WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                           ), format),
+                           update_date = CURRENT_TIMESTAMP
+                     WHERE id = ?
+                    """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
+                    bookId.asString());
+        });
+        bookCache.evict(bookId);
+        log.debug("Preferred artifact для книги {}: {}", bookId.asString(), artifactId);
+    }
+
+    @Override
+    public void upsertArtifact(BookId bookId, BookArtifact artifact, boolean makePreferred) {
+        if (bookId == null) throw new IllegalArgumentException("Book id is required");
+        if (artifact == null) throw new IllegalArgumentException("Artifact is required");
+        busyRetry.run("book artifact upsert", () -> {
+            var file = artifact.getFile();
+            int changed = getJdbcTemplate().update("""
+                    INSERT INTO book_artifacts(
+                        artifact_id, book_id, source_id, artifact_name, media_type, file_format,
+                        file_name, archive_name, archive_entry, size_bytes, sha256, content_fingerprint,
+                        remote, local, collection_root, folder, state, created_at, updated_at
+                    ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP)
+                    ON CONFLICT(artifact_id) DO UPDATE SET
+                        source_id=excluded.source_id,
+                        artifact_name=excluded.artifact_name,
+                        media_type=excluded.media_type,
+                        file_format=excluded.file_format,
+                        file_name=excluded.file_name,
+                        archive_name=excluded.archive_name,
+                        archive_entry=excluded.archive_entry,
+                        size_bytes=excluded.size_bytes,
+                        sha256=excluded.sha256,
+                        content_fingerprint=excluded.content_fingerprint,
+                        remote=excluded.remote,
+                        local=excluded.local,
+                        collection_root=excluded.collection_root,
+                        folder=excluded.folder,
+                        state=excluded.state,
+                        updated_at=CURRENT_TIMESTAMP
+                    WHERE book_artifacts.book_id=excluded.book_id
+                    """,
+                    artifact.getId(), bookId.asString(), blankToNull(artifact.getSourceId()), artifact.getName(),
+                    blankToNull(artifact.getMediaType()), blankToNull(artifact.getFormat()),
+                    blankToNull(file.getFileName()), null, blankToNull(file.getArchiveEntry()),
+                    Math.max(0L, file.getFileSize()), blankToNull(artifact.getSha256()),
+                    blankToNull(artifact.getContentFingerprint()), artifact.isRemote() ? 1 : 0, artifact.isLocal() ? 1 : 0,
+                    blankToNull(file.getCollectionRoot()), blankToNull(file.getFolder()), artifact.getState().name());
+            if (changed == 0) {
+                throw new IllegalArgumentException("Artifact id already belongs to another book: " + artifact.getId());
+            }
+
+            getJdbcTemplate().update("DELETE FROM book_artifact_metadata WHERE artifact_id=?", artifact.getId());
+            if (artifact.getMetadata() != null && !artifact.getMetadata().isEmpty()) {
+                getJdbcTemplate().batchUpdate(
+                        "INSERT INTO book_artifact_metadata(artifact_id,metadata_key,metadata_value) VALUES (?,?,?)",
+                        artifact.getMetadata().entrySet(),
+                        100,
+                        (ps, entry) -> {
+                            ps.setString(1, artifact.getId());
+                            ps.setString(2, entry.getKey());
+                            ps.setString(3, entry.getValue());
+                        });
+            }
+
+            if (makePreferred) {
+                getJdbcTemplate().update("""
+                        INSERT INTO book_artifact_preferences(book_id, preferred_artifact_id, updated_at)
+                        VALUES (?, ?, CURRENT_TIMESTAMP)
+                        ON CONFLICT(book_id) DO UPDATE SET
+                            preferred_artifact_id=excluded.preferred_artifact_id,
+                            updated_at=CURRENT_TIMESTAMP
+                        """, bookId.asString(), artifact.getId());
+                updatePreferredProjection(bookId, artifact.getId());
+            }
+        });
+        bookCache.evict(bookId);
+        log.debug("Artifact upsert for book {}: {} preferred={}", bookId.asString(), artifact.getId(), makePreferred);
+    }
+
+    private void updatePreferredProjection(BookId bookId, String artifactId) {
+        getJdbcTemplate().update("""
+                UPDATE books
+                   SET file_name = COALESCE((
+                           SELECT COALESCE(NULLIF(ba.archive_name, ''), ba.file_name, '')
+                             FROM book_artifacts ba
+                            WHERE ba.book_id = books.id AND ba.artifact_id = ?
+                       ), file_name),
+                       folder = COALESCE((SELECT ba.folder FROM book_artifacts ba
+                                          WHERE ba.book_id = books.id AND ba.artifact_id = ?), ''),
+                       archive_entry = COALESCE((SELECT ba.archive_entry FROM book_artifacts ba
+                                                 WHERE ba.book_id = books.id AND ba.artifact_id = ?), ''),
+                       file_size = COALESCE((SELECT ba.size_bytes FROM book_artifacts ba
+                                             WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0),
+                       collection_root = COALESCE((SELECT ba.collection_root FROM book_artifacts ba
+                                                   WHERE ba.book_id = books.id AND ba.artifact_id = ?), ''),
+                       local = COALESCE((SELECT ba.local FROM book_artifacts ba
+                                         WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0),
+                       missing_since = CASE
+                           WHEN COALESCE((SELECT ba.local FROM book_artifacts ba
+                                          WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0) = 1
+                           THEN NULL ELSE COALESCE(missing_since, CURRENT_TIMESTAMP) END,
+                       format = COALESCE((SELECT NULLIF(ba.file_format, '') FROM book_artifacts ba
+                                          WHERE ba.book_id = books.id AND ba.artifact_id = ?), format),
+                       update_date = CURRENT_TIMESTAMP
+                 WHERE id = ?
+                """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
+                bookId.asString());
+    }
+
+    private static String blankToNull(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     @Override

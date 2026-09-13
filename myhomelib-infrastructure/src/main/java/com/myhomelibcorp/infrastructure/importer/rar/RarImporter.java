@@ -25,7 +25,6 @@ import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import java.util.Locale;
 
 @Component
 @Slf4j
@@ -35,7 +34,7 @@ public class RarImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        return SupportedFormatRegistry.standard().isFormat(file, "rar", "cbr");
+        return SupportedFormatRegistry.standard().isFormat(file, "rar");
     }
 
     @Override public String getFormatName() { return "RAR"; }

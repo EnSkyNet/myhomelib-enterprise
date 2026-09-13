@@ -257,7 +257,7 @@ public class ApplicationThemeService {
     private String secondary(ThemeConfig c) { return isDark(c.background()) ? "#c58af9" : "#7b1fa2"; }
     private String border(ThemeConfig c) { return isDark(c.background()) ? "#4a4d52" : "#d5d9df"; }
     private String success(ThemeConfig c) { return isDark(c.background()) ? "#81c995" : "#2e7d32"; }
-    private String warning(ThemeConfig c) { return isDark(c.background()) ? "#fdd663" : "#ed8b00"; }
+    private String warning(ThemeConfig c) { return isDark(c.background()) ? "#fdd663" : "#b45309"; }
     private String danger(ThemeConfig c) { return isDark(c.background()) ? "#f28b82" : "#c62828"; }
     private String onAccent(ThemeConfig c) { return isDark(c.accent()) ? "#ffffff" : "#111111"; }
     private String warningBg(ThemeConfig c) { return isDark(c.background()) ? "#4b3b12" : "#fff3cd"; }

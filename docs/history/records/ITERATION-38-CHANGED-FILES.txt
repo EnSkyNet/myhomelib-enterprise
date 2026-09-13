@@ -1,0 +1,75 @@
+Iteration 38 — changed-file inventory
+Date: 2026-09-11
+Base: MyHomeLib 7.3 WIP / Iteration 37
+Scope: MHL-205 annotation export + MHL-206 PDF Reader v1; MHL-207 not started (acceptance gate).
+Release-policy correction: formal source ZIP excludes all Maven runtime/wrapper payload (`mvnw`, `mvnw.cmd`, `.mvn/`); build scripts and CI fall back to external Maven.
+
+Changed / added source, docs, tests and release scripts (generated target/verification output excluded):
+- .github/workflows/ci-pr.yml
+- .github/workflows/ci-release.yml
+- .github/workflows/performance-baseline.yml
+- ARCHITECTURE.md
+- BUILD-CHECK-FIXES.cmd
+- ITERATION-38-ANNOTATION-EXPORT-PDF-READER-CHECKPOINT.md
+- ITERATION-38-CHANGED-FILES.txt
+- Lang/bg.json
+- Lang/en.json
+- Lang/uk.json
+- MYHOMELIB-DEVELOPMENT.md
+- MYHOMELIB-FEATURES.md
+- MYHOMELIB-OPERATIONS.md
+- MYHOMELIB-RELEASE.md
+- README.md
+- REFACTORING_COMPLETION.md
+- TASKS-ITERATION-38.md
+- build.ps1
+- build.sh
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportFormat.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportPage.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportRequest.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportResult.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportRow.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportSelection.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportService.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/export/AnnotationExportTemplates.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/annotation/AnnotationExportQueryPort.java
+- myhomelib-application/src/test/java/com/myhomelibcorp/application/annotation/export/AnnotationExportServiceTest.java
+- myhomelib-benchmark/src/test/java/com/myhomelibcorp/benchmark/PerformanceBaselineTest.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationExportQueryAdapter.java
+- myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationExportQueryAdapterIntegrationTest.java
+- myhomelib-reader/pom.xml
+- myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfDocumentSession.java
+- myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfPagePosition.java
+- myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfPageSize.java
+- myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfReaderView.java
+- myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/pdf/PdfRenderedPage.java
+- myhomelib-reader/src/test/java/com/myhomelibcorp/reader/render/pdf/PdfDocumentSessionTest.java
+- myhomelib-reader/src/test/java/com/myhomelibcorp/reader/render/pdf/PdfPagePositionTest.java
+- myhomelib-reader/src/test/java/com/myhomelibcorp/reader/render/pdf/PdfReaderSourceContractTest.java
+- myhomelib-shared/src/main/java/com/myhomelibcorp/shared/format/SupportedFormatRegistry.java
+- myhomelib-shared/src/test/java/com/myhomelibcorp/shared/format/SupportedFormatRegistryTest.java
+- myhomelib-ui/src/main/java/com/myhomelibcorp/ui/annotation/AnnotationManagerWorkspaceController.java
+- myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java
+- myhomelib-ui/src/main/resources/lang/default/bg.json
+- myhomelib-ui/src/main/resources/lang/default/en.json
+- myhomelib-ui/src/main/resources/lang/default/uk.json
+- myhomelib-ui/src/main/resources/view/annotation-manager-workspace.fxml
+- myhomelib-ui/src/test/java/com/myhomelibcorp/ui/PdfReaderWorkflowContractTest.java
+- myhomelib-ui/src/test/java/com/myhomelibcorp/ui/annotation/AnnotationManagerUiContractTest.java
+- package-desktop.ps1
+- package-desktop.sh
+- package-mcp.ps1
+- package-mcp.sh
+- package.ps1
+- package.sh
+- pom.xml
+- release.ps1
+- release.sh
+- run.ps1
+- run.sh
+- tools/invoke-maven.cmd
+- tools/invoke-maven.ps1
+- tools/invoke-maven.sh
+- tools/package-v71-source.py
+- tools/static_release_check.py
+- tools/supply-chain-policy-check.py

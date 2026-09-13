@@ -1,0 +1,25 @@
+Iteration 78 changed files vs Iteration 77 source
+
+ADDED:
++ docs/history/records/ITERATION-78-FINAL-LOCAL-PREFLIGHT.md
++ docs/release/EXTERNAL-TEST-PLAN-ITERATION-78.md
+
+MODIFIED:
+* MYHOMELIB-RELEASE.md
+* README.md
+* docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+* docs/release/CURRENT-VALIDATION.md
+* myhomelib-application/src/main/java/com/myhomelibcorp/application/content/indexing/ContentIndexingQueueService.java
+* tools/external-acceptance-readiness.py
+* tools/followup-navigation-download-export-check.py
+* tools/functional-regression-check.py
+* tools/review4-critical-behavior-check.py
+* tools/stage16-export-profiles-check.py
+* tools/stage17-18-opds-check.py
+* tools/stage25a-ui-orchestration-check.py
+* tools/stage25b-reader-refactor-check.py
+* tools/stage25c-search-sync-refactor-check.py
+* tools/thread-sleep-audit-check.py
+
+REMOVED:
+(none)

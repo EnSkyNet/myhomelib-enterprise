@@ -13,6 +13,7 @@ public class AutoScrollController {
     private final Runnable nextPageAction;
     private AnimationTimer scrollTimer;
     private boolean running;
+    private boolean motionAllowed = true;
     private double speed = 1.0;
 
     public AutoScrollController(Runnable nextPageAction) {
@@ -20,7 +21,7 @@ public class AutoScrollController {
     }
 
     public void start() {
-        if (running || nextPageAction == null) {
+        if (!motionAllowed || running || nextPageAction == null) {
             return;
         }
         running = true;
@@ -62,6 +63,15 @@ public class AutoScrollController {
 
     public boolean isRunning() {
         return running;
+    }
+
+    public void setMotionAllowed(boolean motionAllowed) {
+        this.motionAllowed = motionAllowed;
+        if (!motionAllowed) stop();
+    }
+
+    public boolean isMotionAllowed() {
+        return motionAllowed;
     }
 
     public void setSpeed(double speed) {

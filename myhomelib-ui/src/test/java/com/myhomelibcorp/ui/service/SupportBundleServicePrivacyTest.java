@@ -56,7 +56,8 @@ class SupportBundleServicePrivacyTest {
                 """.formatted(data), StandardCharsets.UTF_8);
         Path oversized = logs.resolve("oversized.log");
         createSparseFile(oversized, SupportBundleService.MAX_LOG_FILE + 1);
-        Files.writeString(launch.resolve("RELEASE_VALIDATION.txt"),
+        Files.createDirectories(launch.resolve("docs/release"));
+        Files.writeString(launch.resolve("docs/release/CURRENT-VALIDATION.md"),
                 "workspace=" + launch + " url=https://private.example.test/build?token=xyz\n",
                 StandardCharsets.UTF_8);
 
@@ -82,7 +83,7 @@ class SupportBundleServicePrivacyTest {
         Map<String, String> entries = textEntries(zip);
 
         assertThat(entries).containsKeys("environment.txt", "settings-redacted.txt", "threads.txt",
-                "release/RELEASE_VALIDATION.txt", "logs/myhomelib.log");
+                "release/CURRENT-VALIDATION.md", "logs/myhomelib.log");
         assertThat(entries).doesNotContainKey("logs/oversized.log");
 
         String combined = String.join("\n", entries.values());

@@ -47,8 +47,7 @@ public final class ImportBookMergePolicy {
         Cover effectiveCover = incoming.getCover() != null && !incoming.getCover().isEmpty()
                 ? incoming.getCover() : existing.getCover();
 
-        return Book.builder()
-                .id(existing.getId())
+        return existing.toBuilder()
                 .title(preferIncoming(incoming.getTitle(), existing.getTitle()))
                 .authors(incoming.getAuthors() == null || incoming.getAuthors().isEmpty()
                         ? new ArrayList<>(existing.getAuthors()) : new ArrayList<>(incoming.getAuthors()))
@@ -60,8 +59,6 @@ public final class ImportBookMergePolicy {
                 .file(effectiveFile)
                 .cover(effectiveCover)
                 .updateDate(incoming.getUpdateDate())
-                .createdAt(existing.getCreatedAt())
-                .deleted(existing.isDeleted())
                 .local(effectiveLocal)
                 .missingSince(effectiveMissingSince)
                 .build();

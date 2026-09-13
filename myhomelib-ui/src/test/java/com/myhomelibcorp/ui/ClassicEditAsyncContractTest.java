@@ -21,6 +21,6 @@ class ClassicEditAsyncContractTest {
         String source = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/service/ClassicLibraryActionsService.java"), StandardCharsets.UTF_8);
         assertThat(source).contains("backgroundExecutor.submit(() -> query.findById(id).orElse(null))");
         assertThat(source.indexOf("backgroundExecutor.submit(() -> query.findById(id).orElse(null))"))
-                .isLessThan(source.indexOf("showEditDialog(owner, book, onSuccess)"));
+                .isLessThan(source.indexOf("showEditDialog(owner, book, onSuccess, lease, token)"));
     }
 }

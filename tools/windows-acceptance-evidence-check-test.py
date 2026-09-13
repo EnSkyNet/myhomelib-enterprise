@@ -123,6 +123,7 @@ def build_bundle(root: Path, previous_source: str = "external") -> None:
         "note": "",
     }
     write_json(installer_dir / "installer-acceptance.json", installer)
+    (installer_dir / "installer-acceptance.md").write_text("# Installer acceptance\n\nOverall: **PASS**\n", encoding="utf-8")
 
     portable = {
         "schemaVersion": 1,
@@ -153,7 +154,9 @@ def build_bundle(root: Path, previous_source: str = "external") -> None:
         "overall": "PASS",
         "note": "",
     }
-    write_json(root / "windows-portable-acceptance" / "portable-smoke.json", portable)
+    portable_dir = root / "windows-portable-acceptance"
+    write_json(portable_dir / "portable-smoke.json", portable)
+    (portable_dir / "portable-smoke.md").write_text("# Portable acceptance\n\nOverall: **PASS**\n", encoding="utf-8")
 
     seed = 1
     for scale in mod.DPI_SCALES:
@@ -198,6 +201,9 @@ def build_bundle(root: Path, previous_source: str = "external") -> None:
             "results": results,
         }
         write_json(root / f"windows-ui-acceptance-{scale}.json", ui)
+        (root / f"windows-ui-acceptance-{scale}.md").write_text(
+            f"# DPI {scale} acceptance\n\nOverall: **PASS**\n", encoding="utf-8"
+        )
 
     desktop_dir = root / "windows-release-desktop-acceptance"
     evidence_dir = desktop_dir / "evidence"
@@ -243,6 +249,7 @@ def build_bundle(root: Path, previous_source: str = "external") -> None:
         "results": desktop_results,
     }
     write_json(desktop_dir / "desktop-acceptance.json", desktop)
+    (desktop_dir / "desktop-acceptance.md").write_text("# Desktop acceptance\n\nOverall: **PASS**\n", encoding="utf-8")
 
 
 def expect_failure(label: str, action) -> None:
@@ -268,6 +275,9 @@ def main() -> None:
         assert desktop["overall"] == "PASS"
         binding = mod.verify_host_cohesion(root, require_dpi=True, require_desktop=True)
         assert binding["acceptanceSessionId"] == SESSION_ID
+        mod.verify_evidence_closure(
+            root, require_dpi=True, require_desktop=True, require_host_binding=True
+        )
 
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
@@ -409,6 +419,41 @@ def main() -> None:
         expect_failure(
             "mixed Windows acceptance session accepted",
             lambda: mod.verify_host_cohesion(root, require_dpi=False, require_desktop=False),
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_bundle(root)
+        path = root / "windows-ui-acceptance-125.json"
+        data = load_json(path)
+        data["timestamp"] = "2026-09-06T16:58:59+03:00"
+        write_json(path, data)
+        expect_failure(
+            "pre-session Windows evidence accepted",
+            lambda: mod.verify_host_cohesion(root, require_dpi=True, require_desktop=True),
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_bundle(root)
+        path = root / "windows-portable-acceptance" / "portable-smoke.json"
+        data = load_json(path)
+        data["timestamp"] = "2026-09-06T18:01:00"
+        write_json(path, data)
+        expect_failure(
+            "timezone-free Windows evidence accepted",
+            lambda: mod.verify_host_cohesion(root, require_dpi=False, require_desktop=False),
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        root = Path(td)
+        build_bundle(root)
+        (root / "windows-installer-acceptance" / "unreferenced-secret.txt").write_text("secret", encoding="utf-8")
+        expect_failure(
+            "unreferenced Windows evidence file accepted",
+            lambda: mod.verify_evidence_closure(
+                root, require_dpi=True, require_desktop=True, require_host_binding=True
+            ),
         )
 
     print("Windows acceptance evidence validator regression tests: PASS")

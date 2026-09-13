@@ -20,8 +20,8 @@ test=txt('myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructur
 legacy=txt('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/legacy/SqliteLegacyCollectionAttachAdapter.java')
 atomic_support=txt('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AtomicFileSupport.java')
 
-need('CURRENT_SCHEMA_VERSION = 2' in port, 'portable user-data schema v2 missing')
-for section in ['bookState','readingProgress','readingHistory','readingStats','bookmarks','groups','groupMemberships','savedSearches','filterSettings','readerSettings']:
+need('CURRENT_SCHEMA_VERSION = 4' in port, 'portable user-data schema v4 missing')
+for section in ['bookState','readingProgress','readingHistory','readingStats','bookmarks','annotations','annotationTags','groups','groupMemberships','savedSearches','filterSettings','readerSettings']:
     need(f'"{section}"' in adapter, f'missing portable section {section}')
 need('SELECT id FROM books WHERE lib_id=?' in adapter, 'restore must resolve stable LibID first')
 need('sourceBookId' in adapter, 'same-catalogue internal-id fallback missing')
@@ -42,7 +42,7 @@ need("'old-1','L100'" in test and "'new-77','L100'" in test, 'LibID remap regres
 need('sequentiallyMigratesPreviousV1Manifest' in test, 'v1 manifest compatibility test missing')
 need('validateCurrentManifestStructure' in adapter and 'replaceByPrefix(FILTER_PREFIX' in adapter and 'rollbackExternalState' in adapter, 'portable restore preflight/external-state atomicity missing')
 need('schemaVersion must be an integer' in adapter and 'format is missing for schema v' in adapter and 'Conflicting portable user-data schema versions' in adapter,
-     'portable v2 header validation/anti-downgrade guards missing')
+     'portable current-schema header validation/anti-downgrade guards missing')
 need('currentSchemaRestoreReplacesFilterSliceAndClearsExplicitNullReaderGlobal' in test and
      'malformedV2ExternalSectionIsRejectedBeforeDatabaseMutation' in test and
      'externalSettingsFailureRollsBackDatabaseAndRestoresExternalState' in test and
@@ -103,7 +103,7 @@ if errors:
     for e in errors: print(' -',e)
     sys.exit(1)
 print('STAGE 22 VERSIONED USER-DATA CHECK: PASS')
-print(' - schema-v2 portable user-data sections + streaming v1 compatibility: PASS')
+print(' - schema-v4 portable user-data sections (including annotations) + streaming v1 compatibility: PASS')
 print(' - stable LibID-first remap + bounded identity cache + migrated-schema index lookup: PASS')
 print(' - WAL-safe VACUUM INTO backup + staged atomic DB restore: PASS')
 print(' - full restore + user-data-only UI modes + legacy DB-only compatibility: PASS')

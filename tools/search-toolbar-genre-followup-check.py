@@ -54,8 +54,17 @@ require('sourceLabel.equalsIgnoreCase(requestedCode)' in read('myhomelib-ui/src/
 
 require('<FlowPane' in main_fxml and 'styleClass="main-toolbar-wrap"' in main_fxml,
         'main toolbar is not wrapping/adaptive')
-require('⬇ Завантажити вибрані' in main_fxml and '✕ Скасувати завантаження' in main_fxml,
-        'download toolbar commands remain ambiguous')
+import xml.etree.ElementTree as ET
+toolbar = ET.fromstring(main_fxml)
+buttons = {node.get('onAction'): node for node in toolbar.iter('Button')}
+for handler, tooltip in [('#handleDownloadBook', 'Завантажити вибрані книги'),
+                         ('#handleCancelDownload', 'Скасувати активне завантаження')]:
+    button = buttons.get(handler)
+    require(button is not None and any(node.get('text') == tooltip for node in button.iter('Tooltip')),
+            'download toolbar action/tooltip missing: ' + handler)
+main_controller = read('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java')
+require('batchOperationsController.handleBatchDownload(' in main_controller,
+        'toolbar download no longer dispatches checkbox-selected books')
 
 require('PauseTransition' in progress and 'stage.close()' in progress,
         'download completion window does not auto-close')

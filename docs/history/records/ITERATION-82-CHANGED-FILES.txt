@@ -1,0 +1,21 @@
+Iteration 82 changed files relative to Iteration 81
+
+MYHOMELIB-RELEASE.md
+README.md
+docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+docs/history/records/ITERATION-82-WINDOWS-WORKFLOW-STATE-HOTFIX.md
+docs/release/CURRENT-VALIDATION.md
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/tts/SystemTtsProvider.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/tts/SystemTtsProviderTest.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/ExportController.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/MainNavigationCoordinator.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/table/TreeBookTableController.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/ExportBatchCompletionContractTest.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/annotation/AnnotationManagerUiContractTest.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/navigation/MainNavigationCoordinatorAnnotationTest.java
+tools/external-acceptance-readiness.py
+docs/history/records/ITERATION-82-CHANGED-FILES.txt
+
+Total: 17 files

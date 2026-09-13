@@ -1,0 +1,16 @@
+.github/workflows/ci-pr.yml
+.github/workflows/ci-release.yml
+MYHOMELIB-DEVELOPMENT.md
+MYHOMELIB-RELEASE.md
+README.md
+docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+docs/history/records/ITERATION-74-CHANGED-FILES.txt
+docs/history/records/ITERATION-74-RELEASE-CANDIDATE-INTEGRITY.md
+docs/release/CURRENT-VALIDATION.md
+docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md
+tools/external-acceptance-readiness.py
+tools/github-connected-acceptance-test.py
+tools/github-connected-acceptance.py
+tools/release-candidate-integrity-test.py
+tools/release-candidate-integrity.py
+tools/supply-chain-policy-check.py

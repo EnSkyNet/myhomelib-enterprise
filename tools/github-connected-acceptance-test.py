@@ -65,20 +65,47 @@ def artifact_zip(candidate_sha: str = "a" * 40) -> bytes:
     return out.getvalue()
 
 
-def windows_artifact_zip(version: str = "7.1.0") -> tuple[bytes, str, str, str]:
+def windows_artifact_zip(version: str = "7.1.0", candidate_sha: str = "a" * 40) -> tuple[bytes, str, str, str]:
     files = {
         f"MyHomeLib-{version}.msi": b"synthetic-msi-candidate",
         f"MyHomeLib-{version}.exe": b"synthetic-exe-candidate",
         f"myhomelib-{version}-windows-amd64.zip": b"synthetic-portable-candidate",
     }
     lines = []
-    for name, data in files.items():
-        lines.append(f"{hashlib.sha256(data).hexdigest()}  {name}")
+    dist_rows = []
+    for name, data in sorted(files.items()):
+        digest = hashlib.sha256(data).hexdigest()
+        lines.append(f"{digest}  {name}")
+        dist_rows.append({"path": name, "size": len(data), "sha256": digest})
+    sums = "\n".join(lines) + "\n"
+    aggregate = hashlib.sha256()
+    for row in dist_rows:
+        aggregate.update(f"{row['sha256']}  {row['path']}  {row['size']}\n".encode())
+    integrity = {
+        "schemaVersion": 1,
+        "scenario": "release-candidate-integrity",
+        "overall": "PASS",
+        "projectVersion": version,
+        "candidateSha": candidate_sha,
+        "platform": "windows",
+        "sourceFileCount": 10,
+        "sourceTreeSha256": "b" * 64,
+        "criticalPolicyFiles": [{"path": "pom.xml", "size": 1, "sha256": "c" * 64}],
+        "distFileCount": len(dist_rows),
+        "distManifestSha256": aggregate.hexdigest(),
+        "sha256sSha256": hashlib.sha256(sums.encode()).hexdigest(),
+        "distFiles": dist_rows,
+    }
+    integrity_bytes = (json.dumps(integrity, indent=2, sort_keys=True) + "\n").encode()
+    integrity_name = "release-candidate-integrity-windows.json"
+    sidecar = f"{hashlib.sha256(integrity_bytes).hexdigest()}  {integrity_name}\n"
     out = io.BytesIO()
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zf:
         for name, data in files.items():
             zf.writestr(name, data)
-        zf.writestr("SHA256SUMS", "\n".join(lines) + "\n")
+        zf.writestr("SHA256SUMS", sums)
+        zf.writestr(integrity_name, integrity_bytes)
+        zf.writestr(integrity_name + ".sha256", sidecar)
     return (
         out.getvalue(),
         hashlib.sha256(files[f"MyHomeLib-{version}.msi"]).hexdigest(),
@@ -121,17 +148,35 @@ def main() -> int:
     win_blob, expected_msi, expected_exe, expected_portable = windows_artifact_zip()
     with tempfile.TemporaryDirectory() as candidate_td:
         candidate_dir = Path(candidate_td)
-        win_info = mod.validate_windows_release_artifact(win_blob, "7.1.0", candidate_dir)
+        win_info = mod.validate_windows_release_artifact(win_blob, "7.1.0", candidate_dir, "a" * 40)
         assert (candidate_dir / "MyHomeLib-7.1.0.msi").is_file()
         assert (candidate_dir / "MyHomeLib-7.1.0.exe").is_file()
         assert (candidate_dir / "myhomelib-7.1.0-windows-amd64.zip").is_file()
         candidate_manifest = (candidate_dir / "candidate-windows.sha256").read_text()
         assert "MyHomeLib-7.1.0.msi" in candidate_manifest
         assert "MyHomeLib-7.1.0.exe" in candidate_manifest
+        integrity_copy = candidate_dir / "release-candidate-integrity-windows.json"
+        integrity_sidecar = candidate_dir / "release-candidate-integrity-windows.json.sha256"
+        release_sums = candidate_dir / "release-windows-SHA256SUMS"
+        assert integrity_copy.is_file() and integrity_sidecar.is_file() and release_sums.is_file()
+        copied = json.loads(integrity_copy.read_text())
+        assert copied["candidateSha"] == "a" * 40
+        assert copied["projectVersion"] == "7.1.0"
+        sidecar_parts = integrity_sidecar.read_text().strip().split(None, 1)
+        assert sidecar_parts[1] == integrity_copy.name
+        assert sidecar_parts[0] == hashlib.sha256(integrity_copy.read_bytes()).hexdigest()
+        assert hashlib.sha256(release_sums.read_bytes()).hexdigest() == copied["sha256sSha256"]
     assert win_info["windowsMsiSha256"] == expected_msi
     assert win_info["windowsExeSha256"] == expected_exe
     assert win_info["windowsPortableSha256"] == expected_portable
-    expect_fail(lambda: mod.validate_windows_release_artifact(b"not a zip", "7.1.0"), "valid zip")
+    assert win_info["windowsIntegrityCandidateSha"] == "a" * 40
+    assert win_info["windowsIntegrityProjectVersion"] == "7.1.0"
+    assert len(win_info["windowsIntegritySha256"]) == 64
+    assert len(win_info["windowsChecksumsSha256"]) == 64
+    assert len(win_info["windowsIntegritySourceTreeSha256"]) == 64
+    bad_sha_blob, _, _, _ = windows_artifact_zip(candidate_sha="b" * 40)
+    expect_fail(lambda: mod.validate_windows_release_artifact(bad_sha_blob, "7.1.0", expected_sha="a" * 40), "candidate SHA")
+    expect_fail(lambda: mod.validate_windows_release_artifact(b"not a zip", "7.1.0", expected_sha="a" * 40), "valid zip")
     expect_fail(lambda: mod.normalize_sha("abc"), "40-character")
     assert mod.normalize_sha("A" * 40) == "a" * 40
 

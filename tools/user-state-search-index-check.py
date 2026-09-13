@@ -27,12 +27,17 @@ for rel, mutation in [
     need(mutation in t, f'{rel} lost DB mutation')
     need('synchronizeAfterCommit(bookIds)' in t, f'{rel} does not invalidate Lucene after committed user-state change')
 
-for rel in [
- 'myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/DownloadBookUseCase.java',
- 'myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/RemoveLocalBookCopyUseCase.java']:
-    t=read(rel)
-    need('updateStorage' in t, f'{rel} lost local-storage mutation')
-    need('synchronizeSafelyNow' in t, f'{rel} does not refresh Lucene local-state filter')
+download=read('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/DownloadBookUseCase.java')
+need('updateStorage' in download, 'DownloadBookUseCase lost local-storage mutation')
+need('synchronizeSafelyNow' in download, 'DownloadBookUseCase does not refresh Lucene local-state filter')
+
+remove=read('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/download/RemoveLocalBookCopyUseCase.java')
+committed=read('myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CommittedCatalogMutationService.java')
+need('updateStorage' in remove, 'RemoveLocalBookCopyUseCase lost local-storage mutation')
+need('committedCatalogMutationService.executeSynchronized' in remove,
+     'RemoveLocalBookCopyUseCase does not route committed local-state mutation through synchronized transaction boundary')
+need('searchIndexSynchronizer.synchronizeAfterCommit(ids)' in committed,
+     'CommittedCatalogMutationService no longer schedules Lucene synchronization after commit')
 
 folder=read('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/sync/FolderSyncService.java')
 inpx=read('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/sync/FolderSyncInpxSupport.java')
@@ -40,7 +45,7 @@ need('FolderSyncInpxSupport.importAndAccumulate' in folder, 'FolderSyncService s
 need('FolderSyncInpxSupport.finalizeIndex' in folder, 'FolderSyncService lacks one final INPX index finalization')
 need('ImportChangeAccumulator' in folder, 'FolderSyncService lacks bounded cross-file INPX change tracking')
 need('importFileWithResult' in inpx, 'Folder sync still uses count-only INPX import result')
-need(inpx.count('rebuildIndex()') == 1, 'FolderSync INPX support has more than one full-rebuild call path')
+need(inpx.count('rebuildSafelyNow()') == 1, 'FolderSync INPX support must have exactly one guarded full-rebuild fallback path')
 need('synchronizeSafelyNow' in inpx, 'complete INPX changes do not use selective Lucene synchronization')
 
 need((ROOT/'myhomelib-application/src/test/java/com/myhomelibcorp/application/search/SearchIndexSynchronizerTest.java').is_file(),

@@ -1,14 +1,24 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.usecase.integrity.DataIntegrityChecker;
-import com.myhomelibcorp.application.usecase.integrity.IntegrityReport;
+import com.myhomelibcorp.application.health.LibraryHealthIssue;
+import com.myhomelibcorp.application.health.LibraryHealthIssueType;
+import com.myhomelibcorp.application.health.LibraryHealthReport;
+import com.myhomelibcorp.application.health.LibraryHealthService;
+import com.myhomelibcorp.application.content.index.ContentIndexHealth;
+import com.myhomelibcorp.application.content.maintenance.ContentIndexMaintenanceService;
+import com.myhomelibcorp.application.content.maintenance.ContentIndexRebuildProgress;
+import com.myhomelibcorp.application.content.maintenance.ContentIndexRebuildResult;
+import com.myhomelibcorp.application.integrity.ArtifactIntegrityFinding;
 import com.myhomelibcorp.application.progress.OperationStage;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
-import com.myhomelibcorp.ui.operation.OperationCenterService;
-import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import javafx.beans.property.ReadOnlyObjectWrapper;
+import javafx.beans.property.ReadOnlyStringWrapper;
+import javafx.collections.FXCollections;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
 import javafx.stage.FileChooser;
@@ -21,189 +31,432 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.util.List;
+import java.util.Locale;
+import java.util.concurrent.Future;
+import java.util.concurrent.atomic.AtomicBoolean;
 
+/** Unified MHL-117 Library Health dashboard backed by the non-destructive MHL-116 artifact audit. */
 @Component
 @RequiredArgsConstructor
 @Slf4j
 public class IntegrityCheckController {
+    private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm")
+            .withZone(ZoneId.systemDefault());
 
-    private final DataIntegrityChecker integrityChecker;
+    private final LibraryHealthService healthService;
     private final DialogService dialogService;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
     private final ApplicationState appState;
+    private final ContentIndexMaintenanceService contentIndexMaintenance;
 
-    @FXML private TextArea reportArea;
-    @FXML private ProgressIndicator progressIndicator;
     @FXML private Button checkButton;
-    @FXML private Button fixButton;
+    @FXML private ProgressIndicator progressIndicator;
     @FXML private Label statusLabel;
-    @FXML private Label issuesSummaryLabel;
+    @FXML private Label overallStatusLabel;
+    @FXML private Label localArtifactsValue;
+    @FXML private Label missingValue;
+    @FXML private Label corruptValue;
+    @FXML private Label changedValue;
+    @FXML private Label duplicatesValue;
+    @FXML private Label metadataValue;
+    @FXML private Label indexValue;
+    @FXML private Label backupValue;
+    @FXML private Label contentIndexValue;
+    @FXML private Label contentIndexDetailLabel;
+    @FXML private ProgressBar contentIndexProgress;
+    @FXML private Button contentIndexRebuildButton;
+    @FXML private Button contentIndexCancelButton;
+    @FXML private TableView<LibraryHealthIssue> issueTable;
+    @FXML private TableColumn<LibraryHealthIssue, String> severityColumn;
+    @FXML private TableColumn<LibraryHealthIssue, String> categoryColumn;
+    @FXML private TableColumn<LibraryHealthIssue, Number> countColumn;
+    @FXML private TableColumn<LibraryHealthIssue, String> actionColumn;
+    @FXML private TextArea detailArea;
+
+    private LibraryHealthReport lastReport;
     private String lastReportText = "";
+    private final AtomicBoolean contentIndexCancel = new AtomicBoolean();
+    private Future<?> contentIndexRebuildTask;
 
     @FXML
     public void initialize() {
-        fixButton.setDisable(true);
         progressIndicator.setVisible(false);
         statusLabel.setText("Готово до перевірки");
-        reportArea.setStyle("-fx-font-family: monospace; -fx-font-size: 13px;");
-        reportArea.setText("Натисніть 'Перевірити' для аналізу цілісності бази даних.");
+        overallStatusLabel.setText("Стан ще не перевірено");
+        configureIssueTable();
+        if (contentIndexProgress != null) { contentIndexProgress.setProgress(0); contentIndexProgress.setVisible(false); contentIndexProgress.setManaged(false); }
+        if (contentIndexCancelButton != null) { contentIndexCancelButton.setDisable(true); }
+        refreshContentIndexHealth();
+        detailArea.setText("Натисніть «Оновити стан», щоб виконати integrity/hash audit та зібрати KPI бібліотеки.");
+    }
+
+    private void configureIssueTable() {
+        severityColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(switch (cell.getValue().severity()) {
+            case ERROR -> "Помилка";
+            case WARNING -> "Увага";
+            case INFO -> "Інформація";
+        }));
+        categoryColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().title()));
+        countColumn.setCellValueFactory(cell -> new ReadOnlyObjectWrapper<>(cell.getValue().count()));
+        actionColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().action()));
+        issueTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, issue) -> {
+            if (issue != null) displayIssueDetail(issue);
+        });
+        issueTable.setPlaceholder(new Label("Проблем не виявлено"));
     }
 
     @FXML
     public void onCheckIntegrity() {
         checkButton.setDisable(true);
-        fixButton.setDisable(true);
         progressIndicator.setVisible(true);
-        statusLabel.setText("⏳ Перевірка цілісності...");
-        reportArea.clear();
-        issuesSummaryLabel.setText("");
+        statusLabel.setText("Перевірка локальних artifacts, SQLite та Lucene...");
+        detailArea.setText("Виконується інкрементальний audit. Незмінені файли використовують попередній hash baseline.");
 
         var collection = appState.getCurrentLibraryCollection();
         String operationId = operationCenter.start(
-                "Перевірка цілісності", collection == null ? "" : collection.getId(),
+                "Library Health audit", collection == null ? "" : collection.getId(),
                 OperationStage.INTEGRITY_CHECKS, false);
-        executor.submit(integrityChecker::check)
+        executor.submit(healthService::refresh)
                 .whenComplete((report, error) -> UiExecutor.runOnUiThread(() -> {
+                    checkButton.setDisable(false);
+                    progressIndicator.setVisible(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
-                        checkButton.setDisable(false);
-                        progressIndicator.setVisible(false);
-                        statusLabel.setText("❌ Помилка: " + cause.getMessage());
-                        dialogService.showError("Помилка", "Не вдалося виконати перевірку: " + cause.getMessage());
-                        log.error("Помилка перевірки цілісності", cause);
+                        statusLabel.setText("Помилка перевірки: " + cause.getMessage());
+                        dialogService.showError("Library Health", "Не вдалося оновити стан: " + cause.getMessage());
+                        log.error("Library Health refresh failed", cause);
                         return;
                     }
 
-                    operationCenter.complete(operationId, report.hasIssues()
-                            ? "Виявлено проблем: " + report.problemCount()
-                            : "Проблем не виявлено");
+                    lastReport = report;
+                    lastReportText = formatExport(report);
+                    operationCenter.complete(operationId, report.healthy()
+                            ? "Проблем не виявлено"
+                            : "Проблем: " + formatNumber(report.totalProblemCount()));
                     displayReport(report);
-                    checkButton.setDisable(false);
-                    progressIndicator.setVisible(false);
-                    statusLabel.setText("✅ Перевірку завершено");
-                    fixButton.setDisable(!report.hasIssues());
-                    if (!report.hasIssues()) {
-                        issuesSummaryLabel.setText("✅ ПРОБЛЕМ НЕ ВИЯВЛЕНО");
-                        issuesSummaryLabel.setStyle("-fx-text-fill: green; -fx-font-weight: bold;");
+                    statusLabel.setText("Оновлено: " + DATE_TIME.format(report.generatedAt()));
+                }));
+    }
+
+    private void displayReport(LibraryHealthReport report) {
+        localArtifactsValue.setText(formatNumber(report.localArtifacts()));
+        missingValue.setText(formatNumber(report.missingArtifacts()));
+        corruptValue.setText(formatNumber(report.corruptArtifacts()));
+        changedValue.setText(formatNumber(report.changedArtifacts()));
+        duplicatesValue.setText(formatNumber(report.duplicateBooks()));
+        metadataValue.setText(formatNumber(report.metadataGaps()));
+        indexValue.setText(report.searchIndexFresh() ? "Актуальний" : "Потребує rebuild");
+        backupValue.setText(report.latestBackupAt() == null
+                ? "Не знайдено"
+                : formatAge(report.backupAgeHours()));
+
+        if (report.healthy()) {
+            overallStatusLabel.setText("Library Health: основні перевірки пройдено");
+            overallStatusLabel.setStyle("-fx-text-fill: -mhl-success; -fx-font-weight: bold; -fx-font-size: 15px;");
+        } else {
+            overallStatusLabel.setText("Library Health: проблем — " + formatNumber(report.totalProblemCount()));
+            overallStatusLabel.setStyle("-fx-text-fill: -mhl-warning; -fx-font-weight: bold; -fx-font-size: 15px;");
+        }
+
+        issueTable.setItems(FXCollections.observableArrayList(report.issues()));
+        if (report.issues().isEmpty()) {
+            detailArea.setText("Проблем не виявлено.\n\n"
+                    + "Artifact audit: перевірено " + formatNumber(report.auditInspected())
+                    + ", reuse без повторного hash: " + formatNumber(report.auditReused())
+                    + ", прочитано: " + formatBytes(report.auditBytesRead()) + ".");
+        } else {
+            issueTable.getSelectionModel().selectFirst();
+        }
+    }
+
+    private void displayIssueDetail(LibraryHealthIssue issue) {
+        if (lastReport == null) return;
+        StringBuilder text = new StringBuilder();
+        text.append(issue.title()).append("\n")
+                .append("Кількість: ").append(formatNumber(issue.count())).append("\n\n")
+                .append(issue.detail()).append("\n\n")
+                .append("Рекомендована дія: ").append(issue.action());
+
+        List<ArtifactIntegrityFinding> matches = artifactFindings(issue.type());
+        if (!matches.isEmpty()) {
+            text.append("\n\nArtifacts (деталі audit, максимум у поточному звіті):\n");
+            for (ArtifactIntegrityFinding finding : matches) {
+                text.append("• ").append(finding.bookTitle().isBlank() ? finding.bookId() : finding.bookTitle())
+                        .append(" [").append(finding.status()).append("]\n  ")
+                        .append(finding.path());
+                if (!finding.detail().isBlank()) text.append("\n  ").append(finding.detail());
+                text.append('\n');
+            }
+        }
+        detailArea.setText(text.toString());
+    }
+
+    private List<ArtifactIntegrityFinding> artifactFindings(LibraryHealthIssueType type) {
+        if (lastReport == null) return List.of();
+        return lastReport.artifactFindings().stream().filter(finding -> switch (type) {
+            case MISSING_ARTIFACTS -> finding.status().name().equals("MISSING");
+            case CORRUPT_ARTIFACTS -> finding.status().isCorrupt();
+            case CHANGED_ARTIFACTS -> finding.status().isChanged();
+            default -> false;
+        }).limit(200).toList();
+    }
+
+
+    @FXML
+    public void onShowContentIndex() {
+        refreshContentIndexHealth();
+        String id = currentCollectionId();
+        if (id.isBlank()) return;
+        executor.submit(() -> contentIndexMaintenance.health(id))
+                .thenAccept(health -> UiExecutor.runOnUiThread(() -> detailArea.setText(formatContentIndexHealth(health))));
+    }
+
+    @FXML
+    public void onRebuildContentIndex() {
+        String id = currentCollectionId();
+        if (id.isBlank()) {
+            dialogService.showWarning("Full-text index", "Активну бібліотеку не вибрано.");
+            return;
+        }
+        if (!dialogService.showConfirmation("Перебудова full-text index",
+                "Перебудувати окремий індекс вмісту книг?",
+                "Активний індекс залишиться доступним до успішного завершення атомарної перебудови.")) return;
+
+        contentIndexCancel.set(false);
+        setContentRebuildRunning(true);
+        updateContentProgress(new ContentIndexRebuildProgress(0, 0, "", "starting"));
+        contentIndexRebuildTask = executor.submit(() -> contentIndexMaintenance.rebuild(
+                id, contentIndexCancel::get, progress -> UiExecutor.runOnUiThread(() -> updateContentProgress(progress))))
+                .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+                    setContentRebuildRunning(false);
+                    if (error != null) {
+                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                        dialogService.showError("Full-text index", "Помилка перебудови: " + cause.getMessage());
+                        refreshContentIndexHealth();
+                        return;
+                    }
+                    if (result == null) return;
+                    displayContentIndexHealth(result.health());
+                    if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
+                        detailArea.setText("Full-text index успішно перебудовано.\n"
+                                + "Книг оброблено: " + formatNumber(result.processedBooks()) + "\n"
+                                + "Artifacts проіндексовано: " + formatNumber(result.indexedArtifacts()) + "\n\n"
+                                + formatContentIndexHealth(result.health()));
+                    } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
+                        detailArea.setText("Перебудову скасовано. Попередній активний content index збережено.\n\n"
+                                + formatContentIndexHealth(result.health()));
                     } else {
-                        issuesSummaryLabel.setText("⚠️ ВИЯВЛЕНО ПРОБЛЕМ: " + formatNumber(report.problemCount()));
-                        issuesSummaryLabel.setStyle("-fx-text-fill: orange; -fx-font-weight: bold;");
+                        detailArea.setText("Перебудова завершилась помилкою; попередній активний content index збережено.\n"
+                                + result.message() + "\n\n" + formatContentIndexHealth(result.health()));
                     }
                 }));
     }
 
     @FXML
-    public void onFixIssues() {
-        dialogService.showInfo(
-                "Безпечне обслуговування",
-                "Автоматичне legacy-виправлення вимкнено. Відкрийте «Колекція → Керування колекціями...» "
-                        + "і використайте Maintenance: Analyze → Dry run → Apply. Перед Apply створюється backup.");
+    public void onCancelContentIndexRebuild() {
+        contentIndexCancel.set(true);
+        if (contentIndexCancelButton != null) contentIndexCancelButton.setDisable(true);
+        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText("Скасування…");
     }
 
-    private void displayReport(IntegrityReport report) {
-        StringBuilder sb = new StringBuilder();
-
-        // Заголовок
-        sb.append("📊 ЗВІТ ПРО ЦІЛІСНІСТЬ БАЗИ ДАНИХ\n");
-        sb.append("═".repeat(50)).append("\n\n");
-
-        // Статистика
-        sb.append("📈 СТАТИСТИКА:\n");
-        sb.append("  ─────────────────────────────────\n");
-        sb.append("  📚 Книг без авторів:   ").append(formatNumber(report.booksWithoutAuthor())).append("\n");
-        sb.append("  📚 Книг без жанрів:    ").append(formatNumber(report.booksWithoutGenre())).append("\n");
-        sb.append("  👤 Авторів без книг:   ").append(formatNumber(report.orphanedAuthors())).append("\n");
-        sb.append("  🏷️ Жанрів без книг:    ").append(formatNumber(report.orphanedGenres())).append("\n");
-        sb.append("  🔄 Дублікатів книг:    ").append(formatNumber(report.duplicateBooks())).append("\n");
-        sb.append("  📚 Серій без книг:     ").append(formatNumber(report.orphanedSeries())).append("\n");
-        sb.append("  📕 Книг з невідомою серією: ").append(formatNumber(report.booksWithMissingSeries())).append("\n");
-        sb.append("  🔗 Пошкоджених зв’язків: ").append(formatNumber(report.brokenRelations())).append("\n");
-        sb.append("  🗄 SQLite:             ").append(report.sqliteIntegrityOk() ? "OK" : "ERROR: " + report.sqliteIntegrityMessage()).append("\n");
-        sb.append("  🔎 Lucene:             ").append(report.luceneIntegrityOk() ? "OK" : "ERROR")
-                .append(" (").append(formatNumber(report.luceneDocuments())).append(" / ")
-                .append(formatNumber(report.catalogBooks())).append(")\n");
-        sb.append("  ─────────────────────────────────\n");
-        sb.append("  ⚠️ ВСЬОГО ПРОБЛЕМ:     ").append(formatNumber(report.problemCount())).append("\n\n");
-
-        // Детальний список проблем
-        if (report.hasIssues()) {
-            sb.append("📋 ДЕТАЛЬНИЙ СПИСОК ПРОБЛЕМ:\n");
-            sb.append("  ─────────────────────────────────\n");
-            int index = 1;
-            for (String issue : report.issues()) {
-                sb.append("  ").append(String.format("%2d", index)).append(". ").append(issue).append("\n");
-                index++;
-            }
-            sb.append("  ─────────────────────────────────\n\n");
-
-            sb.append("💡 РЕКОМЕНДАЦІЇ:\n");
-            if (report.booksWithoutAuthor() > 0) {
-                sb.append("  • Видаліть книги без авторів або додайте авторів\n");
-            }
-            if (report.booksWithoutGenre() > 0) {
-                sb.append("  • Додайте жанри до книг без жанрів\n");
-            }
-            if (report.orphanedAuthors() > 0) {
-                sb.append("  • Перевірте авторів без книг у Collection Maintenance\n");
-            }
-            if (report.orphanedGenres() > 0) {
-                sb.append("  • Перевірте жанри без книг у Collection Maintenance\n");
-            }
-            if (report.duplicateBooks() > 0) {
-                sb.append("  • Перевірте детерміновані дублікати у Collection Maintenance\n");
-            }
-            if (report.orphanedSeries() > 0 || report.booksWithMissingSeries() > 0) {
-                sb.append("  • Синхронізуйте довідник серій із каталогом книг\n");
-            }
-            if (report.brokenRelations() > 0 || !report.sqliteIntegrityOk()) {
-                sb.append("  • Не застосовуйте автоматичні зміни до резервного копіювання та аналізу Maintenance\n");
-            }
-            if (!report.luceneIntegrityOk()) {
-                sb.append("  • Перебудуйте Lucene та повторіть перевірку цілісності\n");
-            }
-            sb.append("\n");
-            sb.append("🔧 Для безпечного repair використайте Collection Workspace → Maintenance (з preview/dry-run/backup).");
-        } else {
-            sb.append("✅ ВСІ ПЕРЕВІРКИ ПРОЙДЕНО УСПІШНО\n");
-            sb.append("  База даних не містить проблем цілісності.");
+    private void refreshContentIndexHealth() {
+        String id = currentCollectionId();
+        if (id.isBlank()) {
+            if (contentIndexValue != null) contentIndexValue.setText("—");
+            if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText("Немає активної бібліотеки");
+            return;
         }
-
-        lastReportText = sb.toString();
-        reportArea.setText(lastReportText);
+        executor.submit(() -> contentIndexMaintenance.health(id))
+                .thenAccept(health -> UiExecutor.runOnUiThread(() -> displayContentIndexHealth(health)))
+                .exceptionally(error -> {
+                    UiExecutor.runOnUiThread(() -> {
+                        if (contentIndexValue != null) contentIndexValue.setText("Помилка");
+                        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(UiExceptionSupport.unwrapAsync(error).getMessage());
+                    });
+                    return null;
+                });
     }
 
-    private String formatNumber(long number) {
-        return number < 0 ? "—" : String.format("%,d", number);
+    private void displayContentIndexHealth(ContentIndexHealth health) {
+        if (health == null) return;
+        if (contentIndexValue != null) contentIndexValue.setText(health.compatible() ? "OK" : "Rebuild");
+        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(
+                "v" + health.schemaVersion() + " · " + formatNumber(health.documentCount()) + " docs · " + formatBytes(health.sizeBytes()));
+    }
+
+    private String formatContentIndexHealth(ContentIndexHealth health) {
+        if (health == null) return "Full-text index: стан недоступний";
+        return "Full-text content index\n"
+                + "Collection: " + health.collectionId() + "\n"
+                + "Schema version: " + health.schemaVersion() + "\n"
+                + "Documents: " + formatNumber(health.documentCount()) + "\n"
+                + "Size: " + formatBytes(health.sizeBytes()) + "\n"
+                + "Compatible: " + (health.compatible() ? "YES" : "NO") + "\n"
+                + "Status: " + health.message() + "\n\n"
+                + "Metadata index перебудовується окремо через Database Tools → Rebuild Index.";
+    }
+
+    private void updateContentProgress(ContentIndexRebuildProgress progress) {
+        if (progress == null) return;
+        if (contentIndexProgress != null) {
+            double value = progress.totalBooks() <= 0 ? ProgressIndicator.INDETERMINATE_PROGRESS
+                    : Math.min(1.0, progress.processedBooks() / (double) progress.totalBooks());
+            contentIndexProgress.setProgress(value);
+        }
+        if (contentIndexDetailLabel != null) {
+            String current = progress.currentBook().isBlank() ? "" : " · " + progress.currentBook();
+            contentIndexDetailLabel.setText(progress.phase() + " · " + progress.processedBooks() + "/" + progress.totalBooks() + current);
+        }
+    }
+
+    private void setContentRebuildRunning(boolean running) {
+        if (contentIndexRebuildButton != null) contentIndexRebuildButton.setDisable(running);
+        if (contentIndexCancelButton != null) contentIndexCancelButton.setDisable(!running);
+        if (contentIndexProgress != null) { contentIndexProgress.setVisible(running); contentIndexProgress.setManaged(running); }
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null || collection.getId() == null ? "" : collection.getId().trim();
+    }
+
+    @FXML public void onShowMissing() { selectIssue(LibraryHealthIssueType.MISSING_ARTIFACTS); }
+    @FXML public void onShowCorrupt() { selectIssue(LibraryHealthIssueType.CORRUPT_ARTIFACTS); }
+    @FXML public void onShowChanged() { selectIssue(LibraryHealthIssueType.CHANGED_ARTIFACTS); }
+    @FXML public void onShowDuplicates() { selectIssue(LibraryHealthIssueType.DUPLICATES); }
+    @FXML public void onShowMetadata() { selectIssue(LibraryHealthIssueType.METADATA_GAPS); }
+    @FXML public void onShowIndex() { selectIssue(LibraryHealthIssueType.STALE_SEARCH_INDEX); }
+    @FXML public void onShowBackup() { selectIssue(LibraryHealthIssueType.BACKUP_AGE); }
+
+    private void selectIssue(LibraryHealthIssueType type) {
+        if (lastReport == null) return;
+        for (LibraryHealthIssue issue : issueTable.getItems()) {
+            if (issue.type() == type) {
+                issueTable.getSelectionModel().select(issue);
+                issueTable.scrollTo(issue);
+                return;
+            }
+        }
+        detailArea.setText(noIssueMessage(type));
+    }
+
+    private String noIssueMessage(LibraryHealthIssueType type) {
+        return switch (type) {
+            case MISSING_ARTIFACTS -> "Відсутніх локальних artifacts не виявлено.";
+            case CORRUPT_ARTIFACTS -> "Пошкоджених або нечитабельних artifacts не виявлено.";
+            case CHANGED_ARTIFACTS -> "Artifacts зі зміненим вмістом не виявлено.";
+            case DUPLICATES -> "Фізичних дублікатів не виявлено.";
+            case METADATA_GAPS -> "Критичних прогалин metadata не виявлено.";
+            case STALE_SEARCH_INDEX -> "Пошуковий індекс актуальний.\n" + lastReport.searchIndexDetail();
+            case BACKUP_AGE -> lastReport.latestBackupAt() == null
+                    ? "Резервну копію не знайдено."
+                    : "Остання резервна копія: " + DATE_TIME.format(lastReport.latestBackupAt())
+                    + " (" + formatAge(lastReport.backupAgeHours()) + ").";
+            case DATABASE_INTEGRITY -> "SQLite integrity_check: OK.";
+        };
+    }
+
+    @FXML
+    public void onSafeRepairInfo() {
+        dialogService.showInfo("Безпечне обслуговування",
+                "Artifact audit є лише діагностичним і не змінює файли чи hash baseline у book_artifacts. "
+                        + "Для виправлень використовуйте Collection Maintenance з Analyze → Dry run → Apply; "
+                        + "для stale index — окрему команду перебудови індексу.");
     }
 
     @FXML
     public void onExportReport() {
         if (lastReportText == null || lastReportText.isBlank()) {
-            dialogService.showWarning("Експорт", "Спочатку виконайте перевірку цілісності.");
+            dialogService.showWarning("Експорт", "Спочатку оновіть стан бібліотеки.");
             return;
         }
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Експорт звіту цілісності");
-        chooser.setInitialFileName("myhomelib-integrity-report.txt");
+        chooser.setTitle("Експорт Library Health report");
+        chooser.setInitialFileName("myhomelib-library-health.txt");
         chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Text report", "*.txt"));
-        File target = chooser.showSaveDialog(reportArea.getScene() == null ? null : reportArea.getScene().getWindow());
+        File target = chooser.showSaveDialog(detailArea.getScene() == null ? null : detailArea.getScene().getWindow());
         if (target == null) return;
         try {
             Files.writeString(target.toPath(), lastReportText, StandardCharsets.UTF_8);
             dialogService.showInfo("Експорт", "Звіт збережено: " + target.getAbsolutePath());
         } catch (IOException error) {
-            log.error("Не вдалося експортувати integrity report", error);
+            log.error("Cannot export Library Health report", error);
             dialogService.showError("Експорт", "Не вдалося зберегти звіт: " + error.getMessage());
         }
     }
 
+    private String formatExport(LibraryHealthReport report) {
+        StringBuilder out = new StringBuilder();
+        out.append("MyHomeLib Library Health Report\n")
+                .append("Generated: ").append(DATE_TIME.format(report.generatedAt())).append("\n\n")
+                .append("Local artifacts: ").append(report.localArtifacts()).append('\n')
+                .append("Missing: ").append(report.missingArtifacts()).append('\n')
+                .append("Corrupt/unreadable: ").append(report.corruptArtifacts()).append('\n')
+                .append("Changed: ").append(report.changedArtifacts()).append('\n')
+                .append("Duplicates: ").append(report.duplicateBooks()).append('\n')
+                .append("Metadata gaps: ").append(report.metadataGaps()).append('\n')
+                .append("SQLite: ").append(report.databaseHealthy() ? "OK" : "ERROR").append('\n')
+                .append("Lucene: ").append(report.searchIndexFresh() ? "FRESH" : "STALE")
+                .append(" (").append(report.searchIndexDetail()).append(")\n")
+                .append("Backup: ").append(report.latestBackupAt() == null ? "not found" : DATE_TIME.format(report.latestBackupAt()))
+                .append("; ageHours=").append(report.backupAgeHours()).append('\n')
+                .append("Artifact audit: inspected=").append(report.auditInspected())
+                .append(", reused=").append(report.auditReused())
+                .append(", bytesRead=").append(report.auditBytesRead()).append("\n\n");
+
+        out.append("Issues\n------\n");
+        if (report.issues().isEmpty()) out.append("none\n");
+        for (LibraryHealthIssue issue : report.issues()) {
+            out.append(issue.severity()).append(" | ").append(issue.type()).append(" | count=")
+                    .append(issue.count()).append(" | ").append(issue.title()).append('\n')
+                    .append("  ").append(issue.detail()).append('\n')
+                    .append("  action: ").append(issue.action()).append('\n');
+        }
+
+        if (!report.artifactFindings().isEmpty()) {
+            out.append("\nArtifact findings\n-----------------\n");
+            for (ArtifactIntegrityFinding finding : report.artifactFindings()) {
+                out.append(finding.status()).append(" | ").append(finding.artifactId())
+                        .append(" | book=").append(finding.bookId()).append(" | ").append(finding.path()).append('\n');
+                if (!finding.detail().isBlank()) out.append("  ").append(finding.detail()).append('\n');
+                if (!finding.baselineSha256().isBlank() || !finding.observedSha256().isBlank()) {
+                    out.append("  baselineSha256=").append(finding.baselineSha256())
+                            .append(" observedSha256=").append(finding.observedSha256()).append('\n');
+                }
+            }
+        }
+        return out.toString();
+    }
+
+    private static String formatNumber(long number) {
+        return number < 0 ? "—" : String.format(Locale.ROOT, "%,d", number).replace(',', ' ');
+    }
+
+    private static String formatAge(long hours) {
+        if (hours < 0) return "—";
+        long days = hours / 24;
+        long remainder = hours % 24;
+        return days > 0 ? days + " д " + remainder + " год" : hours + " год";
+    }
+
+    private static String formatBytes(long bytes) {
+        if (bytes < 0) return "—";
+        if (bytes < 1024) return bytes + " B";
+        double kib = bytes / 1024.0;
+        if (kib < 1024) return String.format(Locale.ROOT, "%.1f KiB", kib);
+        double mib = kib / 1024.0;
+        if (mib < 1024) return String.format(Locale.ROOT, "%.1f MiB", mib);
+        return String.format(Locale.ROOT, "%.2f GiB", mib / 1024.0);
+    }
+
     @FXML
     public void closeDialog() {
-        Stage stage = (Stage) reportArea.getScene().getWindow();
-        if (stage != null) {
-            stage.close();
-        }
+        Stage stage = (Stage) detailArea.getScene().getWindow();
+        if (stage != null) stage.close();
     }
 }

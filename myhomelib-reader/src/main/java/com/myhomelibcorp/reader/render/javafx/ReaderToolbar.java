@@ -47,6 +47,9 @@ public class ReaderToolbar extends ToolBar {
     @Getter private final Button bookmarksButton;
     @Getter private final Button tocButton;
     @Getter private final Button searchButton;
+    @Getter private final Button ttsStartButton;
+    @Getter private final Button ttsPauseButton;
+    @Getter private final Button ttsStopButton;
 
     private Consumer<ReaderSettings> onSettingsClick;
     private Runnable onBookmarkClick;
@@ -56,6 +59,11 @@ public class ReaderToolbar extends ToolBar {
     private Runnable onBackClick;
     private Runnable onToggleLeftSidebarClick;
     private Runnable onToggleRightSidebarClick;
+    private Runnable onTtsStartClick;
+    private Runnable onTtsPauseClick;
+    private Runnable onTtsStopClick;
+    private boolean ttsActive;
+    private boolean ttsPaused;
 
     public ReaderToolbar(ReaderCanvas canvas, Function<String, String> text) {
         this.canvas = canvas;
@@ -94,6 +102,9 @@ public class ReaderToolbar extends ToolBar {
         bookmarksButton = createButton("🔖", "ui.reader.toolbar.bookmarks");
         tocButton = createButton("📑", "ui.reader.toolbar.toc");
         searchButton = createButton("🔍", "ui.reader.toolbar.search");
+        ttsStartButton = createButton("🔊", "ui.reader.toolbar.tts_start");
+        ttsPauseButton = createButton("⏯", "ui.reader.toolbar.tts_pause_resume");
+        ttsStopButton = createButton("⏹", "ui.reader.toolbar.tts_stop");
 
         // ToolBar provides a native overflow popup when the Reader becomes narrow
         // (for example with the right details panel visible or at 150–200% DPI).
@@ -124,7 +135,11 @@ public class ReaderToolbar extends ToolBar {
                 bookmarkButton,
                 bookmarksButton,
                 tocButton,
-                searchButton
+                searchButton,
+                new Separator(),
+                ttsStartButton,
+                ttsPauseButton,
+                ttsStopButton
         );
 
         setupActions();
@@ -135,7 +150,9 @@ public class ReaderToolbar extends ToolBar {
 
     private Button createButton(String label, String tooltipKey) {
         Button btn = new Button(label);
-        btn.setTooltip(new Tooltip(text.apply(tooltipKey)));
+        String accessibleName = text.apply(tooltipKey);
+        btn.setTooltip(new Tooltip(accessibleName));
+        btn.setAccessibleText(accessibleName);
         btn.setStyle("-fx-font-size: 13px; -fx-padding: 2 6 2 6;");
         return btn;
     }
@@ -218,6 +235,9 @@ public class ReaderToolbar extends ToolBar {
                 onSearchClick.run();
             }
         });
+        ttsStartButton.setOnAction(e -> { if (onTtsStartClick != null) onTtsStartClick.run(); });
+        ttsPauseButton.setOnAction(e -> { if (onTtsPauseClick != null) onTtsPauseClick.run(); });
+        ttsStopButton.setOnAction(e -> { if (onTtsStopClick != null) onTtsStopClick.run(); });
     }
 
     private void toggleFullscreen() {
@@ -236,6 +256,10 @@ public class ReaderToolbar extends ToolBar {
         bookmarksButton.setDisable(!open);
         tocButton.setDisable(!open);
         searchButton.setDisable(!open);
+        autoScrollButton.setDisable(!open || !canvas.isAutoScrollAllowed());
+        ttsStartButton.setDisable(!open || ttsActive);
+        ttsPauseButton.setDisable(!open || !ttsActive);
+        ttsStopButton.setDisable(!open || !ttsActive);
 
         pageModeButton.setStyle(canvas.isTwoPageModeEnabled() ?
                 "-fx-font-size: 13px; -fx-padding: 2 6 2 6; -fx-background-color: #4CAF50; -fx-text-fill: white;" :
@@ -287,4 +311,18 @@ public class ReaderToolbar extends ToolBar {
         updateState();
     }
 
+
+    public void setOnTtsStartClick(Runnable listener) { this.onTtsStartClick = listener; }
+    public void setOnTtsPauseClick(Runnable listener) { this.onTtsPauseClick = listener; }
+    public void setOnTtsStopClick(Runnable listener) { this.onTtsStopClick = listener; }
+
+    public void updateTtsState(boolean active, boolean paused) {
+        this.ttsActive = active;
+        this.ttsPaused = paused;
+        updateState();
+        String key = ttsPaused ? "ui.reader.toolbar.tts_resume" : "ui.reader.toolbar.tts_pause";
+        String name = text.apply(key);
+        ttsPauseButton.setTooltip(new Tooltip(name));
+        ttsPauseButton.setAccessibleText(name);
+    }
 }

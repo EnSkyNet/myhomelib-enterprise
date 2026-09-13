@@ -1,0 +1,10 @@
+MYHOMELIB-RELEASE.md
+README.md
+docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+docs/history/records/ITERATION-76-CHANGED-FILES.txt
+docs/history/records/ITERATION-76-REVIEWER-MARKDOWN-CONSISTENCY.md
+docs/release/CURRENT-VALIDATION.md
+docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md
+tools/external-acceptance-readiness.py
+tools/v71-final-evidence-bundle-check-test.py
+tools/v71-final-evidence-bundle-check.py

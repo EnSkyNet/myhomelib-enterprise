@@ -2,17 +2,15 @@ package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.BookFormat;
 import com.myhomelibcorp.reader.api.BookSource;
+import com.myhomelibcorp.reader.api.ReaderAnnotationOverlay;
 import com.myhomelibcorp.reader.api.ReaderPosition;
+import com.myhomelibcorp.reader.api.ReaderSelection;
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.core.ReaderEngine;
 import com.myhomelibcorp.reader.core.ReaderEngineBuilder;
 import com.myhomelibcorp.reader.core.ReaderEngine.PreparedBook;
 import com.myhomelibcorp.reader.core.registry.DefaultBookFormatRegistry;
 import com.myhomelibcorp.reader.layout.TextLayoutEngine;
-import com.myhomelibcorp.reader.format.fb2.Fb2Format;
-import com.myhomelibcorp.reader.format.epub.EpubFormat;
-import com.myhomelibcorp.reader.format.txt.TxtFormat;
-import com.myhomelibcorp.reader.format.zip.ZipFormat;
 import javafx.application.Platform;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.layout.BorderPane;
@@ -20,6 +18,8 @@ import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 
@@ -33,6 +33,7 @@ public class ReaderView extends BorderPane {
     private final ReaderToolbar toolbar;
     @Getter
     private final ReaderStatusBar statusBar;
+    private boolean reducedMotion;
     @Getter
     private final ReaderEngine engine;
     @Getter
@@ -47,17 +48,16 @@ public class ReaderView extends BorderPane {
     private Runnable onTocClick;
     private Runnable onSearchClick;
     private Runnable onBackClick;
+    private Runnable onTtsStartClick;
+    private Runnable onTtsPauseClick;
+    private Runnable onTtsStopClick;
 
     public ReaderView() {
         this(key -> key);
     }
 
     public ReaderView(Function<String, String> text) {
-        formatRegistry = new DefaultBookFormatRegistry();
-        formatRegistry.register(new Fb2Format());
-        formatRegistry.register(new EpubFormat());
-        formatRegistry.register(new TxtFormat());
-        formatRegistry.register(new ZipFormat());
+        formatRegistry = DefaultBookFormatRegistry.standard();
 
         // Один Canvas на весь render pipeline.
         Canvas canvasNode = new Canvas();
@@ -71,7 +71,7 @@ public class ReaderView extends BorderPane {
                         new JavaFxFontMetricsProvider(initialSettings), initialSettings))
                 .build();
 
-        canvas = new ReaderCanvas(engine, renderer);
+        canvas = new ReaderCanvas(engine, renderer, text);
         toolbar = new ReaderToolbar(canvas, text);
         statusBar = new ReaderStatusBar(canvas, text);
 
@@ -117,6 +117,9 @@ public class ReaderView extends BorderPane {
         toolbar.setOnBackClick(() -> {
             if (onBackClick != null) onBackClick.run();
         });
+        toolbar.setOnTtsStartClick(() -> { if (onTtsStartClick != null) onTtsStartClick.run(); });
+        toolbar.setOnTtsPauseClick(() -> { if (onTtsPauseClick != null) onTtsPauseClick.run(); });
+        toolbar.setOnTtsStopClick(() -> { if (onTtsStopClick != null) onTtsStopClick.run(); });
     }
 
     private void toggleToolbarVisibility() {
@@ -173,12 +176,67 @@ public class ReaderView extends BorderPane {
         onBackClick = listener;
     }
 
+    public void setOnTtsStartClick(Runnable listener) { onTtsStartClick = listener; }
+    public void setOnTtsPauseClick(Runnable listener) { onTtsPauseClick = listener; }
+    public void setOnTtsStopClick(Runnable listener) { onTtsStopClick = listener; }
+    public void updateTtsState(boolean active, boolean paused) { toolbar.updateTtsState(active, paused); }
+
     public void setOnToggleLeftSidebarClick(Runnable listener) {
         toolbar.setOnToggleLeftSidebarClick(listener);
     }
 
     public void setOnToggleRightSidebarClick(Runnable listener) {
         toolbar.setOnToggleRightSidebarClick(listener);
+    }
+
+    public void setOnHighlightRequested(Consumer<ReaderSelection> listener) {
+        canvas.setOnHighlightRequested(listener);
+    }
+
+    public void setOnNoteRequested(Consumer<ReaderSelection> listener) {
+        canvas.setOnNoteRequested(listener);
+    }
+
+    public void setOnDictionaryRequested(Consumer<ReaderSelection> listener) {
+        canvas.setOnDictionaryRequested(listener);
+    }
+
+    public void setOnTranslationRequested(Consumer<ReaderSelection> listener) {
+        canvas.setOnTranslationRequested(listener);
+    }
+
+    public void setOnSelectionChanged(Consumer<Optional<ReaderSelection>> listener) {
+        canvas.setOnSelectionChanged(listener);
+    }
+
+    public Optional<ReaderSelection> getSelection() {
+        return canvas.getSelection();
+    }
+
+    public void clearTextSelection() {
+        canvas.clearTextSelection();
+    }
+
+    public void setAnnotationOverlays(List<ReaderAnnotationOverlay> overlays) {
+        canvas.setAnnotationOverlays(overlays);
+    }
+
+    public void setSpeechHighlight(long startOffset, long endOffset) {
+        canvas.setSpeechHighlight(startOffset, endOffset);
+    }
+
+    public void clearSpeechHighlight() {
+        canvas.clearSpeechHighlight();
+    }
+
+    public void setReducedMotion(boolean reducedMotion) {
+        this.reducedMotion = reducedMotion;
+        canvas.setReducedMotion(reducedMotion);
+        toolbar.updateState();
+    }
+
+    public boolean isReducedMotion() {
+        return reducedMotion;
     }
 
     public void openBook(BookSource source) throws IOException {
@@ -191,6 +249,9 @@ public class ReaderView extends BorderPane {
      */
     public void openPrepared(PreparedBook prepared, ReaderPosition initialPosition) throws IOException {
         engine.openPrepared(prepared, initialPosition);
+        if (reducedMotion && engine.getSettings().autoScroll()) {
+            engine.applySettings(engine.getSettings().withAutoScroll(false));
+        }
         if (engine.getCurrentDocument() != null) {
             renderer.setResourceRepository(engine.getCurrentDocument().resources());
         }
@@ -219,6 +280,7 @@ public class ReaderView extends BorderPane {
 
     public void applySettings(ReaderSettings settings) {
         if (settings == null) return;
+        if (reducedMotion && settings.autoScroll()) settings = settings.withAutoScroll(false);
         canvas.applySettings(settings);
         toolbar.setVisible(settings.showToolbar());
         toolbar.setManaged(settings.showToolbar());

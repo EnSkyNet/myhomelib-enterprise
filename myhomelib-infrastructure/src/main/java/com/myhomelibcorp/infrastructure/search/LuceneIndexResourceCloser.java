@@ -16,10 +16,10 @@ final class LuceneIndexResourceCloser {
                       boolean atomicUpdate,
                       boolean commitBeforeClose,
                       Runnable commitObserver) {
-        IOException failure = null;
+        Exception failure = null;
         if (searcherManager != null) {
             try { searcherManager.close(); }
-            catch (IOException e) { failure = e; }
+            catch (IOException | RuntimeException e) { failure = e; }
         }
         if (indexWriter != null) {
             try {
@@ -30,15 +30,21 @@ final class LuceneIndexResourceCloser {
                         indexWriter.commit();
                         if (commitObserver != null) commitObserver.run();
                     }
-                    indexWriter.close(); // commitOnClose=false in LuceneIndexWriterFactory
                 }
-            } catch (IOException e) {
+            } catch (IOException | RuntimeException e) {
                 if (failure == null) failure = e; else failure.addSuppressed(e);
+            }
+            // A failed commit/observer must not skip releasing the writer and its file lock.
+            if (!atomicUpdate) {
+                try { indexWriter.close(); } // commitOnClose=false in LuceneIndexWriterFactory
+                catch (IOException | RuntimeException e) {
+                    if (failure == null) failure = e; else failure.addSuppressed(e);
+                }
             }
         }
         if (directory != null) {
             try { directory.close(); }
-            catch (IOException e) {
+            catch (IOException | RuntimeException e) {
                 if (failure == null) failure = e; else failure.addSuppressed(e);
             }
         }

@@ -27,7 +27,7 @@ if errorlevel 1 (
 )
 
 echo [2/2] Running Maven clean verify...
-call mvnw.cmd clean verify -Pproduction
+call tools\invoke-maven.cmd clean verify -Pproduction
 if errorlevel 1 (
   echo ERROR: Maven clean verify failed.
   exit /b %ERRORLEVEL%

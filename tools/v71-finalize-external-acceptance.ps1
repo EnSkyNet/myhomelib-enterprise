@@ -67,6 +67,15 @@ try {
     $CandidateManifest = Join-Path $GitHubEvidenceRoot "candidate-windows\candidate-windows.sha256"
     if (-not (Test-Path $CandidateManifest -PathType Leaf)) { throw "Missing bound candidate manifest: $CandidateManifest" }
     Copy-Item -Force $CandidateManifest $githubStage
+    $ReleaseChecksums = Join-Path $GitHubEvidenceRoot "candidate-windows\release-windows-SHA256SUMS"
+    if (-not (Test-Path $ReleaseChecksums -PathType Leaf)) { throw "Missing Windows release SHA256SUMS evidence: $ReleaseChecksums" }
+    Copy-Item -Force $ReleaseChecksums $githubStage
+    $CandidateIntegrity = Join-Path $GitHubEvidenceRoot "candidate-windows\release-candidate-integrity-windows.json"
+    if (-not (Test-Path $CandidateIntegrity -PathType Leaf)) { throw "Missing Windows candidate integrity evidence: $CandidateIntegrity" }
+    Copy-Item -Force $CandidateIntegrity $githubStage
+    $CandidateIntegritySidecar = Join-Path $GitHubEvidenceRoot "candidate-windows\release-candidate-integrity-windows.json.sha256"
+    if (-not (Test-Path $CandidateIntegritySidecar -PathType Leaf)) { throw "Missing Windows candidate integrity sidecar: $CandidateIntegritySidecar" }
+    Copy-Item -Force $CandidateIntegritySidecar $githubStage
 
     Copy-Item -Force "target\windows-final-acceptance-evidence.zip" $windowsStage
     Copy-Item -Force "target\windows-final-acceptance-evidence.zip.sha256" $windowsStage

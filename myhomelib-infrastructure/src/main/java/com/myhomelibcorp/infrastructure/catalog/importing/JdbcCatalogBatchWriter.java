@@ -344,7 +344,7 @@ final class JdbcCatalogBatchWriter {
                         firstNonBlank(artifact.name(), "artifact-" + ordinal), blankToNull(artifact.mediaType()),
                         blankToNull(artifact.fileFormat()), blankToNull(artifact.name()), blankToNull(artifact.archive()),
                         blankToNull(artifact.archiveEntry()), artifact.size(), blankToNull(artifact.sha256()),
-                        blankToNull(artifact.contentFingerprint()), 1, 0});
+                        blankToNull(artifact.contentFingerprint()), 1, 0, "REMOTE_ONLY"});
                 for (Map.Entry<String, String> metadata : artifact.metadata().entrySet()) {
                     if (metadata.getKey() != null && !metadata.getKey().isBlank()) {
                         metadataRows.add(new Object[]{artifactId, metadata.getKey(), metadata.getValue()});
@@ -369,13 +369,13 @@ final class JdbcCatalogBatchWriter {
         if (!rows.isEmpty()) jdbc.batchUpdate("""
                 INSERT INTO book_artifacts(
                     artifact_id,book_id,source_id,artifact_name,media_type,file_format,file_name,archive_name,
-                    archive_entry,size_bytes,sha256,content_fingerprint,remote,local
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    archive_entry,size_bytes,sha256,content_fingerprint,remote,local,state
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(artifact_id) DO UPDATE SET
                     media_type=excluded.media_type,file_format=excluded.file_format,file_name=excluded.file_name,
                     archive_name=excluded.archive_name,archive_entry=excluded.archive_entry,size_bytes=excluded.size_bytes,
                     sha256=excluded.sha256,content_fingerprint=excluded.content_fingerprint,
-                    remote=excluded.remote,local=excluded.local,updated_at=CURRENT_TIMESTAMP
+                    remote=excluded.remote,local=excluded.local,state=excluded.state,updated_at=CURRENT_TIMESTAMP
                 """, rows);
         if (!metadataRows.isEmpty()) jdbc.batchUpdate("""
                 INSERT INTO book_artifact_metadata(artifact_id,metadata_key,metadata_value) VALUES (?,?,?)

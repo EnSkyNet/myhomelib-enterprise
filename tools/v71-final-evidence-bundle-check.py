@@ -18,6 +18,10 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
+from evidence_contracts import validate_record
+
+from zip_evidence_safety import inspect_open_zip
+
 ROOT = Path(__file__).resolve().parents[1]
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 SESSION_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
@@ -29,6 +33,9 @@ REQUIRED_MEMBERS = {
     "github/github-connected-acceptance-ingest.json",
     "github/acceptance-harness.sha256",
     "github/candidate-windows.sha256",
+    "github/release-windows-SHA256SUMS",
+    "github/release-candidate-integrity-windows.json",
+    "github/release-candidate-integrity-windows.json.sha256",
     "windows/windows-harness-binding.json",
     "windows/windows-host-binding.json",
     "windows/windows-final-acceptance-evidence.zip",
@@ -103,6 +110,58 @@ def load_json_bytes(blob: bytes, label: str) -> dict[str, Any]:
     return value
 
 
+def render_github_markdown(data: dict[str, Any]) -> str:
+    checks = data.get("checks")
+    need(isinstance(checks, list), "GitHub evidence checks must be a list for Markdown rendering")
+    lines = [
+        "# GitHub connected acceptance evidence",
+        "",
+        f"- Repository: `{data.get('repository')}`",
+        f"- Branch: `{data.get('branch') or 'n/a'}`",
+        f"- GitHub REST API version: `{data.get('githubApiVersion')}`",
+        f"- Candidate SHA: `{data.get('candidateSha') or 'n/a'}`",
+        f"- Acceptance harness manifest SHA-256: `{data.get('acceptanceHarnessManifestSha256') or 'n/a'}`",
+        f"- Overall: **{data.get('overall')}**",
+        "",
+        "| Check | Status | Summary |",
+        "|---|---|---|",
+    ]
+    for row in checks:
+        need(isinstance(row, dict), "GitHub evidence check row must be an object for Markdown rendering")
+        lines.append(f"| {row.get('id')} | {row.get('status')} | {row.get('summary')} |")
+    lines.extend(["", "## Machine-readable details", "", "See `github-connected-acceptance.json` in the same evidence directory.", ""])
+    return "\n".join(lines)
+
+
+def render_final_markdown(data: dict[str, Any]) -> str:
+    evidence = data.get("evidence")
+    need(isinstance(evidence, list), "final decision evidence must be a list for Markdown rendering")
+    lines = [
+        "# MyHomeLib 7.1 Final — external acceptance",
+        "",
+        f"Overall: **{data.get('overall')}**",
+        "",
+        "| Evidence | Status |",
+        "|---|---|",
+    ]
+    for row in evidence:
+        need(isinstance(row, dict), "final decision evidence row must be an object for Markdown rendering")
+        lines.append(f"| {row.get('name')} | {row.get('status')} |")
+    failure = data.get("failure")
+    if failure:
+        lines.extend(["", "## Failure", "", str(failure)])
+    lines.append("")
+    return "\n".join(lines)
+
+
+def verify_markdown_exact(actual_blob: bytes, expected: str, label: str) -> None:
+    try:
+        actual = actual_blob.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise BundleError(f"{label}: Markdown is not valid UTF-8") from exc
+    need(actual == expected, f"{label}: human-readable Markdown does not exactly match machine-readable JSON evidence")
+
+
 def verify_candidate_manifest(text: str, github: dict[str, Any]) -> dict[str, str]:
     manifest = parse_manifest(text, "candidate-windows.sha256")
     need(len(manifest) == 3, "candidate-windows.sha256 must contain exactly MSI, EXE and portable entries")
@@ -118,9 +177,74 @@ def verify_candidate_manifest(text: str, github: dict[str, Any]) -> dict[str, st
     return {"msi": msi[0][0], "exe": exe[0][0], "portable": portable[0][0]}
 
 
+def verify_candidate_integrity_record(
+    record_blob: bytes,
+    sidecar_text: str,
+    release_sums_blob: bytes,
+    candidate_manifest_text: str,
+    github: dict[str, Any],
+) -> None:
+    record_name = "release-candidate-integrity-windows.json"
+    expected_record_sha = parse_sidecar_text(sidecar_text, record_name, "candidate integrity sidecar")
+    actual_record_sha = sha256_bytes(record_blob)
+    need(actual_record_sha == expected_record_sha, "candidate integrity sidecar digest mismatch")
+    need(actual_record_sha == github["windowsIntegritySha256"],
+         "candidate integrity record SHA does not match GitHub evidence")
+    record = load_json_bytes(record_blob, "candidate integrity record")
+    try:
+        validate_record(record, "release-candidate-integrity", label="candidate integrity record")
+    except ValueError as exc:
+        raise BundleError(str(exc)) from exc
+    need(record.get("overall") == "PASS", "candidate integrity record is not PASS")
+    need(record.get("platform") == "windows", "candidate integrity platform must be windows")
+    need(record.get("projectVersion") == github["windowsIntegrityProjectVersion"],
+         "candidate integrity project version mismatch")
+    need(str(record.get("candidateSha") or "").lower() == github["candidateSha"] == github["windowsIntegrityCandidateSha"],
+         "candidate integrity Git SHA mismatch")
+    need(str(record.get("sourceTreeSha256") or "").lower() == github["windowsIntegritySourceTreeSha256"],
+         "candidate integrity source-tree digest mismatch")
+    need(str(record.get("distManifestSha256") or "").lower() == github["windowsIntegrityDistManifestSha256"],
+         "candidate integrity dist-manifest digest mismatch")
+
+    sums_sha = sha256_bytes(release_sums_blob)
+    need(sums_sha == github["windowsChecksumsSha256"],
+         "release Windows SHA256SUMS digest does not match GitHub evidence")
+    need(str(record.get("sha256sSha256") or "").lower() == sums_sha,
+         "candidate integrity SHA256SUMS digest mismatch")
+    release_sums = parse_manifest(release_sums_blob.decode("utf-8-sig"), "release Windows SHA256SUMS")
+    rows = record.get("distFiles")
+    need(isinstance(rows, list) and rows, "candidate integrity distFiles missing")
+    need(record.get("distFileCount") == len(rows), "candidate integrity distFileCount mismatch")
+    dist: dict[str, dict[str, Any]] = {}
+    aggregate = hashlib.sha256()
+    for row in rows:
+        need(isinstance(row, dict), "candidate integrity distFiles row invalid")
+        rel = str(row.get("path") or "").replace("\\", "/")
+        digest = str(row.get("sha256") or "").lower()
+        size = row.get("size")
+        need(rel and rel not in dist, f"candidate integrity duplicate/blank dist path: {rel!r}")
+        need(".." not in Path(rel).parts and not rel.startswith("/"), f"candidate integrity unsafe dist path: {rel!r}")
+        need(SHA256_RE.fullmatch(digest) is not None, f"candidate integrity invalid dist digest: {rel}")
+        need(isinstance(size, int) and size >= 0, f"candidate integrity invalid dist size: {rel}")
+        dist[rel] = row
+        aggregate.update(f"{digest}  {rel}  {size}\n".encode("utf-8"))
+    need(set(dist) == set(release_sums), "candidate integrity dist file set does not match release SHA256SUMS")
+    need(aggregate.hexdigest() == github["windowsIntegrityDistManifestSha256"],
+         "candidate integrity dist aggregate mismatch")
+    for rel, digest in release_sums.items():
+        need(str(dist[rel]["sha256"]).lower() == digest, f"candidate integrity/release sums mismatch for {rel}")
+
+    candidate = parse_manifest(candidate_manifest_text, "candidate-windows.sha256")
+    need(len(candidate) == 3, "candidate-windows.sha256 must contain exactly three release binaries")
+    for rel, digest in candidate.items():
+        need(release_sums.get(rel) == digest, f"candidate manifest entry is not bound by release SHA256SUMS: {rel}")
+
+
 def verify_final_record(data: dict[str, Any], github: dict[str, Any], nested_windows_sha: str) -> None:
-    need(data.get("schemaVersion") == 1, "final decision schemaVersion must be 1")
-    need(data.get("scenario") == "myhomelib-7.1-final-external-acceptance", "final decision scenario mismatch")
+    try:
+        validate_record(data, "myhomelib-7.1-final-external-acceptance", label="final decision")
+    except ValueError as exc:
+        raise BundleError(str(exc)) from exc
     need(data.get("overall") == "PASS", "final decision is not PASS")
     backlog = data.get("backlogItems")
     need(isinstance(backlog, list) and set(map(str, backlog)) == EXPECTED_BACKLOG,
@@ -179,7 +303,12 @@ def verify_final_record(data: dict[str, Any], github: dict[str, Any], nested_win
     need(wa.get("portableSha256") == github["windowsPortableSha256"], "final decision Windows archive portable SHA mismatch")
 
     binding = rows["candidate-binding"].get("details") or {}
-    for key in ("candidateSha", "windowsMsiSha256", "windowsExeSha256", "windowsPortableSha256", "releaseRunId", "releaseRunUrl", "acceptanceHarnessManifestSha256"):
+    for key in (
+        "candidateSha", "windowsMsiSha256", "windowsExeSha256", "windowsPortableSha256",
+        "windowsChecksumsSha256", "windowsIntegrityProjectVersion", "windowsIntegrityCandidateSha",
+        "windowsIntegritySha256", "windowsIntegritySourceTreeSha256", "windowsIntegrityDistManifestSha256",
+        "releaseRunId", "releaseRunUrl", "acceptanceHarnessManifestSha256",
+    ):
         need(binding.get(key) == github[key], f"final decision candidate binding mismatch for {key}")
     need(binding.get("acceptanceRunId") == gi.get("acceptanceRunId"), "final decision candidate binding acceptance run id mismatch")
     need(binding.get("acceptanceRunUrl") == gi.get("acceptanceRunUrl"), "final decision candidate binding acceptance run URL mismatch")
@@ -198,16 +327,19 @@ def verify_bundle(bundle: Path) -> None:
     except zipfile.BadZipFile as exc:
         raise BundleError(f"final evidence bundle is not a valid ZIP: {bundle}") from exc
     with zf:
-        names = [n.replace("\\", "/") for n in zf.namelist() if not n.endswith("/")]
-        need(names and len(names) == len(set(names)), "final evidence bundle is empty or contains duplicate names")
-        for name in names:
-            parts = Path(name).parts
-            need(not name.startswith("/") and ".." not in parts, f"unsafe final evidence member: {name}")
-        missing = REQUIRED_MEMBERS - set(names)
+        infos = inspect_open_zip(
+            zf,
+            label="final evidence bundle",
+            error_type=BundleError,
+        )
+        names = set(infos)
+        missing = REQUIRED_MEMBERS - names
+        extra = names - REQUIRED_MEMBERS
         need(not missing, "final evidence bundle missing required member(s): " + ", ".join(sorted(missing)))
+        need(not extra, "final evidence bundle contains unexpected member(s): " + ", ".join(sorted(extra)))
 
         manifest = parse_manifest(zf.read("manifest.sha256").decode("utf-8-sig"), "outer manifest.sha256")
-        payload_names = set(names) - {"manifest.sha256"}
+        payload_names = names - {"manifest.sha256"}
         need(set(manifest) == payload_names, "outer manifest/member set mismatch")
         for name, digest in manifest.items():
             need(sha256_bytes(zf.read(name)) == digest, f"outer manifest checksum mismatch for {name}")
@@ -216,9 +348,16 @@ def verify_bundle(bundle: Path) -> None:
         with tempfile.TemporaryDirectory(prefix="myhomelib-final-bundle-") as td:
             temp = Path(td)
             github_path = temp / "github-connected-acceptance.json"
-            github_path.write_bytes(zf.read("github/github-connected-acceptance.json"))
+            github_blob = zf.read("github/github-connected-acceptance.json")
+            github_path.write_bytes(github_blob)
             github_ev = final_mod.verify_github_json(github_path)
             github = github_ev.details
+            github_json = load_json_bytes(github_blob, "GitHub connected acceptance")
+            verify_markdown_exact(
+                zf.read("github/github-connected-acceptance.md"),
+                render_github_markdown(github_json),
+                "GitHub connected acceptance Markdown",
+            )
             ingest_path = temp / "github-connected-acceptance-ingest.json"
             ingest_path.write_bytes(zf.read("github/github-connected-acceptance-ingest.json"))
             ingest_ev = final_mod.verify_github_ingest(ingest_path, github_ev)
@@ -232,7 +371,10 @@ def verify_bundle(bundle: Path) -> None:
             final_mod.verify_harness_binding(harness_binding_path, github_ev, harness_manifest_path)
             host_binding_blob = zf.read("windows/windows-host-binding.json")
             host_binding = json.loads(host_binding_blob.decode("utf-8-sig"))
-            need(host_binding.get("scenario") == "windows-acceptance-host-binding", "reviewer bundle Windows host binding scenario mismatch")
+            try:
+                validate_record(host_binding, "windows-acceptance-host-binding", label="reviewer bundle Windows host binding")
+            except ValueError as exc:
+                raise BundleError(str(exc)) from exc
             need(host_binding.get("overall") == "PASS", "reviewer bundle Windows host binding is not PASS")
             need(host_binding.get("candidateSha") == github["candidateSha"], "reviewer bundle Windows host binding candidate SHA mismatch")
             need(host_binding.get("repository") == github["repository"], "reviewer bundle Windows host binding repository mismatch")
@@ -243,7 +385,15 @@ def verify_bundle(bundle: Path) -> None:
                  "reviewer bundle Windows host fingerprint invalid")
             need(SHA256_RE.fullmatch(str(host_binding.get("userFingerprintSha256") or "")) is not None,
                  "reviewer bundle Windows user fingerprint invalid")
-            verify_candidate_manifest(zf.read("github/candidate-windows.sha256").decode("utf-8-sig"), github)
+            candidate_manifest_text = zf.read("github/candidate-windows.sha256").decode("utf-8-sig")
+            verify_candidate_manifest(candidate_manifest_text, github)
+            verify_candidate_integrity_record(
+                zf.read("github/release-candidate-integrity-windows.json"),
+                zf.read("github/release-candidate-integrity-windows.json.sha256").decode("utf-8-sig"),
+                zf.read("github/release-windows-SHA256SUMS"),
+                candidate_manifest_text,
+                github,
+            )
 
             windows_path = temp / "windows-final-acceptance-evidence.zip"
             windows_path.write_bytes(zf.read("windows/windows-final-acceptance-evidence.zip"))
@@ -267,6 +417,11 @@ def verify_bundle(bundle: Path) -> None:
 
             final_record = load_json_bytes(zf.read("final/v71-final-external-acceptance.json"), "final decision")
             verify_final_record(final_record, github, nested_actual)
+            verify_markdown_exact(
+                zf.read("final/v71-final-external-acceptance.md"),
+                render_final_markdown(final_record),
+                "Final external acceptance Markdown",
+            )
             final_rows = {str(row.get("name") or ""): (row.get("details") or {}) for row in final_record["evidence"]}
             final_win = final_rows["windows"]
             need(final_win.get("acceptanceSessionId") == host_binding["acceptanceSessionId"],

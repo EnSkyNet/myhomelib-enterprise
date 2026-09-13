@@ -2,6 +2,7 @@
 """Offline Stage 19/20 Reader UX + engine regression guard."""
 from pathlib import Path
 import shutil, subprocess, tempfile, textwrap
+import runpy
 
 ROOT = Path(__file__).resolve().parents[1]
 errors=[]
@@ -18,6 +19,7 @@ state=text('myhomelib-application/src/main/java/com/myhomelibcorp/application/re
 override=text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/reader/ReaderBookPreferencesService.java')
 atomic=text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AtomicFileSupport.java')
 dialog=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderSettingsDialog.java')
+dialog=runpy.run_path(str(ROOT/'tools/localization-contract-support.py'))['localized_source'](dialog)
 workspace=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java')
 autosave=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderPositionAutosaver.java')
 view=text('myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderView.java')
@@ -48,7 +50,7 @@ if 'AtomicFileSupport.moveReplacing' not in legacy or 'StandardCopyOption.ATOMIC
     fail('global Reader settings persistence is not atomic')
 if ('ReaderPreferences.builder().build()' not in codec or 'valueToTree' not in codec or 'merged.set' not in codec): fail('legacy Reader preferences are not merged over current defaults')
 
-for marker in ('Типографіка','Стилі елементів','Кольори','Макет','Навігація','Статус','Застосувати preset','Лише для цієї книги','livePreview','Скинути типографіку','Скинути навігацію','Скинути статус'):
+for marker in ('Типографіка','Стилі елементів','Кольори','Макет','Навігація','Статус','Застосувати preset','ui.reader.settings.per_book','livePreview','Скинути типографіку','Скинути навігацію','Скинути статус'):
     if marker not in dialog: fail(f'categorized/live settings dialog missing: {marker}')
 if 'ReaderStatusBar' not in view or 'setBottom(statusBar)' not in view: fail('ReaderView has no dedicated status bar')
 for marker in ('showStatusProgress','showStatusChapter','showStatusPage'):

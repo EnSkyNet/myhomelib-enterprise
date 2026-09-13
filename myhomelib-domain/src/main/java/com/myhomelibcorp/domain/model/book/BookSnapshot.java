@@ -1,10 +1,12 @@
 package com.myhomelibcorp.domain.model.book;
 
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.domain.model.customfield.CustomFieldValue;
 import lombok.Builder;
 import lombok.Value;
 
 import java.time.LocalDateTime;
+import java.util.List;
 
 /** Lightweight immutable view used by the search index. */
 @Value
@@ -35,6 +37,8 @@ public class BookSnapshot {
     LocalDateTime updateDate;
     boolean deleted;
     boolean local;
+    @Builder.Default
+    List<CustomFieldValue> customFieldValues = List.of();
 
     public static BookSnapshot fromBook(Book book) {
         return BookSnapshot.builder()
@@ -63,6 +67,7 @@ public class BookSnapshot {
                 .updateDate(book.getUpdateDate())
                 .deleted(book.isDeleted())
                 .local(book.isLocal())
+                .customFieldValues(List.of())
                 .build();
     }
 }

@@ -22,6 +22,21 @@ public class ExportRequest {
     String profileId;
     String profileName;
     String postActionProfileId;    // Optional Stage-15 action executed for the exported target
+    /** Ordered device preference. Existing callers may leave it empty and use {@link #format}. */
+    List<ExportFormat> preferredFormats;
+    /** Completion contract for removable-device writes. Legacy callers default to VERIFY_READABLE. */
+    CompletionPolicy completionPolicy;
+
+    public List<ExportFormat> effectivePreferredFormats() {
+        java.util.LinkedHashSet<ExportFormat> ordered = new java.util.LinkedHashSet<>();
+        if (preferredFormats != null) preferredFormats.stream().filter(java.util.Objects::nonNull).forEach(ordered::add);
+        if (format != null) ordered.add(format);
+        return List.copyOf(ordered);
+    }
+
+    public CompletionPolicy effectiveCompletionPolicy() {
+        return completionPolicy == null ? CompletionPolicy.VERIFY_READABLE : completionPolicy;
+    }
 
     public CollisionPolicy effectiveCollisionPolicy() {
         if (collisionPolicy != null) return collisionPolicy;
@@ -30,6 +45,13 @@ public class ExportRequest {
 
     public enum CollisionPolicy {
         OVERWRITE, SKIP, RENAME, ASK
+    }
+
+    public enum CompletionPolicy {
+        /** Existing behavior: staged commit plus reopen/read verification. */
+        VERIFY_READABLE,
+        /** Flush committed file data/metadata before reporting success; directory metadata is flushed best-effort. */
+        EJECT_SAFE
     }
 
     public enum ExportFormat {

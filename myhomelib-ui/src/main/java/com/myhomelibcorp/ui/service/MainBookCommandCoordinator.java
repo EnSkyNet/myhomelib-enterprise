@@ -4,6 +4,9 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
+import com.myhomelibcorp.ui.metadata.MetadataMergeUiService;
+import com.myhomelibcorp.ui.metadata.BulkMetadataEditUiService;
+import com.myhomelibcorp.ui.customfield.CustomFieldUiService;
 import javafx.application.Platform;
 import javafx.beans.property.ObjectProperty;
 import javafx.stage.Window;
@@ -21,6 +24,10 @@ public class MainBookCommandCoordinator {
     private final ClassicLibraryActionsService classicActions;
     private final ExternalBookLauncher externalBookLauncher;
     private final WorkspaceManager workspaceManager;
+    private final BookSelectionService selection;
+    private final MetadataMergeUiService metadataMerge;
+    private final BulkMetadataEditUiService bulkMetadataEdit;
+    private final CustomFieldUiService customFieldUi;
 
     public boolean hasSelectedBook() {
         return currentBook() != null;
@@ -35,6 +42,25 @@ public class MainBookCommandCoordinator {
         BookDto selected = requireBook();
         if (selected == null) return;
         classicActions.editBook(owner, BookId.fromString(selected.getId()), refresh);
+    }
+
+    public void editBatchMetadata(Window owner, Runnable refresh) {
+        metadataMerge.lookupAndReview(owner, selection.snapshot(), refresh);
+    }
+
+    public void editLocalBatchMetadata(Window owner, Runnable refresh) {
+        bulkMetadataEdit.editChecked(owner, refresh);
+    }
+
+    public void undoLastLibraryOperation(Window owner, Runnable refresh) {
+        bulkMetadataEdit.undoLatest(owner, refresh);
+    }
+
+    public void manageCustomFields(Window owner) { customFieldUi.manage(owner); }
+
+    public void editCustomFieldValues(Window owner) {
+        BookDto selected = requireBook();
+        if (selected != null) customFieldUi.editBookValues(owner, BookId.fromString(selected.getId()));
     }
 
     public void deleteBook(Runnable refresh) {

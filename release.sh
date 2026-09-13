@@ -8,7 +8,7 @@ print(root.findtext('m:version', namespaces=ns) or '')
 PY
 )}
 [[ -n "$VERSION" ]] || { echo "Cannot determine version from pom.xml" >&2; exit 2; }
-./mvnw clean verify -Pproduction
+./tools/invoke-maven.sh clean verify -Pproduction
 export MHL_SKIP_BUILD=1
 ./package-portable.sh
 ./smoke-desktop.sh

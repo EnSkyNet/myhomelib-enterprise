@@ -426,6 +426,10 @@ public class AuthorWorkspaceController {
     }
 
     private void reloadBooks() {
+        reloadBooks(null);
+    }
+
+    private void reloadBooks(String preferredCurrentBookId) {
         AuthorId authorId = currentAuthorId;
         if (authorId == null) return;
         String filter = filterTextField == null ? "" : filterTextField.getText();
@@ -452,6 +456,7 @@ public class AuthorWorkspaceController {
             booksTableView.getSelectionModel().clearSelection();
             appState.getBookDetails().setCurrentBook(null);
             rebuildVisibleRows();
+            restoreCurrentBookSelection(preferredCurrentBookId);
             setBusy(false);
         })).exceptionally(ex -> {
             log.error("Помилка завантаження книг автора {}", authorId, ex);
@@ -687,7 +692,26 @@ public class AuthorWorkspaceController {
 
     @FXML
     private void onExportBooks() {
-        exportController.handleExport(booksTableView.getScene() == null ? null : booksTableView.getScene().getWindow());
+        String currentBookId = selectedConcreteBookId();
+        exportController.handleExport(booksTableView.getScene() == null ? null : booksTableView.getScene().getWindow(),
+                () -> reloadBooks(currentBookId));
+    }
+
+    private String selectedConcreteBookId() {
+        BookViewModel selected = booksTableView == null ? null : booksTableView.getSelectionModel().getSelectedItem();
+        return selected == null || selected.isGroupHeader() ? null : selected.getId();
+    }
+
+    private void restoreCurrentBookSelection(String bookId) {
+        if (bookId == null || bookId.isBlank() || booksTableView == null) return;
+        for (int i = 0; i < booksTableView.getItems().size(); i++) {
+            BookViewModel row = booksTableView.getItems().get(i);
+            if (row != null && !row.isGroupHeader() && bookId.equals(row.getId())) {
+                booksTableView.getSelectionModel().select(i);
+                booksTableView.scrollTo(i);
+                return;
+            }
+        }
     }
 
     @FXML

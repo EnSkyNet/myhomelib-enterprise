@@ -4,7 +4,7 @@ Set-Location $PSScriptRoot
 $Version = if ($env:MHL_VERSION) { $env:MHL_VERSION } else { [string]$rootPom.project.version }
 if ([string]::IsNullOrWhiteSpace($Version)) { throw "Cannot determine application version" }
 
-& .\mvnw.cmd clean verify -Pproduction
+& .\tools\invoke-maven.ps1 clean verify -Pproduction
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 $env:MHL_SKIP_BUILD = "1"
 & .\package-portable.ps1 -Version $Version

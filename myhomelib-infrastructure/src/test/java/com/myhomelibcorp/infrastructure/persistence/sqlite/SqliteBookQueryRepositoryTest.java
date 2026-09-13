@@ -11,6 +11,7 @@ import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookArtifactHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
 import com.zaxxer.hikari.HikariDataSource;
@@ -39,6 +40,7 @@ import static org.mockito.Mockito.mock;
         BookRowMapper.class,
         BookListRowMapper.class,
         BookAuthorHelper.class,
+        BookArtifactHelper.class,
         BookGenreHelper.class,
         BookQueryBuilder.class,
         SqliteBookQueryRepositoryTest.TestConfig.class
@@ -168,6 +170,43 @@ public class SqliteBookQueryRepositoryTest {
         assertThat(snapshot.getCreatedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 9, 4, 10, 20, 30, 123_000_000));
         assertThat(snapshot.isLocal()).isTrue();
         assertThat(snapshot.isDeleted()).isFalse();
+    }
+
+
+    @Test
+    void findByIdHydratesAllArtifactsMetadataAndPreferredRepresentation() {
+        String bookId = "33333333-3333-3333-3333-333333333333";
+        jdbc.update("""
+                INSERT INTO books(id,title,file_name,folder,archive_entry,file_size,language,deleted,local,collection_root,format)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+                """, bookId, "Multi artifact", "book.epub", "books", "", 2048, "uk", 0, 1, "/library", "epub");
+
+        insertArtifact(bookId, "artifact-epub", "book.epub", "epub", 1, 0, "AVAILABLE");
+        insertArtifact(bookId, "artifact-fb2", "book.fb2", "fb2", 1, 0, "AVAILABLE");
+        insertArtifact(bookId, "artifact-pdf", "book.pdf", "pdf", 0, 1, "REMOTE_ONLY");
+        jdbc.update("INSERT INTO book_artifact_preferences(book_id, preferred_artifact_id) VALUES (?,?)", bookId, "artifact-fb2");
+        jdbc.update("INSERT INTO book_artifact_metadata(artifact_id, metadata_key, metadata_value) VALUES (?,?,?)",
+                "artifact-fb2", "quality", "proofread");
+
+        var book = repository.findById(com.myhomelibcorp.domain.model.valueobject.BookId.fromString(bookId)).orElseThrow();
+
+        assertThat(book.getArtifacts()).hasSize(3);
+        assertThat(book.getArtifacts()).extracting(com.myhomelibcorp.domain.model.book.BookArtifact::getFormat)
+                .containsExactly("epub", "fb2", "pdf");
+        assertThat(book.getPreferredArtifactId()).isEqualTo("artifact-fb2");
+        assertThat(book.getFileName()).isEqualTo("book.fb2");
+        assertThat(book.getPreferredArtifact().orElseThrow().getMetadata().get("quality")).isEqualTo("proofread");
+    }
+
+    private void insertArtifact(String bookId, String artifactId, String fileName, String format,
+                                int local, int remote, String state) {
+        jdbc.update("""
+                INSERT INTO book_artifacts(artifact_id,book_id,source_id,artifact_name,media_type,file_format,
+                                           file_name,archive_name,archive_entry,size_bytes,remote,local,
+                                           collection_root,folder,state)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """, artifactId, bookId, "source-test", fileName, "application/" + format, format,
+                fileName, null, "", 2048, remote, local, "/library", "books", state);
     }
 
 }

@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
+import com.myhomelibcorp.application.port.out.collection.IncomingFolderWatchPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -22,7 +23,8 @@ class DeleteCollectionUseCaseTest {
         CollectionStorageManager storage = mock(CollectionStorageManager.class);
         CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
         CollectionSourceMonitorPort sourceMonitor = mock(CollectionSourceMonitorPort.class);
-        DeleteCollectionUseCase useCase = new DeleteCollectionUseCase(repository, storage, lifecycle, sourceMonitor, new LibraryOperationCoordinator());
+        IncomingFolderWatchPort incomingWatcher = mock(IncomingFolderWatchPort.class);
+        DeleteCollectionUseCase useCase = new DeleteCollectionUseCase(repository, storage, lifecycle, sourceMonitor, incomingWatcher, new LibraryOperationCoordinator());
 
         Collection active = mock(Collection.class);
         Collection target = mock(Collection.class);
@@ -34,6 +36,8 @@ class DeleteCollectionUseCaseTest {
 
         useCase.execute("target");
 
+        verify(sourceMonitor).stopMonitoring("target");
+        verify(incomingWatcher).stopMonitoring("target");
         verify(storage).closeCollection(target);
         verify(storage, never()).vacuumCurrent();
         verify(storage).deletePhysicalFiles(target);

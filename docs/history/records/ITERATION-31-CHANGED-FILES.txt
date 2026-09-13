@@ -1,0 +1,47 @@
+# Iteration 31 changed files vs Iteration 30
+
+Added: 31
+Modified: 4
+Removed: 0
+
+## Added
+CONTINUATION-ITERATION-31-FOLDER-WATCHER.md
+ITERATION-31-FOLDER-WATCHER-CHECKPOINT.md
+myhomelib-application/src/main/java/com/myhomelibcorp/application/event/IncomingFolderFileReadyEvent.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/folderwatch/IncomingFolderCandidate.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/folderwatch/IncomingFolderCandidateStatus.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/folderwatch/IncomingFolderImportCoordinator.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/folderwatch/IncomingFolderWatchState.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/collection/IncomingFolderWatchPort.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/IncomingFolderWatchUseCase.java
+myhomelib-application/src/test/java/com/myhomelibcorp/application/folderwatch/IncomingFolderImportCoordinatorTest.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapter.java
+myhomelib-infrastructure/src/main/resources/db/migration_meta/V6__incoming_folder_watch.sql
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/collection/watch/IncomingFolderWatchAdapterTest.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/IncomingFolderPanelCoordinator.java
+verification/iteration31/AUDIT-UA.md
+verification/iteration31/logs/java21-parse.txt
+verification/iteration31/logs/javac-all-production.txt
+verification/iteration31/logs/maven-offline-test-compile.txt
+verification/iteration31/logs/mhl113-migration-filesystem-smoke.txt
+verification/iteration31/logs/static-results-part-b.log
+verification/iteration31/logs/static-results-part-c.log
+verification/iteration31/logs/static-results-part1a.log
+verification/iteration31/logs/static-results-part2a.log
+verification/iteration31/logs/static-results-part3.log
+verification/iteration31/static-results-part-b.json
+verification/iteration31/static-results-part-c.json
+verification/iteration31/static-results-part1a.json
+verification/iteration31/static-results-part2a.json
+verification/iteration31/static-results-part3.json
+verification/iteration31/static-results.json
+verification/iteration31/static-summary.json
+
+## Modified
+myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/collection/DeleteCollectionUseCase.java
+myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/collection/DeleteCollectionUseCaseTest.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/CollectionWorkspaceController.java
+myhomelib-ui/src/main/resources/view/collection-workspace.fxml
+
+## Removed
+(none)

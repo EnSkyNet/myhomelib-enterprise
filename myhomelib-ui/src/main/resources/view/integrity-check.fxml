@@ -6,52 +6,97 @@
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.controller.IntegrityCheckController"
-      spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
-      prefWidth="700" prefHeight="550">
+      spacing="10" style="-fx-padding: 18; -fx-background-color: -mhl-background;"
+      prefWidth="940" prefHeight="700">
 
-    <!-- Заголовок -->
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="🔍 Перевірка цілісності" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
-    </HBox>
-
-    <Separator/>
-
-    <!-- Кнопки управління -->
-    <HBox spacing="10" alignment="CENTER_LEFT">
-        <Button fx:id="checkButton" text="🔍 Перевірити" onAction="#onCheckIntegrity"
-                style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 20;"/>
-
-        <Button fx:id="fixButton" text="🔧 Безпечний repair" onAction="#onFixIssues"
-                style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 20;"/>
-
-        <Button text="💾 Експорт звіту" onAction="#onExportReport"/>
-
-        <ProgressIndicator fx:id="progressIndicator" visible="false" prefWidth="30" prefHeight="30"/>
-
-        <Label fx:id="statusLabel" text="Готово до перевірки" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
-
+        <Label text="Library Health" style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
+        <Label fx:id="overallStatusLabel" text="Стан ще не перевірено"
+               style="-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: -mhl-muted-text;"/>
         <Region HBox.hgrow="ALWAYS"/>
-
-        <Button text="✕ Закрити" onAction="#closeDialog"
-                style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
+        <ProgressIndicator fx:id="progressIndicator" visible="false" prefWidth="28" prefHeight="28"/>
+        <Button fx:id="checkButton" text="Оновити стан" onAction="#onCheckIntegrity"/>
+        <Button text="Безпечне обслуговування" onAction="#onSafeRepairInfo"/>
+        <Button text="Експорт" onAction="#onExportReport"/>
+        <Button text="Закрити" onAction="#closeDialog"/>
     </HBox>
 
-    <!-- Підсумок проблем -->
-    <Label fx:id="issuesSummaryLabel" style="-fx-font-size: 14px; -fx-font-weight: bold;"/>
+    <Label fx:id="statusLabel" text="Готово до перевірки" style="-fx-text-fill: -mhl-muted-text;"/>
 
+    <VBox spacing="5" style="-fx-padding: 8; -fx-border-color: -mhl-border; -fx-border-radius: 4;">
+        <HBox spacing="8" alignment="CENTER_LEFT">
+            <Label text="Full-text content index" style="-fx-font-weight: bold;"/>
+            <Label fx:id="contentIndexValue" text="—" style="-fx-font-weight: bold;"/>
+            <Label fx:id="contentIndexDetailLabel" text="Стан завантажується…" HBox.hgrow="ALWAYS"/>
+            <Button text="Деталі" accessibleText="Деталі full-text content index" onAction="#onShowContentIndex"/>
+            <Button fx:id="contentIndexRebuildButton" text="Перебудувати content" accessibleText="Перебудувати full-text content index" onAction="#onRebuildContentIndex"/>
+            <Button fx:id="contentIndexCancelButton" text="Скасувати" accessibleText="Скасувати перебудову full-text content index" onAction="#onCancelContentIndexRebuild"/>
+        </HBox>
+        <ProgressBar fx:id="contentIndexProgress" maxWidth="Infinity" progress="0" visible="false" managed="false"/>
+    </VBox>
     <Separator/>
 
-    <!-- Область звіту -->
-    <TextArea fx:id="reportArea" VBox.vgrow="ALWAYS" editable="false"
-              style="-fx-font-family: 'Consolas', 'Monaco', monospace; -fx-font-size: 13px;
-                     -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 4px;"
-              wrapText="false"/>
+    <GridPane hgap="8" vgap="8">
+        <columnConstraints>
+            <ColumnConstraints percentWidth="14.28"/>
+            <ColumnConstraints percentWidth="14.28"/>
+            <ColumnConstraints percentWidth="14.28"/>
+            <ColumnConstraints percentWidth="14.28"/>
+            <ColumnConstraints percentWidth="14.28"/>
+            <ColumnConstraints percentWidth="14.28"/>
+            <ColumnConstraints percentWidth="14.32"/>
+        </columnConstraints>
 
-    <!-- Підказка -->
-    <HBox spacing="5" alignment="CENTER_LEFT">
-        <Label text="💡" style="-fx-font-size: 14px;"/>
-        <Label text="Перевірка аналізує Books, Authors, Genres, Series, Relations, SQLite та Lucene. Repair дозволений лише через безпечний Maintenance workflow."
-               style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 12px;"/>
-    </HBox>
+        <VBox GridPane.columnIndex="0" spacing="3" style="-fx-padding: 10; -fx-border-color: -mhl-border; -fx-border-radius: 4;">
+            <Label text="Локальні artifacts" style="-fx-text-fill: -mhl-muted-text;"/>
+            <Label fx:id="localArtifactsValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+        </VBox>
+        <Button GridPane.columnIndex="1" accessibleText="Відсутні" onAction="#onShowMissing" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="Відсутні"/><Label fx:id="missingValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        </Button>
+        <Button GridPane.columnIndex="2" accessibleText="Пошкоджені" onAction="#onShowCorrupt" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="Пошкоджені"/><Label fx:id="corruptValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        </Button>
+        <Button GridPane.columnIndex="3" accessibleText="Змінені" onAction="#onShowChanged" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="Змінені"/><Label fx:id="changedValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        </Button>
+        <Button GridPane.columnIndex="4" accessibleText="Дублікати" onAction="#onShowDuplicates" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="Дублікати"/><Label fx:id="duplicatesValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        </Button>
+        <Button GridPane.columnIndex="5" accessibleText="Metadata gaps" onAction="#onShowMetadata" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="Metadata gaps"/><Label fx:id="metadataValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        </Button>
+        <VBox GridPane.columnIndex="6" spacing="4">
+            <Button accessibleText="Lucene" onAction="#onShowIndex" maxWidth="Infinity">
+                <graphic><VBox alignment="CENTER"><Label text="Lucene"/><Label fx:id="indexValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
+            </Button>
+            <Button accessibleText="Backup age" onAction="#onShowBackup" maxWidth="Infinity">
+                <graphic><VBox alignment="CENTER"><Label text="Backup age"/><Label fx:id="backupValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
+            </Button>
+        </VBox>
+    </GridPane>
 
+    <SplitPane dividerPositions="0.55" VBox.vgrow="ALWAYS">
+        <items>
+            <VBox spacing="6">
+                <Label text="Проблеми та рекомендовані дії" style="-fx-font-weight: bold;"/>
+                <TableView fx:id="issueTable" VBox.vgrow="ALWAYS">
+                    <columns>
+                        <TableColumn fx:id="severityColumn" text="Рівень" prefWidth="85"/>
+                        <TableColumn fx:id="categoryColumn" text="Категорія" prefWidth="190"/>
+                        <TableColumn fx:id="countColumn" text="К-сть" prefWidth="65"/>
+                        <TableColumn fx:id="actionColumn" text="Дія" prefWidth="310"/>
+                    </columns>
+                </TableView>
+            </VBox>
+            <VBox spacing="6">
+                <Label text="Drill-down" style="-fx-font-weight: bold;"/>
+                <TextArea fx:id="detailArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"
+                          style="-fx-font-family: 'Consolas', 'Monaco', monospace; -fx-font-size: 12px;"/>
+            </VBox>
+        </items>
+    </SplitPane>
+
+    <Label text="Audit не виконує destructive auto-repair: він лише читає файли, порівнює size/SHA-256 та зберігає власний audit baseline/cache."
+           wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
 </VBox>

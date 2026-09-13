@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.opds;
 
+import com.myhomelibcorp.application.opds.OpdsAccessTokenInfo;
+import com.myhomelibcorp.application.opds.OpdsAccessTokenService;
 import com.myhomelibcorp.application.opds.OpdsCertificateInfo;
 import com.myhomelibcorp.application.opds.OpdsCertificateManager;
 import com.myhomelibcorp.application.opds.OpdsServerControl;
@@ -7,12 +9,15 @@ import com.myhomelibcorp.application.opds.OpdsServerSettings;
 import com.myhomelibcorp.application.opds.OpdsServerStatus;
 import com.myhomelibcorp.application.opds.OpdsSettingsService;
 import com.myhomelibcorp.application.opds.OpdsTlsSettings;
+import com.myhomelibcorp.application.opds.OpdsTokenScope;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.ClipboardContent;
 import javafx.scene.layout.GridPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
@@ -25,7 +30,9 @@ import java.net.InetAddress;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.EnumSet;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
@@ -36,10 +43,13 @@ import java.util.function.Supplier;
 public class OpdsUiService {
     private static final DateTimeFormatter CERT_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
             .withZone(ZoneId.systemDefault());
+    private static final DateTimeFormatter TOKEN_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
+            .withZone(ZoneId.systemDefault());
 
     private final OpdsServerControl serverControl;
     private final OpdsSettingsService settingsService;
     private final OpdsCertificateManager certificateManager;
+    private final OpdsAccessTokenService accessTokens;
     private final UiBackgroundExecutor backgroundExecutor;
     private final LocalizationService i18n;
 
@@ -196,6 +206,75 @@ public class OpdsUiService {
         keyStorePath.setPrefColumnCount(45);
         fingerprint.setPrefColumnCount(45);
 
+        ListView<OpdsAccessTokenInfo> tokenList = new ListView<>();
+        tokenList.setPrefHeight(150);
+        tokenList.setAccessibleText(i18n.text("ui.opds.tokens.list.accessible"));
+        tokenList.setCellFactory(list -> new ListCell<>() {
+            @Override
+            protected void updateItem(OpdsAccessTokenInfo item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : tokenSummary(item));
+            }
+        });
+
+        TextField tokenDevice = new TextField();
+        tokenDevice.setPromptText(i18n.text("ui.opds.tokens.device.prompt"));
+        CheckBox tokenCatalogRead = new CheckBox(i18n.text("ui.opds.tokens.scope.catalog"));
+        tokenCatalogRead.setSelected(true);
+        CheckBox tokenDownload = new CheckBox(i18n.text("ui.opds.tokens.scope.download"));
+        Button tokenCreate = new Button(i18n.text("ui.opds.tokens.create"));
+        Button tokenRevoke = new Button(i18n.text("ui.opds.tokens.revoke"));
+        Button tokenRefresh = new Button(i18n.text("ui.opds.tokens.refresh"));
+        tokenRevoke.setDisable(true);
+
+        Runnable refreshTokens = () -> {
+            OpdsAccessTokenInfo selected = tokenList.getSelectionModel().getSelectedItem();
+            String selectedId = selected == null ? "" : selected.id();
+            tokenList.getItems().setAll(accessTokens.list());
+            if (!selectedId.isBlank()) {
+                tokenList.getItems().stream().filter(t -> selectedId.equals(t.id())).findFirst()
+                        .ifPresent(t -> tokenList.getSelectionModel().select(t));
+            }
+            OpdsAccessTokenInfo current = tokenList.getSelectionModel().getSelectedItem();
+            tokenRevoke.setDisable(current == null || current.revoked());
+        };
+        tokenList.getSelectionModel().selectedItemProperty().addListener((obs, old, value) ->
+                tokenRevoke.setDisable(value == null || value.revoked()));
+        tokenRefresh.setOnAction(e -> refreshTokens.run());
+        tokenCreate.setOnAction(e -> {
+            EnumSet<OpdsTokenScope> scopes = EnumSet.noneOf(OpdsTokenScope.class);
+            if (tokenCatalogRead.isSelected()) scopes.add(OpdsTokenScope.CATALOG_READ);
+            if (tokenDownload.isSelected()) scopes.add(OpdsTokenScope.DOWNLOAD);
+            if (scopes.isEmpty()) {
+                status.setText(i18n.text("ui.opds.tokens.scope.required"));
+                return;
+            }
+            OpdsAccessTokenService.CreatedToken created = accessTokens.create(tokenDevice.getText(), scopes);
+            refreshTokens.run();
+            showTokenOnce(owner, created.token());
+            tokenDevice.clear();
+            status.setText(i18n.text("ui.opds.tokens.created.status"));
+        });
+        tokenRevoke.setOnAction(e -> {
+            OpdsAccessTokenInfo selected = tokenList.getSelectionModel().getSelectedItem();
+            if (selected == null || selected.revoked()) return;
+            Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
+                    i18n.format("ui.opds.tokens.revoke.confirm", tokenDisplayName(selected)),
+                    ButtonType.OK, ButtonType.CANCEL);
+            confirm.setTitle(i18n.text("ui.opds.tokens.revoke.title"));
+            if (owner != null) confirm.initOwner(owner);
+            if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK && accessTokens.revoke(selected.id())) {
+                refreshTokens.run();
+                status.setText(i18n.text("ui.opds.tokens.revoked.status"));
+            }
+        });
+        HBox tokenScopes = new HBox(10, tokenCatalogRead, tokenDownload);
+        HBox tokenActions = new HBox(8, tokenCreate, tokenRevoke, tokenRefresh);
+        VBox tokenSection = new VBox(8,
+                new Label(i18n.text("ui.opds.tokens.help")),
+                tokenDevice, tokenScopes, tokenActions, tokenList);
+        refreshTokens.run();
+
         Button save = new Button(i18n.text("common.save"));
         Button start = new Button(i18n.text("ui.opds.start"));
         Button stop = new Button(i18n.text("ui.opds.stop"));
@@ -247,6 +326,9 @@ public class OpdsUiService {
                 new Label(i18n.text("ui.opds.certificate.section")),
                 tlsForm,
                 new Separator(),
+                new Label(i18n.text("ui.opds.tokens.section")),
+                tokenSection,
+                new Separator(),
                 status,
                 actions);
         root.setPadding(new Insets(14));
@@ -257,6 +339,58 @@ public class OpdsUiService {
         if (close != null) ((Button) close).setText(i18n.text("common.close"));
         refreshStatus.run();
         dialog.showAndWait();
+    }
+
+    private void showTokenOnce(Window owner, String rawToken) {
+        Dialog<Void> tokenDialog = new Dialog<>();
+        tokenDialog.setTitle(i18n.text("ui.opds.tokens.created.title"));
+        if (owner != null) tokenDialog.initOwner(owner);
+        Label warning = new Label(i18n.text("ui.opds.tokens.created.once"));
+        warning.setWrapText(true);
+        TextArea tokenText = new TextArea(rawToken);
+        tokenText.setEditable(false);
+        tokenText.setWrapText(false);
+        tokenText.setPrefRowCount(3);
+        tokenText.setAccessibleText(i18n.text("ui.opds.tokens.created.accessible"));
+        Button copy = new Button(i18n.text("ui.opds.tokens.copy"));
+        copy.setOnAction(e -> {
+            ClipboardContent content = new ClipboardContent();
+            content.putString(rawToken);
+            Clipboard.getSystemClipboard().setContent(content);
+        });
+        VBox content = new VBox(8, warning, tokenText, copy);
+        content.setPadding(new Insets(12));
+        content.setPrefWidth(620);
+        tokenDialog.getDialogPane().setContent(content);
+        tokenDialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
+        Node close = tokenDialog.getDialogPane().lookupButton(ButtonType.CLOSE);
+        if (close instanceof Button button) button.setText(i18n.text("common.close"));
+        tokenDialog.showAndWait();
+    }
+
+    private String tokenSummary(OpdsAccessTokenInfo info) {
+        String state = info.revoked() ? i18n.text("ui.opds.tokens.state.revoked") : i18n.text("ui.opds.tokens.state.active");
+        String lastUsed = formatTokenInstant(info.lastUsedAt());
+        return i18n.format("ui.opds.tokens.row", tokenDisplayName(info), encodeTokenScopes(info.scopes()),
+                formatTokenInstant(info.createdAt()), lastUsed, state);
+    }
+
+    private String formatTokenInstant(java.time.Instant value) {
+        return value == null ? i18n.text("ui.opds.tokens.never") : TOKEN_DATE.format(value);
+    }
+
+    private String tokenDisplayName(OpdsAccessTokenInfo info) {
+        return info.deviceName().isBlank() ? info.id() : info.deviceName();
+    }
+
+    private String encodeTokenScopes(Set<OpdsTokenScope> scopes) {
+        StringBuilder text = new StringBuilder();
+        if (scopes.contains(OpdsTokenScope.CATALOG_READ)) text.append(i18n.text("ui.opds.tokens.scope.catalog"));
+        if (scopes.contains(OpdsTokenScope.DOWNLOAD)) {
+            if (!text.isEmpty()) text.append(", ");
+            text.append(i18n.text("ui.opds.tokens.scope.download"));
+        }
+        return text.toString();
     }
 
     private void runCertificateTask(Supplier<OpdsCertificateManager.ManagedCertificate> task,

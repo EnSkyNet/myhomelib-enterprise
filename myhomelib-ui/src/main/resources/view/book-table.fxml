@@ -15,7 +15,7 @@
         <ComboBox fx:id="quickFilterColumnComboBox" prefWidth="125"/>
         <TextField fx:id="quickFilterValueField" promptText="Введіть значення…" HBox.hgrow="ALWAYS"/>
         <Button text="Застосувати" onAction="#applyQuickFilter"/>
-        <Button text="✕" onAction="#clearQuickFilter">
+        <Button text="✕" accessibleText="Очистити швидкий фільтр" onAction="#clearQuickFilter">
             <tooltip>
                 <Tooltip text="Очистити швидкий фільтр"/>
             </tooltip>
@@ -45,8 +45,8 @@
         <Region HBox.hgrow="ALWAYS"/>
         <Label text="Розмір сторінки:"/>
         <ComboBox fx:id="pageSizeComboBox" prefWidth="70"/>
-        <Button fx:id="prevPageButton" text="◀"/>
+        <Button fx:id="prevPageButton" text="◀" accessibleText="Попередня сторінка"/>
         <Label fx:id="pageInfoLabel" text="Сторінка 1 з 1"/>
-        <Button fx:id="nextPageButton" text="▶"/>
+        <Button fx:id="nextPageButton" text="▶" accessibleText="Наступна сторінка"/>
     </HBox>
 </VBox>

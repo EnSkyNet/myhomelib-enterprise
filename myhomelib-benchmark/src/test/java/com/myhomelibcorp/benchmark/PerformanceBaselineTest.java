@@ -50,7 +50,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * Stage 24 opt-in performance regression suite.
  *
  * It is deliberately skipped during normal unit tests. Run with:
- *   ./mvnw -pl myhomelib-benchmark -am test -Pperformance
+ *   mvn -pl myhomelib-benchmark -am test -Pperformance
  * or override catalogue sizes with -Dmhl.performance.sizes=100000,500000,1000000.
  */
 @EnabledIfSystemProperty(named = "mhl.performance", matches = "true")

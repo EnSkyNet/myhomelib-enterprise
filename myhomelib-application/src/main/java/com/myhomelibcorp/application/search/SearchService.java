@@ -154,7 +154,7 @@ public class SearchService {
                 .text(base.text()).authorId(base.authorId()).genreId(base.genreId())
                 .language(base.language()).ratingFrom(base.ratingFrom()).ratingTo(base.ratingTo())
                 .yearFrom(base.yearFrom()).yearTo(base.yearTo()).addedFrom(base.addedFrom()).addedTo(base.addedTo())
-                .localOnly(base.localOnly()).filterSpec(filter)
+                .localOnly(base.localOnly()).filterSpec(filter).smartCollectionSpec(base.smartCollectionSpec())
                 .limit(base.limit()).offset(base.offset()).mode(base.mode()).trackTotalHits(base.trackTotalHits())
                 .build();
     }
@@ -242,7 +242,7 @@ public class SearchService {
                 .text(base.text()).authorId(base.authorId()).genreId(base.genreId())
                 .language(base.language()).ratingFrom(base.ratingFrom()).ratingTo(base.ratingTo())
                 .yearFrom(base.yearFrom()).yearTo(base.yearTo()).addedFrom(base.addedFrom()).addedTo(base.addedTo())
-                .localOnly(base.localOnly()).filterSpec(base.filterSpec())
+                .localOnly(base.localOnly()).filterSpec(base.filterSpec()).smartCollectionSpec(base.smartCollectionSpec())
                 .limit(limit).offset(offset).mode(base.mode()).trackTotalHits(trackTotalHits)
                 .build();
     }

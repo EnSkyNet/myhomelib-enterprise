@@ -1,0 +1,60 @@
+# Iteration 32 — changed source/documentation files
+
+Added: 25
+Changed: 23
+Removed: 0
+
+## Added
+- ITERATION-32-SMART-COLLECTIONS-CHECKPOINT.md
+- TASKS-ITERATION-33.md
+- docs/smart-collections-performance.md
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/search/BuildSmartCollectionSearchRequestUseCase.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/search/LoadSmartCollectionDefinitionUseCase.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/search/MarkSavedSearchUsedUseCase.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/search/SaveSmartCollectionUseCase.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/search/SetSavedSearchPinnedUseCase.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/search/SmartCollectionDefinition.java
+- myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/search/SmartCollectionUseCasesTest.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SavedSearchKind.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionField.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionMode.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionOperator.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionRule.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionSort.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionSortDirection.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SmartCollectionSpec.java
+- myhomelib-domain/src/test/java/com/myhomelibcorp/domain/model/search/SmartCollectionSpecTest.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSmartCollectionBuilder.java
+- myhomelib-infrastructure/src/main/resources/db/migration/V54__smart_collections.sql
+- myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteSavedSearchRepositorySmartCollectionTest.java
+- myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/search/LuceneSmartCollectionTest.java
+- myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/SmartCollectionDialogController.java
+- myhomelib-ui/src/main/resources/view/smart-collection.fxml
+
+## Changed
+- Lang/bg.json
+- Lang/en.json
+- Lang/uk.json
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/folderwatch/IncomingFolderImportCoordinator.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/query/search/SearchRequest.java
+- myhomelib-application/src/main/java/com/myhomelibcorp/application/search/SearchService.java
+- myhomelib-domain/src/main/java/com/myhomelibcorp/domain/model/search/SavedSearch.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/backup/VersionedUserDataTransferAdapter.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/ApplicationServiceConfig.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteSavedSearchRepository.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneCollectionIndexLifecycle.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneDocumentMapper.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchExecutor.java
+- myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneSearchService.java
+- myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/DatabaseMigrationMatrixTest.java
+- myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/SavedSearchesController.java
+- myhomelib-ui/src/main/java/com/myhomelibcorp/ui/search/SearchWorkspaceController.java
+- myhomelib-ui/src/main/resources/lang/default/bg.json
+- myhomelib-ui/src/main/resources/lang/default/en.json
+- myhomelib-ui/src/main/resources/lang/default/uk.json
+- myhomelib-ui/src/main/resources/view/saved-searches.fxml
+- myhomelib-ui/src/test/java/com/myhomelibcorp/ui/action/BookMenuActionContextTest.java
+- myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/MainBookCommandCoordinatorSelectionTest.java
+
+## Removed
+- none

@@ -21,6 +21,8 @@ public class Book {
     private final Integer sequenceNumber;
     private final BookMetadata metadata;
     private final BookFile file;
+    private final List<BookArtifact> artifacts;
+    private final String preferredArtifactId;
     private final Cover cover;
     private final LocalDateTime updateDate;
     private final LocalDateTime createdAt;
@@ -38,6 +40,8 @@ public class Book {
         this.genres = new ArrayList<>(Objects.requireNonNullElse(builder.genres, List.of()));
         this.metadata = Objects.requireNonNull(builder.metadata, "BookMetadata cannot be null");
         this.file = Objects.requireNonNull(builder.file, "BookFile cannot be null");
+        this.artifacts = new ArrayList<>(Objects.requireNonNullElse(builder.artifacts, List.of()));
+        this.preferredArtifactId = normalizePreferredArtifactId(builder.preferredArtifactId, this.artifacts);
         this.cover = Objects.requireNonNullElse(builder.cover, Cover.empty());
         this.series = builder.series;
         this.sequenceNumber = builder.sequenceNumber;
@@ -54,6 +58,22 @@ public class Book {
      */
     public List<Author> getAuthors() { return Collections.unmodifiableList(authors); }
     public List<Genre> getGenres() { return Collections.unmodifiableList(genres); }
+    public List<BookArtifact> getArtifacts() { return Collections.unmodifiableList(artifacts); }
+
+    public String getPreferredArtifactId() { return preferredArtifactId; }
+
+    public java.util.Optional<BookArtifact> getPreferredArtifact() {
+        if (artifacts.isEmpty()) return java.util.Optional.empty();
+        if (preferredArtifactId != null && !preferredArtifactId.isBlank()) {
+            java.util.Optional<BookArtifact> explicit = artifacts.stream()
+                    .filter(a -> preferredArtifactId.equals(a.getId()))
+                    .findFirst();
+            if (explicit.isPresent()) return explicit;
+        }
+        return artifacts.stream().filter(BookArtifact::isAvailable).findFirst()
+                .or(() -> artifacts.stream().filter(BookArtifact::isLocal).findFirst())
+                .or(() -> artifacts.stream().findFirst());
+    }
 
     // === ДЕЛЕГУЮЧІ МЕТОДИ ДЛЯ ЗРУЧНОСТІ (не порушують інкапсуляцію) ===
     public String getFileName() { return file != null ? file.getFileName() : ""; }
@@ -112,21 +132,9 @@ public class Book {
         if (newTitle == null || newTitle.isBlank()) {
             throw new IllegalArgumentException("New title cannot be empty");
         }
-        return builder()
-                .id(this.id)
+        return toBuilder()
                 .title(newTitle)
-                .authors(this.authors)
-                .genres(this.genres)
-                .series(this.series)
-                .sequenceNumber(this.sequenceNumber)
-                .metadata(this.metadata)
-                .file(this.file)
-                .cover(this.cover)
                 .updateDate(LocalDateTime.now())
-                .createdAt(this.createdAt)
-                .deleted(this.deleted)
-                .local(this.local)
-                .missingSince(this.missingSince)
                 .build();
     }
 
@@ -134,21 +142,9 @@ public class Book {
         if (newMetadata == null) {
             throw new IllegalArgumentException("Metadata cannot be null");
         }
-        return builder()
-                .id(this.id)
-                .title(this.title)
-                .authors(this.authors)
-                .genres(this.genres)
-                .series(this.series)
-                .sequenceNumber(this.sequenceNumber)
+        return toBuilder()
                 .metadata(newMetadata)
-                .file(this.file)
-                .cover(this.cover)
                 .updateDate(LocalDateTime.now())
-                .createdAt(this.createdAt)
-                .deleted(this.deleted)
-                .local(this.local)
-                .missingSince(this.missingSince)
                 .build();
     }
 
@@ -156,21 +152,9 @@ public class Book {
         if (newFile == null) {
             throw new IllegalArgumentException("File cannot be null");
         }
-        return builder()
-                .id(this.id)
-                .title(this.title)
-                .authors(this.authors)
-                .genres(this.genres)
-                .series(this.series)
-                .sequenceNumber(this.sequenceNumber)
-                .metadata(this.metadata)
+        return toBuilder()
                 .file(newFile)
-                .cover(this.cover)
                 .updateDate(LocalDateTime.now())
-                .createdAt(this.createdAt)
-                .deleted(this.deleted)
-                .local(this.local)
-                .missingSince(this.missingSince)
                 .build();
     }
 
@@ -181,25 +165,83 @@ public class Book {
 
     public Book withLocalAvailability(boolean local, LocalDateTime missingSince) {
         if (this.local == local && Objects.equals(this.missingSince, missingSince)) return this;
-        return builder()
-                .id(this.id)
-                .title(this.title)
-                .authors(this.authors)
-                .genres(this.genres)
-                .series(this.series)
-                .sequenceNumber(this.sequenceNumber)
-                .metadata(this.metadata)
-                .file(this.file)
-                .cover(this.cover)
+        return toBuilder()
                 .updateDate(LocalDateTime.now())
-                .createdAt(this.createdAt)
-                .deleted(this.deleted)
                 .local(local)
                 .missingSince(missingSince)
                 .build();
     }
 
+
+    /** Returns a copy with a complete artifact set and an optional preferred artifact. */
+    public Book withArtifacts(List<BookArtifact> newArtifacts, String newPreferredArtifactId) {
+        List<BookArtifact> safe = new ArrayList<>(Objects.requireNonNullElse(newArtifacts, List.of()));
+        String preferred = normalizePreferredArtifactId(newPreferredArtifactId, safe);
+        BookFile operationalFile = safe.stream()
+                .filter(a -> preferred != null && preferred.equals(a.getId()))
+                .findFirst()
+                .or(() -> safe.stream().filter(BookArtifact::isAvailable).findFirst())
+                .or(() -> safe.stream().findFirst())
+                .map(BookArtifact::getFile)
+                .orElse(this.file);
+        return toBuilder()
+                .file(operationalFile)
+                .artifacts(safe)
+                .preferredArtifactId(preferred)
+                .build();
+    }
+
+    public Book addArtifact(BookArtifact artifact, boolean makePreferred) {
+        Objects.requireNonNull(artifact, "Artifact cannot be null");
+        List<BookArtifact> updated = new ArrayList<>(artifacts);
+        updated.removeIf(existing -> existing.getId().equals(artifact.getId()));
+        updated.add(artifact);
+        return withArtifacts(updated, makePreferred ? artifact.getId() : preferredArtifactId);
+    }
+
+    public Book removeArtifact(String artifactId) {
+        if (artifactId == null || artifactId.isBlank()) return this;
+        List<BookArtifact> updated = artifacts.stream()
+                .filter(a -> !artifactId.equals(a.getId()))
+                .toList();
+        if (updated.size() == artifacts.size()) return this;
+        String preferred = artifactId.equals(preferredArtifactId) ? null : preferredArtifactId;
+        return withArtifacts(updated, preferred);
+    }
+
+    public Book selectPreferredArtifact(String artifactId) {
+        if (artifactId == null || artifactId.isBlank()) {
+            throw new IllegalArgumentException("Preferred artifact id cannot be blank");
+        }
+        boolean exists = artifacts.stream().anyMatch(a -> artifactId.equals(a.getId()));
+        if (!exists) throw new IllegalArgumentException("Artifact does not belong to book: " + artifactId);
+        return withArtifacts(artifacts, artifactId);
+    }
+
+    private static String normalizePreferredArtifactId(String value, List<BookArtifact> artifacts) {
+        if (artifacts == null || artifacts.isEmpty()) return null;
+        if (value != null && !value.isBlank() && artifacts.stream().anyMatch(a -> value.equals(a.getId()))) {
+            return value;
+        }
+        return artifacts.stream().filter(BookArtifact::isAvailable).findFirst()
+                .or(() -> artifacts.stream().filter(BookArtifact::isLocal).findFirst())
+                .or(() -> artifacts.stream().findFirst())
+                .map(BookArtifact::getId)
+                .orElse(null);
+    }
+
     // === BUILDER ===
+    /** Complete copy for focused edits; relationship lists are detached at snapshot time. */
+    public Builder toBuilder() {
+        return builder()
+                .id(id).title(title)
+                .authors(new ArrayList<>(authors)).genres(new ArrayList<>(genres))
+                .series(series).sequenceNumber(sequenceNumber).metadata(metadata).file(file)
+                .artifacts(new ArrayList<>(artifacts)).preferredArtifactId(preferredArtifactId)
+                .cover(cover).updateDate(updateDate).createdAt(createdAt)
+                .deleted(deleted).local(local).missingSince(missingSince);
+    }
+
     public static Builder builder() {
         return new Builder();
     }
@@ -213,6 +255,8 @@ public class Book {
         private Integer sequenceNumber;
         private BookMetadata metadata;
         private BookFile file;
+        private List<BookArtifact> artifacts = new ArrayList<>();
+        private String preferredArtifactId;
         private Cover cover = Cover.empty();
         private LocalDateTime updateDate;
         private LocalDateTime createdAt;
@@ -228,6 +272,8 @@ public class Book {
         public Builder sequenceNumber(Integer sequenceNumber) { this.sequenceNumber = sequenceNumber; return this; }
         public Builder metadata(BookMetadata metadata) { this.metadata = metadata; return this; }
         public Builder file(BookFile file) { this.file = file; return this; }
+        public Builder artifacts(List<BookArtifact> artifacts) { this.artifacts = artifacts; return this; }
+        public Builder preferredArtifactId(String preferredArtifactId) { this.preferredArtifactId = preferredArtifactId; return this; }
         public Builder cover(Cover cover) { this.cover = cover; return this; }
         public Builder updateDate(LocalDateTime updateDate) { this.updateDate = updateDate; return this; }
         public Builder createdAt(LocalDateTime createdAt) { this.createdAt = createdAt; return this; }

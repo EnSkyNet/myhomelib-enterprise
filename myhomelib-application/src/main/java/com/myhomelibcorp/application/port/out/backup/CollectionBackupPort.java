@@ -4,6 +4,8 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.Optional;
 
 /** Infrastructure boundary used by backup/restore orchestration. */
 public interface CollectionBackupPort {
@@ -12,6 +14,9 @@ public interface CollectionBackupPort {
     void closeCurrentCollection();
     void openCollection(Collection collection);
     boolean hasActiveCollection();
+
+    /** Latest known on-disk backup for the supplied collection, when discoverable. */
+    Optional<Instant> latestBackupTime(Collection collection);
 
     /** Creates a transactionally consistent SQLite database snapshot. */
     void createDatabaseSnapshot(Collection collection, Path targetFile) throws IOException;

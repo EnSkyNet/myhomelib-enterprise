@@ -13,6 +13,10 @@ public final class ArchiveEntryNameSupport {
         return normalized;
     }
 
+    public static boolean sameLogicalPath(String left, String right) {
+        return normalizePath(left).equalsIgnoreCase(normalizePath(right));
+    }
+
     public static boolean isFb2(String value) {
         return normalizePath(value).toLowerCase(Locale.ROOT).endsWith(".fb2");
     }

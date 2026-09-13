@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.collection.CollectionDatabasePathResolver;
@@ -13,6 +14,9 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
+import java.time.Instant;
+import java.util.Comparator;
+import java.util.Optional;
 
 @Component
 @RequiredArgsConstructor
@@ -30,6 +34,38 @@ public class CollectionBackupAdapter implements CollectionBackupPort {
     @Override public void closeCurrentCollection() { collectionManager.closeCurrentCollection(); }
     @Override public void openCollection(Collection collection) { collectionManager.switchToCollection(collection); }
     @Override public boolean hasActiveCollection() { return collectionManager.hasActiveCollection(); }
+
+    @Override
+    public Optional<Instant> latestBackupTime(Collection collection) {
+        if (collection == null) return Optional.empty();
+        Path backupRoot = AppPaths.backupsDir();
+        if (!Files.isDirectory(backupRoot)) return Optional.empty();
+
+        String databaseName = CollectionDatabasePathResolver.resolve(collection).getFileName() == null
+                ? "" : CollectionDatabasePathResolver.resolve(collection).getFileName().toString();
+        String maintenancePrefix = "collection-" + sanitize(collection.getId()) + "-";
+        try (var paths = Files.walk(backupRoot, 3)) {
+            return paths.filter(Files::isRegularFile)
+                    .filter(path -> {
+                        String name = path.getFileName() == null ? "" : path.getFileName().toString();
+                        return (!databaseName.isBlank() && name.equalsIgnoreCase(databaseName))
+                                || (name.startsWith(maintenancePrefix) && name.toLowerCase(java.util.Locale.ROOT).endsWith(".db"));
+                    })
+                    .map(path -> {
+                        try { return Files.getLastModifiedTime(path).toInstant(); }
+                        catch (IOException ignored) { return null; }
+                    })
+                    .filter(java.util.Objects::nonNull)
+                    .max(Comparator.naturalOrder());
+        } catch (IOException error) {
+            log.debug("Cannot inspect backup age for collection {}: {}", collection.getId(), error.toString());
+            return Optional.empty();
+        }
+    }
+
+    private static String sanitize(String value) {
+        return (value == null ? "" : value).replaceAll("[^A-Za-z0-9._-]", "_");
+    }
 
     @Override
     public void createDatabaseSnapshot(Collection collection, Path targetFile) throws IOException {

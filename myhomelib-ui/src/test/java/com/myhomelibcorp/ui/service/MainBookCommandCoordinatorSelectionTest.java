@@ -14,7 +14,7 @@ class MainBookCommandCoordinatorSelectionTest {
     void selectedBookContextTracksCanonicalBookDetailsSelection() {
         ApplicationState state = new ApplicationState();
         MainBookCommandCoordinator coordinator = new MainBookCommandCoordinator(
-                state, null, null, null, null, null);
+                state, null, null, null, null, null, null, null, null, null);
         AtomicInteger changes = new AtomicInteger();
         coordinator.selectedBookProperty().addListener((obs, oldBook, newBook) -> changes.incrementAndGet());
 

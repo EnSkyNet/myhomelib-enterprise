@@ -12,7 +12,7 @@ if ([string]::IsNullOrWhiteSpace($BuildVersion)) { throw "Cannot determine appli
 $Version = if (-not [string]::IsNullOrWhiteSpace($PackageVersion)) { $PackageVersion } elseif ($env:MHL_PACKAGE_VERSION) { $env:MHL_PACKAGE_VERSION } else { $BuildVersion }
 
 if ($env:MHL_SKIP_BUILD -ne "1") {
-    & .\mvnw.cmd -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+    & .\tools\invoke-maven.ps1 -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 

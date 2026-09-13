@@ -2,6 +2,8 @@ package com.myhomelibcorp.application.mapper;
 
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
+import com.myhomelibcorp.domain.model.book.BookArtifactState;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.*;
 import com.myhomelibcorp.domain.service.LanguageResolver;
@@ -11,6 +13,7 @@ import org.mapstruct.Mapping;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 @Mapper(componentModel = "spring")
 public interface BookMapper {
@@ -35,6 +38,8 @@ public interface BookMapper {
     @Mapping(target = "folder", source = "file.folder")
     @Mapping(target = "archiveEntry", source = "file.archiveEntry")
     @Mapping(target = "collectionRoot", source = "file.collectionRoot")
+    @Mapping(target = "artifacts", expression = "java(toArtifactDtos(book))")
+    @Mapping(target = "preferredArtifactId", expression = "java(book.getPreferredArtifactId())")
     BookDto toDto(Book book);
 
 
@@ -63,6 +68,28 @@ public interface BookMapper {
                 .name(genre.getName())
                 .parentId(genre.getParentId() != null ? genre.getParentId().asString() : null)
                 .fb2Code(genre.getFb2Code())
+                .build()).toList();
+    }
+
+    default List<com.myhomelibcorp.application.dto.BookArtifactDto> toArtifactDtos(Book book) {
+        if (book == null || book.getArtifacts() == null) return List.of();
+        return book.getArtifacts().stream().map(artifact -> com.myhomelibcorp.application.dto.BookArtifactDto.builder()
+                .id(artifact.getId())
+                .sourceId(artifact.getSourceId())
+                .name(artifact.getName())
+                .mediaType(artifact.getMediaType())
+                .format(artifact.getFormat())
+                .fileName(artifact.getFile().getFileName())
+                .folder(artifact.getFile().getFolder())
+                .collectionRoot(artifact.getFile().getCollectionRoot())
+                .archiveEntry(artifact.getFile().getArchiveEntry())
+                .fileSize(artifact.getFile().getFileSize())
+                .sha256(artifact.getSha256())
+                .contentFingerprint(artifact.getContentFingerprint())
+                .remote(artifact.isRemote())
+                .local(artifact.isLocal())
+                .state(artifact.getState().name())
+                .metadata(artifact.getMetadata())
                 .build()).toList();
     }
 
@@ -109,6 +136,26 @@ public interface BookMapper {
                 .progress(dto.getProgress())
                 .build();
 
+        List<BookArtifact> artifacts = dto.getArtifacts().stream().map(artifact -> BookArtifact.builder()
+                .id(artifact.getId())
+                .sourceId(artifact.getSourceId())
+                .name(artifact.getName())
+                .mediaType(artifact.getMediaType())
+                .format(artifact.getFormat())
+                .file(new BookFile(
+                        artifact.getFileName() != null ? artifact.getFileName() : "",
+                        artifact.getFolder() != null ? artifact.getFolder() : "",
+                        artifact.getArchiveEntry() != null ? artifact.getArchiveEntry() : "",
+                        artifact.getFileSize(),
+                        artifact.getCollectionRoot() != null ? artifact.getCollectionRoot() : ""))
+                .sha256(artifact.getSha256())
+                .contentFingerprint(artifact.getContentFingerprint())
+                .remote(artifact.isRemote())
+                .local(artifact.isLocal())
+                .state(BookArtifactState.fromStorage(artifact.getState(), artifact.isLocal(), artifact.isRemote()))
+                .metadata(artifact.getMetadata() != null ? artifact.getMetadata() : Map.of())
+                .build()).toList();
+
         return Book.builder()
                 .id(bookId)
                 .title(dto.getTitle() != null ? dto.getTitle() : "")
@@ -118,6 +165,8 @@ public interface BookMapper {
                 .sequenceNumber(dto.getSequenceNumber() != null ? dto.getSequenceNumber() : 0)
                 .metadata(metadata)
                 .file(file)
+                .artifacts(artifacts)
+                .preferredArtifactId(dto.getPreferredArtifactId())
                 .updateDate(dto.getUpdateDate() != null ? dto.getUpdateDate() : LocalDateTime.now())
                 .createdAt(dto.getCreatedAt() != null ? dto.getCreatedAt() : LocalDateTime.now())
                 .deleted(dto.isDeleted())

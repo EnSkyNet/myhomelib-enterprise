@@ -11,6 +11,10 @@ ALLOWED = {
     "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/download/scenario/ConnectionScriptExecutor.java",
     "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBusyRetryExecutor.java",
     "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/search/LuceneIndexWriterFactory.java",
+    # WebDAV transient-error retry backoff; interruption is propagated and restores interrupt state.
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/sync/webdav/WebDavSyncAdapter.java",
+    # Provider rate limiting runs on ExecutorPort; polling checks deadline/cancellation every 50 ms.
+    "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/metadata/MetadataProviderSupport.java",
 }
 found = set()
 errors = []

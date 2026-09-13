@@ -71,11 +71,6 @@ final class FolderSyncInpxSupport {
         return (int) Math.min(Integer.MAX_VALUE, Math.max(0L, value));
     }
 
-    private static String safeMessage(Throwable error) {
-        String message = error.getMessage();
-        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
-    }
-
     record FileChanges(int added, int updated, int deleted, int errors) {
         static FileChanges skipped() { return new FileChanges(0, 0, 0, 0); }
     }

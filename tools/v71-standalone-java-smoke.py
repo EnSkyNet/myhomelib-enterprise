@@ -348,6 +348,16 @@ public class V71StandaloneSmoke {
     public Optional<InputStream> findFirstEntry(Path p,Predicate<String> f){
       for(String n:listEntries(p)) if(f.test(n)) return readEntry(p,n); return Optional.empty();
     }
+    public boolean materializeEntry(Path p,String name,Path target,long maxBytes,java.util.function.BooleanSupplier cancelled) throws IOException {
+      if(maxBytes<=0) throw new IllegalArgumentException("maxBytes must be positive");
+      Optional<InputStream> opened=readEntry(p,name); if(opened.isEmpty()) return false;
+      Path stage=Files.createTempFile(target.toAbsolutePath().getParent(),".mhl-smoke-",".part"); boolean published=false;
+      try(InputStream in=opened.orElseThrow(); OutputStream out=Files.newOutputStream(stage)){
+        byte[] buf=new byte[64*1024]; long total=0; int n;
+        while((n=in.read(buf))>=0){ if(Thread.currentThread().isInterrupted() || (cancelled!=null && cancelled.getAsBoolean())) throw new InterruptedIOException("cancelled"); if(n==0) continue; total+=n; if(total>maxBytes) throw new IOException("entry exceeds maxBytes"); out.write(buf,0,n); }
+        Files.move(stage,target,java.nio.file.StandardCopyOption.REPLACE_EXISTING); published=true; return true;
+      } finally { if(!published) Files.deleteIfExists(stage); }
+    }
   }
 
   static void check(boolean ok,String label){ if(!ok) throw new AssertionError(label); }

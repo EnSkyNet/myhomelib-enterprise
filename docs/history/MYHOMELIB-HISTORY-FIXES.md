@@ -1,6 +1,6 @@
 # MYHOMELIB — History: Fixes and Regressions
 
-This file summarizes important historical repair passes. It is not a substitute for the current contracts in the root documentation. Original notes are retained under `docs/archive/source-notes/root/`.
+This file summarizes important historical repair passes. It is not a substitute for the current contracts in the root documentation. Original notes are retained under `docs/history/source-notes/root/`.
 
 ## Reader repair line
 
@@ -72,3 +72,32 @@ actual: Romanovich_Zemli-chudovishch_1_Zemli-chudovishch.586491.fb2
 HTTP download succeeded, but validation rejected the archive. The correction restored compatibility without reverting to unsafe guessing: exact match first, then unambiguous basename/LibID token resolution, then a single-FB2 fallback. The actual resolved member is propagated through the download result and persisted so Reader/open/cover/resource lookup use the real ZIP structure. The matching algorithm is centralized in `ArchiveEntryNameSupport` to prevent validator/resolver drift.
 
 This behavior is now part of the active contract in `MYHOMELIB-FEATURES.md` and `MYHOMELIB-OPERATIONS.md`.
+
+## Iterations 47–53 stabilization line
+
+Later fixes included Comic Reader lazy archive handling, TTS pause/resume race hardening, JavaFX/AWT headless-test isolation, accessibility contrast/name guards, background indexing queue race fixes, fail-safe candidate content-index rebuilds, sync bundle atomic publication, and WebDAV XML/origin/credential hardening. The exact iteration records are preserved under `docs/history/records/`.
+## Iteration 62 annotation FTS performance hardening
+
+The original annotation FTS triggers addressed rows through `annotation_id`, which is intentionally `UNINDEXED` inside FTS5. On large annotation imports this made every trigger refresh scan the FTS table and caused quadratic growth. Flyway V60 preserves V58 as history, rebuilds the FTS index once, introduces a stable `annotation_search_ids` integer key, and refreshes/deletes FTS rows by `rowid`. The mapping uses an explicit `INTEGER PRIMARY KEY` value so SQLite `VACUUM` cannot renumber live annotation keys. Migration, delete/update, 5,000-annotation, backup and `VACUUM` regressions are covered by the infrastructure suite.
+
+## Iteration 63 plugin security boundary
+
+The first plugin SPI checkpoint intentionally left permissions/isolation open. Iteration 63 adds manifest-declared network/filesystem capabilities, exact host approval binding, trusted/untrusted state, disable/quarantine lifecycle and a managed invocation boundary. Plugin exceptions, linkage failures and assertion failures quarantine the plugin instead of escaping to ordinary host control flow. Capability-gated invocations fail closed when the required permission is not approved. Because Java in-process loading is not an OS sandbox, untrusted plugins are rejected for in-process execution rather than given misleading isolation guarantees.
+
+## Iteration 64 plugin SDK contract closure
+
+MHL-503 turns the plugin SPI/security boundary into a reproducible developer workflow. Plugin API 1.2 adds a public `PluginTestHarness` that executes the host's structural loader checks under a synthetic exact-version test approval without altering runtime trust. A new reactor sample module compiles three independent ServiceLoader plugins (dictionary, metadata and export) and validates their declared permissions in CI. `docs/plugin-sdk/` documents authoring, compatibility and the explicit limitation that the in-process permission model is not an OS sandbox.
+
+
+## Iteration 71 optional AI privacy/security boundary
+
+MHL-510 completes the release-8.0 ecosystem backlog with Plugin API 1.3 and the additive `AI_PROVIDER` service. The application has no built-in/default provider. Host-owned execution requires persistent per-book opt-in plus explicit content/network consent, bounds request/response sizes and owns cancellation/deadlines. Providers can read only declared credential names through `AiProviderContext`; credentials remain namespaced in the existing `SecretStore` abstraction and are never moved into ordinary settings. Network-backed AI plugins must also declare `NETWORK_ACCESS` in the exact approved manifest permission set.
+
+
+## Iteration 77 evidence schema drift hardening
+
+External acceptance JSON had explicit `schemaVersion` fields but the accepted values lived as duplicated literals across producer/verifier scripts. Iteration 77 centralizes those contracts in `tools/evidence_contracts.py`, makes Python producers derive current versions from the registry and makes verifiers reject missing, legacy, future or wrong-scenario records. The registry is included in the candidate critical-policy digest and Windows acceptance-harness fingerprint so evidence schema policy cannot change without changing candidate-bound integrity evidence.
+
+## Iteration 83 Windows runtime evidence hardening
+
+Real Windows evidence showed two distinct gaps that local string-level checks had missed. TTS discovery diagnostics could be merged into stdout and parsed as voice rows when the PowerShell command failed; discovery now uses an encoded script, strict record framing, separated stderr and non-zero-exit rejection. Annotation Manager FXML also used a JavaFX 21 callback constant as a plain string attribute; the callback is now set in controller code and the invalid FXML literal is regression-guarded.

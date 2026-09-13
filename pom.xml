@@ -31,6 +31,9 @@
         <commons-compress.version>1.28.0</commons-compress.version>
         <junrar.version>8.1.0</junrar.version>
         <zstd-jni.version>1.5.6-9</zstd-jni.version>
+        <xz.version>1.9</xz.version>
+        <pdfbox.version>3.0.8</pdfbox.version>
+        <jbig2-imageio.version>3.0.5</jbig2-imageio.version>
 
         <junit.version>5.10.2</junit.version>
         <mockito.version>5.10.0</mockito.version>
@@ -49,6 +52,8 @@
         <module>myhomelib-shared</module>
         <module>myhomelib-domain</module>
         <module>myhomelib-application</module>
+        <module>myhomelib-plugin-api</module>
+        <module>myhomelib-plugin-samples</module>
         <module>myhomelib-infrastructure</module>
         <module>myhomelib-ui</module>
         <module>myhomelib-bootstrap</module>
@@ -59,6 +64,7 @@
         <!-- ОДИН МОДУЛЬ READER (без дублікатів!) -->
         <module>myhomelib-reader</module>
         <module>myhomelib-mcp</module>
+        <module>myhomelib-web</module>
         <module>myhomelib-opds</module>
     </modules>
 
@@ -135,6 +141,11 @@
                 <artifactId>zstd-jni</artifactId>
                 <version>${zstd-jni.version}</version>
             </dependency>
+            <dependency>
+                <groupId>org.tukaani</groupId>
+                <artifactId>xz</artifactId>
+                <version>${xz.version}</version>
+            </dependency>
 
             <!-- Native OS credential storage (Windows DPAPI; platform helpers) -->
             <dependency>
@@ -165,6 +176,18 @@
                 <groupId>org.apache.lucene</groupId>
                 <artifactId>lucene-analysis-common</artifactId>
                 <version>${lucene.version}</version>
+            </dependency>
+
+            <!-- PDF Reader raster backend -->
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>pdfbox</artifactId>
+                <version>${pdfbox.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>org.apache.pdfbox</groupId>
+                <artifactId>jbig2-imageio</artifactId>
+                <version>${jbig2-imageio.version}</version>
             </dependency>
 
             <!-- Reader модуль -->
@@ -286,6 +309,9 @@
                             <include>**/*Test.java</include>
                             <include>**/*Tests.java</include>
                         </includes>
+                        <systemPropertyVariables>
+                            <myhomelib.encryption.key>AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=</myhomelib.encryption.key>
+                        </systemPropertyVariables>
                     </configuration>
                 </plugin>
             </plugins>

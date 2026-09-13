@@ -1,6 +1,7 @@
 package com.myhomelibcorp.e2e;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.myhomelibcorp.application.port.out.backup.UserDataTransferPort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.infrastructure.backup.VersionedUserDataTransferAdapter;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -51,7 +52,7 @@ class BackupRestoreJourneyE2ETest {
         VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(
                 manager(source), sourceSettings, new ObjectMapper());
         var exported = sourceAdapter.exportTo(manifest);
-        assertThat(exported.schemaVersion()).isEqualTo(2);
+        assertThat(exported.schemaVersion()).isEqualTo(UserDataTransferPort.CURRENT_SCHEMA_VERSION);
         assertThat(manifest).isRegularFile();
 
         Db target = db(tempDir.resolve("target.db"));
@@ -62,7 +63,7 @@ class BackupRestoreJourneyE2ETest {
                 manager(target), targetSettings, new ObjectMapper());
 
         var restored = targetAdapter.restoreFrom(manifest);
-        assertThat(restored.effectiveSchemaVersion()).isEqualTo(2);
+        assertThat(restored.effectiveSchemaVersion()).isEqualTo(UserDataTransferPort.CURRENT_SCHEMA_VERSION);
         assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new-id'", Integer.class)).isEqualTo(8);
         assertThat(target.jdbc().queryForObject("SELECT progress FROM books WHERE id='new-id'", Integer.class)).isEqualTo(61);
         assertThat(target.jdbc().queryForObject("SELECT paragraph_id FROM reading_progress WHERE book_id='new-id'", String.class)).isEqualTo("p-7");
@@ -128,7 +129,7 @@ class BackupRestoreJourneyE2ETest {
     private static void createSchema(JdbcTemplate j) {
         j.execute("CREATE TABLE books(id TEXT PRIMARY KEY, lib_id TEXT, rate INTEGER DEFAULT 0, progress INTEGER DEFAULT 0, review TEXT)");
         j.execute("CREATE INDEX idx_books_lib_id ON books(lib_id)");
-        j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0)");
+        j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0, last_device TEXT NOT NULL DEFAULT 'desktop')");
         j.execute("CREATE TABLE reading_history(book_id TEXT PRIMARY KEY,last_opened_at TEXT NOT NULL,open_count INTEGER NOT NULL DEFAULT 1)");
         j.execute("CREATE TABLE reading_stats(id INTEGER PRIMARY KEY AUTOINCREMENT,book_id TEXT NOT NULL UNIQUE,first_read_at TEXT NOT NULL,last_read_at TEXT NOT NULL,total_reading_seconds INTEGER DEFAULT 0,reading_sessions INTEGER DEFAULT 0,start_percent INTEGER DEFAULT 0,end_percent INTEGER DEFAULT 0,current_percent INTEGER DEFAULT 0,completed_at TEXT)");
         j.execute("CREATE TABLE bookmarks(id TEXT PRIMARY KEY,book_id TEXT NOT NULL,paragraph_id TEXT NOT NULL,char_offset INTEGER DEFAULT 0,position REAL DEFAULT 0,chapter_title TEXT,context TEXT,created_at TEXT NOT NULL)");

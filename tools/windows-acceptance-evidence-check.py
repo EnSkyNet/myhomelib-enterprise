@@ -13,7 +13,10 @@ import json
 import re
 import struct
 from collections import Counter
+from datetime import datetime
 from pathlib import Path, PureWindowsPath
+
+from evidence_contracts import validate_record
 
 DPI_SCALES = (100, 125, 150, 200)
 P4_IDS = [f"P4-{i:02d}" for i in range(1, 21)]
@@ -38,10 +41,10 @@ def load(path: Path) -> dict:
 
 
 def require_contract(data: dict, report: Path, scenario: str) -> None:
-    if data.get("schemaVersion") != 1:
-        raise AssertionError(f"{report}: schemaVersion={data.get('schemaVersion')!r}, expected 1")
-    if data.get("scenario") != scenario:
-        raise AssertionError(f"{report}: scenario={data.get('scenario')!r}, expected {scenario!r}")
+    try:
+        validate_record(data, scenario, label=str(report))
+    except ValueError as exc:
+        raise AssertionError(str(exc)) from exc
 
 
 def require_nonblank(data: dict, report: Path, *keys: str) -> None:
@@ -68,6 +71,113 @@ def resolve_bundle_path(root: Path, report: Path, raw: object) -> Path:
         raise AssertionError(f"{report}: evidence escapes bundle root: {value}") from exc
     return candidate
 
+
+
+def parse_acceptance_timestamp(value: object, report: Path) -> datetime:
+    text = str(value or "").strip()
+    if not text:
+        raise AssertionError(f"{report}: missing/blank field timestamp")
+    normalized = text[:-1] + "+00:00" if text.endswith("Z") else text
+    # PowerShell round-trip ("o") may emit seven fractional digits. Python only
+    # needs microsecond precision for ordering, so trim any excess deterministically.
+    normalized = re.sub(r"(\.\d{6})\d+(?=[+-]\d{2}:\d{2}$)", r"\1", normalized)
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise AssertionError(f"{report}: timestamp is not ISO-8601 with timezone: {text!r}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise AssertionError(f"{report}: timestamp must include a timezone offset")
+    return parsed
+
+
+def _relative_to_root(root: Path, path: Path) -> str:
+    try:
+        return path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError as exc:
+        raise AssertionError(f"evidence path escapes bundle root: {path}") from exc
+
+
+def expected_evidence_members(
+    root: Path, *, require_dpi: bool, require_desktop: bool, require_host_binding: bool
+) -> set[str]:
+    expected: set[str] = {
+        "windows-installer-acceptance/installer-acceptance.json",
+        "windows-installer-acceptance/installer-acceptance.md",
+        "windows-portable-acceptance/portable-smoke.json",
+        "windows-portable-acceptance/portable-smoke.md",
+    }
+    installer_report = root / "windows-installer-acceptance" / "installer-acceptance.json"
+    installer = load(installer_report)
+    logs = installer.get("msiexecLogs")
+    if not isinstance(logs, list):
+        raise AssertionError(f"{installer_report}: msiexecLogs must be a list")
+    for raw in logs:
+        expected.add(_relative_to_root(root, resolve_bundle_path(root, installer_report, raw)))
+
+    if require_host_binding:
+        expected.add("windows-host-binding/windows-host-binding.json")
+
+    if require_dpi:
+        for scale in DPI_SCALES:
+            report = root / f"windows-ui-acceptance-{scale}.json"
+            expected.add(f"windows-ui-acceptance-{scale}.json")
+            expected.add(f"windows-ui-acceptance-{scale}.md")
+            data = load(report)
+            rows = data.get("results")
+            if not isinstance(rows, list):
+                raise AssertionError(f"{report}: results must be a list")
+            for row in rows:
+                if isinstance(row, dict) and str(row.get("Evidence") or "").strip():
+                    expected.add(_relative_to_root(root, resolve_bundle_path(root, report, row.get("Evidence"))))
+
+    if require_desktop:
+        report = root / "windows-release-desktop-acceptance" / "desktop-acceptance.json"
+        expected.add("windows-release-desktop-acceptance/desktop-acceptance.json")
+        expected.add("windows-release-desktop-acceptance/desktop-acceptance.md")
+        data = load(report)
+        rows = data.get("results")
+        if not isinstance(rows, list):
+            raise AssertionError(f"{report}: results must be a list")
+        for row in rows:
+            if isinstance(row, dict) and str(row.get("Evidence") or "").strip():
+                expected.add(_relative_to_root(root, resolve_bundle_path(root, report, row.get("Evidence"))))
+    return expected
+
+
+def verify_evidence_closure(
+    root: Path, *, require_dpi: bool, require_desktop: bool, require_host_binding: bool
+) -> None:
+    expected = expected_evidence_members(
+        root,
+        require_dpi=require_dpi,
+        require_desktop=require_desktop,
+        require_host_binding=require_host_binding,
+    )
+    actual: set[str] = set()
+    dirs = ["windows-installer-acceptance", "windows-portable-acceptance"]
+    if require_host_binding:
+        dirs.append("windows-host-binding")
+    if require_desktop:
+        dirs.append("windows-release-desktop-acceptance")
+    if require_dpi:
+        dirs.extend(f"dpi-{scale}-evidence" for scale in DPI_SCALES)
+    for dirname in dirs:
+        base = root / dirname
+        if base.is_dir():
+            actual.update(_relative_to_root(root, path) for path in base.rglob("*") if path.is_file())
+    if require_dpi:
+        for scale in DPI_SCALES:
+            for suffix in ("json", "md"):
+                path = root / f"windows-ui-acceptance-{scale}.{suffix}"
+                if path.is_file():
+                    actual.add(_relative_to_root(root, path))
+
+    missing = expected - actual
+    extra = actual - expected
+    if missing:
+        raise AssertionError("Windows evidence is missing referenced file(s): " + ", ".join(sorted(missing)))
+    if extra:
+        raise AssertionError("Windows evidence contains unreferenced file(s): " + ", ".join(sorted(extra)))
 
 def sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
@@ -141,6 +251,8 @@ def verify_host_binding(root: Path) -> dict:
 
 def verify_host_cohesion(root: Path, *, require_dpi: bool, require_desktop: bool) -> dict:
     binding = verify_host_binding(root)
+    binding_report = root / "windows-host-binding" / "windows-host-binding.json"
+    binding_timestamp = parse_acceptance_timestamp(binding.get("timestamp"), binding_report)
     reports = [
         root / "windows-installer-acceptance" / "installer-acceptance.json",
         root / "windows-portable-acceptance" / "portable-smoke.json",
@@ -156,7 +268,12 @@ def verify_host_cohesion(root: Path, *, require_dpi: bool, require_desktop: bool
     )
     for report in reports:
         data = load(report)
-        require_nonblank(data, report, *fields)
+        require_nonblank(data, report, "timestamp", *fields)
+        report_timestamp = parse_acceptance_timestamp(data.get("timestamp"), report)
+        if report_timestamp < binding_timestamp:
+            raise AssertionError(
+                f"{report}: timestamp predates windows-host-binding; stale evidence cannot join this session"
+            )
         for field in fields:
             if str(data.get(field) or "") != str(binding.get(field) or ""):
                 raise AssertionError(
@@ -409,6 +526,12 @@ def main() -> None:
         verify_release_desktop(ns.root)
     if ns.require_host_binding:
         verify_host_cohesion(ns.root, require_dpi=ns.dpi, require_desktop=ns.release_desktop)
+    verify_evidence_closure(
+        ns.root,
+        require_dpi=ns.dpi,
+        require_desktop=ns.release_desktop,
+        require_host_binding=ns.require_host_binding,
+    )
     print("Windows acceptance evidence: PASS")
 
 

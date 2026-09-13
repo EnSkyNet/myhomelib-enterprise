@@ -18,8 +18,12 @@ import tempfile
 import zipfile
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
+
+from evidence_contracts import current_schema, validate_record
+
+from zip_evidence_safety import inspect_open_zip
 
 ROOT = Path(__file__).resolve().parents[1]
 SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -28,6 +32,25 @@ REQUIRED_GITHUB_CHECKS = {
     "MHL-010-B",
     "MHL-017/MHL-018",
     "MHL-019",
+}
+
+
+WINDOWS_REQUIRED_REPORT_MEMBERS = {
+    "windows-installer-acceptance/installer-acceptance.json",
+    "windows-installer-acceptance/installer-acceptance.md",
+    "windows-portable-acceptance/portable-smoke.json",
+    "windows-portable-acceptance/portable-smoke.md",
+    "windows-ui-acceptance-100.json",
+    "windows-ui-acceptance-100.md",
+    "windows-ui-acceptance-125.json",
+    "windows-ui-acceptance-125.md",
+    "windows-ui-acceptance-150.json",
+    "windows-ui-acceptance-150.md",
+    "windows-ui-acceptance-200.json",
+    "windows-ui-acceptance-200.md",
+    "windows-release-desktop-acceptance/desktop-acceptance.json",
+    "windows-release-desktop-acceptance/desktop-acceptance.md",
+    "windows-host-binding/windows-host-binding.json",
 }
 
 
@@ -67,8 +90,10 @@ def load_json(path: Path) -> dict[str, Any]:
 
 def verify_github_json(path: Path) -> Evidence:
     data = load_json(path)
-    need(data.get("schemaVersion") == 2, f"{path}: schemaVersion must be 2 (candidate-bound evidence)")
-    need(data.get("scenario") == "github-connected-acceptance", f"{path}: wrong scenario")
+    try:
+        validate_record(data, "github-connected-acceptance", label=str(path))
+    except ValueError as exc:
+        raise FinalAcceptanceError(str(exc)) from exc
     need(data.get("overall") == "PASS", f"{path}: overall is not PASS")
     need(str(data.get("repository") or "").strip(), f"{path}: repository missing")
     need(str(data.get("branch") or "").strip(), f"{path}: branch missing")
@@ -105,6 +130,18 @@ def verify_github_json(path: Path) -> Evidence:
     need(isinstance(release_run_id, int) and release_run_id > 0, f"{path}: CI Release runId missing/invalid")
     release_run_url = str(release_details.get("htmlUrl") or "").strip()
     need(release_run_url.startswith("https://"), f"{path}: CI Release htmlUrl missing/invalid")
+    integrity_project_version = str(release_details.get("windowsIntegrityProjectVersion") or "").strip()
+    need(integrity_project_version, f"{path}: Windows integrity project version missing")
+    integrity_candidate_sha = str(release_details.get("windowsIntegrityCandidateSha") or "").strip().lower()
+    need(integrity_candidate_sha == candidate_sha, f"{path}: Windows integrity candidate SHA mismatch")
+    integrity_sha256 = str(release_details.get("windowsIntegritySha256") or "").strip().lower()
+    need(SHA256_RE.fullmatch(integrity_sha256) is not None, f"{path}: Windows integrity record SHA-256 missing/invalid")
+    integrity_source_tree_sha = str(release_details.get("windowsIntegritySourceTreeSha256") or "").strip().lower()
+    need(SHA256_RE.fullmatch(integrity_source_tree_sha) is not None, f"{path}: Windows integrity source tree SHA-256 missing/invalid")
+    integrity_dist_manifest_sha = str(release_details.get("windowsIntegrityDistManifestSha256") or "").strip().lower()
+    need(SHA256_RE.fullmatch(integrity_dist_manifest_sha) is not None, f"{path}: Windows integrity dist manifest SHA-256 missing/invalid")
+    windows_checksums_sha = str(release_details.get("windowsChecksumsSha256") or "").strip().lower()
+    need(SHA256_RE.fullmatch(windows_checksums_sha) is not None, f"{path}: Windows SHA256SUMS SHA-256 missing/invalid")
 
     return Evidence(
         "github",
@@ -122,6 +159,12 @@ def verify_github_json(path: Path) -> Evidence:
             "windowsPortableSha256": windows_portable_sha,
             "releaseRunId": release_run_id,
             "releaseRunUrl": release_run_url,
+            "windowsIntegrityProjectVersion": integrity_project_version,
+            "windowsIntegrityCandidateSha": integrity_candidate_sha,
+            "windowsIntegritySha256": integrity_sha256,
+            "windowsIntegritySourceTreeSha256": integrity_source_tree_sha,
+            "windowsIntegrityDistManifestSha256": integrity_dist_manifest_sha,
+            "windowsChecksumsSha256": windows_checksums_sha,
             "checks": sorted(REQUIRED_GITHUB_CHECKS),
         },
     )
@@ -129,12 +172,20 @@ def verify_github_json(path: Path) -> Evidence:
 
 def verify_github_ingest(path: Path, github: Evidence) -> Evidence:
     data = load_json(path)
-    need(data.get("schemaVersion") == 1, f"{path}: schemaVersion must be 1")
-    need(data.get("scenario") == "github-connected-acceptance-artifact-ingest", f"{path}: wrong scenario")
+    try:
+        validate_record(data, "github-connected-acceptance-artifact-ingest", label=str(path))
+    except ValueError as exc:
+        raise FinalAcceptanceError(str(exc)) from exc
     need(data.get("overall") == "PASS", f"{path}: overall is not PASS")
     need(data.get("remoteDigestVerified") is True, f"{path}: final acceptance requires GitHub API digest-verified ingest")
     details = github.details
-    for key in ("candidateSha", "repository", "releaseRunId", "releaseRunUrl", "windowsMsiSha256", "windowsExeSha256", "windowsPortableSha256", "acceptanceHarnessManifestSha256"):
+    for key in (
+        "candidateSha", "repository", "releaseRunId", "releaseRunUrl",
+        "windowsMsiSha256", "windowsExeSha256", "windowsPortableSha256",
+        "windowsChecksumsSha256", "windowsIntegrityProjectVersion", "windowsIntegrityCandidateSha",
+        "windowsIntegritySha256", "windowsIntegritySourceTreeSha256", "windowsIntegrityDistManifestSha256",
+        "acceptanceHarnessManifestSha256",
+    ):
         need(data.get(key) == details.get(key), f"{path}: ingest/GitHub mismatch for {key}")
     acceptance_run_id = data.get("acceptanceRunId")
     need(isinstance(acceptance_run_id, int) and acceptance_run_id > 0, f"{path}: acceptanceRunId missing/invalid")
@@ -160,6 +211,12 @@ def verify_github_ingest(path: Path, github: Evidence) -> Evidence:
             "windowsMsiSha256": details["windowsMsiSha256"],
             "windowsExeSha256": details["windowsExeSha256"],
             "windowsPortableSha256": details["windowsPortableSha256"],
+            "windowsChecksumsSha256": details["windowsChecksumsSha256"],
+            "windowsIntegrityProjectVersion": details["windowsIntegrityProjectVersion"],
+            "windowsIntegrityCandidateSha": details["windowsIntegrityCandidateSha"],
+            "windowsIntegritySha256": details["windowsIntegritySha256"],
+            "windowsIntegritySourceTreeSha256": details["windowsIntegritySourceTreeSha256"],
+            "windowsIntegrityDistManifestSha256": details["windowsIntegrityDistManifestSha256"],
             "acceptanceHarnessManifestSha256": details["acceptanceHarnessManifestSha256"],
         },
     )
@@ -167,8 +224,10 @@ def verify_github_ingest(path: Path, github: Evidence) -> Evidence:
 
 def verify_harness_binding(path: Path, github: Evidence, manifest_path: Path | None = None) -> Evidence:
     data = load_json(path)
-    need(data.get("schemaVersion") == 1, f"{path}: schemaVersion must be 1")
-    need(data.get("scenario") == "windows-acceptance-harness-binding", f"{path}: wrong scenario")
+    try:
+        validate_record(data, "windows-acceptance-harness-binding", label=str(path))
+    except ValueError as exc:
+        raise FinalAcceptanceError(str(exc)) from exc
     need(data.get("overall") == "PASS", f"{path}: overall is not PASS")
     need(str(data.get("candidateSha") or "").strip().lower() == github.details["candidateSha"],
          f"{path}: harness binding candidate SHA mismatch")
@@ -213,6 +272,59 @@ def verify_harness_binding(path: Path, github: Evidence, manifest_path: Path | N
     )
 
 
+def read_archive_json(zf: zipfile.ZipFile, name: str) -> dict[str, Any]:
+    try:
+        value = json.loads(zf.read(name).decode("utf-8-sig"))
+    except Exception as exc:  # noqa: BLE001
+        raise FinalAcceptanceError(f"invalid JSON evidence inside Windows archive {name}: {exc}") from exc
+    need(isinstance(value, dict), f"Windows archive JSON root must be an object: {name}")
+    return value
+
+
+def _archive_reference(report_member: str, raw: Any) -> str:
+    value = str(raw or "").strip().replace("\\", "/")
+    need(value, f"{report_member}: blank evidence reference")
+    ref = PurePosixPath(value)
+    need(not value.startswith("/") and not ref.is_absolute() and ".." not in ref.parts,
+         f"{report_member}: unsafe evidence reference {value!r}")
+    return str(PurePosixPath(report_member).parent / ref)
+
+
+def expected_windows_archive_members(zf: zipfile.ZipFile) -> set[str]:
+    expected = set(WINDOWS_REQUIRED_REPORT_MEMBERS) | {"manifest.sha256"}
+
+    installer_name = "windows-installer-acceptance/installer-acceptance.json"
+    installer = read_archive_json(zf, installer_name)
+    logs = installer.get("msiexecLogs")
+    need(isinstance(logs, list), "Windows archive installer msiexecLogs must be a list")
+    for raw in logs:
+        expected.add(_archive_reference(installer_name, raw))
+
+    for scale in (100, 125, 150, 200):
+        report_name = f"windows-ui-acceptance-{scale}.json"
+        report = read_archive_json(zf, report_name)
+        rows = report.get("results")
+        need(isinstance(rows, list), f"{report_name}: results must be a list")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            evidence = str(row.get("Evidence") or "").strip()
+            if evidence:
+                expected.add(_archive_reference(report_name, evidence))
+
+    desktop_name = "windows-release-desktop-acceptance/desktop-acceptance.json"
+    desktop = read_archive_json(zf, desktop_name)
+    rows = desktop.get("results")
+    need(isinstance(rows, list), "Windows archive desktop results must be a list")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        evidence = str(row.get("Evidence") or "").strip()
+        if evidence:
+            expected.add(_archive_reference(desktop_name, evidence))
+    return expected
+
+
 def parse_sidecar(path: Path) -> tuple[str, str]:
     need(path.is_file(), f"missing SHA-256 sidecar: {path}")
     text = path.read_text(encoding="utf-8-sig").strip()
@@ -240,31 +352,14 @@ def verify_windows_archive(
     except zipfile.BadZipFile as exc:
         raise FinalAcceptanceError(f"Windows evidence archive is not a valid ZIP: {path}") from exc
     with zf:
-        names = [n.replace("\\", "/") for n in zf.namelist() if not n.endswith("/")]
-        need(names, f"Windows evidence archive is empty: {path}")
-        need(len(names) == len(set(names)), f"Windows evidence archive contains duplicate member names")
-        for name in names:
-            parts = Path(name).parts
-            need(not name.startswith("/") and ".." not in parts, f"unsafe Windows evidence archive member: {name}")
+        infos = inspect_open_zip(
+            zf,
+            label="Windows evidence archive",
+            error_type=FinalAcceptanceError,
+        )
+        names = set(infos)
         need("manifest.sha256" in names, "Windows evidence archive missing manifest.sha256")
-        required = {
-            "windows-installer-acceptance/installer-acceptance.json",
-            "windows-installer-acceptance/installer-acceptance.md",
-            "windows-portable-acceptance/portable-smoke.json",
-            "windows-portable-acceptance/portable-smoke.md",
-            "windows-ui-acceptance-100.json",
-            "windows-ui-acceptance-100.md",
-            "windows-ui-acceptance-125.json",
-            "windows-ui-acceptance-125.md",
-            "windows-ui-acceptance-150.json",
-            "windows-ui-acceptance-150.md",
-            "windows-ui-acceptance-200.json",
-            "windows-ui-acceptance-200.md",
-            "windows-release-desktop-acceptance/desktop-acceptance.json",
-            "windows-release-desktop-acceptance/desktop-acceptance.md",
-            "windows-host-binding/windows-host-binding.json",
-        }
-        missing = required - set(names)
+        missing = WINDOWS_REQUIRED_REPORT_MEMBERS - names
         need(not missing, "Windows evidence archive missing required evidence: " + ", ".join(sorted(missing)))
 
         try:
@@ -288,25 +383,25 @@ def verify_windows_archive(
             member_hash = hashlib.sha256(zf.read(name)).hexdigest()
             need(member_hash == digest, f"Windows archive manifest checksum mismatch for {name}")
 
-        try:
-            installer = json.loads(zf.read("windows-installer-acceptance/installer-acceptance.json").decode("utf-8-sig"))
-        except Exception as exc:  # noqa: BLE001
-            raise FinalAcceptanceError(f"invalid installer evidence inside Windows archive: {exc}") from exc
+        installer = read_archive_json(zf, "windows-installer-acceptance/installer-acceptance.json")
         archive_msi_sha = str(installer.get("currentMsiSha256") or "").strip().lower()
         need(SHA256_RE.fullmatch(archive_msi_sha) is not None, "Windows archive installer evidence lacks currentMsiSha256")
         if expected_current_msi_sha:
             need(archive_msi_sha == expected_current_msi_sha.lower(),
                  "Windows archive current MSI SHA-256 does not match the GitHub release candidate")
 
-        try:
-            portable = json.loads(zf.read("windows-portable-acceptance/portable-smoke.json").decode("utf-8-sig"))
-        except Exception as exc:  # noqa: BLE001
-            raise FinalAcceptanceError(f"invalid portable evidence inside Windows archive: {exc}") from exc
+        portable = read_archive_json(zf, "windows-portable-acceptance/portable-smoke.json")
         archive_portable_sha = str(portable.get("archiveSha256") or "").strip().lower()
         need(SHA256_RE.fullmatch(archive_portable_sha) is not None, "Windows archive portable evidence lacks archiveSha256")
         if expected_portable_sha:
             need(archive_portable_sha == expected_portable_sha.lower(),
                  "Windows archive portable SHA-256 does not match the GitHub release candidate")
+
+        expected_members = expected_windows_archive_members(zf)
+        extra_members = names - expected_members
+        missing_members = expected_members - names
+        need(not missing_members, "Windows evidence archive missing referenced member(s): " + ", ".join(sorted(missing_members)))
+        need(not extra_members, "Windows evidence archive contains unreferenced member(s): " + ", ".join(sorted(extra_members)))
 
         # Re-run the same strict validator against the archive payload itself. This
         # prevents a valid live root plus a detached/altered reviewer ZIP from passing.
@@ -362,6 +457,12 @@ def verify_windows_root(root: Path) -> Evidence:
         validator.verify_dpi(root)
         desktop = validator.verify_release_desktop(root)
         host_binding = validator.verify_host_cohesion(root, require_dpi=True, require_desktop=True)
+        validator.verify_evidence_closure(
+            root,
+            require_dpi=True,
+            require_desktop=True,
+            require_host_binding=True,
+        )
     except AssertionError as exc:
         raise FinalAcceptanceError(f"strict Windows evidence validation failed: {exc}") from exc
     installer_report = root / "windows-installer-acceptance" / "installer-acceptance.json"
@@ -396,7 +497,7 @@ def verify_windows_root(root: Path) -> Evidence:
 def write_result(out_dir: Path, status: str, evidence: list[Evidence], failure: str | None = None) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schemaVersion": 1,
+        "schemaVersion": current_schema("myhomelib-7.1-final-external-acceptance"),
         "scenario": "myhomelib-7.1-final-external-acceptance",
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "overall": status,
@@ -484,6 +585,12 @@ def main(argv: list[str] | None = None) -> int:
                     "windowsMsiSha256": expected_msi_sha,
                     "windowsExeSha256": expected_exe_sha,
                     "windowsPortableSha256": expected_portable_sha,
+                    "windowsChecksumsSha256": github.details["windowsChecksumsSha256"],
+                    "windowsIntegrityProjectVersion": github.details["windowsIntegrityProjectVersion"],
+                    "windowsIntegrityCandidateSha": github.details["windowsIntegrityCandidateSha"],
+                    "windowsIntegritySha256": github.details["windowsIntegritySha256"],
+                    "windowsIntegritySourceTreeSha256": github.details["windowsIntegritySourceTreeSha256"],
+                    "windowsIntegrityDistManifestSha256": github.details["windowsIntegrityDistManifestSha256"],
                     "releaseRunId": github.details["releaseRunId"],
                     "releaseRunUrl": github.details["releaseRunUrl"],
                     "acceptanceRunId": evidence[1].details["acceptanceRunId"],

@@ -1,0 +1,10 @@
+ARCHITECTURE.md
+ITERATION-45-ARCHIVE-TRAVERSAL-EFFICIENCY-CHECKPOINT.md
+TASKS-ITERATION-45.md
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/archive/ArchiveEntryNameSupport.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReader.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolver.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReaderTransparencyTest.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolverArchiveCompatibilityTest.java
+tools/iteration45-archive-efficiency-check.py
+ITERATION-45-CHANGED-FILES.txt

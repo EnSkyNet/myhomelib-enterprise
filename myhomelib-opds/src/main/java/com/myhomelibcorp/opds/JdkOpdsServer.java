@@ -1,14 +1,18 @@
 package com.myhomelibcorp.opds;
 
 import com.myhomelibcorp.application.opds.*;
+import com.myhomelibcorp.application.webreader.WebReaderUseCase;
+import com.myhomelibcorp.application.usecase.reading.ContinueReadingService;
+import com.myhomelibcorp.web.WebLibraryRenderer;
+import com.myhomelibcorp.web.WebReaderRenderer;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 import com.sun.net.httpserver.HttpsConfigurator;
 import com.sun.net.httpserver.HttpsParameters;
 import com.sun.net.httpserver.HttpsServer;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -39,7 +43,6 @@ import javax.net.ssl.SSLParameters;
  * outside JavaFX/controllers and talks only to application-level read services.
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsServerControl {
     private static final String ATOM = "application/atom+xml;profile=opds-catalog;charset=utf-8";
@@ -47,6 +50,36 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
 
     private final OpdsCatalogService catalog;
     private final OpdsDownloadService downloads;
+    private final OpdsAccessTokenService accessTokens;
+    private final Opds2JsonRenderer opds2 = new Opds2JsonRenderer();
+    private final WebLibraryRenderer web = new WebLibraryRenderer();
+    private final WebReaderRenderer webReaderRenderer = new WebReaderRenderer();
+    private final WebReaderUseCase webReader;
+    private final ContinueReadingService continueReading;
+
+    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads) {
+        this(catalog, downloads, null, null, null);
+    }
+
+    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads, OpdsAccessTokenService accessTokens) {
+        this(catalog, downloads, accessTokens, null, null);
+    }
+
+    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads,
+                         OpdsAccessTokenService accessTokens, WebReaderUseCase webReader) {
+        this(catalog, downloads, accessTokens, webReader, null);
+    }
+
+    @Autowired
+    public JdkOpdsServer(OpdsCatalogService catalog, OpdsDownloadService downloads,
+                         OpdsAccessTokenService accessTokens, WebReaderUseCase webReader,
+                         ContinueReadingService continueReading) {
+        this.catalog = Objects.requireNonNull(catalog, "catalog");
+        this.downloads = downloads;
+        this.accessTokens = accessTokens;
+        this.webReader = webReader;
+        this.continueReading = continueReading;
+    }
     private final AtomicReference<HttpServer> server = new AtomicReference<>();
     private final AtomicReference<ExecutorService> executor = new AtomicReference<>();
     private final AtomicReference<OpdsServerStatus> status = new AtomicReference<>(OpdsServerStatus.stopped());
@@ -137,29 +170,78 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
 
         try (exchange; permit) {
             try {
-                if (!"GET".equalsIgnoreCase(exchange.getRequestMethod())) {
+                String path = normalizePath(exchange.getRequestURI().getPath());
+                String method = exchange.getRequestMethod() == null ? "" : exchange.getRequestMethod().toUpperCase(Locale.ROOT);
+                boolean webProgressPost = "POST".equals(method) && path.startsWith("/web/read/") && path.endsWith("/progress");
+                if (!"GET".equals(method) && !webProgressPost) {
                     exchange.getResponseHeaders().set("Allow", "GET");
                     exchange.getResponseHeaders().set("Connection", "close");
                     sendText(exchange, 405, "Method Not Allowed");
                     return;
                 }
-                // GET requests do not use a request body; close it immediately to avoid retaining resources.
-                exchange.getRequestBody().close();
-
-                String path = normalizePath(exchange.getRequestURI().getPath());
+                if ("GET".equals(method)) exchange.getRequestBody().close();
                 if ("/health".equals(path)) {
                     if (!healthAuthorized(exchange)) return;
                     sendJson(exchange, 200, "{\"status\":\"UP\",\"opds\":\"running\"}");
+                    return;
+                }
+                if (path.startsWith("/web")) {
+                    OpdsTokenScope requiredScope = path.startsWith("/web/download/")
+                            ? OpdsTokenScope.DOWNLOAD : OpdsTokenScope.CATALOG_READ;
+                    if (!webAuthorized(exchange, requiredScope)) return;
+                    handleWeb(exchange, path, query(exchange.getRequestURI()), method);
                     return;
                 }
                 if (!path.startsWith("/opds")) {
                     sendText(exchange, 404, "Not Found");
                     return;
                 }
-                if (!authorized(exchange)) return;
+                OpdsTokenScope requiredScope = path.startsWith("/opds/download/")
+                        ? OpdsTokenScope.DOWNLOAD : OpdsTokenScope.CATALOG_READ;
+                if (!authorized(exchange, requiredScope)) return;
 
                 Map<String, String> query = query(exchange.getRequestURI());
-                if ("/opds".equals(path) || "/opds/".equals(path)) {
+                if ("/opds/v2".equals(path) || "/opds/v2/".equals(path)) {
+                    sendOpds2(exchange, 200, opds2.root());
+                } else if ("/opds/v2/library".equals(path)) {
+                    sendOpds2(exchange, 200, opds2.publications("Бібліотека", "/opds/v2/library",
+                            catalog.books(OpdsBookQuery.all(offset(query), limit(query)))));
+                } else if ("/opds/v2/collections".equals(path)) {
+                    sendOpds2(exchange, 200, opds2.collections(catalog.currentCollection()));
+                } else if (path.startsWith("/opds/v2/collections/")) {
+                    String id = decode(segmentAfter(path, "/opds/v2/collections/"));
+                    var active = catalog.currentCollection();
+                    if (active.isEmpty() || !Objects.equals(active.get().id(), id)) {
+                        sendText(exchange, 404, "Collection not found");
+                    } else {
+                        String self = "/opds/v2/collections/" + encode(id);
+                        sendOpds2(exchange, 200, opds2.publications(active.get().label(), self,
+                                catalog.books(OpdsBookQuery.all(offset(query), limit(query)))));
+                    }
+                } else if ("/opds/v2/groups".equals(path)) {
+                    sendOpds2(exchange, 200, opds2.groups(catalog.groups(offset(query), limit(query))));
+                } else if (path.startsWith("/opds/v2/groups/")) {
+                    String id = decode(segmentAfter(path, "/opds/v2/groups/"));
+                    String self = "/opds/v2/groups/" + encode(id);
+                    sendOpds2(exchange, 200, opds2.publications("Група", self,
+                            catalog.groupBooks(id, offset(query), limit(query))));
+                } else if ("/opds/v2/favorites".equals(path)) {
+                    sendOpds2(exchange, 200, opds2.publications("Обране", "/opds/v2/favorites",
+                            catalog.favorites(offset(query), limit(query))));
+                } else if ("/opds/v2/continue".equals(path)) {
+                    sendOpds2(exchange, 200, opds2.publications("Продовжити читання", "/opds/v2/continue",
+                            catalog.continueReading(offset(query), limit(query))));
+                } else if ("/opds/v2/search".equals(path)) {
+                    String search = query.getOrDefault("q", "");
+                    String self = "/opds/v2/search?q=" + encode(search);
+                    sendOpds2(exchange, 200, opds2.publications("Пошук: " + search, self,
+                            catalog.books(new OpdsBookQuery("", "", "", search, offset(query), limit(query)))));
+                } else if (path.startsWith("/opds/v2/books/")) {
+                    String id = decode(segmentAfter(path, "/opds/v2/books/"));
+                    var book = catalog.book(id);
+                    if (book.isEmpty()) sendText(exchange, 404, "Book not found");
+                    else sendOpds2(exchange, 200, opds2.publication(book.get()));
+                } else if ("/opds".equals(path) || "/opds/".equals(path)) {
                     sendXml(exchange, 200, rootFeed());
                 } else if ("/opds/authors".equals(path)) {
                     sendXml(exchange, 200, facetFeed("Автори", "/opds/authors", catalog.authors(offset(query), limit(query))));
@@ -202,6 +284,110 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         }
     }
 
+    private void handleWeb(HttpExchange exchange, String path, Map<String, String> query, String method) throws IOException {
+        if ("POST".equals(method) && path.startsWith("/web/read/") && path.endsWith("/progress")) {
+            saveWebReaderProgress(exchange, path);
+            return;
+        }
+        if ("/web".equals(path) || "/web/".equals(path)) {
+            sendHtml(exchange, 200, web.books("Бібліотека", "/web/", "",
+                    catalog.books(OpdsBookQuery.all(offset(query), limit(query)))));
+        } else if ("/web/search".equals(path)) {
+            String search = query.getOrDefault("q", "");
+            sendHtml(exchange, 200, web.books("Пошук: " + search, "/web/search?q=" + encode(search), search,
+                    catalog.books(new OpdsBookQuery("", "", "", search, offset(query), limit(query)))));
+        } else if ("/web/continue".equals(path)) {
+            if (continueReading != null) {
+                sendHtml(exchange, 200, web.continueReading(continueReading.recent(limit(query))));
+            } else {
+                sendHtml(exchange, 200, web.books("Продовжити читання", "/web/continue", "",
+                        catalog.continueReading(offset(query), limit(query))));
+            }
+        } else if (path.startsWith("/web/read/")) {
+            if (webReader == null) {
+                sendText(exchange, 503, "Web Reader is unavailable");
+                return;
+            }
+            String id = decode(segmentAfter(path, "/web/read/"));
+            int chapter = integer(query.get("chapter"), -1, -1, 1_000_000);
+            var document = webReader.open(id, chapter);
+            if (document.isEmpty()) sendHtml(exchange, 404, webReaderRenderer.notFound());
+            else sendHtml(exchange, 200, webReaderRenderer.render(document.get()));
+        } else if (path.startsWith("/web/books/")) {
+            String id = decode(segmentAfter(path, "/web/books/"));
+            var book = catalog.book(id);
+            if (book.isEmpty()) sendHtml(exchange, 404, web.notFound());
+            else sendHtml(exchange, 200, web.book(book.get()));
+        } else if (path.startsWith("/web/download/")) {
+            download(exchange, decode(segmentAfter(path, "/web/download/")));
+        } else {
+            sendText(exchange, 404, "Not Found");
+        }
+    }
+
+    private void saveWebReaderProgress(HttpExchange exchange, String path) throws IOException {
+        if (webReader == null) {
+            sendText(exchange, 503, "Web Reader is unavailable");
+            return;
+        }
+        if (!"1".equals(exchange.getRequestHeaders().getFirst("X-MyHomeLib-Request"))) {
+            sendText(exchange, 403, "Missing same-origin request marker");
+            return;
+        }
+        String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+        if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
+            sendText(exchange, 415, "Expected application/json");
+            return;
+        }
+        String idPart = path.substring("/web/read/".length(), path.length() - "/progress".length());
+        String id = decode(idPart);
+        byte[] body = readBounded(exchange.getRequestBody(), 2048);
+        String json = new String(body, StandardCharsets.UTF_8);
+        Long chapter = jsonLong(json, "chapter");
+        Long offset = jsonLong(json, "offset");
+        if (chapter == null || offset == null || chapter < 0 || chapter > 1_000_000 || offset < 0) {
+            sendText(exchange, 400, "Invalid progress payload");
+            return;
+        }
+        var saved = webReader.saveProgress(id, chapter.intValue(), offset);
+        sendJson(exchange, 200, "{\"percent\":" + String.format(Locale.ROOT, "%.4f", saved.getPercent()) + "}");
+    }
+
+    private static byte[] readBounded(InputStream input, int maxBytes) throws IOException {
+        try (InputStream in = input; var out = new java.io.ByteArrayOutputStream(Math.min(maxBytes, 1024))) {
+            byte[] buffer = new byte[512];
+            int total = 0;
+            int read;
+            while ((read = in.read(buffer)) >= 0) {
+                if (read == 0) continue;
+                total += read;
+                if (total > maxBytes) throw new IOException("Request body too large");
+                out.write(buffer, 0, read);
+            }
+            return out.toByteArray();
+        }
+    }
+
+    private static Long jsonLong(String json, String field) {
+        if (json == null) return null;
+        java.util.regex.Matcher matcher = java.util.regex.Pattern.compile(
+                "\"" + java.util.regex.Pattern.quote(field) + "\"\\s*:\\s*(-?\\d+)").matcher(json);
+        if (!matcher.find()) return null;
+        try { return Long.parseLong(matcher.group(1)); }
+        catch (NumberFormatException ignored) { return null; }
+    }
+
+    /** Web catalogue data is never anonymous, even when loopback OPDS itself is configured public. */
+    private boolean webAuthorized(HttpExchange exchange, OpdsTokenScope requiredScope) throws IOException {
+        String value = exchange.getRequestHeaders().getFirst("Authorization");
+        boolean bearer = value != null && value.regionMatches(true, 0, "Bearer ", 0, 7);
+        if (bearer || activeSettings.basicAuthEnabled()) return authorized(exchange, requiredScope);
+        exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"MyHomeLib Web\"");
+        exchange.getResponseHeaders().set("Connection", "close");
+        sendText(exchange, 401, "Authentication required");
+        return false;
+    }
+
     private boolean healthAuthorized(HttpExchange exchange) throws IOException {
         OpdsServerSettings s = activeSettings;
         if (!activeExposedBeyondLoopback || !s.limits().healthRequiresAuthWhenExposed()) return true;
@@ -210,11 +396,47 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             sendText(exchange, 403, "Health endpoint is private when OPDS is exposed");
             return false;
         }
-        return authorized(exchange);
+        return authorized(exchange, OpdsTokenScope.CATALOG_READ);
     }
 
-    private boolean authorized(HttpExchange exchange) throws IOException {
+    private boolean authorized(HttpExchange exchange, OpdsTokenScope requiredScope) throws IOException {
         OpdsServerSettings s = activeSettings;
+        String value = exchange.getRequestHeaders().getFirst("Authorization");
+        boolean bearerAttempt = value != null && value.regionMatches(true, 0, "Bearer ", 0, 7);
+
+        if (bearerAttempt) {
+            String client = clientKey(exchange);
+            OpdsRequestLimiter limiter = requestLimiter.get();
+            OpdsRequestLimiter.AuthThrottle throttle = limiter.beforeAuthentication(client);
+            if (throttle.blocked()) {
+                sendThrottled(exchange, throttle.retryAfterSeconds());
+                return false;
+            }
+            String raw = value.substring(7).trim();
+            OpdsAccessTokenService.Authorization result = accessTokens == null
+                    ? OpdsAccessTokenService.Authorization.INVALID
+                    : accessTokens.authorize(raw, requiredScope);
+            if (result == OpdsAccessTokenService.Authorization.AUTHORIZED) {
+                limiter.authenticationSucceeded(client);
+                return true;
+            }
+            if (result == OpdsAccessTokenService.Authorization.INSUFFICIENT_SCOPE) {
+                exchange.getResponseHeaders().set("WWW-Authenticate",
+                        "Bearer realm=\"MyHomeLib OPDS\", error=\"insufficient_scope\"");
+                exchange.getResponseHeaders().set("Connection", "close");
+                sendText(exchange, 403, "Token scope does not allow this operation");
+                return false;
+            }
+            OpdsRequestLimiter.AuthThrottle afterFailure = limiter.authenticationFailed(client);
+            if (afterFailure.blocked()) sendThrottled(exchange, afterFailure.retryAfterSeconds());
+            else {
+                exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"MyHomeLib OPDS\"");
+                exchange.getResponseHeaders().set("Connection", "close");
+                sendText(exchange, 401, "Invalid or revoked bearer token");
+            }
+            return false;
+        }
+
         if (!s.basicAuthEnabled()) return true;
 
         String client = clientKey(exchange);
@@ -226,7 +448,6 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             return false;
         }
 
-        String value = exchange.getRequestHeaders().getFirst("Authorization");
         String[] credentials = decodeBasicCredentials(value);
         boolean usernameMatches = credentials != null
                 && MessageDigest.isEqual(credentials[0].getBytes(StandardCharsets.UTF_8), s.username().getBytes(StandardCharsets.UTF_8));
@@ -346,6 +567,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                 + navigationEntry("series", "Серії", "/opds/series")
                 + navigationEntry("genres", "Жанри", "/opds/genres")
                 + navigationEntry("search", "Пошук", "/opds/search?q=")
+                + navigationEntry("opds2", "OPDS 2.0", "/opds/v2")
                 + "</feed>";
     }
 
@@ -383,7 +605,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                 .append(encode(book.id())).append("\"/>");
         if (book.local()) {
             xml.append("<link rel=\"http://opds-spec.org/acquisition/open-access\" type=\"")
-                    .append(escapeAttr(mime(book))).append("\" href=\"/opds/download/").append(encode(book.id())).append("\"/>");
+                    .append(escapeAttr(mimeType(book))).append("\" href=\"/opds/download/").append(encode(book.id())).append("\"/>");
         }
         return xml.append("</entry>").toString();
     }
@@ -437,7 +659,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         }
     }
 
-    private static String mime(OpdsBookDto book) {
+    static String mimeType(OpdsBookDto book) {
         String candidate = !blank(book.format()) ? book.format() : book.fileName();
         return mime(candidate);
     }
@@ -484,6 +706,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
 
     private static String segmentAfter(String path, String prefix) { return path.length() <= prefix.length() ? "" : path.substring(prefix.length()); }
     private static String normalizePath(String path) { return path == null || path.isBlank() ? "/" : path.replaceAll("/{2,}", "/"); }
+    static String encodePathSegment(String value) { return encode(value); }
     private static String encode(String value) { return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8).replace("+", "%20"); }
     private static String decode(String value) { return URLDecoder.decode(value == null ? "" : value, StandardCharsets.UTF_8); }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
@@ -491,7 +714,9 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     private static String escapeAttr(String value) { return escape(value).replace("\"", "&quot;").replace("'", "&apos;"); }
 
     private static void sendXml(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, ATOM, body); }
+    private static void sendOpds2(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, Opds2JsonRenderer.TYPE, body); }
     private static void sendJson(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, "application/json;charset=utf-8", body); }
+    private static void sendHtml(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, "text/html;charset=utf-8", body); }
     private static void sendText(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, "text/plain;charset=utf-8", body); }
     private static void sendTextSafe(HttpExchange exchange, int code, String body) {
         try { sendText(exchange, code, body); } catch (Exception ignored) { }

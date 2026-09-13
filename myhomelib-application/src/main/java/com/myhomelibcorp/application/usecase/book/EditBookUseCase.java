@@ -55,21 +55,13 @@ public class EditBookUseCase {
                 ? current.getAuthors()
                 : List.copyOf(request.authors());
 
-        Book updated = Book.builder()
-                .id(current.getId())
+        Book updated = current.toBuilder()
                 .title(title)
                 .authors(authors)
-                .genres(current.getGenres())
                 .series(normalizeNullable(request.series()))
                 .sequenceNumber(request.sequenceNumber())
                 .metadata(metadata)
-                .file(current.getFile())
-                .cover(current.getCover())
                 .updateDate(LocalDateTime.now())
-                .createdAt(current.getCreatedAt())
-                .deleted(current.isDeleted())
-                .local(current.isLocal())
-                .missingSince(current.getMissingSince())
                 .build();
 
         committedMutations.save(updated);

@@ -12,7 +12,7 @@ import java.nio.file.Path;
  */
 public interface UserDataTransferPort {
     String FILE_NAME = "user-data.json";
-    int CURRENT_SCHEMA_VERSION = 2;
+    int CURRENT_SCHEMA_VERSION = 4;
 
     ExportResult exportTo(Path targetFile) throws IOException;
 
@@ -23,12 +23,12 @@ public interface UserDataTransferPort {
     }
 
     record ExportResult(int schemaVersion, long bookRecords, long groupMemberships,
-                        long bookmarks, long historyEntries, long savedSearches,
+                        long bookmarks, long annotations, long historyEntries, long savedSearches,
                         long readerOverrides) { }
 
     record ImportResult(int sourceSchemaVersion, int effectiveSchemaVersion,
                         long matchedBooks, long unmatchedBooks, long groups,
-                        long groupMemberships, long bookmarks, long historyEntries,
+                        long groupMemberships, long bookmarks, long annotations, long historyEntries,
                         long savedSearches, long readerOverrides,
                         ImportChangeSet searchChanges) {
         public ImportResult {

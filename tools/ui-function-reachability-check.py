@@ -8,7 +8,8 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 UI_JAVA = ROOT / 'myhomelib-ui/src/main/java'
 UI_RES = ROOT / 'myhomelib-ui/src/main/resources'
-USECASE_ROOT = ROOT / 'myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase'
+APP_ROOT = ROOT / 'myhomelib-application/src/main/java/com/myhomelibcorp/application'
+USECASE_ROOT = APP_ROOT / 'usecase'
 
 FX = '{http://javafx.com/fxml/1}'
 errors = []
@@ -45,8 +46,10 @@ for fxml in UI_RES.rglob('*.fxml'):
             if not re.search(r'\b' + re.escape(handler) + r'\s*\(', controller_text):
                 errors.append(f'{fxml.relative_to(ROOT)}: {controller_name}.#{handler} not found')
 
-# Every application use case must have an intended direct entry area. This is intentionally textual:
-# Spring/FXML/reflection classes are not deleted from this result alone; failures are manual-review blockers.
+# Every application use case must be reachable from an intended UI/MCP/OPDS entry area.
+# Reachability is allowed through application-layer facades/services (for example LibraryHealthService
+# -> DataIntegrityChecker) so the guard does not force UI controllers to bypass orchestration boundaries.
+# This remains intentionally textual: failures are manual-review blockers, not automatic deletion signals.
 entry_roots = {
     'UI': ROOT / 'myhomelib-ui/src/main',
     'MCP': ROOT / 'myhomelib-mcp/src/main',
@@ -61,6 +64,30 @@ for name, base in entry_roots.items():
                 chunks.append(p.read_text(encoding='utf-8', errors='ignore'))
     entry_text[name] = '\n'.join(chunks)
 
+# Build a simple-name application dependency graph and walk from application classes directly
+# referenced by an entry surface. This recognizes intentional application facades without making
+# the guard dependent on Spring runtime wiring.
+app_sources = {}
+for p in APP_ROOT.rglob('*.java'):
+    text = p.read_text(encoding='utf-8', errors='ignore')
+    if re.search(r'\b(?:class|record|interface|enum)\s+' + re.escape(p.stem) + r'\b', text):
+        app_sources[p.stem] = text
+
+entry_corpus = '\n'.join(entry_text.values())
+reachable_app = {name for name in app_sources
+                 if re.search(r'\b' + re.escape(name) + r'\b', entry_corpus)}
+changed = True
+while changed:
+    changed = False
+    for owner in tuple(reachable_app):
+        owner_text = app_sources.get(owner, '')
+        for candidate in app_sources:
+            if candidate in reachable_app:
+                continue
+            if re.search(r'\b' + re.escape(candidate) + r'\b', owner_text):
+                reachable_app.add(candidate)
+                changed = True
+
 usecase_count = 0
 for p in USECASE_ROOT.rglob('*.java'):
     name = p.stem
@@ -70,8 +97,8 @@ for p in USECASE_ROOT.rglob('*.java'):
     if not re.search(r'\bclass\s+' + re.escape(name) + r'\b', text):
         continue
     usecase_count += 1
-    if not any(re.search(r'\b' + re.escape(name) + r'\b', corpus) for corpus in entry_text.values()):
-        errors.append(f'use case has no direct UI/MCP/OPDS entry reference: {name}')
+    if name not in reachable_app:
+        errors.append(f'use case has no UI/MCP/OPDS-reachable application path: {name}')
 
 # Known v7.1 dead bean must stay deleted; it created its own pool but had no operational caller.
 if (UI_JAVA / 'com/myhomelibcorp/ui/service/BackgroundTaskService.java').exists():
@@ -90,5 +117,5 @@ if errors:
     sys.exit(1)
 print('UI FUNCTION REACHABILITY CHECK: PASS')
 print(f' - FXML handler references checked: {handler_count}')
-print(f' - application use cases with direct UI/MCP/OPDS entry: {usecase_count}')
+print(f' - application use cases reachable from UI/MCP/OPDS: {usecase_count}')
 print(' - dead BackgroundTaskService absent: PASS')

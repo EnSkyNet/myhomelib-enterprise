@@ -11,5 +11,6 @@ public enum LibraryOperationType {
     SWITCH,
     DELETE,
     CREATE,
-    SYNC
+    SYNC,
+    INTEGRITY_AUDIT
 }

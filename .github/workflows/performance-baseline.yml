@@ -27,13 +27,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Make wrapper executable
-        run: chmod +x mvnw
+      - name: Make Maven launcher helper executable
+        run: chmod +x tools/invoke-maven.sh
       - name: JVM/Lucene/reader performance suite
         env:
           PERF_SIZES: ${{ github.event.inputs.sizes || '100000,500000,700000,1000000' }}
         run: >-
-          ./mvnw -B -ntp -pl myhomelib-benchmark -am test -Pperformance
+          ./tools/invoke-maven.sh -B -ntp -pl myhomelib-benchmark -am test -Pperformance
           -Dmhl.performance.sizes="$PERF_SIZES"
           -Dmhl.performance.readerMb=8
       - name: Offline SQLite scale baseline

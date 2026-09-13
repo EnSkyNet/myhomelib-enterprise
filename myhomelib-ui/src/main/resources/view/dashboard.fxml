@@ -14,11 +14,7 @@
     <!-- Блок "Продовжити читання" -->
     <VBox fx:id="continueReadingBox" spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
         <Label text="📖 Продовжити читання" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
-        <HBox spacing="10" alignment="CENTER_LEFT">
-            <Label fx:id="continueTitle" text="Немає книг" wrapText="true" HBox.hgrow="ALWAYS" style="-fx-font-size: 14px;"/>
-            <Button text="Читати" onAction="#onContinueReading" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-        </HBox>
-        <ProgressBar fx:id="continueProgress" prefWidth="200" style="-fx-accent: -mhl-success;"/>
+        <VBox fx:id="continueReadingItemsBox" spacing="8"/>
     </VBox>
 
     <!-- Блок "Останні відкриті" -->

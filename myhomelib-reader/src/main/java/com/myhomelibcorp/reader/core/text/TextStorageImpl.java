@@ -61,7 +61,7 @@ public class TextStorageImpl implements TextStorage {
     }
 
     private void addIndexedSpan(StyleSpan span) {
-        if (!spans.isEmpty() && spans.getLast().start() > span.start()) spansSorted = false;
+        if (!spans.isEmpty() && spans.get(spans.size() - 1).start() > span.start()) spansSorted = false;
         spans.add(span);
         spanIndexDirty = true;
     }

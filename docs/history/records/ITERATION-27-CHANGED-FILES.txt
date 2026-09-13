@@ -1,0 +1,5 @@
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/metadata/GoogleBooksMetadataProvider.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/metadata/MetadataProviderSupport.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/metadata/OpenLibraryMetadataProvider.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/metadata/GoogleBooksMetadataProviderTest.java
+ITERATION-27-GOOGLE-BOOKS-PROVIDER-CHECKPOINT.md

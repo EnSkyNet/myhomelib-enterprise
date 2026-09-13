@@ -158,22 +158,27 @@ public class InpxReader {
 
         private ZipInpxIterator(Path path, boolean onlineCollection) throws IOException {
             this.zip = openZip(path);
-            validateArchive(this.zip);
-            StructureInfo structureInfo = readStructure(zip);
-            this.structure = structureInfo.fields();
-            this.inferFallbackStructure = structureInfo.inferred();
-            this.archivesByStem = readArchives(zip);
-            this.inpEntries = zip.stream()
-                    .filter(e -> isCatalogInpMember(e, onlineCollection))
-                    .map(e -> (ZipEntry) e)
-                    .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
-                    .toList();
-            if (inpEntries.isEmpty()) {
-                close();
-                throw new IOException("No .inp entries in " + path);
+            try {
+                validateArchive(this.zip);
+                StructureInfo structureInfo = readStructure(zip);
+                this.structure = structureInfo.fields();
+                this.inferFallbackStructure = structureInfo.inferred();
+                this.archivesByStem = readArchives(zip);
+                this.inpEntries = zip.stream()
+                        .filter(e -> isCatalogInpMember(e, onlineCollection))
+                        .map(e -> (ZipEntry) e)
+                        .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
+                        .toList();
+                if (inpEntries.isEmpty()) {
+                    close();
+                    throw new IOException("No .inp entries in " + path);
+                }
+                log.info("Знайдено {} INP файлів в INPX", inpEntries.size());
+                advance();
+            } catch (IOException | RuntimeException failure) {
+                try { zip.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
             }
-            log.info("Знайдено {} INP файлів в INPX", inpEntries.size());
-            advance();
         }
 
         @Override public boolean hasNext() { return next != null; }
@@ -271,9 +276,12 @@ public class InpxReader {
         }
         private void advance() {
             try {
-                nextLine = reader.readLine();
+                do {
+                    nextLine = reader.readLine();
+                } while (nextLine != null && nextLine.isBlank());
                 if (nextLine == null) close();
             } catch (IOException e) {
+                try { close(); } catch (IOException cleanup) { e.addSuppressed(cleanup); }
                 throw new UncheckedIOException(e);
             }
         }
@@ -545,11 +553,16 @@ public class InpxReader {
     private static BufferedReader newDetectedReader(InputStream input) throws IOException {
         final int sampleLimit = 16 * 1024;
         PushbackInputStream in = new PushbackInputStream(new BufferedInputStream(input, 64 * 1024), sampleLimit);
-        byte[] sample = in.readNBytes(sampleLimit);
-        DetectedEncoding detected = detectEncoding(sample);
-        int skip = Math.min(detected.bomBytes(), sample.length);
-        if (sample.length > skip) in.unread(sample, skip, sample.length - skip);
-        return new BufferedReader(new InputStreamReader(in, detected.charset()), 64 * 1024);
+        try {
+            byte[] sample = in.readNBytes(sampleLimit);
+            DetectedEncoding detected = detectEncoding(sample);
+            int skip = Math.min(detected.bomBytes(), sample.length);
+            if (sample.length > skip) in.unread(sample, skip, sample.length - skip);
+            return new BufferedReader(new InputStreamReader(in, detected.charset()), 64 * 1024);
+        } catch (IOException | RuntimeException failure) {
+            try { in.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     private static DetectedEncoding detectEncoding(byte[] sample) {

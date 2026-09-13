@@ -30,7 +30,7 @@ class VersionedUserDataTransferAdapterTest {
     }
 
     @Test
-    void portableV2RoundTripMapsBookScopedUserDataByLibId() throws Exception {
+    void portableCurrentRoundTripMapsBookScopedUserDataByLibId() throws Exception {
         System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata").toString());
         Files.createDirectories(tempDir.resolve("appdata/config"));
 
@@ -53,8 +53,8 @@ class VersionedUserDataTransferAdapterTest {
         Path exported = tempDir.resolve("user-data.json");
         VersionedUserDataTransferAdapter sourceAdapter = new VersionedUserDataTransferAdapter(manager(source), sourceSettings, mapper);
         var exportResult = sourceAdapter.exportTo(exported);
-        assertThat(exportResult.schemaVersion()).isEqualTo(2);
-        assertThat(Files.readString(exported)).contains("\"libId\" : \"L100\"").contains("\"schemaVersion\" : 2");
+        assertThat(exportResult.schemaVersion()).isEqualTo(4);
+        assertThat(Files.readString(exported)).contains("\"libId\" : \"L100\"").contains("\"schemaVersion\" : 4");
 
         var manifest = mapper.readTree(exported.toFile());
         assertThat(manifest.path("bookState").size()).isEqualTo(1);
@@ -77,7 +77,7 @@ class VersionedUserDataTransferAdapterTest {
         VersionedUserDataTransferAdapter targetAdapter = new VersionedUserDataTransferAdapter(manager(target), targetSettings, mapper);
         var result = targetAdapter.restoreFrom(exported);
 
-        assertThat(result.sourceSchemaVersion()).isEqualTo(2);
+        assertThat(result.sourceSchemaVersion()).isEqualTo(4);
         assertThat(result.unmatchedBooks()).isZero();
         assertThat(target.jdbc().queryForMap("SELECT rate,progress,review FROM books WHERE id='new-77'"))
                 .containsEntry("rate", 8).containsEntry("progress", 42).containsEntry("review", "great");
@@ -281,7 +281,7 @@ class VersionedUserDataTransferAdapterTest {
         VersionedUserDataTransferAdapter adapter = new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
         var result = adapter.restoreFrom(file);
         assertThat(result.sourceSchemaVersion()).isEqualTo(1);
-        assertThat(result.effectiveSchemaVersion()).isEqualTo(2);
+        assertThat(result.effectiveSchemaVersion()).isEqualTo(4);
         assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(7);
         assertThat(target.jdbc().queryForObject("SELECT paragraph_id FROM reading_progress WHERE book_id='new'", String.class)).isEqualTo("p");
     }
@@ -340,7 +340,7 @@ class VersionedUserDataTransferAdapterTest {
     private static void createSchema(JdbcTemplate j) {
         j.execute("CREATE TABLE books(id TEXT PRIMARY KEY, lib_id TEXT, rate INTEGER DEFAULT 0, progress INTEGER DEFAULT 0, review TEXT)");
         j.execute("CREATE INDEX idx_books_lib_id ON books(lib_id)");
-        j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0)");
+        j.execute("CREATE TABLE reading_progress(book_id TEXT PRIMARY KEY, paragraph_id TEXT NOT NULL, char_offset INTEGER NOT NULL, percent REAL NOT NULL, updated_at TEXT NOT NULL, anchor_id TEXT, paragraph_index INTEGER DEFAULT 0, last_device TEXT NOT NULL DEFAULT 'desktop')");
         j.execute("CREATE TABLE reading_history(book_id TEXT PRIMARY KEY,last_opened_at TEXT NOT NULL,open_count INTEGER NOT NULL DEFAULT 1)");
         j.execute("CREATE TABLE reading_stats(id INTEGER PRIMARY KEY AUTOINCREMENT,book_id TEXT NOT NULL UNIQUE,first_read_at TEXT NOT NULL,last_read_at TEXT NOT NULL,total_reading_seconds INTEGER DEFAULT 0,reading_sessions INTEGER DEFAULT 0,start_percent INTEGER DEFAULT 0,end_percent INTEGER DEFAULT 0,current_percent INTEGER DEFAULT 0,completed_at TEXT)");
         j.execute("CREATE TABLE bookmarks(id TEXT PRIMARY KEY,book_id TEXT NOT NULL,paragraph_id TEXT NOT NULL,char_offset INTEGER DEFAULT 0,position REAL DEFAULT 0,chapter_title TEXT,context TEXT,created_at TEXT NOT NULL)");

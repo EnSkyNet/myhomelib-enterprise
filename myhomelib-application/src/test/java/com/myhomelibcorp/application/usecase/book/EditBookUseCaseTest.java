@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
 import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.*;
 import org.junit.jupiter.api.Test;
@@ -29,7 +30,12 @@ class EditBookUseCaseTest {
                         .year(1999).publisher("old publisher").libId("LIB-42").libraryRate(7)
                         .translators("Translator").city("Kyiv").sourceUrl("https://example.invalid/source")
                         .rate(4).progress(61).build())
-                .file(BookFile.empty()).local(true).build();
+                .file(BookFile.empty()).local(true).build()
+                .withArtifacts(List.of(
+                        BookArtifact.builder().id("fb2").name("book.fb2").format("fb2")
+                                .file(new BookFile("book.fb2", "", "", 100, "/library")).build(),
+                        BookArtifact.builder().id("epub").name("book.epub").format("epub")
+                                .file(new BookFile("book.epub", "", "", 200, "/library")).build()), "epub");
         BookQueryRepository queries = mock(BookQueryRepository.class);
         CommittedCatalogMutationService mutations = mock(CommittedCatalogMutationService.class);
         when(queries.findById(id)).thenReturn(Optional.of(current));
@@ -58,6 +64,8 @@ class EditBookUseCaseTest {
         assertThat(result.getRate()).isEqualTo(4);
         assertThat(result.getProgress()).isEqualTo(61);
         assertThat(result.getFile()).isSameAs(current.getFile());
+        assertThat(result.getArtifacts()).containsExactlyElementsOf(current.getArtifacts());
+        assertThat(result.getPreferredArtifactId()).isEqualTo("epub");
     }
 
     @Test

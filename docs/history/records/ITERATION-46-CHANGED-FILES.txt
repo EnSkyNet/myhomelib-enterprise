@@ -1,0 +1,16 @@
+ARCHITECTURE.md
+ITERATION-46-ARCHIVE-STREAMING-MATERIALIZATION-CHECKPOINT.md
+ITERATION-46-CHANGED-FILES.txt
+TASKS-ITERATION-46.md
+myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/cover/ArchiveReader.java
+myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/resource/BookResourcePort.java
+myhomelib-infrastructure/pom.xml
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReader.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolver.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/cover/ZipArchiveReaderTransparencyTest.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolverArchiveCompatibilityTest.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/ReaderArchiveCompatibilityUiContractTest.java
+pom.xml
+tools/iteration46-archive-streaming-check.py
+tools/v71-standalone-java-smoke.py

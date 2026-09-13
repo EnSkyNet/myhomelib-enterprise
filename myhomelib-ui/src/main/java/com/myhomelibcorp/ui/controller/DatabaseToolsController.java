@@ -41,8 +41,8 @@ public class DatabaseToolsController {
             Parent root = loader.load();
 
             Stage stage = new Stage();
-            stage.setTitle("Перевірка цілісності");
-            stage.setScene(new Scene(root, 720, 580));
+            stage.setTitle("Library Health");
+            stage.setScene(new Scene(root, 960, 740));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
             stage.show();

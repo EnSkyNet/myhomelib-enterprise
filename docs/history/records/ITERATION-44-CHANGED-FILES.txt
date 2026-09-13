@@ -1,0 +1,22 @@
+Iteration 44 changed paths versus formal Iteration 43 source baseline
+Generated: 2026-09-11
+
+ADDED (6)
+ITERATION-44-CHANGED-FILES.txt
+ITERATION-44-READER-TRANSITION-EFFICIENCY-CHECKPOINT.md
+TASKS-ITERATION-44.md
+myhomelib-reader/src/test/java/com/myhomelibcorp/reader/core/registry/StandardBookFormatRegistryTest.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/ReaderWorkspaceDetailsReuseContractTest.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/viewmodel/BookDetailsViewModelIdentityUpdateTest.java
+
+MODIFIED (6)
+README.md
+myhomelib-reader/src/main/java/com/myhomelibcorp/reader/core/registry/DefaultBookFormatRegistry.java
+myhomelib-reader/src/main/java/com/myhomelibcorp/reader/inspection/BookInspectionService.java
+myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderView.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/viewmodel/BookDetailsViewModel.java
+
+REMOVED (0)
+
+TOTAL CHANGED: 12

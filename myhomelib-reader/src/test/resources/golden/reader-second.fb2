@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<FictionBook xmlns="http://www.gribuser.ru/xml/fictionbook/2.0">
+  <description>
+    <title-info>
+      <genre>sf</genre>
+      <author><first-name>Тест</first-name><last-name>Другий</last-name></author>
+      <book-title>Reader Golden — Second FB2</book-title>
+      <lang>uk</lang>
+    </title-info>
+  </description>
+  <body>
+    <section id="zip-chapter-2">
+      <title><p>Другий ZIP-розділ</p></title>
+      <p>Контрольний текст другої книги всередині ZIP.</p>
+    </section>
+  </body>
+</FictionBook>

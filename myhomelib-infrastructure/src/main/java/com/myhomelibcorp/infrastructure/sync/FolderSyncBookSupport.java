@@ -9,7 +9,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
@@ -44,20 +43,11 @@ final class FolderSyncBookSupport {
         }
 
         BookFile newFile = new BookFile(fileName, folder, entry, size, root.toString());
-        return Book.builder()
-                .id(parsed.getId())
-                .title(parsed.getTitle())
-                .authors(new ArrayList<>(parsed.getAuthors()))
-                .genres(new ArrayList<>(parsed.getGenres()))
-                .series(parsed.getSeries())
-                .sequenceNumber(parsed.getSequenceNumber())
-                .metadata(parsed.getMetadata())
+        return parsed.toBuilder()
                 .file(newFile)
-                .cover(parsed.getCover())
                 .updateDate(fileTimestamp(physicalFile))
-                .createdAt(parsed.getCreatedAt())
-                .deleted(parsed.isDeleted())
                 .local(true)
+                .missingSince(null)
                 .build();
     }
 
@@ -158,7 +148,4 @@ final class FolderSyncBookSupport {
         return value.atZone(ZoneId.systemDefault()).toInstant().toEpochMilli();
     }
 
-    private String preferParsed(String parsed, String existing) {
-        return parsed != null && !parsed.isBlank() ? parsed : (existing == null ? "" : existing);
-    }
 }

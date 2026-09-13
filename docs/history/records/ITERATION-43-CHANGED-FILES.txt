@@ -1,0 +1,15 @@
+ITERATION-43-RUNTIME-LOG-RELIABILITY-CHECKPOINT.md
+README.md
+myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/book/ResolveBookContentUseCase.java
+myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/book/ResolveBookContentUseCaseArchiveCompatibilityTest.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/config/DataSourceConfig.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/SqliteDateTimeCodec.java
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolver.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/config/DataSourceConfigLeakDetectionTest.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/SqliteDateTimeCodecTest.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolverArchiveCompatibilityTest.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java
+myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/LanguageCatalogService.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/ReaderArchiveCompatibilityUiContractTest.java
+myhomelib-ui/src/test/java/com/myhomelibcorp/ui/service/LanguageCatalogServiceTest.java
+ITERATION-43-CHANGED-FILES.txt

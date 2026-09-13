@@ -11,6 +11,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.GroupId;
 import com.myhomelibcorp.domain.model.valueobject.SeriesId;
+import com.myhomelibcorp.ui.accessibility.UiAccessibilitySupport;
 import com.myhomelibcorp.ui.author.AuthorWorkspaceController;
 import com.myhomelibcorp.ui.service.BookLoaderService;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
@@ -109,6 +110,7 @@ public class WorkspaceManager {
 
         currentWorkspace = workspace;
         localizationService.apply(workspace);
+        UiAccessibilitySupport.enhance(workspace);
         workspace.setMaxHeight(Double.MAX_VALUE);
         workspace.setMaxWidth(Double.MAX_VALUE);
         workspaceStackPane.getChildren().add(workspace);
@@ -266,6 +268,12 @@ public class WorkspaceManager {
         push("operations", "");
     }
 
+    public void showAnnotationManagerWorkspace() {
+        Pane workspace = fxmlLoaderFactory.loadWorkspace("/view/annotation-manager-workspace.fxml");
+        setWorkspace(workspace);
+        push("annotations", "");
+    }
+
     public void showAlreadyReadWorkspace() {
         Pane workspace = loadBookTableWorkspace("already-read");
         setWorkspace(workspace);
@@ -325,9 +333,47 @@ public class WorkspaceManager {
     }
 
     private void openNewReaderWorkspaceLocal(BookId bookId) {
-        Pane workspace = fxmlLoaderFactory.loadNewReaderWorkspace(bookId);
+        openNewReaderWorkspaceLocal(bookId, null);
+    }
+
+    /** Opens the Reader and jumps to one persisted annotation once its anchor is resolved. */
+    public void showAnnotationInReader(String bookId, String annotationId) {
+        if (bookId == null || bookId.isBlank() || annotationId == null || annotationId.isBlank()) return;
+        BookId id = BookId.fromString(bookId.trim());
+        bookDownloadCoordinator.ensureLocalForOpen(id).whenComplete((path, error) -> {
+            if (error != null) {
+                log.warn("Не вдалося відкрити annotation {} у Reader для книги {}: {}", annotationId, bookId, error.getMessage());
+                return;
+            }
+            Runnable open = () -> openNewReaderWorkspaceLocal(id, annotationId.trim());
+            if (Platform.isFxApplicationThread()) open.run();
+            else Platform.runLater(open);
+        });
+    }
+
+    private void openNewReaderWorkspaceLocal(BookId bookId, String annotationId) {
+        Pane workspace = fxmlLoaderFactory.loadNewReaderWorkspace(bookId, annotationId);
         setWorkspace(workspace);
         push("new-reader", bookId.asString());
+    }
+
+    /** Opens an indexed full-text hit at its stable global text offset without changing the user's preferred artifact. */
+    public void showContentHitInReader(String bookId, String artifactId, long offset) {
+        if (bookId == null || bookId.isBlank()) return;
+        BookId id = BookId.fromString(bookId.trim());
+        bookDownloadCoordinator.ensureLocalForOpen(id).whenComplete((path, error) -> {
+            if (error != null) {
+                log.warn("Не вдалося відкрити content hit у Reader для книги {}: {}", bookId, error.getMessage());
+                return;
+            }
+            Runnable open = () -> {
+                Pane workspace = fxmlLoaderFactory.loadNewReaderWorkspace(id, null, artifactId, Math.max(0L, offset));
+                setWorkspace(workspace);
+                push("new-reader", id.asString());
+            };
+            if (Platform.isFxApplicationThread()) open.run();
+            else Platform.runLater(open);
+        });
     }
 
     public void showImportWorkspace() {
@@ -389,6 +435,7 @@ public class WorkspaceManager {
             case "updates" -> showUpdatesWorkspace();
             case "followed-authors" -> showFollowedAuthorsWorkspace();
             case "operations" -> showOperationCenterWorkspace();
+            case "annotations" -> showAnnotationManagerWorkspace();
             case "all-books" -> showAllBooksWorkspace();
             case "already-read" -> showAlreadyReadWorkspace();
             case "history" -> showHistoryWorkspace();

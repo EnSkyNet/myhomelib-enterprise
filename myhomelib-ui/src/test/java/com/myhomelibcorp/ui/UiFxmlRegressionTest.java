@@ -41,6 +41,23 @@ class UiFxmlRegressionTest {
                 "Online INPX field must have a clear label");
     }
 
+
+    @Test
+    void bookDetailsMustExposeMultiArtifactSelectionAndPreferredFormatActions() throws IOException {
+        String fxml = resource("/view/details.fxml");
+
+        assertTrue(fxml.contains("fx:id=\"artifactBadgesPane\""),
+                "Details must expose visible format badges");
+        assertTrue(fxml.contains("fx:id=\"artifactComboBox\""),
+                "Details must allow selecting a concrete representation");
+        assertTrue(fxml.contains("onAction=\"#onSetPreferredArtifact\""),
+                "User must be able to persist the preferred representation");
+        assertTrue(fxml.contains("onAction=\"#onOpenSelectedArtifact\""),
+                "User must be able to open a selected representation without changing the default");
+        assertTrue(fxml.contains("fx:id=\"artifactLocationLabel\""),
+                "Details must show artifact source/location");
+    }
+
     private static String resource(String path) throws IOException {
         try (InputStream in = UiFxmlRegressionTest.class.getResourceAsStream(path)) {
             if (in == null) throw new IOException("Missing test resource: " + path);

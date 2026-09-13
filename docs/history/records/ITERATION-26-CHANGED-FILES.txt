@@ -1,0 +1,3 @@
+myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/metadata/OpenLibraryMetadataProvider.java
+myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/metadata/OpenLibraryMetadataProviderTest.java
+ITERATION-26-OPEN-LIBRARY-PROVIDER-CHECKPOINT.md

@@ -31,6 +31,17 @@
             <version>${javafx.version}</version>
         </dependency>
 
+        <!-- Internal PDF Reader renderer backend -->
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>pdfbox</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.pdfbox</groupId>
+            <artifactId>jbig2-imageio</artifactId>
+            <scope>runtime</scope>
+        </dependency>
+
         <!-- Логування -->
         <dependency>
             <groupId>org.slf4j</groupId>
@@ -79,6 +90,16 @@
                             <version>${lombok.version}</version>
                         </path>
                     </annotationProcessorPaths>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <configuration>
+                    <systemPropertyVariables>
+                        <!-- PDFBox rasterization is AWT-headless compatible; never require an X11 server for Reader unit tests. -->
+                        <java.awt.headless>true</java.awt.headless>
+                    </systemPropertyVariables>
                 </configuration>
             </plugin>
         </plugins>

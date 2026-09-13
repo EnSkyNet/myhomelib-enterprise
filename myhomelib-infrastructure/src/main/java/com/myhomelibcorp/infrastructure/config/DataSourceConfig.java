@@ -17,6 +17,7 @@ public class DataSourceConfig {
     // 700k-record imports that later returned the connection normally. Keep leak detection,
     // but place it above the expected full-catalog transaction window.
     private static final long LEAK_DETECTION_THRESHOLD_MS = 1_800_000L; // 30 minutes
+    private static final long MAX_LIFETIME_MS = 2_100_000L; // 35 minutes; must stay above leak threshold
 
     /**
      * Створює базовий DataSource для мета-БД (колекції).
@@ -30,7 +31,7 @@ public class DataSourceConfig {
         config.setMaximumPoolSize(4);
         config.setMinimumIdle(1);
         config.setIdleTimeout(300000);
-        config.setMaxLifetime(600000);
+        config.setMaxLifetime(MAX_LIFETIME_MS);
         config.setConnectionTimeout(30000);
         config.setLeakDetectionThreshold(LEAK_DETECTION_THRESHOLD_MS);
 
@@ -63,7 +64,7 @@ public class DataSourceConfig {
         config.setMaximumPoolSize(4);
         config.setMinimumIdle(1);
         config.setIdleTimeout(300000);
-        config.setMaxLifetime(600000);
+        config.setMaxLifetime(MAX_LIFETIME_MS);
         config.setConnectionTimeout(30000);
         config.setLeakDetectionThreshold(LEAK_DETECTION_THRESHOLD_MS);
 

@@ -1,0 +1,53 @@
+Iteration 69 — MHL-508 Audiobook support v1
+Date: 2026-09-13
+
+Validation evidence:
+- new audiobook acceptance tests: 16/16 PASS
+- affected audiobook + registry/format regressions: 21/21 PASS
+- real Linux FFmpeg media smoke: MP3 + M4B probe and MP3 playback through production backend PASS (FFmpeg 7.1.5)
+- full Application: 268 tests, 0 failures, 0 errors, 1 skipped
+- LayerArchitectureTest: 14/14 PASS
+- architecture-check.py: PASS
+- implementation-completeness-check.py: PASS
+- check-critical-ui-localization.py: PASS
+- static_release_check.py: PASS
+- supply-chain-policy-check.py: PASS
+- full 16-project offline test-compile: BUILD SUCCESS
+- Windows/macOS FFmpeg runtime smoke: NOT CLAIMED
+- archive-contained multi-track auto-grouping: NOT CLAIMED
+
+Changed source/documentation files relative to Iteration 68:
+MODIFIED: ARCHITECTURE.md
+MODIFIED: Lang/bg.json
+MODIFIED: Lang/en.json
+MODIFIED: Lang/uk.json
+MODIFIED: MYHOMELIB-FEATURES.md
+MODIFIED: README.md
+MODIFIED: docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/query/book/BookFormat.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importer/generic/GenericDocumentImporter.java
+MODIFIED: myhomelib-shared/src/main/java/com/myhomelibcorp/shared/format/SupportedFormatRegistry.java
+MODIFIED: myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderPersistenceService.java
+MODIFIED: myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java
+MODIFIED: myhomelib-ui/src/main/resources/lang/default/bg.json
+MODIFIED: myhomelib-ui/src/main/resources/lang/default/en.json
+MODIFIED: myhomelib-ui/src/main/resources/lang/default/uk.json
+ADDED: docs/history/records/ITERATION-69-AUDIOBOOK-CHECKPOINT.md
+ADDED: docs/history/records/ITERATION-69-CHANGED-FILES.txt
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/reader/AudiobookTrackGrouping.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/reader/AudiobookTrackGroupingTest.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/sync/AudiobookProgressSyncTest.java
+ADDED: myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/importer/generic/GenericAudiobookImporterTest.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/AudioChapter.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/AudioDocumentSession.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/AudioPlaybackBackend.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/AudioPosition.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/AudioReaderView.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/AudioTrack.java
+ADDED: myhomelib-reader/src/main/java/com/myhomelibcorp/reader/audio/FfmpegAudioPlaybackBackend.java
+ADDED: myhomelib-reader/src/test/java/com/myhomelibcorp/reader/audio/AudioDocumentSessionTest.java
+ADDED: myhomelib-reader/src/test/java/com/myhomelibcorp/reader/audio/AudioPositionTest.java
+ADDED: myhomelib-reader/src/test/java/com/myhomelibcorp/reader/audio/FfmpegAudioPlaybackBackendRealSmokeTest.java
+ADDED: myhomelib-reader/src/test/java/com/myhomelibcorp/reader/audio/FfmpegAudioPlaybackBackendTest.java
+ADDED: myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/AudioPositionAutosaver.java
+ADDED: myhomelib-ui/src/test/java/com/myhomelibcorp/ui/reader/NewReaderAudiobookPersistenceTest.java

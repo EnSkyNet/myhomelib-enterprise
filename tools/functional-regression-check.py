@@ -15,14 +15,44 @@ for f in sorted(RES.rglob('*.fxml')):
     ids += [f'{rel}#{x}' for x in re.findall(r'fx:id="([A-Za-z_][A-Za-z0-9_]*)"',t)]
     for attr in ('onAction','onMouseClicked','onKeyPressed'):
         bindings += [f'{rel}#{attr}#{x}' for x in re.findall(attr+r'="#([A-Za-z_][A-Za-z0-9_]*)"',t)]
+INTENTIONAL_BINDING_REPLACEMENTS = {
+    # Dashboard 7.5+ renders a multi-book Continue Reading shelf dynamically;
+    # each row owns its own navigation action instead of one legacy FXML button.
+    'view/dashboard.fxml#onAction#onContinueReading',
+    # Library Health is intentionally non-destructive; the legacy Fix Issues
+    # action was replaced by explicit safe-maintenance guidance.
+    'view/integrity-check.fxml#onAction#onFixIssues',
+}
+INTENTIONAL_ID_REPLACEMENTS = {
+    # Legacy one-book dashboard controls were replaced by a dynamic shelf.
+    'view/dashboard.fxml#continueProgress',
+    'view/dashboard.fxml#continueTitle',
+    # Legacy destructive repair/report controls were replaced by the structured
+    # Library Health status/table/detail workflow.
+    'view/integrity-check.fxml#fixButton',
+    'view/integrity-check.fxml#issuesSummaryLabel',
+    'view/integrity-check.fxml#reportArea',
+}
+
 for label,expected,actual in [
     ('FXML files',BASE['fxml_files'],files),
     ('FXML action bindings',BASE['fxml_action_bindings'],sorted(set(bindings))),
     ('FXML ids',BASE['fxml_ids'],sorted(set(ids)))]:
-    missing=sorted(set(expected)-set(actual))
+    missing=set(expected)-set(actual)
+    if label == 'FXML action bindings':
+        missing -= INTENTIONAL_BINDING_REPLACEMENTS
+    if label == 'FXML ids':
+        missing -= INTENTIONAL_ID_REPLACEMENTS
+    missing=sorted(missing)
     if missing: fail(f'{label} removed: {missing[:12]}')
 
 checks={
+'Dashboard Continue Reading replacement remains actionable': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/dashboard/DashboardController.java',
+ ['getContinueReadingShelf()', 'createContinueReadingRow(item)', 'open.setOnAction', 'navigationService.navigateToBook']),
+'Integrity legacy repair action replaced by safe maintenance': (
+ ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java',
+ ['onSafeRepairInfo()', 'Artifact audit', 'Collection Maintenance', 'Dry run']),
 'Online open confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java',
  ['ensureLocalForOpen(', 'Книга фізично відсутня на комп’ютері', 'showConfirmation(']),

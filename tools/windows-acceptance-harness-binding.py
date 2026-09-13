@@ -15,12 +15,16 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from evidence_contracts import current_schema
+
 ROOT = Path(__file__).resolve().parents[1]
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 CRITICAL_FILES = (
+    "tools/evidence_contracts.py",
     "tools/windows-acceptance-harness-binding.py",
     "tools/windows-acceptance-host.ps1",
     "tools/github-acceptance-artifact-ingest.py",
+    "tools/zip_evidence_safety.py",
     "tools/v71-windows-acceptance-start.ps1",
     "tools/windows-bound-packaging-acceptance.ps1",
     "tools/windows-installer-acceptance.ps1",
@@ -119,7 +123,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.out_json:
             args.out_json.parent.mkdir(parents=True, exist_ok=True)
             payload = {
-                "schemaVersion": 1,
+                "schemaVersion": current_schema("windows-acceptance-harness-binding"),
                 "scenario": "windows-acceptance-harness-binding",
                 "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
                 "overall": "PASS",

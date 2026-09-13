@@ -9,10 +9,6 @@ import com.myhomelibcorp.reader.api.ResourceInfo;
 import com.myhomelibcorp.reader.api.TextStorage;
 import com.myhomelibcorp.reader.api.TocEntry;
 import com.myhomelibcorp.reader.core.registry.DefaultBookFormatRegistry;
-import com.myhomelibcorp.reader.format.epub.EpubFormat;
-import com.myhomelibcorp.reader.format.fb2.Fb2Format;
-import com.myhomelibcorp.reader.format.txt.TxtFormat;
-import com.myhomelibcorp.reader.format.zip.ZipFormat;
 
 import javax.xml.stream.XMLInputFactory;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
@@ -37,11 +33,7 @@ public final class BookInspectionService {
     private final DefaultBookFormatRegistry registry;
 
     public BookInspectionService() {
-        registry = new DefaultBookFormatRegistry();
-        registry.register(new Fb2Format());
-        registry.register(new EpubFormat());
-        registry.register(new TxtFormat());
-        registry.register(new ZipFormat());
+        registry = DefaultBookFormatRegistry.standard();
     }
 
     public DocumentInspectionSession inspect(BookSource source) {

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.port.out.search;
 
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.application.search.SearchIndexHealth;
 
 /** Lifecycle of the derived Lucene index bound to the active collection. */
 public interface SearchIndexLifecycle {
@@ -9,6 +10,11 @@ public interface SearchIndexLifecycle {
      * @return true only when the persisted index is proven reusable for the current database state.
      */
     boolean activateCollectionIndex(Collection collection);
+
+    /** Cheap read-only freshness projection for dashboards/monitoring. */
+    default SearchIndexHealth currentHealth() {
+        return SearchIndexHealth.unknown("Search index health is not exposed by this adapter");
+    }
 
     /**
      * Invalidates the freshness proof for the active derived index before synchronizing a

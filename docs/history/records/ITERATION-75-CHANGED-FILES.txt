@@ -1,0 +1,17 @@
+MYHOMELIB-RELEASE.md
+README.md
+docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+docs/history/records/ITERATION-75-CHANGED-FILES.txt
+docs/history/records/ITERATION-75-FINAL-REVIEWER-EVIDENCE-BINDING.md
+docs/release/CURRENT-VALIDATION.md
+docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md
+tools/external-acceptance-readiness.py
+tools/github-acceptance-artifact-ingest-test.py
+tools/github-acceptance-artifact-ingest.py
+tools/github-connected-acceptance-test.py
+tools/github-connected-acceptance.py
+tools/v71-final-evidence-bundle-check-test.py
+tools/v71-final-evidence-bundle-check.py
+tools/v71-final-external-acceptance-check-test.py
+tools/v71-final-external-acceptance-check.py
+tools/v71-finalize-external-acceptance.ps1

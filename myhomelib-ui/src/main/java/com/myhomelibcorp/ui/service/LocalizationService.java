@@ -139,6 +139,9 @@ public class LocalizationService {
     }
 
     private void translateNode(Node node) {
+        if (node instanceof Control control && control.getAccessibleText() != null && !control.getAccessibleText().isBlank()) {
+            control.setAccessibleText(tr(control.getAccessibleText()));
+        }
         if (node instanceof Labeled labeled && !labeled.textProperty().isBound()) {
             labeled.setText(tr(labeled.getText()));
         }

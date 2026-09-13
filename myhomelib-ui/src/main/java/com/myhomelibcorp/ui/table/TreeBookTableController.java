@@ -316,7 +316,7 @@ public class TreeBookTableController {
 
     @FXML
     public void exportSelected() {
-        exportController.handleExport(treeTableView.getScene() == null ? null : treeTableView.getScene().getWindow());
+        exportController.handleExport(treeTableView.getScene() == null ? null : treeTableView.getScene().getWindow(), this::refresh);
     }
 
     @FXML

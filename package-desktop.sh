@@ -13,7 +13,7 @@ PY
 [[ -n "$VERSION" ]] || { echo "Cannot determine version from pom.xml" >&2; exit 2; }
 
 if [[ "${MHL_SKIP_BUILD:-0}" != "1" ]]; then
-  ./mvnw -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
+  ./tools/invoke-maven.sh -pl myhomelib-bootstrap -am package -DskipTests -Pproduction
 fi
 JAR="myhomelib-bootstrap/target/myhomelib-bootstrap-${VERSION}.jar"
 [ -f "$JAR" ] || { echo "Missing $JAR" >&2; exit 1; }

@@ -24,6 +24,11 @@ import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
 import com.myhomelibcorp.application.usecase.search.DeleteSavedSearchUseCase;
 import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
+import com.myhomelibcorp.application.usecase.search.SaveSmartCollectionUseCase;
+import com.myhomelibcorp.application.usecase.search.LoadSmartCollectionDefinitionUseCase;
+import com.myhomelibcorp.application.usecase.search.BuildSmartCollectionSearchRequestUseCase;
+import com.myhomelibcorp.application.usecase.search.SetSavedSearchPinnedUseCase;
+import com.myhomelibcorp.application.usecase.search.MarkSavedSearchUsedUseCase;
 import com.myhomelibcorp.application.usecase.sync.SyncFolderUseCase;
 import com.myhomelibcorp.application.usecase.author.UpdateAuthorDescriptionUseCase;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
@@ -142,6 +147,32 @@ public class ApplicationServiceConfig {
     @Bean
     public DeleteSavedSearchUseCase deleteSavedSearchUseCase(SavedSearchRepository savedSearchRepository) {
         return new DeleteSavedSearchUseCase(savedSearchRepository);
+    }
+
+    @Bean
+    public SaveSmartCollectionUseCase saveSmartCollectionUseCase(SavedSearchRepository savedSearchRepository) {
+        return new SaveSmartCollectionUseCase(savedSearchRepository);
+    }
+
+
+    @Bean
+    public LoadSmartCollectionDefinitionUseCase loadSmartCollectionDefinitionUseCase(SavedSearchRepository savedSearchRepository) {
+        return new LoadSmartCollectionDefinitionUseCase(savedSearchRepository);
+    }
+
+    @Bean
+    public BuildSmartCollectionSearchRequestUseCase buildSmartCollectionSearchRequestUseCase(SavedSearchRepository savedSearchRepository) {
+        return new BuildSmartCollectionSearchRequestUseCase(savedSearchRepository);
+    }
+
+    @Bean
+    public SetSavedSearchPinnedUseCase setSavedSearchPinnedUseCase(SavedSearchRepository savedSearchRepository) {
+        return new SetSavedSearchPinnedUseCase(savedSearchRepository);
+    }
+
+    @Bean
+    public MarkSavedSearchUsedUseCase markSavedSearchUsedUseCase(SavedSearchRepository savedSearchRepository) {
+        return new MarkSavedSearchUsedUseCase(savedSearchRepository);
     }
 
     @Bean

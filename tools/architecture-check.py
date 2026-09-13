@@ -22,23 +22,27 @@ MODULES = {
     "myhomelib-shared": "shared",
     "myhomelib-domain": "domain",
     "myhomelib-application": "application",
+    "myhomelib-plugin-api": "plugin",
     "myhomelib-infrastructure": "infrastructure",
     "myhomelib-reader": "reader",
     "myhomelib-ui": "ui",
     "myhomelib-bootstrap": "bootstrap",
     "myhomelib-mcp": "mcp",
     "myhomelib-opds": "opds",
+    "myhomelib-web": "web",
 }
 
 PACKAGE_TO_MODULE = {
     "shared": "myhomelib-shared",
     "domain": "myhomelib-domain",
     "application": "myhomelib-application",
+    "plugin": "myhomelib-plugin-api",
     "infrastructure": "myhomelib-infrastructure",
     "reader": "myhomelib-reader",
     "ui": "myhomelib-ui",
     "mcp": "myhomelib-mcp",
     "opds": "myhomelib-opds",
+    "web": "myhomelib-web",
 }
 
 # Direct production dependencies that are allowed and expected after Stage 1.
@@ -46,6 +50,7 @@ EXPECTED_INTERNAL_DEPS = {
     "myhomelib-shared": set(),
     "myhomelib-domain": {"myhomelib-shared"},
     "myhomelib-application": {"myhomelib-shared", "myhomelib-domain"},
+    "myhomelib-plugin-api": {"myhomelib-application"},
     "myhomelib-infrastructure": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application"},
     "myhomelib-reader": {"myhomelib-shared"},
     "myhomelib-ui": {"myhomelib-shared", "myhomelib-domain", "myhomelib-application", "myhomelib-reader"},
@@ -58,7 +63,8 @@ EXPECTED_INTERNAL_DEPS = {
         "myhomelib-opds",
     },
     "myhomelib-mcp": {"myhomelib-shared"},
-    "myhomelib-opds": {"myhomelib-application", "myhomelib-shared"},
+    "myhomelib-web": {"myhomelib-application"},
+    "myhomelib-opds": {"myhomelib-application", "myhomelib-shared", "myhomelib-web"},
 }
 
 # Existing debt is a ceiling, not a requirement. Removing an item is always OK;
@@ -215,12 +221,12 @@ def check_forbidden_source_boundaries() -> None:
         "myhomelib-shared": (
             "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.",
             "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",
-            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
+            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
             "org.springframework.", "javafx.", "java.sql.", "org.apache.lucene.",
         ),
         "myhomelib-domain": (
             "com.myhomelibcorp.application.", "com.myhomelibcorp.infrastructure.",
-            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
+            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
             "org.springframework.", "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
         ),
         "myhomelib-application": (
@@ -228,11 +234,16 @@ def check_forbidden_source_boundaries() -> None:
             "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
             "javafx.", "java.sql.", "javax.sql.", "org.springframework.jdbc.", "org.apache.lucene.",
         ),
+        "myhomelib-plugin-api": (
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.",
+            "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
+            "javafx.", "java.sql.", "javax.sql.", "org.springframework.", "org.apache.lucene.",
+        ),
         "myhomelib-infrastructure": (
-            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.opds.", "javafx.",
+            "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.", "javafx.",
         ),
         "myhomelib-ui": (
-            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.opds.", "java.sql.", "javax.sql.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.", "java.sql.", "javax.sql.",
             "org.springframework.jdbc.", "org.apache.lucene.",
         ),
         "myhomelib-reader": (
@@ -242,8 +253,13 @@ def check_forbidden_source_boundaries() -> None:
         ),
         "myhomelib-mcp": (
             "com.myhomelibcorp.domain.", "com.myhomelibcorp.application.",
-            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.opds.",
+            "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.", "com.myhomelibcorp.reader.", "com.myhomelibcorp.opds.", "com.myhomelibcorp.web.",
             "org.springframework.", "javafx.",
+        ),
+        "myhomelib-web": (
+            "com.myhomelibcorp.domain.", "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",
+            "com.myhomelibcorp.reader.", "com.myhomelibcorp.mcp.", "com.myhomelibcorp.opds.",
+            "org.springframework.", "javafx.", "java.sql.", "javax.sql.", "org.apache.lucene.",
         ),
         "myhomelib-opds": (
             "com.myhomelibcorp.infrastructure.", "com.myhomelibcorp.ui.",

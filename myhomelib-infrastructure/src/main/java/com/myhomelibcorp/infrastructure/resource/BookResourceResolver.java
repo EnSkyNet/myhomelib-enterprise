@@ -4,7 +4,7 @@ import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.archive.ArchiveEntryNameSupport;
-import com.myhomelibcorp.infrastructure.cover.ZipArchiveReader;
+import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -20,6 +20,7 @@ import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.Locale;
 
@@ -32,7 +33,7 @@ import java.util.Locale;
 @Slf4j
 public class BookResourceResolver implements BookResourcePort {
 
-    private final ZipArchiveReader archiveReader;
+    private final ArchiveReader archiveReader;
 
     private static final List<String> ARCHIVE_EXTENSIONS = List.of(".zip", ".fb2zip", ".fb2.zip", ".cbz", ".jar", ".7z", ".rar", ".cbr", ".tar", ".tar.gz", ".tgz", ".tar.bz2", ".tbz2", ".tar.xz", ".txz", ".cpio");
 
@@ -62,14 +63,14 @@ public class BookResourceResolver implements BookResourcePort {
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             Path archivePath = findArchivePath(fileName, folder, collectionRoot);
             if (archivePath != null && Files.isRegularFile(archivePath)) {
-                if (archiveReader.containsEntry(archivePath, archiveEntry)) {
-                    log.debug("Знайдено архів і запис '{}': {}", archiveEntry, archivePath);
-                    return Optional.of(archivePath);
-                }
-                Optional<String> compatible = resolveCompatibleArchiveEntry(archivePath, archiveEntry, fileName);
-                if (compatible.isPresent()) {
-                    log.info("Знайдено server-renamed/legacy archive entry: '{}' -> '{}' у {}",
-                            archiveEntry, compatible.get(), archivePath);
+                Optional<String> resolvedEntry = resolveArchiveEntry(archivePath, archiveEntry, fileName);
+                if (resolvedEntry.isPresent()) {
+                    if (ArchiveEntryNameSupport.sameLogicalPath(resolvedEntry.get(), archiveEntry)) {
+                        log.debug("Знайдено архів і запис '{}': {}", archiveEntry, archivePath);
+                    } else {
+                        log.info("Знайдено server-renamed/legacy archive entry: '{}' -> '{}' у {}",
+                                archiveEntry, resolvedEntry.get(), archivePath);
+                    }
                     return Optional.of(archivePath);
                 }
                 log.debug("Архів існує, але запис '{}' відсутній: {}", archiveEntry, archivePath);
@@ -104,6 +105,45 @@ public class BookResourceResolver implements BookResourcePort {
 
         log.debug("Файл не знайдено: fileName='{}', folder='{}'", fileName, folder);
         return Optional.empty();
+    }
+
+    @Override
+    public Optional<Path> locateBookContainer(Book book) {
+        if (book == null) return Optional.empty();
+        String archiveEntry = book.getArchiveEntry();
+        if (archiveEntry != null && !archiveEntry.isBlank()) {
+            Path archivePath = findArchivePath(book.getFileName(), book.getFolder(), book.getCollectionRoot());
+            return archivePath != null && Files.isRegularFile(archivePath)
+                    ? Optional.of(archivePath) : Optional.empty();
+        }
+        return locateBookFile(book);
+    }
+
+    @Override
+    public Optional<String> materializeArchiveBookEntry(Book book, Path archivePath, Path target, long maxBytes,
+                                                        BooleanSupplier cancelled) throws IOException {
+        if (book == null || archivePath == null || target == null) return Optional.empty();
+        String requestedEntry = book.getArchiveEntry();
+        if (requestedEntry == null || requestedEntry.isBlank() || !Files.isRegularFile(archivePath)) {
+            return Optional.empty();
+        }
+        String actualEntry;
+        try {
+            actualEntry = resolveArchiveEntry(archivePath, requestedEntry, book.getFileName()).orElse(null);
+        } catch (UncheckedIOException e) {
+            throw e.getCause();
+        } catch (RuntimeException e) {
+            throw new IOException("Не вдалося визначити archive entry у " + archivePath, e);
+        }
+        if (actualEntry == null) return Optional.empty();
+        if (!ArchiveEntryNameSupport.sameLogicalPath(actualEntry, requestedEntry)) {
+            log.info("Матеріалізація сумісного archive entry: '{}' -> '{}' у {}",
+                    requestedEntry, actualEntry, archivePath);
+        }
+        if (!archiveReader.materializeEntry(archivePath, actualEntry, target, maxBytes, cancelled)) {
+            return Optional.empty();
+        }
+        return Optional.of(actualEntry);
     }
 
     private Path findArchivePath(String fileName, String folder, String collectionRoot) {
@@ -151,10 +191,12 @@ public class BookResourceResolver implements BookResourcePort {
             if (archiveEntry != null && !archiveEntry.isBlank()) {
                 Path archivePath = findArchivePath(fileName, folder, collectionRoot);
                 if (archivePath != null && Files.isRegularFile(archivePath)) {
-                    String actualEntry = archiveReader.containsEntry(archivePath, archiveEntry)
-                            ? archiveEntry
-                            : resolveCompatibleArchiveEntry(archivePath, archiveEntry, fileName).orElse(null);
+                    String actualEntry = resolveArchiveEntry(archivePath, archiveEntry, fileName).orElse(null);
                     if (actualEntry != null) {
+                        if (!ArchiveEntryNameSupport.sameLogicalPath(actualEntry, archiveEntry)) {
+                            log.info("Читання сумісного archive entry: '{}' -> '{}' у {}",
+                                    archiveEntry, actualEntry, archivePath);
+                        }
                         log.debug("Читання з архіву: {}, запис: {}", archivePath, actualEntry);
                         return archiveReader.readEntry(archivePath, actualEntry);
                     }
@@ -192,9 +234,14 @@ public class BookResourceResolver implements BookResourcePort {
      * remain preferred; fallback is allowed only when a token match is unique or the archive
      * contains exactly one FB2 document, so shared multi-book archives are never guessed.
      */
-    private Optional<String> resolveCompatibleArchiveEntry(Path archivePath, String requestedEntry, String fileName) {
+    private Optional<String> resolveArchiveEntry(Path archivePath, String requestedEntry, String fileName) {
         List<String> entries = archiveReader.listEntries(archivePath);
         if (entries.isEmpty()) return Optional.empty();
+
+        Optional<String> exact = entries.stream()
+                .filter(entry -> ArchiveEntryNameSupport.sameLogicalPath(entry, requestedEntry))
+                .findFirst();
+        if (exact.isPresent()) return exact;
 
         String requested = ArchiveEntryNameSupport.baseName(requestedEntry);
         String file = ArchiveEntryNameSupport.baseName(fileName);

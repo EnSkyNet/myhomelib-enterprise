@@ -1,6 +1,6 @@
 # MYHOMELIB — History: Development Stages
 
-This is a compact historical index. It is not the current product contract. Exact original changelogs and validation reports are preserved in `docs/archive/source-notes/root/`.
+This is a compact historical index. It is not the current product contract. Exact original changelogs and validation reports are preserved in `docs/history/source-notes/root/`.
 
 ## Stage 1 — Architecture Baseline Changelog
 

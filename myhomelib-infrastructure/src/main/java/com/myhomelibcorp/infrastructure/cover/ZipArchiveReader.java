@@ -17,16 +17,21 @@ import org.springframework.stereotype.Component;
 import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InterruptedIOException;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.io.BufferedInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -83,33 +88,6 @@ public class ZipArchiveReader implements ArchiveReader {
         }
     }
 
-    /**
-     * Checks whether a named logical entry exists without extracting its payload.
-     * ZIP uses the central directory directly; sequential archive formats fall back
-     * to bounded entry enumeration. This is used by effective-local resolution so
-     * an existing but incomplete/corrupt shared archive is not treated as a local book.
-     */
-    public boolean containsEntry(Path archivePath, String entryName) {
-        if (archivePath == null || entryName == null || entryName.isBlank() || !Files.isRegularFile(archivePath)) {
-            return false;
-        }
-        String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
-        try {
-            if (!lower.endsWith(".7z") && !lower.endsWith(".rar") && !lower.endsWith(".cbr")
-                    && !isStreamArchiveName(lower)) {
-                try (ZipFile zip = ZipCharsetSupport.open(archivePath)) {
-                    ZipEntry entry = findZipEntry(zip, entryName);
-                    return entry != null && !entry.isDirectory();
-                }
-            }
-            return listEntries(archivePath).stream().anyMatch(name -> sameEntry(name, entryName));
-        } catch (IOException error) {
-            throw new UncheckedIOException("Не вдалося перевірити архів: " + archivePath, error);
-        } catch (RuntimeException error) {
-            throw error;
-        }
-    }
-
     @Override
     public Optional<InputStream> readEntry(Path archivePath, String entryName) {
         if (archivePath == null || entryName == null || entryName.isBlank() || !Files.isRegularFile(archivePath)) {
@@ -132,14 +110,183 @@ public class ZipArchiveReader implements ArchiveReader {
 
     @Override
     public Optional<InputStream> findFirstEntry(Path archivePath, Predicate<String> filter) {
-        if (archivePath == null || filter == null) return Optional.empty();
-        for (String name : listEntries(archivePath)) {
-            if (filter.test(name)) {
-                Optional<InputStream> result = readEntry(archivePath, name);
-                if (result.isPresent()) return result;
-            }
+        if (archivePath == null || filter == null || !Files.isRegularFile(archivePath)) return Optional.empty();
+        String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
+        try {
+            if (lower.endsWith(".7z")) return findFirst7zEntry(archivePath, filter);
+            if (lower.endsWith(".rar") || lower.endsWith(".cbr")) return findFirstRarEntry(archivePath, filter);
+            if (isStreamArchiveName(lower)) return findFirstStreamArchiveEntry(archivePath, filter);
+            return findFirstZipEntry(archivePath, filter);
+        } catch (IOException e) {
+            throw new UncheckedIOException("Не вдалося знайти запис у архіві: " + archivePath, e);
+        } catch (RuntimeException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new IllegalStateException("Не вдалося знайти запис у архіві: " + archivePath, e);
         }
-        return Optional.empty();
+    }
+
+    @Override
+    public boolean materializeEntry(Path archivePath, String entryName, Path target, long maxBytes,
+                                    BooleanSupplier cancelled) throws IOException {
+        if (archivePath == null || entryName == null || entryName.isBlank() || target == null
+                || !Files.isRegularFile(archivePath)) return false;
+        if (maxBytes <= 0) throw new IllegalArgumentException("maxBytes must be positive");
+
+        long limit = Math.min(maxBytes, ArchiveSafetyLimits.MAX_ENTRY_BYTES);
+        checkCancelled(cancelled);
+        Path absoluteTarget = target.toAbsolutePath().normalize();
+        Path parent = absoluteTarget.getParent();
+        if (parent == null) throw new IOException("Materialization target has no parent: " + target);
+        Files.createDirectories(parent);
+        Path staging = Files.createTempFile(parent, ".mhl-archive-materialize-", ".part");
+        boolean published = false;
+        try {
+            String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
+            boolean found;
+            try {
+                if (lower.endsWith(".7z")) {
+                    found = materialize7zEntry(archivePath, entryName, staging, limit, cancelled);
+                } else if (lower.endsWith(".rar") || lower.endsWith(".cbr")) {
+                    found = materializeRarEntry(archivePath, entryName, staging, limit, cancelled);
+                } else if (isStreamArchiveName(lower)) {
+                    found = materializeStreamArchiveEntry(archivePath, entryName, staging, limit, cancelled);
+                } else {
+                    found = materializeZipEntry(archivePath, entryName, staging, limit, cancelled);
+                }
+            } catch (InterruptedIOException e) {
+                throw e;
+            } catch (IOException e) {
+                throw e;
+            } catch (RuntimeException e) {
+                throw e;
+            } catch (Exception e) {
+                throw new IOException("Не вдалося матеріалізувати запис '" + entryName + "' з " + archivePath, e);
+            }
+            if (!found) return false;
+            checkCancelled(cancelled);
+            publishStaging(staging, absoluteTarget);
+            published = true;
+            return true;
+        } finally {
+            if (!published) Files.deleteIfExists(staging);
+        }
+    }
+
+    private boolean materializeZipEntry(Path path, String requestedName, Path staging, long limit,
+                                        BooleanSupplier cancelled) throws IOException {
+        try (ZipFile zip = ZipCharsetSupport.open(path)) {
+            ZipEntry entry = findZipEntryChecked(zip, requestedName);
+            if (entry == null || entry.isDirectory()) return false;
+            validateZipEntry(entry, limit);
+            try (InputStream in = zip.getInputStream(entry);
+                 OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                copyBounded(in, out, limit, cancelled, "ZIP entry");
+            }
+            return true;
+        }
+    }
+
+    private boolean materialize7zEntry(Path path, String requestedName, Path staging, long limit,
+                                       BooleanSupplier cancelled) throws IOException {
+        try (SevenZFile sevenZ = SevenZFile.builder()
+                .setFile(path.toFile())
+                .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB)
+                .get()) {
+            SevenZArchiveEntry entry;
+            int count = 0;
+            while ((entry = sevenZ.getNextEntry()) != null) {
+                checkCancelled(cancelled);
+                if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("7z contains too many entries");
+                if (entry.isDirectory() || entry.getName() == null || !sameEntry(entry.getName(), requestedName)) continue;
+                if (declaredTooLarge(entry.getSize(), limit)) throw new IOException("7z entry is too large: " + entry.getSize());
+                try (OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    byte[] buffer = new byte[64 * 1024];
+                    long total = 0;
+                    int read;
+                    while ((read = sevenZ.read(buffer, 0, buffer.length)) >= 0) {
+                        checkCancelled(cancelled);
+                        if (read == 0) continue;
+                        total = accountBytes(total, read, limit, "7z entry");
+                        out.write(buffer, 0, read);
+                    }
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private boolean materializeRarEntry(Path path, String requestedName, Path staging, long limit,
+                                        BooleanSupplier cancelled) throws Exception {
+        try (Archive archive = new Archive(path.toFile())) {
+            if (archive.isPasswordProtected()) {
+                throw new IOException("RAR archive is password-protected; configure/extract it before import");
+            }
+            int count = 0;
+            for (FileHeader header : archive.getFileHeaders()) {
+                checkCancelled(cancelled);
+                if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("RAR contains too many entries");
+                if (header.isDirectory() || header.getFileName() == null || !sameEntry(header.getFileName(), requestedName)) continue;
+                try (InputStream in = archive.getInputStream(header);
+                     OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    copyBounded(in, out, limit, cancelled, "RAR entry");
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private boolean materializeStreamArchiveEntry(Path path, String requestedName, Path staging, long limit,
+                                                  BooleanSupplier cancelled) throws Exception {
+        try (ArchiveInputStream<?> in = openStreamArchive(path)) {
+            ArchiveEntry entry;
+            int count = 0;
+            while ((entry = in.getNextEntry()) != null) {
+                checkCancelled(cancelled);
+                if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
+                if (entry.isDirectory() || entry.getName() == null || !sameEntry(entry.getName(), requestedName)) continue;
+                if (declaredTooLarge(entry.getSize(), limit)) throw new IOException("Archive entry is too large: " + entry.getSize());
+                try (OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                    copyBounded(in, out, limit, cancelled, "Archive entry");
+                }
+                return true;
+            }
+            return false;
+        }
+    }
+
+    private Optional<InputStream> findFirstZipEntry(Path path, Predicate<String> filter) throws IOException {
+        ZipFile zip = ZipCharsetSupport.open(path);
+        try {
+            Enumeration<? extends ZipEntry> entries = zip.entries();
+            int count = 0;
+            while (entries.hasMoreElements()) {
+                if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                    throw new IOException("ZIP contains too many entries");
+                }
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory() || entry.getName() == null || !filter.test(entry.getName())) continue;
+                if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
+                    throw new IOException("ZIP entry is too large: " + entry.getSize());
+                }
+                long compressed = entry.getCompressedSize();
+                long size = entry.getSize();
+                if (compressed > 0 && size > 0
+                        && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+                    throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
+                }
+                InputStream delegate = zip.getInputStream(entry);
+                ZipFile owner = zip;
+                return Optional.of(boundedOwnerStream(delegate, owner::close, "ZIP entry"));
+            }
+            zip.close();
+            return Optional.empty();
+        } catch (IOException | RuntimeException e) {
+            try { zip.close(); } catch (Exception ignored) { }
+            throw e;
+        }
     }
 
     private List<String> listZip(Path path) throws IOException {
@@ -217,6 +364,10 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private Optional<InputStream> read7zEntry(Path path, String requestedName) throws IOException {
+        return findFirst7zEntry(path, name -> sameEntry(name, requestedName));
+    }
+
+    private Optional<InputStream> findFirst7zEntry(Path path, Predicate<String> filter) throws IOException {
         Path temp = null;
         try (SevenZFile sevenZ = SevenZFile.builder()
                 .setFile(path.toFile())
@@ -226,8 +377,7 @@ public class ZipArchiveReader implements ArchiveReader {
             int count = 0;
             while ((entry = sevenZ.getNextEntry()) != null) {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("7z contains too many entries");
-                if (entry.isDirectory() || entry.getName() == null) continue;
-                if (!sameEntry(entry.getName(), requestedName)) continue;
+                if (entry.isDirectory() || entry.getName() == null || !filter.test(entry.getName())) continue;
                 if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) {
                     throw new IOException("7z entry is too large: " + entry.getSize());
                 }
@@ -268,6 +418,10 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private Optional<InputStream> readRarEntry(Path path, String requestedName) throws Exception {
+        return findFirstRarEntry(path, name -> sameEntry(name, requestedName));
+    }
+
+    private Optional<InputStream> findFirstRarEntry(Path path, Predicate<String> filter) throws Exception {
         Archive archive = new Archive(path.toFile());
         try {
             if (archive.isPasswordProtected()) {
@@ -276,8 +430,7 @@ public class ZipArchiveReader implements ArchiveReader {
             int count = 0;
             for (FileHeader header : archive.getFileHeaders()) {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("RAR contains too many entries");
-                if (header.isDirectory() || header.getFileName() == null) continue;
-                if (!sameEntry(header.getFileName(), requestedName)) continue;
+                if (header.isDirectory() || header.getFileName() == null || !filter.test(header.getFileName())) continue;
                 InputStream delegate = archive.getInputStream(header);
                 return Optional.of(boundedOwnerStream(delegate, archive::close, "RAR entry"));
             }
@@ -330,13 +483,17 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private Optional<InputStream> readStreamArchiveEntry(Path path, String requestedName) throws Exception {
+        return findFirstStreamArchiveEntry(path, name -> sameEntry(name, requestedName));
+    }
+
+    private Optional<InputStream> findFirstStreamArchiveEntry(Path path, Predicate<String> filter) throws Exception {
         Path temp = null;
         try (ArchiveInputStream<?> in = openStreamArchive(path)) {
             ArchiveEntry entry;
             int count = 0;
             while ((entry = in.getNextEntry()) != null) {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
-                if (entry.isDirectory() || entry.getName() == null || !sameEntry(entry.getName(), requestedName)) continue;
+                if (entry.isDirectory() || entry.getName() == null || !filter.test(entry.getName())) continue;
                 if (entry.getSize() > ArchiveSafetyLimits.MAX_ENTRY_BYTES) throw new IOException("Archive entry is too large");
                 temp = Files.createTempFile("myhomelib-archive-", safeSuffix(entry.getName()));
                 try (var out = Files.newOutputStream(temp, StandardOpenOption.TRUNCATE_EXISTING)) {
@@ -355,6 +512,74 @@ public class ZipArchiveReader implements ArchiveReader {
             throw e;
         }
         return Optional.empty();
+    }
+
+
+    private ZipEntry findZipEntryChecked(ZipFile zip, String requestedName) throws IOException {
+        ZipEntry direct = zip.getEntry(requestedName);
+        if (direct != null) return direct;
+        String normalized = normalizeEntryName(requestedName);
+        Enumeration<? extends ZipEntry> entries = zip.entries();
+        int count = 0;
+        while (entries.hasMoreElements()) {
+            if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("ZIP contains too many entries");
+            ZipEntry entry = entries.nextElement();
+            if (normalizeEntryName(entry.getName()).equalsIgnoreCase(normalized)) return entry;
+        }
+        return null;
+    }
+
+    private static boolean declaredTooLarge(long declaredSize, long limit) {
+        return declaredSize >= 0 && declaredSize > limit;
+    }
+
+    private static long accountBytes(long current, long delta, long limit, String label) throws IOException {
+        long total = current + delta;
+        if (total < current || total > limit) {
+            throw new IOException(label + " exceeds safety limit of " + limit + " bytes");
+        }
+        return total;
+    }
+
+    private static long copyBounded(InputStream in, OutputStream out, long limit, BooleanSupplier cancelled,
+                                    String label) throws IOException {
+        byte[] buffer = new byte[64 * 1024];
+        long total = 0;
+        int read;
+        while ((read = in.read(buffer)) >= 0) {
+            checkCancelled(cancelled);
+            if (read == 0) continue;
+            total = accountBytes(total, read, limit, label);
+            out.write(buffer, 0, read);
+        }
+        checkCancelled(cancelled);
+        return total;
+    }
+
+    private static void checkCancelled(BooleanSupplier cancelled) throws InterruptedIOException {
+        if (Thread.currentThread().isInterrupted() || (cancelled != null && cancelled.getAsBoolean())) {
+            throw new InterruptedIOException("Archive materialization cancelled");
+        }
+    }
+
+    private static void publishStaging(Path staging, Path target) throws IOException {
+        try {
+            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+        } catch (AtomicMoveNotSupportedException e) {
+            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING);
+        }
+    }
+
+    private static void validateZipEntry(ZipEntry entry, long limit) throws IOException {
+        if (declaredTooLarge(entry.getSize(), limit)) {
+            throw new IOException("ZIP entry is too large: " + entry.getSize());
+        }
+        long compressed = entry.getCompressedSize();
+        long size = entry.getSize();
+        if (compressed > 0 && size > 0
+                && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+            throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
+        }
     }
 
 

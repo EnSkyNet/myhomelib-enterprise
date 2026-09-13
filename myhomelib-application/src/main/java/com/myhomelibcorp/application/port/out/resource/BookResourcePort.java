@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
 
 /**
  * Порт для роботи з ресурсами книг (файли, архіви).
@@ -32,6 +33,25 @@ public interface BookResourcePort {
      * @return шлях до файлу, якщо знайдено
      */
     Optional<Path> locateBookFile(String fileName, String folder, String collectionRoot, String archiveEntry);
+
+
+    /**
+     * Resolves only the physical resource/container. For catalogue entries inside an archive
+     * this deliberately does not enumerate members; callers that need the member must use
+     * {@link #materializeArchiveBookEntry(Book, Path, Path, long, BooleanSupplier)}.
+     */
+    Optional<Path> locateBookContainer(Book book);
+
+    /**
+     * Resolves the catalogue archive member (including the legacy/server-renamed fallback)
+     * once, then streams that exact member to {@code target}. The target is usable only when
+     * a non-empty result is returned.
+     *
+     * @return actual archive member name that was materialized, or empty when no unambiguous
+     *         compatible member exists
+     */
+    Optional<String> materializeArchiveBookEntry(Book book, Path archivePath, Path target, long maxBytes,
+                                                 BooleanSupplier cancelled) throws IOException;
 
     /**
      * Читає дані книги.

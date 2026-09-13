@@ -1,0 +1,27 @@
+Iteration 68 — MHL-507 Optional calibre CLI adapter
+Date: 2026-09-13
+
+Validation evidence:
+- CalibreCliBookConverterTest: 7/7 PASS
+- production ProcessBuilder path exercised with a real local fake ebook-convert executable
+- LayerArchitectureTest: 14/14 PASS
+- architecture-check.py: PASS
+- implementation-completeness-check.py: PASS
+- check-critical-ui-localization.py: PASS
+- static_release_check.py: PASS
+- supply-chain-policy-check.py: PASS
+- full 16-project offline test-compile: BUILD SUCCESS
+- real calibre installation/version: NOT CLAIMED; not present in validation environment
+
+Changed source/documentation files relative to Iteration 67:
+MODIFIED: ARCHITECTURE.md
+MODIFIED: MYHOMELIB-DEVELOPMENT.md
+MODIFIED: MYHOMELIB-FEATURES.md
+MODIFIED: MYHOMELIB-RELEASE.md
+MODIFIED: README.md
+MODIFIED: docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+ADDED: docs/history/records/ITERATION-68-CALIBRE-CLI-CHECKPOINT.md
+ADDED: docs/history/records/ITERATION-68-CHANGED-FILES.txt
+ADDED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/CalibreCliBookConverter.java
+ADDED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/CalibreConverterConfiguration.java
+ADDED: myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/exporter/CalibreCliBookConverterTest.java

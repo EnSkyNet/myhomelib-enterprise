@@ -42,7 +42,17 @@ class SupportedFormatRegistryTest {
     void capabilityMatrixKeepsReaderSubsetExplicit() {
         assertThat(registry.byId("fb2")).get().extracting(SupportedFormat::readerSupported).isEqualTo(true);
         assertThat(registry.byId("epub")).get().extracting(SupportedFormat::fullTextSupported).isEqualTo(true);
-        assertThat(registry.byId("pdf")).get().extracting(SupportedFormat::readerSupported).isEqualTo(false);
+        assertThat(registry.byId("pdf")).get().extracting(SupportedFormat::readerSupported).isEqualTo(true);
+        assertThat(registry.byId("cbz")).get().satisfies(format -> {
+            assertThat(format.family()).isEqualTo(SupportedFormat.Family.BOOK);
+            assertThat(format.importMode()).isEqualTo(SupportedFormat.ImportMode.NATIVE);
+            assertThat(format.readerSupported()).isTrue();
+            assertThat(format.fullTextSupported()).isFalse();
+        });
+        assertThat(registry.byId("cbr")).get().satisfies(format -> {
+            assertThat(format.family()).isEqualTo(SupportedFormat.Family.BOOK);
+            assertThat(format.readerSupported()).isTrue();
+        });
         assertThat(registry.byId("docx")).get().extracting(SupportedFormat::importMode)
                 .isEqualTo(SupportedFormat.ImportMode.GENERIC);
     }

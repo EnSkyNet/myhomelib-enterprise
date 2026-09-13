@@ -1,0 +1,28 @@
+Iteration 65 — MHL-504 Device profiles
+Date: 2026-09-12
+
+Validation evidence:
+- targeted MHL-504 regression: 9 tests, 0 failures/errors
+- full myhomelib-application suite: 247 tests, 0 failures/errors, 1 skipped
+- LayerArchitectureTest: 14/14 PASS
+- architecture-check.py: PASS
+- implementation-completeness-check.py: PASS
+- full 16-project offline test-compile: BUILD SUCCESS
+- broader Reader/UI test attempt is not a release claim: blocked by X11-dependent PDF raster test and missing golden/reader-rich.zip in the source checkpoint environment
+
+Changed source/documentation files relative to Iteration 64:
+MODIFIED: ARCHITECTURE.md
+MODIFIED: MYHOMELIB-DEVELOPMENT.md
+MODIFIED: MYHOMELIB-FEATURES.md
+MODIFIED: README.md
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/dto/ExportRequest.java
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/export/DeviceProfileService.java
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/export/DeviceTargetProfile.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/export/ExportProfile.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/export/ExportProfileService.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/export/DeviceProfileServiceTest.java
+MODIFIED: myhomelib-application/src/test/java/com/myhomelibcorp/application/export/ExportProfileServiceTest.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseDeviceProfileTest.java
+MODIFIED: myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/ExportController.java
+MODIFIED: myhomelib-ui/src/main/resources/view/export-dialog.fxml

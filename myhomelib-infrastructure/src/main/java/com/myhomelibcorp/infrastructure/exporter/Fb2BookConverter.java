@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.exporter;
 
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
+import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -9,14 +10,25 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
+import java.util.Set;
 
 @Component
 @Slf4j
 public class Fb2BookConverter implements BookConverter {
 
     @Override
+    public Set<BookConversionCapability> capabilities() {
+        return Set.of(new BookConversionCapability(Set.of("fb2"), "FB2", ".fb2"));
+    }
+
+    @Override
     public boolean supports(Book book) {
         return Fb2ConversionSupport.supports(book);
+    }
+
+    @Override
+    public boolean supports(Book book, String sourceFormat) {
+        return "fb2".equals(BookConversionCapability.normalizeFormat(sourceFormat));
     }
 
     @Override

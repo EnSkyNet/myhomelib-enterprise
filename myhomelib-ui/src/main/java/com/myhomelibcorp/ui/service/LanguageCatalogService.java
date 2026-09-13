@@ -226,19 +226,88 @@ public class LanguageCatalogService {
         } catch (Exception e) {
             log.warn("Cannot create language directories: {}", e.getMessage());
         }
-        if (Files.isRegularFile(availableLanguagesFile)) return;
-        for (String code : BUNDLED_DEFAULTS) {
-            Path target = languageDir.resolve(code + ".json");
-            if (Files.isRegularFile(target)) continue;
-            String resource = "/lang/default/" + code + ".json";
-            try (InputStream in = LanguageCatalogService.class.getResourceAsStream(resource)) {
-                if (in == null) { log.warn("Bundled language resource is missing: {}", resource); continue; }
-                Files.copy(in, target, StandardCopyOption.REPLACE_EXISTING);
-                log.info("Created default language file {}", target);
-            } catch (Exception e) {
-                log.warn("Cannot create default language file {}: {}", target, e.getMessage());
+        boolean firstRun = !Files.isRegularFile(availableLanguagesFile);
+        for (String code : BUNDLED_DEFAULTS) synchronizeBundledCatalogue(code, firstRun);
+    }
+
+    /**
+     * Shipped language files are copied to a writable external Lang directory. Older
+     * installations therefore keep an older snapshot forever unless we explicitly merge
+     * newly introduced stable keys. Merge only missing bundled values: user overrides and
+     * custom keys remain authoritative, while new application keys become available after
+     * an upgrade instead of leaking raw `ui.*` identifiers into messages.
+     */
+    private void synchronizeBundledCatalogue(String code, boolean createIfMissing) {
+        Path target = languageDir.resolve(code + ".json");
+        String resource = "/lang/default/" + code + ".json";
+        try (InputStream in = LanguageCatalogService.class.getResourceAsStream(resource)) {
+            if (in == null) {
+                log.warn("Bundled language resource is missing: {}", resource);
+                return;
+            }
+            byte[] bundledBytes = in.readAllBytes();
+            if (!Files.isRegularFile(target)) {
+                if (createIfMissing) {
+                    atomicWrite(target, new String(bundledBytes, StandardCharsets.UTF_8));
+                    log.info("Created default language file {}", target);
+                }
+                return;
+            }
+
+            Map<String, Object> bundled = mapper.readValue(bundledBytes, new TypeReference<>() {});
+            Map<String, Object> existing = mapper.readValue(target.toFile(), new TypeReference<>() {});
+            boolean changed = false;
+            for (String field : List.of("translations", "genres", "genreAliases", "genreGroups",
+                    "genreParents", "legacyBaseAliases")) {
+                changed |= mergeMissingMapEntries(existing, bundled, field);
+            }
+            int bundledSchema = intValue(bundled.get("schemaVersion"), CURRENT_SCHEMA_VERSION);
+            int existingSchema = intValue(existing.get("schemaVersion"), 1);
+            if (existingSchema < bundledSchema) {
+                existing.put("schemaVersion", bundledSchema);
+                changed = true;
+            }
+            if (!existing.containsKey("code") && bundled.containsKey("code")) {
+                existing.put("code", bundled.get("code"));
+                changed = true;
+            }
+            if (!existing.containsKey("name") && bundled.containsKey("name")) {
+                existing.put("name", bundled.get("name"));
+                changed = true;
+            }
+            if (changed) {
+                atomicWrite(target, mapper.writerWithDefaultPrettyPrinter().writeValueAsString(existing) + "\n");
+                log.info("Updated bundled language catalogue with missing keys: {}", target);
+            }
+        } catch (Exception e) {
+            // Never destroy a user-edited catalogue merely because it cannot be upgraded.
+            // refresh() will report its validation problem through normal diagnostics.
+            log.warn("Cannot synchronize bundled language file {}: {}", target, e.getMessage());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static boolean mergeMissingMapEntries(Map<String, Object> existing, Map<String, Object> bundled, String field) {
+        Object bundledRaw = bundled.get(field);
+        if (!(bundledRaw instanceof Map<?, ?> bundledMap)) return false;
+        Object existingRaw = existing.get(field);
+        Map<String, Object> existingMap;
+        boolean changed = false;
+        if (existingRaw instanceof Map<?, ?> map) {
+            existingMap = (Map<String, Object>) map;
+        } else {
+            existingMap = new LinkedHashMap<>();
+            existing.put(field, existingMap);
+            changed = true;
+        }
+        for (Map.Entry<?, ?> entry : bundledMap.entrySet()) {
+            String key = String.valueOf(entry.getKey());
+            if (!existingMap.containsKey(key)) {
+                existingMap.put(key, entry.getValue());
+                changed = true;
             }
         }
+        return changed;
     }
 
     private Map<String, Catalog> loadCatalogs(Path dir, List<String> messages) {

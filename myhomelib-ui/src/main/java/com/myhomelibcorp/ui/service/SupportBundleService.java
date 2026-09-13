@@ -36,7 +36,7 @@ public class SupportBundleService {
     private static final Set<String> SECRET_WORDS = Set.of(
             "password", "passwd", "secret", "token", "apikey", "api_key", "credential", "auth", "encryption.key");
     private static final List<String> RELEASE_FILES = List.of(
-            "RELEASE_VALIDATION.txt", "MYHOMELIB-RELEASE.md", "ARCHITECTURE.md", "MYHOMELIB-OPERATIONS.md");
+            "docs/release/CURRENT-VALIDATION.md", "MYHOMELIB-RELEASE.md", "ARCHITECTURE.md", "MYHOMELIB-OPERATIONS.md");
 
     private final ApplicationSettingsPort settings;
 
@@ -83,7 +83,7 @@ public class SupportBundleService {
             Path file = AppPaths.launchDir().resolve(name);
             long size = safeSize(file);
             boolean eligible = Files.isRegularFile(file) && size >= 0 && size <= MAX_RELEASE_FILE;
-            items.add(new SupportBundlePreview.Item("release/" + name, size,
+            items.add(new SupportBundlePreview.Item(releaseEntryName(name), size,
                     actual.includeReleaseDocuments() && eligible,
                     eligible ? "санітизований текст" : "файл відсутній або перевищує 2 MiB"));
         }
@@ -195,9 +195,14 @@ public class SupportBundleService {
             Path file = AppPaths.launchDir().resolve(name);
             long size = safeSize(file);
             if (Files.isRegularFile(file) && size >= 0 && size <= MAX_RELEASE_FILE) {
-                putSanitizedFile(zip, "release/" + name, file, size, sanitizer, MAX_RELEASE_FILE);
+                putSanitizedFile(zip, releaseEntryName(name), file, size, sanitizer, MAX_RELEASE_FILE);
             }
         }
+    }
+
+
+    private static String releaseEntryName(String sourcePath) {
+        return "release/" + Path.of(sourcePath).getFileName();
     }
 
     private void addLogs(ZipOutputStream zip, SupportBundleSanitizer sanitizer) throws IOException {

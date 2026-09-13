@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
+
+<BorderPane xmlns:fx="http://javafx.com/fxml/1"
+            fx:controller="com.myhomelibcorp.ui.controller.SmartCollectionDialogController"
+            prefWidth="760" prefHeight="620" style="-fx-background-color: -mhl-background;">
+    <top>
+        <VBox spacing="10" BorderPane.alignment="CENTER" style="-fx-padding: 15;">
+            <Label text="Smart Collection" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+            <HBox spacing="10">
+                <Label text="Name" minWidth="80"/>
+                <TextField fx:id="nameField" HBox.hgrow="ALWAYS"/>
+                <CheckBox fx:id="pinnedCheck" text="Pinned"/>
+            </HBox>
+            <HBox spacing="10">
+                <Label text="Mode" minWidth="80"/>
+                <ComboBox fx:id="modeCombo" prefWidth="140"/>
+                <Label text="Sort"/>
+                <ComboBox fx:id="sortCombo" prefWidth="140"/>
+                <ComboBox fx:id="directionCombo" prefWidth="120"/>
+                <Label text="Limit"/>
+                <TextField fx:id="limitField" prefWidth="90"/>
+            </HBox>
+            <Separator/>
+        </VBox>
+    </top>
+    <center>
+        <VBox spacing="8" style="-fx-padding: 0 15 10 15;">
+            <Label text="Rules" style="-fx-font-weight: bold;"/>
+            <ScrollPane fitToWidth="true" VBox.vgrow="ALWAYS">
+                <content>
+                    <VBox fx:id="rulesBox" spacing="8" style="-fx-padding: 5;"/>
+                </content>
+            </ScrollPane>
+            <Button fx:id="addRuleButton" text="+ Rule" onAction="#onAddRule"/>
+        </VBox>
+    </center>
+    <bottom>
+        <HBox alignment="CENTER_RIGHT" spacing="10" style="-fx-padding: 12 15 15 15;">
+            <Button text="Cancel" onAction="#onCancel"/>
+            <Button text="Save" onAction="#onSave" defaultButton="true"
+                    style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
+        </HBox>
+    </bottom>
+</BorderPane>

@@ -2,7 +2,7 @@
 
 MyHomeLib Enterprise створює узгоджений snapshot SQLite через `VACUUM INTO`, тому активну WAL-базу не копіюють як звичайний файл. Звичайний backup може містити базу, пошуковий індекс, обкладинки та `user-data.json`.
 
-`user-data.json` — переносимий versioned manifest. Він містить рейтинги, прогрес і відгуки, bookmarks, reading history/statistics, groups/favorites, saved searches, unified filters, глобальні Reader settings та per-book Reader overrides. Книжкові записи зіставляються насамперед за стабільним `LibID`; внутрішній book ID використовується лише як fallback для тієї самої колекції.
+`user-data.json` — переносимий versioned manifest. Він містить рейтинги, прогрес і відгуки, bookmarks, highlights/notes із текстовими anchors, reading history/statistics, groups/favorites, saved searches, unified filters, глобальні Reader settings та per-book Reader overrides. Книжкові записи зіставляються насамперед за стабільним `LibID`; внутрішній book ID використовується лише як fallback для тієї самої колекції.
 
 Під час відновлення доступні два режими:
 

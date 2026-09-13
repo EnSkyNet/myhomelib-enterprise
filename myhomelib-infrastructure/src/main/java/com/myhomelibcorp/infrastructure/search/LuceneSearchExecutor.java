@@ -2,6 +2,8 @@ package com.myhomelibcorp.infrastructure.search;
 
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.search.SearchResult;
+import com.myhomelibcorp.domain.model.search.SmartCollectionSortDirection;
+import com.myhomelibcorp.domain.model.search.SmartCollectionSpec;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import org.apache.lucene.document.Document;
 import org.apache.lucene.document.IntPoint;
@@ -23,7 +25,8 @@ final class LuceneSearchExecutor {
     private LuceneSearchExecutor() { }
 
     static SearchResult search(SearchRequest request, SearcherManager manager,
-                               LuceneQueryNormalizer normalizer, LuceneUnifiedFilterBuilder filterBuilder) throws Exception {
+                               LuceneQueryNormalizer normalizer, LuceneUnifiedFilterBuilder filterBuilder,
+                               LuceneSmartCollectionBuilder smartCollectionBuilder, LuceneCustomFieldFilterBuilder customFieldFilterBuilder) throws Exception {
         long started = System.currentTimeMillis();
         manager.maybeRefresh();
         IndexSearcher searcher = manager.acquire();
@@ -51,27 +54,31 @@ final class LuceneSearchExecutor {
             }
             if (request.localOnly() != null) b.add(term("local", request.localOnly() ? "1" : "0"), BooleanClause.Occur.FILTER);
             filterBuilder.addTo(b, request.filterSpec());
+            smartCollectionBuilder.addTo(b, request.smartCollectionSpec());
+            customFieldFilterBuilder.addTo(b, request.customFieldFilters());
             b.add(term("deleted", "0"), BooleanClause.Occur.FILTER);
             Query query = b.build().clauses().isEmpty() ? new MatchAllDocsQuery() : b.build();
 
             int offset = Math.max(0, request.offset());
             int limit = Math.min(MAX_PAGE_SIZE, Math.max(1, request.limit()));
+            int smartLimit = request.smartCollectionSpec() == null
+                    ? Integer.MAX_VALUE : request.smartCollectionSpec().maxResults();
+            Sort sort = smartSort(request.smartCollectionSpec());
 
-            // The first interactive page needs an exact total for the UI. Continuation pages
-            // already know that total and can skip the full count(query), which is significant
-            // for broad matches in 700k–1M catalogues.
-            int totalHits = request.trackTotalHits() ? searcher.count(query) : -1;
-            if (totalHits >= 0 && offset >= totalHits) {
+            int countedHits = request.trackTotalHits() ? searcher.count(query) : -1;
+            int totalHits = countedHits < 0 ? -1 : Math.min(countedHits, smartLimit);
+            if ((totalHits >= 0 && offset >= totalHits) || offset >= smartLimit) {
                 return new SearchResult(List.of(), totalHits, offset / limit, limit,
                         System.currentTimeMillis() - started);
             }
 
-            ScoreDoc after = skipToOffset(searcher, query, offset);
-            int pageSize = totalHits >= 0 ? Math.min(limit, totalHits - offset) : limit;
-            TopDocs page = searcher.searchAfter(after, query, pageSize);
+            ScoreDoc after = skipToOffset(searcher, query, offset, sort);
+            int pageCeiling = Math.max(0, smartLimit - offset);
+            int pageSize = totalHits >= 0 ? Math.min(limit, totalHits - offset) : Math.min(limit, pageCeiling);
+            TopDocs page = searchAfter(searcher, after, query, pageSize, sort);
             List<BookId> ids = new ArrayList<>(page.scoreDocs.length);
             for (ScoreDoc hit : page.scoreDocs) {
-                Document doc = searcher.doc(hit.doc);
+                Document doc = searcher.storedFields().document(hit.doc);
                 String id = doc.get("id");
                 if (id != null && !id.isEmpty()) ids.add(BookId.fromString(id));
             }
@@ -82,23 +89,39 @@ final class LuceneSearchExecutor {
         }
     }
 
-    /**
-     * Advances in bounded chunks instead of allocating TopDocs for {@code offset + limit}.
-     * ScoreDoc contains Lucene's score/doc-id tie-break state, so it is safe to feed the
-     * last hit into searchAfter for the next chunk.
-     */
-    private static ScoreDoc skipToOffset(IndexSearcher searcher, Query query, int offset) throws Exception {
+    private static TopDocs searchAfter(IndexSearcher searcher, ScoreDoc after, Query query, int limit, Sort sort) throws Exception {
+        if (limit <= 0) return new TopDocs(new TotalHits(0, TotalHits.Relation.EQUAL_TO), new ScoreDoc[0]);
+        return sort == null ? searcher.searchAfter(after, query, limit) : searcher.searchAfter(after, query, limit, sort);
+    }
+
+    private static ScoreDoc skipToOffset(IndexSearcher searcher, Query query, int offset, Sort sort) throws Exception {
         ScoreDoc after = null;
         int remaining = offset;
         while (remaining > 0) {
             int chunk = Math.min(SKIP_BATCH_SIZE, remaining);
-            TopDocs skipped = searcher.searchAfter(after, query, chunk);
+            TopDocs skipped = searchAfter(searcher, after, query, chunk, sort);
             if (skipped.scoreDocs.length == 0) return after;
             after = skipped.scoreDocs[skipped.scoreDocs.length - 1];
             remaining -= skipped.scoreDocs.length;
             if (skipped.scoreDocs.length < chunk) break;
         }
         return after;
+    }
+
+    private static Sort smartSort(SmartCollectionSpec spec) {
+        if (spec == null) return null;
+        boolean reverse = spec.direction() == SmartCollectionSortDirection.DESC;
+        SortField primary = switch (spec.sort()) {
+            case TITLE -> new SortField("title_sort", SortField.Type.STRING, reverse);
+            case AUTHOR -> new SortField("author_sort", SortField.Type.STRING, reverse);
+            case SERIES -> new SortField("series_sort", SortField.Type.STRING, reverse);
+            case YEAR -> new SortField("year_sort", SortField.Type.INT, reverse);
+            case RATING -> new SortField("rate_sort", SortField.Type.INT, reverse);
+            case PROGRESS -> new SortField("progress_sort", SortField.Type.INT, reverse);
+            case ADDED -> new SortField("created_sort", SortField.Type.LONG, reverse);
+        };
+        SortField id = new SortField("id_sort", SortField.Type.STRING, reverse);
+        return new Sort(primary, id);
     }
 
     private static TermQuery term(String field, String value) { return new TermQuery(new Term(field, value)); }

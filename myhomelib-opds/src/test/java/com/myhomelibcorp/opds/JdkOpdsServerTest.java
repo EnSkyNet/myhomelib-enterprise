@@ -2,6 +2,13 @@ package com.myhomelibcorp.opds;
 
 import com.myhomelibcorp.application.opds.*;
 import com.myhomelibcorp.application.port.out.opds.OpdsCatalogQueryPort;
+import com.myhomelibcorp.application.dto.ReadingProgressDto;
+import com.myhomelibcorp.application.dto.ContinueReadingItemDto;
+import com.myhomelibcorp.application.usecase.reading.ContinueReadingService;
+import com.myhomelibcorp.application.webreader.WebReaderChapter;
+import com.myhomelibcorp.application.webreader.WebReaderDocument;
+import com.myhomelibcorp.application.webreader.WebReaderUseCase;
+import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -18,7 +25,11 @@ import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.security.cert.X509Certificate;
 import java.util.Base64;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Set;
 import java.util.Optional;
+import java.time.LocalDateTime;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -57,6 +68,56 @@ class JdkOpdsServerTest {
         assertThat(authors.body()).contains("Автор Один", "2 книг").doesNotContain("Автор Два");
     }
 
+
+    @Test
+    void servesOpds2NavigationLibrarySearchGroupsFavoritesAndContinueReading() throws Exception {
+        var catalog = new OpdsCatalogService(new FakeCatalog());
+        server = new JdkOpdsServer(catalog, null);
+        int port = freePort();
+        assertThat(server.start(new OpdsServerSettings("127.0.0.1", port, false, "", "", false)).running()).isTrue();
+
+        HttpClient client = HttpClient.newHttpClient();
+        String base = "http://127.0.0.1:" + port;
+
+        var root = get(client, base + "/opds/v2");
+        assertThat(root.statusCode()).isEqualTo(200);
+        assertThat(root.headers().firstValue("Content-Type").orElse("")).startsWith("application/opds+json");
+        assertThat(root.body()).contains("\"navigation\"", "/opds/v2/library", "/opds/v2/search?q=",
+                "/opds/v2/collections", "/opds/v2/groups", "/opds/v2/favorites", "/opds/v2/continue");
+
+        var library = get(client, base + "/opds/v2/library?limit=1");
+        assertThat(library.statusCode()).isEqualTo(200);
+        assertThat(library.body()).contains("\"publications\"", "Книга \\\"Один\\\"",
+                "urn:myhomelib:book:b1", "\"next\"", "offset=1&limit=1");
+
+        var search = get(client, base + "/opds/v2/search?q=needle&limit=1");
+        assertThat(search.statusCode()).isEqualTo(200);
+        assertThat(search.body()).contains("Пошук: needle", "q=needle", "Книга \\\"Один\\\"");
+
+        var collections = get(client, base + "/opds/v2/collections");
+        assertThat(collections.body()).contains("Основна колекція", "/opds/v2/collections/c1", "numberOfItems\":2");
+
+        var groups = get(client, base + "/opds/v2/groups?limit=1");
+        assertThat(groups.body()).contains("Обране", "/opds/v2/groups/1", "\"next\"");
+
+        var groupBooks = get(client, base + "/opds/v2/groups/1");
+        assertThat(groupBooks.body()).contains("Книга \\\"Один\\\"");
+
+        var favorites = get(client, base + "/opds/v2/favorites");
+        assertThat(favorites.body()).contains("Книга \\\"Один\\\"");
+
+        var reading = get(client, base + "/opds/v2/continue");
+        assertThat(reading.body()).contains("Книга \\\"Один\\\"");
+
+        var detail = get(client, base + "/opds/v2/books/b1");
+        assertThat(detail.body()).contains("application/fb2+xml", "/opds/download/b1");
+
+        // OPDS 1.x remains available for old clients.
+        var legacy = get(client, base + "/opds");
+        assertThat(legacy.headers().firstValue("Content-Type").orElse("")).contains("application/atom+xml");
+        assertThat(legacy.body()).contains("OPDS 2.0", "/opds/v2");
+    }
+
     @Test
     void rejectsPlainHttpWhenBindingBeyondLoopback() throws Exception {
         server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null);
@@ -90,6 +151,24 @@ class JdkOpdsServerTest {
         var root = get(client, "https://127.0.0.1:" + port + "/opds");
         assertThat(root.statusCode()).isEqualTo(200);
         assertThat(root.body()).contains("MyHomeLib");
+    }
+
+    @Test
+    void webLibraryWorksOverLanHttpsAndRequiresAuthentication() throws Exception {
+        server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null);
+        int port = freePort();
+        String hash = OpdsPasswordHash.hash("secret");
+        OpdsServerSettings settings = new OpdsServerSettings("0.0.0.0", port, true, "reader", hash, false,
+                tlsSettings("changeit"), OpdsSecurityLimits.defaults());
+        assertThat(server.start(settings).running()).isTrue();
+
+        HttpClient client = httpsClient();
+        String uri = "https://127.0.0.1:" + port + "/web/";
+        assertThat(get(client, uri).statusCode()).isEqualTo(401);
+        var page = get(client, uri, basic("reader", "secret"));
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.headers().firstValue("Content-Type").orElse("")).startsWith("text/html");
+        assertThat(page.body()).contains("MyHomeLib", "name=\"viewport\"");
     }
 
     @Test
@@ -145,6 +224,132 @@ class JdkOpdsServerTest {
 
         var bad = get(client, "http://127.0.0.1:" + port + "/opds", basic("reader", "wrong"));
         assertThat(bad.statusCode()).isEqualTo(401);
+    }
+
+
+    @Test
+    void bearerTokensAuthenticateRevokeImmediatelyAndEnforceScopes() throws Exception {
+        MemorySettings tokenSettings = new MemorySettings();
+        OpdsAccessTokenService tokens = new OpdsAccessTokenService(tokenSettings);
+        var readToken = tokens.create("Browser", Set.of(OpdsTokenScope.CATALOG_READ));
+        var catalog = new OpdsCatalogService(new FakeCatalog());
+        server = new JdkOpdsServer(catalog, null, tokens);
+        int port = freePort();
+        String passwordHash = OpdsPasswordHash.hash("secret");
+        server.start(new OpdsServerSettings("127.0.0.1", port, true, "reader", passwordHash, false));
+        HttpClient client = HttpClient.newHttpClient();
+        String base = "http://127.0.0.1:" + port;
+
+        assertThat(get(client, base + "/opds/v2").statusCode()).isEqualTo(401);
+        assertThat(get(client, base + "/opds/v2", bearer(readToken.token())).statusCode()).isEqualTo(200);
+        assertThat(tokens.list().getFirst().lastUsedAt()).isNotNull();
+
+        var scopeDenied = get(client, base + "/opds/download/b1", bearer(readToken.token()));
+        assertThat(scopeDenied.statusCode()).isEqualTo(403);
+        assertThat(scopeDenied.headers().firstValue("WWW-Authenticate").orElse(""))
+                .contains("insufficient_scope");
+
+        assertThat(tokens.revoke(readToken.info().id())).isTrue();
+        var revoked = get(client, base + "/opds/v2", bearer(readToken.token()));
+        assertThat(revoked.statusCode()).isEqualTo(401);
+    }
+
+    @Test
+    void webLibraryRequiresAuthenticationAndServesResponsiveCatalogueSearchDetailsAndContinue() throws Exception {
+        MemorySettings tokenSettings = new MemorySettings();
+        OpdsAccessTokenService tokens = new OpdsAccessTokenService(tokenSettings);
+        var readToken = tokens.create("Browser", Set.of(OpdsTokenScope.CATALOG_READ));
+        server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null, tokens);
+        int port = freePort();
+        server.start(new OpdsServerSettings("127.0.0.1", port, false, "", "", false));
+        HttpClient client = HttpClient.newHttpClient();
+        String base = "http://127.0.0.1:" + port;
+
+        var denied = get(client, base + "/web/");
+        assertThat(denied.statusCode()).isEqualTo(401);
+        assertThat(denied.headers().firstValue("WWW-Authenticate").orElse("")).contains("Bearer");
+
+        var library = get(client, base + "/web/?limit=1", bearer(readToken.token()));
+        assertThat(library.statusCode()).isEqualTo(200);
+        assertThat(library.headers().firstValue("Content-Type").orElse("")).startsWith("text/html");
+        assertThat(library.body()).contains("name=\"viewport\"", "Книга &quot;Один&quot;", "Далі →", "/web/continue");
+
+        var search = get(client, base + "/web/search?q=needle", bearer(readToken.token()));
+        assertThat(search.statusCode()).isEqualTo(200);
+        assertThat(search.body()).contains("Пошук: needle", "value=\"needle\"");
+
+        var detail = get(client, base + "/web/books/b1", bearer(readToken.token()));
+        assertThat(detail.statusCode()).isEqualTo(200);
+        assertThat(detail.body()).contains("Анотація", "/web/download/b1", "/web/read/b1", "Читати");
+
+        var reading = get(client, base + "/web/continue", bearer(readToken.token()));
+        assertThat(reading.statusCode()).isEqualTo(200);
+        assertThat(reading.body()).contains("Продовжити читання", "Книга &quot;Один&quot;");
+
+        var downloadDenied = get(client, base + "/web/download/b1", bearer(readToken.token()));
+        assertThat(downloadDenied.statusCode()).isEqualTo(403);
+    }
+
+
+    @Test
+    void webReaderRendersEpubFb2UiResumesAndPersistsProgressThroughAuthenticatedPost() throws Exception {
+        MemorySettings tokenSettings = new MemorySettings();
+        OpdsAccessTokenService tokens = new OpdsAccessTokenService(tokenSettings);
+        var readToken = tokens.create("Browser", Set.of(OpdsTokenScope.CATALOG_READ));
+        java.util.concurrent.atomic.AtomicReference<ReadingProgressDto> saved = new java.util.concurrent.atomic.AtomicReference<>();
+        WebReaderUseCase reader = new WebReaderUseCase() {
+            @Override public Optional<WebReaderDocument> open(String bookId, int requestedChapter) {
+                int selected = requestedChapter < 0 ? 1 : requestedChapter;
+                return Optional.of(new WebReaderDocument(bookId, "Browser Book", "epub", true, "", java.util.List.of(
+                        new WebReaderChapter(0, "c1", "One", 0, 10, "alpha beta"),
+                        new WebReaderChapter(1, "c2", "Two", 11, 21, "gamma delta")
+                ), selected, 1, 15, 71.4));
+            }
+            @Override public ReadingProgressDto saveProgress(String bookId, int chapterIndex, long absoluteOffset) {
+                ReadingProgressDto dto = ReadingProgressDto.builder().bookId(bookId)
+                        .anchorId(chapterIndex + ":" + absoluteOffset + ":0:0")
+                        .chapterId("c" + (chapterIndex + 1)).percent(80).build();
+                saved.set(dto);
+                return dto;
+            }
+        };
+        server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null, tokens, reader);
+        int port = freePort();
+        server.start(new OpdsServerSettings("127.0.0.1", port, false, "", "", false));
+        HttpClient client = HttpClient.newHttpClient();
+        String base = "http://127.0.0.1:" + port;
+
+        assertThat(get(client, base + "/web/read/b1").statusCode()).isEqualTo(401);
+        var page = get(client, base + "/web/read/b1", bearer(readToken.token()));
+        assertThat(page.statusCode()).isEqualTo(200);
+        assertThat(page.body()).contains("Browser Book", "Зміст", "Two", "data-resume=\"15\"", "id=theme", "id=font");
+
+        var rejected = post(client, base + "/web/read/b1/progress", bearer(readToken.token()),
+                "{\"chapter\":1,\"offset\":18}", false);
+        assertThat(rejected.statusCode()).isEqualTo(403);
+
+        var progress = post(client, base + "/web/read/b1/progress", bearer(readToken.token()),
+                "{\"chapter\":1,\"offset\":18}", true);
+        assertThat(progress.statusCode()).isEqualTo(200);
+        assertThat(progress.body()).contains("80.0000");
+        assertThat(saved.get().getAnchorId()).isEqualTo("1:18:0:0");
+    }
+
+    @Test
+    void continueReadingWebShelfShowsSyncedProgressDeviceAndTime() throws Exception {
+        MemorySettings tokenSettings = new MemorySettings();
+        OpdsAccessTokenService tokens = new OpdsAccessTokenService(tokenSettings);
+        var readToken = tokens.create("Browser", Set.of(OpdsTokenScope.CATALOG_READ));
+        ContinueReadingService shelf = new ContinueReadingService(limit -> java.util.List.of(
+                new ContinueReadingItemDto("b1", "Synced Book", "Author", 64.5, "Chapter 4",
+                        LocalDateTime.of(2026, 9, 12, 18, 10), "phone-1")));
+        server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null, tokens, null, shelf);
+        int port = freePort();
+        server.start(new OpdsServerSettings("127.0.0.1", port, false, "", "", false));
+
+        var response = get(HttpClient.newHttpClient(), "http://127.0.0.1:" + port + "/web/continue", bearer(readToken.token()));
+        assertThat(response.statusCode()).isEqualTo(200);
+        assertThat(response.body()).contains("Synced Book", "64.5%", "phone-1", "12.09.2026 18:10", "/web/read/b1");
     }
 
     @Test
@@ -217,10 +422,21 @@ class JdkOpdsServerTest {
                 HttpResponse.BodyHandlers.ofString());
     }
 
+
+    private static HttpResponse<String> post(HttpClient client, String uri, String authorization, String json, boolean marker) throws Exception {
+        HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(uri))
+                .header("Authorization", authorization)
+                .header("Content-Type", "application/json");
+        if (marker) builder.header("X-MyHomeLib-Request", "1");
+        return client.send(builder.POST(HttpRequest.BodyPublishers.ofString(json)).build(), HttpResponse.BodyHandlers.ofString());
+    }
+
     private static String basic(String username, String password) {
         String token = Base64.getEncoder().encodeToString((username + ":" + password).getBytes(StandardCharsets.UTF_8));
         return "Basic " + token;
     }
+
+    private static String bearer(String token) { return "Bearer " + token; }
 
     private static OpdsTlsSettings tlsSettings(String password) throws Exception {
         Path path = Path.of(JdkOpdsServerTest.class.getResource("/tls/opds-test.p12").toURI());
@@ -251,8 +467,55 @@ class JdkOpdsServerTest {
         }
         @Override public OpdsPage<OpdsFacetDto> series(int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
         @Override public OpdsPage<OpdsFacetDto> genres(int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
-        @Override public OpdsPage<OpdsBookDto> books(OpdsBookQuery query) { return new OpdsPage<>(java.util.List.of(), 0, query.offset(), query.limit()); }
-        @Override public Optional<OpdsBookDto> book(String bookId) { return Optional.empty(); }
+        @Override public OpdsPage<OpdsBookDto> books(OpdsBookQuery query) {
+            var all = java.util.List.of(book("b1", "Книга \"Один\""), book("b2", "Друга книга"));
+            int from = Math.min(query.offset(), all.size());
+            int to = Math.min(from + query.limit(), all.size());
+            return new OpdsPage<>(all.subList(from, to), all.size(), query.offset(), query.limit());
+        }
+        @Override public Optional<OpdsBookDto> book(String bookId) {
+            return "b1".equals(bookId) ? Optional.of(book("b1", "Книга \"Один\"")) : Optional.empty();
+        }
+        @Override public Optional<OpdsFacetDto> currentCollection() {
+            return Optional.of(new OpdsFacetDto("c1", "Основна колекція", 2));
+        }
+        @Override public OpdsPage<OpdsFacetDto> groups(int offset, int limit) {
+            var all = java.util.List.of(new OpdsFacetDto("1", "Обране", 1), new OpdsFacetDto("2", "До читання", 1));
+            int from = Math.min(offset, all.size());
+            int to = Math.min(from + limit, all.size());
+            return new OpdsPage<>(all.subList(from, to), all.size(), offset, limit);
+        }
+        @Override public OpdsPage<OpdsBookDto> groupBooks(String groupId, int offset, int limit) {
+            return pageOf(book("b1", "Книга \"Один\""), offset, limit);
+        }
+        @Override public OpdsPage<OpdsBookDto> favorites(int offset, int limit) {
+            return pageOf(book("b1", "Книга \"Один\""), offset, limit);
+        }
+        @Override public OpdsPage<OpdsBookDto> continueReading(int offset, int limit) {
+            return pageOf(book("b1", "Книга \"Один\""), offset, limit);
+        }
+        private static OpdsPage<OpdsBookDto> pageOf(OpdsBookDto book, int offset, int limit) {
+            var all = java.util.List.of(book);
+            int from = Math.min(offset, all.size());
+            int to = Math.min(from + limit, all.size());
+            return new OpdsPage<>(all.subList(from, to), all.size(), offset, limit);
+        }
+        private static OpdsBookDto book(String id, String title) {
+            return new OpdsBookDto(id, title, "Автор", "Серія", "uk", 2026, "Анотація",
+                    "fb2", true, id + ".fb2", "");
+        }
+    }
+
+    private static final class MemorySettings implements ApplicationSettingsPort {
+        private final Map<String, String> values = new LinkedHashMap<>();
+        @Override public String get(String key, String defaultValue) { return values.getOrDefault(key, defaultValue); }
+        @Override public void put(String key, String value) { if (value == null) values.remove(key); else values.put(key, value); }
+        @Override public void remove(String key) { values.remove(key); }
+        @Override public Map<String, String> findByPrefix(String prefix) {
+            Map<String, String> result = new LinkedHashMap<>();
+            values.forEach((key, value) -> { if (key.startsWith(prefix)) result.put(key, value); });
+            return result;
+        }
     }
 
     private static final class BlockingCatalog extends FakeCatalog {

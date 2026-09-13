@@ -26,6 +26,15 @@
             <version>${project.parent.version}</version>
         </dependency>
 
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-core</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.lucene</groupId>
+            <artifactId>lucene-analysis-common</artifactId>
+        </dependency>
+
         <!-- Spring Boot Starter для анотацій та контексту -->
         <dependency>
             <groupId>org.springframework.boot</groupId>

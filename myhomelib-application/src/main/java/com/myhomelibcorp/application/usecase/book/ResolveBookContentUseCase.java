@@ -40,6 +40,13 @@ public class ResolveBookContentUseCase {
 
         if (!resourcePort.isArchive(physical.toString())) return new ResolvedBookContent(physical, false);
 
+        // Some reader-native documents are themselves archive containers (CBZ/CBR).
+        // When the physical container extension is explicitly allowed, preserve it whole
+        // instead of selecting one member as if it were a generic ZIP/RAR bundle.
+        if (allowed(allowedExtensions, physical.getFileName() == null ? "" : physical.getFileName().toString())) {
+            return new ResolvedBookContent(physical, false);
+        }
+
         String selected = trim(book.getArchiveEntry());
         if (selected.isBlank()) {
             selected = resourcePort.listArchiveEntries(physical).stream()
@@ -50,7 +57,10 @@ public class ResolveBookContentUseCase {
             throw new IOException("В архіві не знайдено підтримуваний файл книги");
         }
 
-        Optional<InputStream> opened = resourcePort.readArchiveEntry(physical, selected);
+        Optional<InputStream> opened = trim(book.getArchiveEntry()).isBlank()
+                ? resourcePort.readArchiveEntry(physical, selected)
+                : resourcePort.readBookData(
+                        book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry());
         if (opened.isEmpty()) throw new IOException("Не вдалося прочитати запис архіву: " + selected);
         Path temp = Files.createTempFile("myhomelib-book-content-", suffix(selected));
         boolean success = false;

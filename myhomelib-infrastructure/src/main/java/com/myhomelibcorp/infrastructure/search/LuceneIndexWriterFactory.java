@@ -25,15 +25,15 @@ final class LuceneIndexWriterFactory {
 
     static OpenedIndex open(Directory initialDirectory, Analyzer analyzer) {
         Directory directory = initialDirectory;
-        IndexWriterConfig config = config(analyzer, IndexWriterConfig.OpenMode.CREATE_OR_APPEND);
+        IndexWriterConfig.OpenMode mode = IndexWriterConfig.OpenMode.CREATE_OR_APPEND;
         Exception lastLock = null;
 
         for (int attempt = 1; attempt <= LOCK_ATTEMPTS; attempt++) {
             try {
-                IndexWriter writer = new IndexWriter(directory, config);
-                SearcherManager searcher = new SearcherManager(writer, true, true, null);
+                // IndexWriterConfig is attached to one writer, including failed open attempts.
+                OpenedIndex opened = openResources(directory, analyzer, mode);
                 log.info("Lucene IndexWriter/SearcherManager opened (attempt {})", attempt);
-                return new OpenedIndex(directory, writer, searcher);
+                return opened;
             } catch (LockObtainFailedException e) {
                 lastLock = e;
                 if (attempt == LOCK_ATTEMPTS) break;
@@ -46,12 +46,24 @@ final class LuceneIndexWriterFactory {
                 }
             } catch (IndexFormatTooNewException | IndexFormatTooOldException incompatible) {
                 directory = recreateFilesystemDirectory(directory, incompatible);
-                config = config(analyzer, IndexWriterConfig.OpenMode.CREATE);
+                mode = IndexWriterConfig.OpenMode.CREATE;
             } catch (IOException e) {
                 throw new IllegalStateException("Cannot open Lucene index", e);
             }
         }
         throw new IllegalStateException("Cannot obtain Lucene index lock after " + LOCK_ATTEMPTS + " attempts", lastLock);
+    }
+
+    private static OpenedIndex openResources(Directory directory, Analyzer analyzer, IndexWriterConfig.OpenMode mode)
+            throws IOException {
+        IndexWriter writer = new IndexWriter(directory, config(analyzer, mode));
+        try {
+            return new OpenedIndex(directory, writer, new SearcherManager(writer, true, true, null));
+        } catch (IOException | RuntimeException failure) {
+            try { writer.rollback(); }
+            catch (IOException | RuntimeException cleanup) { failure.addSuppressed(cleanup); }
+            throw failure;
+        }
     }
 
     static IndexWriterConfig config(Analyzer analyzer, IndexWriterConfig.OpenMode mode) {

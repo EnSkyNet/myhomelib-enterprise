@@ -13,6 +13,7 @@ import java.util.List;
  *   <li>Recovery before any SQLite open.</li>
  *   <li>Collection activation + Flyway migration.</li>
  *   <li>Search reuse/rebuild policy after migration.</li>
+ *   <li>Restore unfinished full-text indexing queue.</li>
  *   <li>Backup staging cleanup.</li>
  *   <li>Optional OPDS autostart.</li>
  * </ol>
@@ -28,6 +29,7 @@ public class StartupOrchestrator {
             RecoveryStartupTask recoveryStartupTask,
             MigrationStartupTask migrationStartupTask,
             SearchStartupTask searchStartupTask,
+            ContentIndexingStartupTask contentIndexingStartupTask,
             BackupStartupTask backupStartupTask,
             OPDSStartupTask opdsStartupTask) {
         this.collectionResolver = collectionResolver;
@@ -35,6 +37,7 @@ public class StartupOrchestrator {
                 recoveryStartupTask,
                 migrationStartupTask,
                 searchStartupTask,
+                contentIndexingStartupTask,
                 backupStartupTask,
                 opdsStartupTask);
     }

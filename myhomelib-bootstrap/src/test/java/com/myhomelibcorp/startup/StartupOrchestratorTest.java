@@ -14,6 +14,7 @@ class StartupOrchestratorTest {
         RecoveryStartupTask recovery = mock(RecoveryStartupTask.class);
         MigrationStartupTask migration = mock(MigrationStartupTask.class);
         SearchStartupTask search = mock(SearchStartupTask.class);
+        ContentIndexingStartupTask contentIndexing = mock(ContentIndexingStartupTask.class);
         BackupStartupTask backup = mock(BackupStartupTask.class);
         OPDSStartupTask opds = mock(OPDSStartupTask.class);
         var collection = StartupTestFixtures.collection("c1");
@@ -23,25 +24,28 @@ class StartupOrchestratorTest {
         when(search.id()).thenReturn("SearchStartupTask");
         when(search.failurePolicy()).thenReturn(StartupFailurePolicy.BEST_EFFORT);
         when(search.execute(any())).thenThrow(new IllegalStateException("search executor saturated"));
+        stub(contentIndexing, "ContentIndexingStartupTask", StartupFailurePolicy.BEST_EFFORT, StartupTaskResult.success("restored"));
         stub(backup, "BackupStartupTask", StartupFailurePolicy.BEST_EFFORT, StartupTaskResult.skipped("none"));
         stub(opds, "OPDSStartupTask", StartupFailurePolicy.BEST_EFFORT, StartupTaskResult.skipped("disabled"));
-        StartupOrchestrator orchestrator = new StartupOrchestrator(resolver, recovery, migration, search, backup, opds);
+        StartupOrchestrator orchestrator = new StartupOrchestrator(resolver, recovery, migration, search, contentIndexing, backup, opds);
 
         StartupReport report = orchestrator.run();
 
         assertThat(orchestrator.orderedTaskIds()).containsExactly(
-                "RecoveryStartupTask", "MigrationStartupTask", "SearchStartupTask", "BackupStartupTask", "OPDSStartupTask");
+                "RecoveryStartupTask", "MigrationStartupTask", "SearchStartupTask", "ContentIndexingStartupTask", "BackupStartupTask", "OPDSStartupTask");
         assertThat(report.degraded()).isTrue();
         assertThat(report.outcomes()).extracting(StartupTaskOutcome::status).containsExactly(
                 StartupTaskOutcome.Status.SUCCESS,
                 StartupTaskOutcome.Status.SUCCESS,
                 StartupTaskOutcome.Status.DEGRADED,
+                StartupTaskOutcome.Status.SUCCESS,
                 StartupTaskOutcome.Status.SKIPPED,
                 StartupTaskOutcome.Status.SKIPPED);
-        InOrder order = inOrder(recovery, migration, search, backup, opds);
+        InOrder order = inOrder(recovery, migration, search, contentIndexing, backup, opds);
         order.verify(recovery).execute(any());
         order.verify(migration).execute(any());
         order.verify(search).execute(any());
+        order.verify(contentIndexing).execute(any());
         order.verify(backup).execute(any());
         order.verify(opds).execute(any());
     }
@@ -52,18 +56,19 @@ class StartupOrchestratorTest {
         RecoveryStartupTask recovery = mock(RecoveryStartupTask.class);
         MigrationStartupTask migration = mock(MigrationStartupTask.class);
         SearchStartupTask search = mock(SearchStartupTask.class);
+        ContentIndexingStartupTask contentIndexing = mock(ContentIndexingStartupTask.class);
         BackupStartupTask backup = mock(BackupStartupTask.class);
         OPDSStartupTask opds = mock(OPDSStartupTask.class);
         when(resolver.resolve()).thenReturn(StartupTestFixtures.collection("c1"));
         when(recovery.id()).thenReturn("RecoveryStartupTask");
         when(recovery.failurePolicy()).thenReturn(StartupFailurePolicy.REQUIRED);
         when(recovery.execute(any())).thenThrow(new IllegalStateException("recovery marker is corrupt"));
-        StartupOrchestrator orchestrator = new StartupOrchestrator(resolver, recovery, migration, search, backup, opds);
+        StartupOrchestrator orchestrator = new StartupOrchestrator(resolver, recovery, migration, search, contentIndexing, backup, opds);
 
         assertThatThrownBy(orchestrator::run)
                 .isInstanceOf(StartupException.class)
                 .satisfies(error -> assertThat(((StartupException) error).taskId()).isEqualTo("RecoveryStartupTask"));
-        verifyNoInteractions(migration, search, backup, opds);
+        verifyNoInteractions(migration, search, contentIndexing, backup, opds);
     }
 
     private static void stub(StartupTask task, String id, StartupFailurePolicy policy, StartupTaskResult result) throws Exception {

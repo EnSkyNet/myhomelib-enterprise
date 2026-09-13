@@ -1,0 +1,34 @@
+Iteration 66 — MHL-505 Send to Device completion safety
+Date: 2026-09-13
+
+Validation evidence:
+- targeted MHL-504/MHL-505 export regression: 14 tests, 0 failures/errors/skips
+- full myhomelib-application suite: 255 tests, 0 failures/errors, 1 skipped
+- LayerArchitectureTest: 14/14 PASS
+- architecture-check.py: PASS
+- implementation-completeness-check.py: PASS
+- check-critical-ui-localization.py: PASS
+- static_release_check.py: PASS
+- full 16-project offline test-compile: BUILD SUCCESS
+- two supplied real FB2 archives: RealFb2ReaderProbeTest PASS
+- supplied Flibusta INPX: 707,154-record precheck; production smoke reached 200,000 processed records with 0 parser/import errors before execution limit; no full-corpus completion claim
+
+Changed source/documentation files relative to Iteration 65:
+MODIFIED: ARCHITECTURE.md
+MODIFIED: MYHOMELIB-DEVELOPMENT.md
+MODIFIED: MYHOMELIB-FEATURES.md
+MODIFIED: README.md
+MODIFIED: docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+ADDED: docs/history/records/ITERATION-66-SEND-TO-DEVICE-CHECKPOINT.md
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/dto/ExportRequest.java
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/export/ExportCompletionService.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java
+MODIFIED: myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/ExportController.java
+MODIFIED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseCrashSafetyTest.java
+MODIFIED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseDeviceProfileTest.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseSendToDeviceTest.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/export/ExportCompletionServiceTest.java
+ADDED: myhomelib-ui/src/test/java/com/myhomelibcorp/ui/ExportControllerSendToDeviceContractTest.java
+MOVED: ITERATION-64-CHANGED-FILES.txt -> docs/history/records/ITERATION-64-CHANGED-FILES.txt
+MOVED: ITERATION-65-CHANGED-FILES.txt -> docs/history/records/ITERATION-65-CHANGED-FILES.txt
+ADDED: docs/history/records/ITERATION-66-CHANGED-FILES.txt

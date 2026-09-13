@@ -8,7 +8,9 @@ import com.myhomelibcorp.ui.action.ActionCustomizationDialog;
 import com.myhomelibcorp.ui.action.ActionRegistry;
 import com.myhomelibcorp.ui.action.BookActionProfilesDialog;
 import com.myhomelibcorp.ui.action.CoreActions;
+import com.myhomelibcorp.ui.accessibility.UiAccessibilitySupport;
 import com.myhomelibcorp.ui.collection.CollectionWorkspaceController;
+import com.myhomelibcorp.ui.duplicate.DuplicateReviewUiService;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
@@ -29,6 +31,7 @@ import javafx.scene.control.RadioMenuItem;
 import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Modality;
@@ -60,6 +63,7 @@ public class MainController {
     private final CatalogUpdateService catalogUpdateService;
     private final UiBackgroundExecutor uiBackgroundExecutor;
     private final ApplicationThemeService applicationThemeService;
+    private final DuplicateReviewUiService duplicateReviewUiService;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -81,6 +85,7 @@ public class MainController {
     private final com.myhomelibcorp.ui.service.CollectionPropertiesUiService collectionPropertiesUiService;
     // ===== FXML =====
     @FXML private BorderPane mainPane;
+    @FXML private FlowPane mainToolbar;
     @FXML private TextField searchField;
     @FXML private Button backButton;
     @FXML private Button forwardButton;
@@ -125,6 +130,7 @@ public class MainController {
 
         showDashboard();
         localizationService.apply(mainPane);
+        UiAccessibilitySupport.enhance(mainPane);
         populateLanguages();
         if (languageMenu != null) languageMenu.setOnShowing(event -> populateLanguages());
         if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> mainNavigationCoordinator.populateRecentBooksMenu(recentBooksMenu));
@@ -362,6 +368,11 @@ public class MainController {
     public void onFollowedAuthors() { mainNavigationCoordinator.followedAuthors(); }
 
     @FXML
+    public void onAnnotations() {
+        mainNavigationCoordinator.annotations();
+    }
+
+    @FXML
     public void onOperations() {
         cleanupReader();
         workspaceManager.showOperationCenterWorkspace();
@@ -497,7 +508,15 @@ public class MainController {
     // ==================== Експорт ====================
     @FXML
     public void handleExport() {
-        exportController.handleExport(mainPane);
+        exportController.handleExport(mainPane == null || mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+                this::refreshAfterSuccessfulExport);
+    }
+
+    private void refreshAfterSuccessfulExport() {
+        if (appState.getBookTableController() != null) appState.getBookTableController().refreshRows();
+        eventPublisher.publishEvent(new NavigationRefreshEvent());
+        navigationPanelController.refreshAll();
+        refreshUpdateBadge();
     }
 
     @FXML
@@ -525,6 +544,11 @@ public class MainController {
         importController.handleSyncFolder(this::handleRefresh);
     }
     // ==================== Інструменти БД ====================
+    @FXML
+    public void handleDuplicates() {
+        duplicateReviewUiService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+    }
+
     @FXML
     public void handleCheckIntegrity() {
         Stage stage = (Stage) mainPane.getScene().getWindow();
@@ -561,6 +585,21 @@ public class MainController {
     // ==================== Редагування книг ====================
     @FXML
     public void handleEditMetadata() { bookCommandCoordinator.editMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
+
+    @FXML
+    public void handleBatchMetadata() { bookCommandCoordinator.editBatchMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
+
+    @FXML
+    public void handleLocalBatchMetadata() { bookCommandCoordinator.editLocalBatchMetadata(mainPane.getScene().getWindow(), this::handleRefresh); }
+
+    @FXML
+    public void handleUndoLastLibraryOperation() { bookCommandCoordinator.undoLastLibraryOperation(mainPane.getScene().getWindow(), this::handleRefresh); }
+
+    @FXML
+    public void handleManageCustomFields() { bookCommandCoordinator.manageCustomFields(mainPane.getScene().getWindow()); }
+
+    @FXML
+    public void handleEditCustomFieldValues() { bookCommandCoordinator.editCustomFieldValues(mainPane.getScene().getWindow()); }
 
     @FXML
     public void handleDeleteBook() {

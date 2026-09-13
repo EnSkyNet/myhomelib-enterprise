@@ -113,6 +113,11 @@ class OpdsManagedTlsIntegrationTest {
             @Override public OpdsPage<OpdsFacetDto> genres(int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
             @Override public OpdsPage<OpdsBookDto> books(OpdsBookQuery query) { return new OpdsPage<>(java.util.List.of(), 0, query.offset(), query.limit()); }
             @Override public Optional<OpdsBookDto> book(String bookId) { return Optional.empty(); }
+            @Override public Optional<OpdsFacetDto> currentCollection() { return Optional.empty(); }
+            @Override public OpdsPage<OpdsFacetDto> groups(int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
+            @Override public OpdsPage<OpdsBookDto> groupBooks(String groupId, int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
+            @Override public OpdsPage<OpdsBookDto> favorites(int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
+            @Override public OpdsPage<OpdsBookDto> continueReading(int offset, int limit) { return new OpdsPage<>(java.util.List.of(), 0, offset, limit); }
         };
     }
 

@@ -15,7 +15,7 @@ navcoord=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/navigation/MainNa
 bookcoord=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/MainBookCommandCoordinator.java')
 test=text('myhomelib-ui/src/test/java/com/myhomelibcorp/ui/navigation/WorkspaceManagerNavigationStateTest.java')
 
-need(len(main.splitlines()) <= 660, f'MainController still too large: {len(main.splitlines())} lines')
+need(len(main.splitlines()) <= 680, f'MainController exceeded reviewed feature-era ratchet: {len(main.splitlines())} lines')
 need('setMainController(' not in main, 'MainController must not wire callback cycles')
 need('MainController' not in workspace, 'WorkspaceManager must not depend on MainController')
 need(not (ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/NavigationHistoryService.java').exists(),

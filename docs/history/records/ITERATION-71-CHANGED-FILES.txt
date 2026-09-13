@@ -1,0 +1,28 @@
+MHL-510 / Iteration 71 exact source change inventory
+
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiConsent.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiExtensionService.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiOperation.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiProvider.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiProviderCapabilities.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiProviderContext.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiProviderErrorKind.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiProviderException.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiRequest.java
+ADDED myhomelib-application/src/main/java/com/myhomelibcorp/application/ai/AiResponse.java
+ADDED myhomelib-application/src/test/java/com/myhomelibcorp/application/ai/AiExtensionServiceTest.java
+ADDED myhomelib-plugin-api/src/main/java/com/myhomelibcorp/plugin/api/AiProvider.java
+ADDED myhomelib-plugin-api/src/test/java/com/myhomelibcorp/plugin/api/AiProviderPluginContractTest.java
+ADDED docs/history/records/ITERATION-71-AI-EXTENSION-CHECKPOINT.md
+ADDED docs/history/records/ITERATION-71-CHANGED-FILES.txt
+MODIFIED myhomelib-plugin-api/src/main/java/com/myhomelibcorp/plugin/api/PluginApiVersion.java
+MODIFIED myhomelib-plugin-api/src/main/java/com/myhomelibcorp/plugin/api/PluginLoader.java
+MODIFIED myhomelib-plugin-api/src/main/java/com/myhomelibcorp/plugin/api/PluginService.java
+MODIFIED myhomelib-plugin-api/src/test/java/com/myhomelibcorp/plugin/api/PluginSpiSurfaceTest.java
+MODIFIED docs/plugin-sdk/COMPATIBILITY.md
+MODIFIED docs/plugin-sdk/README.md
+MODIFIED MYHOMELIB-FEATURES.md
+MODIFIED MYHOMELIB-RELEASE.md
+MODIFIED README.md
+MODIFIED docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+MODIFIED docs/history/MYHOMELIB-HISTORY-FIXES.md

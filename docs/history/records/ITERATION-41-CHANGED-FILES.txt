@@ -1,0 +1,17 @@
+# Iteration 41 changed files vs Iteration 40 formal source baseline
+
+ADD	ITERATION-41-CHANGED-FILES.txt
+ADD	ITERATION-41-UNDO-TRANSACTION-OFFLINE-CHECKPOINT.md
+MOD	MYHOMELIB-DEVELOPMENT.md
+MOD	README.md
+ADD	TASKS-ITERATION-41.md
+ADD	myhomelib-application/src/test/java/com/myhomelibcorp/application/bulkedit/BatchMetadataEditUseCaseUndoGuardTest.java
+ADD	myhomelib-application/src/test/java/com/myhomelibcorp/application/history/LibraryOperationHistoryUseCaseTest.java
+ADD	myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/CollectionTransactionExecutor.java
+MOD	myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationExportQueryAdapter.java
+MOD	myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationManagerQueryAdapter.java
+MOD	myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteAnnotationRepository.java
+MOD	myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/history/SqliteOperationHistoryAcceptanceTest.java
+ADD	myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/CollectionTransactionExecutorTest.java
+ADD	tools/offline_acceptance.py
+MOD	tools/stage35-annotations-check.py

@@ -1,0 +1,2 @@
+timestamp,tasks,cpu,profile,worker_limit,max_active,p95_enqueue_us,max_enqueue_us,total_ms,completed
+2026-09-12T12:01:09.577522867Z,300,4,BALANCED,2,2,167,5421,389,300

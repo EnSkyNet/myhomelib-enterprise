@@ -28,7 +28,9 @@ for token in ['navigateToAuthor','navigateToSeriesByName','navigateToGenre','nav
 for token in ['tocPreviewBox','Pagination','openImage','wordCount','sourceLanguageLabel','translatorsLabel','reviewArea']:
     require(token in controller or token in fxml, f'rich panel missing {token}')
 require('ResolveBookContentUseCase' in analysis and 'ArchiveSafetyLimits.MAX_ENTRY_BYTES' in source, 'archive materialization is not bounded behind application use case')
-require('DETAILS_EXTENSIONS' in source and all(x in source for x in ['"mobi"','"pdf"','"djvu"']), 'extra formats not resolvable')
+registry = text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/format/SupportedFormatRegistry.java')
+require('DETAILS_EXTENSIONS = FORMATS.extensions(' in source and 'SupportedFormatRegistry.standard()' in source
+        and all(x in registry for x in ['"mobi"', '"pdf"', '"djvu"']), 'extra formats not resolvable through canonical registry')
 for token in ['countWords','flattenToc','scanFb2SourceLanguage','DocumentImageInfo','resources().open']:
     require(token in inspection, f'reader inspection missing {token}')
 for token in ['inspectMobi','inspectPdf','inspectDjvu','EXTH','pdfField(latin, "Title")']:

@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.search;
 
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.port.out.customfield.CustomFieldRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.port.out.search.SearchQueryService;
 import com.myhomelibcorp.application.query.search.SearchRequest;
@@ -23,6 +24,7 @@ import org.apache.lucene.search.SearcherManager;
 import org.apache.lucene.index.Term;
 import org.apache.lucene.store.Directory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -39,12 +41,15 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     private Directory directory;
     private final Analyzer analyzer;
     private final BookQueryRepository bookQueryRepository;
+    private final CustomFieldRepository customFieldRepository;
     private final LuceneDocumentMapper documentMapper = new LuceneDocumentMapper();
     private final LuceneUnifiedFilterBuilder unifiedFilterBuilder = new LuceneUnifiedFilterBuilder();
+    private final LuceneSmartCollectionBuilder smartCollectionBuilder = new LuceneSmartCollectionBuilder();
+    private final LuceneCustomFieldFilterBuilder customFieldFilterBuilder = new LuceneCustomFieldFilterBuilder();
     private final LuceneQueryNormalizer queryNormalizer;
 
     @Value("${app.search.commit-interval:10000}")
-    private int commitInterval;
+    private int commitInterval = 10_000;
 
     private IndexWriter indexWriter;
     private SearcherManager searcherManager;
@@ -59,9 +64,16 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
     public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
                                BookQueryRepository bookQueryRepository) {
+        this(directory, analyzer, queryParser, bookQueryRepository, null);
+    }
+
+    @Autowired
+    public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
+                               BookQueryRepository bookQueryRepository, CustomFieldRepository customFieldRepository) {
         this.directory = directory;
         this.analyzer = analyzer;
         this.bookQueryRepository = bookQueryRepository;
+        this.customFieldRepository = customFieldRepository;
         this.queryNormalizer = new LuceneQueryNormalizer(queryParser);
     }
 
@@ -111,7 +123,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     @Override
     public void indexBook(Book book) {
         if (book == null || isClosed.get()) return;
-        indexSnapshot(BookSnapshot.fromBook(book));
+        indexSnapshot(snapshotWithCustomFields(book));
     }
 
     @Override
@@ -136,7 +148,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         try {
             for (Book book : books) {
                 if (book == null) continue;
-                BookSnapshot snapshot = BookSnapshot.fromBook(book);
+                BookSnapshot snapshot = snapshotWithCustomFields(book);
                 indexWriter.updateDocument(new Term("id", snapshot.getId().asString()),
                         documentMapper.toDocument(snapshot));
                 indexed++;
@@ -147,6 +159,21 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         } catch (IOException e) {
             throw new IllegalStateException("Не вдалося пакетно оновити Lucene індекс", e);
         }
+    }
+
+    private BookSnapshot snapshotWithCustomFields(Book book) {
+        BookSnapshot snapshot = BookSnapshot.fromBook(book);
+        if (customFieldRepository == null || book == null || book.getId() == null) return snapshot;
+        var values = customFieldRepository.findValues(book.getId());
+        return BookSnapshot.builder()
+                .id(snapshot.getId()).title(snapshot.getTitle()).authorsText(snapshot.getAuthorsText()).authorIds(snapshot.getAuthorIds())
+                .series(snapshot.getSeries()).genresText(snapshot.getGenresText()).genreIds(snapshot.getGenreIds())
+                .keywords(snapshot.getKeywords()).annotation(snapshot.getAnnotation()).fileName(snapshot.getFileName())
+                .language(snapshot.getLanguage()).rate(snapshot.getRate()).progress(snapshot.getProgress()).year(snapshot.getYear())
+                .publisher(snapshot.getPublisher()).libId(snapshot.getLibId()).libraryRate(snapshot.getLibraryRate())
+                .translators(snapshot.getTranslators()).city(snapshot.getCity()).sourceUrl(snapshot.getSourceUrl()).isbn(snapshot.getIsbn())
+                .createdAt(snapshot.getCreatedAt()).updateDate(snapshot.getUpdateDate()).deleted(snapshot.isDeleted()).local(snapshot.isLocal())
+                .customFieldValues(values.values().stream().toList()).build();
     }
 
     @Override
@@ -396,7 +423,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
             throw new SearchIndexUnavailableException(queryUnavailableReason);
         }
         try {
-            return LuceneSearchExecutor.search(request, searcherManager, queryNormalizer, unifiedFilterBuilder);
+            return LuceneSearchExecutor.search(request, searcherManager, queryNormalizer, unifiedFilterBuilder, smartCollectionBuilder, customFieldFilterBuilder);
         } catch (SearchIndexUnavailableException e) {
             throw e;
         } catch (Exception e) {

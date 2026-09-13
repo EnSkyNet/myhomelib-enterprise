@@ -11,6 +11,7 @@ import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.session.SessionService;
+import com.myhomelibcorp.application.usecase.reading.ContinueReadingService;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
@@ -33,6 +34,7 @@ public class LoadDashboardDataUseCase {
     private final AuthorMapper authorMapper;
     private final ExecutorPort executorPort;
     private final SessionService sessionService;
+    private final ContinueReadingService continueReadingService;
 
     public CompletableFuture<DashboardData> execute() {
         CompletableFuture<LibraryStatistics> statsFuture = executorPort.submit(
@@ -67,13 +69,16 @@ public class LoadDashboardDataUseCase {
             return bookMapper.toDto(book);
         });
 
-        return CompletableFuture.allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture)
+        var continueShelfFuture = executorPort.submit(() -> continueReadingService.recent(10));
+
+        return CompletableFuture.allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture, continueShelfFuture)
                 .thenApply(v -> DashboardData.builder()
                         .statistics(statsFuture.join())
                         .recentBooks(recentFuture.join())
                         .recentAdded(addedFuture.join())
                         .favoriteAuthors(favAuthorsFuture.join())
                         .continueReading(continueFuture.join())
+                        .continueReadingShelf(continueShelfFuture.join())
                         .build());
     }
 }

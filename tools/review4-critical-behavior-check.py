@@ -34,7 +34,7 @@ try:
             ["resources.locateBookFile"], [])
     require("resource resolver accepts only physical files",
             "myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/resource/BookResourceResolver.java",
-            ["Files.isRegularFile(archivePath)", "Files.isRegularFile(filePath)", "archiveReader.containsEntry"],
+            ["Files.isRegularFile(archivePath)", "Files.isRegularFile(filePath)", "resolveArchiveEntry", "archiveReader.listEntries"],
             ["filePath != null && Files.exists(filePath)"])
     require("no UI thread sleeps",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/imports/ImportWorkspaceController.java",

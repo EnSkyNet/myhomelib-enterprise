@@ -2,7 +2,7 @@
 
 MyHomeLib Enterprise създава съгласуван SQLite snapshot чрез `VACUUM INTO`; активна WAL база не се копира като обикновен файл. Нормалният backup може да съдържа базата, search index, covers и `user-data.json`.
 
-`user-data.json` е преносим versioned manifest с ratings, progress/reviews, bookmarks, reading history/statistics, groups/favorites, saved searches, unified filters, глобални Reader settings и per-book Reader overrides. Данните за книга се свързват първо по стабилен `LibID`; вътрешният book ID е само fallback за същия каталог.
+`user-data.json` е преносим versioned manifest с ratings, progress/reviews, bookmarks, highlights/notes с текстови anchors, reading history/statistics, groups/favorites, saved searches, unified filters, глобални Reader settings и per-book Reader overrides. Данните за книга се свързват първо по стабилен `LibID`; вътрешният book ID е само fallback за същия каталог.
 
 Restore има два режима:
 

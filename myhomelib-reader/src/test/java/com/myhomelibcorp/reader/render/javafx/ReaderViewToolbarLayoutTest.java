@@ -8,8 +8,8 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
-import java.awt.GraphicsEnvironment;
 import java.lang.reflect.Method;
+import java.nio.file.Path;
 import java.util.Locale;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -120,18 +120,41 @@ class ReaderViewToolbarLayoutTest {
         assertThat(done.await(10, TimeUnit.SECONDS)).isTrue();
         if (error.get() != null) throw new AssertionError(error.get());
     }
-    /** Avoid poisoning the JavaFX singleton when CI exposes a stale/unreachable DISPLAY. */
-    private static void assumeDisplayReachable() {
+    /** Avoid poisoning AWT/JavaFX singletons when CI exposes a stale/unreachable DISPLAY. */
+    private static void assumeDisplayReachable() throws Exception {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (!os.contains("linux")) return;
 
         String display = System.getenv("DISPLAY");
-        Assumptions.assumeTrue(display != null && !display.isBlank(),
-                "JavaFX runtime test requires DISPLAY on Linux");
-        try {
-            GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
-        } catch (Throwable unreachableDisplay) {
-            Assumptions.abort("JavaFX DISPLAY is not reachable: " + unreachableDisplay.getMessage());
+        if (display == null || display.isBlank()) {
+            System.setProperty("java.awt.headless", "true");
+            Assumptions.abort("JavaFX runtime test requires DISPLAY on Linux");
+        }
+
+        Process probe = new ProcessBuilder(
+                Path.of(System.getProperty("java.home"), "bin", "java").toString(),
+                "-cp", System.getProperty("java.class.path"),
+                DisplayProbe.class.getName())
+                .redirectErrorStream(true)
+                .start();
+        boolean finished = probe.waitFor(5, TimeUnit.SECONDS);
+        if (!finished) probe.destroyForcibly();
+        if (!finished || probe.exitValue() != 0) {
+            System.setProperty("java.awt.headless", "true");
+            Assumptions.abort("JavaFX DISPLAY is not reachable");
+        }
+    }
+
+    /** Runs the destructive AWT display probe in an isolated JVM. */
+    public static final class DisplayProbe {
+        private DisplayProbe() { }
+
+        public static void main(String[] args) {
+            try {
+                java.awt.GraphicsEnvironment.getLocalGraphicsEnvironment().getDefaultScreenDevice();
+            } catch (Throwable unreachableDisplay) {
+                System.exit(2);
+            }
         }
     }
 

@@ -99,4 +99,34 @@ class LanguageCatalogServiceTest {
         assertThat(Files.readString(data.resolve("config/available-languages.txt"), StandardCharsets.UTF_8))
                 .doesNotContain("bg=Български");
     }
+    @Test
+    void upgradesShippedCatalogueWithMissingKeysWithoutOverwritingUserValues() throws Exception {
+        Path data = tempDir.resolve("data-upgrade");
+        Path lang = data.resolve("Lang");
+        Files.createDirectories(lang);
+        System.setProperty("myhomelib.dataDir", data.toString());
+        System.setProperty("myhomelib.langDir", lang.toString());
+
+        Files.writeString(lang.resolve("uk.json"), """
+                {
+                  "schemaVersion": 2,
+                  "code": "uk",
+                  "name": "Українська",
+                  "translations": {
+                    "Колекція": "МОЯ КОЛЕКЦІЯ"
+                  }
+                }
+                """, StandardCharsets.UTF_8);
+
+        LanguageCatalogService service = new LanguageCatalogService();
+
+        assertThat(service.translations("uk")).hasValueSatisfying(map -> {
+            assertThat(map).containsEntry("Колекція", "МОЯ КОЛЕКЦІЯ");
+            assertThat(map.get("ui.reader.error.archive_entry_read"))
+                    .isEqualTo("Не вдалося прочитати запис архіву: %s");
+        });
+        String upgraded = Files.readString(lang.resolve("uk.json"), StandardCharsets.UTF_8);
+        assertThat(upgraded).contains("\"schemaVersion\" : 3");
+    }
+
 }

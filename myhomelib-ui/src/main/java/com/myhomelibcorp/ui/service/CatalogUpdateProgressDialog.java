@@ -212,6 +212,7 @@ public final class CatalogUpdateProgressDialog {
             case ROLLING_BACK -> "Відкат оновлення";
             case REFRESHING_STATISTICS -> "Перерахунок статистики";
             case INTEGRITY_CHECKS -> "Перевірка цілісності";
+            case SCANNING_DUPLICATES -> "Пошук дублікатів";
             case SYNCHRONIZING_FILES -> "Синхронізація файлів";
             case OPTIMIZING_DATABASE -> "Оптимізація БД";
             case BACKING_UP -> "Резервне копіювання";

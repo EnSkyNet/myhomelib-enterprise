@@ -75,8 +75,9 @@ public class BackupRestoreService {
             try {
                 var exported = userDataTransferPort.exportTo(backupDir.resolve(UserDataTransferPort.FILE_NAME));
                 copiedItems++;
-                log.info("Portable user data exported: schema={}, bookRecords={}, bookmarks={}, memberships={}",
-                        exported.schemaVersion(), exported.bookRecords(), exported.bookmarks(), exported.groupMemberships());
+                log.info("Portable user data exported: schema={}, bookRecords={}, bookmarks={}, annotations={}, memberships={}",
+                        exported.schemaVersion(), exported.bookRecords(), exported.bookmarks(), exported.annotations(),
+                        exported.groupMemberships());
             } catch (Exception e) {
                 errors.add("Portable user data: " + e.getMessage());
                 log.error("Portable user-data export failed", e);

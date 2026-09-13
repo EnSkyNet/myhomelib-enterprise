@@ -37,6 +37,7 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
                 .chapterId(rs.getString("chapter_id"))
                 .updatedAt(SqliteDateTimeCodec.parse(rs.getString("updated_at")))
                 .readingTimeSeconds(rs.getLong("reading_time_seconds"))
+                .lastDevice(rs.getString("last_device"))
                 .build();
 
         // Якщо anchor_id порожній, використовуємо paragraph_id як fallback
@@ -52,9 +53,9 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
         // ===== ВИПРАВЛЕНО: ЗАВЖДИ ПЕРЕДАЄМО ЗНАЧЕННЯ ДЛЯ ВСІХ ПОЛІВ =====
         String sql = """
                 INSERT OR REPLACE INTO reading_progress 
-                (book_id, anchor_id, paragraph_index, paragraph_id, char_offset, percent, 
-                 chapter_title, chapter_id, updated_at, reading_time_seconds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                (book_id, anchor_id, paragraph_index, paragraph_id, char_offset, percent,
+                 chapter_title, chapter_id, updated_at, reading_time_seconds, last_device)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """;
 
         // Значення, які використовуються всередині retry-lambda, мають бути final/effectively final.
@@ -78,6 +79,10 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
                 ? SqliteDateTimeCodec.format(progress.getUpdatedAt())
                 : SqliteDateTimeCodec.format(LocalDateTime.now());
 
+        final String lastDevice = progress.getLastDevice() == null || progress.getLastDevice().isBlank()
+                ? "desktop"
+                : progress.getLastDevice().trim();
+
         busyRetry.run("reading progress save", () -> getJdbcTemplate().update(sql,
                 progress.getBookId(),
                 anchorId,
@@ -88,7 +93,8 @@ public class SqliteReadingProgressRepository implements ReadingProgressRepositor
                 chapterTitle,
                 chapterId,
                 updatedAt,
-                progress.getReadingTimeSeconds()
+                progress.getReadingTimeSeconds(),
+                lastDevice
         ));
 
         log.debug("Saved reading progress for book {}: anchor={}, paragraph_id={}, charOffset={}, %={}",

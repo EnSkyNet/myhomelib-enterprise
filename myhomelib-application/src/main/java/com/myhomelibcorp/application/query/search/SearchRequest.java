@@ -4,12 +4,15 @@ import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
+import com.myhomelibcorp.domain.model.search.SmartCollectionSpec;
 
 import java.time.LocalDate;
+import java.util.List;
 
 /**
- * Full-text/Lucene search request. Ordering is Lucene relevance order.
- * Catalogue table sorting belongs to BookQuery/SQL and is intentionally not duplicated here.
+ * Full-text/Lucene search request. Classic searches use Lucene relevance order;
+ * smart collections may request deterministic Lucene DocValues ordering.
+ * Catalogue table sorting outside smart collections remains a BookQuery/SQL concern.
  */
 public record SearchRequest(
         String text,
@@ -24,6 +27,8 @@ public record SearchRequest(
         LocalDate addedTo,
         Boolean localOnly,
         BookFilterSpec filterSpec,
+        SmartCollectionSpec smartCollectionSpec,
+        List<CustomFieldSearchFilter> customFieldFilters,
         int limit,
         int offset,
         SearchMode mode,
@@ -46,6 +51,8 @@ public record SearchRequest(
         private LocalDate addedTo;
         private Boolean localOnly;
         private BookFilterSpec filterSpec;
+        private SmartCollectionSpec smartCollectionSpec;
+        private List<CustomFieldSearchFilter> customFieldFilters = List.of();
         private int limit = 100;
         private int offset = 0;
         private SearchMode mode = SearchMode.PHRASE;
@@ -63,6 +70,8 @@ public record SearchRequest(
         public Builder addedTo(LocalDate addedTo) { this.addedTo = addedTo; return this; }
         public Builder localOnly(Boolean localOnly) { this.localOnly = localOnly; return this; }
         public Builder filterSpec(BookFilterSpec filterSpec) { this.filterSpec = filterSpec; return this; }
+        public Builder smartCollectionSpec(SmartCollectionSpec smartCollectionSpec) { this.smartCollectionSpec = smartCollectionSpec; return this; }
+        public Builder customFieldFilters(List<CustomFieldSearchFilter> customFieldFilters) { this.customFieldFilters = customFieldFilters == null ? List.of() : List.copyOf(customFieldFilters); return this; }
         public Builder limit(int limit) { this.limit = limit; return this; }
         public Builder offset(int offset) { this.offset = offset; return this; }
         public Builder mode(SearchMode mode) { this.mode = mode; return this; }
@@ -71,7 +80,7 @@ public record SearchRequest(
         public SearchRequest build() {
             return new SearchRequest(
                     text, authorId, genreId, language,
-                    ratingFrom, ratingTo, yearFrom, yearTo, addedFrom, addedTo, localOnly, filterSpec,
+                    ratingFrom, ratingTo, yearFrom, yearTo, addedFrom, addedTo, localOnly, filterSpec, smartCollectionSpec, customFieldFilters,
                     limit, offset, mode, trackTotalHits
             );
         }

@@ -12,16 +12,16 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/** Release-acceptance matrix: representative historical schemas must reach V49 without data loss. */
+/** Release-acceptance matrix: representative historical schemas must reach the current schema without data loss. */
 class DatabaseMigrationMatrixTest {
 
-    private static final List<Integer> SOURCE_VERSIONS = List.of(1, 10, 20, 30, 40, 44);
+    private static final List<Integer> SOURCE_VERSIONS = List.of(1, 10, 20, 30, 40, 44, 52, 53, 57, 58, 59);
 
     @TempDir
     Path tempDir;
 
     @Test
-    void migratesRepresentativeHistoricalSchemasToV49AndPreservesCoreAndUserData() {
+    void migratesRepresentativeHistoricalSchemasToCurrentAndPreservesCoreAndUserData() {
         for (int sourceVersion : SOURCE_VERSIONS) {
             Path db = tempDir.resolve("migration-v" + sourceVersion + ".db");
             var ds = new DriverManagerDataSource("jdbc:sqlite:" + db.toAbsolutePath());
@@ -35,6 +35,9 @@ class DatabaseMigrationMatrixTest {
                     .migrate();
 
             seedV1CompatibleData(jdbc, sourceVersion);
+            if (sourceVersion >= 57) {
+                seedAnnotationData(jdbc, sourceVersion);
+            }
 
             Flyway flyway = Flyway.configure()
                     .dataSource(ds)
@@ -42,7 +45,7 @@ class DatabaseMigrationMatrixTest {
                     .load();
             flyway.migrate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("49");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("60");
             assertThat(jdbc.queryForObject("SELECT title FROM books WHERE id='book-matrix'", String.class))
                     .isEqualTo("Migration Matrix Book V" + sourceVersion);
             assertThat(jdbc.queryForObject("SELECT keywords FROM books WHERE id='book-matrix'", String.class))
@@ -53,6 +56,10 @@ class DatabaseMigrationMatrixTest {
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_genres WHERE book_id='book-matrix' AND genre_code='sf'", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT value FROM settings WHERE key='matrix.user.setting'", String.class)).isEqualTo("preserved");
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_groups bg JOIN groups g ON g.id=bg.group_id WHERE bg.book_id='book-matrix' AND g.name='Matrix Group'", Integer.class)).isEqualTo(1);
+            if (sourceVersion >= 57) {
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM annotation_search_ids WHERE annotation_id='annotation-matrix'", Integer.class)).isEqualTo(1);
+                assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM annotation_search_fts WHERE annotation_search_fts MATCH 'matrix'", Integer.class)).isEqualTo(1);
+            }
 
             assertIndex(jdbc, "idx_authors_navigation_page");
             assertIndex(jdbc, "idx_books_active_language_title");
@@ -74,6 +81,19 @@ class DatabaseMigrationMatrixTest {
         jdbc.update("INSERT OR IGNORE INTO groups(name,allow_delete) VALUES ('Matrix Group',1)");
         Integer groupId = jdbc.queryForObject("SELECT id FROM groups WHERE name='Matrix Group'", Integer.class);
         jdbc.update("INSERT INTO book_groups(book_id,group_id) VALUES ('book-matrix',?)", groupId);
+    }
+
+    private static void seedAnnotationData(JdbcTemplate jdbc, int sourceVersion) {
+        String instant = "2026-09-12T10:00:00Z";
+        jdbc.update("""
+                INSERT INTO annotations(id,book_id,annotation_type,color,note,created_at,updated_at)
+                VALUES ('annotation-matrix','book-matrix','NOTE','#FFF59D',?, ?, ?)
+                """, "matrix-note-v" + sourceVersion, instant, instant);
+        jdbc.update("""
+                INSERT INTO annotation_anchors(annotation_id,chapter_title,start_offset,end_offset,position,quote_text,prefix_text,suffix_text)
+                VALUES ('annotation-matrix','Matrix chapter',0,11,0.5,'matrix quote','','')
+                """);
+        jdbc.update("INSERT INTO annotation_tags(annotation_id,tag) VALUES ('annotation-matrix','matrix-tag')");
     }
 
     private static void assertIndex(JdbcTemplate jdbc, String name) {

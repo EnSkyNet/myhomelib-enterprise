@@ -3,6 +3,7 @@ package com.myhomelibcorp.application.usecase.collection;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
+import com.myhomelibcorp.application.port.out.collection.IncomingFolderWatchPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
@@ -20,6 +21,7 @@ public class DeleteCollectionUseCase {
     private final CollectionStorageManager storageManager;
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final CollectionSourceMonitorPort sourceMonitorPort;
+    private final IncomingFolderWatchPort incomingFolderWatchPort;
     private final LibraryOperationCoordinator operationCoordinator;
 
     public void execute(String id) {
@@ -42,6 +44,7 @@ public class DeleteCollectionUseCase {
 
         // Stop in-process source monitoring as part of the collection lifecycle, not as a UI side effect.
         sourceMonitorPort.stopMonitoring(id);
+        incomingFolderWatchPort.stopMonitoring(id);
         storageManager.closeCollection(collection);
         // VACUUM must not run here: the collection being deleted is necessarily inactive,
         // while the storage adapter's VACUUM operates on the active JdbcTemplate.

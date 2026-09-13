@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Offline release sanity checks that require only Python 3.
 
-This is intentionally not a replacement for `./mvnw clean verify`: it catches
+This is intentionally not a replacement for `mvn clean verify`: it catches
 broken XML/FXML references and validates the raw SQLite migration chain in an
 empty file-backed database when Maven dependencies are not available yet.
 """
@@ -184,12 +184,16 @@ def packaging_checks() -> list[str]:
     ingest_test = ROOT / "tools/github-acceptance-artifact-ingest-test.py"
     harness_binding = ROOT / "tools/windows-acceptance-harness-binding.py"
     harness_binding_test = ROOT / "tools/windows-acceptance-harness-binding-test.py"
+    zip_safety = ROOT / "tools/zip_evidence_safety.py"
+    zip_safety_test = ROOT / "tools/zip-evidence-safety-test.py"
     windows_host_binding = ROOT / "tools/windows-acceptance-host.ps1"
     desktop_acceptance = ROOT / "tools/windows-release-desktop-acceptance.ps1"
     final_external = ROOT / "tools/v71-final-external-acceptance-check.py"
     final_external_test = ROOT / "tools/v71-final-external-acceptance-check-test.py"
     connected_workflow = ROOT / ".github/workflows/github-acceptance.yml"
-    for path in (connected_script, connected_test, ingest_script, ingest_test, harness_binding, harness_binding_test, windows_host_binding, desktop_acceptance, final_external, final_external_test, connected_workflow):
+    evidence_contracts = ROOT / "tools/evidence_contracts.py"
+    evidence_contracts_test = ROOT / "tools/evidence-contracts-test.py"
+    for path in (connected_script, connected_test, ingest_script, ingest_test, harness_binding, harness_binding_test, zip_safety, zip_safety_test, windows_host_binding, desktop_acceptance, final_external, final_external_test, connected_workflow, evidence_contracts, evidence_contracts_test):
         if not path.is_file():
             errors.append(f"{path.relative_to(ROOT)}: connected GitHub acceptance contract is missing")
     if connected_script.is_file():
@@ -211,9 +215,10 @@ def packaging_checks() -> list[str]:
         for contract in ["MHL-010-A", "MHL-017/MHL-018", "verify_installer",
                          "verify_portable", "verify_dpi", "verify_release_desktop",
                          "verify_github_ingest", "windows-final-acceptance-evidence.zip",
-                         "schemaVersion must be 2", "candidate-binding", "windowsExeSha256",
+                         'validate_record(data, "github-connected-acceptance"', "candidate-binding", "windowsExeSha256",
                          "windowsPortableSha256", "verify_harness_binding", "acceptanceHarnessManifestSha256",
-                         "verify_host_cohesion", "acceptanceSessionId", "hostFingerprintSha256"]:
+                         "verify_host_cohesion", "acceptanceSessionId", "hostFingerprintSha256",
+                         "expected_windows_archive_members", "inspect_open_zip"]:
             if contract not in final_text:
                 errors.append(f"v71-final-external-acceptance-check.py: missing final acceptance contract {contract!r}")
 
@@ -247,7 +252,7 @@ def main() -> int:
             print(f"- {error}")
         return 1
     print("OFFLINE STATIC RELEASE CHECK: PASS")
-    print("NOTE: this does not replace ./mvnw clean verify or JavaFX/jpackage runtime smoke tests.")
+    print("NOTE: this does not replace mvn clean verify or JavaFX/jpackage runtime smoke tests.")
     return 0
 
 

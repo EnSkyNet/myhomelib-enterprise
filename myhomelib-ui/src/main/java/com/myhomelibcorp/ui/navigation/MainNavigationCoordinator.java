@@ -54,6 +54,12 @@ public class MainNavigationCoordinator {
         workspaceManager.showFollowedAuthorsWorkspace();
     }
 
+    /** Opens the global Annotation/Notes workspace after releasing the active Reader first. */
+    public void annotations() {
+        cleanupReader();
+        workspaceManager.showAnnotationManagerWorkspace();
+    }
+
     public void alreadyRead() {
         cleanupReader();
         navigationPanelController.revealNode(NavigationMode.ALREADY_READ, "already-read");

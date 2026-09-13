@@ -158,6 +158,7 @@ public class OperationCenterController implements WorkspaceLifecycle {
             case ROLLING_BACK -> "Відкат оновлення";
             case REFRESHING_STATISTICS -> "Статистика";
             case INTEGRITY_CHECKS -> "Перевірка цілісності";
+            case SCANNING_DUPLICATES -> "Пошук дублікатів";
             case SYNCHRONIZING_FILES -> "Синхронізація файлів";
             case OPTIMIZING_DATABASE -> "Оптимізація БД";
             case BACKING_UP -> "Резервне копіювання";

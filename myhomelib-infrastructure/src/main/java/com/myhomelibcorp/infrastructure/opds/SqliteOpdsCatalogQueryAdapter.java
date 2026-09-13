@@ -222,7 +222,132 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
         return items.stream().findFirst();
     }
 
+
+    @Override
+    public Optional<OpdsFacetDto> currentCollection() {
+        var collection = collectionManager.getCurrentCollection();
+        if (collection == null || collection.getId() == null || collection.getId().isBlank()) {
+            return Optional.empty();
+        }
+        long books = scalar("SELECT COUNT(*) FROM books WHERE deleted = 0");
+        return Optional.of(new OpdsFacetDto(
+                collection.getId(),
+                nonBlank(collection.getName(), "MyHomeLib"),
+                books));
+    }
+
+    @Override
+    public OpdsPage<OpdsFacetDto> groups(int offset, int limit) {
+        int safeOffset = safeOffset(offset);
+        int safeLimit = clamp(limit);
+        long total = scalar("SELECT COUNT(*) FROM groups");
+        String sql = """
+                SELECT CAST(g.id AS TEXT) AS id,
+                       COALESCE(NULLIF(TRIM(g.name), ''), 'Без назви') AS label,
+                       COUNT(b.id) AS book_count
+                FROM groups g
+                LEFT JOIN book_groups bg ON bg.group_id = g.id
+                LEFT JOIN books b ON b.id = bg.book_id AND b.deleted = 0
+                GROUP BY g.id, g.name
+                ORDER BY LOWER(label), g.id
+                LIMIT ? OFFSET ?
+                """;
+        List<OpdsFacetDto> items = jdbc().query(sql, (rs, row) -> new OpdsFacetDto(
+                rs.getString("id"),
+                nonBlank(rs.getString("label"), "Без назви"),
+                rs.getLong("book_count")
+        ), safeLimit, safeOffset);
+        return new OpdsPage<>(items, total, safeOffset, safeLimit);
+    }
+
+    @Override
+    public OpdsPage<OpdsBookDto> groupBooks(String groupId, int offset, int limit) {
+        if (groupId == null || groupId.isBlank()) {
+            return new OpdsPage<>(List.of(), 0, safeOffset(offset), clamp(limit));
+        }
+        String where = """
+                WHERE b.deleted = 0
+                  AND EXISTS (SELECT 1 FROM book_groups bg WHERE bg.book_id = b.id AND CAST(bg.group_id AS TEXT) = ?)
+                """;
+        return queryBooks(where, List.of(groupId), "b.title, b.id", offset, limit);
+    }
+
+    @Override
+    public OpdsPage<OpdsBookDto> favorites(int offset, int limit) {
+        String where = """
+                WHERE b.deleted = 0
+                  AND EXISTS (
+                    SELECT 1 FROM book_groups bg
+                    JOIN groups g ON g.id = bg.group_id
+                    WHERE bg.book_id = b.id
+                      AND LOWER(TRIM(g.name)) IN ('favorites','обране','избрани','улюблене')
+                  )
+                """;
+        return queryBooks(where, List.of(), "b.title, b.id", offset, limit);
+    }
+
+    @Override
+    public OpdsPage<OpdsBookDto> continueReading(int offset, int limit) {
+        String where = """
+                WHERE b.deleted = 0
+                  AND EXISTS (
+                    SELECT 1 FROM reading_progress rp
+                    WHERE rp.book_id = b.id
+                      AND COALESCE(rp.percent, 0) > 0
+                      AND COALESCE(rp.percent, 0) < 100
+                  )
+                """;
+        String order = """
+                (SELECT rp.updated_at FROM reading_progress rp WHERE rp.book_id = b.id LIMIT 1) DESC,
+                b.title, b.id
+                """;
+        return queryBooks(where, List.of(), order, offset, limit);
+    }
+
     // --- Helper methods ---
+
+    private OpdsPage<OpdsBookDto> queryBooks(String where, List<Object> params, String orderBy, int offset, int limit) {
+        int safeOffset = safeOffset(offset);
+        int safeLimit = clamp(limit);
+        long total = countBooks(where, params);
+        List<Object> pageParams = new ArrayList<>(params);
+        pageParams.add(safeLimit);
+        pageParams.add(safeOffset);
+        String sql = """
+                SELECT b.id, b.title, b.series, b.language, b.year, b.annotation,
+                       COALESCE(b.format, '') AS format, b.local, b.file_name, b.archive_entry,
+                       COALESCE((
+                           SELECT group_concat(%s, ', ')
+                           FROM book_authors ba
+                           JOIN authors a ON a.id = ba.author_id
+                           WHERE ba.book_id = b.id
+                       ), '') AS authors
+                FROM books b
+                %s
+                ORDER BY %s
+                LIMIT ? OFFSET ?
+                """.formatted(getAuthorFullNameExpression(), where, orderBy);
+        List<OpdsBookDto> items = jdbc().query(sql, (rs, row) -> mapBook(rs), pageParams.toArray());
+        return new OpdsPage<>(items, total, safeOffset, safeLimit);
+    }
+
+    private static OpdsBookDto mapBook(java.sql.ResultSet rs) throws java.sql.SQLException {
+        String title = nonBlank(rs.getString("title"), "Без назви");
+        String series = rs.getString("series");
+        return new OpdsBookDto(
+                rs.getString("id"),
+                title,
+                rs.getString("authors"),
+                series != null ? series : "",
+                rs.getString("language"),
+                nullableInt(rs, "year"),
+                rs.getString("annotation"),
+                rs.getString("format"),
+                rs.getInt("local") == 1,
+                rs.getString("file_name"),
+                rs.getString("archive_entry")
+        );
+    }
 
     private String getAuthorFullNameExpression() {
         return """

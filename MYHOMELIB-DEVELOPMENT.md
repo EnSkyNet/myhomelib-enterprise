@@ -21,13 +21,15 @@ PowerShell equivalents:
 .\package.ps1
 ```
 
-Full release build/test gate:
+Full release build/test gate from the formal source archive:
 
 ```bash
-./mvnw clean verify -Pproduction
+mvn clean verify -Pproduction
 ```
 
-The Maven Wrapper may need external access on first use unless Maven/dependencies are already cached.
+The formal source archive intentionally contains no Maven runtime or Maven Wrapper payload. Install Maven 3.9.6+ separately. The root build/run/package scripts use the repository wrapper when one exists, otherwise they fall back to `mvn` from `PATH`; dependencies still require network/cache access or the prepared offline repository.
+
+For repeatable isolated validation without the install lifecycle, run `python tools/offline_acceptance.py --maven-repo <repo>`; add `--full` to append the full reactor test suite. This path uses `test-compile`/`test` and therefore does not require `maven-install-plugin`.
 
 ## Architecture checks
 
@@ -40,7 +42,7 @@ python3 tools/architecture-check.py
 Compiled ArchUnit gate:
 
 ```bash
-./mvnw -pl myhomelib-architecture-tests -am test
+mvn -pl myhomelib-architecture-tests -am test
 ```
 
 Architecture changes must update both documentation and corresponding ratchets/tests. Do not weaken a check merely to preserve an obsolete stage assumption; update stale tests only when the production contract intentionally changed.
@@ -69,8 +71,8 @@ Normal application startup does not download Maven artifacts; dependency resolut
 
 ### Supply-chain CI
 
-- `./mvnw -Psbom -DskipTests verify` generates aggregate CycloneDX `target/bom.json` and `target/bom.xml` for runtime/compile dependencies.
-- `./mvnw -Pdependency-check -DskipTests verify` runs OWASP Dependency-Check; CVSS **7.0+** is blocking. `NVD_API_KEY` should be configured in GitHub secrets for reliable/rate-friendly NVD updates.
+- `mvn -Psbom -DskipTests verify` generates aggregate CycloneDX `target/bom.json` and `target/bom.xml` for runtime/compile dependencies.
+- `mvn -Pdependency-check -DskipTests verify` runs OWASP Dependency-Check; CVSS **7.0+** is blocking. `NVD_API_KEY` should be configured in GitHub secrets for reliable/rate-friendly NVD updates.
 - `security/dependency-check-suppressions.xml` is reviewed policy, not a permanent allowlist. Every future suppression must have an expiry and substantive issue-linked rationale; `tools/supply-chain-policy-check.py` enforces this offline.
 - `.github/workflows/codeql.yml` runs Java/Kotlin CodeQL on PR, `main`/`master`, schedule and manual dispatch. The release workflow additionally refuses to proceed while open High/Critical code-scanning alerts exist.
 
@@ -94,7 +96,8 @@ Reproducible helpers include:
 - `tools/stage24-performance-baseline.py`;
 - `tools/inpx-batch-index-benchmark.py`;
 - `tools/duplicate-index-benchmark.py`;
-- `myhomelib-benchmark` JVM/Lucene/Reader probes.
+- `myhomelib-benchmark` JVM/Lucene/Reader probes;
+- `com.myhomelibcorp.benchmark.search.SmartCollectionLuceneBenchmark` for reproducible 500k Smart Collections/Custom Fields query measurements (cold/warm first page, 5/20-rule AND/OR, numeric range, DocValues sort, bounded maxResults, heap/RSS/GC).
 
 The dedicated performance Maven profile and scheduled/manual GitHub workflow must be used for JVM heap/GC, disk-backed Lucene and Reader baselines when dependency access is available.
 
@@ -155,11 +158,11 @@ Active project documentation is limited to:
 - `MYHOMELIB-DEVELOPMENT.md`;
 - `MYHOMELIB-RELEASE.md`.
 
-Historical summaries live in `docs/history/`; original legacy notes live in `docs/archive/source-notes/`. Runtime help/localization Markdown is not part of this documentation consolidation.
+Historical summaries live in `docs/history/`; original legacy notes live in `docs/history/source-notes/`. Runtime help/localization Markdown is not part of this documentation consolidation.
 
 ## Refactoring guardrails (2026-09-02)
 
-For new work, preserve the completed stabilization rules: do not run repository/file/index maintenance on the JavaFX Application Thread; acquire the collection-operation coordinator for mutating/maintenance flows; expose long operations through `OperationProgress`/Operation Center; never translate database/index failures into normal empty results; keep interactive search/navigation bounded; and preserve semantic Reader position when layout changes. `REFACTORING_COMPLETION.md` records the current source-level baseline and release boundary.
+For new work, preserve the completed stabilization rules: do not run repository/file/index maintenance on the JavaFX Application Thread; acquire the collection-operation coordinator for mutating/maintenance flows; expose long operations through `OperationProgress`/Operation Center; never translate database/index failures into normal empty results; keep interactive search/navigation bounded; and preserve semantic Reader position when layout changes. `docs/history/records/REFACTORING_COMPLETION.md` records the current source-level baseline and release boundary.
 
 ## Stage 05 real Online Update phase probes
 
@@ -234,3 +237,94 @@ The critical gate rejects user-facing Cyrillic string literals and legacy `Local
 - Recovery must execute before SQLite is opened. Migration/collection activation must not hide a Lucene rebuild; search reuse/rebuild remains a separate task.
 - If startup fails after a collection was opened, close the collection through `CollectionLifecycleService`; do not leave a half-started datasource/index behind.
 - Run `python3 tools/startup-orchestration-check.py` and `python3 tools/startup-nonblocking-check.py` with the startup tests before changing this pipeline.
+
+
+## Artifact integrity / Library Health development rules
+
+- Artifact integrity checks are diagnostic only: do not change/delete book files or silently rewrite `book_artifacts.sha256` / `size_bytes`.
+- Keep audit baseline/cache in `artifact_integrity_state`; catalog metadata remains the authoritative baseline when it exists.
+- Incremental audit may skip content hashing only when the physical file size + mtime signature is unchanged and a prior observed hash exists.
+- Archive readability failures and missing files are distinct from content-change findings.
+- Library Health refresh is a maintenance operation and must acquire `LibraryOperationCoordinator` so it cannot race a collection switch/import/update.
+- Dashboard filesystem/SQLite/Lucene work stays off the JavaFX thread.
+- `app.health.backup-stale-hours` is a configurable warning threshold (default 168 hours), not a performance or retention SLA.
+- The Smart Collections benchmark records measurements; do not turn one host's numbers into a product latency promise.
+
+## Iteration 35 — annotation foundation
+
+MHL-201/MHL-202 add the backend foundation for highlights/notes: immutable renderer-neutral anchors, exact quote/context relocation, application repository/service contracts, Flyway V57 persistence, and portable user-data schema v4. MHL-203 Reader UI remains the next consumer and must use `AnnotationService` rather than SQLite directly.
+
+## Iteration 36 — MHL-203 Reader highlight/note creation
+
+- Reader selection is represented by source-text offsets plus chapter/paragraph metadata and bounded quote context (`ReaderSelection`).
+- Existing Shift+drag selection now has draggable endpoint handles; Shift+Left/Right extends a selection from the current source-text position.
+- The selection context menu exposes Highlight, Note, Copy and Clear; keyboard shortcuts `Ctrl+Shift+H` / `Ctrl+Shift+N` invoke annotation actions.
+- `ReaderAnnotationOverlay` keeps renderer state independent of the annotation domain. Overlays redraw from source offsets after reflow/layout changes.
+- `NewReaderWorkspaceController` invokes `AnnotationService` only through the application boundary and performs database work on `UiBackgroundExecutor`.
+- Persisted anchors are resolved after reopen through exact offsets first and quote/context relocation only when needed. Full document text is materialized lazily on the background path.
+- Artifact binding is conservative: the opened legacy file projection is matched to a concrete `BookArtifact`; no uncertain artifact id is assigned or silently switched.
+
+## Iteration 37 — MHL-204 Annotation Manager
+
+MHL-204 adds a global annotation workspace over a dedicated application query contract. `SqliteAnnotationManagerQueryAdapter` performs bounded search/filter/count/facet queries, while the JavaFX controller stays asynchronous and application-only. Delete/undo uses a complete application snapshot, and `WorkspaceManager.showAnnotationInReader` supplies a one-shot annotation id so Reader can resolve the persisted anchor before jumping. Filtered CSV export is intentionally a simple manager capability; MHL-205 remains responsible for configurable Markdown/JSON/HTML exporters.
+
+## Iteration 38 — MHL-205 rich annotation export
+
+Rich annotation export is split across the existing clean boundary. `myhomelib-application` owns export request/selection/templates, the stable flattened export projection and streaming serialization; its `AnnotationExportQueryPort` asks storage for bounded deterministic pages. `SqliteAnnotationExportQueryAdapter` implements selection and metadata/tag projection with parameterized SQLite queries. `AnnotationManagerWorkspaceController` only gathers format/scope/template choices and submits the application service through `UiBackgroundExecutor`. Final files are created by writing a sibling temporary file and publishing only after successful completion, so cancellation/error leaves an existing destination untouched.
+
+## Iteration 38 — MHL-206 PDF Reader v1
+
+PDF rendering is implemented as a separate renderer adapter rather than extending the FB2/EPUB text layout engine. `PdfDocumentSession` owns Apache PDFBox 3.0.8 document lifecycle, page metadata, rasterization and a bounded LRU cache; source bytes are copied in bounded chunks to a session-owned temporary file and PDFBox stream scratch data is file-backed. `PdfReaderView` owns only JavaFX presentation and schedules render jobs on a single daemon executor; callbacks are accepted only when both the session and generation token still match. `NewReaderWorkspaceController.prepareOpen` opens the PDF session on the existing background open path, while apply/open/save/close reuse the normal Reader lifecycle and persistence services. The v1 position maps the zero-based PDF page to `ReaderPosition.textOffset`, allowing existing save/restore infrastructure to remain unchanged.
+
+Iteration 40 supplies PDFBox/JBIG2 to the build only through the external offline dependency repository and keeps the formal source package Maven/dependency-binary free. MHL-207 outline/search/bookmark work stays behind the Reader boundary, uses bounded/cancellable document tasks, does not add OCR, and does not introduce alternate annotation persistence or UI-to-PDFBox/SQLite bypasses.
+
+## Iteration 39 — Reader DictionaryProvider / TranslationProvider rules
+
+- `myhomelib-reader` may expose text-selection callbacks but must not depend on application provider contracts, Spring, JDBC or concrete provider adapters.
+- Dictionary/translation orchestration belongs to `myhomelib-application`; provider adapters belong to `myhomelib-infrastructure`; JavaFX depends only on application services and neutral Reader APIs.
+- Default provider selection is offline-first. Remote translation providers are disabled unless explicitly enabled.
+- No selection observer may invoke translation. Remote text transmission requires an explicit Reader action plus a privacy confirmation immediately before invocation.
+- Remote endpoints must be HTTPS. Do not add trust-all TLS behavior.
+- Persisted secrets such as API keys/tokens must use the existing authenticated `EncryptionUtil` envelope; runtime system properties/environment variables may supply ephemeral credentials. Do not put credentials into URLs or user-visible provider errors.
+- `TextProviderRequestContext` provides bounded deadline/cancellation. Reader close/book switch must cancel active requests and stale async completions must be ignored.
+- Local dictionary format: UTF-8 TSV `language<TAB>headword<TAB>part-of-speech<TAB>definition<TAB>examples`, with examples separated by ` | `. Optional path: `dictionary.local.path`; default custom file is `config/dictionary.tsv`.
+- Local translation format: UTF-8 TSV `source-language<TAB>target-language<TAB>source-text<TAB>translated-text`. Optional path: `translation.local.path`; default custom file is `config/translations.tsv`.
+- Remote settings are namespaced under `translation.deepl.*`, `translation.google.*` and `translation.custom.*`; all remote providers remain opt-in.
+
+
+## Iteration 41 — shared undo closure and transaction debt
+
+Iteration 41 re-validates MHL-112 on the current reactor and adds application acceptance for shared undo dispatch/race refusal. The V53 operation journal remains unchanged. Annotation SQLite repository/query/export adapters now share `CollectionTransactionExecutor`, removing the historical exact clone while preserving current-collection transaction semantics and rollback. `tools/offline_acceptance.py` provides the supported no-`install` offline validation path.
+
+## Plugin SDK development
+
+For third-party extension work, depend on `myhomelib-plugin-api` rather than Infrastructure/UI/Bootstrap modules. The current Plugin API is 1.3. Declare an inclusive API range, exact services, intentional core overrides and all required network/filesystem capabilities in `PluginManifest`, then register the entrypoint with `META-INF/services/com.myhomelibcorp.plugin.api.PluginEntrypoint`.
+
+Use `PluginTestHarness.verify(...)` or `verifyServiceLoader(...)` in plugin CI. The harness validates host compatibility/bindings/permissions but its synthetic test approval is not runtime trust. Buildable metadata/dictionary/export references are in `myhomelib-plugin-samples`; the full authoring and compatibility guide is in `docs/plugin-sdk/README.md`.
+
+## Device profile development
+
+Device targeting is an Application concern. Extend `DeviceTargetProfile`/`DeviceProfileService` rather than putting USB-device heuristics into UI or Infrastructure. Saved destinations must remain relative to the user-selected mount root; never persist a platform drive letter as part of a built-in profile. Unknown device roots must fail safe to the generic-folder profile rather than guessing a vendor.
+
+When selecting an export representation, prefer an existing compatible `BookArtifact` before invoking a converter. Converter selection and legacy direct-source fallback remain in `ExportToDeviceUseCase`; a device profile supplies only ordered format preference and destination subfolder policy. Regression coverage for MHL-504 is in `DeviceProfileServiceTest`, `ExportProfileServiceTest`, `ExportToDeviceUseCaseDeviceProfileTest` and the existing crash-safety test.
+
+### Send-to-device completion contract
+
+Do not create a second send pipeline for removable devices. Batch iteration, progress, cancellation, collision handling, staging and atomic publication remain in `ExportToDeviceUseCase`. New callers choose completion behavior through `ExportRequest.CompletionPolicy`: `VERIFY_READABLE` preserves the legacy post-commit reopen/read check, while `EJECT_SAFE` additionally requires `ExportCompletionService` to force the committed file with `FileChannel.force(true)` before success is counted. Parent-directory force is best-effort only because some host/device filesystems do not expose a forceable directory channel.
+
+A file-level durability-flush failure must propagate into the per-book export failure result; UI code must not present that item as safely completed. Even after `EJECT_SAFE` succeeds, desktop UX must tell the user to use the operating system’s safe-removal/eject action before unplugging hardware. Regression coverage is in `ExportToDeviceUseCaseSendToDeviceTest`, `ExportCompletionServiceTest` and `ExportControllerSendToDeviceContractTest`.
+
+
+
+## Knowledge Markdown integration development
+
+MHL-509 must reuse `AnnotationExportQueryPort`; do not add UI/JDBC access or a second annotation projection. Query implementations must preserve one stable total order with rows for a logical book contiguous across page boundaries. Keep export path rendering fail-closed: only documented placeholders are accepted, every generated segment is sanitized, and the resolved target must remain below the user-selected root.
+
+Do not implement convenient auto-rename on re-export. The deterministic target is part of the integration contract. `REPLACE_MANAGED` may replace only a file whose ownership marker matches the same book id; otherwise surface a collision. Publication must remain staged/atomic and cancellation/error must remove staging files without modifying an existing target.
+
+## Release candidate integrity development
+
+Release packaging must keep `SHA256SUMS` authoritative for the `dist/` payload. `tools/release-candidate-integrity.py` may only attest files already represented by that manifest and must fail closed if unchecksummed payload exists. The record is deliberately separate from `dist/` so generating it cannot change the payload it describes. Keep candidate SHA binding mandatory in CI, and keep source-tree hashing deterministic by excluding build/runtime payload directories (`target`, `dist`, `.mvn`, `.git`, IDE/cache directories).
+
+Do not describe the integrity record as a signature or SLSA provenance. It proves deterministic SHA-256 cohesion inside one CI candidate; GitHub artifact digests and the existing connected/final acceptance evidence remain the external trust boundary.
+

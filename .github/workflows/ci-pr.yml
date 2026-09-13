@@ -36,25 +36,25 @@ jobs:
         with:
           python-version: '3.12'
 
-      - name: Ensure Maven wrapper is executable
+      - name: Ensure Maven launcher helper is executable
         shell: bash
-        run: chmod +x mvnw
+        run: chmod +x tools/invoke-maven.sh
 
       - name: Compile production and test sources
         shell: bash
-        run: ./mvnw -B -ntp -DskipTests test-compile
+        run: ./tools/invoke-maven.sh -B -ntp -DskipTests test-compile
 
       - name: Fast core unit tests
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-shared,myhomelib-domain,myhomelib-application,myhomelib-opds
           test
 
       - name: Migration and security regression tests
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-infrastructure -am
           -Dtest=DatabaseMigrationMatrixTest,DatabaseMigrationAdapterLegacyGuardIntegrationTest,LegacyMigrationDataGuardTest,OnlineHttpPolicyTest,SqliteCollectionRepositoryCredentialsV7Test,ArchiveImportSupportTest,ZipArchiveReaderTransparencyTest,LocalCopyDeletionRecoveryStoreTest,SimpleEventBusTest,AsyncConfigTest,MemoryMonitorTest,FolderSyncAsyncExecutorTest,SpringExecutorAdapterTest,EditBookTransactionalConsistencyTest,PlatformSecretStoreProviderTest
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -63,7 +63,7 @@ jobs:
       - name: JavaFX lifecycle and async workspace regression
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-ui -am
           -Dtest=UiSubscriptionsLifecycleTest,FxmlLoaderFactoryLifecycleTest,AsyncWorkspaceControllerContractTest,UiAsyncRequestGuardTest,ClassicEditAsyncContractTest
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -72,7 +72,7 @@ jobs:
       - name: Privacy and external-reader temp lifecycle regression
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-ui -am
           -Dtest=ExternalReaderMaterializationCacheTest,RunBookActionMaterializationLifecycleTest,SupportBundleServicePrivacyTest
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -81,7 +81,7 @@ jobs:
       - name: Startup orchestration regression
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-bootstrap -am
           -Dtest=com.myhomelibcorp.startup.*Test
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -102,7 +102,7 @@ jobs:
       - name: Architecture boundaries
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-architecture-tests -am
           -Dtest=LayerArchitectureTest
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -111,7 +111,7 @@ jobs:
       - name: End-to-end regression journeys
         shell: bash
         run: >-
-          ./mvnw -B -ntp
+          ./tools/invoke-maven.sh -B -ntp
           -pl myhomelib-e2e-tests -am
           -Dtest=ImportSearchReaderJourneyE2ETest,BackupRestoreJourneyE2ETest,CollectionRollbackJourneyE2ETest,OpdsJourneyE2ETest
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -133,6 +133,23 @@ jobs:
         shell: bash
         run: python3 tools/managed-executor-check.py
 
+      - name: Spring constructor wiring policy
+        shell: bash
+        run: python3 tools/spring-constructor-wiring-check.py
+
+      - name: Spring proxyability policy
+        shell: bash
+        run: python3 tools/spring-proxyability-check.py
+
+      - name: Full Spring context startup smoke
+        shell: bash
+        run: >-
+          ./tools/invoke-maven.sh -B -ntp
+          -pl myhomelib-bootstrap -am
+          -Dtest=SpringContextStartupSmokeTest
+          -Dsurefire.failIfNoSpecifiedTests=false
+          test
+
       - name: Windows acceptance harness structure
         shell: bash
         run: python3 tools/windows-acceptance-harness-check.py
@@ -140,6 +157,10 @@ jobs:
       - name: Windows acceptance evidence validator regression
         shell: bash
         run: python3 tools/windows-acceptance-evidence-check-test.py
+
+      - name: External evidence ZIP safety regression
+        shell: bash
+        run: python3 tools/zip-evidence-safety-test.py
 
       - name: Supply-chain policy structure
         shell: bash
@@ -164,6 +185,18 @@ jobs:
       - name: Final 7.1 reviewer bundle integrity regression
         shell: bash
         run: python3 tools/v71-final-evidence-bundle-check-test.py
+
+      - name: Release candidate integrity regression
+        shell: bash
+        run: python3 tools/release-candidate-integrity-test.py
+
+      - name: External acceptance readiness regression
+        shell: bash
+        run: python3 tools/external-acceptance-readiness-test.py
+
+      - name: External acceptance readiness
+        shell: bash
+        run: python3 tools/external-acceptance-readiness.py
 
       - name: Upload test diagnostics on failure
         if: failure()
@@ -197,7 +230,7 @@ jobs:
       - name: SecretStore migration + real DPAPI tests
         shell: pwsh
         run: >-
-          .\mvnw.cmd -B -ntp
+          .\tools\invoke-maven.ps1 -B -ntp
           -pl myhomelib-infrastructure -am
           -Dtest=CredentialMasterKeyManagerTest,PlatformSecretStoreProviderTest,WindowsDpapiSecretStoreIntegrationTest
           -Dsurefire.failIfNoSpecifiedTests=false
@@ -229,13 +262,13 @@ jobs:
           restore-keys: |
             dependency-check-${{ runner.os }}-
 
-      - name: Ensure Maven wrapper is executable
-        run: chmod +x mvnw
+      - name: Ensure Maven launcher helper is executable
+        run: chmod +x tools/invoke-maven.sh
 
       - name: Scan dependencies (CVSS 7+ blocks)
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: ./mvnw -B -ntp -DskipTests -Pdependency-check verify
+        run: ./tools/invoke-maven.sh -B -ntp -DskipTests -Pdependency-check verify
 
       - name: Upload dependency scan report
         if: always()

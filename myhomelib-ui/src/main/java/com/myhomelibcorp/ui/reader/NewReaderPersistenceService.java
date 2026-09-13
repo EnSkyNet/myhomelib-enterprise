@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.port.out.repository.BookmarkRepository;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import com.myhomelibcorp.domain.model.bookmark.Bookmark;
 import com.myhomelibcorp.reader.api.ReaderPosition;
+import com.myhomelibcorp.reader.audio.AudioPosition;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -56,6 +57,7 @@ public class NewReaderPersistenceService {
                 dto.setCharOffset(position.charOffset());
                 dto.setPercent(position.getPercent(totalTextLength));
                 dto.setUpdatedAt(LocalDateTime.now());
+                dto.setLastDevice("desktop");
             } else {
                 dto = ReadingProgressDto.builder()
                         .bookId(bookId)
@@ -66,6 +68,7 @@ public class NewReaderPersistenceService {
                         .percent(position.getPercent(totalTextLength))
                         .updatedAt(LocalDateTime.now())
                         .readingTimeSeconds(0)
+                        .lastDevice("desktop")
                         .build();
             }
             readingProgressRepository.save(dto);
@@ -99,6 +102,64 @@ public class NewReaderPersistenceService {
     public void clearCache() {
         lastSavedPositions.clear();
         log.debug("🧹 Кеш позицій очищено");
+    }
+
+
+    // ==================== AUDIOBOOK POSITION ====================
+
+    public boolean saveAudioPosition(String bookId, AudioPosition position, double progressPercent) {
+        if (bookId == null || position == null) return true;
+        try {
+            Optional<ReadingProgressDto> existing = readingProgressRepository.findByBookId(bookId);
+            double percent = Math.min(100.0, Math.max(0.0, progressPercent));
+            ReadingProgressDto dto = existing.orElseGet(() -> ReadingProgressDto.builder()
+                    .bookId(bookId).readingTimeSeconds(0).build());
+            dto.setAnchorId(position.serialize());
+            dto.setParagraphIndex(position.chapterIndex());
+            dto.setParagraphId("audio-track:" + position.trackIndex());
+            dto.setCharOffset(0);
+            dto.setPercent(percent);
+            dto.setUpdatedAt(LocalDateTime.now());
+            dto.setLastDevice("desktop");
+            readingProgressRepository.save(dto);
+            return true;
+        } catch (Exception e) {
+            log.error("Помилка збереження audiobook position в БД: {}", e.getMessage());
+            return false;
+        }
+    }
+
+    public Optional<AudioPosition> loadAudioPosition(String bookId) {
+        if (bookId == null) return Optional.empty();
+        try {
+            return readingProgressRepository.findByBookId(bookId)
+                    .flatMap(dto -> AudioPosition.parse(dto.getAnchorId()));
+        } catch (Exception e) {
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.position_load_error", bookId), e);
+        }
+    }
+
+    public Bookmark saveAudioBookmark(String bookId, AudioPosition position, double percent, String title, String context) {
+        if (bookId == null || position == null) throw new IllegalArgumentException("bookId and position are required");
+        try {
+            Bookmark bookmark = Bookmark.builder()
+                    .id(UUID.randomUUID().toString())
+                    .bookId(bookId)
+                    .paragraphId(position.serialize())
+                    .charOffset(0)
+                    .position(Math.max(0.0, Math.min(100.0, percent)))
+                    .chapterTitle(title != null ? title : i18n.text("ui.reader.bookmark.default_title"))
+                    .context(context != null ? context : "")
+                    .createdAt(LocalDateTime.now())
+                    .build();
+            return bookmarkRepository.save(bookmark);
+        } catch (Exception e) {
+            throw new IllegalStateException(i18n.format("ui.reader.persistence.bookmark_save_error", bookId), e);
+        }
+    }
+
+    public Optional<AudioPosition> audioBookmarkToPosition(Bookmark bookmark) {
+        return bookmark == null ? Optional.empty() : AudioPosition.parse(bookmark.getParagraphId());
     }
 
     // ==================== ЗАКЛАДКИ ====================

@@ -1,9 +1,11 @@
 package com.myhomelibcorp.application.usecase.export;
 
+import com.myhomelibcorp.application.usecase.conversion.ConvertBookUseCase;
 import com.myhomelibcorp.application.action.BookActionExecutionService;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
 import com.myhomelibcorp.application.export.ExportHistoryService;
+import com.myhomelibcorp.application.export.ExportCompletionService;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -106,7 +108,7 @@ class ExportToDeviceUseCaseCrashSafetyTest {
             when(converter.getFormatName()).thenReturn("FB2");
             when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
             useCase = new ExportToDeviceUseCase(books, List.of(converter), resources, settings,
-                    actions, actionExecution, history);
+                    actions, actionExecution, history, mock(ExportCompletionService.class), mock(ConvertBookUseCase.class));
         }
 
         ExportRequest request() {

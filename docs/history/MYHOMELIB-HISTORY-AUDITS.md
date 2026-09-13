@@ -1,6 +1,6 @@
 # MYHOMELIB — History: Audits, Validation and Upgrades
 
-This file summarizes historical audit/release documents that are no longer active specifications. Exact source notes are preserved under `docs/archive/source-notes/root/` and `docs/archive/source-notes/docs/`.
+This file summarizes historical audit/release documents that are no longer active specifications. Exact source notes are preserved under `docs/history/source-notes/root/` and `docs/history/source-notes/docs/`.
 
 ## Architecture upgrade audits
 
@@ -53,3 +53,11 @@ Sources: `RELEASE_NOTES_1.0.0.md`, `RELEASE_NOTES_7.1.0.md`, `ROADMAP-COMPLETION
 ## Validation principle retained
 
 Historical audit notes repeatedly distinguished "source/static check passed" from "full compiled release validated". That principle remains normative: a connected `./mvnw clean verify -Pproduction` plus real platform CI is required before a formal production release claim.
+
+## 2026-09-12 iteration audit and cleanup
+
+A full completed-task audit confirmed the locally closed implementation through Iteration 52. Iteration 53 WebDAV remained RC pending its full regression. Historical iteration/task/continuation files were consolidated under `docs/history/records/`; the repository root is now restricted to active project documentation and build/runtime scripts. External MHL-010/011/012/017/018/019 remain explicitly OPEN.
+
+## Iteration 54 closure
+
+After the root/history cleanup, the exact cleaned source tree passed the full offline 13-module Maven reactor: 894 tests, 0 failures, 0 errors, 12 skipped. This closed the local MHL-402 WebDAV gate while leaving the six external Windows/GitHub acceptance items open.

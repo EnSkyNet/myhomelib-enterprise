@@ -52,8 +52,8 @@ jobs:
           restore-keys: |
             dependency-check-${{ runner.os }}-
 
-      - name: Ensure Maven wrapper is executable
-        run: chmod +x mvnw
+      - name: Ensure Maven launcher helper is executable
+        run: chmod +x tools/invoke-maven.sh
 
       - name: Validate supply-chain policy
         run: python3 tools/supply-chain-policy-check.py
@@ -61,7 +61,7 @@ jobs:
       - name: Generate CycloneDX SBOM and scan dependencies
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: ./mvnw -B -ntp -DskipTests -Psbom,dependency-check verify
+        run: ./tools/invoke-maven.sh -B -ntp -DskipTests -Psbom,dependency-check verify
 
       - name: Require both release SBOM formats
         shell: bash
@@ -122,12 +122,12 @@ jobs:
       - name: Full production Maven verification (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
-        run: .\mvnw.cmd clean verify -Pproduction
+        run: .\tools\invoke-maven.ps1 clean verify -Pproduction
 
       - name: Full production Maven verification (Linux/macOS)
         if: matrix.platform != 'windows'
         shell: bash
-        run: ./mvnw clean verify -Pproduction
+        run: ./tools/invoke-maven.sh clean verify -Pproduction
 
       - name: Source/static release validation
         if: matrix.platform == 'linux'
@@ -260,6 +260,27 @@ jobs:
         shell: bash
         run: python3 tools/stage23-cross-platform-release-check.py --dist dist --require-checksums --require-portable
 
+      - name: Generate candidate-bound release integrity manifest
+        shell: bash
+        run: >-
+          python tools/release-candidate-integrity.py
+          --root .
+          --dist dist
+          --platform "${{ matrix.platform }}"
+          --candidate-sha "$GITHUB_SHA"
+          --out "target/release-candidate-integrity/release-candidate-integrity-${{ matrix.platform }}.json"
+
+      - name: Verify candidate-bound release integrity manifest
+        shell: bash
+        run: >-
+          python tools/release-candidate-integrity.py
+          --verify
+          --root .
+          --dist dist
+          --platform "${{ matrix.platform }}"
+          --candidate-sha "$GITHUB_SHA"
+          --out "target/release-candidate-integrity/release-candidate-integrity-${{ matrix.platform }}.json"
+
       - name: Upload platform release artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -272,6 +293,8 @@ jobs:
             dist/myhomelib-bootstrap-*.jar
             dist/myhomelib-mcp-*.jar
             dist/SHA256SUMS
+            target/release-candidate-integrity/release-candidate-integrity-${{ matrix.platform }}.json
+            target/release-candidate-integrity/release-candidate-integrity-${{ matrix.platform }}.json.sha256
           if-no-files-found: error
           retention-days: 30
 

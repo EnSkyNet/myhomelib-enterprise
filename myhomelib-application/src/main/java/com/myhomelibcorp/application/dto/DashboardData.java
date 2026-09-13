@@ -13,6 +13,7 @@ import java.util.List;
 @AllArgsConstructor
 public class DashboardData {
     private BookDto continueReading;
+    private List<ContinueReadingItemDto> continueReadingShelf;
     private List<BookDto> recentBooks;
     private List<BookDto> recentAdded;
     private List<AuthorDto> favoriteAuthors;  // <-- має бути List<AuthorDto>

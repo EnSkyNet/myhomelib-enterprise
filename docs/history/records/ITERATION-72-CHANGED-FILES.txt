@@ -1,0 +1,17 @@
+Iteration 72 — changed files vs Iteration 71
+
+Changed / added:
+- MYHOMELIB-DEVELOPMENT.md
+- MYHOMELIB-RELEASE.md
+- README.md
+- docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+- docs/history/records/ITERATION-72-RELEASE-HARDENING-CHECKPOINT.md
+- myhomelib-e2e-tests/src/test/java/com/myhomelibcorp/e2e/BackupRestoreJourneyE2ETest.java
+- myhomelib-reader/pom.xml
+- myhomelib-reader/src/test/resources/golden/reader-rich.zip
+- myhomelib-reader/src/test/resources/golden/reader-second.fb2
+- myhomelib-ui/src/test/java/com/myhomelibcorp/ui/ComicReaderWorkflowContractTest.java
+
+Notes:
+- no production Java source files changed
+- release-hardening/test-fixture/documentation checkpoint only

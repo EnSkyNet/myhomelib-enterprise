@@ -7,19 +7,23 @@ import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.book.BookSnapshot;
+import com.myhomelibcorp.domain.model.customfield.CustomFieldType;
+import com.myhomelibcorp.domain.model.customfield.CustomFieldValue;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookArtifactHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteInClauseSupport;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteDateTimeCodec;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -28,7 +32,6 @@ import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
 
 @Repository
-@RequiredArgsConstructor
 @Slf4j
 public class SqliteBookQueryRepository implements BookQueryRepository {
 
@@ -39,16 +42,49 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     private final BookListRowMapper bookListRowMapper;
     private final BookAuthorHelper bookAuthorHelper;
     private final BookGenreHelper bookGenreHelper;
+    private final BookArtifactHelper bookArtifactHelper;
     private final BookQueryBuilder queryBuilder;
+
+    @Autowired
+    public SqliteBookQueryRepository(CollectionManager collectionManager,
+                                     BookRowMapper bookRowMapper,
+                                     BookListRowMapper bookListRowMapper,
+                                     BookAuthorHelper bookAuthorHelper,
+                                     BookGenreHelper bookGenreHelper,
+                                     @Nullable BookArtifactHelper bookArtifactHelper,
+                                     BookQueryBuilder queryBuilder) {
+        this.collectionManager = collectionManager;
+        this.bookRowMapper = bookRowMapper;
+        this.bookListRowMapper = bookListRowMapper;
+        this.bookAuthorHelper = bookAuthorHelper;
+        this.bookGenreHelper = bookGenreHelper;
+        this.bookArtifactHelper = bookArtifactHelper;
+        this.queryBuilder = queryBuilder;
+    }
+
+    /**
+     * Backward-compatible constructor for focused repository/performance tests that
+     * do not need multi-artifact hydration. Production wiring uses the @Autowired
+     * constructor above.
+     */
+    public SqliteBookQueryRepository(CollectionManager collectionManager,
+                                     BookRowMapper bookRowMapper,
+                                     BookListRowMapper bookListRowMapper,
+                                     BookAuthorHelper bookAuthorHelper,
+                                     BookGenreHelper bookGenreHelper,
+                                     BookQueryBuilder queryBuilder) {
+        this(collectionManager, bookRowMapper, bookListRowMapper, bookAuthorHelper, bookGenreHelper, null, queryBuilder);
+    }
 
     private JdbcTemplate getJdbcTemplate() {
         return collectionManager.getCurrentJdbcTemplate();
     }
 
-    private void enrichBooks(List<Book> books) {
-        if (books.isEmpty()) return;
-        bookAuthorHelper.loadAuthorsForBooks(books);
-        bookGenreHelper.loadGenresForBooks(books);
+    private List<Book> enrichBooks(List<Book> books) {
+        if (books.isEmpty()) return books;
+        if (bookAuthorHelper != null) bookAuthorHelper.loadAuthorsForBooks(books);
+        if (bookGenreHelper != null) bookGenreHelper.loadGenresForBooks(books);
+        return bookArtifactHelper != null ? bookArtifactHelper.attachArtifacts(books) : books;
     }
 
     // ===== Пошук з пагінацією =====
@@ -67,7 +103,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     private PageResult<Book> loadOffsetPage(BookQuery query, long total) {
         var sqlQuery = queryBuilder.build(query);
         List<Book> books = getJdbcTemplate().query(sqlQuery.sql(), bookListRowMapper, sqlQuery.params());
-        enrichBooks(books);
+        books = enrichBooks(books);
         return toPageResult(query, books, total);
     }
 
@@ -80,7 +116,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         if (pageDirection == BookPageDirection.BEFORE && books.size() > 1) {
             Collections.reverse(books);
         }
-        enrichBooks(books);
+        books = enrichBooks(books);
         return toPageResult(query, books, knownTotal);
     }
 
@@ -105,7 +141,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT * FROM books WHERE id = ?";
         try {
             Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper, id.asString());
-            enrichBooks(List.of(book));
+            book = enrichBooks(List.of(book)).getFirst();
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -115,28 +151,26 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
     @Override
     public List<Book> findByIds(List<BookId> ids) {
         if (ids == null || ids.isEmpty()) return List.of();
-        List<Book> books = new ArrayList<>(Math.min(ids.size(), SqliteInClauseSupport.MAX_ITEMS));
+        List<Book> loadedBooks = new ArrayList<>(Math.min(ids.size(), SqliteInClauseSupport.MAX_ITEMS));
         SqliteInClauseSupport.forEachChunk(ids, part -> {
             String sql = "SELECT * FROM books WHERE id IN (" + SqliteInClauseSupport.placeholders(part.size()) + ")";
             Object[] params = part.stream().map(BookId::asString).toArray();
-            books.addAll(getJdbcTemplate().query(sql, bookRowMapper, params));
+            loadedBooks.addAll(getJdbcTemplate().query(sql, bookRowMapper, params));
         });
-        enrichBooks(books);
-        return books;
+        return enrichBooks(loadedBooks);
     }
 
     @Override
     public List<Book> findListItemsByIds(List<BookId> ids) {
         if (ids == null || ids.isEmpty()) return List.of();
-        List<Book> books = new ArrayList<>(Math.min(ids.size(), SqliteInClauseSupport.MAX_ITEMS));
+        List<Book> loadedBooks = new ArrayList<>(Math.min(ids.size(), SqliteInClauseSupport.MAX_ITEMS));
         SqliteInClauseSupport.forEachChunk(ids, part -> {
             String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION
                     + " FROM books b WHERE b.id IN (" + SqliteInClauseSupport.placeholders(part.size()) + ")";
             Object[] params = part.stream().map(BookId::asString).toArray();
-            books.addAll(getJdbcTemplate().query(sql, bookListRowMapper, params));
+            loadedBooks.addAll(getJdbcTemplate().query(sql, bookListRowMapper, params));
         });
-        enrichBooks(books);
-        return books;
+        return enrichBooks(loadedBooks);
     }
 
     @Override
@@ -152,7 +186,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         try {
             Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper,
                     safe(collectionRoot), safe(folder), safe(fileName), safe(archiveEntry));
-            enrichBooks(List.of(book));
+            book = enrichBooks(List.of(book)).getFirst();
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -175,7 +209,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                   )
                 """;
         List<Book> books = getJdbcTemplate().query(sql, bookRowMapper, rel, abs, root, rel);
-        enrichBooks(books);
+        books = enrichBooks(books);
         return books;
     }
 
@@ -222,7 +256,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             """;
         try {
             Book book = getJdbcTemplate().queryForObject(sql, bookRowMapper, title, authorLastName);
-            enrichBooks(List.of(book));
+            book = enrichBooks(List.of(book)).getFirst();
             return Optional.of(book);
         } catch (EmptyResultDataAccessException e) {
             return Optional.empty();
@@ -234,7 +268,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION + " FROM books b "
                 + "WHERE b.deleted = 0 ORDER BY b.update_date DESC LIMIT ?";
         List<Book> books = getJdbcTemplate().query(sql, bookListRowMapper, limit);
-        enrichBooks(books);
+        books = enrichBooks(books);
         return books;
     }
 
@@ -243,7 +277,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION + " FROM books b "
                 + "WHERE b.deleted = 0 ORDER BY b.created_at DESC LIMIT ?";
         List<Book> books = getJdbcTemplate().query(sql, bookListRowMapper, limit);
-        enrichBooks(books);
+        books = enrichBooks(books);
         return books;
     }
 
@@ -252,7 +286,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         String sql = "SELECT " + BookQueryBuilder.BOOK_LIST_PROJECTION + " FROM books b "
                 + "WHERE b.deleted = 0 ORDER BY b.rate DESC LIMIT ?";
         List<Book> books = getJdbcTemplate().query(sql, bookListRowMapper, limit);
-        enrichBooks(books);
+        books = enrichBooks(books);
         return books;
     }
 
@@ -304,7 +338,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         private void loadNextPage() {
             String sql = "SELECT * FROM books WHERE id > ? ORDER BY id LIMIT ?";
             currentPage = getJdbcTemplate().query(sql, bookRowMapper, lastId, pageSize);
-            enrichBooks(currentPage);
+            currentPage = enrichBooks(currentPage);
             currentIndex = 0;
             if (currentPage.isEmpty()) {
                 endReached = true;
@@ -379,6 +413,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
 
             Map<String, RelatedText> authors = loadSearchAuthors(first, last, pageIds);
             Map<String, RelatedText> genres = loadSearchGenres(first, last, pageIds);
+            Map<String, List<CustomFieldValue>> customFields = loadSearchCustomFields(first, last, pageIds);
             List<BookSnapshot> snapshots = new ArrayList<>(baseRows.size());
             for (SearchBaseRow row : baseRows) {
                 RelatedText author = authors.get(row.id());
@@ -408,6 +443,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                         .createdAt(row.createdAt())
                         .deleted(false)
                         .local(row.local())
+                        .customFieldValues(customFields.getOrDefault(row.id(), List.of()))
                         .build());
             }
             currentPage = snapshots;
@@ -453,6 +489,27 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return result;
     }
 
+    private Map<String, List<CustomFieldValue>> loadSearchCustomFields(String firstId, String lastId, Set<String> pageIds) {
+        Map<String, List<CustomFieldValue>> result = new HashMap<>();
+        String sql = """
+                SELECT v.book_id, v.definition_id, d.field_type, v.value_text
+                  FROM custom_field_values v
+                  JOIN custom_field_definitions d ON d.id = v.definition_id
+                 WHERE v.book_id >= ? AND v.book_id <= ?
+                 ORDER BY v.book_id, v.definition_id
+                """;
+        getJdbcTemplate().query(sql, rs -> {
+            String bookId = rs.getString("book_id");
+            if (!pageIds.contains(bookId)) return;
+            long definitionId = rs.getLong("definition_id");
+            CustomFieldType type = CustomFieldType.valueOf(rs.getString("field_type"));
+            result.computeIfAbsent(bookId, ignored -> new ArrayList<>())
+                    .add(new CustomFieldValue(definitionId, type, value(rs.getString("value_text"))));
+        }, firstId, lastId);
+        result.replaceAll((ignored, values) -> List.copyOf(values));
+        return result;
+    }
+
     private static String joinName(String last, String first, String middle) {
         StringBuilder out = new StringBuilder();
         appendNamePart(out, last);
@@ -478,7 +535,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             Integer libraryRate, String translators, String city, String sourceUrl, String isbn,
             LocalDateTime createdAt, boolean local) { }
 
-    private static final class RelatedText {
+    private static class RelatedText {
         private final String textSeparator;
         private final String idSeparator;
         private final StringBuilder text = new StringBuilder();

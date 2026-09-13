@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.action.BookActionProfile;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
 import com.myhomelibcorp.application.dto.InpxExportRequest;
+import com.myhomelibcorp.application.export.DeviceProfileService;
+import com.myhomelibcorp.application.export.DeviceTargetProfile;
 import com.myhomelibcorp.application.export.ExportCollisionContext;
 import com.myhomelibcorp.application.export.ExportCollisionDecision;
 import com.myhomelibcorp.application.export.ExportHistoryEntry;
@@ -47,13 +49,11 @@ import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
-import java.util.Locale;
 
 @Component
 @RequiredArgsConstructor
@@ -63,6 +63,7 @@ public class ExportController {
     private final ExportToDeviceUseCase exportToDeviceUseCase;
     private final ExportToInpxUseCase exportToInpxUseCase;
     private final ExportProfileService exportProfileService;
+    private final DeviceProfileService deviceProfileService;
     private final ExportLastStateService exportLastStateService;
     private final ExportHistoryService exportHistoryService;
     private final BookActionProfileService bookActionProfileService;
@@ -76,6 +77,7 @@ public class ExportController {
     private final ApplicationContext springContext;
 
     @FXML private ComboBox<ExportProfile> profileComboBox;
+    @FXML private ComboBox<DeviceTargetProfile> deviceProfileComboBox;
     @FXML private ComboBox<ExportRequest.ExportFormat> formatComboBox;
     @FXML private TextField destinationField;
     @FXML private TextField fileNameTemplateField;
@@ -94,6 +96,7 @@ public class ExportController {
     private final AtomicBoolean exportCancelFlag = new AtomicBoolean(false);
     private volatile boolean exportRunning;
     private boolean applyingProfile;
+    private Runnable successfulExportCallback = () -> { };
 
     @FXML
     public void initialize() {
@@ -126,6 +129,16 @@ public class ExportController {
                 }
                 return collisionPolicyComboBox.getValue();
             }
+        });
+
+        deviceProfileComboBox.getItems().setAll(deviceProfileService.loadProfiles());
+        deviceProfileComboBox.setConverter(new StringConverter<>() {
+            @Override public String toString(DeviceTargetProfile p) { return p == null ? "" : p.displayName(); }
+            @Override public DeviceTargetProfile fromString(String value) { return deviceProfileComboBox.getValue(); }
+        });
+        deviceProfileComboBox.setValue(deviceProfileService.genericFolder());
+        deviceProfileComboBox.valueProperty().addListener((obs, old, value) -> {
+            if (!applyingProfile) applyDevicePreferredFormat(value);
         });
 
         profileComboBox.setConverter(new StringConverter<>() {
@@ -163,9 +176,7 @@ public class ExportController {
         List<BookViewModel> validBooks = selectedBooks.stream()
                 .filter(b -> b.getId() != null && !b.getId().isBlank()).toList();
         selectedBookIds = validBooks.stream().map(b -> BookId.fromString(b.getId())).collect(Collectors.toList());
-        EnumSet<ExportRequest.ExportFormat> common = EnumSet.noneOf(ExportRequest.ExportFormat.class);
-        common.addAll(exportToDeviceUseCase.supportedFormats());
-        for (BookViewModel book : validBooks) common.retainAll(sourceFormats(book));
+        Set<ExportRequest.ExportFormat> common = exportToDeviceUseCase.supportedFormatsForBooks(selectedBookIds);
         ExportRequest.ExportFormat preferred = formatComboBox.getValue();
         formatComboBox.getItems().setAll(java.util.Arrays.stream(ExportRequest.ExportFormat.values())
                 .filter(common::contains).toList());
@@ -176,22 +187,14 @@ public class ExportController {
             if (!validBooks.isEmpty()) selectedBooksLabel.setText(validBooks.size() + " книг — немає спільного формату експорту");
         } else {
             ExportProfile profile = profileComboBox.getValue();
+            DeviceTargetProfile device = deviceProfileComboBox.getValue();
+            ExportRequest.ExportFormat devicePreferred = firstSupportedDeviceFormat(device, common);
             if (profile != null && common.contains(profile.format())) formatComboBox.setValue(profile.format());
+            else if (devicePreferred != null) formatComboBox.setValue(devicePreferred);
             else if (preferred != null && common.contains(preferred)) formatComboBox.setValue(preferred);
             else formatComboBox.setValue(formatComboBox.getItems().getFirst());
             exportButton.setDisable(false);
         }
-    }
-
-    private Set<ExportRequest.ExportFormat> sourceFormats(BookViewModel book) {
-        String source = book.getArchiveEntry();
-        if (source == null || source.isBlank()) source = book.getFileName();
-        source = source == null ? "" : source.toLowerCase(Locale.ROOT);
-        if (source.endsWith(".fb2") || source.endsWith(".fbd"))
-            return EnumSet.of(ExportRequest.ExportFormat.FB2, ExportRequest.ExportFormat.FB2_ZIP, ExportRequest.ExportFormat.TXT);
-        if (source.endsWith(".epub")) return EnumSet.of(ExportRequest.ExportFormat.EPUB);
-        if (source.endsWith(".txt") || source.endsWith(".text")) return EnumSet.of(ExportRequest.ExportFormat.TXT);
-        return EnumSet.noneOf(ExportRequest.ExportFormat.class);
     }
 
     public void setStage(Stage stage) {
@@ -214,6 +217,14 @@ public class ExportController {
 
     /** Device export always uses the shared checkbox selection; row cursor is never a fallback. */
     public void handleExport(Window owner) {
+        handleExport(owner, null);
+    }
+
+    /**
+     * Device export with a workspace-local refresh callback. The callback runs only after a
+     * non-cancelled export with no failures/errors, after the exported checkbox selection is cleared.
+     */
+    public void handleExport(Window owner, Runnable onSuccessfulExport) {
         List<BookId> selectedIds = bookSelectionService.snapshot();
         if (selectedIds.isEmpty()) {
             dialogService.showWarning("Немає вибраних книг",
@@ -230,7 +241,7 @@ public class ExportController {
                         dialogService.showWarning("Експорт", "Вибрані книги не знайдено в активній колекції.");
                         return;
                     }
-                    showExportDialog(owner, rows);
+                    showExportDialog(owner, rows, onSuccessfulExport);
                 }))
                 .exceptionally(error -> {
                     Platform.runLater(() -> dialogService.showError("Експорт",
@@ -240,6 +251,10 @@ public class ExportController {
     }
 
     public void showExportDialog(Window owner, List<BookViewModel> selectedBooks) {
+        showExportDialog(owner, selectedBooks, null);
+    }
+
+    public void showExportDialog(Window owner, List<BookViewModel> selectedBooks, Runnable onSuccessfulExport) {
         if (selectedBooks == null || selectedBooks.isEmpty()) {
             dialogService.showWarning("Немає вибраних книг", "Виберіть хоча б одну книгу.");
             return;
@@ -250,13 +265,18 @@ public class ExportController {
             Parent root = loader.load();
             ExportController controller = loader.getController();
             controller.setSelectedBooks(selectedBooks);
+            controller.successfulExportCallback = onSuccessfulExport == null ? () -> { } : onSuccessfulExport;
             Stage dialogStage = new Stage();
             dialogStage.setTitle("Експорт книг (" + selectedBooks.size() + " книг)");
             dialogStage.setScene(new Scene(root, 700, 620));
             dialogStage.initModality(Modality.WINDOW_MODAL);
             if (owner != null) dialogStage.initOwner(owner);
             controller.setStage(dialogStage);
-            dialogStage.showAndWait();
+            try {
+                dialogStage.showAndWait();
+            } finally {
+                controller.successfulExportCallback = () -> { };
+            }
         } catch (Exception e) {
             log.error("Помилка відкриття діалогу експорту", e);
             dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
@@ -367,9 +387,11 @@ public class ExportController {
     }
 
     private ExportProfile snapshotProfile(String id, String name) {
+        DeviceTargetProfile device = deviceProfileComboBox.getValue();
         return new ExportProfile(id, name, formatComboBox.getValue(), text(destinationField.getText()),
                 collisionPolicyComboBox.getValue(), extractOnlyCheckBox.isSelected(),
-                text(fileNameTemplateField.getText()), text(subfolderTemplateField.getText()), selectedPostActionId());
+                text(fileNameTemplateField.getText()), text(subfolderTemplateField.getText()), selectedPostActionId(),
+                device == null ? DeviceProfileService.GENERIC_FOLDER_ID : device.id());
     }
 
     private void loadProfiles(String selectId) {
@@ -414,7 +436,9 @@ public class ExportController {
         if (profile == null) { updateProfileButtons(); return; }
         applyingProfile = true;
         try {
+            selectDeviceProfile(profile.deviceProfileId());
             if (formatComboBox.getItems().contains(profile.format())) formatComboBox.setValue(profile.format());
+            else applyDevicePreferredFormat(deviceProfileComboBox.getValue());
             destinationField.setText(profile.destinationFolder());
             collisionPolicyComboBox.setValue(profile.collisionPolicy());
             extractOnlyCheckBox.setSelected(profile.extractOnly());
@@ -423,6 +447,30 @@ public class ExportController {
             selectPostAction(profile.postActionProfileId());
         } finally { applyingProfile = false; }
         updateProfileButtons();
+    }
+
+    private void selectDeviceProfile(String id) {
+        DeviceTargetProfile selected = deviceProfileService.findById(text(id)).orElse(deviceProfileService.genericFolder());
+        deviceProfileComboBox.setValue(selected);
+    }
+
+    private void applyDevicePreferredFormat(DeviceTargetProfile profile) {
+        if (profile == null || formatComboBox.getItems().isEmpty()) return;
+        for (ExportRequest.ExportFormat format : profile.preferredFormats()) {
+            if (formatComboBox.getItems().contains(format)) {
+                formatComboBox.setValue(format);
+                return;
+            }
+        }
+    }
+
+    private ExportRequest.ExportFormat firstSupportedDeviceFormat(DeviceTargetProfile profile,
+                                                                   Set<ExportRequest.ExportFormat> supported) {
+        if (profile == null || supported == null) return null;
+        for (ExportRequest.ExportFormat format : profile.preferredFormats()) {
+            if (supported.contains(format)) return format;
+        }
+        return null;
     }
 
     private void loadPostActions(String selectId) {
@@ -459,7 +507,14 @@ public class ExportController {
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Виберіть папку для експорту");
         File dir = chooser.showDialog(stage);
-        if (dir != null) destinationField.setText(dir.getAbsolutePath());
+        if (dir != null) {
+            destinationField.setText(dir.getAbsolutePath());
+            DeviceTargetProfile current = deviceProfileComboBox.getValue();
+            DeviceTargetProfile detected = deviceProfileService.detectOrGeneric(dir.toPath());
+            if (current == null || DeviceProfileService.GENERIC_FOLDER_ID.equals(current.id())) {
+                deviceProfileComboBox.setValue(detected);
+            }
+        }
     }
 
     @FXML private void onExport() {
@@ -471,15 +526,22 @@ public class ExportController {
         if (formatComboBox.getValue() == null) {
             dialogService.showWarning("Немає сумісного формату", "Вибрані книги мають різні вихідні формати. Експортуйте їх окремими групами."); return;
         }
-        Path destination;
-        try { destination = Path.of(destPath).toAbsolutePath().normalize(); }
+        Path mountRoot;
+        try { mountRoot = Path.of(destPath).toAbsolutePath().normalize(); }
         catch (RuntimeException e) { dialogService.showWarning("Некоректна папка", e.getMessage()); return; }
-        if (!destination.toFile().exists()
+        if (!mountRoot.toFile().exists()
                 && !dialogService.showConfirmation("Створити папку?", "Папка не існує.", "Створити \"" + destPath + "\"?")) return;
+
+        DeviceTargetProfile device = deviceProfileComboBox.getValue();
+        if (device == null) device = deviceProfileService.genericFolder();
+        Path destination;
+        try { destination = device.resolveDestination(mountRoot); }
+        catch (RuntimeException e) { dialogService.showWarning("Профіль пристрою", e.getMessage()); return; }
 
         ExportProfile selectedProfile = profileComboBox.getValue();
         ExportRequest request = ExportRequest.builder()
                 .bookIds(selectedBookIds).destinationFolder(destination).format(formatComboBox.getValue())
+                .preferredFormats(deviceProfileService.orderedFormats(device, formatComboBox.getValue()))
                 .collisionPolicy(collisionPolicyComboBox.getValue())
                 .overwriteExisting(collisionPolicyComboBox.getValue() == ExportRequest.CollisionPolicy.OVERWRITE)
                 .extractOnly(extractOnlyCheckBox.isSelected())
@@ -488,6 +550,7 @@ public class ExportController {
                 .profileId(selectedProfile == null ? "" : selectedProfile.id())
                 .profileName(selectedProfile == null ? "Ad hoc" : selectedProfile.name())
                 .postActionProfileId(selectedPostActionId())
+                .completionPolicy(ExportRequest.CompletionPolicy.EJECT_SAFE)
                 .build();
 
         persistLastExportState(request);
@@ -540,7 +603,7 @@ public class ExportController {
                                 + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
                         return;
                     }
-                    finishExport(result);
+                    finishExport(result, request);
                 }));
     }
 
@@ -576,7 +639,7 @@ public class ExportController {
         return ExportCollisionDecision.CANCEL;
     }
 
-    private void finishExport(ExportToDeviceUseCase.ExportResult result) {
+    private void finishExport(ExportToDeviceUseCase.ExportResult result, ExportRequest request) {
         setExportRunning(false);
         appState.getStatusBar().setProgressVisible(false);
         selectedBooksLabel.setText(selectedBookIds.size() + " книг вибрано");
@@ -587,6 +650,20 @@ public class ExportController {
         if (result.cancelled()) {
             dialogService.showInfo("Експорт скасовано", summary);
         } else if (result.failed() == 0 && result.errors().isEmpty()) {
+            // A completed batch is a UI transaction: exported checkboxes are consumed and the
+            // active workspace must re-read physical-local state (remote books may have been
+            // downloaded as part of export preparation). Failed/cancelled exports deliberately
+            // keep the selection so the user can retry.
+            bookSelectionService.setSelectedIds(List.copyOf(selectedBookIds), false);
+            try {
+                successfulExportCallback.run();
+            } catch (RuntimeException refreshFailure) {
+                log.warn("Експорт завершено, але не вдалося оновити workspace", refreshFailure);
+            }
+            if (request != null && request.effectiveCompletionPolicy() == ExportRequest.CompletionPolicy.EJECT_SAFE) {
+                summary += " Запис на носій завершено; перед фізичним від’єднанням скористайтеся безпечним вилученням ОС.";
+                appState.getStatusBar().setStatusText(summary);
+            }
             selectedBooksLabel.setText(summary);
             PauseTransition closeDelay = new PauseTransition(Duration.seconds(1.0));
             closeDelay.setOnFinished(event -> closeDialog());
@@ -602,6 +679,7 @@ public class ExportController {
         exportRunning = running;
         exportButton.setDisable(running || selectedBookIds == null || selectedBookIds.isEmpty() || formatComboBox.getValue() == null);
         formatComboBox.setDisable(running); collisionPolicyComboBox.setDisable(running); profileComboBox.setDisable(running);
+        deviceProfileComboBox.setDisable(running);
         destinationField.setDisable(running); fileNameTemplateField.setDisable(running); subfolderTemplateField.setDisable(running);
         postActionComboBox.setDisable(running); extractOnlyCheckBox.setDisable(running);
         cancelButton.setDisable(false);

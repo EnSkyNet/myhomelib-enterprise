@@ -1,0 +1,9 @@
+# source-language	target-language	source-text	translated-text
+uk	en	книга	book
+en	uk	book	книга
+uk	en	читач	reader
+en	uk	reader	читач
+uk	bg	книга	книга
+bg	uk	книга	книга
+en	bg	bookmark	отметка
+bg	en	отметка	bookmark

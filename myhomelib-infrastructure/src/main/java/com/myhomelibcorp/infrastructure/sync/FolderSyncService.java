@@ -19,6 +19,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
+import com.myhomelibcorp.infrastructure.sync.FolderSyncCounters.FileResult;
+
 import java.io.IOException;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
@@ -101,7 +103,7 @@ public class FolderSyncService implements FolderSyncPort {
         cancelFlag.set(false);
         LocalDateTime startTime = LocalDateTime.now();
 
-        Counters counters = new Counters();
+        FolderSyncCounters counters = new FolderSyncCounters();
         List<String> errorMessages = new ArrayList<>();
         ImportChangeAccumulator inpxChanges = new ImportChangeAccumulator(
                 ImportChangeAccumulator.normalizeLimit(changeTrackingLimit));
@@ -352,23 +354,4 @@ public class FolderSyncService implements FolderSyncPort {
         return new FileResult(added, updated + unavailable, 0, 0);
     }
 
-    private record FileResult(int added, int updated, int deleted, int errors) {
-        static FileResult skipped() { return new FileResult(0, 0, 0, 0); }
-    }
-
-    private static final class Counters {
-        int added;
-        int updated;
-        int deleted;
-        int skipped;
-        int errors;
-
-        void add(FileResult result) {
-            added += result.added();
-            updated += result.updated();
-            deleted += result.deleted();
-            errors += result.errors();
-            if (result.added() == 0 && result.updated() == 0 && result.deleted() == 0 && result.errors() == 0) skipped++;
-        }
-    }
 }

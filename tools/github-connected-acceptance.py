@@ -30,8 +30,10 @@ import zipfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
+
+from evidence_contracts import current_schema, validate_record
 
 API_VERSION = "2026-03-10"
 FAST_GATE_NAMES = {"fast gate", "pr ci / fast gate"}
@@ -315,7 +317,9 @@ def verify_github_artifact_digest(blob: bytes, declared_digest: str, label: str)
     return actual
 
 
-def validate_windows_release_artifact(blob: bytes, version: str, extract_dir: Path | None = None) -> dict[str, Any]:
+def validate_windows_release_artifact(
+    blob: bytes, version: str, extract_dir: Path | None = None, expected_sha: str | None = None
+) -> dict[str, Any]:
     """Validate the Windows release artifact and return the exact MSI digest.
 
     The connected acceptance must bind later manual Windows evidence to the same
@@ -380,6 +384,71 @@ def validate_windows_release_artifact(blob: bytes, version: str, extract_dir: Pa
         msi_sha = _sha256_bytes(msi_bytes)
         exe_sha = _sha256_bytes(exe_bytes)
         portable_sha = _sha256_bytes(portable_bytes)
+
+        integrity_name = "release-candidate-integrity-windows.json"
+        integrity_sidecar_name = integrity_name + ".sha256"
+        need(integrity_name in basenames, f"Windows release artifact missing {integrity_name}")
+        need(integrity_sidecar_name in basenames, f"Windows release artifact missing {integrity_sidecar_name}")
+        integrity_path = basenames[integrity_name][0]
+        integrity_sidecar_path = basenames[integrity_sidecar_name][0]
+        integrity_bytes = zf.read(integrity_path)
+        sidecar_parts = zf.read(integrity_sidecar_path).decode("utf-8-sig").strip().split(None, 1)
+        need(len(sidecar_parts) == 2 and sidecar_parts[1].lstrip("*") == integrity_name,
+             "Windows release integrity sidecar is invalid")
+        need(re.fullmatch(r"[0-9a-fA-F]{64}", sidecar_parts[0]) is not None,
+             "Windows release integrity sidecar has invalid SHA-256")
+        need(_sha256_bytes(integrity_bytes) == sidecar_parts[0].lower(),
+             "Windows release integrity sidecar digest mismatch")
+        try:
+            integrity = json.loads(integrity_bytes)
+        except Exception as exc:  # noqa: BLE001
+            raise AcceptanceError(f"invalid Windows release integrity JSON: {exc}") from exc
+        need(isinstance(integrity, dict), "Windows release integrity JSON root must be an object")
+        try:
+            validate_record(integrity, "release-candidate-integrity", label="Windows release integrity")
+        except ValueError as exc:
+            raise AcceptanceError(str(exc)) from exc
+        need(integrity.get("overall") == "PASS", "Windows release integrity record is not PASS")
+        need(integrity.get("projectVersion") == version, "Windows release integrity project version mismatch")
+        need(integrity.get("platform") == "windows", "Windows release integrity platform must be windows")
+        integrity_sha = normalize_sha(str(integrity.get("candidateSha") or ""), "Windows integrity candidate SHA")
+        if expected_sha:
+            need(integrity_sha == expected_sha, "Windows release integrity candidate SHA does not match CI Release head SHA")
+        source_tree_sha = str(integrity.get("sourceTreeSha256") or "").lower()
+        need(re.fullmatch(r"[0-9a-f]{64}", source_tree_sha) is not None, "Windows release integrity sourceTreeSha256 invalid")
+        dist_manifest_sha = str(integrity.get("distManifestSha256") or "").lower()
+        need(re.fullmatch(r"[0-9a-f]{64}", dist_manifest_sha) is not None, "Windows release integrity distManifestSha256 invalid")
+        need(str(integrity.get("sha256sSha256") or "").lower() == _sha256_bytes(zf.read(sums_path)),
+             "Windows release integrity SHA256SUMS digest mismatch")
+        dist_rows = integrity.get("distFiles")
+        need(isinstance(dist_rows, list) and dist_rows, "Windows release integrity distFiles missing")
+        integrity_dist: dict[str, dict[str, Any]] = {}
+        aggregate = hashlib.sha256()
+        for row in dist_rows:
+            need(isinstance(row, dict), "Windows release integrity distFiles row invalid")
+            rel = str(row.get("path") or "").replace("\\", "/")
+            digest = str(row.get("sha256") or "").lower()
+            size = row.get("size")
+            need(rel and "/" not in rel and ".." not in PurePosixPath(rel).parts,
+                 f"Windows release integrity dist path invalid: {rel!r}")
+            need(re.fullmatch(r"[0-9a-f]{64}", digest) is not None, f"Windows release integrity digest invalid for {rel}")
+            need(isinstance(size, int) and size >= 0, f"Windows release integrity size invalid for {rel}")
+            need(rel not in integrity_dist, f"Windows release integrity duplicate dist entry: {rel}")
+            integrity_dist[rel] = row
+            aggregate.update(f"{digest}  {rel}  {size}\n".encode("utf-8"))
+        need(aggregate.hexdigest() == dist_manifest_sha, "Windows release integrity distManifestSha256 mismatch")
+        need(set(integrity_dist) == set(entries), "Windows release integrity dist file set does not match SHA256SUMS")
+        for rel, digest in entries.items():
+            row = integrity_dist[rel]
+            artifact_path = basenames.get(rel, [None])[0]
+            need(artifact_path is not None, f"Windows release artifact missing integrity-bound file {rel}")
+            payload = zf.read(artifact_path)
+            need(str(row["sha256"]) == digest == _sha256_bytes(payload),
+                 f"Windows release integrity digest mismatch for {rel}")
+            need(int(row["size"]) == len(payload), f"Windows release integrity size mismatch for {rel}")
+
+        integrity_record_sha = _sha256_bytes(integrity_bytes)
+        integrity_project_version = str(integrity.get("projectVersion") or "")
         if extract_dir is not None:
             extract_dir.mkdir(parents=True, exist_ok=True)
             (extract_dir / msi_name).write_bytes(msi_bytes)
@@ -389,6 +458,13 @@ def validate_windows_release_artifact(blob: bytes, version: str, extract_dir: Pa
                 f"{msi_sha}  {msi_name}\n{exe_sha}  {exe_name}\n{portable_sha}  {portable[0]}\n",
                 encoding="utf-8",
             )
+            # Preserve the exact CI Release integrity evidence for the later
+            # Windows/final reviewer handoff.  The final bundle verifier can
+            # therefore re-check candidate SHA/source/dist binding offline,
+            # rather than trusting only derived fields in GitHub evidence.
+            (extract_dir / "release-windows-SHA256SUMS").write_bytes(zf.read(sums_path))
+            (extract_dir / integrity_name).write_bytes(integrity_bytes)
+            (extract_dir / integrity_sidecar_name).write_bytes(zf.read(integrity_sidecar_path))
         return {
             "windowsArtifactFileCount": len(names),
             "windowsMsiPath": msi_path,
@@ -398,6 +474,13 @@ def validate_windows_release_artifact(blob: bytes, version: str, extract_dir: Pa
             "windowsPortablePath": portable_path,
             "windowsPortableSha256": portable_sha,
             "windowsChecksumsPath": sums_path,
+            "windowsChecksumsSha256": _sha256_bytes(zf.read(sums_path)),
+            "windowsIntegrityPath": integrity_path,
+            "windowsIntegritySha256": integrity_record_sha,
+            "windowsIntegrityProjectVersion": integrity_project_version,
+            "windowsIntegrityCandidateSha": integrity_sha,
+            "windowsIntegritySourceTreeSha256": source_tree_sha,
+            "windowsIntegrityDistManifestSha256": dist_manifest_sha,
         }
 
 
@@ -620,7 +703,7 @@ def check_supply_chain_run(
     windows_download_sha = verify_github_artifact_digest(
         windows_blob, windows_digest, f"CI Release run {run_id} Windows artifact"
     )
-    windows_validated = validate_windows_release_artifact(windows_blob, version, candidate_dir)
+    windows_validated = validate_windows_release_artifact(windows_blob, version, candidate_dir, run_sha)
 
     details = {
         "runId": run_id,
@@ -689,7 +772,7 @@ def write_evidence(
 ) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     payload = {
-        "schemaVersion": 2,
+        "schemaVersion": current_schema("github-connected-acceptance"),
         "scenario": "github-connected-acceptance",
         "candidateSha": candidate_sha,
         "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),

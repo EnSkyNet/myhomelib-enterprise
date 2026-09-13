@@ -1,0 +1,7 @@
+README.md
+MYHOMELIB-RELEASE.md
+docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+docs/history/records/ITERATION-79-WINDOWS-SPRING-WIRING-HOTFIX.md
+docs/history/records/ITERATION-79-CHANGED-FILES.txt
+myhomelib-application/src/main/java/com/myhomelibcorp/application/content/indexing/ContentIndexingQueueService.java
+myhomelib-application/src/test/java/com/myhomelibcorp/application/content/indexing/ContentIndexingQueueServiceSpringWiringTest.java

@@ -15,10 +15,10 @@
             <!-- Ліва панель: список груп -->
             <VBox spacing="5" style="-fx-padding: 5;">
                 <HBox spacing="5">
-                    <Button text="+" onAction="#onCreateGroup" prefWidth="30"/>
-                    <Button text="✎" onAction="#onRenameGroup" prefWidth="30"/>
-                    <Button text="✕" onAction="#onDeleteGroup" prefWidth="30"/>
-                    <Button text="↻" onAction="#onRefresh" prefWidth="30"/>
+                    <Button text="+" accessibleText="Створити групу" onAction="#onCreateGroup" prefWidth="30"/>
+                    <Button text="✎" accessibleText="Перейменувати групу" onAction="#onRenameGroup" prefWidth="30"/>
+                    <Button text="✕" accessibleText="Видалити групу" onAction="#onDeleteGroup" prefWidth="30"/>
+                    <Button text="↻" accessibleText="Оновити групи" onAction="#onRefresh" prefWidth="30"/>
                     <Region HBox.hgrow="ALWAYS"/>
                 </HBox>
                 <Label fx:id="groupsStateLabel" text="Завантаження…" visible="false" managed="false" wrapText="true"

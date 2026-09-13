@@ -32,11 +32,13 @@ class LayerArchitectureTest {
     private static final String SHARED = "com.myhomelibcorp.shared..";
     private static final String DOMAIN = "com.myhomelibcorp.domain..";
     private static final String APPLICATION = "com.myhomelibcorp.application..";
+    private static final String PLUGIN = "com.myhomelibcorp.plugin.api..";
     private static final String INFRASTRUCTURE = "com.myhomelibcorp.infrastructure..";
     private static final String UI = "com.myhomelibcorp.ui..";
     private static final String READER = "com.myhomelibcorp.reader..";
     private static final String MCP = "com.myhomelibcorp.mcp..";
     private static final String OPDS = "com.myhomelibcorp.opds..";
+    private static final String WEB = "com.myhomelibcorp.web..";
 
     /**
      * Import production classes once for the whole suite. JUnit creates a new test
@@ -47,10 +49,12 @@ class LayerArchitectureTest {
             "myhomelib-shared",
             "myhomelib-domain",
             "myhomelib-application",
+            "myhomelib-plugin-api",
             "myhomelib-infrastructure",
             "myhomelib-reader",
             "myhomelib-ui",
             "myhomelib-opds",
+            "myhomelib-web",
             "myhomelib-bootstrap",
             "myhomelib-mcp"
     );
@@ -104,11 +108,14 @@ class LayerArchitectureTest {
                 .should().dependOnClassesThat().resideInAnyPackage(
                         DOMAIN,
                         APPLICATION,
+                        PLUGIN,
+                        PLUGIN,
                         INFRASTRUCTURE,
                         UI,
                         READER,
                         MCP,
                         OPDS,
+                        WEB,
                         "org.springframework..",
                         "javafx..",
                         "java.sql..",
@@ -128,6 +135,7 @@ class LayerArchitectureTest {
                         READER,
                         MCP,
                         OPDS,
+                        WEB,
                         "org.springframework..",
                         "javafx..",
                         "java.sql..",
@@ -147,11 +155,24 @@ class LayerArchitectureTest {
                         READER,
                         MCP,
                         OPDS,
+                        WEB,
                         "javafx..",
                         "java.sql..",
                         "javax.sql..",
                         "org.springframework.jdbc..",
                         "org.apache.lucene.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void pluginApiDependsOnlyOnStableApplicationBoundaryAndJdk() {
+        noClasses()
+                .that().resideInAnyPackage(PLUGIN)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        INFRASTRUCTURE, UI, READER, MCP, OPDS, WEB,
+                        "javafx..", "java.sql..", "javax.sql..",
+                        "org.springframework..", "org.apache.lucene.."
                 )
                 .check(CLASSES);
     }
@@ -204,6 +225,7 @@ class LayerArchitectureTest {
                         UI,
                         MCP,
                         OPDS,
+                        WEB,
                         "org.springframework..",
                         "java.sql..",
                         "javax.sql..",
@@ -241,6 +263,25 @@ class LayerArchitectureTest {
                         OPDS,
                         "org.springframework..",
                         "javafx.."
+                )
+                .check(CLASSES);
+    }
+
+    @Test
+    void webLibraryDependsOnApplicationApiButNotDesktopAdapters() {
+        noClasses()
+                .that().resideInAnyPackage(WEB)
+                .should().dependOnClassesThat().resideInAnyPackage(
+                        INFRASTRUCTURE,
+                        UI,
+                        READER,
+                        MCP,
+                        OPDS,
+                        "javafx..",
+                        "java.sql..",
+                        "javax.sql..",
+                        "org.springframework.jdbc..",
+                        "org.apache.lucene.."
                 )
                 .check(CLASSES);
     }

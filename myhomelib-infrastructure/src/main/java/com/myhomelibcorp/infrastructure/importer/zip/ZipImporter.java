@@ -21,7 +21,6 @@ import java.nio.charset.Charset;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.LinkedList;
-import java.util.Locale;
 import java.util.Queue;
 import java.util.NoSuchElementException;
 import java.util.Spliterator;
@@ -41,7 +40,7 @@ public class ZipImporter implements BookImporterPort {
 
     @Override
     public boolean supports(Path file) {
-        return SupportedFormatRegistry.standard().isFormat(file, "zip", "cbz", "jar");
+        return SupportedFormatRegistry.standard().isFormat(file, "zip", "jar");
     }
 
     @Override

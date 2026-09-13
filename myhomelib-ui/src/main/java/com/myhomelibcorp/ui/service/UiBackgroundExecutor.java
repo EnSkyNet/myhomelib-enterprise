@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.shared.util.AsyncCallSupport;
 import com.myhomelibcorp.shared.util.ExecutorShutdown;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -48,17 +49,7 @@ public class UiBackgroundExecutor {
     }
 
     public <T> CompletableFuture<T> submit(Callable<T> task) {
-        try {
-            return CompletableFuture.supplyAsync(() -> {
-            try {
-                return task.call();
-            } catch (Exception e) {
-                throw new CompletionException(e);
-            }
-        }, executor);
-        } catch (RejectedExecutionException rejected) {
-            return CompletableFuture.failedFuture(rejected);
-        }
+        return AsyncCallSupport.submit(task, executor);
     }
 
     /** Submit a task whose Future cancellation interrupts the worker thread. */

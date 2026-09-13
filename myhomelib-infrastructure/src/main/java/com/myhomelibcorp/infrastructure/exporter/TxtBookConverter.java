@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.exporter;
 
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
+import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -15,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
+import java.util.Set;
 
 @Component
 @Slf4j
@@ -25,11 +27,21 @@ public class TxtBookConverter implements BookConverter {
 
 
     @Override
+    public Set<BookConversionCapability> capabilities() {
+        return Set.of(new BookConversionCapability(Set.of("fb2", "txt"), "TXT", ".txt"));
+    }
+
+    @Override
     public boolean supports(Book book) {
         String name = book.getArchiveEntry();
         if (name == null || name.isBlank()) name = book.getFileName();
         name = name == null ? "" : name.toLowerCase(Locale.ROOT);
         return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".txt") || name.endsWith(".text");
+    }
+
+    @Override
+    public boolean supports(Book book, String sourceFormat) {
+        return Set.of("fb2", "txt").contains(BookConversionCapability.normalizeFormat(sourceFormat));
     }
 
     @Override

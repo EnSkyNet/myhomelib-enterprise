@@ -7,13 +7,16 @@ import com.myhomelibcorp.application.dto.ExportRequest;
 import com.myhomelibcorp.application.export.ExportCollisionContext;
 import com.myhomelibcorp.application.export.ExportCollisionDecision;
 import com.myhomelibcorp.application.export.ExportCollisionResolver;
+import com.myhomelibcorp.application.export.ExportCompletionService;
 import com.myhomelibcorp.application.export.ExportHistoryService;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.util.CommandTemplate;
+import com.myhomelibcorp.application.usecase.conversion.ConvertBookUseCase;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.book.BookArtifact;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -44,6 +47,8 @@ public class ExportToDeviceUseCase {
     private final BookActionProfileService actionProfileService;
     private final BookActionExecutionService actionExecutionService;
     private final ExportHistoryService historyService;
+    private final ExportCompletionService completionService;
+    private final ConvertBookUseCase convertBookUseCase;
 
     private final Map<ExportRequest.ExportFormat, String> formatExtensions = Map.of(
             ExportRequest.ExportFormat.FB2, ".fb2",
@@ -65,10 +70,35 @@ public class ExportToDeviceUseCase {
 
     public Set<ExportRequest.ExportFormat> supportedFormats() {
         EnumSet<ExportRequest.ExportFormat> result = EnumSet.noneOf(ExportRequest.ExportFormat.class);
-        for (ExportRequest.ExportFormat format : ExportRequest.ExportFormat.values()) {
-            if (findAnyAvailableConverter(format) != null) result.add(format);
+        for (ConvertBookUseCase.CapabilityView view : convertBookUseCase.capabilityMatrix()) {
+            if (!view.available()) continue;
+            exportFormat(view.capability().targetFormat()).ifPresent(result::add);
         }
         return Set.copyOf(result);
+    }
+
+    /** Formats that every selected book can either provide as a local artifact or convert to. */
+    public Set<ExportRequest.ExportFormat> supportedFormatsForBooks(List<BookId> bookIds) {
+        if (bookIds == null || bookIds.isEmpty()) return Set.of();
+        EnumSet<ExportRequest.ExportFormat> common = EnumSet.allOf(ExportRequest.ExportFormat.class);
+        for (BookId id : bookIds) {
+            Book book = bookQueryRepository.findById(id).orElse(null);
+            if (book == null) return Set.of();
+            EnumSet<ExportRequest.ExportFormat> available = EnumSet.noneOf(ExportRequest.ExportFormat.class);
+            for (BookArtifact artifact : book.getArtifacts()) {
+                if (!artifact.isAvailable()) continue;
+                artifactFormat(artifact).ifPresent(available::add);
+            }
+            for (ExportRequest.ExportFormat format : ExportRequest.ExportFormat.values()) {
+                if (findConverter(format, book) != null) available.add(format);
+            }
+            if (book.getArtifacts().isEmpty()) {
+                sourceFormat(book).ifPresent(available::add);
+            }
+            common.retainAll(available);
+            if (common.isEmpty()) break;
+        }
+        return Set.copyOf(common);
     }
 
     public ExportResult execute(ExportRequest request) {
@@ -131,18 +161,39 @@ public class ExportToDeviceUseCase {
                 Book book = bookQueryRepository.findById(bookId)
                         .orElseThrow(() -> new IllegalArgumentException("Книгу не знайдено: " + bookId));
                 progressTitle = book.getTitle() == null ? bookId.asString() : book.getTitle();
-                if (bookResourcePort.locateBookFile(book).isEmpty()) {
+                boolean extractRawArchiveEntry = request.isExtractOnly() && book.hasArchiveEntry();
+                DirectArtifact directArtifact = null;
+                Conversion conversion = null;
+                ExportRequest.ExportFormat legacyDirectFormat = null;
+                if (!extractRawArchiveEntry) {
+                    // Respect the requested/device preference order per format. A later direct artifact must not
+                    // bypass a converter for an earlier explicitly selected format (for example FB2_ZIP -> FB2).
+                    for (ExportRequest.ExportFormat preferredFormat : request.effectivePreferredFormats()) {
+                        directArtifact = findPreferredArtifact(book, List.of(preferredFormat));
+                        if (directArtifact != null) break;
+                        conversion = findPreferredConversion(book, List.of(preferredFormat));
+                        if (conversion != null) break;
+                        // Legacy raw copy is the last-resort fallback only when no converter exists for this format.
+                        legacyDirectFormat = findLegacyDirectFormat(book, List.of(preferredFormat));
+                        if (legacyDirectFormat != null) break;
+                    }
+                }
+                if (extractRawArchiveEntry && bookResourcePort.locateBookFile(book).isEmpty()) {
                     throw new IllegalStateException("Книга не завантажена локально. Завантажте її перед експортом: " + progressTitle);
                 }
-                boolean extractRawArchiveEntry = request.isExtractOnly() && book.hasArchiveEntry();
-                BookConverter converter = extractRawArchiveEntry ? null : findConverter(request.getFormat(), book);
-                if (!extractRawArchiveEntry && converter == null) {
-                    throw new IllegalArgumentException("Формат " + request.getFormat()
-                            + " не підтримується для джерела: " + sourceName(book)
-                            + " або зовнішній конвертер не налаштовано");
+                if (!extractRawArchiveEntry && directArtifact == null && legacyDirectFormat == null && conversion == null) {
+                    throw new IllegalArgumentException("Жоден із форматів " + request.effectivePreferredFormats()
+                            + " не доступний для джерела: " + sourceName(book)
+                            + " і сумісний конвертер не налаштовано");
                 }
 
-                String targetExtension = extractRawArchiveEntry ? sourceExtension(sourceName(book)) : converter.getTargetExtension();
+                String targetExtension = extractRawArchiveEntry
+                        ? sourceExtension(sourceName(book))
+                        : directArtifact != null
+                            ? formatExtensions.get(directArtifact.format())
+                            : legacyDirectFormat != null
+                                ? formatExtensions.get(legacyDirectFormat)
+                                : conversion.converter().getTargetExtension();
                 if (targetExtension.isBlank()) throw new IllegalArgumentException("Не вдалося визначити розширення запису архіву");
                 String fileName = generateFileName(book, request);
                 Path normalizedDestination = destination.toAbsolutePath().normalize();
@@ -154,7 +205,8 @@ public class ExportToDeviceUseCase {
                 if (!Files.isWritable(bookDestination)) {
                     throw new IllegalStateException("Папка призначення доступна лише для читання: " + bookDestination);
                 }
-                long expectedBytes = Math.max(1L, book.getFileSize());
+                long expectedBytes = Math.max(1L, directArtifact == null
+                        ? book.getFileSize() : directArtifact.artifact().getFile().getFileSize());
                 long usableBytes = Files.getFileStore(bookDestination).getUsableSpace();
                 if (usableBytes < expectedBytes) {
                     throw new IllegalStateException("Недостатньо вільного місця: потрібно щонайменше "
@@ -178,16 +230,18 @@ public class ExportToDeviceUseCase {
 
                 Path stagedFile = Files.createTempFile(bookDestination, ".mhl-export-", targetExtension);
                 try {
-                    try (InputStream sourceStream = getBookStream(book)) {
-                        if (extractRawArchiveEntry) {
+                    try (InputStream sourceStream = directArtifact == null
+                            ? getBookStream(book) : getArtifactStream(directArtifact.artifact())) {
+                        if (extractRawArchiveEntry || directArtifact != null || legacyDirectFormat != null) {
                             Files.copy(sourceStream, stagedFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
                         } else {
-                            converter.convert(book, sourceStream, stagedFile);
+                            conversion.converter().convert(book, sourceStream, stagedFile);
                         }
                     }
                     verifyExportedFile(stagedFile);
                     commitExportedFile(stagedFile, targetFile);
                     verifyExportedFile(targetFile);
+                    completionService.complete(targetFile, request.effectiveCompletionPolicy());
                 } finally {
                     Files.deleteIfExists(stagedFile);
                 }
@@ -278,6 +332,98 @@ public class ExportToDeviceUseCase {
                         "Файл книги не знайдено або архівний запис недоступний: " + sourceName(book)));
     }
 
+    private InputStream getArtifactStream(BookArtifact artifact) {
+        var file = artifact.getFile();
+        return bookResourcePort.readBookData(file.getFileName(), file.getFolder(), file.getCollectionRoot(), file.getArchiveEntry())
+                .orElseThrow(() -> new IllegalArgumentException(
+                        "Artifact недоступний локально: " + artifact.displayName()));
+    }
+
+    private DirectArtifact findPreferredArtifact(Book book, List<ExportRequest.ExportFormat> preferredFormats) {
+        if (book == null || preferredFormats == null) return null;
+        for (ExportRequest.ExportFormat format : preferredFormats) {
+            for (BookArtifact artifact : book.getArtifacts()) {
+                if (!artifact.isAvailable()) continue;
+                if (artifactFormat(artifact).filter(format::equals).isPresent()) {
+                    return new DirectArtifact(artifact, format);
+                }
+            }
+        }
+        return null;
+    }
+
+    private ExportRequest.ExportFormat findLegacyDirectFormat(Book book, List<ExportRequest.ExportFormat> preferredFormats) {
+        if (book == null || !book.getArtifacts().isEmpty() || preferredFormats == null) return null;
+        java.util.Optional<ExportRequest.ExportFormat> source = sourceFormat(book);
+        if (source.isEmpty() || bookResourcePort.locateBookFile(book).isEmpty()) return null;
+        for (ExportRequest.ExportFormat format : preferredFormats) {
+            if (format == source.get()) return format;
+        }
+        return null;
+    }
+
+    private Conversion findPreferredConversion(Book book, List<ExportRequest.ExportFormat> preferredFormats) {
+        if (preferredFormats == null) return null;
+        for (ExportRequest.ExportFormat format : preferredFormats) {
+            BookConverter converter = findConverter(format, book);
+            if (converter != null) return new Conversion(format, converter);
+        }
+        return null;
+    }
+
+    private java.util.Optional<ExportRequest.ExportFormat> artifactFormat(BookArtifact artifact) {
+        if (artifact == null) return java.util.Optional.empty();
+        String name = artifact.getFile().hasArchiveEntry() ? artifact.getFile().getArchiveEntry() : artifact.getFile().getFileName();
+        String normalized = (artifact.getFormat() == null ? "" : artifact.getFormat()).trim().toLowerCase(java.util.Locale.ROOT);
+        String lowerName = name == null ? "" : name.toLowerCase(java.util.Locale.ROOT);
+        if (lowerName.endsWith(".fb2.zip") || normalized.equals("fb2_zip") || normalized.equals("fb2zip")) {
+            return java.util.Optional.of(ExportRequest.ExportFormat.FB2_ZIP);
+        }
+        return switch (normalized) {
+            case "fb2", "fbd" -> java.util.Optional.of(ExportRequest.ExportFormat.FB2);
+            case "txt", "text" -> java.util.Optional.of(ExportRequest.ExportFormat.TXT);
+            case "pdf" -> java.util.Optional.of(ExportRequest.ExportFormat.PDF);
+            case "epub" -> java.util.Optional.of(ExportRequest.ExportFormat.EPUB);
+            case "mobi", "azw", "azw3" -> java.util.Optional.of(ExportRequest.ExportFormat.MOBI);
+            case "lrf" -> java.util.Optional.of(ExportRequest.ExportFormat.LRF);
+            default -> formatFromName(lowerName);
+        };
+    }
+
+    private java.util.Optional<ExportRequest.ExportFormat> sourceFormat(Book book) {
+        return formatFromName(sourceName(book).toLowerCase(java.util.Locale.ROOT));
+    }
+
+    private java.util.Optional<ExportRequest.ExportFormat> formatFromName(String name) {
+        if (name == null) return java.util.Optional.empty();
+        String lower = name.toLowerCase(java.util.Locale.ROOT);
+        if (lower.endsWith(".fb2.zip")) return java.util.Optional.of(ExportRequest.ExportFormat.FB2_ZIP);
+        if (lower.endsWith(".fb2") || lower.endsWith(".fbd")) return java.util.Optional.of(ExportRequest.ExportFormat.FB2);
+        if (lower.endsWith(".txt") || lower.endsWith(".text")) return java.util.Optional.of(ExportRequest.ExportFormat.TXT);
+        if (lower.endsWith(".pdf")) return java.util.Optional.of(ExportRequest.ExportFormat.PDF);
+        if (lower.endsWith(".epub")) return java.util.Optional.of(ExportRequest.ExportFormat.EPUB);
+        if (lower.endsWith(".mobi") || lower.endsWith(".azw") || lower.endsWith(".azw3")) return java.util.Optional.of(ExportRequest.ExportFormat.MOBI);
+        if (lower.endsWith(".lrf")) return java.util.Optional.of(ExportRequest.ExportFormat.LRF);
+        return java.util.Optional.empty();
+    }
+
+    private record DirectArtifact(BookArtifact artifact, ExportRequest.ExportFormat format) { }
+    private record Conversion(ExportRequest.ExportFormat format, BookConverter converter) { }
+
+    private java.util.Optional<ExportRequest.ExportFormat> exportFormat(String format) {
+        String normalized = com.myhomelibcorp.application.conversion.BookConversionCapability.normalizeFormat(format);
+        return switch (normalized) {
+            case "fb2" -> java.util.Optional.of(ExportRequest.ExportFormat.FB2);
+            case "fb2_zip" -> java.util.Optional.of(ExportRequest.ExportFormat.FB2_ZIP);
+            case "txt" -> java.util.Optional.of(ExportRequest.ExportFormat.TXT);
+            case "pdf" -> java.util.Optional.of(ExportRequest.ExportFormat.PDF);
+            case "epub" -> java.util.Optional.of(ExportRequest.ExportFormat.EPUB);
+            case "mobi", "azw", "azw3" -> java.util.Optional.of(ExportRequest.ExportFormat.MOBI);
+            case "lrf" -> java.util.Optional.of(ExportRequest.ExportFormat.LRF);
+            default -> java.util.Optional.empty();
+        };
+    }
+
     private String sourceName(Book book) {
         if (book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank()) return book.getArchiveEntry();
         return book.getFileName() == null ? "" : book.getFileName();
@@ -318,7 +464,7 @@ public class ExportToDeviceUseCase {
 
     private String generateSubfolder(Book book, ExportRequest request) {
         String template = text(request.getSubfolderTemplate());
-        if (template.isBlank()) template = settings.get("export.subfolderTemplate", "%a/%s").trim();
+        if (template.isBlank()) template = text(settings.get("export.subfolderTemplate", "%a/%s"));
         if (template.isBlank()) template = "%a/%s";
         String result = applyTemplate(template, book).replace("..", "_");
         // Empty series segments are dropped by sanitizePathTemplate(), therefore the canonical
@@ -365,7 +511,7 @@ public class ExportToDeviceUseCase {
     /** Backward compatibility only; named Stage-15 action profiles are preferred. */
     private void runLegacyPostCommand(Book book, Path destination, Path file) {
         if (!settings.getBoolean("export.runPostCommand", false)) return;
-        String template = settings.get("export.postCommand", "").trim();
+        String template = text(settings.get("export.postCommand", ""));
         if (template.isEmpty()) return;
         try {
             List<String> args = CommandTemplate.expand(template, postActionPlaceholders(book, destination, file));
@@ -384,7 +530,7 @@ public class ExportToDeviceUseCase {
 
     private String generateFileName(Book book, ExportRequest request) {
         String template = text(request.getCustomFileNameTemplate());
-        if (template.isBlank()) template = settings.get("export.filenameTemplate", "%n2 - %t").trim();
+        if (template.isBlank()) template = text(settings.get("export.filenameTemplate", "%n2 - %t"));
         if (template.isBlank()) template = "%n2 - %t";
 
         // Canonical device layout: Author/[Series]/NN - Title.ext.

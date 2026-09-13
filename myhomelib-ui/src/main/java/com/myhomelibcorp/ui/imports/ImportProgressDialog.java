@@ -203,6 +203,7 @@ public class ImportProgressDialog {
             case ROLLING_BACK -> i18n.text("ui.import.stage.rolling_back");
             case REFRESHING_STATISTICS -> i18n.text("ui.import.stage.refreshing_statistics");
             case INTEGRITY_CHECKS -> i18n.text("ui.import.stage.integrity_checks");
+            case SCANNING_DUPLICATES -> i18n.text("ui.import.stage.scanning_duplicates");
             case SYNCHRONIZING_FILES -> i18n.text("ui.import.stage.synchronizing_files");
             case OPTIMIZING_DATABASE -> i18n.text("ui.import.stage.optimizing_database");
             case BACKING_UP -> i18n.text("ui.import.stage.backing_up");

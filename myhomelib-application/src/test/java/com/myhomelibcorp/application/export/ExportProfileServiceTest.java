@@ -25,7 +25,7 @@ class ExportProfileServiceTest {
         assertThat(migrated.postActionProfileId()).isEqualTo("legacy-post-command");
 
         ExportProfile custom = new ExportProfile("device", "Reader device", ExportRequest.ExportFormat.EPUB,
-                "/reader", ExportRequest.CollisionPolicy.ASK, false, "%t", "%a/%y", "send-device");
+                "/reader", ExportRequest.CollisionPolicy.ASK, false, "%t", "%a/%y", "send-device", DeviceProfileService.KOBO_ID);
         service.save(custom);
         assertThat(service.findById("device")).contains(custom);
     }

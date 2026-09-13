@@ -12,7 +12,8 @@ public record ExportProfile(
         boolean extractOnly,
         String filenameTemplate,
         String subfolderTemplate,
-        String postActionProfileId
+        String postActionProfileId,
+        String deviceProfileId
 ) {
     public ExportProfile {
         id = text(id);
@@ -22,6 +23,7 @@ public record ExportProfile(
         filenameTemplate = text(filenameTemplate);
         subfolderTemplate = text(subfolderTemplate);
         postActionProfileId = text(postActionProfileId);
+        deviceProfileId = text(deviceProfileId);
     }
 
     private static String text(String value) { return value == null ? "" : value.trim(); }

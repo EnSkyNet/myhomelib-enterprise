@@ -22,7 +22,7 @@
         <TextField fx:id="listSearchField" promptText="🔍 Пошук..."
                    HBox.hgrow="ALWAYS"
                    style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
-        <Button text="✕" onAction="#onClearListSearch" focusTraversable="false">
+        <Button text="✕" accessibleText="Очистити пошук навігації" onAction="#onClearListSearch">
             <tooltip><Tooltip text="Очистити пошук"/></tooltip>
         </Button>
     </HBox>

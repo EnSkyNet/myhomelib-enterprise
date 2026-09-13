@@ -40,6 +40,49 @@ HOST_FIELDS = {
     "osBuild": "26100",
     "osArchitecture": "x64",
 }
+PROJECT_VERSION = "7.1.0"
+SOURCE_TREE_SHA = "b" * 64
+
+
+def candidate_integrity_fixture() -> tuple[bytes, bytes, bytes, str, str]:
+    payloads = {
+        f"MyHomeLib-{PROJECT_VERSION}.msi": b"candidate-msi",
+        f"MyHomeLib-{PROJECT_VERSION}.exe": b"candidate-exe",
+        f"myhomelib-{PROJECT_VERSION}-windows-amd64.zip": b"candidate-portable",
+    }
+    rows = []
+    sums_lines = []
+    aggregate = hashlib.sha256()
+    for name, blob in sorted(payloads.items()):
+        digest = hashlib.sha256(blob).hexdigest()
+        row = {"path": name, "size": len(blob), "sha256": digest}
+        rows.append(row)
+        sums_lines.append(f"{digest}  {name}")
+        aggregate.update(f"{digest}  {name}  {len(blob)}\n".encode())
+    sums = ("\n".join(sums_lines) + "\n").encode()
+    record = {
+        "schemaVersion": 1,
+        "scenario": "release-candidate-integrity",
+        "overall": "PASS",
+        "projectVersion": PROJECT_VERSION,
+        "candidateSha": CANDIDATE_SHA,
+        "platform": "windows",
+        "sourceFileCount": 10,
+        "sourceTreeSha256": SOURCE_TREE_SHA,
+        "criticalPolicyFiles": [{"path": "pom.xml", "size": 1, "sha256": "c" * 64}],
+        "distFileCount": len(rows),
+        "distManifestSha256": aggregate.hexdigest(),
+        "sha256sSha256": hashlib.sha256(sums).hexdigest(),
+        "distFiles": rows,
+    }
+    record_bytes = (json.dumps(record, indent=2, sort_keys=True) + "\n").encode()
+    record_sha = hashlib.sha256(record_bytes).hexdigest()
+    sidecar = f"{record_sha}  release-candidate-integrity-windows.json\n".encode()
+    return sums, record_bytes, sidecar, record_sha, aggregate.hexdigest()
+
+
+RELEASE_SUMS, INTEGRITY_BYTES, INTEGRITY_SIDECAR, INTEGRITY_SHA, DIST_MANIFEST_SHA = candidate_integrity_fixture()
+RELEASE_SUMS_SHA = hashlib.sha256(RELEASE_SUMS).hexdigest()
 
 
 def expect_fail(fn, text: str) -> None:
@@ -74,6 +117,12 @@ def github_payload(status: str = "PASS") -> dict:
                     "windowsMsiSha256": MSI_SHA,
                     "windowsExeSha256": EXE_SHA,
                     "windowsPortableSha256": PORTABLE_SHA,
+                    "windowsChecksumsSha256": RELEASE_SUMS_SHA,
+                    "windowsIntegrityProjectVersion": PROJECT_VERSION,
+                    "windowsIntegrityCandidateSha": CANDIDATE_SHA,
+                    "windowsIntegritySha256": INTEGRITY_SHA,
+                    "windowsIntegritySourceTreeSha256": SOURCE_TREE_SHA,
+                    "windowsIntegrityDistManifestSha256": DIST_MANIFEST_SHA,
                     "runId": 123,
                     "htmlUrl": "https://github.com/owner/repo/actions/runs/123",
                 },
@@ -321,6 +370,12 @@ def main() -> int:
             "windowsMsiSha256": MSI_SHA,
             "windowsExeSha256": EXE_SHA,
             "windowsPortableSha256": PORTABLE_SHA,
+            "windowsChecksumsSha256": RELEASE_SUMS_SHA,
+            "windowsIntegrityProjectVersion": PROJECT_VERSION,
+            "windowsIntegrityCandidateSha": CANDIDATE_SHA,
+            "windowsIntegritySha256": INTEGRITY_SHA,
+            "windowsIntegritySourceTreeSha256": SOURCE_TREE_SHA,
+            "windowsIntegrityDistManifestSha256": DIST_MANIFEST_SHA,
             "acceptanceHarnessManifestSha256": HARNESS_SHA,
         }
         ingest = root / "ingest.json"
@@ -378,6 +433,25 @@ def main() -> int:
         expect_fail(lambda: mod.verify_windows_archive(archive, "0" * 64, PORTABLE_SHA, EXE_SHA), "does not match")
         expect_fail(lambda: mod.verify_windows_archive(archive, MSI_SHA, "0" * 64, EXE_SHA), "portable SHA-256 does not match")
         expect_fail(lambda: mod.verify_windows_archive(archive, MSI_SHA, PORTABLE_SHA, "0" * 64), "EXE SHA-256 does not match")
+
+        # Even a manifest-consistent extra file must be rejected: reviewer evidence is a closed set.
+        extra_archive = root / "windows-extra.zip"
+        with zipfile.ZipFile(archive) as src:
+            payload = {name: src.read(name) for name in src.namelist() if name != "manifest.sha256"}
+        payload["windows-installer-acceptance/unreferenced-secret.txt"] = b"must-not-be-bundled"
+        extra_manifest = "".join(
+            f"{hashlib.sha256(blob).hexdigest()}  {name}\n" for name, blob in sorted(payload.items())
+        )
+        with zipfile.ZipFile(extra_archive, "w", zipfile.ZIP_DEFLATED) as zf:
+            for name, blob in payload.items():
+                zf.writestr(name, blob)
+            zf.writestr("manifest.sha256", extra_manifest)
+        extra_digest = mod.sha256_file(extra_archive)
+        Path(str(extra_archive) + ".sha256").write_text(
+            f"{extra_digest}  {extra_archive.name}\n", encoding="utf-8"
+        )
+        expect_fail(lambda: mod.verify_windows_archive(extra_archive, MSI_SHA, PORTABLE_SHA, EXE_SHA), "unreferenced member")
+
         Path(str(archive) + ".sha256").write_text(f"{'0'*64}  windows.zip\n", encoding="utf-8")
         expect_fail(lambda: mod.verify_windows_archive(archive), "mismatch")
 

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.NavigationNodeDto;
@@ -197,6 +198,27 @@ public class DefaultNavigationService implements NavigationService {
     }
 
     @Override
+    public void openBookArtifact(BookDto book, BookArtifactDto artifact) {
+        if (book == null || artifact == null) {
+            log.warn("Спроба відкрити порожній artifact книги");
+            return;
+        }
+        if (!artifact.isLocal() || !"AVAILABLE".equalsIgnoreCase(artifact.getState())) {
+            log.info("Artifact {} недоступний локально; відкриття як файл пропущено", artifact.getId());
+            return;
+        }
+        BookDto projected = book.projectArtifact(artifact);
+        try {
+            // Do not call the book-id authoritative download guard here: it intentionally
+            // resolves the preferred artifact. "Open as" must preserve the user's default
+            // and operate on the explicitly selected local representation.
+            externalBookLauncher.open(projected);
+        } catch (Exception ex) {
+            log.error("Не вдалося відкрити artifact {} книги {}", artifact.getId(), book.getTitle(), ex);
+        }
+    }
+
+    @Override
     public void openBookFolder(BookDto book) {
         if (book == null) {
             log.warn("Спроба відкрити папку для null книги");
@@ -273,8 +295,4 @@ public class DefaultNavigationService implements NavigationService {
         }
     }
 
-    private String normalizeSeriesName(String name) {
-        if (name == null) return "";
-        return name.trim().toLowerCase(Locale.ROOT).replaceAll("\\s+", " ");
-    }
 }

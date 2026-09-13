@@ -14,4 +14,19 @@ public interface OpdsCatalogQueryPort {
     OpdsPage<OpdsFacetDto> genres(int offset, int limit);
     OpdsPage<OpdsBookDto> books(OpdsBookQuery query);
     Optional<OpdsBookDto> book(String bookId);
+
+    /** Active MyHomeLib collection exposed by the OPDS sidecar. */
+    Optional<OpdsFacetDto> currentCollection();
+
+    /** User groups in the active collection. */
+    OpdsPage<OpdsFacetDto> groups(int offset, int limit);
+
+    /** Books assigned to one user group. */
+    OpdsPage<OpdsBookDto> groupBooks(String groupId, int offset, int limit);
+
+    /** Books in the built-in Favorites group. */
+    OpdsPage<OpdsBookDto> favorites(int offset, int limit);
+
+    /** In-progress books ordered by the most recently updated reading position. */
+    OpdsPage<OpdsBookDto> continueReading(int offset, int limit);
 }

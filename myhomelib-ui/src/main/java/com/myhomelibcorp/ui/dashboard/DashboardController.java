@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.dashboard;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.dto.ContinueReadingItemDto;
 import com.myhomelibcorp.application.dto.DashboardData;
 import com.myhomelibcorp.application.usecase.dashboard.LoadDashboardDataUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -13,7 +14,9 @@ import com.myhomelibcorp.ui.util.UiSubscriptions;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
+import javafx.scene.control.Button;
 import javafx.scene.control.ProgressBar;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -37,8 +40,7 @@ public class DashboardController implements WorkspaceLifecycle {
     private final UiSubscriptions subscriptions = new UiSubscriptions();
 
     @FXML private VBox continueReadingBox;
-    @FXML private Label continueTitle;
-    @FXML private ProgressBar continueProgress;
+    @FXML private VBox continueReadingItemsBox;
     @FXML private VBox recentBooksBox;
     @FXML private VBox newBooksBox;
     @FXML private Label booksCount;
@@ -79,11 +81,11 @@ public class DashboardController implements WorkspaceLifecycle {
         vm.setNewBooks(data.getRecentAdded());
         vm.setStatistics(data.getStatistics());
 
-        BookDto continueBook = data.getContinueReading();
-        if (continueBook != null) {
+        var shelf = data.getContinueReadingShelf() == null ? java.util.List.<ContinueReadingItemDto>of() : data.getContinueReadingShelf();
+        continueReadingItemsBox.getChildren().clear();
+        if (!shelf.isEmpty()) {
             continueReadingBox.setVisible(true);
-            continueTitle.setText(continueBook.getTitle());
-            continueProgress.setProgress(continueBook.getProgress() / 100.0);
+            shelf.forEach(item -> continueReadingItemsBox.getChildren().add(createContinueReadingRow(item)));
         } else {
             continueReadingBox.setVisible(false);
         }
@@ -119,12 +121,26 @@ public class DashboardController implements WorkspaceLifecycle {
         return label;
     }
 
-    @FXML
-    private void onContinueReading() {
-        BookDto book = appState.getDashboard().getContinueReading();
-        if (book != null) {
-            navigationService.navigateToBook(BookId.fromString(book.getId()));
-        }
+    private VBox createContinueReadingRow(ContinueReadingItemDto item) {
+        Label title = new Label("📖 " + item.title());
+        title.setWrapText(true);
+        Label meta = new Label(String.format(java.util.Locale.ROOT, "%.1f%% · %s · %s",
+                item.percent(), item.lastDevice(), formatTime(item.updatedAt())));
+        meta.setStyle("-fx-opacity: 0.75;");
+        ProgressBar progress = new ProgressBar(item.percent() / 100.0);
+        progress.setMaxWidth(Double.MAX_VALUE);
+        Button open = new Button("Читати");
+        open.setOnAction(e -> navigationService.navigateToBook(BookId.fromString(item.bookId())));
+        HBox header = new HBox(10, title, open);
+        HBox.setHgrow(title, javafx.scene.layout.Priority.ALWAYS);
+        VBox row = new VBox(4, header, meta, progress);
+        row.setStyle("-fx-padding: 6 0 6 0;");
+        return row;
+    }
+
+    private static String formatTime(java.time.LocalDateTime value) {
+        if (value == null) return "—";
+        return value.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM HH:mm"));
     }
     @Override
     public void dispose() {

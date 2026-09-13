@@ -69,12 +69,16 @@ def read(path: str) -> str:
 def check_workflows() -> None:
     pr = read(".github/workflows/ci-pr.yml")
     rel = read(".github/workflows/ci-release.yml")
+    perf = read(".github/workflows/performance-baseline.yml")
     codeql = read(".github/workflows/codeql.yml")
     connected = read(".github/workflows/github-acceptance.yml")
 
     for text, label in ((pr, "PR"), (rel, "release")):
         need("dependency-check" in text and "verify" in text, f"{label} workflow must run dependency-check profile")
         need("dependency-check-report" in text, f"{label} workflow must retain dependency-check report")
+    for text, label in ((pr, "PR"), (rel, "release"), (perf, "performance")):
+        need("mvnw" not in text, f"{label} workflow must not depend on Maven Wrapper payload excluded from source ZIP")
+        need("invoke-maven" in text, f"{label} workflow must use the external-Maven-compatible launcher helper")
     need("-Psbom" in rel, "release workflow must generate SBOM")
     need("bom.json" in rel and "bom.xml" in rel, "release workflow must publish JSON and XML SBOM")
     need("github/codeql-action/init@v4" in codeql, "CodeQL v4 init missing")
@@ -87,6 +91,12 @@ def check_workflows() -> None:
          "release CodeQL preflight must bind the SAST gate to the exact release candidate SHA")
     need("github-release-codeql-gate/**" in rel,
          "release supply-chain artifact must retain exact-candidate CodeQL gate evidence")
+    need("release-candidate-integrity.py" in rel and "release-candidate-integrity-${{ matrix.platform }}.json" in rel,
+         "release workflow must generate and retain a candidate-bound platform integrity manifest")
+    need('--candidate-sha "$GITHUB_SHA"' in rel and '--platform "${{ matrix.platform }}"' in rel,
+         "release integrity manifest must bind the exact candidate SHA and platform")
+    need("release-candidate-integrity-test.py" in pr,
+         "PR fast gate must regression-test release candidate integrity binding")
     need("github-connected-acceptance-test.py" in pr,
          "PR fast gate must regression-test the connected acceptance policy")
     need("github-acceptance-artifact-ingest-test.py" in pr,
@@ -106,6 +116,14 @@ def check_workflows() -> None:
          "connected GitHub acceptance must bind evidence to the dispatched candidate commit")
     need("--expect-windows-msi" in rel and "--expect-windows-exe" in rel,
          "release workflow must require publishable Windows MSI and EXE candidates")
+    integrity = read("tools/release-candidate-integrity.py")
+    need('"scenario": "release-candidate-integrity"' in integrity and "sourceTreeSha256" in integrity and "distManifestSha256" in integrity,
+         "candidate integrity tool must bind source tree and dist manifest")
+    need("dist file set does not exactly match SHA256SUMS" in integrity,
+         "candidate integrity tool must fail closed on unchecksummed dist payload")
+    connected_policy = read("tools/github-connected-acceptance.py")
+    need("release-candidate-integrity-windows.json" in connected_policy and "windowsIntegrityCandidateSha" in connected_policy,
+         "connected acceptance must verify the Windows candidate integrity record")
     ingest = read("tools/github-acceptance-artifact-ingest.py")
     need("remoteDigestVerified" in ingest and "verify_github_artifact_digest" in ingest,
          "final GitHub evidence ingest must verify the Actions API artifact digest")
@@ -116,34 +134,65 @@ def check_workflows() -> None:
     harness_binding = read("tools/windows-acceptance-harness-binding.py")
     need('"tools/windows-acceptance-host.ps1"' in harness_binding,
          "candidate-bound Windows acceptance harness manifest must include the shared host/session identity helper")
+    need('"tools/zip_evidence_safety.py"' in harness_binding,
+         "candidate-bound Windows acceptance harness manifest must include the shared ZIP safety helper")
+    need("inspect_open_zip" in ingest,
+         "GitHub acceptance artifact ingest must use the shared bounded ZIP safety helper")
+    windows_validator = read("tools/windows-acceptance-evidence-check.py")
+    need("timestamp predates windows-host-binding" in windows_validator and "contains unreferenced file(s)" in windows_validator,
+         "Windows acceptance validator must enforce session chronology and closed evidence sets")
+    final_bundle = read("tools/v71-final-evidence-bundle-check.py")
+    need("contains unexpected member(s)" in final_bundle and "inspect_open_zip" in final_bundle,
+         "final reviewer bundle must enforce exact bounded ZIP contents")
     finalizer = read("tools/v71-finalize-external-acceptance.ps1")
     need("--require-host-binding" in finalizer and "windows-host-binding.json" in finalizer,
          "final Windows evidence must require and retain one host/user/session binding")
 
 
 def check_source_release_contract() -> None:
+    # A repository checkout may carry a Maven Wrapper for CI/developer convenience, but the
+    # formal source-release archive is Maven-payload-free. If wrapper files are present in a
+    # checkout, still validate them as a complete/integrity-checked set.
     mvnw = ROOT / "mvnw"
     mvnw_cmd = ROOT / "mvnw.cmd"
-    wrapper_jar = ROOT / ".mvn/wrapper/maven-wrapper.jar"
-    wrapper_props = ROOT / ".mvn/wrapper/maven-wrapper.properties"
-    for path in (mvnw, mvnw_cmd, wrapper_jar, wrapper_props):
-        need(path.is_file(), f"self-contained source launcher file missing: {path.relative_to(ROOT)}")
-    with zipfile.ZipFile(wrapper_jar) as zf:
-        need("org/apache/maven/wrapper/MavenWrapperMain.class" in zf.namelist(), "invalid Maven wrapper JAR")
-    props = wrapper_props.read_text(encoding="utf-8")
-    need("distributionUrl=" in props, "Maven wrapper properties missing distributionUrl")
-    checksum_file = ROOT / ".mvn/wrapper/maven-wrapper.jar.sha256"
-    need(checksum_file.is_file(), "bundled Maven wrapper JAR checksum file missing")
-    expected = checksum_file.read_text(encoding="ascii").split()[0].lower()
-    import hashlib
-    actual = hashlib.sha256(wrapper_jar.read_bytes()).hexdigest()
-    need(expected == actual, "bundled Maven wrapper JAR checksum mismatch")
+    wrapper_dir = ROOT / ".mvn/wrapper"
+    wrapper_jar = wrapper_dir / "maven-wrapper.jar"
+    wrapper_props = wrapper_dir / "maven-wrapper.properties"
+    checksum_file = wrapper_dir / "maven-wrapper.jar.sha256"
+    wrapper_items = (mvnw, mvnw_cmd, wrapper_jar, wrapper_props, checksum_file)
+    if any(path.exists() for path in wrapper_items):
+        for path in wrapper_items:
+            need(path.is_file(), f"partial Maven wrapper payload in repository checkout: {path.relative_to(ROOT)}")
+        with zipfile.ZipFile(wrapper_jar) as zf:
+            need("org/apache/maven/wrapper/MavenWrapperMain.class" in zf.namelist(), "invalid Maven wrapper JAR")
+        props = wrapper_props.read_text(encoding="utf-8")
+        need("distributionUrl=" in props, "Maven wrapper properties missing distributionUrl")
+        import hashlib
+        expected = checksum_file.read_text(encoding="ascii").split()[0].lower()
+        actual = hashlib.sha256(wrapper_jar.read_bytes()).hexdigest()
+        need(expected == actual, "Maven wrapper JAR checksum mismatch")
 
     packager = read("tools/package-v71-source.py")
-    need("verify_source_launcher" in packager, "source packager must verify wrapper contract after extraction")
-    embedded = ROOT / ".mvn/maven/apache-maven-3.9.6/bin/mvn"
-    need(embedded.is_file(), "source tree must contain embedded Maven 3.9.6 for self-contained launcher")
-    need("Apache Maven 3.9.6" in packager, "source packager must verify embedded Maven version after extraction")
+    need('".mvn"' in packager and "EXCLUDED_DIRS" in packager,
+         "source packager must exclude the complete .mvn directory")
+    need('"mvnw"' in packager and '"mvnw.cmd"' in packager and "EXCLUDED_FILES" in packager,
+         "source packager must exclude Maven wrapper launchers")
+    need("verify_no_maven_payload" in packager,
+         "source packager must verify the Maven-free archive contract after extraction")
+    need("source release must not contain Maven runtime/wrapper payload" in packager,
+         "source packager must reject Maven runtime/wrapper payload in the archive")
+
+    for helper in ("tools/invoke-maven.sh", "tools/invoke-maven.ps1", "tools/invoke-maven.cmd"):
+        need((ROOT / helper).is_file(), f"external-Maven fallback helper missing: {helper}")
+
+    root_launchers = (
+        "build.sh", "build.ps1", "run.sh", "run.ps1", "package.sh", "package.ps1",
+        "package-mcp.sh", "package-mcp.ps1", "package-desktop.sh", "package-desktop.ps1",
+        "release.sh", "release.ps1", "BUILD-CHECK-FIXES.cmd",
+    )
+    for launcher in root_launchers:
+        text = read(launcher)
+        need("invoke-maven" in text, f"root launcher must use external-Maven-compatible helper: {launcher}")
 
 
 def main() -> int:

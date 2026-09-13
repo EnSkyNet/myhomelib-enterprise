@@ -1,0 +1,44 @@
+Iteration 67 — MHL-506 BookConverter SPI / conversion capabilities
+Date: 2026-09-13
+
+Validation evidence:
+- final MHL-506/device targeted regression: 20 tests, 0 failures/errors/skips
+- full myhomelib-application suite: 265 tests, 0 failures/errors, 1 skipped
+- affected SQLite artifact persistence: 2/2 PASS
+- LayerArchitectureTest: 14/14 PASS
+- architecture-check.py: PASS
+- implementation-completeness-check.py: PASS
+- check-critical-ui-localization.py: PASS
+- static_release_check.py: PASS
+- supply-chain-policy-check.py: PASS
+- build-check-v7.py: PASS
+- full 16-project offline test-compile: BUILD SUCCESS
+- full monolithic infrastructure suite: NOT CLAIMED; execution window ended after Application and during Infrastructure compilation
+
+Changed source/documentation files relative to Iteration 66:
+MODIFIED: ARCHITECTURE.md
+MODIFIED: MYHOMELIB-DEVELOPMENT.md
+MODIFIED: MYHOMELIB-FEATURES.md
+MODIFIED: MYHOMELIB-RELEASE.md
+MODIFIED: README.md
+MODIFIED: docs/history/MYHOMELIB-HISTORY-ITERATIONS.md
+ADDED: docs/history/records/ITERATION-67-BOOK-CONVERTER-CHECKPOINT.md
+ADDED: docs/history/records/ITERATION-67-CHANGED-FILES.txt
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/conversion/BookConversionCapability.java
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/conversion/BookConversionContext.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/exporter/BookConverter.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/repository/BookCommandRepository.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/service/CommittedCatalogMutationService.java
+ADDED: myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/conversion/ConvertBookUseCase.java
+MODIFIED: myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCase.java
+ADDED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/conversion/ConvertBookUseCaseTest.java
+MODIFIED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseCrashSafetyTest.java
+MODIFIED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseDeviceProfileTest.java
+MODIFIED: myhomelib-application/src/test/java/com/myhomelibcorp/application/usecase/export/ExportToDeviceUseCaseSendToDeviceTest.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/EpubBookConverter.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/ExternalCommandBookConverter.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/Fb2BookConverter.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/Fb2ZipBookConverter.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/exporter/TxtBookConverter.java
+MODIFIED: myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqliteBookCommandRepository.java
+MODIFIED: myhomelib-infrastructure/src/test/java/com/myhomelibcorp/infrastructure/persistence/sqlite/SqlitePreferredArtifactSelectionTest.java

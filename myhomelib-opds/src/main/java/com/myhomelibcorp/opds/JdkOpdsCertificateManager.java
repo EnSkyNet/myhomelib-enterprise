@@ -500,11 +500,6 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
         }
     }
 
-    private static String compact(String value) {
-        String text = value == null ? "" : value.replaceAll("\\s+", " ").trim();
-        return text.length() > 500 ? text.substring(0, 500) + "…" : text;
-    }
-
     private static String safeMessage(Throwable error) {
         String message = error == null ? "" : error.getMessage();
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;

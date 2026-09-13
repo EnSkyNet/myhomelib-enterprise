@@ -9,11 +9,11 @@
 **Search:** Apache Lucene 9.x  
 **Reader rendering:** JavaFX Canvas
 
-This file is the current architecture contract. Historical stage documents are not normative; they are consolidated under `docs/history/` and preserved verbatim under `docs/archive/source-notes/`.
+This file is the current architecture contract. Historical stage documents are not normative; they are consolidated under `docs/history/` and preserved verbatim under `docs/history/source-notes/`.
 
 ## 1. System shape
 
-MyHomeLib Enterprise is a modular desktop monolith with separate MCP and OPDS sidecar runtimes.
+MyHomeLib Enterprise is a modular desktop monolith with separate MCP and OPDS/Web sidecar runtimes.
 
 ```text
                          myhomelib-bootstrap
@@ -29,16 +29,20 @@ MyHomeLib Enterprise is a modular desktop monolith with separate MCP and OPDS si
                                 v
                      myhomelib-application
                      use cases / DTO / ports
-                                |
-                                v
-                       myhomelib-domain
-                                |
-                                v
-                       myhomelib-shared
+                         ^             |
+                         |             v
+                myhomelib-plugin-api  myhomelib-domain
+                stable extension SPI         |
+                                             v
+                                      myhomelib-shared
 
         myhomelib-reader                  myhomelib-opds
-        reader engine + JavaFX            JDK HTTP / OPDS
-        depends on shared                 depends on application
+        reader engine + JavaFX            JDK HTTP / OPDS + Web routes
+        depends on shared                 depends on application, shared, web
+
+        myhomelib-web
+        server-rendered browser UI
+        depends on application
 
         myhomelib-mcp
         independent MCP sidecar
@@ -49,19 +53,22 @@ MyHomeLib Enterprise is a modular desktop monolith with separate MCP and OPDS si
 
 ## 2. Maven modules
 
-The root reactor contains 12 modules.
+The root reactor contains 15 modules.
 
 | Module | Responsibility |
 |---|---|
 | `myhomelib-shared` | Small reusable primitives, archive limits, paths, security/utilities |
 | `myhomelib-domain` | Domain entities, IDs/value objects, user/reader state models, events |
 | `myhomelib-application` | Use cases, queries, DTOs, application services and ports |
+| `myhomelib-plugin-api` | Versioned public plugin SPI, manifests, compatibility/security contracts and developer test harness |
+| `myhomelib-plugin-samples` | Buildable SDK reference plugins; developer material, not wired into desktop runtime |
 | `myhomelib-infrastructure` | SQLite/Flyway, Lucene, import/export, filesystem/network/archive adapters |
 | `myhomelib-reader` | Format parsing, document/layout engine, bounded caches and JavaFX Canvas renderer |
 | `myhomelib-ui` | JavaFX controllers, workspaces, dialogs, localization and Reader integration |
 | `myhomelib-bootstrap` | Desktop composition root and lifecycle |
 | `myhomelib-mcp` | Separate MCP runtime with direct SQLite/archive technology |
-| `myhomelib-opds` | Read-only OPDS delivery runtime through application contracts |
+| `myhomelib-web` | Server-rendered Web Library / Web Reader presentation through application DTOs |
+| `myhomelib-opds` | JDK HTTP sidecar serving OPDS plus authenticated Web routes through application contracts |
 | `myhomelib-architecture-tests` | ArchUnit boundary tests |
 | `myhomelib-e2e-tests` | End-to-end test module |
 | `myhomelib-benchmark` | Import/search/Reader performance probes |
@@ -72,12 +79,15 @@ The root reactor contains 12 modules.
 shared          -> -
 domain          -> shared
 application     -> shared, domain
+plugin-api      -> application
+plugin-samples  -> plugin-api
 reader          -> shared
 infrastructure  -> shared, domain, application
 ui              -> shared, domain, application, reader
 bootstrap       -> shared, domain, application, infrastructure, ui, opds
 mcp             -> shared
-opds            -> shared, application
+web             -> application
+opds            -> shared, application, web
 ```
 
 The graph must remain acyclic.
@@ -95,6 +105,16 @@ Domain may depend on `shared` and the JDK. It must not depend on Application, In
 ### Application
 
 Application describes intent and boundaries. It must not depend on Infrastructure, UI, Reader, MCP, JavaFX, JDBC/SQL or Lucene. Output ports are interfaces. Existing Spring core/transaction annotations are tolerated as known framework coupling, not as adapter coupling.
+
+
+### Plugin API
+
+`plugin-api` is the public extension boundary for third-party providers. It may depend on stable Application contracts but must not depend on Infrastructure, UI, Reader, MCP, OPDS/Web, JavaFX, JDBC, Spring or Lucene. Plugin manifests declare an API compatibility range, the services provided, every intentional core-service override, and required network/filesystem capabilities; undeclared overrides and approval/manifest mismatches are rejected before activation. Trust is assigned by the host, never by plugin code. Untrusted plugins are not executed in-process. Trusted in-process plugins are not presented as an OS sandbox: host code must route calls through `PluginManager` when it needs disable/quarantine fault containment or capability-gated invocation. `PluginTestHarness` exposes the same structural checks to plugin CI without changing runtime trust state. `myhomelib-plugin-samples` depends only on the public plugin boundary and is intentionally excluded from desktop composition/runtime wiring.
+
+### Device profiles
+
+Device profile definitions, persistence and preferred-format ordering live in Application. They may describe a relative destination below a user-selected mount root but must not own OS-specific mount enumeration, raw USB access or UI dialogs. A saved profile must never resolve outside that root. `ExportToDeviceUseCase` is the orchestration boundary that combines device preferences with the existing artifact catalogue, converters, collision policy and crash-safe publication. Existing `BookArtifact` representations are preferred before conversion so device-aware export does not create unnecessary duplicate artifacts. Completion policy also remains an Application concern: `ExportCompletionService` may require a committed-file durability flush before success is reported, while host-specific physical eject remains outside the Java export contract. Directory-metadata force is best-effort for portability, and UI may only instruct the user to invoke the operating system safe-removal action; it must not model a successful file flush as equivalent to hardware eject.
+
 
 ### Infrastructure
 
@@ -240,7 +260,7 @@ python3 tools/architecture-check.py
 Compiled boundary tests when dependencies are available:
 
 ```bash
-./mvnw -pl myhomelib-architecture-tests -am test
+mvn -pl myhomelib-architecture-tests -am test
 ```
 
 The source guard and ArchUnit enforce the dependency graph, forbidden layer/framework references, Reader JavaFX isolation and architecture-debt ratchets.
@@ -282,3 +302,78 @@ Classic metadata editing crosses the UI/application boundary through `EditBookUs
 Desktop startup is modeled as testable tasks implementing `StartupTask`. `StartupCollectionResolver` resolves the target collection once and `StartupContext` carries the active collection plus reusable-search state between phases. `RecoveryStartupTask` invokes filesystem/crash recovery before any SQLite open. `MigrationStartupTask` activates/migrates the collection without forcing a search rebuild and closes a partially opened collection if a post-switch startup component fails. `SearchStartupTask` independently reuses a valid index or schedules a managed background rebuild. `BackupStartupTask` removes only interrupted `.snapshot.tmp` staging files. `OPDSStartupTask` applies optional autostart as a best-effort phase.
 
 `StartupOrchestrator` is the single source of task order and failure policy. Do not move migration, search rebuild, backup cleanup or OPDS autostart back into `MyHomeLibApp`.
+
+## Annotation boundary (Iteration 35)
+
+Annotations are domain user data, not Reader-canvas state. `myhomelib-domain` owns the immutable `Annotation` / `AnnotationAnchor` model and pure relocation rules. `myhomelib-application` owns lifecycle orchestration through `AnnotationRepository`. SQLite/Flyway and portable backup live in infrastructure. Reader/UI integrations added by later iterations must call the application boundary and must not import infrastructure annotation persistence classes.
+
+An artifact-bound anchor may reuse exact offsets only for that same artifact. Cross-artifact migration is an explicit re-anchor operation; no renderer or restore path may silently apply offsets from one representation to another.
+
+## Iteration 36 — Reader annotation interaction boundary
+
+MHL-203 consumes the Iteration 35 annotation foundation without moving persistence into the Reader module. `myhomelib-reader` exposes only renderer-neutral `ReaderSelection` and `ReaderAnnotationOverlay` values. `ReaderSelectionController` owns source-text offsets, hit-testing, selection handles and keyboard extension; `ReaderCanvas` owns transient JavaFX interaction/rendering and delegates Highlight/Note requests outward.
+
+`NewReaderWorkspaceController` is the integration boundary: it converts `ReaderSelection` to `AnnotationAnchor`, invokes `AnnotationService` asynchronously, and resolves persisted anchors to Reader overlays after a book is opened. Reader never imports annotation domain/repository/SQLite types. Overlay ranges are source-text offsets, so font, margin, toolbar and pagination changes only trigger a redraw and do not mutate stored anchors. Artifact-bound anchors are rendered only for the exact opened artifact; ambiguous/foreign artifact bindings are not guessed.
+
+## Annotation Manager boundary (Iteration 37)
+
+MHL-204 keeps global annotation browsing separate from renderer and persistence details. `myhomelib-application` owns `AnnotationManagerFilter`, bounded pages/facets, edit/delete/undo orchestration and the `AnnotationManagerQueryPort`. Infrastructure implements that port with parameterized SQLite queries and bounded pagination. `myhomelib-ui` consumes only those application contracts; the annotation-manager package must not import annotation-domain entities, repositories or SQLite adapters.
+
+Jump-to-location crosses the existing workspace/Reader boundary using only book id + annotation id. Reader reloads its application annotation projections, resolves the anchor against the actually opened artifact, performs a one-shot source-offset jump, and clears the target. This preserves the MHL-203 rule that layout/reflow state is renderer-local while persisted anchors remain application/domain user data.
+
+## Rich annotation export boundary (Iteration 38 / MHL-205)
+
+The export serializer is an application use case. UI may construct `AnnotationExportRequest` and invoke `AnnotationExportService`, but it must not query SQLite/JDBC or annotation-domain repositories to build Markdown/JSON/HTML. Storage-specific selection, joins and deterministic bounded paging implement `AnnotationExportQueryPort` in Infrastructure. Export serialization is UTF-8 and page-streamed; publication occurs only after a complete temporary artifact exists. This keeps templates and external interchange semantics out of persistence while keeping database knowledge out of UI.
+
+## PDF Reader renderer boundary (Iteration 38 / MHL-206)
+
+PDF is a renderer adapter inside `myhomelib-reader`, parallel to the existing text Reader rendering path. PDFBox must not be imported by `myhomelib-ui`, Application or Domain. `PdfDocumentSession` encapsulates the native document lifecycle, page rasterization and bounded cache. `PdfReaderView` may depend on JavaFX and the PDF session adapter, but heavy parsing/rasterization executes on its background renderer executor. `NewReaderWorkspaceController` chooses the adapter by Reader-supported format and continues to own workspace lifecycle, saved position, session history and cancellation. A generation/session guard is mandatory for every background raster result so a stale page cannot mutate the current workspace after switch/close.
+
+MHL-207 extends that boundary without exposing PDFBox outside Reader. `PdfDocumentSession` resolves bounded outline entries and performs cancellable text-layer search; `PdfReaderView` exposes only `PdfOutlineEntry`, `PdfSearchOutcome` and page navigation callbacks to UI. Page bookmarks reuse the existing Reader persistence path. The application module owns `PdfAnnotationSelectionData`, whose offsets are explicitly page-local so future PDF text selection can integrate with the existing annotation lifecycle without inventing global offsets or creating parallel persistence. Image-only PDFs do not trigger OCR implicitly.
+
+## Iteration 45 — archive traversal boundary
+
+Book resource resolution depends on the application `ArchiveReader` output port, not on the concrete multi-format archive adapter. Archive entry compatibility resolution uses one bounded name enumeration per resolver operation; exact normalized logical-path matches are preferred before legacy unique-token/single-FB2 fallback. `findFirstEntry` is a direct format-specific traversal: sequential archives must not be expanded into a name list and then reopened merely to select the first matching member. Existing archive count/size/compression/memory limits and owner/temp cleanup remain mandatory.
+
+### Iteration 46 — bounded Reader archive materialization
+
+Reader archive-member opening uses a two-step application boundary: `locateBookContainer` resolves only the physical container without enumerating members, then `materializeArchiveBookEntry` performs exactly one compatibility-name resolution and delegates bounded streaming publication to `ArchiveReader.materializeEntry`. The archive adapter writes into a sibling staging file, enforces the caller byte ceiling together with centralized archive safety limits, observes thread/supplier cancellation between bounded reads, and only publishes the target after the member is complete. ZIP, 7z, RAR/CBR and sequential tar/compressed-tar/CPIO paths therefore avoid full-entry `byte[]` materialization and avoid the Reader-side copy of an adapter-owned temporary stream. Reader owns the published temporary book and deletes it on failed preparation, stale/cancelled handoff, book switch, Back and workspace disposal. Reader-open observability records only phase timings, format and byte size (`resolve -> materialize -> parse -> render-ready`); book contents are never included in that timing event.
+
+## Iteration 47 — Comic Reader boundary
+
+CBZ/CBR are native `BOOK` formats in the shared format registry, not generic multi-book archive imports. `ComicArchiveImporter` creates one catalogue `Book` for the physical comic container; the legacy ZIP/RAR importers no longer claim `.cbz`/`.cbr`, so contained images cannot become accidental catalogue books. Physical archive access still uses the existing `BookResourcePort`/`ArchiveReader` boundary.
+
+`myhomelib-reader` owns `ComicDocumentSession`, `ComicPageSource`, page-position mapping and `ComicReaderView`. Session open enumerates only safe supported image names, applies deterministic natural ordering, and does not decode image bytes until a page is requested. Per-page compressed bytes, source raster pixels and the decoded LRU cache are explicitly bounded; ImageIO source subsampling is used for viewport/thumbnails. JavaFX rendering runs on the Reader renderer executor and stale results are generation/session guarded. UI adapts `BookResourcePort.listArchiveEntries/readArchiveEntry` to `ComicPageSource`, while workspace lifecycle, saved position, bookmarks, history and Back/dispose remain in `NewReaderWorkspaceController`. No archive implementation type leaks into Reader or UI.
+
+Comic layout state (fit page/width, continuous scroll, dual-page and RTL manga ordering) is renderer-local. Persisted progress/bookmarks reuse `ReaderPosition` as a page index and therefore remain independent from zoom/layout changes. Text-only annotations, TOC and search are not applied to image comics.
+
+
+## Iteration 50 — persistent content-index queue and throttling boundary
+
+`ContentIndexingQueueService` is application-owned orchestration. It depends only on three output ports: durable checkpoint storage, per-task processing and power state. The infrastructure layer implements file checkpoint persistence, bounded/rate-limited extraction-to-content-index processing and cached system power detection. Queue control methods remain non-blocking; work executes on daemon worker/coordinator/checkpoint executors.
+
+Restart durability is collection-scoped. Active work remains in the outstanding snapshot and is re-queued after process restart. Shutdown first stops dispatch, drains already-enqueued checkpoint writes, writes one final synchronous snapshot, and only then interrupts workers. This ordering prevents an older async checkpoint from racing after the final save. Eco/Balanced/Fast resource policy belongs to application configuration; platform power detection and byte-rate enforcement remain infrastructure concerns.
+
+## Iterations 52–54 — sync transport boundary
+
+Sync records and ChangeSets are domain/application data contracts. They carry stable sync IDs, entity type, schema version, `baseVersion/version`, UTC timestamps, source device identity and tombstones. Transport adapters must never synchronize a live collection SQLite file.
+
+Local-folder and WebDAV adapters live in infrastructure and exchange immutable ChangeSet bundles. Publication is staged and atomic where the backend permits it. WebDAV protects payloads with authenticated AES-256-GCM; credentials and shared key material are retrieved only through `SecretStore`. Non-loopback WebDAV requires HTTPS. PROPFIND parsing goes through the hardened XML boundary, and remote href resolution is same-origin/path-bounded before any credential-bearing follow-up request.
+
+Conflict-resolution semantics and key-rotation/migration are application/security policies tracked independently by MHL-404/MHL-405; transport success must not silently imply those policies are complete.
+
+## Iteration 69 — audiobook Reader boundary (MHL-508)
+
+Audiobook playback is a Reader concern, while book identity, artifacts and synchronized user state remain outside the Reader module. `myhomelib-reader` owns `AudioDocumentSession`, the renderer-facing `AudioReaderView` and the `AudioPlaybackBackend` abstraction. The concrete FFmpeg-backed implementation launches `ffprobe`/`ffplay` with argv-only `ProcessBuilder`; it never builds a shell command, bounds retained diagnostics, drains child output to avoid pipe deadlocks, enforces probe timeout and owns child-process termination.
+
+The shared format registry declares MP3/M4B as importable Reader formats. Generic import remains an infrastructure adapter. Explicit multi-file grouping lives in the Application layer (`AudiobookTrackGrouping`) because artifact selection depends on the domain aggregate; UI must not add new direct domain-model helper debt. Untagged alternate audio artifacts remain separate representations.
+
+Desktop audiobook progress reuses the existing reading-progress/application persistence boundary. The stable opaque anchor is `audio:<millis>:<track>:<chapter>`; sync transports/projectors preserve it without interpreting audio semantics. Audio bookmarks use the same exact anchor. No Reader code imports SQLite/sync infrastructure and no new database migration is required.
+
+
+
+## Iteration 70 — knowledge Markdown integration boundary (MHL-509)
+
+Obsidian/Joplin export is an Application-layer integration over the existing `AnnotationExportQueryPort`; UI only gathers scope/template/policy choices and never queries SQLite or annotation-domain repositories. `KnowledgeMarkdownExportService` consumes the same stable, bounded, per-book-contiguous projection as MHL-205 and writes one UTF-8 Markdown document per logical book through sibling staging + atomic publication.
+
+Path templates are treated as untrusted user configuration: placeholders are allow-listed, path segments are sanitized for cross-platform filesystem rules, traversal cannot escape the chosen root, and deterministic file names are used instead of automatic ` (1)` collision suffixes. The default `REPLACE_MANAGED` policy overwrites only a target containing the exact MyHomeLib ownership marker for the same book id. `SKIP_EXISTING` and `FAIL_IF_EXISTS` are explicit alternatives. Optional YAML frontmatter remains standard Markdown metadata; backlinks use the stable `myhomelib://book/<bookId>?annotation=<annotationId>` URI without embedding secrets or database identifiers beyond existing stable ids.

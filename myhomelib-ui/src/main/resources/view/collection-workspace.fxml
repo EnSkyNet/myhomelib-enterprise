@@ -17,9 +17,9 @@
                 <HBox spacing="5">
                     <Button text="+ Порожня" onAction="#onCreateCollection"/>
                     <Button fx:id="activateButton" text="▶ Активувати" onAction="#onActivateCollection" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-                    <Button fx:id="renameButton" text="✏️" onAction="#onRenameCollection" prefWidth="30"/>
-                    <Button fx:id="deleteButton" text="🗑" onAction="#onDeleteCollection" prefWidth="30"/>
-                    <Button text="🔄" onAction="#onRefresh" prefWidth="30"/>
+                    <Button fx:id="renameButton" text="✏️" accessibleText="Перейменувати колекцію" onAction="#onRenameCollection" prefWidth="30"/>
+                    <Button fx:id="deleteButton" text="🗑" accessibleText="Видалити колекцію" onAction="#onDeleteCollection" prefWidth="30"/>
+                    <Button text="🔄" accessibleText="Оновити колекції" onAction="#onRefresh" prefWidth="30"/>
                     <Region HBox.hgrow="ALWAYS"/>
                 </HBox>
                 <ListView fx:id="collectionsListView" VBox.vgrow="ALWAYS"/>
@@ -47,6 +47,24 @@
                                 <Button fx:id="sourceCheckButton" text="Перевірити зараз" onAction="#onCheckSourceNow"/>
                             </HBox>
                             <Label fx:id="sourceStatusLabel" text="Джерело автооновлення не налаштовано" wrapText="true"/>
+                        </VBox>
+                    </content>
+                </TitledPane>
+
+                <TitledPane text="Incoming folder — автоматичний імпорт" expanded="false">
+                    <content>
+                        <VBox spacing="7" style="-fx-padding: 8;">
+                            <Label text="Файл імпортується лише після debounce і stability check. Черга зберігається між перезапусками; імпорт виконується тільки коли ця колекція активна." wrapText="true"/>
+                            <HBox spacing="6">
+                                <TextField fx:id="incomingFolderField" promptText="Папка з новими книгами/архівами" HBox.hgrow="ALWAYS"/>
+                                <Button text="Огляд..." onAction="#onBrowseIncomingFolder"/>
+                            </HBox>
+                            <HBox spacing="8" alignment="CENTER_LEFT">
+                                <CheckBox fx:id="incomingFolderEnabledCheckBox" text="Автоматично імпортувати стабільні файли"/>
+                                <Button text="Зберегти" onAction="#onSaveIncomingFolder"/>
+                                <Button fx:id="incomingFolderScanButton" text="Сканувати зараз" onAction="#onScanIncomingFolder"/>
+                            </HBox>
+                            <Label fx:id="incomingFolderStatusLabel" text="Incoming folder не налаштовано" wrapText="true"/>
                         </VBox>
                     </content>
                 </TitledPane>
