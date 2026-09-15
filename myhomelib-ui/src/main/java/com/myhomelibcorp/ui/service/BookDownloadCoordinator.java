@@ -8,6 +8,10 @@ import com.myhomelibcorp.application.usecase.download.DownloadBookUseCase;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.application.usecase.download.RemoveLocalBookCopyUseCase;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.progress.OperationStage;
+import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.operation.OperationKind;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.event.NavigationRefreshEvent;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -38,12 +42,14 @@ public class BookDownloadCoordinator {
     private final ApplicationState applicationState;
     private final DialogService dialogService;
     private final ApplicationEventPublisher eventPublisher;
+    private final OperationCenterService operationCenter;
     private final Semaphore downloadSlots;
     private final Map<String, AtomicBoolean> active = new ConcurrentHashMap<>();
 
     public BookDownloadCoordinator(DownloadBookUseCase downloadBookUseCase, RemoveLocalBookCopyUseCase removeLocalBookCopyUseCase,
                                    LoadBookByIdUseCase loadBookByIdUseCase, BookResourcePort bookResourcePort, UiBackgroundExecutor executor, ApplicationState applicationState,
-                                   DialogService dialogService, ApplicationSettingsPort settings, ApplicationEventPublisher eventPublisher) {
+                                   DialogService dialogService, ApplicationSettingsPort settings, ApplicationEventPublisher eventPublisher,
+                                   OperationCenterService operationCenter) {
         this.downloadBookUseCase = downloadBookUseCase;
         this.removeLocalBookCopyUseCase = removeLocalBookCopyUseCase;
         this.loadBookByIdUseCase = loadBookByIdUseCase;
@@ -52,6 +58,7 @@ public class BookDownloadCoordinator {
         this.applicationState = applicationState;
         this.dialogService = dialogService;
         this.eventPublisher = eventPublisher;
+        this.operationCenter = operationCenter;
         int permits = Math.max(1, Math.min(16, settings.getInt("online.maxParallelDownloads", 2)));
         this.downloadSlots = new Semaphore(permits, true);
     }
@@ -290,6 +297,11 @@ public class BookDownloadCoordinator {
             return CompletableFuture.failedFuture(new IllegalStateException("Завантаження цієї книги вже виконується"));
         }
 
+        String collectionId = collection.getId() == null ? "" : collection.getId();
+        String operationTitle = "Завантаження книги — " + safeBookTitle(book);
+        String operationId = operationCenter.start(operationTitle, collectionId, OperationKind.BOOK_DOWNLOAD,
+                OperationStage.BOOK_DOWNLOAD, true);
+
         // Показуємо початок завантаження
         Platform.runLater(() -> {
             applicationState.getStatusBar().setStatusText("📥 Завантаження: " + book.getTitle());
@@ -319,12 +331,18 @@ public class BookDownloadCoordinator {
 
                         BookDto effectiveBook = loadBookByIdUseCase.execute(BookId.fromString(book.getId())).orElse(book);
                         normalizeLegacyRemoteStorage(effectiveBook);
-                        return downloadBookUseCase.execute(effectiveBook, collection, cancel, value ->
-                                Platform.runLater(() -> {
-                                    applicationState.getStatusBar().setProgress(value);
-                                    int percent = (int) Math.round(value * 100);
-                                    applicationState.getStatusBar().setStatusText("📥 Завантаження: " + effectiveBook.getTitle() + " (" + percent + "%)");
-                                }), force);
+                        return downloadBookUseCase.execute(effectiveBook, collection, cancel, value -> {
+                            long processed = Math.max(0L, Math.min(1000L, Math.round(value * 1000.0)));
+                            operationCenter.accept(operationTitle, collectionId, OperationKind.BOOK_DOWNLOAD,
+                                    OperationProgress.stage(operationId, OperationStage.BOOK_DOWNLOAD, true)
+                                            .withProgress(processed, 1000)
+                                            .withCurrentItem(safeBookTitle(effectiveBook)));
+                            Platform.runLater(() -> {
+                                applicationState.getStatusBar().setProgress(value);
+                                int percent = (int) Math.round(value * 100);
+                                applicationState.getStatusBar().setStatusText("📥 Завантаження: " + effectiveBook.getTitle() + " (" + percent + "%)");
+                            });
+                        }, force);
                     } finally {
                         if (acquired) downloadSlots.release();
                     }
@@ -336,7 +354,19 @@ public class BookDownloadCoordinator {
                     // Complete the future only after the caller's DTO has authoritative storage metadata.
                     // External-open callbacks may run immediately when this stage completes and must not
                     // observe the pre-download remote folder/fileName.
-                    if (error == null) copyStorageState(refreshed, book);
+                    if (error == null) {
+                        copyStorageState(refreshed, book);
+                        operationCenter.complete(operationId, "Завантажено за " + Math.max(0, duration / 1000) + " с");
+                    } else {
+                        Throwable operationFailure = unwrap(error);
+                        if (operationFailure instanceof java.util.concurrent.CancellationException
+                                || (operationFailure.getMessage() != null
+                                && operationFailure.getMessage().toLowerCase(java.util.Locale.ROOT).contains("скасовано"))) {
+                            operationCenter.cancel(operationId, "Завантаження скасовано");
+                        } else {
+                            operationCenter.fail(operationId, operationFailure);
+                        }
+                    }
                     Platform.runLater(() -> {
                         applicationState.getStatusBar().setProgressVisible(false);
                         if (error == null) {
@@ -448,6 +478,11 @@ public class BookDownloadCoordinator {
         target.setMissingSince(source.getMissingSince());
         target.setLibId(source.getLibId());
         target.setSourceUrl(source.getSourceUrl());
+    }
+
+    private static String safeBookTitle(BookDto book) {
+        if (book == null || book.getTitle() == null || book.getTitle().isBlank()) return "Без назви";
+        return book.getTitle().trim();
     }
 
     private CompletableFuture<Path> failedVisible(String message) {

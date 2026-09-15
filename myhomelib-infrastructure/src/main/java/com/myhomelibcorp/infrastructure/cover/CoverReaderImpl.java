@@ -58,7 +58,7 @@ public class CoverReaderImpl implements CoverReader {
                 try (InputStream in = Files.newInputStream(path)) { yield fb2CoverParser.parseToBytes(in); }
             }
             case "epub" -> epubCoverParser.parse(path);
-            case "mobi", "azw", "azw3" -> fallbackIfEmpty(mobiCoverParser.parse(path), normalized, book);
+            case "mobi", "prc", "azw", "azw3" -> fallbackIfEmpty(mobiCoverParser.parse(path), normalized, book);
             case "pdf" -> fallbackIfEmpty(pdfCoverParser.parse(path), normalized, book);
             case "djvu", "djv" -> fallbackCoverRenderer.render("DJVU", book.getTitle());
             default -> null;

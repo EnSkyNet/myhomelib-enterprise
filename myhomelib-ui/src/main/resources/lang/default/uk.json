@@ -1002,7 +1002,7 @@
     "ui.main.language.changed_title": "Мова / Language",
     "ui.main.language.restart_required": "%s — перезапустіть MyHomeLib, щоб застосувати мову до всіх вікон.",
     "ui.main.about.title": "Про програму",
-    "ui.main.about.body": "Версія %s\nJava 21, Spring Boot 3.5, JavaFX 21\n\nНовий Reader на Canvas (без WebView)",
+    "ui.main.about.body": "Версія %s\nJava 21, Spring Boot 4.1, JavaFX 21.0.12\n\nНовий Reader на Canvas (без WebView)",
     "ui.collection.wizard.title": "Майстер створення колекції",
     "ui.collection.wizard.open_error": "Не вдалося відкрити майстер: %s",
     "ui.main.columns.unavailable_title": "Таблиця недоступна",

@@ -33,7 +33,7 @@ class SupportedFormatRegistryTest {
         var patterns = registry.chooserPatterns(SupportedFormat::importSupported);
 
         assertThat(patterns).hasSameSizeAs(expected);
-        assertThat(patterns).contains("*.pdf", "*.djvu", "*.mobi", "*.azw3", "*.docx", "*.rtf", "*.html", "*.chm");
+        assertThat(patterns).contains("*.pdf", "*.djvu", "*.mobi", "*.prc", "*.azw", "*.azw3", "*.docx", "*.rtf", "*.html", "*.chm");
         assertThat(registry.isImportSupported(Path.of("novel.epub"))).isTrue();
         assertThat(registry.isImportSupported(Path.of("unknown.exe"))).isFalse();
     }
@@ -43,6 +43,15 @@ class SupportedFormatRegistryTest {
         assertThat(registry.byId("fb2")).get().extracting(SupportedFormat::readerSupported).isEqualTo(true);
         assertThat(registry.byId("epub")).get().extracting(SupportedFormat::fullTextSupported).isEqualTo(true);
         assertThat(registry.byId("pdf")).get().extracting(SupportedFormat::readerSupported).isEqualTo(true);
+        assertThat(registry.byId("mobi")).get().satisfies(format -> {
+            assertThat(format.extensions()).contains("mobi", "prc");
+            assertThat(format.readerSupported()).isTrue();
+            assertThat(format.fullTextSupported()).isTrue();
+        });
+        assertThat(registry.byId("azw3")).get().satisfies(format -> {
+            assertThat(format.extensions()).contains("azw", "azw3");
+            assertThat(format.readerSupported()).isTrue();
+        });
         assertThat(registry.byId("cbz")).get().satisfies(format -> {
             assertThat(format.family()).isEqualTo(SupportedFormat.Family.BOOK);
             assertThat(format.importMode()).isEqualTo(SupportedFormat.ImportMode.NATIVE);

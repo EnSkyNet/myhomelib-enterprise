@@ -339,20 +339,38 @@ public class DuplicateReviewUiService {
         results.clear();
         status.setText("Сканування локальних artifacts…");
         try {
+            java.util.concurrent.atomic.AtomicReference<String> operationId = new java.util.concurrent.atomic.AtomicReference<>();
             exactScanner.scanAsync(telemetry -> {
+                        operationId.set(telemetry.operationId());
                         operationCenter.accept("Пошук точних дублікатів", collection.getId(), telemetry);
                         UiExecutor.runOnUiThread(() -> applyProgress(telemetry, status, counters, progress));
                     })
-                    .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
-                        start.setDisable(false);
-                        cancel.setDisable(true);
-                        if (error != null) {
-                            Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                            status.setText("Помилка scan: " + cause.getMessage());
-                            return;
+                    .whenComplete((result, error) -> {
+                        String id = operationId.get();
+                        if (error != null && id != null) {
+                            operationCenter.fail(id, UiExceptionSupport.unwrapAsync(error));
+                        } else if (result != null && id != null) {
+                            // The scanner normally emits COMPLETED/CANCELLED telemetry itself. Keep the
+                            // journal terminal even if a future implementation returns before that final event.
+                            operationCenter.snapshot().stream()
+                                    .filter(entry -> id.equals(entry.operationId()) && entry.active())
+                                    .findFirst()
+                                    .ifPresent(entry -> {
+                                        if (result.cancelled()) operationCenter.cancel(id, "Пошук дублікатів скасовано");
+                                        else operationCenter.complete(id, "Груп знайдено: " + result.groups().size());
+                                    });
                         }
-                        renderExactResult(result, status, counters, progress, results);
-                    }));
+                        UiExecutor.runOnUiThread(() -> {
+                            start.setDisable(false);
+                            cancel.setDisable(true);
+                            if (error != null) {
+                                Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                                status.setText("Помилка scan: " + cause.getMessage());
+                                return;
+                            }
+                            renderExactResult(result, status, counters, progress, results);
+                        });
+                    });
         } catch (RuntimeException error) {
             start.setDisable(false);
             cancel.setDisable(true);

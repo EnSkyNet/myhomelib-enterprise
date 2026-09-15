@@ -11,6 +11,8 @@ import javafx.scene.control.Label;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
+import javafx.animation.KeyFrame;
+import javafx.animation.Timeline;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -29,29 +31,44 @@ public class OperationCenterController implements WorkspaceLifecycle {
     private final OperationCenterService operationCenter;
     private final ObservableList<OperationCenterEntry> rows = FXCollections.observableArrayList();
     private AutoCloseable registration;
+    private Timeline durationTicker;
 
     @FXML private Label summaryLabel;
     @FXML private TableView<OperationCenterEntry> operationsTable;
     @FXML private TableColumn<OperationCenterEntry, String> stateColumn;
     @FXML private TableColumn<OperationCenterEntry, String> titleColumn;
+    @FXML private TableColumn<OperationCenterEntry, String> kindColumn;
     @FXML private TableColumn<OperationCenterEntry, String> stageColumn;
     @FXML private TableColumn<OperationCenterEntry, String> progressColumn;
     @FXML private TableColumn<OperationCenterEntry, String> startedColumn;
+    @FXML private TableColumn<OperationCenterEntry, String> finishedColumn;
     @FXML private TableColumn<OperationCenterEntry, String> durationColumn;
+    @FXML private TableColumn<OperationCenterEntry, String> resultColumn;
     @FXML private TextArea detailsArea;
 
     @FXML
     public void initialize() {
         stateColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(stateText(cell.getValue())));
         titleColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().title()));
+        kindColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(kindText(cell.getValue().kind())));
         stageColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(stageText(cell.getValue().stage())));
         progressColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(progressText(cell.getValue())));
         startedColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(TIME_FORMAT.format(cell.getValue().startedAt())));
+        finishedColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(finishedText(cell.getValue())));
         durationColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(durationText(cell.getValue().duration(Instant.now()))));
+        resultColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(resultText(cell.getValue())));
         operationsTable.setItems(rows);
         operationsTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, selected) -> showDetails(selected));
 
         registration = operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> applySnapshot(snapshot)));
+        durationTicker = new Timeline(new KeyFrame(javafx.util.Duration.seconds(1), event -> {
+            if (rows.stream().anyMatch(OperationCenterEntry::active)) {
+                operationsTable.refresh();
+                showDetails(operationsTable.getSelectionModel().getSelectedItem());
+            }
+        }));
+        durationTicker.setCycleCount(Timeline.INDEFINITE);
+        durationTicker.play();
     }
 
     @FXML
@@ -94,10 +111,13 @@ public class OperationCenterController implements WorkspaceLifecycle {
         StringBuilder text = new StringBuilder();
         text.append(entry.title()).append('\n');
         text.append("Стан: ").append(stateText(entry)).append('\n');
+        text.append("Тип: ").append(kindText(entry.kind())).append('\n');
         text.append("Етап: ").append(stageText(entry.stage())).append('\n');
         text.append("Прогрес: ").append(progressText(entry)).append('\n');
         text.append("Початок: ").append(TIME_FORMAT.format(entry.startedAt())).append('\n');
+        text.append("Завершення: ").append(finishedText(entry)).append('\n');
         text.append("Тривалість: ").append(durationText(entry.duration(Instant.now()))).append('\n');
+        text.append("Результат: ").append(resultText(entry)).append('\n');
         if (!entry.collectionId().isBlank()) text.append("Collection ID: ").append(entry.collectionId()).append('\n');
         if (entry.inserted() != 0 || entry.updated() != 0 || entry.deleted() != 0) {
             text.append("Додано: ").append(entry.inserted())
@@ -114,6 +134,23 @@ public class OperationCenterController implements WorkspaceLifecycle {
         if (!entry.errorMessage().isBlank()) text.append("Помилка: ").append(entry.errorMessage()).append('\n');
         text.append("ID: ").append(entry.operationId());
         detailsArea.setText(text.toString());
+    }
+
+    private static String finishedText(OperationCenterEntry entry) {
+        if (entry == null || entry.finishedAt() == null) return "—";
+        return TIME_FORMAT.format(entry.finishedAt());
+    }
+
+    private static String resultText(OperationCenterEntry entry) {
+        if (entry == null) return "";
+        if (!entry.errorMessage().isBlank()) return entry.errorMessage();
+        if (!entry.currentItem().isBlank() && !entry.active()) return entry.currentItem();
+        return switch (entry.stage()) {
+            case COMPLETED -> "Успішно";
+            case CANCELLED -> "Скасовано";
+            case FAILED -> "Помилка";
+            default -> entry.currentItem().isBlank() ? "Виконується" : entry.currentItem();
+        };
     }
 
     private static String stateText(OperationCenterEntry entry) {
@@ -175,10 +212,31 @@ public class OperationCenterController implements WorkspaceLifecycle {
 
     @Override
     public void dispose() {
+        if (durationTicker != null) {
+            durationTicker.stop();
+            durationTicker = null;
+        }
         AutoCloseable current = registration;
         registration = null;
         if (current != null) {
             try { current.close(); } catch (Exception ignored) { }
         }
     }
+    private static String kindText(OperationKind kind) {
+        if (kind == null) return "Інша";
+        return switch (kind) {
+            case COLLECTION_CREATE -> "Створення колекції";
+            case COLLECTION_DELETE -> "Видалення колекції";
+            case CATALOG_IMPORT -> "Імпорт каталогу/книг";
+            case CATALOG_UPDATE -> "Оновлення каталогу";
+            case INDEX_REBUILD -> "Пошуковий індекс";
+            case BACKUP -> "Резервна копія";
+            case RESTORE -> "Відновлення";
+            case INTEGRITY_CHECK -> "Перевірка цілісності";
+            case MAINTENANCE -> "Обслуговування";
+            case BOOK_DOWNLOAD -> "Завантаження книги";
+            case GENERIC -> "Інша";
+        };
+    }
+
 }

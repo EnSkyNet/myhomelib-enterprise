@@ -77,4 +77,35 @@ class LibraryOperationCoordinatorTest {
             assertTrue(blocked.get(2, TimeUnit.SECONDS));
         }
     }
+    @Test
+    void listenersObserveRootOperationLifecycleWithoutNestedNoise() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        java.util.List<LibraryOperationType> observed = new java.util.ArrayList<>();
+        coordinator.addListener(observed::add);
+
+        try (var create = coordinator.acquire(LibraryOperationType.CREATE)) {
+            try (var nestedImport = coordinator.acquire(LibraryOperationType.IMPORT)) {
+                assertEquals(LibraryOperationType.CREATE, coordinator.activeOperation());
+            }
+        }
+
+        assertEquals(java.util.Arrays.asList(null, LibraryOperationType.CREATE, null), observed);
+    }
+
+    @Test
+    void completionListenersReceiveFailureAndDetail() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        java.util.List<LibraryOperationCompletion> completions = new java.util.ArrayList<>();
+        coordinator.addCompletionListener(completions::add);
+
+        var lease = coordinator.acquireDetached(LibraryOperationType.INDEX);
+        lease.markFailed(new IllegalStateException("index exploded"));
+        lease.close();
+
+        assertEquals(1, completions.size());
+        assertEquals(LibraryOperationType.INDEX, completions.getFirst().operation());
+        assertEquals(LibraryOperationOutcome.FAILED, completions.getFirst().outcome());
+        assertEquals("index exploded", completions.getFirst().detail());
+    }
+
 }

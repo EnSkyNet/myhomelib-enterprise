@@ -83,6 +83,11 @@ public class OperationCenterService {
         transition(operationId, OperationStage.FAILED, message, message);
     }
 
+    public void fail(String operationId, String message) {
+        String effective = message == null || message.isBlank() ? "Невідома помилка" : message.trim();
+        transition(operationId, OperationStage.FAILED, effective, effective);
+    }
+
     public List<OperationCenterEntry> snapshot() {
         synchronized (lock) {
             return sortedSnapshotLocked();
@@ -94,6 +99,17 @@ public class OperationCenterService {
             int count = 0;
             for (OperationCenterEntry entry : entries.values()) if (entry.active()) count++;
             return count;
+        }
+    }
+
+    /** Returns whether an active operation of the requested UI category is already represented. */
+    public boolean hasActiveKind(OperationKind kind) {
+        if (kind == null) return false;
+        synchronized (lock) {
+            for (OperationCenterEntry entry : entries.values()) {
+                if (entry.active() && entry.kind() == kind) return true;
+            }
+            return false;
         }
     }
 
@@ -131,6 +147,7 @@ public class OperationCenterService {
                     detail == null || detail.isBlank() ? previous.currentItem() : detail,
                     false, previous.startedAt(), now, now,
                     errorMessage == null ? previous.errorMessage() : errorMessage));
+            trimHistoryLocked();
         }
         publishSnapshot();
     }

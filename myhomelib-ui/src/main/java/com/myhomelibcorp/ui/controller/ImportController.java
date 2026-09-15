@@ -1,11 +1,12 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.usecase.sync.SyncFolderUseCase;
-import com.myhomelibcorp.application.progress.OperationStage;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.ui.operation.LibraryOperationUiText;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
 import com.myhomelibcorp.ui.presenter.BookImportPresenter;
-import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
@@ -32,7 +33,7 @@ public class ImportController {
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final ApplicationState appState;
-    private final OperationCenterService operationCenter;
+    private final LibraryOperationCoordinator libraryOperations;
 
     public void importFb2(Runnable onComplete) {
         bookImportPresenter.importFb2(onComplete);
@@ -42,7 +43,12 @@ public class ImportController {
         bookImportPresenter.importInpx(onComplete);
     }
 
+    public void updateCollectionFromInpx(Runnable onComplete) {
+        bookImportPresenter.importInpx(onComplete, "Оновлення колекції");
+    }
+
     public void importDirectory(Runnable onComplete) {
+        if (!ensureLibraryAvailable("Імпорт папки")) return;
         Stage stage = new Stage();
         File dir = fileChooserService.chooseDirectory(stage, "Виберіть папку з книгами");
         if (dir != null) {
@@ -51,6 +57,7 @@ public class ImportController {
     }
 
     public void handleSyncFolder(Runnable onComplete) {
+        if (!ensureLibraryAvailable("Синхронізація папки")) return;
         Stage stage = new Stage();
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Виберіть папку для синхронізації");
@@ -65,14 +72,9 @@ public class ImportController {
             appState.getStatusBar().setStatusText("🔄 Синхронізація папки: " + dir.getName());
             appState.getStatusBar().setProgressVisible(true);
 
-            var collection = appState.getCurrentLibraryCollection();
-            String operationId = operationCenter.start(
-                    "Синхронізація папки — " + dir.getName(),
-                    collection == null ? "" : collection.getId(), OperationStage.SYNCHRONIZING_FILES, false);
             CompletableFuture<SyncResult> future = syncFolderUseCase.executeAsync(dir.toPath(), options);
 
             future.thenAccept(result -> UiExecutor.runOnUiThread(() -> {
-                        operationCenter.complete(operationId, result.getSummary());
                         appState.getStatusBar().setProgressVisible(false);
                         appState.getStatusBar().setStatusText("✅ " + result.getSummary());
                         dialogService.showInfo("Синхронізація завершена", result.getSummary());
@@ -80,7 +82,6 @@ public class ImportController {
                     }))
                     .exceptionally(ex -> {
                         Throwable cause = UiExceptionSupport.unwrapAsync(ex);
-                        operationCenter.fail(operationId, cause);
                         UiExecutor.runOnUiThread(() -> {
                             appState.getStatusBar().setProgressVisible(false);
                             appState.getStatusBar().setStatusText("❌ Помилка синхронізації");
@@ -134,4 +135,13 @@ public class ImportController {
 
         return dialog;
     }
+
+    private boolean ensureLibraryAvailable(String requestedAction) {
+        LibraryOperationType active = libraryOperations.activeOperation();
+        if (active == null) return true;
+        dialogService.showWarning("Фонова операція",
+                LibraryOperationUiText.blockingMessage(requestedAction, active));
+        return false;
+    }
+
 }

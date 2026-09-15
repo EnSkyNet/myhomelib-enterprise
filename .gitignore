@@ -16,4 +16,4 @@ search-index/
 .DS_Store
 Thumbs.db
 
-.mvn/
+.mvn/maven/

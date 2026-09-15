@@ -33,8 +33,16 @@ public class SyncFolderUseCase {
         }
 
         log.info("📂 Початок синхронізації папки: {}", directory);
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.SYNC)) {
-            return folderSyncPort.syncFolder(directory, options);
+        var lease = operationCoordinator.acquire(LibraryOperationType.SYNC);
+        try {
+            SyncResult result = folderSyncPort.syncFolder(directory, options);
+            lease.markCompleted(result == null ? "Синхронізацію завершено" : result.getSummary());
+            return result;
+        } catch (RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
         }
     }
 
@@ -44,8 +52,22 @@ public class SyncFolderUseCase {
         var lease = operationCoordinator.acquireDetached(LibraryOperationType.SYNC);
         try {
             return folderSyncPort.syncFolderAsync(directory, options)
-                    .whenComplete((ignored, failure) -> lease.close());
+                    .whenComplete((result, failure) -> {
+                        if (failure != null) {
+                            Throwable cause = failure instanceof java.util.concurrent.CompletionException
+                                    && failure.getCause() != null ? failure.getCause() : failure;
+                            if (cause instanceof java.util.concurrent.CancellationException) {
+                                lease.markCancelled("Синхронізацію скасовано");
+                            } else {
+                                lease.markFailed(cause);
+                            }
+                        } else {
+                            lease.markCompleted(result == null ? "Синхронізацію завершено" : result.getSummary());
+                        }
+                        lease.close();
+                    });
         } catch (RuntimeException e) {
+            lease.markFailed(e);
             lease.close();
             throw e;
         }

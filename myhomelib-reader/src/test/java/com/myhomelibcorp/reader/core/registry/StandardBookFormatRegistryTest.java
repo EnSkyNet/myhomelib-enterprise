@@ -19,8 +19,12 @@ class StandardBookFormatRegistryTest {
         assertThat(registry.findByExtension("epub")).isPresent();
         assertThat(registry.findByExtension("txt")).isPresent();
         assertThat(registry.findByExtension("zip")).isPresent();
+        assertThat(registry.findByExtension("mobi")).isPresent();
+        assertThat(registry.findByExtension("prc")).isPresent();
+        assertThat(registry.findByExtension("azw")).isPresent();
+        assertThat(registry.findByExtension("azw3")).isPresent();
         assertThat(registry.getAllFormats()).extracting(BookFormat::id)
-                .containsExactlyInAnyOrder("fb2", "epub", "txt", "zip");
+                .containsExactlyInAnyOrder("fb2", "epub", "txt", "mobi", "azw3", "zip");
     }
 
     @Test

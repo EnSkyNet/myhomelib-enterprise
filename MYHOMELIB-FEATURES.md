@@ -1,7 +1,7 @@
 # MYHOMELIB — Features
 
 **Version:** 8.0.0  
-**Snapshot:** 12 September 2026
+**Snapshot:** 15 September 2026
 
 This document describes the current supported product behavior. Historical stage names are intentionally omitted.
 
@@ -15,7 +15,7 @@ This document describes the current supported product behavior. Historical stage
 
 ## Import and synchronization
 
-- FB2/FBD, EPUB and TXT import.
+- FB2/FBD, EPUB, TXT, MOBI/PRC and AZW/AZW3 import.
 - ZIP/FB2ZIP/JAR multi-book archives.
 - Native CBZ/CBR comic documents; 7z through Apache Commons Compress and RAR through junrar remain general archive containers.
 - INPX with multiple `.inp` parts plus `structure.info` and `archives.info` compatibility.
@@ -61,11 +61,11 @@ Nested archives are not recursively expanded by default.
 ## Reader
 
 - JavaFX Canvas reader; no WebView dependency for the main reading pipeline.
-- FB2/FBD, FB2-in-ZIP, EPUB, TXT, PDF and CBZ/CBR.
+- FB2/FBD, FB2-in-ZIP, EPUB, TXT, PDF, CBZ/CBR and DRM-free MOBI/PRC/AZW/AZW3 (uncompressed or PalmDOC; HUFF/CDIC requires conversion).
 - CBZ/CBR Comic Reader: fit-page, fit-width, continuous scroll, dual-page spreads, manga RTL layout and thumbnails. Comic pages are naturally ordered and decoded lazily with bounded compressed-page, raster and cache limits.
 - Streaming/incremental parsing and bounded page/resource caches.
 - Rich inline text, paragraph layout, justify, hyphenation and multi-page navigation.
-- TOC, search, bookmarks, text selection/copy and reading-position persistence.
+- TOC, search, bookmarks, ordinary mouse-drag text selection, double-click/long-press word selection, copy, highlights/notes and reading-position persistence.
 - Global defaults plus per-book settings.
 - Presets, custom fonts/colors, day/night themes, one/two-page mode, automatic landscape behavior, configurable tap zones, gestures, swipe navigation, pinch text resizing and autoscroll.
 - Explicit navigation by page/percentage/chapter/start/end where supported.
@@ -73,6 +73,12 @@ Nested archives are not recursively expanded by default.
 - Ukrainian/English/Bulgarian/Russian hyphenation dictionaries with conservative fallback.
 
 Desktop Reader behavior is intentionally not a claim of complete Android/iOS or AlReaderX feature parity.
+
+## Background operations and status
+
+- The status bar gives priority to an active long-running operation (index rebuild, catalogue update/import, synchronization, backup/restore and related maintenance) and restores the previous foreground status when it finishes.
+- Conflicting collection actions explain which active operation is blocking them instead of failing with an opaque message.
+- The Operations workspace keeps current-session running and completed operations with type, stage, progress, start/end time, duration, result and error details; completed history can be cleared explicitly.
 
 ## User data and backup
 
@@ -159,7 +165,7 @@ Highlights and notes now have a durable backend model with book/artifact/chapter
 
 ## 7.3 Reader annotations (Iteration 36)
 
-- Shift+drag text selection with visible draggable endpoint handles.
+- Ordinary left-button drag selects rendered text; Shift+drag remains available, with visible draggable endpoint handles.
 - Keyboard text selection with Shift+Left/Right.
 - Selection context actions: Highlight, Add note, Copy and Clear selection; keyboard annotation shortcuts are available.
 - Highlight/note creation persists through the application annotation service and returns immediately to the Reader UI through the bounded background executor.

@@ -10,6 +10,8 @@ import com.myhomelibcorp.application.content.maintenance.ContentIndexRebuildProg
 import com.myhomelibcorp.application.content.maintenance.ContentIndexRebuildResult;
 import com.myhomelibcorp.application.integrity.ArtifactIntegrityFinding;
 import com.myhomelibcorp.application.progress.OperationStage;
+import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.ui.operation.OperationKind;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
@@ -230,31 +232,55 @@ public class IntegrityCheckController {
         contentIndexCancel.set(false);
         setContentRebuildRunning(true);
         updateContentProgress(new ContentIndexRebuildProgress(0, 0, "", "starting"));
+        String operationTitle = "Перебудова full-text індексу";
+        String operationId = operationCenter.start(operationTitle, id, OperationKind.INDEX_REBUILD,
+                OperationStage.UPDATING_SEARCH_INDEX, true);
         contentIndexRebuildTask = executor.submit(() -> contentIndexMaintenance.rebuild(
-                id, contentIndexCancel::get, progress -> UiExecutor.runOnUiThread(() -> updateContentProgress(progress))))
-                .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
-                    setContentRebuildRunning(false);
+                id, contentIndexCancel::get, progress -> {
+                    OperationProgress telemetry = OperationProgress.stage(
+                                    operationId, OperationStage.UPDATING_SEARCH_INDEX, true)
+                            .withProgress(progress.processedBooks(), progress.totalBooks())
+                            .withCurrentItem(progress.currentBook().isBlank() ? progress.phase() : progress.currentBook());
+                    operationCenter.accept(operationTitle, id, OperationKind.INDEX_REBUILD, telemetry);
+                    UiExecutor.runOnUiThread(() -> updateContentProgress(progress));
+                }))
+                .whenComplete((result, error) -> {
                     if (error != null) {
-                        Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                        dialogService.showError("Full-text index", "Помилка перебудови: " + cause.getMessage());
-                        refreshContentIndexHealth();
-                        return;
-                    }
-                    if (result == null) return;
-                    displayContentIndexHealth(result.health());
-                    if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
-                        detailArea.setText("Full-text index успішно перебудовано.\n"
-                                + "Книг оброблено: " + formatNumber(result.processedBooks()) + "\n"
-                                + "Artifacts проіндексовано: " + formatNumber(result.indexedArtifacts()) + "\n\n"
-                                + formatContentIndexHealth(result.health()));
+                        operationCenter.fail(operationId, UiExceptionSupport.unwrapAsync(error));
+                    } else if (result == null) {
+                        operationCenter.fail(operationId, "Перебудова завершилась без результату");
+                    } else if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
+                        operationCenter.complete(operationId, "Книг: " + result.processedBooks()
+                                + " · artifacts: " + result.indexedArtifacts());
                     } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
-                        detailArea.setText("Перебудову скасовано. Попередній активний content index збережено.\n\n"
-                                + formatContentIndexHealth(result.health()));
+                        operationCenter.cancel(operationId, "Перебудову full-text індексу скасовано");
                     } else {
-                        detailArea.setText("Перебудова завершилась помилкою; попередній активний content index збережено.\n"
-                                + result.message() + "\n\n" + formatContentIndexHealth(result.health()));
+                        operationCenter.fail(operationId, result.message());
                     }
-                }));
+                    UiExecutor.runOnUiThread(() -> {
+                        setContentRebuildRunning(false);
+                        if (error != null) {
+                            Throwable cause = UiExceptionSupport.unwrapAsync(error);
+                            dialogService.showError("Full-text index", "Помилка перебудови: " + cause.getMessage());
+                            refreshContentIndexHealth();
+                            return;
+                        }
+                        if (result == null) return;
+                        displayContentIndexHealth(result.health());
+                        if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
+                            detailArea.setText("Full-text index успішно перебудовано.\n"
+                                    + "Книг оброблено: " + formatNumber(result.processedBooks()) + "\n"
+                                    + "Artifacts проіндексовано: " + formatNumber(result.indexedArtifacts()) + "\n\n"
+                                    + formatContentIndexHealth(result.health()));
+                        } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
+                            detailArea.setText("Перебудову скасовано. Попередній активний content index збережено.\n\n"
+                                    + formatContentIndexHealth(result.health()));
+                        } else {
+                            detailArea.setText("Перебудова завершилась помилкою; попередній активний content index збережено.\n"
+                                    + result.message() + "\n\n" + formatContentIndexHealth(result.health()));
+                        }
+                    });
+                });
     }
 
     @FXML

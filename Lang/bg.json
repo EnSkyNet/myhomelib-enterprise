@@ -1002,7 +1002,7 @@
     "ui.main.language.changed_title": "Език / Language",
     "ui.main.language.restart_required": "%s — рестартирайте MyHomeLib, за да приложите езика към всички прозорци.",
     "ui.main.about.title": "За програмата",
-    "ui.main.about.body": "Версия %s\nJava 21, Spring Boot 3.5, JavaFX 21\n\nНов Reader върху Canvas (без WebView)",
+    "ui.main.about.body": "Версия %s\nJava 21, Spring Boot 4.1, JavaFX 21.0.12\n\nНов Reader върху Canvas (без WebView)",
     "ui.collection.wizard.title": "Съветник за създаване на колекция",
     "ui.collection.wizard.open_error": "Съветникът не можа да бъде отворен: %s",
     "ui.main.columns.unavailable_title": "Таблицата не е достъпна",

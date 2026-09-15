@@ -5,6 +5,8 @@ import com.myhomelibcorp.reader.api.BookFormatRegistry;
 import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.format.epub.EpubFormat;
 import com.myhomelibcorp.reader.format.fb2.Fb2Format;
+import com.myhomelibcorp.reader.format.mobi.AzwFormat;
+import com.myhomelibcorp.reader.format.mobi.MobiFormat;
 import com.myhomelibcorp.reader.format.txt.TxtFormat;
 import com.myhomelibcorp.reader.format.zip.ZipFormat;
 import lombok.extern.slf4j.Slf4j;
@@ -20,7 +22,7 @@ import java.util.Locale;
 public class DefaultBookFormatRegistry implements BookFormatRegistry {
 
     private static final List<BookFormat> STANDARD_FORMATS = List.of(
-            new Fb2Format(), new EpubFormat(), new TxtFormat(), new ZipFormat());
+            new Fb2Format(), new EpubFormat(), new TxtFormat(), new MobiFormat(), new AzwFormat(), new ZipFormat());
 
     /**
      * Creates a mutable registry preloaded with the built-in Reader formats without replaying

@@ -658,7 +658,7 @@ public class MainController {
 
     @FXML public void handleCopyToCollection() { collectionCopyUiService.copySelected(mainPane.getScene().getWindow(), this::handleRefresh); }
 
-    @FXML public void handleUpdateCollectionManual() { importController.importInpx(this::handleRefresh); }
+    @FXML public void handleUpdateCollectionManual() { importController.updateCollectionFromInpx(this::handleRefresh); }
     @FXML public void handleUpdateCollectionNetwork() { collectionUpdateUiService.updateFromNetwork(mainPane.getScene().getWindow(), this::handleRefresh); }
     @FXML public void handleCancelCollectionUpdate() { if(!collectionUpdateUiService.cancel()) dialogService.showInfo(localizationService.text("ui.main.update.title"), localizationService.text("ui.main.update.none")); }
 

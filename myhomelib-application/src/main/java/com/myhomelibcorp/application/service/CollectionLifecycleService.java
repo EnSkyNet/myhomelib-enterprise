@@ -114,18 +114,26 @@ public class CollectionLifecycleService {
             rebuildSearchIndexLocked();
             return;
         }
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.INDEX)) {
-            rebuildSearchIndexLocked();
+        var lease = operationCoordinator.acquire(LibraryOperationType.INDEX);
+        try {
+            long indexed = rebuildSearchIndexLocked();
+            lease.markCompleted("Пошуковий індекс оновлено: " + indexed + " документів");
+        } catch (RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
         }
     }
 
-    private void rebuildSearchIndexLocked() {
+    private long rebuildSearchIndexLocked() {
         log.info("🔄 Перебудова індексу...");
         long startTime = System.currentTimeMillis();
         indexRebuilder.rebuildIndex();
         long duration = System.currentTimeMillis() - startTime;
-        log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів",
-                duration, indexRebuilder.getIndexedDocumentCount());
+        long indexed = indexRebuilder.getIndexedDocumentCount();
+        log.info("✅ Індекс перебудовано за {} мс. Проіндексовано {} документів", duration, indexed);
+        return indexed;
     }
 
     /**
@@ -200,7 +208,10 @@ public class CollectionLifecycleService {
             executorPort.execute(() -> runAsyncRebuild(task, leaseForTask));
         } catch (RuntimeException schedulingFailure) {
             activeRebuild.compareAndSet(task, null);
-            if (preAcquiredLease != null) preAcquiredLease.close();
+            if (preAcquiredLease != null) {
+                preAcquiredLease.markFailed(schedulingFailure);
+                preAcquiredLease.close();
+            }
             future.completeExceptionally(schedulingFailure);
         }
         return future;
@@ -210,6 +221,7 @@ public class CollectionLifecycleService {
         LibraryOperationCoordinator.Lease lease = preAcquiredLease;
         RuntimeException failure = null;
         boolean cancelled = false;
+        String completionDetail = "";
         try {
             if (lease == null) {
                 lease = operationCoordinator.acquireDetachedAwait(LibraryOperationType.INDEX);
@@ -223,8 +235,9 @@ public class CollectionLifecycleService {
                     cancelled = true;
                 } else {
                     long duration = System.currentTimeMillis() - startTime;
-                    log.info("✅ Coordinated Lucene rebuild завершено за {} мс; документів {}",
-                            duration, indexRebuilder.getIndexedDocumentCount());
+                    long indexed = indexRebuilder.getIndexedDocumentCount();
+                    completionDetail = "Пошуковий індекс оновлено: " + indexed + " документів";
+                    log.info("✅ Coordinated Lucene rebuild завершено за {} мс; документів {}", duration, indexed);
                 }
             }
         } catch (RuntimeException rebuildFailure) {
@@ -240,6 +253,9 @@ public class CollectionLifecycleService {
             // reports INDEX and an immediately following SWITCH can fail spuriously.
             if (lease != null) {
                 try {
+                    if (failure != null) lease.markFailed(failure);
+                    else if (cancelled) lease.markCancelled("Оновлення пошукового індексу скасовано");
+                    else lease.markCompleted(completionDetail);
                     lease.close();
                 } catch (RuntimeException releaseFailure) {
                     if (failure == null && !cancelled) failure = releaseFailure;

@@ -1,6 +1,9 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.collection.UpdateCollectionFromNetworkUseCase;
 import com.myhomelibcorp.application.usecase.collection.CatalogUpdateFailureException;
 import com.myhomelibcorp.application.progress.OperationStage;
@@ -8,6 +11,7 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.operation.LibraryOperationUiText;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.stage.Window;
@@ -29,6 +33,7 @@ public class CollectionUpdateUiService {
     private final DialogService dialogs;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
+    private final LibraryOperationCoordinator libraryOperations;
     private volatile AtomicBoolean active;
     private final AtomicBoolean startupCheckStarted = new AtomicBoolean(false);
 
@@ -36,6 +41,13 @@ public class CollectionUpdateUiService {
         Collection collection = state.getCurrentLibraryCollection();
         if (collection == null) {
             dialogs.showWarning("Колекція", "Спочатку виберіть колекцію.");
+            return;
+        }
+
+        LibraryOperationType blockingOperation = libraryOperations.activeOperation();
+        if (blockingOperation != null) {
+            dialogs.showWarning("Оновлення колекції",
+                    LibraryOperationUiText.blockingMessage("Оновлення колекції", blockingOperation));
             return;
         }
 
@@ -108,6 +120,12 @@ public class CollectionUpdateUiService {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         if (flag.get()) {
                             state.getStatusBar().setStatusText("Оновлення скасовано");
+                            return;
+                        }
+                        if (cause instanceof LibraryOperationConflictException conflict) {
+                            state.getStatusBar().setStatusText("Оновлення колекції не запущено");
+                            dialogs.showWarning("Оновлення колекції",
+                                    LibraryOperationUiText.blockingMessage("Оновлення колекції", conflict.activeOperation()));
                             return;
                         }
                         if (cause instanceof CatalogUpdateFailureException failure) {

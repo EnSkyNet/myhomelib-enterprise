@@ -28,7 +28,7 @@ public class BookFormatDetector {
             case "EPUB" -> Format.EPUB;
             case "TXT" -> Format.TXT;
             case "INPX" -> Format.INPX;
-            case "MOBI", "AZW3" -> Format.MOBI;
+            case "MOBI", "PRC", "AZW", "AZW3" -> Format.MOBI;
             case "PDF" -> Format.PDF;
             case "DOC", "DOCX", "ODT", "RTF", "HTML" -> Format.DOCX;
             default -> Format.OTHER;

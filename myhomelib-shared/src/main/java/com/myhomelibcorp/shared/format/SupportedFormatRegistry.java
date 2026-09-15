@@ -129,8 +129,8 @@ public final class SupportedFormatRegistry {
         result.add(f("pdf", "PDF", "PDF", set("pdf"), set("application/pdf"), BOOK, GENERIC, true, true, true, false));
         result.add(f("mp3", "MP3", "MP3 Audio", set("mp3"), set("audio/mpeg"), BOOK, GENERIC, false, true, false, false));
         result.add(f("m4b", "M4B", "M4B Audiobook", set("m4b"), set("audio/mp4", "audio/x-m4b"), BOOK, GENERIC, false, true, false, false));
-        result.add(f("mobi", "MOBI", "MOBI", set("mobi"), set("application/x-mobipocket-ebook"), BOOK, GENERIC, true, false, true, false));
-        result.add(f("azw3", "AZW3", "AZW/AZW3", set("azw", "azw3"), set("application/vnd.amazon.ebook"), BOOK, GENERIC, true, false, true, false));
+        result.add(f("mobi", "MOBI", "MOBI", set("mobi", "prc"), set("application/x-mobipocket-ebook"), BOOK, NATIVE, true, true, true, true));
+        result.add(f("azw3", "AZW3", "AZW/AZW3", set("azw", "azw3"), set("application/vnd.amazon.ebook"), BOOK, NATIVE, true, true, true, true));
         result.add(f("djvu", "DJVU", "DjVu", set("djvu", "djv"), set("image/vnd.djvu", "image/x-djvu"), BOOK, GENERIC, true, false, true, false));
         result.add(f("doc", "DOC", "DOC", set("doc"), set("application/msword"), BOOK, GENERIC, false, false, false, false));
         result.add(f("docx", "DOCX", "DOCX", set("docx"), set("application/vnd.openxmlformats-officedocument.wordprocessingml.document"), BOOK, GENERIC, false, false, false, false));

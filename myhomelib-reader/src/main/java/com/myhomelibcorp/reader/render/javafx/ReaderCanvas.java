@@ -47,6 +47,7 @@ public class ReaderCanvas extends StackPane {
     private final ReaderPaginationController paginationController;
     private final ReaderSelectionController selectionController;
     private final ReaderKeyboardScrollController keyboardScrollController;
+    private final ReaderPointerGestureController pointerGestures;
     private final Function<String, String> text;
     private final ContextMenu selectionContextMenu = new ContextMenu();
     private List<ReaderAnnotationOverlay> annotationOverlays = List.of();
@@ -59,19 +60,13 @@ public class ReaderCanvas extends StackPane {
     private PageDimensions currentDimensions;
 
     private static final double SPREAD_GUTTER = 24.0;
-    private static final long LONG_PRESS_MS = 520L;
+    private static final long TEXT_SINGLE_CLICK_DELAY_MS = 360L;
 
     private double zoomBaseFontSize;
     private boolean rendering;
     private boolean renderScheduled;
     private boolean sizeUpdated;
-    private boolean dragging;
-    private boolean swipeHandled;
-    private boolean longPressHandled;
-    private boolean selectionGestureHandled;
-    private double dragStartX;
-    private double dragStartY;
-    private final PauseTransition longPressTimer = new PauseTransition(Duration.millis(LONG_PRESS_MS));
+    private final PauseTransition textSingleClickTimer = new PauseTransition(Duration.millis(TEXT_SINGLE_CLICK_DELAY_MS));
     private PageLayout renderedLeftPage = PageLayout.empty();
     private PageLayout renderedRightPage = PageLayout.empty();
     private double renderedRightOffset;
@@ -115,6 +110,7 @@ public class ReaderCanvas extends StackPane {
         this.autoScrollController = new AutoScrollController(this::nextPage);
         this.selectionController = new ReaderSelectionController(engine, fxRenderer);
         this.keyboardScrollController = new ReaderKeyboardScrollController(this);
+        this.pointerGestures = new ReaderPointerGestureController(this, engine, selectionController);
         configureSelectionContextMenu();
 
         canvas.setFocusTraversable(true);
@@ -130,9 +126,9 @@ public class ReaderCanvas extends StackPane {
         setOnScroll(keyboardScrollController::onScroll);
         setOnMouseClicked(this::onMouseClicked);
         setOnMouseMoved(this::onMouseMoved);
-        setOnMousePressed(this::onMousePressed);
-        setOnMouseDragged(this::onMouseDragged);
-        setOnMouseReleased(this::onMouseReleased);
+        setOnMousePressed(pointerGestures::onPressed);
+        setOnMouseDragged(pointerGestures::onDragged);
+        setOnMouseReleased(pointerGestures::onReleased);
         setOnSwipeLeft(this::onSwipeLeft);
         setOnSwipeRight(this::onSwipeRight);
         setOnSwipeUp(this::onSwipeUp);
@@ -330,7 +326,7 @@ public class ReaderCanvas extends StackPane {
         return a == null ? b == null : b != null && a.textOffset() == b.textOffset();
     }
 
-    private boolean ensureDimensions() {
+    boolean ensureDimensions() {
         if (currentDimensions != null && currentDimensions.isValid()) {
             return true;
         }
@@ -505,21 +501,53 @@ public class ReaderCanvas extends StackPane {
             requestFocus();
             return;
         }
-        if (swipeHandled || longPressHandled || selectionGestureHandled) {
-            swipeHandled = false;
-            longPressHandled = false;
-            selectionGestureHandled = false;
+        if (pointerGestures.consumeHandledClick()) {
             event.consume();
             requestFocus();
             return;
         }
+
         Optional<ReaderAnnotationOverlay> annotation = annotationAt(event.getX(), event.getY());
         if (annotation.isPresent()) {
+            textSingleClickTimer.stop();
             keyboardAnnotation = annotation.get();
             activateAnnotation(annotation.get(), event.getScreenX(), event.getScreenY());
-        } else {
-            executeTapAction(tapActionAt(event.getX(), event.getY(), false));
+            event.consume();
+            requestFocus();
+            return;
         }
+
+        // On rendered text, delay the legacy tap-zone action briefly so the first click of a
+        // double-click cannot turn the page before the second click selects the word.
+        if (event.getClickCount() >= 2 && ensureDimensions()) {
+            textSingleClickTimer.stop();
+            SelectionPage page = selectionPageAt(event.getX());
+            if (selectionController.selectWord(event.getX(), event.getY(), page.page(), page.xOffset())) {
+                notifySelectionChanged();
+                render();
+                selectionContextMenu.show(this, event.getScreenX(), event.getScreenY());
+                event.consume();
+                requestFocus();
+                return;
+            }
+        }
+
+        if (event.getClickCount() == 1 && ensureDimensions()) {
+            SelectionPage page = selectionPageAt(event.getX());
+            if (selectionController.isTextHit(event.getX(), event.getY(), page.page(), page.xOffset())) {
+                String action = tapActionAt(event.getX(), event.getY(), false);
+                textSingleClickTimer.stop();
+                textSingleClickTimer.setOnFinished(ignored -> {
+                    if (engine.isOpen()) executeTapAction(action);
+                });
+                textSingleClickTimer.playFromStart();
+                event.consume();
+                requestFocus();
+                return;
+            }
+        }
+
+        executeTapAction(tapActionAt(event.getX(), event.getY(), false));
         event.consume();
         requestFocus();
     }
@@ -531,7 +559,17 @@ public class ReaderCanvas extends StackPane {
         }
         Optional<ReaderAnnotationOverlay> annotation = annotationAt(event.getX(), event.getY());
         keyboardAnnotation = annotation.orElse(null);
-        setCursor(annotation.isPresent() ? Cursor.HAND : Cursor.DEFAULT);
+        if (annotation.isPresent()) {
+            setCursor(Cursor.HAND);
+            return;
+        }
+        if (ensureDimensions()) {
+            SelectionPage page = selectionPageAt(event.getX());
+            setCursor(selectionController.isTextHit(event.getX(), event.getY(), page.page(), page.xOffset())
+                    ? Cursor.TEXT : Cursor.DEFAULT);
+        } else {
+            setCursor(Cursor.DEFAULT);
+        }
     }
 
     private Optional<ReaderAnnotationOverlay> annotationAt(double x, double y) {
@@ -557,7 +595,7 @@ public class ReaderCanvas extends StackPane {
         activateAnnotation(keyboardAnnotation, x, y);
     }
 
-    private String tapActionAt(double x, double y, boolean longPress) {
+    String tapActionAt(double x, double y, boolean longPress) {
         double w = Math.max(1.0, canvas.getWidth());
         double h = Math.max(1.0, canvas.getHeight());
         ReaderSettings settings = engine.getSettings();
@@ -567,7 +605,7 @@ public class ReaderCanvas extends StackPane {
                 longPress);
     }
 
-    private void executeTapAction(String action) {
+    void executeTapAction(String action) {
         String normalized = action == null ? "none" : action.trim().toLowerCase(java.util.Locale.ROOT);
         switch (normalized) {
             case "previous-page" -> previousPage();
@@ -591,99 +629,26 @@ public class ReaderCanvas extends StackPane {
         }
     }
 
-    private void onMousePressed(MouseEvent event) {
-        if (!event.isPrimaryButtonDown()) return;
-        longPressTimer.stop();
-        selectionContextMenu.hide();
-        longPressHandled = false;
-        if (engine.isOpen() && hasSelection() && ensureDimensions()) {
-            SelectionPage handlePage = selectionPageAt(event.getX());
-            if (selectionController.beginHandleDrag(event.getX(), event.getY(), handlePage.page(), handlePage.xOffset())) {
-                dragging = false;
-                selectionGestureHandled = true;
-                render();
-                event.consume();
-                return;
-            }
-        }
-        if (event.isShiftDown() && engine.isOpen() && ensureDimensions()) {
-            dragging = false;
-            SelectionPage selectionPage = selectionPageAt(event.getX());
-            selectionController.begin(event.getX(), event.getY(), selectionPage.page(), selectionPage.xOffset());
-            selectionGestureHandled = true;
-            notifySelectionChanged();
-            render();
-            event.consume();
-            return;
-        }
-        dragging = true;
-        clearSelection(false);
-        swipeHandled = false;
-        dragStartX = event.getX();
-        dragStartY = event.getY();
-        longPressTimer.setOnFinished(ignored -> {
-            if (dragging && engine.isOpen() && !swipeHandled && !selectionController.isSelecting()) {
-                executeTapAction(tapActionAt(dragStartX, dragStartY, true));
-                longPressHandled = true;
-                dragging = false;
-            }
-        });
-        longPressTimer.playFromStart();
+    void cancelTextSingleClick() { textSingleClickTimer.stop(); }
+
+    void hideSelectionContextMenu() { selectionContextMenu.hide(); }
+
+    void showSelectionContextMenu(double screenX, double screenY) {
+        selectionContextMenu.show(this, screenX, screenY);
     }
 
-    private void onMouseDragged(MouseEvent event) {
-        if (selectionController.isSelecting() && engine.isOpen()) {
-            SelectionPage selectionPage = selectionPageAt(event.getX());
-            selectionController.drag(event.getX(), event.getY(), selectionPage.page(), selectionPage.xOffset());
-            render();
-            event.consume();
-            return;
-        }
-        if (!dragging || !engine.isOpen() || swipeHandled) return;
-        double dx = event.getX() - dragStartX;
-        double dy = event.getY() - dragStartY;
-        if (Math.hypot(dx, dy) > 10) longPressTimer.stop();
-        if (Math.max(Math.abs(dx), Math.abs(dy)) < 55) return;
-        if (Math.abs(dx) > Math.abs(dy) * 1.2) {
-            executeTapAction(dx > 0 ? engine.getSettings().input().swipeRight() : engine.getSettings().input().swipeLeft());
-        } else if (Math.abs(dy) > Math.abs(dx) * 1.2) {
-            executeTapAction(dy > 0 ? engine.getSettings().input().swipeDown() : engine.getSettings().input().swipeUp());
-        } else {
-            return;
-        }
-        swipeHandled = true;
-        event.consume();
-    }
-
-    private void onMouseReleased(MouseEvent event) {
-        longPressTimer.stop();
-        dragging = false;
-        if (selectionController.isSelecting()) {
-            SelectionPage selectionPage = selectionPageAt(event.getX());
-            selectionController.finish(event.getX(), event.getY(), selectionPage.page(), selectionPage.xOffset());
-            selectionGestureHandled = true;
-            notifySelectionChanged();
-            render();
-            if (hasSelection()) {
-                selectionContextMenu.show(this, event.getScreenX(), event.getScreenY());
-            }
-            event.consume();
-            requestFocus();
-        }
-    }
-
-    private SelectionPage selectionPageAt(double x) {
+    SelectionPage selectionPageAt(double x) {
         if (twoPageActive && renderedRightPage != null && !renderedRightPage.isEmpty() && x >= renderedRightOffset) {
             return new SelectionPage(renderedRightPage, renderedRightOffset);
         }
         return new SelectionPage(renderedLeftPage, 0.0);
     }
 
-    private record SelectionPage(PageLayout page, double xOffset) { }
+    record SelectionPage(PageLayout page, double xOffset) { }
 
     private boolean hasSelection() { return selectionController.hasSelection(); }
 
-    private void clearSelection(boolean renderNow) {
+    void clearSelection(boolean renderNow) {
         boolean hadSelection = selectionController.hasSelection();
         selectionController.clear();
         selectionContextMenu.hide();
@@ -796,7 +761,7 @@ public class ReaderCanvas extends StackPane {
     private void executeSwipe(SwipeEvent event, String action) {
         if (!engine.isOpen()) return;
         executeTapAction(action);
-        swipeHandled = true;
+        pointerGestures.markSwipeHandled();
         event.consume();
     }
 
@@ -820,7 +785,7 @@ public class ReaderCanvas extends StackPane {
     public void closeBook() {
         if (!engine.isOpen()) return;
         autoScrollController.stop();
-        longPressTimer.stop();
+        pointerGestures.reset();
         engine.close();
         renderer.setResourceRepository(null);
         clear();
@@ -902,7 +867,7 @@ public class ReaderCanvas extends StackPane {
         if (engine.isOpen()) render();
     }
 
-    private void notifySelectionChanged() {
+    void notifySelectionChanged() {
         if (onSelectionChanged != null) onSelectionChanged.accept(selectionController.snapshot());
     }
 
@@ -924,7 +889,7 @@ public class ReaderCanvas extends StackPane {
 
     public void dispose() {
         autoScrollController.stop();
-        longPressTimer.stop();
+        pointerGestures.reset();
         if (engine.isOpen()) engine.close();
         renderer.setResourceRepository(null);
         renderer.clear();

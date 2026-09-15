@@ -30,7 +30,7 @@ final class BinaryMetadataInspector {
         String ext = source.extension().toLowerCase(Locale.ROOT);
         try {
             return switch (ext) {
-                case "mobi", "azw", "azw3" -> inspectMobi(source);
+                case "mobi", "prc", "azw", "azw3" -> inspectMobi(source);
                 case "pdf" -> inspectPdf(source);
                 case "djvu", "djv" -> inspectDjvu(source);
                 default -> DocumentInspection.unsupported(ext.toUpperCase(Locale.ROOT),

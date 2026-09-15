@@ -25,10 +25,13 @@
                 <columns>
                     <TableColumn fx:id="stateColumn" text="Стан" prefWidth="125"/>
                     <TableColumn fx:id="titleColumn" text="Операція" prefWidth="210"/>
+                    <TableColumn fx:id="kindColumn" text="Тип" prefWidth="155"/>
                     <TableColumn fx:id="stageColumn" text="Етап" prefWidth="155"/>
                     <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="190"/>
                     <TableColumn fx:id="startedColumn" text="Початок" prefWidth="90"/>
-                    <TableColumn fx:id="durationColumn" text="Час" prefWidth="85"/>
+                    <TableColumn fx:id="finishedColumn" text="Завершення" prefWidth="90"/>
+                    <TableColumn fx:id="durationColumn" text="Тривалість" prefWidth="90"/>
+                    <TableColumn fx:id="resultColumn" text="Результат" prefWidth="240"/>
                 </columns>
             </TableView>
             <TextArea fx:id="detailsArea" editable="false" wrapText="true" promptText="Виберіть операцію для перегляду деталей"/>

@@ -1,6 +1,6 @@
 # Імпорт
 
-Можна імпортувати окремий файл, каталог, INPX або архів. Вбудовано метадані для FB2/FBD, EPUB і TXT; PDF, DJVU, MOBI/AZW/AZW3, DOC/DOCX/ODT, RTF, HTML/XHTML, Markdown, CHM та інші підтримувані документи каталогізуються для зовнішнього відкриття.
+Можна імпортувати окремий файл, каталог, INPX або архів. Вбудовано метадані для FB2/FBD, EPUB, TXT і MOBI/AZW/AZW3. DRM-free MOBI/PRC/AZW/AZW3 також відкриваються у вбудованому Reader (uncompressed або PalmDOC; HUFF/CDIC потребує конвертації). PDF, DJVU, DOC/DOCX/ODT, RTF, HTML/XHTML, Markdown, CHM та інші підтримувані документи каталогізуються відповідно до їхніх можливостей.
 
 Архіви: ZIP/FB2ZIP/CBZ/JAR, 7z, RAR/CBR, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, TAR.XZ/TXZ і CPIO. Великі записи обробляються потоково/через тимчасові файли з обмеженнями розміру.
 

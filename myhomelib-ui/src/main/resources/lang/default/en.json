@@ -1002,7 +1002,7 @@
     "ui.main.language.changed_title": "Language",
     "ui.main.language.restart_required": "%s — restart MyHomeLib to apply the language to all windows.",
     "ui.main.about.title": "About",
-    "ui.main.about.body": "Version %s\nJava 21, Spring Boot 3.5, JavaFX 21\n\nNew Canvas-based Reader (no WebView)",
+    "ui.main.about.body": "Version %s\nJava 21, Spring Boot 4.1, JavaFX 21.0.12\n\nNew Canvas-based Reader (no WebView)",
     "ui.collection.wizard.title": "Collection setup wizard",
     "ui.collection.wizard.open_error": "Could not open the wizard: %s",
     "ui.main.columns.unavailable_title": "Table unavailable",

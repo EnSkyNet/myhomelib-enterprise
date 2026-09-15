@@ -85,6 +85,25 @@ class ReaderSelectionControllerTest {
         assertThat(controller.snapshot()).isEmpty();
     }
 
+    @Test
+    void pointerHitAndWordSelectionSupportOrdinaryReaderMouseUx() {
+        Fixture fixture = fixture(0);
+        PageLayout page = PageLayout.builder()
+                .startOffset(0)
+                .endOffset(fixture.textLength())
+                .width(220)
+                .height(40)
+                .lines(List.of(new LineLayout(
+                        "Alpha beta gamma delta", 0, 5, 220, 20, 14,
+                        0, 0, TextStyle.NORMAL, 0, fixture.textLength())))
+                .build();
+
+        assertThat(fixture.controller().isTextHit(75, 15, page, 0)).isTrue();
+        assertThat(fixture.controller().isTextHit(75, 38, page, 0)).isFalse();
+        assertThat(fixture.controller().selectWord(75, 15, page, 0)).isTrue();
+        assertThat(fixture.controller().snapshot().orElseThrow().text()).isEqualTo("beta");
+    }
+
     private static Fixture fixture(long currentOffset) {
         String value = "Alpha beta gamma delta";
         TextStorageImpl text = new TextStorageImpl();

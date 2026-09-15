@@ -66,9 +66,25 @@ public class LocalizationService {
                 .orElse(key);
     }
 
-    /** Formats a stable localization key using Locale.ROOT for deterministic placeholders. */
+    /**
+     * Formats a stable localization key using Locale.ROOT.
+     *
+     * <p>The language catalogs contain both legacy printf placeholders ({@code %s}/{@code %d})
+     * and MessageFormat placeholders ({@code {0}}, {@code {1}}). Supporting both here keeps the
+     * catalog backward-compatible and prevents raw placeholders such as "Колекція: {0}" from
+     * leaking into the UI.</p>
+     */
     public String format(String key, Object... args) {
-        return String.format(java.util.Locale.ROOT, text(key), args);
+        return formatPattern(text(key), args);
+    }
+
+    static String formatPattern(String pattern, Object... args) {
+        if (pattern == null) return null;
+        Object[] values = args == null ? new Object[0] : args;
+        if (pattern.matches("(?s).*\\{\\d+(?:,[^}]*)?}.*")) {
+            return new java.text.MessageFormat(pattern, java.util.Locale.ROOT).format(values);
+        }
+        return String.format(java.util.Locale.ROOT, pattern, values);
     }
 
     public String tr(String text) {

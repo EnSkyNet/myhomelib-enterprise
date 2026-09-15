@@ -44,6 +44,19 @@ final class ReaderSelectionController {
         return anchorOffset >= 0 && focusOffset >= 0 && anchorOffset != focusOffset;
     }
 
+    /** Returns true only when the pointer is over rendered text rather than an empty page margin. */
+    boolean isTextHit(double x, double y, PageLayout page, double xOffset) {
+        if (!engine.isOpen() || page == null || page.isEmpty()) return false;
+        double localX = x - xOffset;
+        for (LineLayout line : page.getLines()) {
+            if (y < line.y() || y > line.y() + line.height()) continue;
+            double left = line.x();
+            double right = line.x() + Math.max(1.0, line.width());
+            if (localX >= left && localX <= right) return true;
+        }
+        return false;
+    }
+
     void begin(double x, double y, PageDimensions dimensions) {
         begin(x, y, engine.getCurrentPage(dimensions), 0.0);
     }
@@ -97,6 +110,36 @@ final class ReaderSelectionController {
         if (!selecting) return;
         focusOffset = hitTestOffset(x, y, page, xOffset);
         selecting = false;
+    }
+
+    /** Selects the Unicode word nearest to the pointer. Used by double-click/long-press style reader UX. */
+    boolean selectWord(double x, double y, PageLayout page, double xOffset) {
+        if (!engine.isOpen() || engine.getCurrentDocument() == null || page == null || page.isEmpty()) return false;
+        String fullText = engine.getCurrentDocument().text().getFullText();
+        if (fullText == null || fullText.isEmpty()) return false;
+        int offset = (int) clamp(hitTestOffset(x, y, page, xOffset), 0, fullText.length());
+        if (offset == fullText.length() && offset > 0) offset--;
+        if (offset < 0 || offset >= fullText.length()) return false;
+
+        int pivot = offset;
+        if (!isWordCharacter(fullText.charAt(pivot))) {
+            if (pivot > 0 && isWordCharacter(fullText.charAt(pivot - 1))) pivot--;
+            else return false;
+        }
+
+        int start = pivot;
+        while (start > 0 && isWordCharacter(fullText.charAt(start - 1))) start--;
+        int end = pivot + 1;
+        while (end < fullText.length() && isWordCharacter(fullText.charAt(end))) end++;
+        anchorOffset = start;
+        focusOffset = end;
+        selecting = false;
+        return hasSelection();
+    }
+
+    private static boolean isWordCharacter(char c) {
+        return Character.isLetterOrDigit(c) || Character.getType(c) == Character.NON_SPACING_MARK
+                || c == '\'' || c == '\u2019' || c == '-' || c == '\u2011';
     }
 
     /** Keyboard selection uses source-text offsets and therefore survives pagination/layout changes. */

@@ -49,8 +49,18 @@ public class SwitchCollectionUseCase {
     public SwitchResult executeWithStatus(Collection collection, boolean rebuildIndex) {
         // A collection-specific rebuild must never survive into a different collection context.
         collectionLifecycleService.cancelBackgroundRebuildAndAwait();
-        try (var ignored = operationCoordinator.acquire(LibraryOperationType.SWITCH)) {
-            return executeLocked(collection, rebuildIndex);
+        var lease = operationCoordinator.acquire(LibraryOperationType.SWITCH);
+        try {
+            SwitchResult result = executeLocked(collection, rebuildIndex);
+            String name = result.collection() == null || result.collection().getName() == null
+                    ? "" : result.collection().getName().trim();
+            lease.markCompleted(name.isBlank() ? "Колекцію перемкнено" : "Активна колекція: " + name);
+            return result;
+        } catch (RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
         }
     }
 

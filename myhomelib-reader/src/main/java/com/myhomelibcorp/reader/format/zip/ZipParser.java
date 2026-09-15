@@ -186,7 +186,9 @@ public class ZipParser implements BookParser {
 
     private boolean isReaderBook(String name) {
         return name.endsWith(".fb2") || name.endsWith(".fbd") || name.endsWith(".epub")
-                || name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md");
+                || name.endsWith(".txt") || name.endsWith(".text") || name.endsWith(".md")
+                || name.endsWith(".mobi") || name.endsWith(".prc")
+                || name.endsWith(".azw") || name.endsWith(".azw3");
     }
 
 }

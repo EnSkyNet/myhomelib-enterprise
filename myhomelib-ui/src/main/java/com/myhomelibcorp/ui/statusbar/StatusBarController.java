@@ -1,11 +1,14 @@
 package com.myhomelibcorp.ui.statusbar;
 
 import com.myhomelibcorp.application.dto.LibraryStatistics;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.operation.OperationCenterEntry;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
+import com.myhomelibcorp.ui.operation.LibraryOperationUiText;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.StatusBarViewModel;
@@ -19,6 +22,7 @@ import org.springframework.stereotype.Component;
 import java.lang.management.ManagementFactory;
 import java.lang.management.MemoryMXBean;
 import java.lang.management.MemoryUsage;
+import java.util.List;
 import java.util.Objects;
 
 @Component
@@ -30,7 +34,11 @@ public class StatusBarController {
     private final StatisticsService statisticsService;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
+    private final LibraryOperationCoordinator libraryOperations;
     private final WorkspaceManager workspaceManager;
+
+    private volatile List<OperationCenterEntry> operationSnapshot = List.of();
+    private volatile LibraryOperationType coordinatedOperation;
 
     @FXML private Label statusLabel;
     @FXML private Label operationsLabel;
@@ -43,7 +51,18 @@ public class StatusBarController {
         statusLabel.textProperty().bind(vm.statusTextProperty());
         progressBar.progressProperty().bind(vm.progressProperty());
         progressBar.visibleProperty().bind(vm.progressVisibleProperty());
-        operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> updateOperationsLabel(snapshot)));
+        progressBar.managedProperty().bind(vm.progressVisibleProperty());
+        operationsLabel.setTooltip(new javafx.scene.control.Tooltip(
+                "Відкрити журнал поточних і завершених фонових операцій"));
+        operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> {
+            operationSnapshot = snapshot == null ? List.of() : snapshot;
+            updateOperationsLabel(operationSnapshot);
+            refreshBackgroundStatus(vm);
+        }));
+        libraryOperations.addListener(operation -> UiExecutor.runOnUiThread(() -> {
+            coordinatedOperation = operation;
+            refreshBackgroundStatus(vm);
+        }));
 
         // Оновлення статистики
         vm.statisticsProperty().addListener((obs, old, stats) -> {
@@ -98,7 +117,40 @@ public class StatusBarController {
         int active = 0;
         if (snapshot != null) for (OperationCenterEntry entry : snapshot) if (entry.active()) active++;
         int total = snapshot == null ? 0 : snapshot.size();
-        operationsLabel.setText(active > 0 ? "Операції: " + active + " актив." : "Операції: " + total);
+        int completed = Math.max(0, total - active);
+        operationsLabel.setText(active > 0
+                ? "Операції: " + active + " актив. · " + completed + " заверш."
+                : "Операції: " + completed + " заверш.");
+    }
+
+    private void refreshBackgroundStatus(StatusBarViewModel vm) {
+        OperationCenterEntry entry = selectVisibleOperation(operationSnapshot, coordinatedOperation);
+        if (entry != null) {
+            double fraction = entry.fraction();
+            vm.setBackgroundOperation(LibraryOperationUiText.entryStatus(entry),
+                    fraction >= 0.0 ? fraction : -1.0, true);
+            return;
+        }
+        if (coordinatedOperation != null) {
+            vm.setBackgroundOperation(LibraryOperationUiText.activeStatus(coordinatedOperation), -1.0, true);
+            return;
+        }
+        vm.clearBackgroundOperation();
+    }
+
+    static OperationCenterEntry selectVisibleOperation(List<OperationCenterEntry> snapshot,
+                                                       LibraryOperationType coordinatedOperation) {
+        if (snapshot == null || snapshot.isEmpty()) return null;
+        if (coordinatedOperation != null) {
+            for (OperationCenterEntry entry : snapshot) {
+                if (LibraryOperationUiText.matches(coordinatedOperation, entry)) return entry;
+            }
+            return null;
+        }
+        for (OperationCenterEntry entry : snapshot) {
+            if (entry.active()) return entry;
+        }
+        return null;
     }
 
 }

@@ -34,7 +34,7 @@ public final class CalibreCliBookConverter implements BookConverter {
     private static final int MAX_CAPTURE_BYTES = 64 * 1024;
     private static final int MAX_FAILURE_TEXT = 2048;
     private static final Set<String> SOURCE_FORMATS = Set.of(
-            "fb2", "fb2_zip", "epub", "mobi", "azw", "azw3", "txt", "html", "htm", "rtf", "docx", "pdf");
+            "fb2", "fb2_zip", "epub", "mobi", "prc", "azw", "azw3", "txt", "html", "htm", "rtf", "docx", "pdf");
 
     private final ApplicationSettingsPort settings;
     private final String targetFormat;

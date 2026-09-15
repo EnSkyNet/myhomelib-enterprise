@@ -44,7 +44,7 @@ final class CollectionMaintenanceAnalyzer {
     private static final int MAX_OPEN_ARCHIVES = 4;
 
     private static final Set<String> PHYSICAL_LIBRARY_EXTENSIONS = Set.of(
-            ".fb2", ".fbd", ".epub", ".txt", ".text", ".mobi", ".azw", ".azw3",
+            ".fb2", ".fbd", ".epub", ".txt", ".text", ".mobi", ".prc", ".azw", ".azw3",
             ".pdf", ".djvu", ".djv", ".zip", ".fb2zip", ".7z", ".rar", ".cbz", ".cbr");
 
     private static final Set<String> ZIP_LIKE_EXTENSIONS = Set.of(

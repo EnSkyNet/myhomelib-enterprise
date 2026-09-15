@@ -176,8 +176,13 @@
 }
 .scope-chip {
     -fx-padding: 3 9 3 9;
-    -fx-background-color: derive(-mhl-accent, 88%);
-    -fx-background-radius: 12;
+    /* Keep the collection badge inside the active application theme.
+       Deriving 88% from the accent produced an almost-white oval in dark themes. */
+    -fx-background-color: derive(-mhl-panel, -3%);
+    -fx-border-color: -mhl-border;
+    -fx-border-width: 1;
+    -fx-background-radius: 6;
+    -fx-border-radius: 6;
     -fx-text-fill: -mhl-text;
 }
 
