@@ -22,7 +22,7 @@
         <mhl.test.jvmArgs></mhl.test.jvmArgs>
 
         <spring-boot.version>4.1.1</spring-boot.version>
-        <javafx.version>21.0.12</javafx.version>
+        <javafx.version>26.0.2</javafx.version>
         <sqlite.version>3.53.4.0</sqlite.version>
         <flyway.version>12.4.0</flyway.version>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
