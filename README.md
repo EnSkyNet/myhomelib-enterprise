@@ -1,6 +1,6 @@
-# MyHomeLib Enterprise 7.1.0
+# MyHomeLib Enterprise 8.0.0
 
-Current source checkpoint: **Iteration 83, 2026-09-13 — Windows TTS discovery + Annotation Manager FXML hotfix after real-host testing**. A real Windows run after Iteration 82 showed that the voice chooser was receiving PowerShell parser diagnostics/script fragments rather than only voice data, and that Annotations/Notes still failed because JavaFX could not coerce `CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN` from an FXML string into a `Callback`. Iteration 83 moves Windows voice discovery to PowerShell `-EncodedCommand`, frames valid rows as `MHLVOICE|<UTF-8 Base64>|<locale>`, separates stderr from stdout, fails closed on non-zero discovery exit, and ignores all unframed diagnostics. The Annotation Manager now configures the JavaFX resize-policy callback in Java rather than in FXML, with source-contract and display-capable `FXMLLoader` regressions. The authoritative exhaustive split baseline is **1,049 tests, 0 failures, 0 errors, 12 skipped**; Infrastructure is **437/0/0/7**, Application **287/0/0/1**, UI **98/98**, Reader **77/0/0/1**, Bootstrap **18/18**, OPDS **20/20**, E2E **14/14**, and Architecture **14/14**. Full eager Spring context remains **1/1 PASS**. Because production source changed, Iteration 82 candidate-bound external evidence is invalid for final acceptance; MHL-010/011/012/017/018/019 remain `OPEN_EXTERNAL` and must run against the new Iteration 83 SHA.
+Current source checkpoint: **Iteration 85 post-audit hardened candidate, 2026-09-15**. This tree includes the Iteration 85 Finish/Polish scope plus the independent technical-audit remediations for native-process pipe safety, conservative power-state handling, JavaFX non-blocking operations, OPDS/LAN authentication and browser headers, bounded online downloads/free-space guards, Reader temporary-resource lifecycle, MCP schema compatibility, CI action SHA pinning and dependency-update automation. Final local verification on this exact source state completed with **1,097 tests, 0 failures, 0 errors, 12 skipped**, plus **8/8 display-capable JavaFX tests**, a full **707,154/707,154 real INPX import with 0 errors**, **2/2 real FB2 corpus acceptance**, Linux portable packaging/smoke and release-artifact validation. The six live external gates MHL-010/011/012/017/018/019 remain `OPEN_EXTERNAL` and must bind to the exact release candidate SHA before public release; Linux/offline validation does not substitute for Windows-native or connected GitHub acceptance.
 
 The chronological development record is consolidated in [docs/history/MYHOMELIB-HISTORY-ITERATIONS.md](docs/history/MYHOMELIB-HISTORY-ITERATIONS.md). Original iteration/task/continuation records are kept under `docs/history/records/`. The six external backlog items MHL-010/011/012/017/018/019 remain OPEN until real GitHub/Windows acceptance evidence exists.
 
@@ -49,7 +49,7 @@ or:
 .\package.ps1
 ```
 
-Expected JAR: `myhomelib-bootstrap/target/myhomelib-bootstrap-7.1.0.jar`.
+Expected JAR: `myhomelib-bootstrap/target/myhomelib-bootstrap-8.0.0.jar`.
 
 ## What is included
 
@@ -71,7 +71,7 @@ Active documentation is intentionally small:
 - [MYHOMELIB-FEATURES.md](MYHOMELIB-FEATURES.md) — supported functionality and deliberate limits;
 - [MYHOMELIB-OPERATIONS.md](MYHOMELIB-OPERATIONS.md) — data paths, collections, online download, backup/restore, upgrades and troubleshooting;
 - [MYHOMELIB-DEVELOPMENT.md](MYHOMELIB-DEVELOPMENT.md) — build, tests, performance and contribution/release gates;
-- [MYHOMELIB-RELEASE.md](MYHOMELIB-RELEASE.md) — v7.1 release/upgrade summary and current validation boundary;
+- [MYHOMELIB-RELEASE.md](MYHOMELIB-RELEASE.md) — v8.0 release/upgrade summary and current validation boundary;
 - `docs/history/MYHOMELIB-HISTORY-*.md` — consolidated development history;
 - `docs/history/source-notes/` — original historical Markdown notes retained as source evidence;
 - `docs/history/records/` — iteration/checkpoint/task evidence moved out of the source root.
@@ -80,7 +80,7 @@ Active documentation is intentionally small:
 
 ## Validation note
 
-The repository contains offline architecture/static/regression gates and GitHub Actions workflows for JDK 21 on Windows, Linux and macOS. Critical JavaFX localization is also guarded by stable-key and UK/EN/BG catalogue consistency checks. Repository-side 7.1 acceptance for PR enforcement/timing, SBOM, Dependency-Check and CodeQL can be collected with the manually dispatched **GitHub connected acceptance** workflow; it writes machine-readable JSON plus a reviewer Markdown summary. A connected `mvn clean verify -Pproduction` and real CI run remain the authoritative compiled/tested release gate. Runtime startup itself does not require Maven or dependency downloads.
+The repository contains offline architecture/static/regression gates and GitHub Actions workflows for JDK 21 on Windows, Linux and macOS. Critical JavaFX localization is also guarded by stable-key and UK/EN/BG catalogue consistency checks. Repository-side 8.0 acceptance for PR enforcement/timing, SBOM, Dependency-Check and CodeQL can be collected with the manually dispatched **GitHub connected acceptance** workflow; it writes machine-readable JSON plus a reviewer Markdown summary. A connected `mvn clean verify -Pproduction` and real CI run remain the authoritative compiled/tested release gate. Runtime startup itself does not require Maven or dependency downloads.
 
 The canonical six-gate external acceptance handoff is `docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md`; `tools/external-acceptance-readiness.py` validates repository readiness but never closes an external gate.
 

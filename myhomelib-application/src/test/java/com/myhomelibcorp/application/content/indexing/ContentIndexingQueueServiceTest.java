@@ -94,6 +94,23 @@ class ContentIndexingQueueServiceTest {
     }
 
     @Test
+    void powerProbeFailurePausesWorkConservatively() throws Exception {
+        AtomicInteger processed = new AtomicInteger();
+        ContentIndexingQueueService queue = queue((task, control) -> {
+            processed.incrementAndGet();
+            return ContentIndexingOutcome.completed();
+        }, new MemoryCheckpoint(), () -> { throw new IllegalStateException("power probe unavailable"); },
+                IndexingResourceProfile.BALANCED, 4);
+
+        queue.enqueue(task("probe-failure", ContentIndexingPriority.NORMAL));
+        TimeUnit.MILLISECONDS.sleep(200);
+
+        assertThat(processed.get()).isZero();
+        assertThat(queue.snapshot().pausedForBattery()).isTrue();
+        assertThat(queue.outstandingTasks()).hasSize(1);
+    }
+
+    @Test
     void batteryPauseAndBalancedWorkerLimitAreEnforced() throws Exception {
         AtomicBoolean battery = new AtomicBoolean(true);
         AtomicInteger active = new AtomicInteger();

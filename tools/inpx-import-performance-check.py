@@ -27,9 +27,15 @@ checks.append(("author pair is structured (pipe-safe)", "private record AuthorNa
 checks.append(("indexed author lookup exists", "idx_authors_name_lookup" in m and "first_name, middle_name, last_name" in m))
 checks.append(("long atomic import uses a 30-minute Hikari leak threshold", "LEAK_DETECTION_THRESHOLD_MS = 1_800_000L" in c))
 checks.append(("online catalog caller remains compatible with generic 1000-row request", ".batchSize(1000)" in nu))
-checks.append(("online INPX pipeline raises effective batch to configured 5000",
+checks.append(("online INPX pipeline keeps configured 5000-row tuning bounded",
                "app.import.online-batch-size:5000" in ip
-               and "Math.max(requestedBatch, Math.max(1_000, Math.min(onlineBatchSize, 10_000)))" in ip))
+               and "Math.max(1_000, Math.min(configuredOnline, 10_000))" in ip
+               and "Math.max(requested, Math.max(tunedLarge, tunedOnline))" in ip))
+checks.append(("large full snapshot enables configured 5000-row batches only at 100k+ records",
+               "LARGE_CATALOG_BATCH_MIN_RECORDS = 100_000L" in ip
+               and "app.import.large-catalog-batch-size:5000" in ip
+               and "catalogFullSnapshot && totalRecords >= LARGE_CATALOG_BATCH_MIN_RECORDS" in ip
+               and "Math.max(1_000, Math.min(configuredLarge, 10_000))" in ip))
 checks.append(("create-with-source uses benchmark-selected 1000-row batches", ".batchSize(1000)" in cc and ".batchSize(5000)" not in cc))
 checks.append(("generic catalog fallback batch is 1000", "DEFAULT_BATCH = 1_000" in ci and "DEFAULT_BATCH = 5_000" not in ci))
 

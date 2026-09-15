@@ -53,7 +53,7 @@ public class SqliteAnnotationExportQueryAdapter implements AnnotationExportQuery
                            a.annotation_type,COALESCE(a.color,''),COALESCE(x.chapter_id,''),COALESCE(x.chapter_title,''),
                            COALESCE(x.quote_text,''),COALESCE(a.note,''),x.position,a.created_at,a.updated_at
                     """ + FROM + where.where() + """
-                     ORDER BY COALESCE(b.title,'') COLLATE NOCASE,a.book_id,a.created_at,a.id
+                     ORDER BY COALESCE(b.title,'') COLLATE NOCASE,a.book_id,x.start_offset,x.end_offset,a.created_at,a.id
                      LIMIT ? OFFSET ?
                     """, this::mapRow, pageParams.toArray());
             boolean hasNext = rows.size() > safeLimit;

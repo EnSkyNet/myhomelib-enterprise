@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.annotation.export;
 
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationExportQueryPort;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -7,10 +8,8 @@ import org.springframework.stereotype.Service;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -46,7 +45,7 @@ public class AnnotationExportService {
                 case JSON -> writeJson(request, temp);
             };
             checkCancelled();
-            publish(temp, destination);
+            AtomicFileSupport.moveReplacing(temp, destination);
             committed = true;
             return new AnnotationExportResult(count, destination);
         } finally {
@@ -212,13 +211,6 @@ public class AnnotationExportService {
         return out.toString();
     }
 
-    private static void publish(Path temp, Path destination) throws IOException {
-        try {
-            Files.move(temp, destination, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException ignored) {
-            Files.move(temp, destination, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
 
     private static void checkCancelled() throws InterruptedException {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedException("annotation export cancelled");

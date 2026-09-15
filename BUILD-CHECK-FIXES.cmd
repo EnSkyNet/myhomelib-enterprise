@@ -3,7 +3,7 @@ setlocal EnableExtensions
 cd /d "%~dp0"
 
 echo ============================================================
-echo MyHomeLib Enterprise v7.1 release gate
+echo MyHomeLib 8.0.0 release gate
 echo ============================================================
 
 set "PYTHON_EXE="
@@ -15,14 +15,14 @@ if not defined PYTHON_EXE (
 )
 
 if not defined PYTHON_EXE (
-  echo ERROR: Python 3 is required for the offline v7.1 pre-check.
+  echo ERROR: Python 3 is required for the offline 8.0 pre-check.
   exit /b 2
 )
 
-echo [1/2] Running v7.1 offline regression, migration, security and architecture checks...
+echo [1/2] Running 8.0 offline regression, migration, security and architecture checks...
 %PYTHON_EXE% tools\build-check-v7.py
 if errorlevel 1 (
-  echo ERROR: v7.1 offline checks failed. Maven was not started.
+  echo ERROR: 8.0 offline checks failed. Maven was not started.
   exit /b 3
 )
 
@@ -33,5 +33,5 @@ if errorlevel 1 (
   exit /b %ERRORLEVEL%
 )
 
-echo PASS: MyHomeLib Enterprise v7.1 release checks completed.
+echo PASS: MyHomeLib 8.0.0 release checks completed.
 exit /b 0

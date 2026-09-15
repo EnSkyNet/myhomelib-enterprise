@@ -52,19 +52,17 @@ require('localizationService.genreName' in vm_mapper,
 require('sourceLabel.equalsIgnoreCase(requestedCode)' in read('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/LanguageCatalogService.java'),
         'internal genre codes can still leak into the UI')
 
-require('<FlowPane' in main_fxml and 'styleClass="main-toolbar-wrap"' in main_fxml,
-        'main toolbar is not wrapping/adaptive')
-import xml.etree.ElementTree as ET
-toolbar = ET.fromstring(main_fxml)
-buttons = {node.get('onAction'): node for node in toolbar.iter('Button')}
-for handler, tooltip in [('#handleDownloadBook', 'Завантажити вибрані книги'),
-                         ('#handleCancelDownload', 'Скасувати активне завантаження')]:
-    button = buttons.get(handler)
-    require(button is not None and any(node.get('text') == tooltip for node in button.iter('Tooltip')),
-            'download toolbar action/tooltip missing: ' + handler)
+require('<HBox fx:id="mainToolbar"' in main_fxml and 'styleClass="main-toolbar-wrap"' in main_fxml,
+        'main toolbar is not a single-row adaptive HBox')
+require('HBox.hgrow="ALWAYS"' in main_fxml and '<MenuButton text="⋮"' in main_fxml,
+        'main toolbar search growth/overflow contract missing')
+require('fx:id="selectionToolbar"' in main_fxml and 'onAction="#handleDownloadBook"' in main_fxml,
+        'contextual selection download action missing')
+require('onAction="#handleCancelDownload"' in main_fxml,
+        'download cancellation action is no longer reachable')
 main_controller = read('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java')
 require('batchOperationsController.handleBatchDownload(' in main_controller,
-        'toolbar download no longer dispatches checkbox-selected books')
+        'selection download no longer dispatches checkbox-selected books')
 
 require('PauseTransition' in progress and 'stage.close()' in progress,
         'download completion window does not auto-close')
@@ -89,7 +87,7 @@ print('SEARCH/TOOLBAR/GENRE FOLLOWUP CHECK: PASS')
 print(' - Author Workspace genres use human localized extended labels only; base/code labels are suppressed')
 print(' - search books/authors are no longer capped at 50/20')
 print(' - central search uses compact single-line rows with Author column and bold matches')
-print(' - main toolbar wraps and download actions are clearly named')
+print(' - main toolbar is single-row adaptive; contextual/overflow actions remain reachable')
 print(' - download/export success windows auto-close; local export is silent')
 print(' - successful downloads clear checkbox selection')
 print(' - default device export layout is Author/[Series]/NN - Title')

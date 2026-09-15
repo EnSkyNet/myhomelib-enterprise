@@ -1,6 +1,6 @@
 # MyHomeLib Enterprise — Architecture
 
-**Project version:** `7.1.0`  
+**Project version:** `8.0.0`  
 **Architecture snapshot:** 31 August 2026  
 **Java:** 21  
 **Desktop UI:** JavaFX  

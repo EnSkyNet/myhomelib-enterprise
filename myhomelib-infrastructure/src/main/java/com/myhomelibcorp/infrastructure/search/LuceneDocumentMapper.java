@@ -19,7 +19,7 @@ import java.util.Locale;
 
 /** Maps immutable catalogue snapshots to the Lucene document schema. */
 final class LuceneDocumentMapper {
-    static final String SCHEMA_VERSION = "custom-fields-v1";
+    static final String SCHEMA_VERSION = "custom-fields-v2-activity";
 
     Document toDocument(BookSnapshot snapshot) {
         Document doc = new Document();
@@ -75,6 +75,9 @@ final class LuceneDocumentMapper {
         doc.add(new SortedDocValuesField("id_sort", new BytesRef(snapshot.getId().asString())));
         doc.add(new StringField("local", snapshot.isLocal() ? "1" : "0", Field.Store.NO));
         doc.add(new StringField("deleted", snapshot.isDeleted() ? "1" : "0", Field.Store.NO));
+        doc.add(new StringField("has_note", snapshot.getNoteCount() > 0 ? "1" : "0", Field.Store.NO));
+        doc.add(new StringField("has_highlight", snapshot.getHighlightCount() > 0 ? "1" : "0", Field.Store.NO));
+        doc.add(new StringField("has_annotation", (snapshot.getNoteCount() + snapshot.getHighlightCount()) > 0 ? "1" : "0", Field.Store.NO));
         addCustomFields(doc, snapshot);
         return doc;
     }

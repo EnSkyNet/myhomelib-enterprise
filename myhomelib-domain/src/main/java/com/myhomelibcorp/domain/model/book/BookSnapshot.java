@@ -37,6 +37,8 @@ public class BookSnapshot {
     LocalDateTime updateDate;
     boolean deleted;
     boolean local;
+    int noteCount;
+    int highlightCount;
     @Builder.Default
     List<CustomFieldValue> customFieldValues = List.of();
 
@@ -67,6 +69,8 @@ public class BookSnapshot {
                 .updateDate(book.getUpdateDate())
                 .deleted(book.isDeleted())
                 .local(book.isLocal())
+                .noteCount(0)
+                .highlightCount(0)
                 .customFieldValues(List.of())
                 .build();
     }

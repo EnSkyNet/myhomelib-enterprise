@@ -42,7 +42,7 @@ public final class AnnotationAnchorRelocator {
         while (from <= text.length() - quote.length()) {
             int hit = text.indexOf(quote, from);
             if (hit < 0) break;
-            int contextScore = contextScore(text, hit, quote.length(), prefix, suffix);
+            int contextScore = scoreContext(text, hit, quote.length(), prefix, suffix);
             long distance = Math.abs((long) hit - expected);
             if (contextScore > bestContextScore || (contextScore == bestContextScore && distance < bestDistance)) {
                 best = hit;
@@ -54,7 +54,7 @@ public final class AnnotationAnchorRelocator {
         return best;
     }
 
-    private static int contextScore(String text, int start, int quoteLength, String prefix, String suffix) {
+    public static int scoreContext(String text, int start, int quoteLength, String prefix, String suffix) {
         int score = 0;
         if (prefix != null && !prefix.isEmpty()) {
             int take = Math.min(prefix.length(), start);

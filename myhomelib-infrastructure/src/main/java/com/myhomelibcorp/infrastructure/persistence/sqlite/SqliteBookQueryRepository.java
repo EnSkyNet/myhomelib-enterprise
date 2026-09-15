@@ -414,10 +414,12 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             Map<String, RelatedText> authors = loadSearchAuthors(first, last, pageIds);
             Map<String, RelatedText> genres = loadSearchGenres(first, last, pageIds);
             Map<String, List<CustomFieldValue>> customFields = loadSearchCustomFields(first, last, pageIds);
+            Map<String, AnnotationCounts> annotationCounts = loadSearchAnnotationCounts(first, last, pageIds);
             List<BookSnapshot> snapshots = new ArrayList<>(baseRows.size());
             for (SearchBaseRow row : baseRows) {
                 RelatedText author = authors.get(row.id());
                 RelatedText genre = genres.get(row.id());
+                AnnotationCounts activity = annotationCounts.getOrDefault(row.id(), AnnotationCounts.EMPTY);
                 snapshots.add(BookSnapshot.builder()
                         .id(BookId.fromString(row.id()))
                         .title(row.title())
@@ -443,6 +445,8 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                         .createdAt(row.createdAt())
                         .deleted(false)
                         .local(row.local())
+                        .noteCount(activity.notes())
+                        .highlightCount(activity.highlights())
                         .customFieldValues(customFields.getOrDefault(row.id(), List.of()))
                         .build());
             }
@@ -450,6 +454,26 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             lastId = last;
             endReached = baseRows.size() < pageSize;
         }
+    }
+
+
+    private Map<String, AnnotationCounts> loadSearchAnnotationCounts(String firstId, String lastId, Set<String> pageIds) {
+        Map<String, AnnotationCounts> result = new HashMap<>();
+        String sql = """
+                SELECT book_id,
+                       SUM(CASE WHEN annotation_type='NOTE' THEN 1 ELSE 0 END) AS notes,
+                       SUM(CASE WHEN annotation_type='HIGHLIGHT' THEN 1 ELSE 0 END) AS highlights
+                  FROM annotations
+                 WHERE book_id >= ? AND book_id <= ?
+                 GROUP BY book_id
+                 ORDER BY book_id
+                """;
+        getJdbcTemplate().query(sql, rs -> {
+            String bookId = rs.getString("book_id");
+            if (!pageIds.contains(bookId)) return;
+            result.put(bookId, new AnnotationCounts(rs.getInt("notes"), rs.getInt("highlights")));
+        }, firstId, lastId);
+        return result;
     }
 
     private Map<String, RelatedText> loadSearchAuthors(String firstId, String lastId, Set<String> pageIds) {
@@ -528,6 +552,10 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
         return value == null ? "" : value;
     }
 
+
+    private record AnnotationCounts(int notes, int highlights) {
+        private static final AnnotationCounts EMPTY = new AnnotationCounts(0, 0);
+    }
 
     private record SearchBaseRow(
             String id, String title, String series, String keywords, String annotation, String fileName,

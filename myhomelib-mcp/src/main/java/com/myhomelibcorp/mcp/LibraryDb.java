@@ -20,9 +20,41 @@ final class LibraryDb implements AutoCloseable {
         this.json = json;
         String uri = p.toUri().toASCIIString();
         this.connection = DriverManager.getConnection("jdbc:sqlite:" + uri + "?mode=ro");
-        try (Statement s = connection.createStatement()) {
-            s.execute("PRAGMA query_only=ON");
-            s.execute("PRAGMA busy_timeout=5000");
+        try {
+            try (Statement s = connection.createStatement()) {
+                s.execute("PRAGMA query_only=ON");
+                s.execute("PRAGMA busy_timeout=5000");
+            }
+            validateSchemaCompatibility();
+        } catch (Exception incompatible) {
+            try { connection.close(); } catch (SQLException ignored) { }
+            throw incompatible;
+        }
+    }
+
+    private void validateSchemaCompatibility() throws SQLException {
+        requireColumns("books", Set.of("id", "title", "series", "sequence_number", "language", "year",
+                "publisher", "lib_id", "library_rate", "rate", "progress", "file_name", "folder",
+                "archive_entry", "collection_root", "local", "deleted", "annotation", "keywords"));
+        requireColumns("authors", Set.of("id", "last_name", "first_name", "middle_name", "annotation"));
+        requireColumns("book_authors", Set.of("book_id", "author_id"));
+        requireColumns("genres", Set.of("code", "name"));
+        requireColumns("book_genres", Set.of("book_id", "genre_code"));
+    }
+
+    private void requireColumns(String table, Set<String> required) throws SQLException {
+        Set<String> actual = new HashSet<>();
+        try (Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery("PRAGMA table_info('" + table.replace("'", "''") + "')")) {
+            while (rs.next()) actual.add(rs.getString("name").toLowerCase(Locale.ROOT));
+        }
+        if (actual.isEmpty()) {
+            throw new SQLException("Unsupported MyHomeLib schema: required table is missing: " + table);
+        }
+        Set<String> missing = new TreeSet<>();
+        for (String column : required) if (!actual.contains(column.toLowerCase(Locale.ROOT))) missing.add(column);
+        if (!missing.isEmpty()) {
+            throw new SQLException("Unsupported MyHomeLib schema: table " + table + " is missing columns " + missing);
         }
     }
 

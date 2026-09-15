@@ -12,6 +12,11 @@ Set-StrictMode -Version Latest
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+$ProjectVersion = ([xml](Get-Content -Raw (Join-Path $RepoRoot "pom.xml"))).project.version
+if ([string]::IsNullOrWhiteSpace($ProjectVersion)) {
+    throw "Cannot derive project version from root pom.xml"
+}
+
 if ($env:OS -ne "Windows_NT") {
     throw "Bound Windows packaging acceptance must run on Windows."
 }
@@ -138,11 +143,12 @@ $payload = [ordered]@{
     portableSha256 = $portableSha
     previousMsi = $PreviousMsi
     previousVersion = $PreviousVersion
+    projectVersion = $ProjectVersion
     dpiPending = $true
 }
 $payload | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $outDir "windows-bound-packaging-preflight.json") -Encoding utf8
 @(
-    "# MyHomeLib 7.1 — bound Windows packaging preflight",
+    "# MyHomeLib $ProjectVersion — bound Windows packaging preflight",
     "",
     "Overall: **PASS**",
     "",
@@ -151,6 +157,7 @@ $payload | ConvertTo-Json -Depth 6 | Set-Content -Path (Join-Path $outDir "windo
     "- Current MSI SHA-256: ``$currentMsiSha``",
     "- Current EXE SHA-256: ``$currentExeSha``",
     "- Portable SHA-256: ``$portableSha``",
+    "- Project version: ``$ProjectVersion``",
     "- Real previous version: ``$PreviousVersion``",
     "- DPI acceptance pending: **yes**",
     "",

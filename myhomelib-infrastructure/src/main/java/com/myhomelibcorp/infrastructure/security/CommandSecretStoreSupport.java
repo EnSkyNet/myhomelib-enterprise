@@ -1,9 +1,9 @@
 package com.myhomelibcorp.infrastructure.security;
 
 import com.myhomelibcorp.shared.security.SecretStoreException;
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
@@ -31,27 +31,17 @@ final class CommandSecretStoreSupport {
     }
 
     static Result run(List<String> command, String stdin) {
-        Process process = null;
         try {
-            process = new ProcessBuilder(new ArrayList<>(command)).start();
-            if (stdin != null) {
-                process.getOutputStream().write(stdin.getBytes(StandardCharsets.UTF_8));
-            }
-            process.getOutputStream().close();
-            if (!process.waitFor(TIMEOUT.toMillis(), java.util.concurrent.TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
-                throw new SecretStoreException("Native credential-store command timed out");
-            }
-            String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
-            String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).strip();
-            return new Result(process.exitValue(), stdout, stderr);
+            ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
+                    new ArrayList<>(command), stdin, TIMEOUT, 256 * 1024);
+            return new Result(result.exitCode(), result.stdoutText().strip(), result.stderrText().strip());
+        } catch (ProcessExecutionSupport.ProcessTimeoutException e) {
+            throw new SecretStoreException("Native credential-store command timed out", e);
         } catch (IOException e) {
             throw new SecretStoreException("Native credential-store command could not start", e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new SecretStoreException("Native credential-store command was interrupted", e);
-        } finally {
-            if (process != null && process.isAlive()) process.destroyForcibly();
         }
     }
 

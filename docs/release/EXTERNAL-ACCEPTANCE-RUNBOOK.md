@@ -6,7 +6,7 @@ This runbook is the handoff procedure for the six remaining release gates. It de
 
 ## 1. Freeze the exact candidate
 
-Use one Git commit SHA as the release candidate. Do not mix evidence from different commits, rerolled binaries or different Windows sessions. The Maven release identity currently comes from `pom.xml` (`7.1.0`); the `v71-*` script names are compatibility-stable entrypoints for that formal release identity.
+Use one Git commit SHA as the release candidate. Do not mix evidence from different commits, rerolled binaries or different Windows sessions. The Maven release identity comes from `pom.xml` (`8.0.0` as of Iteration 84); the `v71-*` script names are compatibility-stable entrypoints and must not be interpreted as a hard-coded product version.
 
 Before dispatching remote jobs, run locally:
 

@@ -41,7 +41,7 @@ public class PropertiesApplicationSettingsService implements ApplicationSettings
         try {
             Files.createDirectories(file.getParent());
             try (OutputStream out = Files.newOutputStream(tmp)) {
-                properties.store(out, "MyHomeLib 7.1.0 settings");
+                properties.store(out, "MyHomeLib 8.0.0 settings");
             }
             AtomicFileSupport.moveReplacing(tmp, file);
         } catch (Exception e) {

@@ -47,19 +47,26 @@
         <VBox spacing="8">
             <padding><Insets top="8" right="12" bottom="12" left="12"/></padding>
             <Label fx:id="statusLabel" text="" wrapText="true"/>
-            <HBox spacing="8" alignment="CENTER_LEFT">
+            <FlowPane hgap="8" vgap="8" alignment="CENTER_LEFT">
+                <Label fx:id="selectedLabel" text="" visible="false" managed="false" styleClass="muted-text"/>
                 <Button fx:id="openButton" text="ui.annotations.open" onAction="#openSelected" disable="true"/>
                 <Button fx:id="editButton" text="ui.annotations.edit" onAction="#editSelected" disable="true"/>
                 <Button fx:id="deleteButton" text="ui.annotations.delete" onAction="#deleteSelected" disable="true"/>
                 <Button fx:id="undoButton" text="ui.annotations.undo" onAction="#undoDelete" disable="true"/>
+                <Button fx:id="batchColorButton" text="ui.annotations.batch_color" onAction="#changeSelectedColor" disable="true"/>
+                <Button fx:id="batchTagsButton" text="ui.annotations.batch_tags" onAction="#addTagsToSelected" disable="true"/>
+                <Button fx:id="batchRemoveTagsButton" text="ui.annotations.batch_remove_tags" onAction="#removeTagsFromSelected" disable="true"/>
+                <Button fx:id="exportSelectedButton" text="ui.annotations.export_selected" onAction="#exportSelectedCsv" disable="true"/>
+                <Separator orientation="VERTICAL"/>
                 <Button text="ui.annotations.export_csv" onAction="#exportFilteredCsv"/>
                 <Button text="ui.annotations.export_rich" onAction="#exportRich"/>
                 <Button text="ui.annotations.knowledge_export" onAction="#exportKnowledgeMarkdown"/>
-                <Region HBox.hgrow="ALWAYS"/>
+                <Button text="ui.annotations.digest" onAction="#exportDigest"/>
+                <Region prefWidth="16"/>
                 <Button fx:id="previousButton" text="ui.annotations.previous" onAction="#previousPage" disable="true"/>
                 <Label fx:id="pageLabel" text=""/>
                 <Button fx:id="nextButton" text="ui.annotations.next" onAction="#nextPage" disable="true"/>
-            </HBox>
+            </FlowPane>
         </VBox>
     </bottom>
 </BorderPane>

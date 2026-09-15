@@ -1,6 +1,6 @@
 # MYHOMELIB — Development and Validation
 
-**Version:** 7.1.0  
+**Version:** 8.0.0  
 **Java:** 21
 
 ## Build commands

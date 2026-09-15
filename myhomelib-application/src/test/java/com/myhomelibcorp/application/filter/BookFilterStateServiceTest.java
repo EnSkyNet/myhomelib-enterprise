@@ -17,7 +17,7 @@ class BookFilterStateServiceTest {
         BookFilterStateService service = new BookFilterStateService(settings);
         BookFilterSpec expected = new BookFilterSpec(
                 BookFilterMode.OR, "UK", 2026, 2001, BookFormat.EPUB,
-                true, false, 5, 2, true, BookQuickFilterField.AUTHOR, "Franko");
+                true, false, 5, 2, true, BookAnnotationPresenceFilter.NOTES, BookQuickFilterField.AUTHOR, "Franko");
 
         service.save(expected);
         BookFilterSpec actual = service.current();
@@ -28,6 +28,7 @@ class BookFilterStateServiceTest {
         assertThat(actual.yearTo()).isEqualTo(2026);
         assertThat(actual.ratingMin()).isEqualTo(2);
         assertThat(actual.ratingMax()).isEqualTo(5);
+        assertThat(actual.annotationPresence()).isEqualTo(BookAnnotationPresenceFilter.NOTES);
     }
 
     @Test

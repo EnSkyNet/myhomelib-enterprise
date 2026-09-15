@@ -1,8 +1,97 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
-<?import javafx.scene.layout.StackPane?>
+<?import javafx.geometry.Insets?>
+<?import javafx.scene.control.*?>
+<?import javafx.scene.layout.*?>
 
-<StackPane xmlns:fx="http://javafx.com/fxml/1"
-           fx:id="readerContainer"
-           fx:controller="com.myhomelibcorp.ui.reader.NewReaderWorkspaceController"
-           styleClass="workspace-root"/>
+<BorderPane xmlns:fx="http://javafx.com/fxml/1"
+           
+            fx:controller="com.myhomelibcorp.ui.reader.NewReaderWorkspaceController"
+            styleClass="workspace-root">
+    <center>
+        <StackPane fx:id="readerContainer"/>
+    </center>
+    <right>
+        <VBox fx:id="annotationSidebar" prefWidth="350" minWidth="290" maxWidth="460"
+              visible="false" managed="false" spacing="8"
+              styleClass="reader-tools-sidebar">
+            <padding><Insets top="10" right="10" bottom="10" left="10"/></padding>
+            <HBox spacing="8" alignment="CENTER_LEFT">
+                <Label text="ui.reader.sidebar.title" styleClass="workspace-title"/>
+                <Region HBox.hgrow="ALWAYS"/>
+                <Button text="×" accessibleText="ui.reader.sidebar.close" onAction="#closeAnnotationSidebar"/>
+            </HBox>
+            <TabPane fx:id="readerSidebarTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
+                <tabs>
+                    <Tab fx:id="tocSidebarTab" text="ui.reader.toc.title">
+                        <content>
+                            <VBox spacing="8">
+                                <TextField fx:id="tocSidebarSearch" promptText="ui.reader.sidebar.toc_search"/>
+                                <ListView fx:id="tocSidebarList" VBox.vgrow="ALWAYS"/>
+                            </VBox>
+                        </content>
+                    </Tab>
+                    <Tab fx:id="searchSidebarTab" text="ui.reader.search.title">
+                        <content>
+                            <VBox spacing="8">
+                                <HBox spacing="6">
+                                    <TextField fx:id="readerSidebarSearchField" promptText="ui.reader.search.enter_text"
+                                               onAction="#performSidebarSearch" HBox.hgrow="ALWAYS"/>
+                                    <Button text="ui.reader.search.search" onAction="#performSidebarSearch"/>
+                                </HBox>
+                                <Label fx:id="readerSidebarSearchStatus" styleClass="muted-text" wrapText="true"/>
+                                <ListView fx:id="readerSidebarSearchResults" VBox.vgrow="ALWAYS"/>
+                            </VBox>
+                        </content>
+                    </Tab>
+                    <Tab fx:id="bookmarkSidebarTab" text="ui.reader.bookmarks.title">
+                        <content>
+                            <VBox spacing="8">
+                                <ListView fx:id="bookmarkSidebarList" VBox.vgrow="ALWAYS"/>
+                                <FlowPane hgap="6" vgap="6">
+                                    <Button fx:id="bookmarkSidebarGo" text="ui.reader.bookmark.go_to"
+                                            onAction="#goToSidebarBookmark" disable="true"/>
+                                    <Button fx:id="bookmarkSidebarDelete" text="common.delete"
+                                            onAction="#deleteSidebarBookmark" disable="true"/>
+                                </FlowPane>
+                            </VBox>
+                        </content>
+                    </Tab>
+                    <Tab fx:id="annotationSidebarTab" text="ui.reader.annotation.sidebar.title">
+                        <content>
+                            <VBox spacing="8">
+                                <TextField fx:id="annotationSidebarSearch" promptText="ui.reader.annotation.sidebar.search"/>
+                                <HBox spacing="6">
+                                    <ComboBox fx:id="annotationSidebarTypeFilter" HBox.hgrow="ALWAYS"/>
+                                    <ComboBox fx:id="annotationSidebarTagFilter" HBox.hgrow="ALWAYS"/>
+                                </HBox>
+                                <HBox spacing="8" alignment="CENTER_LEFT">
+                                    <Label fx:id="annotationSidebarCount" styleClass="muted-text"/>
+                                    <Region HBox.hgrow="ALWAYS"/>
+                                    <Button fx:id="annotationSidebarUnavailable" text="" accessibleText="ui.reader.annotation.issues.title" styleClass="danger-button"
+                                            visible="false" managed="false" onAction="#reviewAnnotationIssues"/>
+                                </HBox>
+                                <ListView fx:id="annotationSidebarList" VBox.vgrow="ALWAYS"/>
+                                <FlowPane hgap="6" vgap="6">
+                                    <Button fx:id="annotationSidebarEdit" text="ui.annotations.edit"
+                                            onAction="#editSidebarAnnotation" disable="true"/>
+                                    <Button fx:id="annotationSidebarDelete" text="ui.annotations.delete"
+                                            onAction="#deleteSidebarAnnotation" disable="true"/>
+                                    <Button text="ui.reader.annotation.open_manager" onAction="#openAnnotationManager"/>
+                                </FlowPane>
+                            </VBox>
+                        </content>
+                    </Tab>
+                    <Tab fx:id="bookMapSidebarTab" text="ui.reader.bookmap.title">
+                        <content>
+                            <VBox spacing="8">
+                                <Label text="ui.reader.bookmap.hint" wrapText="true" styleClass="muted-text"/>
+                                <ListView fx:id="bookMapSidebarList" VBox.vgrow="ALWAYS"/>
+                            </VBox>
+                        </content>
+                    </Tab>
+                </tabs>
+            </TabPane>
+        </VBox>
+    </right>
+</BorderPane>

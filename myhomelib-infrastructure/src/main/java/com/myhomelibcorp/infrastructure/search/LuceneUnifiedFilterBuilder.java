@@ -49,6 +49,12 @@ final class LuceneUnifiedFilterBuilder {
         if (filter.hideUnrated()) {
             group.add(IntPoint.newRangeQuery("rate_num", 1, Integer.MAX_VALUE), occur); criteria++;
         }
+        switch (filter.annotationPresence()) {
+            case NOTES -> { group.add(new TermQuery(new Term("has_note", "1")), occur); criteria++; }
+            case HIGHLIGHTS -> { group.add(new TermQuery(new Term("has_highlight", "1")), occur); criteria++; }
+            case NOTES_OR_HIGHLIGHTS -> { group.add(new TermQuery(new Term("has_annotation", "1")), occur); criteria++; }
+            case ANY -> { }
+        }
         if (filter.quickValue() != null) {
             group.add(quickFilterQuery(filter.quickField(), filter.quickValue()), occur); criteria++;
         }

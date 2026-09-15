@@ -49,13 +49,16 @@ class ReaderAnnotationPresenterTest {
                         5, 10, 0.20, "quote", "zero ", " x"),
                 "#FFFF00", false);
 
-        var overlays = ReaderAnnotationPresenter.overlays(
+        var presentation = ReaderAnnotationPresenter.presentation(
                 List.of(relocated, otherArtifact), "artifact-1", document);
 
-        assertThat(overlays).hasSize(1);
-        assertThat(overlays.getFirst().id()).isEqualTo("a1");
-        assertThat(overlays.getFirst().startOffset()).isEqualTo(textValue.lastIndexOf("quote"));
-        assertThat(overlays.getFirst().endOffset()).isEqualTo(textValue.lastIndexOf("quote") + "quote".length());
+        assertThat(presentation.overlays()).hasSize(1);
+        assertThat(presentation.overlays().getFirst().id()).isEqualTo("a1");
+        assertThat(presentation.overlays().getFirst().startOffset()).isEqualTo(textValue.lastIndexOf("quote"));
+        assertThat(presentation.overlays().getFirst().endOffset()).isEqualTo(textValue.lastIndexOf("quote") + "quote".length());
+        assertThat(presentation.unavailable()).hasSize(1);
+        assertThat(presentation.unavailable().getFirst().id()).isEqualTo("a2");
+        assertThat(presentation.unavailable().getFirst().reason()).isEqualTo(ReaderAnnotationUnavailableReason.ARTIFACT_MISMATCH);
     }
 
     @Test
@@ -69,7 +72,7 @@ class ReaderAnnotationPresenterTest {
                         start, start + 6, 0.3, "second", "first ", " third"),
                 "#FFF59D", false);
 
-        var overlay = ReaderAnnotationPresenter.overlays(List.of(annotation), null, document).getFirst();
+        var overlay = ReaderAnnotationPresenter.presentation(List.of(annotation), null, document).overlays().getFirst();
 
         assertThat(overlay.startOffset()).isEqualTo(start);
         assertThat(overlay.endOffset()).isEqualTo(start + 6);

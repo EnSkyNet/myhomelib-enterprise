@@ -5,6 +5,7 @@ import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.startup.StartupOrchestrator;
 import com.myhomelibcorp.startup.StartupReport;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.RuntimeEncodingGuard;
 import com.myhomelibcorp.ui.service.ApplicationThemeService;
 import com.myhomelibcorp.ui.controller.MainController;
 import javafx.application.Application;
@@ -54,8 +55,6 @@ public class MyHomeLibApp extends Application {
 
     @Override
     public void start(Stage primaryStage) {
-        System.setProperty("file.encoding", "UTF-8");
-
         splashStage = buildSplashStage();
         splashStage.show();
 
@@ -189,6 +188,7 @@ public class MyHomeLibApp extends Application {
     }
 
     public static void main(String[] args) {
+        RuntimeEncodingGuard.warnIfNeeded();
         AppPaths.configureSystemProperties();
         if (java.util.Arrays.asList(args).contains("--release-smoke")) {
             try {

@@ -9,10 +9,25 @@ import java.sql.Connection;
 import java.sql.DriverManager;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class LibraryDbWalReadOnlyTest {
     @TempDir Path temp;
+
+
+    @Test
+    void rejectsDatabaseWithIncompatiblePhysicalSchema() throws Exception {
+        Path dbPath = temp.resolve("incompatible.db");
+        try (Connection writer = DriverManager.getConnection("jdbc:sqlite:" + dbPath.toAbsolutePath());
+             var statement = writer.createStatement()) {
+            statement.execute("CREATE TABLE books(id TEXT PRIMARY KEY,title TEXT)");
+        }
+
+        Exception error = assertThrows(Exception.class, () -> new LibraryDb(dbPath, new ObjectMapper()));
+        assertTrue(error.getMessage().contains("Несумісна схема MCP")
+                || error.getMessage().contains("missing"), error.getMessage());
+    }
 
     @Test
     void seesCommittedWalChangesWhileDesktopWriterRemainsOpen() throws Exception {

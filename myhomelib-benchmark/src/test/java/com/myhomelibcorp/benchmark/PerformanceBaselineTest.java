@@ -21,8 +21,6 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.condition.EnabledIfSystemProperty;
 
-import java.io.BufferedWriter;
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.lang.management.GarbageCollectorMXBean;
 import java.lang.management.ManagementFactory;
@@ -94,6 +92,8 @@ class PerformanceBaselineTest {
         assertTrue((Double) reader.get("fb2ParseMs") < 15_000, "huge FB2 parse regression");
         assertTrue((Double) reader.get("epubParseMs") < 15_000, "huge EPUB parse regression");
         assertTrue((Long) reader.get("peakHeapDeltaBytes") < 768L * 1024 * 1024, "reader heap regression");
+        assertTrue((Long) reader.get("openClose20RetainedBytes") < 256L * 1024 * 1024,
+                "reader open/close retention regression");
         for (Map<String, Object> result : lucene) {
             assertTrue((Double) result.get("queryMs") < 1_000, "Lucene query regression at " + result.get("documents"));
             assertTrue((Double) result.get("fullDocsPerSec") > 0, "Lucene full throughput missing");
@@ -247,30 +247,78 @@ class PerformanceBaselineTest {
         try {
             createFb2(fb2, READER_TEXT_MB);
             createEpub(epub, READER_TEXT_MB);
-            PeakHeapSampler sampler = new PeakHeapSampler();
-            sampler.start();
             long beforeGc = totalGcCount();
+            forceGc();
+
+            PeakHeapSampler fb2Sampler = new PeakHeapSampler();
+            fb2Sampler.start();
             long started = System.nanoTime();
             ReaderDocument fb2Doc = new Fb2StreamingParser().parse(new FileBookSource(fb2), ParseOptions.withoutImages());
             double fb2Ms = elapsedMs(started);
             long fb2Chars = fb2Doc.totalTextLength();
+            long fb2PeakDelta = fb2Sampler.stopAndGetDelta();
+            closeResources(fb2Doc);
+            fb2Doc = null;
+            forceGc();
+
+            PeakHeapSampler epubSampler = new PeakHeapSampler();
+            epubSampler.start();
             started = System.nanoTime();
             ReaderDocument epubDoc = new EpubParser().parse(new FileBookSource(epub), ParseOptions.withoutImages());
             double epubMs = elapsedMs(started);
             long epubChars = epubDoc.totalTextLength();
-            long peakDelta = sampler.stopAndGetDelta();
+            long epubPeakDelta = epubSampler.stopAndGetDelta();
+            closeResources(epubDoc);
+            epubDoc = null;
+            forceGc();
+
+            long retainedAfterOpenClose20 = readerOpenCloseRetention(fb2, 20);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("fixtureMb", READER_TEXT_MB);
+            out.put("fb2FixtureBytes", Files.size(fb2));
+            out.put("epubFixtureBytes", Files.size(epub));
             out.put("fb2ParseMs", fb2Ms);
             out.put("fb2Chars", fb2Chars);
+            out.put("fb2PeakHeapDeltaBytes", fb2PeakDelta);
             out.put("epubParseMs", epubMs);
             out.put("epubChars", epubChars);
-            out.put("peakHeapDeltaBytes", peakDelta);
+            out.put("epubPeakHeapDeltaBytes", epubPeakDelta);
+            out.put("peakHeapDeltaBytes", Math.max(fb2PeakDelta, epubPeakDelta));
+            out.put("openClose20RetainedBytes", retainedAfterOpenClose20);
             out.put("gcCollectionsDelta", totalGcCount() - beforeGc);
             return out;
         } finally {
             Files.deleteIfExists(fb2); Files.deleteIfExists(epub); Files.deleteIfExists(dir);
         }
+    }
+
+
+    private static void closeResources(ReaderDocument document) throws Exception {
+        if (document != null && document.resources() instanceof AutoCloseable closeable) closeable.close();
+    }
+
+    private static long readerOpenCloseRetention(Path fb2, int iterations) throws Exception {
+        forceGc();
+        long baseline = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+        for (int i = 0; i < iterations; i++) {
+            ReaderDocument document = new Fb2StreamingParser().parse(new FileBookSource(fb2), ParseOptions.withoutImages());
+            // Touch both text and resource projections so the probe exercises the same retained graph a Reader open uses.
+            document.text().getText(0, Math.min(512, document.text().length()));
+            if (document.resources() instanceof AutoCloseable closeable) closeable.close();
+            document = null;
+            if ((i + 1) % 5 == 0) forceGc();
+        }
+        forceGc();
+        long after = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage().getUsed();
+        return Math.max(0L, after - baseline);
+    }
+
+    private static void forceGc() throws InterruptedException {
+        System.gc();
+        System.runFinalization();
+        Thread.sleep(50L);
+        System.gc();
+        Thread.sleep(50L);
     }
 
     private static Map<String, Object> benchmarkLucene(int documents) throws Exception {
@@ -353,12 +401,16 @@ class PerformanceBaselineTest {
     }
 
     private static void createFb2(Path file, int mb) throws IOException {
-        int repeats = mb * 1024;
-        try (BufferedWriter w = Files.newBufferedWriter(file, StandardCharsets.UTF_8)) {
-            w.write("<?xml version=\"1.0\" encoding=\"UTF-8\"?><FictionBook><description><title-info><book-title>Stage24</book-title><lang>uk</lang></title-info></description><body><section><title><p>Benchmark</p></title>");
-            String para = "<p>Великий тестовий абзац для перевірки потокового читання без повної byte-array копії. benchmark performance reader.</p>";
-            for (int i = 0; i < repeats; i++) w.write(para);
-            w.write("</section></body></FictionBook>");
+        byte[] prefix = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><FictionBook><description><title-info><book-title>Stage24</book-title><lang>uk</lang></title-info></description><body><section><title><p>Benchmark</p></title>".getBytes(StandardCharsets.UTF_8);
+        byte[] paragraph = "<p>Великий тестовий абзац для перевірки потокового читання без повної byte-array копії. benchmark performance reader.</p>".getBytes(StandardCharsets.UTF_8);
+        byte[] suffix = "</section></body></FictionBook>".getBytes(StandardCharsets.UTF_8);
+        long target = Math.max(1L, mb) * 1024L * 1024L;
+        long payload = Math.max(0L, target - prefix.length - suffix.length);
+        long repeats = Math.max(1L, (payload + paragraph.length - 1L) / paragraph.length);
+        try (var out = Files.newOutputStream(file)) {
+            out.write(prefix);
+            for (long i = 0; i < repeats; i++) out.write(paragraph);
+            out.write(suffix);
         }
     }
 
@@ -367,25 +419,28 @@ class PerformanceBaselineTest {
             put(zip, "mimetype", "application/epub+zip");
             put(zip, "META-INF/container.xml", "<?xml version=\"1.0\"?><container xmlns=\"urn:oasis:names:tc:opendocument:xmlns:container\" version=\"1.0\"><rootfiles><rootfile full-path=\"OEBPS/content.opf\" media-type=\"application/oebps-package+xml\"/></rootfiles></container>");
             put(zip, "OEBPS/content.opf", "<?xml version=\"1.0\"?><package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\"><metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\"><dc:title>Stage24</dc:title><dc:creator>Benchmark</dc:creator><dc:language>en</dc:language></metadata><manifest><item id=\"c1\" href=\"c1.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c1\"/></spine></package>");
-            ByteArrayOutputStream xhtml = new ByteArrayOutputStream();
-            xhtml.write("<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><h1>Benchmark</h1>".getBytes(StandardCharsets.UTF_8));
+            byte[] header = "<?xml version=\"1.0\"?><html xmlns=\"http://www.w3.org/1999/xhtml\"><body><h1>Benchmark</h1>".getBytes(StandardCharsets.UTF_8);
             byte[] paragraph = "<p>Large EPUB benchmark paragraph for streaming reader performance and text storage.</p>".getBytes(StandardCharsets.UTF_8);
-            for (int i = 0; i < mb * 1024; i++) xhtml.write(paragraph);
-            xhtml.write("</body></html>".getBytes(StandardCharsets.UTF_8));
-            byte[] body = xhtml.toByteArray();
+            byte[] footer = "</body></html>".getBytes(StandardCharsets.UTF_8);
+            long target = Math.max(1L, mb) * 1024L * 1024L;
+            long payload = Math.max(0L, target - header.length - footer.length);
+            long repeats = Math.max(1L, (payload + paragraph.length - 1L) / paragraph.length);
+            long bodySize = header.length + repeats * paragraph.length + footer.length;
 
-            // The synthetic body is intentionally repetitive and compresses far beyond
-            // the Reader's zip-bomb safety ratio. Store it uncompressed so this fixture
-            // benchmarks parsing instead of tripping the security guard on artificial data.
             CRC32 crc = new CRC32();
-            crc.update(body);
+            crc.update(header);
+            for (long i = 0; i < repeats; i++) crc.update(paragraph);
+            crc.update(footer);
+
             ZipEntry content = new ZipEntry("OEBPS/c1.xhtml");
             content.setMethod(ZipEntry.STORED);
-            content.setSize(body.length);
-            content.setCompressedSize(body.length);
+            content.setSize(bodySize);
+            content.setCompressedSize(bodySize);
             content.setCrc(crc.getValue());
             zip.putNextEntry(content);
-            zip.write(body);
+            zip.write(header);
+            for (long i = 0; i < repeats; i++) zip.write(paragraph);
+            zip.write(footer);
             zip.closeEntry();
         }
     }

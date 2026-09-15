@@ -6,10 +6,11 @@ import com.myhomelibcorp.application.content.indexing.IndexingPerformanceSetting
 import com.myhomelibcorp.application.content.indexing.IndexingResourceProfile;
 import com.myhomelibcorp.application.util.CommandTemplate;
 import com.myhomelibcorp.shared.util.AppPaths;
-import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import com.myhomelibcorp.shared.util.EncryptionUtil;
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import com.myhomelibcorp.shared.format.SupportedFormat;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
+import com.myhomelibcorp.ui.util.UiExecutor;
 import javafx.geometry.Insets;
 import javafx.scene.Node;
 import javafx.scene.control.*;
@@ -21,15 +22,10 @@ import javafx.stage.FileChooser;
 import javafx.stage.Window;
 import org.springframework.stereotype.Component;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
 import java.util.Locale;
 
 /**
@@ -43,17 +39,20 @@ public class ApplicationSettingsDialog {
     private final LocalizationService localizationService;
     private final ApplicationThemeService themeService;
     private final IndexingPerformanceSettingsService indexingPerformanceSettingsService;
+    private final UiBackgroundExecutor backgroundExecutor;
 
     public ApplicationSettingsDialog(ApplicationSettingsPort settings,
                                      SupportBundleService supportBundleService,
                                      LocalizationService localizationService,
                                      ApplicationThemeService themeService,
-                                     IndexingPerformanceSettingsService indexingPerformanceSettingsService) {
+                                     IndexingPerformanceSettingsService indexingPerformanceSettingsService,
+                                     UiBackgroundExecutor backgroundExecutor) {
         this.settings = settings;
         this.supportBundleService = supportBundleService;
         this.localizationService = localizationService;
         this.themeService = themeService;
         this.indexingPerformanceSettingsService = indexingPerformanceSettingsService;
+        this.backgroundExecutor = backgroundExecutor;
     }
 
     public void show(Window owner) {
@@ -175,7 +174,7 @@ public class ApplicationSettingsDialog {
         box.getChildren().add(intro);
         box.getChildren().add(row("Timeout connect, сек", field(text, "online.connectTimeoutSeconds", "20")));
         box.getChildren().add(row("Timeout read, сек", field(text, "online.readTimeoutSeconds", "120")));
-        box.getChildren().add(row("User-Agent", field(text, "online.userAgent", "MyHomeLib Enterprise/7.1")));
+        box.getChildren().add(row("User-Agent", field(text, "online.userAgent", "MyHomeLib Enterprise/8.0.0")));
         box.getChildren().add(row("Макс. паралельних завантажень", field(text, "online.maxParallelDownloads", "2")));
         box.getChildren().add(row("Макс. паралельних на один хост", field(text, "online.maxParallelDownloadsPerHost", "2")));
         box.getChildren().add(checkbox(bool, "online.archive.highReliabilityValidation",
@@ -306,7 +305,7 @@ public class ApplicationSettingsDialog {
 
     private Node commandRow(String label, TextField field, Map<String, String> placeholders) {
         Button test = new Button("Тест");
-        test.setOnAction(e -> testCommand(field.getText(), placeholders));
+        test.setOnAction(e -> testCommand(test, field.getText(), placeholders));
         HBox controls = new HBox(8, field, test);
         javafx.scene.layout.HBox.setHgrow(field, javafx.scene.layout.Priority.ALWAYS);
         return row(label, controls);
@@ -357,53 +356,73 @@ public class ApplicationSettingsDialog {
         chooser.setInitialFileName("MyHomeLib-support-" + java.time.LocalDate.now() + ".zip");
         var selected = chooser.showSaveDialog(owner);
         if (selected == null) return;
-        try {
-            Path output = supportBundleService.create(selected.toPath(), options);
-            alert(Alert.AlertType.INFORMATION, "Діагностика", "Створено:\n" + output);
-        } catch (Exception ex) {
-            alert(Alert.AlertType.ERROR, "Діагностика", "Не вдалося створити ZIP: " + ex.getMessage());
-        }
+        backgroundExecutor.submit(() -> supportBundleService.create(selected.toPath(), options))
+                .whenComplete((output, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (error != null) {
+                        alert(Alert.AlertType.ERROR, "Діагностика",
+                                "Не вдалося створити ZIP: " + rootMessage(error));
+                    } else {
+                        alert(Alert.AlertType.INFORMATION, "Діагностика", "Створено:\n" + output);
+                    }
+                }));
     }
-    private void testCommand(String template, Map<String, String> placeholders) {
+
+    private void testCommand(Button trigger, String template, Map<String, String> placeholders) {
         if (template == null || template.isBlank()) {
             alert(Alert.AlertType.INFORMATION, "Тест команди", "Команда не задана.");
             return;
         }
-        Path output = null;
+        Map<String, String> safePlaceholders = Map.copyOf(placeholders);
+        trigger.setDisable(true);
+        backgroundExecutor.submit(() -> executeCommandTest(template, safePlaceholders))
+                .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+                    trigger.setDisable(false);
+                    if (error != null) {
+                        alert(Alert.AlertType.ERROR, "Тест команди", rootMessage(error));
+                    } else {
+                        alert(result.type(), "Тест команди", result.details());
+                    }
+                }));
+    }
+
+    private CommandTestResult executeCommandTest(String template, Map<String, String> placeholders) throws Exception {
+        var args = CommandTemplate.expand(template, placeholders);
+        if (args.isEmpty()) throw new IllegalArgumentException("Команда порожня після розбору");
+        int timeout = Math.max(1, Math.min(60, parseInt(settings.get("converter.testTimeoutSeconds", "10"), 10)));
+        final int maxCaptureBytes = 64 * 1024;
         try {
-            var args = CommandTemplate.expand(template, placeholders);
-            if (args.isEmpty()) throw new IllegalArgumentException("Команда порожня після розбору");
-            output = Files.createTempFile("myhomelib-command-test-", ".log");
-            Process process = new ProcessBuilder(args).redirectErrorStream(true).redirectOutput(output.toFile()).start();
-            int timeout = Math.max(1, Math.min(60, parseInt(settings.get("converter.testTimeoutSeconds", "10"), 10)));
-            boolean finished = process.waitFor(timeout, TimeUnit.SECONDS);
-            if (!finished) {
-                process.destroyForcibly();
-                process.waitFor(2, TimeUnit.SECONDS);
-                alert(Alert.AlertType.WARNING, "Тест команди", "Timeout після " + timeout + " с.\n" + preview(output));
-                return;
-            }
-            String details = "Exit code: " + process.exitValue() + "\nКоманда: " + String.join(" | ", args) + "\n\n" + preview(output);
-            alert(process.exitValue() == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.ERROR, "Тест команди", details);
-        } catch (Exception ex) {
-            alert(Alert.AlertType.ERROR, "Тест команди", ex.getClass().getSimpleName() + ": " + ex.getMessage());
-        } finally {
-            if (output != null) try { Files.deleteIfExists(output); } catch (IOException ignored) { }
+            ProcessExecutionSupport.Result process = ProcessExecutionSupport.run(
+                    args, null, java.time.Duration.ofSeconds(timeout), maxCaptureBytes);
+            String details = "Exit code: " + process.exitCode() + "\nКоманда: " + String.join(" | ", args)
+                    + "\n\n" + commandOutput(process);
+            return new CommandTestResult(process.exitCode() == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.ERROR,
+                    details);
+        } catch (ProcessExecutionSupport.ProcessTimeoutException timeoutError) {
+            return new CommandTestResult(Alert.AlertType.WARNING, "Timeout після " + timeout + " с.");
         }
     }
 
-    private String preview(Path output) throws IOException {
-        if (output == null || !Files.exists(output)) return "(stdout/stderr порожній)";
-        final int maxBytes = 64 * 1024;
-        byte[] prefix;
-        try (var in = Files.newInputStream(output)) {
-            prefix = BoundedIoSupport.readPrefix(in, maxBytes + 1);
+    private static String commandOutput(ProcessExecutionSupport.Result process) {
+        String stdout = process.stdoutText();
+        String stderr = process.stderrText();
+        StringBuilder text = new StringBuilder();
+        if (!stdout.isBlank()) text.append(stdout.stripTrailing());
+        if (!stderr.isBlank()) {
+            if (!text.isEmpty()) text.append("\n\n[stderr]\n");
+            text.append(stderr.stripTrailing());
         }
-        int visible = Math.min(prefix.length, maxBytes);
-        String text = new String(prefix, 0, visible, StandardCharsets.UTF_8);
-        if (prefix.length > maxBytes || Files.size(output) > maxBytes) text += "\n… output truncated …";
-        return text.isBlank() ? "(stdout/stderr порожній)" : text;
+        if (process.stdoutTruncated() || process.stderrTruncated()) text.append("\n… output truncated …");
+        return text.isEmpty() ? "(stdout/stderr порожній)" : text.toString();
     }
+
+    private static String rootMessage(Throwable error) {
+        Throwable current = error;
+        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
+        String message = current.getMessage();
+        return current.getClass().getSimpleName() + (message == null || message.isBlank() ? "" : ": " + message);
+    }
+
+    private record CommandTestResult(Alert.AlertType type, String details) { }
 
     private void alert(Alert.AlertType type, String title, String content) {
         Alert alert = new Alert(type); alert.setTitle(title); alert.setHeaderText(null);

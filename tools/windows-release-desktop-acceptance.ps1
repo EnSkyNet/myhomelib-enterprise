@@ -14,6 +14,10 @@ Set-StrictMode -Version Latest
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 Set-Location $RepoRoot
 
+[xml]$rootPom = Get-Content -Raw "pom.xml"
+$ProjectVersion = [string]$rootPom.project.version
+if ([string]::IsNullOrWhiteSpace($ProjectVersion)) { throw "Root pom.xml does not declare a project version." }
+
 if ($env:OS -ne "Windows_NT") { throw "Windows release desktop acceptance must run on Windows." }
 
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -152,7 +156,7 @@ $osCaption = try { (Get-CimInstance Win32_OperatingSystem).Caption } catch { [En
 $timestamp = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss K")
 
 $lines = New-Object System.Collections.Generic.List[string]
-$lines.Add("# MyHomeLib 7.1 — real desktop release acceptance")
+$lines.Add("# MyHomeLib $ProjectVersion — real desktop release acceptance")
 $lines.Add("")
 $lines.Add("- Timestamp: $timestamp")
 $lines.Add("- Host: $env:COMPUTERNAME")
@@ -196,6 +200,7 @@ $jsonPath = [IO.Path]::ChangeExtension($ReportPath, ".json")
     exeSha256 = $exeSha
     launcher = $Launcher
     previousVersion = $PreviousVersion
+    projectVersion = $ProjectVersion
     overall = $overall
     results = $results
 } | ConvertTo-Json -Depth 8 | Set-Content -Path $jsonPath -Encoding utf8

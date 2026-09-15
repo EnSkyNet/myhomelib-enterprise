@@ -1,6 +1,6 @@
 # MYHOMELIB — Features
 
-**Version:** 7.1.0  
+**Version:** 8.0.0  
 **Snapshot:** 12 September 2026
 
 This document describes the current supported product behavior. Historical stage names are intentionally omitted.

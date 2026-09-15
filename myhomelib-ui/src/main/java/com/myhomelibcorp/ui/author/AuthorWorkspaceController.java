@@ -20,6 +20,7 @@ import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.NavigationService;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.table.TableProfileService;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -58,8 +59,8 @@ import java.util.concurrent.atomic.AtomicLong;
 public class AuthorWorkspaceController {
 
     private static final String PROFILE_KEY = "author-workspace";
-    private static final String SORT_KEY = "ui.author.sort";
-    private static final String SORT_DIRECTION_KEY = "ui.author.sortDirection";
+    private static final String SORT_KEY = "author.workspace.sort";
+    private static final String SORT_DIRECTION_KEY = "author.workspace.sortDirection";
 
     private final LoadAuthorByIdUseCase loadAuthorByIdUseCase;
     private final UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase;
@@ -76,9 +77,11 @@ public class AuthorWorkspaceController {
     private final UiBackgroundExecutor executor;
     private final TableProfileService tableProfileService;
     private final UiPreferenceService preferences;
+    private final LocalizationService i18n;
 
     @FXML private Label authorNameLabel;
     @FXML private Button followAuthorButton;
+    @FXML private Label followStatusLabel;
     @FXML private Label booksCountLabel;
     @FXML private Label seriesCountLabel;
     @FXML private Label genresCountLabel;
@@ -113,6 +116,7 @@ public class AuthorWorkspaceController {
     private AuthorDto currentAuthor;
     private AuthorBookStatistics authorStatistics = AuthorBookStatistics.empty();
     private boolean currentAuthorFollowed;
+    private long currentAuthorNewBookCount;
     private SortBy currentSort = SortBy.SERIES;
     private SortDirection currentDirection = SortDirection.ASC;
     private CheckBox masterSelectionCheckBox;
@@ -147,7 +151,7 @@ public class AuthorWorkspaceController {
         selectColumn.setId("select");
         masterSelectionCheckBox = new CheckBox();
         masterSelectionCheckBox.setAllowIndeterminate(true);
-        masterSelectionCheckBox.setTooltip(new Tooltip("Виділити всі книги автора"));
+        masterSelectionCheckBox.setTooltip(new Tooltip(i18n.text("ui.author.select_all")));
         masterSelectionCheckBox.setOnAction(event -> {
             if (updatingMasterSelection) return;
             List<BookViewModel> selectable = selectableConcreteBooks();
@@ -219,7 +223,7 @@ public class AuthorWorkspaceController {
                     checkBox.setIndeterminate(state == BookSelectionService.SelectionState.PARTIAL);
                     checkBox.setSelected(state == BookSelectionService.SelectionState.ALL);
                     checkBox.setTooltip(new Tooltip(state == BookSelectionService.SelectionState.ALL
-                            ? "Зняти вибір з усієї серії" : "Виділити всю серію"));
+                            ? i18n.text("ui.author.series.clear_all") : i18n.text("ui.author.series.select_all")));
                 } else {
                     checkBox.setAllowIndeterminate(false);
                     checkBox.setIndeterminate(false);
@@ -250,7 +254,7 @@ public class AuthorWorkspaceController {
                 if (empty || row == null) { setText(null); return; }
                 if (row.isGroupHeader()) {
                     boolean collapsed = collapsedSeries.contains(normalizeSeries(row.getSeries()));
-                    setText((collapsed ? "▶ " : "▼ ") + "Серія: " + row.getSeries());
+                    setText((collapsed ? "▶ " : "▼ ") + i18n.format("ui.author.series.label", row.getSeries()));
                 } else {
                     setText(row.getSeries() != null && !row.getSeries().isBlank() ? "    " + item : item);
                 }
@@ -328,14 +332,20 @@ public class AuthorWorkspaceController {
     }
 
     private void configureFilters() {
-        localFilterComboBox.getItems().setAll("Усі", "Завантажені", "Не завантажені");
-        localFilterComboBox.setValue("Усі");
+        localFilterComboBox.getItems().setAll(localFilterAll(), localFilterDownloaded(), localFilterNotDownloaded());
+        localFilterComboBox.setValue(localFilterAll());
         localFilterComboBox.setOnAction(event -> rebuildVisibleRows());
 
         filterDebounce = new PauseTransition(Duration.millis(300));
         filterDebounce.setOnFinished(event -> reloadBooks());
         filterTextField.textProperty().addListener((obs, old, value) -> filterDebounce.playFromStart());
     }
+
+    private String localFilterAll() { return i18n.text("ui.author.local_filter.all"); }
+
+    private String localFilterDownloaded() { return i18n.text("ui.author.local_filter.downloaded"); }
+
+    private String localFilterNotDownloaded() { return i18n.text("ui.author.local_filter.not_downloaded"); }
 
     private void configureProfilePersistence() {
         profileSaveDelay.setOnFinished(event -> {
@@ -379,13 +389,13 @@ public class AuthorWorkspaceController {
     public void setDownloadedOnly(boolean downloadedOnly) {
         this.downloadedOnly = downloadedOnly;
         if (localFilterComboBox != null) {
-            localFilterComboBox.setValue(downloadedOnly ? "Завантажені" : "Усі");
+            localFilterComboBox.setValue(downloadedOnly ? localFilterDownloaded() : localFilterAll());
             localFilterComboBox.setDisable(downloadedOnly);
         }
     }
 
     public void setAuthorId(AuthorId authorId) {
-        if (authorId == null) throw new IllegalArgumentException("AuthorId не може бути null");
+        if (authorId == null) throw new IllegalArgumentException("AuthorId cannot be null");
         currentAuthorId = authorId;
         collapsedSeries.clear();
         bookSelectionService.clear();
@@ -398,15 +408,20 @@ public class AuthorWorkspaceController {
         setBusy(true);
         executor.submit(() -> {
             AuthorDto author = loadAuthorByIdUseCase.execute(authorId)
-                    .orElseThrow(() -> new IllegalStateException("Автор не знайдений: " + authorId));
+                    .orElseThrow(() -> new IllegalStateException("Author not found: " + authorId));
             AuthorBookStatistics statistics = loadAuthorBookStatisticsUseCase.execute(authorId);
             boolean followed = catalogUpdateService.isAuthorFollowed(authorId);
-            return new AuthorWorkspaceMetadata(author, statistics, followed);
+            long newBookCount = followed ? catalogUpdateService.followedAuthors().stream()
+                    .filter(summary -> authorId.asString().equals(summary.authorId()))
+                    .mapToLong(com.myhomelibcorp.application.catalog.FollowedAuthorSummary::newBookCount)
+                    .findFirst().orElse(0L) : 0L;
+            return new AuthorWorkspaceMetadata(author, statistics, followed, newBookCount);
         }).thenAccept(data -> UiExecutor.runOnUiThread(() -> {
             if (!UiAsyncRequestGuard.isCurrent(requestToken, metadataGeneration, appState) || !authorId.equals(currentAuthorId)) return;
             currentAuthor = data.author();
             authorStatistics = data.statistics();
             currentAuthorFollowed = data.followed();
+            currentAuthorNewBookCount = data.newBookCount();
             updateAuthorUI(data.author());
             updateFollowButton();
             reloadBooks();
@@ -477,7 +492,7 @@ public class AuthorWorkspaceController {
                     String displaySeries = book.getSeries().trim();
                     BookViewModel header = new BookViewModel();
                     header.setSeries(displaySeries);
-                    header.setTitle("Серія: " + displaySeries);
+                    header.setTitle(i18n.format("ui.author.series.label", displaySeries));
                     header.setGroupHeader(true);
                     rows.add(header);
                 }
@@ -494,10 +509,10 @@ public class AuthorWorkspaceController {
     }
 
     private List<BookViewModel> filteredByLocalState() {
-        String mode = downloadedOnly ? "Завантажені" : (localFilterComboBox == null ? "Усі" : localFilterComboBox.getValue());
+        String mode = downloadedOnly ? localFilterDownloaded() : (localFilterComboBox == null ? localFilterAll() : localFilterComboBox.getValue());
         return allBooks.stream().filter(book -> {
-            if ("Завантажені".equals(mode)) return book.isLocal();
-            if ("Не завантажені".equals(mode)) return !book.isLocal();
+            if (localFilterDownloaded().equals(mode)) return book.isLocal();
+            if (localFilterNotDownloaded().equals(mode)) return !book.isLocal();
             return true;
         }).toList();
     }
@@ -508,10 +523,12 @@ public class AuthorWorkspaceController {
 
     private void updateStatisticsLabels(int available) {
         long total = authorStatistics.books();
-        if (downloadedOnly) booksCountLabel.setText("Завантажено: " + available + " / " + total);
-        else booksCountLabel.setText(available == total ? "Книг: " + available : "Книг: " + available + " / " + total);
-        seriesCountLabel.setText("Серій: " + authorStatistics.series());
-        genresCountLabel.setText("Жанрів: " + authorStatistics.genres());
+        if (downloadedOnly) booksCountLabel.setText(i18n.format("ui.author.stats.downloaded", available, total));
+        else booksCountLabel.setText(available == total
+                ? i18n.format("ui.author.stats.books", available)
+                : i18n.format("ui.author.stats.books_filtered", available, total));
+        seriesCountLabel.setText(i18n.format("ui.author.stats.series", authorStatistics.series()));
+        genresCountLabel.setText(i18n.format("ui.author.stats.genres", authorStatistics.genres()));
     }
 
     private void updateSelectionStatus() {
@@ -519,8 +536,8 @@ public class AuthorWorkspaceController {
         BookViewModel current = booksTableView.getSelectionModel().getSelectedItem();
         String currentTitle = current == null || current.isGroupHeader() || current.getTitle() == null || current.getTitle().isBlank()
                 ? "—" : current.getTitle();
-        if (currentBookLabel != null) currentBookLabel.setText("Поточна: " + currentTitle);
-        if (batchSelectionLabel != null) batchSelectionLabel.setText("Пакетно вибрано: " + bookSelectionService.count());
+        if (currentBookLabel != null) currentBookLabel.setText(i18n.format("ui.author.current_book", currentTitle));
+        if (batchSelectionLabel != null) batchSelectionLabel.setText(i18n.format("ui.author.batch_selected", bookSelectionService.count()));
         updateMasterSelectionState();
     }
 
@@ -534,7 +551,7 @@ public class AuthorWorkspaceController {
             masterSelectionCheckBox.setIndeterminate(state == BookSelectionService.SelectionState.PARTIAL);
             masterSelectionCheckBox.setSelected(state == BookSelectionService.SelectionState.ALL);
             masterSelectionCheckBox.setTooltip(new Tooltip(state == BookSelectionService.SelectionState.ALL
-                    ? "Зняти вибір з усіх книг автора" : "Виділити всі книги автора"));
+                    ? i18n.text("ui.author.clear_all") : i18n.text("ui.author.select_all")));
         } finally {
             updatingMasterSelection = false;
         }
@@ -587,8 +604,22 @@ public class AuthorWorkspaceController {
 
     private void updateFollowButton() {
         if (followAuthorButton == null) return;
-        followAuthorButton.setText(currentAuthorFollowed ? "Не стежити" : "Стежити за автором");
+        followAuthorButton.setText(currentAuthorFollowed
+                ? i18n.text("ui.author.follow.following") : i18n.text("ui.author.follow.action"));
         followAuthorButton.setDisable(currentAuthorId == null);
+        followAuthorButton.setStyle(currentAuthorFollowed
+                ? "-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;" : "");
+        if (followStatusLabel != null) {
+            String status = "";
+            if (currentAuthorFollowed) {
+                status = currentAuthorNewBookCount > 0
+                        ? i18n.format("ui.author.follow.new_books", currentAuthorNewBookCount)
+                        : i18n.text("ui.author.follow.up_to_date");
+            }
+            followStatusLabel.setText(status);
+            followStatusLabel.setManaged(currentAuthorFollowed);
+            followStatusLabel.setVisible(currentAuthorFollowed);
+        }
     }
 
     @FXML
@@ -603,7 +634,11 @@ public class AuthorWorkspaceController {
         }).thenAccept(followed -> UiExecutor.runOnUiThread(() -> {
             if (!authorId.equals(currentAuthorId)) return;
             currentAuthorFollowed = followed;
+            currentAuthorNewBookCount = 0L;
             updateFollowButton();
+            appState.getStatusBar().setStatusText(followed
+                    ? i18n.text("ui.author.follow.enabled_status")
+                    : i18n.text("ui.author.follow.disabled_status"));
         })).exceptionally(ex -> {
             log.error("Не вдалося змінити стеження за автором {}", authorId, ex);
             UiExecutor.runOnUiThread(this::updateFollowButton);
@@ -652,8 +687,8 @@ public class AuthorWorkspaceController {
 
     public void showColumnChooser() {
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("Колонки Author Workspace");
-        dialog.setHeaderText("Виберіть колонки для відображення");
+        dialog.setTitle(i18n.text("ui.author.columns.title"));
+        dialog.setHeaderText(i18n.text("ui.author.columns.header"));
         VBox box = new VBox(8);
         box.setPadding(new javafx.geometry.Insets(12));
         for (TableColumn<BookViewModel, ?> column : profileColumns.values()) {
@@ -679,7 +714,7 @@ public class AuthorWorkspaceController {
     private void onDownloadBook() {
         List<BookId> ids = bookSelectionService.snapshot();
         if (ids.isEmpty()) {
-            appState.getStatusBar().setStatusText("Відмітьте книги checkbox для пакетного завантаження");
+            appState.getStatusBar().setStatusText(i18n.text("ui.author.download.select_required"));
             return;
         }
         javafx.stage.Window owner = booksTableView.getScene() == null ? null : booksTableView.getScene().getWindow();
@@ -730,7 +765,7 @@ public class AuthorWorkspaceController {
         area.setWrapText(true);
         area.setPrefRowCount(14);
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("Опис автора");
+        dialog.setTitle(i18n.text("ui.author.description.title"));
         dialog.setHeaderText(currentAuthor.getFullName());
         dialog.getDialogPane().setContent(area);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
@@ -741,6 +776,7 @@ public class AuthorWorkspaceController {
         }
     }
 
-    private record AuthorWorkspaceMetadata(AuthorDto author, AuthorBookStatistics statistics, boolean followed) { }
+    private record AuthorWorkspaceMetadata(
+            AuthorDto author, AuthorBookStatistics statistics, boolean followed, long newBookCount) { }
     private record LoadedBooks(List<BookListItem> items, Set<String> physicallyLocalIds) { }
 }

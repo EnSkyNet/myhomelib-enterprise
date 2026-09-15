@@ -12,6 +12,7 @@
     <HBox spacing="15" alignment="CENTER_LEFT">
         <Label fx:id="authorNameLabel" text="Автор" styleClass="workspace-title"/>
         <Region HBox.hgrow="ALWAYS"/>
+        <Label fx:id="followStatusLabel" text="" styleClass="muted-text"/>
         <Button fx:id="followAuthorButton" text="Стежити за автором" onAction="#onToggleAuthorFollowed"/>
     </HBox>
 

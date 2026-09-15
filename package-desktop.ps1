@@ -40,7 +40,7 @@ $args = @(
 )
 
 if ($Type -in @("exe", "msi")) {
-    # Stable upgrade identity is mandatory: every 7.x installer must upgrade the same product
+    # Stable upgrade identity is mandatory: every MyHomeLib installer must upgrade the same product
     # instead of creating side-by-side Windows Installer registrations.
     $args += @(
         "--win-menu",

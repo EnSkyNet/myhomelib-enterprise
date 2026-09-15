@@ -42,6 +42,8 @@ app:
   import:
     batch-size: 1000
     change-tracking-limit: 50000
+    # Large (100k+) full INPX snapshots use a larger bounded flush to reduce SQLite/JDBC overhead.
+    large-catalog-batch-size: 5000
   search:
     index-path: ${user.home}/.myhomelibcorp/search-index
 
@@ -68,9 +70,11 @@ logging:
     file: "%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{48} - %msg%n"
   file:
     name: ${user.home}/.myhomelibcorp/logs/myhomelib.log
-    max-size: 10MB
-    max-history: 14
-    total-size-cap: 100MB
+  logback:
+    rollingpolicy:
+      max-file-size: 10MB
+      max-history: 14
+      total-size-cap: 100MB
 
 management:
   endpoints:

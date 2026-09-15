@@ -124,7 +124,14 @@ public class ReaderEngine {
         ReaderPosition requested = initialPosition != null
                 ? initialPosition
                 : positionManager.loadPosition(currentDocumentId).orElse(ReaderPosition.start());
-        currentPosition = positionManager.validatePosition(currentDocument, requested);
+        ReaderPosition validated = positionManager.validatePosition(currentDocument, requested);
+        // textOffset is the stable semantic anchor. Chapter boundaries may change after reflow,
+        // reparsing or a corrected source file, so never trust a persisted chapterIndex blindly.
+        currentPosition = new ReaderPosition(
+                Math.max(0, currentDocument.chapterIndexAt(validated.textOffset())),
+                validated.textOffset(),
+                validated.paragraphIndex(),
+                validated.charOffset());
 
         pageCache.clear();
         imageCache.clear();

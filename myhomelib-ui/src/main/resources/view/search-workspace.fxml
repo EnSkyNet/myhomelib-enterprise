@@ -1,23 +1,31 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
 <?import javafx.scene.control.*?>
+<?import javafx.geometry.Insets?>
 <?import javafx.scene.layout.*?>
 
 <VBox xmlns:fx="http://javafx.com/fxml/1"
       fx:controller="com.myhomelibcorp.ui.search.SearchWorkspaceController"
       spacing="10" style="-fx-padding: 12; -fx-background-color: -mhl-background;">
 
-    <Label text="🔎 Пошук у бібліотеці" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <Label text="ui.search.title" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
 
     <HBox spacing="8">
-        <TextField fx:id="searchField" promptText="Назва, автор, серія, жанр..." HBox.hgrow="ALWAYS" onAction="#onSearch"/>
+        <TextField fx:id="searchField" promptText="ui.search.prompt" HBox.hgrow="ALWAYS" onAction="#onSearch"/>
         <ChoiceBox fx:id="searchModeChoice" prefWidth="145"/>
-        <Button text="Шукати" onAction="#onSearch" defaultButton="true"/>
-        <Button text="Очистити" onAction="#onClear"/>
-        <Button text="Фільтри…" onAction="#onGlobalFilters"/>
-        <Label fx:id="filterIndicatorLabel" text="Фільтр вимкнено"/>
-        <Button fx:id="saveSearchButton" text="💾 Зберегти"/>
-        <Button fx:id="savedSearchesButton" text="📂 Збережені"/>
+        <Button text="ui.search.action" onAction="#onSearch" defaultButton="true"/>
+        <Button text="ui.search.clear" onAction="#onClear"/>
+        <Button text="ui.search.filters" onAction="#onGlobalFilters"/>
+        <Label fx:id="filterIndicatorLabel" text="ui.search.filter.off"/>
+        <Button fx:id="saveSearchButton" text="ui.search.save.button"/>
+        <Button fx:id="savedSearchesButton" text="ui.search.saved.button"/>
+    </HBox>
+
+    <HBox spacing="8" alignment="CENTER_LEFT">
+        <FlowPane fx:id="pinnedScopesPane" hgap="6" vgap="6" HBox.hgrow="ALWAYS" visible="false" managed="false"/>
+        <Label fx:id="activeScopeLabel" styleClass="scope-chip" visible="false" managed="false"/>
+        <Button fx:id="clearScopeButton" text="ui.search.scope.clear" onAction="#clearSmartCollectionScope"
+                visible="false" managed="false"/>
     </HBox>
 
     <TitledPane text="Розширений пошук (як у класичному MyHomeLib)" expanded="false">

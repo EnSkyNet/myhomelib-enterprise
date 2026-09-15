@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.search;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.customfield.CustomFieldRepository;
+import com.myhomelibcorp.application.port.out.activity.BookActivityQueryPort;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.port.out.search.SearchQueryService;
 import com.myhomelibcorp.application.query.search.SearchRequest;
@@ -41,7 +42,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     private Directory directory;
     private final Analyzer analyzer;
     private final BookQueryRepository bookQueryRepository;
-    private final CustomFieldRepository customFieldRepository;
+    private final LuceneBookSnapshotEnricher snapshotEnricher;
     private final LuceneDocumentMapper documentMapper = new LuceneDocumentMapper();
     private final LuceneUnifiedFilterBuilder unifiedFilterBuilder = new LuceneUnifiedFilterBuilder();
     private final LuceneSmartCollectionBuilder smartCollectionBuilder = new LuceneSmartCollectionBuilder();
@@ -64,16 +65,22 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
 
     public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
                                BookQueryRepository bookQueryRepository) {
-        this(directory, analyzer, queryParser, bookQueryRepository, null);
+        this(directory, analyzer, queryParser, bookQueryRepository, null, null);
+    }
+
+    public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
+                               BookQueryRepository bookQueryRepository, CustomFieldRepository customFieldRepository) {
+        this(directory, analyzer, queryParser, bookQueryRepository, customFieldRepository, null);
     }
 
     @Autowired
     public LuceneSearchService(Directory directory, Analyzer analyzer, QueryParser queryParser,
-                               BookQueryRepository bookQueryRepository, CustomFieldRepository customFieldRepository) {
+                               BookQueryRepository bookQueryRepository, CustomFieldRepository customFieldRepository,
+                               BookActivityQueryPort bookActivityQueryPort) {
         this.directory = directory;
         this.analyzer = analyzer;
         this.bookQueryRepository = bookQueryRepository;
-        this.customFieldRepository = customFieldRepository;
+        this.snapshotEnricher = new LuceneBookSnapshotEnricher(customFieldRepository, bookActivityQueryPort);
         this.queryNormalizer = new LuceneQueryNormalizer(queryParser);
     }
 
@@ -123,7 +130,7 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
     @Override
     public void indexBook(Book book) {
         if (book == null || isClosed.get()) return;
-        indexSnapshot(snapshotWithCustomFields(book));
+        indexSnapshot(snapshotEnricher.enrich(book));
     }
 
     @Override
@@ -146,9 +153,10 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         if (books == null || books.isEmpty() || isClosed.get()) return;
         int indexed = 0;
         try {
+            var activities = snapshotEnricher.activitySummaries(books);
             for (Book book : books) {
                 if (book == null) continue;
-                BookSnapshot snapshot = snapshotWithCustomFields(book);
+                BookSnapshot snapshot = snapshotEnricher.enrich(book, activities);
                 indexWriter.updateDocument(new Term("id", snapshot.getId().asString()),
                         documentMapper.toDocument(snapshot));
                 indexed++;
@@ -161,20 +169,6 @@ public class LuceneSearchService implements SearchIndexer, SearchQueryService, I
         }
     }
 
-    private BookSnapshot snapshotWithCustomFields(Book book) {
-        BookSnapshot snapshot = BookSnapshot.fromBook(book);
-        if (customFieldRepository == null || book == null || book.getId() == null) return snapshot;
-        var values = customFieldRepository.findValues(book.getId());
-        return BookSnapshot.builder()
-                .id(snapshot.getId()).title(snapshot.getTitle()).authorsText(snapshot.getAuthorsText()).authorIds(snapshot.getAuthorIds())
-                .series(snapshot.getSeries()).genresText(snapshot.getGenresText()).genreIds(snapshot.getGenreIds())
-                .keywords(snapshot.getKeywords()).annotation(snapshot.getAnnotation()).fileName(snapshot.getFileName())
-                .language(snapshot.getLanguage()).rate(snapshot.getRate()).progress(snapshot.getProgress()).year(snapshot.getYear())
-                .publisher(snapshot.getPublisher()).libId(snapshot.getLibId()).libraryRate(snapshot.getLibraryRate())
-                .translators(snapshot.getTranslators()).city(snapshot.getCity()).sourceUrl(snapshot.getSourceUrl()).isbn(snapshot.getIsbn())
-                .createdAt(snapshot.getCreatedAt()).updateDate(snapshot.getUpdateDate()).deleted(snapshot.isDeleted()).local(snapshot.isLocal())
-                .customFieldValues(values.values().stream().toList()).build();
-    }
 
     @Override
     public void deleteBook(BookId bookId) {

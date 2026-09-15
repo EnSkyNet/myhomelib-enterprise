@@ -68,7 +68,9 @@ require("case DOWNLOADED -> workspaceManager.showDownloadedAuthorWorkspace" in n
         "downloaded author selection does not open downloaded Author Workspace")
 require("showDownloadedAuthorWorkspace" in workspace and "loadAuthorWorkspace(authorId, true)" in workspace,
         "WorkspaceManager downloaded-author route missing")
-require("setDownloadedOnly" in author and 'downloadedOnly ? "Завантажені"' in author,
+require("setDownloadedOnly" in author
+        and "String mode = downloadedOnly ? localFilterDownloaded()" in author
+        and "if (localFilterDownloaded().equals(mode)) return book.isLocal();" in author,
         "Author Workspace is not physically filtered to downloaded books")
 require("loadAuthorWorkspace(AuthorId authorId, boolean downloadedOnly)" in loader,
         "FXML loader cannot configure downloaded-only Author Workspace")

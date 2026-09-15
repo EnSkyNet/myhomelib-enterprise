@@ -6,12 +6,18 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
-        <version>7.1.0</version>
+        <version>8.0.0</version>
         <relativePath>../pom.xml</relativePath>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
     <artifactId>myhomelib-ui</artifactId>
+
+    <properties>
+        <!-- Headless by default; display-capable CI overrides these for real JavaFX/FXML tests. -->
+        <ui.testfx.headless>true</ui.testfx.headless>
+        <ui.java.awt.headless>true</ui.java.awt.headless>
+    </properties>
 
     <dependencies>
         <!-- Internal modules used directly by UI -->
@@ -157,16 +163,16 @@
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
-                <version>3.2.5</version>
+                <version>3.5.6</version>
                 <configuration>
                     <includes>
                         <include>**/*Test.java</include>
                         <include>**/*Tests.java</include>
                     </includes>
                     <systemPropertyVariables>
-                        <testfx.headless>true</testfx.headless>
+                        <testfx.headless>${ui.testfx.headless}</testfx.headless>
                         <prism.order>sw</prism.order>
-                        <java.awt.headless>true</java.awt.headless>
+                        <java.awt.headless>${ui.java.awt.headless}</java.awt.headless>
                     </systemPropertyVariables>
                 </configuration>
             </plugin>

@@ -67,6 +67,7 @@
                 <Menu text="Книга">
                     <MenuItem fx:id="openInternalMenuItem" text="Відкрити у Reader" onAction="#handleOpenNewReader"/>
                     <MenuItem fx:id="openExternalMenuItem" text="Відкрити у зовнішній читалці" onAction="#handleOpenExternalReader"/>
+                    <MenuItem text="ui.reader.close" onAction="#handleCloseReader"/>
                     <MenuItem text="Завантажити" onAction="#handleDownloadBook"/>
                     <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
                     <MenuItem text="Скасувати завантаження" onAction="#handleCancelDownload"/>
@@ -79,14 +80,8 @@
                     <MenuItem text="Користувацькі поля книги..." onAction="#handleEditCustomFieldValues"/>
                     <MenuItem text="Керування користувацькими полями..." onAction="#handleManageCustomFields"/>
                     <MenuItem text="Видалити запис(и) з каталогу" onAction="#handleDeleteBook"/>
-                    <MenuItem text="Експортувати..." onAction="#handleExport"/>
                 </Menu>
 
-                <Menu text="Reader">
-                    <MenuItem text="Відкрити" onAction="#handleOpenNewReader"/>
-                    <MenuItem text="Закрити" onAction="#handleCloseReader"/>
-                    <MenuItem text="Відкрити зовнішньою програмою" onAction="#handleOpenExternalReader"/>
-                </Menu>
 
                 <Menu fx:id="viewMenu" text="Вигляд">
                     <MenuItem fx:id="refreshMenuItem" text="Оновити" onAction="#handleRefresh"/>
@@ -101,7 +96,6 @@
 
                 <Menu text="Інструменти">
                     <MenuItem fx:id="importInpxMenuItem" text="Імпорт INPX..." onAction="#handleImportInpx"/>
-                    <MenuItem text="Імпорт каталогу..." onAction="#handleImportDirectory"/>
                     <MenuItem text="Синхронізувати папку..." onAction="#handleSyncFolder"/>
                     <SeparatorMenuItem/>
                     <Menu text="Експорт поточного списку">
@@ -135,50 +129,53 @@
                 </Menu>
             </MenuBar>
 
-            <FlowPane fx:id="mainToolbar" styleClass="main-toolbar-wrap" hgap="3.0" vgap="3.0" rowValignment="CENTER">
+            <HBox fx:id="mainToolbar" styleClass="main-toolbar-wrap" spacing="4.0" alignment="CENTER_LEFT">
                 <Button fx:id="backButton" text="←" accessibleText="Назад" onAction="#handleBack" disable="true"/>
                 <Button fx:id="forwardButton" text="→" accessibleText="Вперед" onAction="#handleForward" disable="true"/>
-                <Separator orientation="VERTICAL"/>
                 <Button text="🏠" accessibleText="Головна" onAction="#handleHome"/>
                 <Separator orientation="VERTICAL"/>
-                <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="170" minWidth="120"/>
+                <Label fx:id="activeScopeLabel" text="ui.main.scope.none" styleClass="scope-chip" maxWidth="180.0"/>
+                <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="240" minWidth="120" maxWidth="360" HBox.hgrow="ALWAYS"/>
                 <Button text="🔍" accessibleText="Пошук" onAction="#handleSearch"/>
-                <Button text="✕" accessibleText="Очистити пошук" onAction="#handleClearSearch">
-                    <tooltip><Tooltip text="Очистити пошук"/></tooltip>
-                </Button>
+                <Button text="✕" accessibleText="Очистити пошук" onAction="#handleClearSearch"/>
+                <Button text="⟳" accessibleText="Оновити" onAction="#handleRefresh"/>
                 <Separator orientation="VERTICAL"/>
-                <Button text="+Імпорт" onAction="#handleImportDirectory"/>
-                <Button text="+Книга" onAction="#handleAddBook"/>
-                <Separator orientation="VERTICAL"/>
-                <Button text="⭐ Оцінити" onAction="#handleBatchRate" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-text;"/>
-                <Button text="📊 Прогрес" onAction="#handleBatchProgress" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="📖 Прочитано" onAction="#handleBatchMarkRead" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="📂 До групи" onAction="#handleBatchAddToGroup" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;">
-                    <tooltip><Tooltip text="Додати вибрані книги до групи"/></tooltip>
-                </Button>
-                <Button text="✖ Зняти вибір" onAction="#handleClearSelection" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="🌳" accessibleText="Перемкнути вигляд бібліотеки" onAction="#handleToggleView" style="-fx-background-color: -mhl-accent-secondary; -fx-text-fill: -mhl-on-accent;"/>
-                <Separator orientation="VERTICAL"/>
-                <Button text="📤 Експорт" onAction="#handleExport" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="📦 INPX" onAction="#handleExportInpx" style="-fx-background-color: -mhl-accent-secondary; -fx-text-fill: -mhl-on-accent;"/>
-                <Separator orientation="VERTICAL"/>
-                <Button text="💾 Backup" onAction="#handleBackup" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
-                <Separator orientation="VERTICAL"/>
-                <Button text="⬇ Завантажити" onAction="#handleDownloadBook">
-                    <tooltip><Tooltip text="Завантажити вибрані книги"/></tooltip>
-                </Button>
-                <Button text="⌫ Локальна копія" onAction="#handleRemoveLocalCopy">
-                    <tooltip><Tooltip text="Видалити локальну копію вибраної книги"/></tooltip>
-                </Button>
-                <Button text="✕ Скасувати" onAction="#handleCancelDownload">
-                    <tooltip><Tooltip text="Скасувати активне завантаження"/></tooltip>
-                </Button>
                 <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-                <Separator orientation="VERTICAL"/>
-                <Button fx:id="themeButton" text="◐" accessibleText="Змінити тему програми" onAction="#handleCycleApplicationTheme">
-                    <tooltip><Tooltip text="Змінити тему програми"/></tooltip>
-                </Button>
-                <Button text="⚙" accessibleText="Налаштування" onAction="#handleSettings"/>
+                <MenuButton text="⋮" accessibleText="ui.main.more_actions">
+                    <items>
+                        <MenuItem text="Імпортувати книгу / архів..." onAction="#handleImportFb2"/>
+                        <MenuItem text="Імпортувати каталог..." onAction="#handleImportDirectory"/>
+                        <MenuItem text="Додати книгу..." onAction="#handleAddBook"/>
+                        <SeparatorMenuItem/>
+                        <MenuItem text="Експортувати книги / на пристрій..." onAction="#handleExport"/>
+                        <MenuItem text="Експорт INPX..." onAction="#handleExportInpx"/>
+                        <SeparatorMenuItem/>
+                        <MenuItem text="Резервна копія..." onAction="#handleBackup"/>
+                        <MenuItem text="Відновити з копії..." onAction="#handleRestore"/>
+                        <SeparatorMenuItem/>
+                        <MenuItem text="Завантажити" onAction="#handleDownloadBook"/>
+                        <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
+                        <MenuItem text="Скасувати завантаження" onAction="#handleCancelDownload"/>
+                        <SeparatorMenuItem/>
+                        <MenuItem text="Перемкнути вигляд бібліотеки" onAction="#handleToggleView"/>
+                        <MenuItem text="Змінити тему програми" onAction="#handleCycleApplicationTheme"/>
+                        <MenuItem text="Налаштування..." onAction="#handleSettings"/>
+                    </items>
+                </MenuButton>
+            </HBox>
+
+            <FlowPane fx:id="selectionToolbar" styleClass="selection-toolbar" hgap="5.0" vgap="5.0"
+                      rowValignment="CENTER" visible="false" managed="false">
+                <Label fx:id="selectedBooksLabel" text="ui.main.selection.none" style="-fx-font-weight: bold;"/>
+                <Button text="ui.main.selection.rate" onAction="#handleBatchRate"/>
+                <Button text="ui.main.selection.progress" onAction="#handleBatchProgress"/>
+                <Button text="ui.main.selection.mark_read" onAction="#handleBatchMarkRead"/>
+                <Button text="ui.main.selection.add_group" onAction="#handleBatchAddToGroup"/>
+                <Button text="ui.main.selection.metadata" onAction="#handleBatchMetadata"/>
+                <Button text="ui.main.selection.export" onAction="#handleExport"/>
+                <Button text="ui.main.selection.download" onAction="#handleDownloadBook"/>
+                <Region prefWidth="12"/>
+                <Button text="ui.main.selection.clear" onAction="#handleClearSelection"/>
             </FlowPane>
         </VBox>
     </top>

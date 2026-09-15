@@ -1,11 +1,11 @@
 # MYHOMELIB — Release and Upgrade
 
-**Source version:** 7.1.0  
-**Documentation snapshot:** 31 August 2026
+**Source version:** 8.0.0  
+**Documentation snapshot:** 14 September 2026
 
 ## Release focus
 
-v7.1 concentrates on online-library compatibility, safe/atomic book downloads, large-catalog stability, Reader correctness, user-data safety and truthful release validation.
+8.0 builds on the hardened 7.x line and focuses on complete Reader workflows, annotations/notes UX, large-catalog stability, user-data safety and truthful release validation.
 
 Key outcomes include:
 
@@ -32,9 +32,9 @@ Back up the data directory before upgrade. Existing collections follow the norma
 
 ### From v7
 
-v7.1 is an additive forward migration. V1–V36 are historical baseline and must remain immutable. Later migrations extend statistics, search/manifest compatibility, metabib/online state and subsequent schema corrections present in the repository. The metadata database has an independent migration chain for collection/download state.
+8.0 is an additive forward migration from the supported v7 line. V1–V36 are historical baseline and must remain immutable. Later migrations extend statistics, search/manifest compatibility, metabib/online state and subsequent schema corrections present in the repository. The metadata database has an independent migration chain for collection/download state.
 
-Before upgrade, keep a restorable v7 backup. After first v7.1 start, verify catalogue/user data, local downloads, search health and online collection settings.
+Before upgrade, keep a restorable v7 backup. After first 8.0 start, verify catalogue/user data, local downloads, search health, annotations/notes and online collection settings.
 
 Rollback is backup-based: restore the pre-upgrade database/application state rather than deleting Flyway rows or columns manually.
 
@@ -44,7 +44,7 @@ Older manifest/search compatibility values may trigger a one-time revalidation o
 
 ## Online compatibility note
 
-Historical MyHomeLib/Flibusta servers may return a ZIP whose internal FB2 filename differs from the catalogue `archiveEntry`. Current v7.1 resolves this safely and persists the actual member. Example:
+Historical MyHomeLib/Flibusta servers may return a ZIP whose internal FB2 filename differs from the catalogue `archiveEntry`. Current 8.0 resolves this safely and persists the actual member. Example:
 
 ```text
 catalogue: 586491.fb2
@@ -174,21 +174,21 @@ The Linux JDK 21 `jpackage` acceptance probe places `myhomelib2.ini` beside `dis
 
 The canonical operator sequence for the six remaining external gates is `docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md`. The offline `tools/external-acceptance-readiness.py` gate is fail-closed on missing harness/workflow contracts but intentionally reports the six gates as OPEN until live evidence exists.
 
-The remaining repository-side 7.1 Final evidence for PR enforcement/performance and supply-chain security is collected by `.github/workflows/github-acceptance.yml` using `tools/github-connected-acceptance.py`.
+The legacy-compatible external-evidence harness (historically named “7.1 Final”) for PR enforcement/performance and supply-chain security is collected by `.github/workflows/github-acceptance.yml` using `tools/github-connected-acceptance.py`.
 
 The workflow fails closed unless the default branch actively requires the `Fast gate` status check, at least five successful hosted PR samples have a `Fast gate` median no greater than 600 seconds, and the selected successful `ci-release.yml` run is the exact candidate commit. Its non-expired `myhomelib-supply-chain` and `myhomelib-windows` artifact ZIPs must match the SHA-256 digests declared by the GitHub Actions API. The supply-chain artifact must contain CycloneDX 1.6 JSON/XML, Dependency-Check JSON/SARIF/HTML, and a PASS CodeQL release-gate record for that exact candidate. The same candidate must also have a recent successful CodeQL analysis on the default branch with no open High/Critical code-scanning alerts.
 
 Release CI invokes the same tested CodeQL implementation with `--codeql-release-gate-only --expected-sha "$GITHUB_SHA"`; it fails closed when the exact release candidate has no successful CodeQL analysis yet. Its JSON/Markdown evidence is retained inside the release supply-chain artifact. An offline source archive still cannot claim this connected PASS: the authoritative evidence is produced by real GitHub workflow/API state.
 
-### Final 7.1 external evidence decision
+### Legacy-compatible external evidence decision
 
 For the final Windows handoff, prefer `tools/v71-windows-acceptance-start.ps1`. Given the repository name, the exact successful **GitHub connected acceptance** run id, a real previous-release MSI and its version, it downloads the acceptance artifact through the GitHub Actions API, verifies the API-declared SHA-256 digest, safely stages the exact MSI/EXE/portable candidate set, runs the real-previous MSI + portable lifecycle, and launches the interactive real-desktop acceptance. A merely copied local ZIP is insufficient for final PASS because the final gate requires `github-connected-acceptance-ingest.json` with `remoteDigestVerified=true`.
 
 After the four 100/125/150/200% DPI passes exist, run `tools/v71-finalize-external-acceptance.ps1`. The flow revalidates all four GitHub connected checks, the digest-verified GitHub artifact ingest, the strict standard-user/real-previous-MSI/portable lifecycle, the exact candidate EXE desktop smoke, all four DPI reports and the nested Windows evidence ZIP. `tools/v71-final-external-acceptance-check.py` reruns the strict Windows validator against the ZIP payload itself, so a detached or altered reviewer archive cannot pass merely because the live `target` tree passed.
 
-The finalizer then creates `myhomelib-7.1-final-external-evidence.zip` and immediately runs `tools/v71-final-evidence-bundle-check.py`. That last gate verifies the outer sidecar, exact manifest/member set, connected GitHub JSON, GitHub ingest record, three-entry bound candidate manifest (MSI/EXE/portable), nested Windows ZIP + sidecar, desktop/DPI evidence and the consolidated decision record. Only a finalizer run ending in `MyHomeLib 7.1 final external evidence: PASS` is sufficient to reconcile the six externally evidenced 7.1 Final backlog items as complete.
+The compatibility finalizer still creates `myhomelib-7.1-final-external-evidence.zip` and invokes `tools/v71-final-evidence-bundle-check.py`; those filenames/output markers are legacy evidence-schema identifiers, not the current product version. The gate verifies the outer sidecar, exact manifest/member set, connected GitHub JSON, GitHub ingest record, three-entry bound candidate manifest (MSI/EXE/portable), nested Windows ZIP + sidecar, desktop/DPI evidence and the consolidated decision record. For Iteration 84, candidate identity must additionally match the version derived from the root `pom.xml` (`8.0.0`).
 
-## 7.1 final acceptance harness binding
+## Legacy `v71-*` acceptance harness binding
 
 The final Windows acceptance harness is itself candidate-bound. `GitHub connected acceptance` writes `acceptance-harness.sha256` from the exact dispatched candidate checkout. The manifest covers every script that can influence the Windows MHL-011/MHL-012 decision, including ingest, installer/portable, desktop/DPI, evidence validators and final reviewer-bundle checks.
 

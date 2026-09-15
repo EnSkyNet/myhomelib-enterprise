@@ -24,6 +24,7 @@ public class BookFilterStateService {
                 integer(P + "ratingMin"),
                 integer(P + "ratingMax"),
                 settings.getBoolean(P + "hideUnrated", false),
+                enumValue(BookAnnotationPresenceFilter.class, settings.get(P + "annotationPresence", BookAnnotationPresenceFilter.ANY.name()), BookAnnotationPresenceFilter.ANY),
                 enumValue(BookQuickFilterField.class, settings.get(P + "quickField", BookQuickFilterField.ANY.name()), BookQuickFilterField.ANY),
                 blankToNull(settings.get(P + "quickValue", ""))
         );
@@ -41,6 +42,7 @@ public class BookFilterStateService {
         putNullable(P + "ratingMin", value.ratingMin());
         putNullable(P + "ratingMax", value.ratingMax());
         settings.putBoolean(P + "hideUnrated", value.hideUnrated());
+        put(P + "annotationPresence", value.annotationPresence().name());
         put(P + "quickField", value.quickField().name());
         putNullable(P + "quickValue", value.quickValue());
     }

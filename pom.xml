@@ -7,7 +7,7 @@
 
     <groupId>com.myhomelibcorp</groupId>
     <artifactId>myhomelib-enterprise</artifactId>
-    <version>7.1.0</version>
+    <version>8.0.0</version>
     <packaging>pom</packaging>
 
     <name>MyHomeLib Enterprise</name>
@@ -19,11 +19,12 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.encoding>UTF-8</maven.compiler.encoding>
+        <mhl.test.jvmArgs></mhl.test.jvmArgs>
 
-        <spring-boot.version>3.5.0</spring-boot.version>
-        <javafx.version>21.0.2</javafx.version>
-        <sqlite.version>3.47.0.0</sqlite.version>
-        <flyway.version>10.16.0</flyway.version>
+        <spring-boot.version>4.1.1</spring-boot.version>
+        <javafx.version>21.0.12</javafx.version>
+        <sqlite.version>3.53.4.0</sqlite.version>
+        <flyway.version>12.4.0</flyway.version>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <lombok.version>1.18.30</lombok.version>
         <caffeine.version>3.1.8</caffeine.version>
@@ -35,11 +36,11 @@
         <pdfbox.version>3.0.8</pdfbox.version>
         <jbig2-imageio.version>3.0.5</jbig2-imageio.version>
 
-        <junit.version>5.10.2</junit.version>
-        <mockito.version>5.10.0</mockito.version>
-        <assertj.version>3.25.3</assertj.version>
-        <archunit.version>1.3.0</archunit.version>
-        <testcontainers.version>1.19.7</testcontainers.version>
+        <junit.version>6.0.3</junit.version>
+        <mockito.version>5.23.0</mockito.version>
+        <assertj.version>3.27.7</assertj.version>
+        <archunit.version>1.5.0</archunit.version>
+        <testcontainers.version>2.0.5</testcontainers.version>
 
         <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
@@ -221,7 +222,7 @@
 
             <dependency>
                 <groupId>com.tngtech.archunit</groupId>
-                <artifactId>archunit-junit5</artifactId>
+                <artifactId>archunit</artifactId>
                 <version>${archunit.version}</version>
                 <scope>test</scope>
             </dependency>
@@ -303,8 +304,9 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.2.5</version>
+                    <version>3.5.6</version>
                     <configuration>
+                        <argLine>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 ${mhl.test.jvmArgs}</argLine>
                         <includes>
                             <include>**/*Test.java</include>
                             <include>**/*Tests.java</include>

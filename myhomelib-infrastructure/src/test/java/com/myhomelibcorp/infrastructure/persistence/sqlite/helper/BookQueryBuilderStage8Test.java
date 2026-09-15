@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite.helper;
 
+import com.myhomelibcorp.application.filter.BookAnnotationPresenceFilter;
 import com.myhomelibcorp.application.filter.BookFilterMode;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookQuickFilterField;
@@ -49,6 +50,26 @@ class BookQueryBuilderStage8Test {
         assertThat(sql).contains(" OR ");
         assertThat(sql).contains("COALESCE(b.progress, 0) >= 100");
         assertThat(sql).contains("EXISTS (SELECT 1 FROM book_authors");
+    }
+
+    @Test
+    void annotationPresenceFilterUsesIndexedExistsSubquery() {
+        BookFilterSpec notes = new BookFilterSpec(
+                BookFilterMode.AND, null, null, null, null, null, null, null, null, false,
+                BookAnnotationPresenceFilter.NOTES, BookQuickFilterField.ANY, null);
+        BookFilterSpec highlights = new BookFilterSpec(
+                BookFilterMode.AND, null, null, null, null, null, null, null, null, false,
+                BookAnnotationPresenceFilter.HIGHLIGHTS, BookQuickFilterField.ANY, null);
+        BookFilterSpec anyAnnotation = new BookFilterSpec(
+                BookFilterMode.AND, null, null, null, null, null, null, null, null, false,
+                BookAnnotationPresenceFilter.NOTES_OR_HIGHLIGHTS, BookQuickFilterField.ANY, null);
+
+        assertThat(normalize(builder.build(BookQuery.builder().filterSpec(notes).build()).sql()))
+                .contains("EXISTS (SELECT 1 FROM annotations qann WHERE qann.book_id = b.id AND qann.annotation_type = 'NOTE')");
+        assertThat(normalize(builder.build(BookQuery.builder().filterSpec(highlights).build()).sql()))
+                .contains("EXISTS (SELECT 1 FROM annotations qann WHERE qann.book_id = b.id AND qann.annotation_type = 'HIGHLIGHT')");
+        assertThat(normalize(builder.build(BookQuery.builder().filterSpec(anyAnnotation).build()).sql()))
+                .contains("EXISTS (SELECT 1 FROM annotations qann WHERE qann.book_id = b.id)");
     }
 
     @Test

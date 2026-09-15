@@ -32,6 +32,9 @@ public class BookViewModel {
     private final StringProperty review = new SimpleStringProperty();
     private final ObjectProperty<LocalDateTime> createdAt = new SimpleObjectProperty<>();
     private final ObjectProperty<Image> cover = new SimpleObjectProperty<>();
+    private final IntegerProperty noteCount = new SimpleIntegerProperty();
+    private final IntegerProperty highlightCount = new SimpleIntegerProperty();
+    private final IntegerProperty bookmarkCount = new SimpleIntegerProperty();
 
     // Властивість для вибору
     private final BooleanProperty selected = new SimpleBooleanProperty(false);
@@ -44,6 +47,7 @@ public class BookViewModel {
     private final StringProperty createdAtFormatted = new SimpleStringProperty();
     private final StringProperty updateDateFormatted = new SimpleStringProperty();
     private final StringProperty localStatus = new SimpleStringProperty();
+    private final StringProperty activitySummary = new SimpleStringProperty();
 
     // ===== ГЕТЕРИ ВЛАСТИВОСТЕЙ =====
     public StringProperty idProperty() { return id; }
@@ -70,6 +74,9 @@ public class BookViewModel {
     public StringProperty reviewProperty() { return review; }
     public ObjectProperty<LocalDateTime> createdAtProperty() { return createdAt; }
     public ObjectProperty<Image> coverProperty() { return cover; }
+    public IntegerProperty noteCountProperty() { return noteCount; }
+    public IntegerProperty highlightCountProperty() { return highlightCount; }
+    public IntegerProperty bookmarkCountProperty() { return bookmarkCount; }
 
     // Властивість вибору
     public BooleanProperty selectedProperty() { return selected; }
@@ -81,6 +88,7 @@ public class BookViewModel {
     public StringProperty createdAtFormattedProperty() { return createdAtFormatted; }
     public StringProperty updateDateFormattedProperty() { return updateDateFormatted; }
     public StringProperty localStatusProperty() { return localStatus; }
+    public StringProperty activitySummaryProperty() { return activitySummary; }
 
     // ===== ГЕТЕРИ ТА СЕТЕРИ =====
     public String getId() { return id.get(); }
@@ -176,6 +184,17 @@ public class BookViewModel {
     public Image getCover() { return cover.get(); }
     public void setCover(Image cover) { this.cover.set(cover); }
 
+    public int getNoteCount() { return noteCount.get(); }
+    public int getHighlightCount() { return highlightCount.get(); }
+    public int getBookmarkCount() { return bookmarkCount.get(); }
+    public void setActivityCounts(int notes, int highlights, int bookmarks) {
+        noteCount.set(Math.max(0, notes));
+        highlightCount.set(Math.max(0, highlights));
+        bookmarkCount.set(Math.max(0, bookmarks));
+        updateActivitySummary();
+    }
+    public String getActivitySummary() { return activitySummary.get(); }
+
     // Властивість вибору
     public boolean isSelected() { return selected.get(); }
     public void setSelected(boolean selected) { this.selected.set(selected); }
@@ -191,6 +210,14 @@ public class BookViewModel {
     public String getLocalStatus() { return localStatus.get(); }
 
     // ===== ОНОВЛЕННЯ ФОРМАТОВАНИХ ПОЛІВ =====
+    private void updateActivitySummary() {
+        java.util.ArrayList<String> parts = new java.util.ArrayList<>(3);
+        if (noteCount.get() > 0) parts.add("📝 " + noteCount.get());
+        if (highlightCount.get() > 0) parts.add("▰ " + highlightCount.get());
+        if (bookmarkCount.get() > 0) parts.add("🔖 " + bookmarkCount.get());
+        activitySummary.set(String.join("  ", parts));
+    }
+
     private void updateFileSizeFormatted() {
         long size = fileSize.get();
         if (size <= 0) { fileSizeFormatted.set(""); return; }

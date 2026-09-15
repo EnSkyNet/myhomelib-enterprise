@@ -54,7 +54,13 @@ public class ExternalBookLauncher {
             if (args.stream().noneMatch(a -> a.equals(file.toAbsolutePath().toString()))) {
                 args.add(file.toAbsolutePath().toString());
             }
-            Process process = new ProcessBuilder(args).start();
+            // The launched reader is detached from MyHomeLib. Do not leave its stdout/stderr as
+            // PIPEs: a verbose external application could otherwise fill an unread pipe and
+            // block even though MyHomeLib never consumes the output.
+            Process process = new ProcessBuilder(args)
+                    .redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
             if (lease != null) lease.retainUntil(process);
         } finally {
             if (lease != null) lease.close();

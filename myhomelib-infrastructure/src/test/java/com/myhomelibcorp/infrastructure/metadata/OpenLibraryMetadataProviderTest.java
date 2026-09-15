@@ -108,7 +108,7 @@ class OpenLibraryMetadataProviderTest {
                 .containsEntry("isbn", "9780132350884")
                 .containsEntry("limit", "20")
                 .containsKey("fields");
-        assertThat(userAgent.get()).contains("MyHomeLib Enterprise/7.1").contains("dev@example.org");
+        assertThat(userAgent.get()).contains("MyHomeLib Enterprise/8.0.0").contains("dev@example.org");
     }
 
     @Test
@@ -297,7 +297,7 @@ class OpenLibraryMetadataProviderTest {
         when(settings.getInt(anyString(), anyInt())).thenAnswer(inv -> inv.getArgument(1));
         when(settings.get(anyString(), anyString())).thenAnswer(inv -> inv.getArgument(1));
         when(settings.get("online.proxy.mode", "SYSTEM")).thenReturn("NONE");
-        when(settings.get("online.userAgent", "MyHomeLib Enterprise/7.1")).thenReturn("MyHomeLib Enterprise/7.1");
+        when(settings.get("online.userAgent", "MyHomeLib Enterprise/8.0.0")).thenReturn("MyHomeLib Enterprise/8.0.0");
         when(settings.get("metadata.openLibrary.contact", "")).thenReturn(contact);
         return settings;
     }

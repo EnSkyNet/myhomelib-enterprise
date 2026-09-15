@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.reader;
 
 import org.junit.jupiter.api.Test;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -9,36 +10,60 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ReaderAnnotationUiContractTest {
     @Test
-    void readerWorkspaceUsesApplicationServiceAndAsyncRefreshForAnnotations() throws Exception {
-        String source = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
+    void readerWorkspaceUsesFullAnnotationProjectionAndCompleteInteractiveWorkflow() throws Exception {
+        String workspace = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
+        String coordinator = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationCoordinator.java"));
+        String presenter = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationPresenter.java"));
+        String popover = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationPopover.java"));
 
-        assertThat(source).contains(
+        assertThat(workspace).contains(
                 "AnnotationService annotationService",
+                "ReaderAnnotationCoordinator",
                 "setOnHighlightRequested(this::createHighlightFromSelection)",
                 "setOnNoteRequested(this::createNoteFromSelection)",
-                "uiBackgroundExecutor.submit(() -> annotationService.createHighlight",
-                "uiBackgroundExecutor.submit(() -> annotationService.createNote",
+                "setOnAnnotationActivated(this::showAnnotationPopover)",
                 "refreshAnnotationsAsync()",
                 "listBookAnnotationViews(bookId)",
-                "ReaderAnnotationPresenter.overlays");
-        assertThat(source).doesNotContain("SqliteAnnotationRepository");
-        String presenter = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationPresenter.java"));
+                "ReaderAnnotationPresenter.presentation",
+                "reviewAnnotationIssues()");
+        assertThat(coordinator).contains(
+                "AnnotationEditorDialog",
+                "ReaderAnnotationPopover",
+                "annotationService.update(",
+                "annotationService.delete(",
+                "annotationService.reanchor(");
+        assertThat(popover).contains("copyQuote", "copyQuoteAndNote");
+        assertThat(workspace).doesNotContain("SqliteAnnotationRepository");
+        assertThat(coordinator).doesNotContain("SqliteAnnotationRepository");
         assertThat(presenter).doesNotContain("com.myhomelibcorp.domain.model.annotation");
-        assertThat(presenter).contains("AnnotationAnchorData", "AnnotationReaderItem", "AnnotationReaderResolver");
+        assertThat(presenter).contains("AnnotationAnchorData", "AnnotationReaderItem", "AnnotationReaderResolver",
+                "findRebindCandidate", "ReaderAnnotationState.RELOCATED", "ARTIFACT_MISMATCH", "UNRESOLVED");
     }
 
     @Test
-    void readerModuleExposesHandlesKeyboardSelectionContextActionsAndPersistentOverlays() throws Exception {
+    void readerModuleSupportsHitTestingKeyboardCyclingAndBookMap() throws Exception {
         Path readerRoot = Path.of("../myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx");
         String canvas = Files.readString(readerRoot.resolve("ReaderCanvas.java"));
-        String selection = Files.readString(readerRoot.resolve("ReaderSelectionController.java"));
+        String hitTest = Files.readString(readerRoot.resolve("ReaderAnnotationHitTest.java"));
         String keyboard = Files.readString(readerRoot.resolve("ReaderKeyboardScrollController.java"));
+        String toolbar = Files.readString(readerRoot.resolve("ReaderToolbar.java"));
 
-        assertThat(selection).contains("beginHandleDrag", "extendByCharacters", "ReaderSelection", "renderHandle");
-        assertThat(canvas).contains("ui.reader.selection.highlight", "ui.reader.selection.note",
-                "setAnnotationOverlays", "renderAnnotationOverlays");
-        assertThat(keyboard).contains("event.isShiftDown() && code == KeyCode.LEFT",
-                "event.isShiftDown() && code == KeyCode.RIGHT",
-                "requestHighlightFromInput", "requestNoteFromInput");
+        assertThat(canvas).contains("setAnnotationOverlays", "renderAnnotationOverlays",
+                "ReaderAnnotationHitTest.hit", "setOnAnnotationActivated", "Cursor.HAND");
+        assertThat(hitTest).contains("marker", "rangeLength", "updatedAt", "visibleOrdered");
+        assertThat(keyboard).contains("KeyCode.N", "event.isAltDown()", "activateNextAnnotationFromInput");
+        assertThat(toolbar).contains("bookMapButton", "ui.reader.toolbar.bookmap", "onBookMapClick",
+                "moreButton", "ui.reader.toolbar.more", "proxyItem");
+    }
+
+    @Test
+    void workspaceFxmlContainsUnifiedReaderSidebarForTocSearchBookmarksAnnotationsAndBookMap() throws Exception {
+        String fxml;
+        try (var in = getClass().getResourceAsStream("/view/new-reader-workspace.fxml")) {
+            assertThat(in).isNotNull();
+            fxml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        assertThat(fxml).contains("readerSidebarTabs", "tocSidebarTab", "searchSidebarTab", "bookmarkSidebarTab",
+                "annotationSidebarTab", "bookMapSidebarTab", "annotationSidebarUnavailable");
     }
 }

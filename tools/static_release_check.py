@@ -132,6 +132,32 @@ def packaging_checks() -> list[str]:
         except ValueError:
             errors.append("package-desktop.ps1: --win-upgrade-uuid is not a valid UUID")
 
+    # Supply-chain guard: every remote GitHub Action must be pinned to an immutable full commit SHA.
+    action_ref = re.compile(r"\buses:\s*([^@\s]+)@([^\s#]+)")
+    for workflow_path in sorted((ROOT / ".github/workflows").glob("*.yml")):
+        for line_no, line in enumerate(workflow_path.read_text(encoding="utf-8").splitlines(), start=1):
+            match = action_ref.search(line)
+            if not match:
+                continue
+            action, ref = match.groups()
+            if action.startswith("./"):
+                continue
+            if not re.fullmatch(r"[0-9a-fA-F]{40}", ref):
+                errors.append(
+                    f"{workflow_path.relative_to(ROOT)}:{line_no}: GitHub Action {action}@{ref} "
+                    "must be pinned to a full 40-character commit SHA"
+                )
+
+    # Build-tool contract: formal source archives rely on external tools, so launchers must fail
+    # fast on unsupported JDK/Maven versions instead of producing environment-dependent failures.
+    invoke_sh = (ROOT / "tools/invoke-maven.sh").read_text(encoding="utf-8")
+    invoke_ps = (ROOT / "tools/invoke-maven.ps1").read_text(encoding="utf-8")
+    for text, label in ((invoke_sh, "tools/invoke-maven.sh"), (invoke_ps, "tools/invoke-maven.ps1")):
+        if "3.9.6" not in text:
+            errors.append(f"{label}: Maven 3.9.6+ guard is missing")
+        if "JDK 21+" not in text:
+            errors.append(f"{label}: JDK 21+ guard is missing")
+
     workflow = (ROOT / ".github/workflows/ci-release.yml").read_text(encoding="utf-8")
     if "smoke-portable.ps1" not in workflow or "smoke-portable.sh" not in workflow:
         errors.append("ci-release.yml: every platform must smoke the extracted portable archive")

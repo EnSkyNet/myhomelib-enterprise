@@ -28,7 +28,7 @@ class SqliteAnnotationExportQueryAdapterIntegrationTest {
         insertAnnotation(f.jdbc(), "a3", "b2", "NOTE", "#333333", "third note", "c3", "End", "third quote",
                 0.9, "2026-09-10T12:00:00Z");
         insertAnnotation(f.jdbc(), "a2", "b1", "NOTE", "#222222", "second note", "c2", "Chapter 2", "second quote",
-                0.6, "2026-09-10T11:00:00Z");
+                0.6, "2026-09-10T09:00:00Z");
         insertAnnotation(f.jdbc(), "a1", "b1", "HIGHLIGHT", "#111111", "first note", "c1", "Intro", "first quote",
                 0.2, "2026-09-10T10:00:00Z");
         f.jdbc().update("INSERT INTO annotation_tags(annotation_id,tag) VALUES('a1','zeta'),('a1','Alpha'),('a2','todo')");
@@ -37,6 +37,7 @@ class SqliteAnnotationExportQueryAdapterIntegrationTest {
         assertThat(one.items()).extracting(item -> item.id()).containsExactly("a3");
 
         var selected = f.adapter().query(AnnotationExportSelection.books(Set.of("b2", "b1")), 0, 2);
+        // Reading position, not annotation creation time, defines deterministic digest/export order.
         assertThat(selected.items()).extracting(item -> item.id()).containsExactly("a1", "a2");
         assertThat(selected.hasNext()).isTrue();
         assertThat(f.adapter().query(AnnotationExportSelection.books(Set.of("b2", "b1")), 2, 2).items())

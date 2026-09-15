@@ -61,6 +61,7 @@ public class BookTableController implements WorkspaceLifecycle {
     @FXML private TableColumn<BookViewModel, String> fileSizeColumn;
     @FXML private TableColumn<BookViewModel, String> rateColumn;
     @FXML private TableColumn<BookViewModel, String> progressColumn;
+    @FXML private TableColumn<BookViewModel, String> activityColumn;
     @FXML private TableColumn<BookViewModel, String> dateColumn;
 
     @FXML private Label filterIndicatorLabel;
@@ -148,6 +149,7 @@ public class BookTableController implements WorkspaceLifecycle {
         registerProfileColumn("fileSize", fileSizeColumn);
         registerProfileColumn("rating", rateColumn);
         registerProfileColumn("progress", progressColumn);
+        registerProfileColumn("activity", activityColumn);
         registerProfileColumn("date", dateColumn);
 
         titleColumn.setCellValueFactory(cellData -> cellData.getValue().titleProperty());
@@ -166,12 +168,26 @@ public class BookTableController implements WorkspaceLifecycle {
         fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         rateColumn.setCellValueFactory(cellData -> cellData.getValue().rateStarsProperty());
         progressColumn.setCellValueFactory(cellData -> cellData.getValue().progressFormattedProperty());
+        activityColumn.setCellValueFactory(cellData -> cellData.getValue().activitySummaryProperty());
+        activityColumn.setSortable(false);
+        activityColumn.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty || item == null || item.isBlank()) { setText(null); setTooltip(null); return; }
+                setText(item);
+                BookViewModel row = getTableRow() == null ? null : getTableRow().getItem();
+                if (row != null && !row.isGroupHeader()) {
+                    setTooltip(new Tooltip(i18n.format("ui.book.activity.tooltip", row.getNoteCount(), row.getHighlightCount(), row.getBookmarkCount())));
+                } else setTooltip(null);
+            }
+        });
         dateColumn.setCellValueFactory(cellData -> cellData.getValue().createdAtFormattedProperty());
 
         // Unsupported SQL sort columns must not silently sort one loaded page in JavaFX.
         genresColumn.setSortable(false);
         fileSizeColumn.setSortable(false);
         progressColumn.setSortable(false);
+        activityColumn.setSortable(false);
 
         bookTableView.setRowFactory(tv -> new TableRow<>() {
             @Override protected void updateItem(BookViewModel item, boolean empty) {
@@ -427,9 +443,9 @@ public class BookTableController implements WorkspaceLifecycle {
 
     private void resetDefaultColumns() {
         titleColumn.setVisible(true); authorColumn.setVisible(true); seriesColumn.setVisible(true); genresColumn.setVisible(true);
-        fileSizeColumn.setVisible(true); rateColumn.setVisible(true); progressColumn.setVisible(true); dateColumn.setVisible(true);
+        fileSizeColumn.setVisible(true); rateColumn.setVisible(true); progressColumn.setVisible(true); activityColumn.setVisible(true); dateColumn.setVisible(true);
         titleColumn.setPrefWidth(250); authorColumn.setPrefWidth(150); seriesColumn.setPrefWidth(100); genresColumn.setPrefWidth(100);
-        fileSizeColumn.setPrefWidth(90); rateColumn.setPrefWidth(80); progressColumn.setPrefWidth(80); dateColumn.setPrefWidth(100);
+        fileSizeColumn.setPrefWidth(90); rateColumn.setPrefWidth(80); progressColumn.setPrefWidth(80); activityColumn.setPrefWidth(140); dateColumn.setPrefWidth(100);
         TableColumn<BookViewModel, ?> select = bookTableView.getColumns().stream().filter(c -> "select".equals(c.getId())).findFirst().orElse(null);
         List<TableColumn<BookViewModel, ?>> ordered = new ArrayList<>();
         if (select != null) ordered.add(select);

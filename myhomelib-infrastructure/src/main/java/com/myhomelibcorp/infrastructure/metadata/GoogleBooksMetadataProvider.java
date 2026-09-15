@@ -277,7 +277,7 @@ public final class GoogleBooksMetadataProvider implements MetadataProvider {
     }
 
     private String userAgent() {
-        return safeHeader(new OnlineHttpPolicy(settings).userAgent(), "MyHomeLib Enterprise/7.1");
+        return safeHeader(new OnlineHttpPolicy(settings).userAgent(), "MyHomeLib Enterprise/8.0.0");
     }
 
     private String fallbackRecordUrl(String id) {

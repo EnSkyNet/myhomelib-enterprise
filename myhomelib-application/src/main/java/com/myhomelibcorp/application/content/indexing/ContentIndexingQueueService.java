@@ -273,7 +273,7 @@ public class ContentIndexingQueueService implements DisposableBean {
 
     private boolean safeOnBattery() {
         try { return powerState.onBatteryPower(); }
-        catch (RuntimeException ignored) { return false; }
+        catch (RuntimeException ignored) { return true; }
     }
 
     private void notifyListeners() {

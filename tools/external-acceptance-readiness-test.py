@@ -30,7 +30,7 @@ def main() -> int:
     ids = {c.id for c in checks}
     assert "release-identity" in ids
     assert "windows-harness-fingerprint" in ids
-    assert mod.project_version(ROOT) == "7.1.0"
+    assert mod.project_version(ROOT) == "8.0.0"
     sha, count = mod.harness_manifest_fingerprint(ROOT)
     assert len(sha) == 64 and count >= 10
     payload = mod.build_payload(ROOT, checks, False)

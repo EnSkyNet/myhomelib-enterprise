@@ -84,6 +84,51 @@ class AnnotationManagerServiceTest {
                 .hasMessageContaining("Annotation not found");
     }
 
+
+    @Test
+    void batchDeleteProducesSingleUndoOperationAndRestoresAllRows() {
+        MemoryRepository repository = new MemoryRepository();
+        AnnotationManagerService service = new AnnotationManagerService(new MemoryQueryPort(), repository);
+        Instant now = Instant.parse("2026-09-14T10:00:00Z");
+        repository.save(annotation("a1", Set.of("one"), now));
+        repository.save(annotation("a2", Set.of("two"), now.plusSeconds(1)));
+
+        AnnotationBatchUndoToken token = service.deleteForUndo(List.of("a1", "a2"));
+
+        assertThat(token.annotations()).hasSize(2);
+        assertThat(repository.findById("a1")).isEmpty();
+        assertThat(repository.findById("a2")).isEmpty();
+
+        service.restoreDeleted(token);
+
+        assertThat(repository.findById("a1")).isPresent();
+        assertThat(repository.findById("a2")).isPresent();
+    }
+
+    @Test
+    void batchTagOperationsPreserveUnrelatedTags() {
+        MemoryRepository repository = new MemoryRepository();
+        AnnotationManagerService service = new AnnotationManagerService(new MemoryQueryPort(), repository);
+        Instant now = Instant.parse("2026-09-14T10:00:00Z");
+        repository.save(annotation("a1", Set.of("keep", "remove"), now));
+        repository.save(annotation("a2", Set.of("keep2", "remove"), now.plusSeconds(1)));
+
+        int added = service.addTags(List.of("a1", "a2"), Set.of("shared"));
+        int removed = service.removeTags(List.of("a1", "a2"), Set.of("remove"));
+
+        assertThat(added).isEqualTo(2);
+        assertThat(removed).isEqualTo(2);
+        assertThat(repository.findById("a1").orElseThrow().tags()).containsExactlyInAnyOrder("keep", "shared");
+        assertThat(repository.findById("a2").orElseThrow().tags()).containsExactlyInAnyOrder("keep2", "shared");
+    }
+
+    private static Annotation annotation(String id, Set<String> tags, Instant now) {
+        return new Annotation(id, AnnotationType.HIGHLIGHT,
+                new AnnotationAnchor("book", "artifact", "ch", "Chapter", "p",
+                        0, 1, 0.1, "x", "", ""),
+                "#FFF59D", "", tags, now, now);
+    }
+
     private static final class MemoryQueryPort implements AnnotationManagerQueryPort {
         int offset;
         int limit;

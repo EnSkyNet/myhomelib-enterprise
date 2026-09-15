@@ -20,9 +20,29 @@ public record BookFilterSpec(
         Integer ratingMin,
         Integer ratingMax,
         boolean hideUnrated,
+        BookAnnotationPresenceFilter annotationPresence,
         BookQuickFilterField quickField,
         String quickValue
 ) {
+    /** Backward-compatible constructor for callers that do not use annotation-presence filtering. */
+    public BookFilterSpec(
+            BookFilterMode mode,
+            String language,
+            Integer yearFrom,
+            Integer yearTo,
+            BookFormat format,
+            Boolean local,
+            Boolean read,
+            Integer ratingMin,
+            Integer ratingMax,
+            boolean hideUnrated,
+            BookQuickFilterField quickField,
+            String quickValue
+    ) {
+        this(mode, language, yearFrom, yearTo, format, local, read, ratingMin, ratingMax, hideUnrated,
+                BookAnnotationPresenceFilter.ANY, quickField, quickValue);
+    }
+
     public BookFilterSpec {
         mode = mode == null ? BookFilterMode.AND : mode;
         language = normalize(language);
@@ -37,13 +57,14 @@ public record BookFilterSpec(
         if (ratingMin != null && ratingMax != null && ratingMin > ratingMax) {
             int tmp = ratingMin; ratingMin = ratingMax; ratingMax = tmp;
         }
+        annotationPresence = annotationPresence == null ? BookAnnotationPresenceFilter.ANY : annotationPresence;
         quickField = quickField == null ? BookQuickFilterField.ANY : quickField;
         quickValue = normalize(quickValue);
     }
 
     public static BookFilterSpec empty() {
         return new BookFilterSpec(BookFilterMode.AND, null, null, null, null,
-                null, null, null, null, false, BookQuickFilterField.ANY, null);
+                null, null, null, null, false, BookAnnotationPresenceFilter.ANY, BookQuickFilterField.ANY, null);
     }
 
     public boolean isActive() { return activeCriteriaCount() > 0; }
@@ -57,13 +78,14 @@ public record BookFilterSpec(
         if (read != null) count++;
         if (ratingMin != null || ratingMax != null) count++;
         if (hideUnrated) count++;
+        if (annotationPresence != BookAnnotationPresenceFilter.ANY) count++;
         if (quickValue != null) count++;
         return count;
     }
 
     public BookFilterSpec withQuickFilter(BookQuickFilterField field, String value) {
         return new BookFilterSpec(mode, language, yearFrom, yearTo, format, local, read,
-                ratingMin, ratingMax, hideUnrated, field, value);
+                ratingMin, ratingMax, hideUnrated, annotationPresence, field, value);
     }
 
     public BookFilterSpec withoutQuickFilter() {
@@ -73,7 +95,7 @@ public record BookFilterSpec(
     public String cacheKey() {
         return mode + "|" + safe(language) + "|" + safe(yearFrom) + "|" + safe(yearTo) + "|"
                 + safe(format) + "|" + safe(local) + "|" + safe(read) + "|" + safe(ratingMin) + "|"
-                + safe(ratingMax) + "|" + hideUnrated + "|" + quickField + "|" + safe(quickValue);
+                + safe(ratingMax) + "|" + hideUnrated + "|" + annotationPresence + "|" + quickField + "|" + safe(quickValue);
     }
 
     private static String normalize(String value) {

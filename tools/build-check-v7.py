@@ -373,9 +373,9 @@ def check_source_invariants() -> None:
         read(required_doc)
 
     pom = read("pom.xml")
-    require(pom, "<version>7.1.0</version>", "v7.1 release version")
+    require(pom, "<version>8.0.0</version>", "v8.0 release version")
     readme = read("README.md")
-    require(readme, "MyHomeLib Enterprise 7.1.0", "README release identity")
+    require(readme, "MyHomeLib Enterprise 8.0.0", "README release identity")
     forbid(readme, "# MyHomeLib Enterprise 1.0.0", "stale README release identity")
     root_md = sorted(p.name for p in ROOT.glob("*.md"))
     expected_root_md = {"README.md", "ARCHITECTURE.md", "MYHOMELIB-FEATURES.md", "MYHOMELIB-OPERATIONS.md", "MYHOMELIB-DEVELOPMENT.md", "MYHOMELIB-RELEASE.md"}
@@ -459,7 +459,7 @@ def main() -> int:
     if not args.skip_tree_cleanliness:
         checks.append(("release tree cleanliness", check_no_generated_or_secrets))
 
-    print("MyHomeLib Enterprise v7.1 offline release checks")
+    print("MyHomeLib 8.0.0 offline release checks")
     print("=" * 48)
     failed = False
     for name, fn in checks:

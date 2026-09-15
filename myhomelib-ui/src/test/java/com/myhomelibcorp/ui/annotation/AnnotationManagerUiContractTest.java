@@ -10,7 +10,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class AnnotationManagerUiContractTest {
     @Test
-    void workspaceExposesFilterJumpEditDeleteUndoExportAndPagedAsyncQuery() throws Exception {
+    void workspaceSupportsRealMultiSelectionBatchActionsBoundedUndoAndDigestExport() throws Exception {
         String fxml;
         try (var in = getClass().getResourceAsStream("/view/annotation-manager-workspace.fxml")) {
             assertThat(in).isNotNull();
@@ -18,18 +18,20 @@ class AnnotationManagerUiContractTest {
         }
         assertThat(fxml).contains("searchField", "bookFilter", "typeFilter", "colorFilter", "tagFilter",
                 "dateFromFilter", "dateToFilter", "#openSelected", "#editSelected", "#deleteSelected",
-                "#undoDelete", "#exportFilteredCsv", "#exportRich", "#exportKnowledgeMarkdown", "#previousPage", "#nextPage");
+                "#undoDelete", "#changeSelectedColor", "#addTagsToSelected", "#removeTagsFromSelected",
+                "#exportSelectedCsv", "#exportDigest", "#exportRich", "#exportKnowledgeMarkdown",
+                "#previousPage", "#nextPage");
         assertThat(fxml).doesNotContain("columnResizePolicy=\"CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN\"");
 
         String controller = Files.readString(Path.of(
                 "src/main/java/com/myhomelibcorp/ui/annotation/AnnotationManagerWorkspaceController.java"));
-        assertThat(controller).contains("TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN",
-                "AnnotationManagerService annotationManagerService",
-                "executor.submit", "annotationManagerService.query", "annotationManagerService.deleteForUndo",
-                "annotationManagerService.restoreDeleted", "workspaceManager.showAnnotationInReader",
-                "EXPORT_PAGE_SIZE", "StandardCharsets.UTF_8", "AnnotationExportService annotationExportService",
-                "annotationExportService.export(request)", "KnowledgeMarkdownExportService knowledgeMarkdownExportService",
-                "knowledgeMarkdownExportService.export(request)");
+        assertThat(controller).contains("SelectionMode.MULTIPLE", "MAX_UNDO_OPERATIONS = 20",
+                "Deque<AnnotationBatchUndoToken>", "KeyCode.Z", "event.isShortcutDown()",
+                "annotationManagerService.deleteForUndo(ids)", "annotationManagerService.restoreDeleted(token)",
+                "annotationManagerService.updateColor(ids, color)", "annotationManagerService.addTags(ids, tags)",
+                "annotationManagerService.removeTags(ids, tags)", "AnnotationDigestService annotationDigestService",
+                "annotationDigestService.export(selection, destination, labels)", "exportSelectedDigest(selected, destination)",
+                ".thenComparing(AnnotationManagerItem::bookId)", "if (!item.bookId().equals(bookId))");
         assertThat(controller).doesNotContain("SqliteAnnotation", "domain.model.annotation", "AnnotationRepository");
     }
 
@@ -43,6 +45,7 @@ class AnnotationManagerUiContractTest {
                 "readerView.goToPosition(position)", "annotationTargetId = null");
         assertThat(manager).contains("showAnnotationInReader", "loadNewReaderWorkspace(bookId, annotationId)");
     }
+
     @Test
     void mainMenuRoutesAnnotationsThroughReaderSafeNavigationCoordinator() throws Exception {
         String main = Files.readString(Path.of(
@@ -53,5 +56,4 @@ class AnnotationManagerUiContractTest {
         assertThat(coordinator).contains("public void annotations()", "cleanupReader();",
                 "workspaceManager.showAnnotationManagerWorkspace()");
     }
-
 }

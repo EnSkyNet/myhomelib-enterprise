@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.annotation;
 
 import com.myhomelibcorp.application.port.out.repository.AnnotationRepository;
+import com.myhomelibcorp.application.search.BookSearchIndexRefreshService;
 import com.myhomelibcorp.domain.model.annotation.Annotation;
 import com.myhomelibcorp.domain.model.annotation.AnnotationAnchor;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,9 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 class AnnotationServiceTest {
 
@@ -47,6 +51,22 @@ class AnnotationServiceTest {
         assertThatThrownBy(() -> service.reanchor(created.id(), anotherBook))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("another logical book");
+    }
+
+    @Test
+    void annotationMutationsRefreshDerivedSearchFlags() {
+        MemoryRepository repository = new MemoryRepository();
+        BookSearchIndexRefreshService refresh = mock(BookSearchIndexRefreshService.class);
+        AnnotationService service = new AnnotationService(repository, refresh);
+        String bookId = "11111111-1111-1111-1111-111111111111";
+        AnnotationAnchorData anchor = new AnnotationAnchorData(bookId, null, null, "Chapter", null,
+                1, 4, 0.1, "abc", "", "");
+
+        Annotation created = service.createNote(anchor, "#FFF59D", "memo", Set.of());
+        service.updateNote(created.id(), "edited");
+        service.delete(created.id());
+
+        verify(refresh, times(3)).refreshBook(bookId);
     }
 
     private static final class MemoryRepository implements AnnotationRepository {

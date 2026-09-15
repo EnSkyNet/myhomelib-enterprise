@@ -12,19 +12,23 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class UiFxmlRegressionTest {
 
     @Test
-    void mainToolbarMustWrapWhenActionsDoNotFitAndExposeSearchClearAction() throws IOException {
+    void mainToolbarMustStaySingleRowAndExposeSearchClearAndOverflowActions() throws IOException {
         String fxml = resource("/view/MainView.fxml");
 
-        assertTrue(fxml.contains("<FlowPane fx:id=\"mainToolbar\""),
-                "Main toolbar must use a wrapping pane so actions can flow to a second row instead of leaving the client area");
+        assertTrue(fxml.contains("<HBox fx:id=\"mainToolbar\""),
+                "Main toolbar must use a single-row adaptive HBox");
         assertTrue(fxml.contains("styleClass=\"main-toolbar-wrap\""),
-                "Wrapping toolbar must keep the dedicated styling contract");
-        assertFalse(fxml.contains("<ToolBar styleClass=\"main-toolbar-wrap\">"),
-                "A single-line ToolBar can push actions beyond the visible client width");
+                "Main toolbar must keep the dedicated styling contract");
+        assertTrue(fxml.contains("HBox.hgrow=\"ALWAYS\""),
+                "Global search must absorb remaining toolbar width");
         assertTrue(fxml.contains("onAction=\"#handleClearSearch\""),
                 "Global search must expose an explicit clear button");
-        assertTrue(fxml.contains("fx:id=\"themeButton\""),
-                "Whole-application theme switch must remain reachable from the main toolbar");
+        assertTrue(fxml.contains("<MenuButton text=\"⋮\""),
+                "Infrequent actions must remain reachable from toolbar overflow");
+        assertTrue(fxml.contains("onAction=\"#handleCycleApplicationTheme\""),
+                "Whole-application theme switch must remain reachable from overflow");
+        assertFalse(fxml.contains("<FlowPane fx:id=\"mainToolbar\""),
+                "Main toolbar must not wrap into multiple rows");
     }
 
     @Test

@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.dto.GroupDto;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.usecase.book.MarkAsReadBatchUseCase;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
+import com.myhomelibcorp.ui.util.UiExceptionMessages;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.application.usecase.book.UpdateProgressBatchUseCase;
 import com.myhomelibcorp.application.usecase.book.UpdateRateBatchUseCase;
@@ -118,19 +119,19 @@ public class BatchOperationsController {
         List<Integer> rates = List.of(1, 2, 3, 4, 5);
         Optional<Integer> result = dialogService.showChoiceDialog(
                 rates, 5, "Оцінка", "Виберіть рейтинг для " + selected.size() + " книг", "Рейтинг:");
-        result.ifPresent(rate -> {
-            try {
-                updateRateBatchUseCase.execute(selected, rate);
-                dialogService.showInfo("Успішно", "Рейтинг оновлено для " + selected.size() + " книг.");
-                clearSelection();
-                if (onComplete != null) {
-                    onComplete.run();
-                }
-            } catch (Exception e) {
-                log.error("Помилка масового оновлення рейтингу", e);
-                dialogService.showError("Помилка", "Не вдалося оновити рейтинг: " + e.getMessage());
+        result.ifPresent(rate -> executor.submit(() -> {
+            updateRateBatchUseCase.execute(selected, rate);
+            return null;
+        }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+            if (error != null) {
+                log.error("Помилка масового оновлення рейтингу", error);
+                dialogService.showError("Помилка", "Не вдалося оновити рейтинг: " + UiExceptionMessages.root(error));
+                return;
             }
-        });
+            dialogService.showInfo("Успішно", "Рейтинг оновлено для " + selected.size() + " книг.");
+            clearSelection();
+            if (onComplete != null) onComplete.run();
+        })));
     }
 
     public void handleBatchProgress(Runnable onComplete) {
@@ -158,15 +159,19 @@ public class BatchOperationsController {
             return;
         }
 
-        try {
+        executor.submit(() -> {
             updateProgressBatchUseCase.execute(selected, progress);
+            return null;
+        }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+            if (error != null) {
+                log.error("Помилка масового оновлення прогресу", error);
+                dialogService.showError("Помилка", "Не вдалося оновити прогрес: " + UiExceptionMessages.root(error));
+                return;
+            }
             dialogService.showInfo("Успішно", "Прогрес " + progress + "% встановлено для " + selected.size() + " книг.");
             clearSelection();
             if (onComplete != null) onComplete.run();
-        } catch (Exception e) {
-            log.error("Помилка масового оновлення прогресу", e);
-            dialogService.showError("Помилка", "Не вдалося оновити прогрес: " + e.getMessage());
-        }
+        }));
     }
 
     public void handleBatchMarkRead(Runnable onComplete) {
@@ -177,17 +182,19 @@ public class BatchOperationsController {
         }
         if (dialogService.showConfirmation("Підтвердження", "Помітити вибрані книги як прочитані?",
                 "Прогрес буде встановлено на 100% для " + selected.size() + " книг.")) {
-            try {
+            executor.submit(() -> {
                 markAsReadBatchUseCase.execute(selected);
+                return null;
+            }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+                if (error != null) {
+                    log.error("Помилка масового позначення прочитаним", error);
+                    dialogService.showError("Помилка", "Не вдалося позначити: " + UiExceptionMessages.root(error));
+                    return;
+                }
                 dialogService.showInfo("Успішно", selected.size() + " книг позначено як прочитані.");
                 clearSelection();
-                if (onComplete != null) {
-                    onComplete.run();
-                }
-            } catch (Exception e) {
-                log.error("Помилка масового позначення прочитаним", e);
-                dialogService.showError("Помилка", "Не вдалося позначити: " + e.getMessage());
-            }
+                if (onComplete != null) onComplete.run();
+            }));
         }
     }
 
@@ -197,27 +204,34 @@ public class BatchOperationsController {
             dialogService.showWarning("Немає вибраних книг", "Будь ласка, виберіть книги за допомогою чекбоксів.");
             return;
         }
-        List<GroupDto> groups = loadGroupsUseCase.execute();
-        if (groups.isEmpty()) {
-            dialogService.showWarning("Немає груп", "Створіть групу перед додаванням книг.");
-            return;
-        }
-        Optional<GroupDto> group = dialogService.showChoiceDialog(
-                groups, groups.get(0), "Додати до групи",
-                "Виберіть групу для " + selected.size() + " книг", "Група:");
-        group.ifPresent(g -> {
-            try {
-                addToGroupBatchUseCase.execute(g.getId(), selected);
-                dialogService.showInfo("Успішно", selected.size() + " книг додано до групи \"" + g.getName() + "\".");
-                clearSelection();
-                if (onComplete != null) {
-                    onComplete.run();
-                }
-            } catch (Exception e) {
-                log.error("Помилка масового додавання до групи", e);
-                dialogService.showError("Помилка", "Не вдалося додати книги: " + e.getMessage());
-            }
-        });
+        executor.submit(loadGroupsUseCase::execute)
+                .whenComplete((groups, loadError) -> UiExecutor.runOnUiThread(() -> {
+                    if (loadError != null) {
+                        log.error("Помилка завантаження груп", loadError);
+                        dialogService.showError("Помилка", "Не вдалося завантажити групи: " + UiExceptionMessages.root(loadError));
+                        return;
+                    }
+                    if (groups == null || groups.isEmpty()) {
+                        dialogService.showWarning("Немає груп", "Створіть групу перед додаванням книг.");
+                        return;
+                    }
+                    Optional<GroupDto> group = dialogService.showChoiceDialog(
+                            groups, groups.get(0), "Додати до групи",
+                            "Виберіть групу для " + selected.size() + " книг", "Група:");
+                    group.ifPresent(g -> executor.submit(() -> {
+                        addToGroupBatchUseCase.execute(g.getId(), selected);
+                        return null;
+                    }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
+                        if (error != null) {
+                            log.error("Помилка масового додавання до групи", error);
+                            dialogService.showError("Помилка", "Не вдалося додати книги: " + UiExceptionMessages.root(error));
+                            return;
+                        }
+                        dialogService.showInfo("Успішно", selected.size() + " книг додано до групи «" + g.getName() + "».");
+                        clearSelection();
+                        if (onComplete != null) onComplete.run();
+                    })));
+                }));
     }
 
     public void handleClearSelection() {

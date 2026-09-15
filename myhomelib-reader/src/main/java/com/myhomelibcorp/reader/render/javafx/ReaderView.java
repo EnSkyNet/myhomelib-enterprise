@@ -2,6 +2,7 @@ package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.BookFormat;
 import com.myhomelibcorp.reader.api.BookSource;
+import com.myhomelibcorp.reader.api.ReaderAnnotationActivation;
 import com.myhomelibcorp.reader.api.ReaderAnnotationOverlay;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderSelection;
@@ -172,6 +173,14 @@ public class ReaderView extends BorderPane {
         onSearchClick = listener;
     }
 
+    public void setOnAnnotationsClick(Runnable listener) {
+        toolbar.setOnAnnotationsClick(listener);
+    }
+
+    public void setOnBookMapClick(Runnable listener) {
+        toolbar.setOnBookMapClick(listener);
+    }
+
     public void setOnBackClick(Runnable listener) {
         onBackClick = listener;
     }
@@ -207,6 +216,10 @@ public class ReaderView extends BorderPane {
 
     public void setOnSelectionChanged(Consumer<Optional<ReaderSelection>> listener) {
         canvas.setOnSelectionChanged(listener);
+    }
+
+    public void setOnAnnotationActivated(Consumer<ReaderAnnotationActivation> listener) {
+        canvas.setOnAnnotationActivated(listener);
     }
 
     public Optional<ReaderSelection> getSelection() {

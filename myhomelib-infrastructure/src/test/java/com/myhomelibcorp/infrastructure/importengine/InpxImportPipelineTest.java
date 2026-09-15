@@ -23,6 +23,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -90,6 +91,40 @@ class InpxImportPipelineTest {
                 catalogUpdateTrackingPort,
                 importIndexLifecycle
         );
+    }
+
+
+    @Test
+    void cancellationDuringCatalogAnalysisStopsBeforeBulkMutation(@TempDir Path tempDir) throws Exception {
+        Path testFile = tempDir.resolve("cancel.inpx");
+        java.nio.file.Files.createFile(testFile);
+        AtomicBoolean cancel = new AtomicBoolean(false);
+        when(reader.count(eq(testFile), same(cancel), eq(false))).thenAnswer(invocation -> {
+            cancel.set(true);
+            return 707_154L;
+        });
+
+        var result = pipeline.importFileWithResult(
+                testFile, 1_000, tempDir, cancel, null, null, null, null);
+
+        assertThat(result.status()).isEqualTo(
+                com.myhomelibcorp.application.imports.statistics.ImportStatus.CANCELLED);
+        assertThat(result.imported()).isZero();
+        verifyNoInteractions(batchWriter);
+        verify(bulkOptimizer, never()).enableBulkInsertMode();
+        verify(importIndexLifecycle, never()).suspendForFullSnapshot(anyBoolean());
+    }
+
+    @Test
+    void largeFullCatalogUsesBoundedFiveThousandRowFlushByDefault() {
+        assertThat(InpxImportPipeline.effectiveBatchSize(1_000, false, true, 707_154L, 5_000, 5_000))
+                .isEqualTo(5_000);
+        assertThat(InpxImportPipeline.effectiveBatchSize(1_000, false, false, 707_154L, 5_000, 5_000))
+                .isEqualTo(1_000);
+        assertThat(InpxImportPipeline.effectiveBatchSize(1_000, true, true, 707_154L, 5_000, 5_000))
+                .isEqualTo(5_000);
+        assertThat(InpxImportPipeline.effectiveBatchSize(9_000, false, true, 707_154L, 5_000, 5_000))
+                .isEqualTo(9_000);
     }
 
     @Test

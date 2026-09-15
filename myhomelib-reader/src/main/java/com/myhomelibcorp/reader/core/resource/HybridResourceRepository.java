@@ -246,12 +246,12 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
 
     private Path createTempFile() throws IOException {
         if (tempDirectory == null) {
+            // Lifecycle is owned by this repository. Avoid the JVM shutdown-deletion registry: the JDK keeps every
+            // registered path in a process-wide set until JVM shutdown, which grows without bound
+            // in long Reader sessions even after files are explicitly deleted.
             tempDirectory = Files.createTempDirectory("myhomelib-reader-");
-            tempDirectory.toFile().deleteOnExit();
         }
-        Path file = tempDirectory.resolve("resource-" + fileCounter.incrementAndGet() + ".bin");
-        file.toFile().deleteOnExit();
-        return file;
+        return tempDirectory.resolve("resource-" + fileCounter.incrementAndGet() + ".bin");
     }
 
     private void removeInternal(String id) {

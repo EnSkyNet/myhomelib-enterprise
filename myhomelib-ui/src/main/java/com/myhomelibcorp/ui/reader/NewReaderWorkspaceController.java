@@ -37,9 +37,14 @@ import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.reader.api.BookSource;
 import com.myhomelibcorp.reader.api.FileBookSource;
+import com.myhomelibcorp.reader.api.ReaderAnnotationActivation;
+import com.myhomelibcorp.reader.api.ReaderAnnotationOverlay;
+import com.myhomelibcorp.reader.api.ReaderAnnotationType;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.api.ReaderSelection;
+import com.myhomelibcorp.reader.api.TocEntry;
+import com.myhomelibcorp.reader.api.ChapterIndex;
 import com.myhomelibcorp.reader.audio.AudioDocumentSession;
 import com.myhomelibcorp.reader.audio.AudioPosition;
 import com.myhomelibcorp.reader.audio.AudioReaderView;
@@ -56,8 +61,10 @@ import com.myhomelibcorp.reader.render.pdf.PdfOutlineEntry;
 import com.myhomelibcorp.reader.render.pdf.PdfReaderView;
 import com.myhomelibcorp.reader.render.pdf.PdfSearchOutcome;
 import com.myhomelibcorp.reader.render.pdf.PdfSearchResult;
+import com.myhomelibcorp.reader.service.ReaderSearchService;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
+import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.ui.service.NavigationService;
@@ -70,22 +77,25 @@ import com.myhomelibcorp.shared.format.SupportedFormat;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import javafx.application.Platform;
 import javafx.fxml.FXML;
-import javafx.fxml.FXMLLoader;
-import javafx.scene.Parent;
-import javafx.scene.Scene;
 import javafx.scene.control.Alert;
 import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
+import javafx.scene.control.Button;
+import javafx.scene.control.ComboBox;
+import javafx.scene.control.Label;
+import javafx.scene.control.ListCell;
+import javafx.scene.control.ListView;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
 import javafx.scene.control.TextArea;
+import javafx.scene.control.Tab;
+import javafx.scene.control.TabPane;
 import javafx.scene.layout.StackPane;
-import javafx.stage.Modality;
-import javafx.stage.Stage;
+import javafx.scene.layout.VBox;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.config.ConfigurableBeanFactory;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.annotation.Scope;
 import org.springframework.stereotype.Component;
 
@@ -98,6 +108,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
@@ -127,10 +138,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private final NewReaderPersistenceService persistenceService;
     private final ReaderSettingsStateService readerSettingsStateService;
     private final AnnotationService annotationService;
+    private final ReaderAnnotationCoordinator annotationCoordinator;
+    private final WorkspaceManager workspaceManager;
     private final DictionaryLookupService dictionaryLookupService;
     private final TranslationService translationService;
     private final TtsPlaybackService ttsPlaybackService;
-    private final ApplicationContext springContext;
     private final UiBackgroundExecutor uiBackgroundExecutor;
     private final ApplicationState appState;
     private final MainLayoutService mainLayoutService;
@@ -138,6 +150,30 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     @FXML
     private StackPane readerContainer;
+    @FXML private VBox annotationSidebar;
+    @FXML private TabPane readerSidebarTabs;
+    @FXML private Tab tocSidebarTab;
+    @FXML private Tab searchSidebarTab;
+    @FXML private Tab bookmarkSidebarTab;
+    @FXML private Tab annotationSidebarTab;
+    @FXML private Tab bookMapSidebarTab;
+    @FXML private TextField tocSidebarSearch;
+    @FXML private ListView<TocEntry> tocSidebarList;
+    @FXML private TextField readerSidebarSearchField;
+    @FXML private Label readerSidebarSearchStatus;
+    @FXML private ListView<ReaderSearchService.SearchResult> readerSidebarSearchResults;
+    @FXML private ListView<Bookmark> bookmarkSidebarList;
+    @FXML private Button bookmarkSidebarGo;
+    @FXML private Button bookmarkSidebarDelete;
+    @FXML private TextField annotationSidebarSearch;
+    @FXML private ComboBox<AnnotationTypeChoice> annotationSidebarTypeFilter;
+    @FXML private ComboBox<AnnotationTagChoice> annotationSidebarTagFilter;
+    @FXML private ListView<AnnotationSidebarRow> annotationSidebarList;
+    @FXML private Label annotationSidebarCount;
+    @FXML private Button annotationSidebarUnavailable;
+    @FXML private Button annotationSidebarEdit;
+    @FXML private Button annotationSidebarDelete;
+    @FXML private ListView<BookMapRow> bookMapSidebarList;
 
     private ReaderView readerView;
     private PdfReaderView pdfReaderView;
@@ -167,6 +203,12 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private boolean positionChanged = false;
     private boolean currentBookOverride = false;
     private String annotationTargetId;
+    private ReaderAnnotationPresentation currentAnnotationPresentation =
+            new ReaderAnnotationPresentation(List.of(), List.of());
+    private List<TocEntry> currentSidebarToc = List.of();
+    private List<Bookmark> currentSidebarBookmarks = List.of();
+    private final AtomicLong readerSidebarSearchGeneration = new AtomicLong();
+    private volatile Future<?> readerSidebarSearchTask;
     private String contentTargetArtifactId;
     private Long contentTargetOffset;
 
@@ -175,7 +217,134 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         log.info("📖 NewReaderWorkspaceController ініціалізовано");
         positionAutosaver = new ReaderPositionAutosaver(persistenceService);
         audioPositionAutosaver = new AudioPositionAutosaver(persistenceService);
+        configureReaderSidebar();
         initializeReaderView();
+    }
+
+    private void configureReaderSidebar() {
+        // Configure every sidebar tool independently. A missing optional annotations control must
+        // never prevent TOC/search/bookmarks/Book Map from being initialized.
+        if (annotationSidebarList != null) {
+            annotationSidebarList.setCellFactory(view -> new ListCell<>() {
+            @Override
+            protected void updateItem(AnnotationSidebarRow row, boolean empty) {
+                super.updateItem(row, empty);
+                getStyleClass().remove("annotation-chapter-header");
+                if (empty || row == null) {
+                    setText(null);
+                    setTooltip(null);
+                    setDisable(false);
+                    return;
+                }
+                if (row.header()) {
+                    setText(row.chapterLabel());
+                    setTooltip(null);
+                    setWrapText(false);
+                    setAccessibleText(row.chapterLabel());
+                    setDisable(true);
+                    if (!getStyleClass().contains("annotation-chapter-header")) {
+                        getStyleClass().add("annotation-chapter-header");
+                    }
+                    return;
+                }
+                ReaderAnnotationOverlay item = row.annotation();
+                String icon = item.note() ? "📝" : "▰";
+                String warning = item.relocated() ? " ⚠" : "";
+                String body = item.displayText().replaceAll("\\s+", " ").trim();
+                if (body.length() > 150) body = body.substring(0, 147) + "…";
+                String tagText = item.tags().isEmpty() ? "" : "\n#" + String.join(" #", item.tags());
+                setText(icon + warning + " " + body + tagText);
+                setWrapText(true);
+                setAccessibleText((row.chapterLabel() + " " + body).trim());
+                setTooltip(new javafx.scene.control.Tooltip(item.quote()));
+                setDisable(false);
+            }
+            });
+            annotationSidebarList.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, row) -> {
+                ReaderAnnotationOverlay item = row == null ? null : row.annotation();
+                boolean selected = item != null;
+                if (annotationSidebarEdit != null) annotationSidebarEdit.setDisable(!selected);
+                if (annotationSidebarDelete != null) annotationSidebarDelete.setDisable(!selected);
+                if (selected) goToAnnotation(item);
+            });
+        }
+        if (annotationSidebarSearch != null) {
+            annotationSidebarSearch.textProperty().addListener((obs, oldValue, value) -> refreshAnnotationSidebarList());
+        }
+        if (annotationSidebarTypeFilter != null) {
+            annotationSidebarTypeFilter.getItems().setAll(
+                    new AnnotationTypeChoice(null, i18n.text("ui.reader.annotation.sidebar.all_types")),
+                    new AnnotationTypeChoice(ReaderAnnotationType.NOTE, i18n.text("ui.annotations.type.note")),
+                    new AnnotationTypeChoice(ReaderAnnotationType.HIGHLIGHT, i18n.text("ui.annotations.type.highlight")));
+            annotationSidebarTypeFilter.getSelectionModel().selectFirst();
+            annotationSidebarTypeFilter.valueProperty().addListener((obs, oldValue, value) -> refreshAnnotationSidebarList());
+        }
+        if (annotationSidebarTagFilter != null) {
+            annotationSidebarTagFilter.getItems().setAll(
+                    new AnnotationTagChoice(null, i18n.text("ui.reader.annotation.sidebar.all_tags")));
+            annotationSidebarTagFilter.getSelectionModel().selectFirst();
+            annotationSidebarTagFilter.valueProperty().addListener((obs, oldValue, value) -> refreshAnnotationSidebarList());
+        }
+        if (tocSidebarSearch != null) {
+            tocSidebarSearch.textProperty().addListener((obs, oldValue, value) -> refreshTocSidebarList());
+        }
+        if (tocSidebarList != null) {
+            tocSidebarList.setCellFactory(view -> new ListCell<>() {
+                @Override protected void updateItem(TocEntry item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) { setText(null); return; }
+                    setText("  ".repeat(Math.max(0, Math.min(8, item.level()))) + item.title());
+                }
+            });
+            tocSidebarList.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2) goToSidebarTocEntry();
+            });
+        }
+        if (readerSidebarSearchResults != null) {
+            readerSidebarSearchResults.setCellFactory(view -> new ListCell<>() {
+                @Override protected void updateItem(ReaderSearchService.SearchResult item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) { setText(null); setTooltip(null); return; }
+                    String context = item.context() == null ? "" : item.context().replaceAll("\\s+", " ").trim();
+                    setText(context.length() <= 160 ? context : context.substring(0, 157) + "…");
+                    setWrapText(true);
+                    setTooltip(new javafx.scene.control.Tooltip(context));
+                }
+            });
+            readerSidebarSearchResults.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2) goToSidebarSearchResult();
+            });
+        }
+        if (bookmarkSidebarList != null) {
+            bookmarkSidebarList.setCellFactory(view -> new ListCell<>() {
+                @Override protected void updateItem(Bookmark item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) { setText(null); return; }
+                    setText(new BookmarkChoice(item, i18n.text("ui.reader.bookmark.default_title")).toString());
+                }
+            });
+            bookmarkSidebarList.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, item) -> {
+                boolean selected = item != null;
+                if (bookmarkSidebarGo != null) bookmarkSidebarGo.setDisable(!selected);
+                if (bookmarkSidebarDelete != null) bookmarkSidebarDelete.setDisable(!selected);
+            });
+            bookmarkSidebarList.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2) goToSidebarBookmark();
+            });
+        }
+        if (bookMapSidebarList != null) {
+            bookMapSidebarList.setCellFactory(view -> new ListCell<>() {
+                @Override protected void updateItem(BookMapRow item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) { setText(null); return; }
+                    setText(item.label());
+                    setWrapText(true);
+                }
+            });
+            bookMapSidebarList.setOnMouseClicked(event -> {
+                if (event.getClickCount() == 2) goToBookMapRow();
+            });
+        }
     }
 
     private void initializeReaderView() {
@@ -188,8 +357,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         readerView.setOnBookmarksClick(this::showBookmarks);
         readerView.setOnTocClick(this::showToc);
         readerView.setOnSearchClick(this::showSearch);
+        readerView.setOnAnnotationsClick(this::toggleAnnotationSidebar);
+        readerView.setOnBookMapClick(this::showBookMap);
         readerView.setOnHighlightRequested(this::createHighlightFromSelection);
         readerView.setOnNoteRequested(this::createNoteFromSelection);
+        readerView.setOnAnnotationActivated(this::showAnnotationPopover);
         readerView.setOnDictionaryRequested(this::lookupDictionaryFromSelection);
         readerView.setOnTranslationRequested(this::translateSelection);
         readerView.setOnTtsStartClick(this::startTts);
@@ -201,6 +373,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         readerView.getCanvas().setOnPositionChanged(pos -> {
             positionChanged = true;
             if (positionAutosaver != null) positionAutosaver.mark(pos);
+            if (annotationSidebar != null && annotationSidebar.isVisible() && readerSidebarTabs != null
+                    && readerSidebarTabs.getSelectionModel().getSelectedItem() == bookMapSidebarTab) {
+                refreshBookMapSidebar();
+            }
         });
 
         pdfReaderView = new PdfReaderView(i18n::text);
@@ -520,6 +696,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void closeCurrentBookForReplacement() {
+        annotationCoordinator.hidePopover();
         cancelTextProviderRequests();
         stopTts();
         if (currentBookId == null && (readerView == null || !readerView.isBookOpen())
@@ -537,6 +714,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         currentBookId = null;
         currentBookCollectionId = null;
         currentReaderArtifactId = null;
+        refreshAnnotationSidebar(new ReaderAnnotationPresentation(List.of(), List.of()));
         currentPdf = false;
         currentComic = false;
         currentAudio = false;
@@ -1276,62 +1454,287 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         @Override public String toString() { return label; }
     }
 
+    private record AnnotationIssueChoice(ReaderAnnotationUnavailable issue, String label) {
+        @Override public String toString() { return label; }
+    }
+
+    private record AnnotationSidebarRow(String chapterLabel, ReaderAnnotationOverlay annotation, boolean header) {
+        private static AnnotationSidebarRow header(String chapterLabel) {
+            return new AnnotationSidebarRow(chapterLabel, null, true);
+        }
+
+        private static AnnotationSidebarRow annotation(String chapterLabel, ReaderAnnotationOverlay annotation) {
+            return new AnnotationSidebarRow(chapterLabel, annotation, false);
+        }
+    }
+
+    private record AnnotationTypeChoice(ReaderAnnotationType type, String label) {
+        @Override public String toString() { return label; }
+    }
+
+    private record AnnotationTagChoice(String tag, String label) {
+        @Override public String toString() { return label; }
+    }
+
+    private void toggleAnnotationSidebar() {
+        boolean sameTabVisible = annotationSidebar != null && annotationSidebar.isVisible()
+                && readerSidebarTabs != null && readerSidebarTabs.getSelectionModel().getSelectedItem() == annotationSidebarTab;
+        if (sameTabVisible) {
+            closeAnnotationSidebar();
+            return;
+        }
+        showReaderSidebar(annotationSidebarTab);
+        refreshAnnotationSidebarList();
+        if (annotationSidebarSearch != null) annotationSidebarSearch.requestFocus();
+    }
+
+    private void showReaderSidebar(Tab tab) {
+        if (annotationSidebar == null) return;
+        annotationSidebar.setVisible(true);
+        annotationSidebar.setManaged(true);
+        if (readerSidebarTabs != null && tab != null) readerSidebarTabs.getSelectionModel().select(tab);
+    }
+
+    @FXML
+    public void closeAnnotationSidebar() {
+        if (annotationSidebar != null) {
+            annotationSidebar.setVisible(false);
+            annotationSidebar.setManaged(false);
+        }
+    }
+
+    @FXML
+    public void editSidebarAnnotation() {
+        AnnotationSidebarRow row = annotationSidebarList == null ? null
+                : annotationSidebarList.getSelectionModel().getSelectedItem();
+        if (row != null && row.annotation() != null) editAnnotation(row.annotation());
+    }
+
+    @FXML
+    public void deleteSidebarAnnotation() {
+        AnnotationSidebarRow row = annotationSidebarList == null ? null
+                : annotationSidebarList.getSelectionModel().getSelectedItem();
+        if (row != null && row.annotation() != null) deleteAnnotation(row.annotation());
+    }
+
+    @FXML
+    public void openAnnotationManager() {
+        workspaceManager.showAnnotationManagerWorkspace();
+    }
+
+    @FXML
+    public void reviewAnnotationIssues() {
+        List<ReaderAnnotationUnavailable> issues = currentAnnotationPresentation.unavailable();
+        if (issues.isEmpty()) return;
+        List<AnnotationIssueChoice> choices = issues.stream()
+                .map(issue -> new AnnotationIssueChoice(issue, annotationIssueLabel(issue)))
+                .toList();
+        ChoiceDialog<AnnotationIssueChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        dialog.setTitle(i18n.text("ui.reader.annotation.issues.title"));
+        dialog.setHeaderText(i18n.format("ui.reader.annotation.issues.header", choices.size()));
+        dialog.setContentText(i18n.text("ui.reader.annotation.issues.select"));
+        AnnotationIssueChoice selected = dialog.showAndWait().orElse(null);
+        if (selected == null) return;
+        ReaderAnnotationUnavailable issue = selected.issue();
+        if (!issue.canOfferSafeRebind()) {
+            String key = issue.reason() == ReaderAnnotationUnavailableReason.ARTIFACT_MISMATCH
+                    ? "ui.reader.annotation.issues.ambiguous" : "ui.reader.annotation.issues.unresolved";
+            dialogService.showInfo(i18n.text("ui.reader.annotation.issues.title"), i18n.text(key));
+            return;
+        }
+        rebindUnavailableAnnotation(issue);
+    }
+
+    private String annotationIssueLabel(ReaderAnnotationUnavailable issue) {
+        String kind = issue.reason() == ReaderAnnotationUnavailableReason.ARTIFACT_MISMATCH
+                ? i18n.text("ui.reader.annotation.issues.artifact_mismatch")
+                : i18n.text("ui.reader.annotation.issues.unresolved_short");
+        String text = issue.source() == null ? issue.id()
+                : (issue.source().noteText().isBlank() ? issue.source().anchor().quote() : issue.source().noteText());
+        text = text == null ? "" : text.replaceAll("\\s+", " ").trim();
+        if (text.length() > 90) text = text.substring(0, 87) + "…";
+        String safe = issue.canOfferSafeRebind() ? " ✓" : "";
+        return kind + safe + " — " + text;
+    }
+
+    private void rebindUnavailableAnnotation(ReaderAnnotationUnavailable issue) {
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.rebind(context, issue);
+    }
+
+    private void goToAnnotation(ReaderAnnotationOverlay item) {
+        if (item == null || readerView == null || !readerView.isBookOpen()) return;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        if (document == null) return;
+        long offset = Math.max(0L, Math.min(item.startOffset(), Math.max(0L, document.totalTextLength() - 1L)));
+        ReaderPosition position = new ReaderPosition(Math.max(0, document.chapterIndexAt(offset)), offset, 0, 0);
+        readerView.goToPosition(position);
+        positionChanged = true;
+        if (positionAutosaver != null) positionAutosaver.mark(position);
+    }
+
+    private void refreshAnnotationSidebar(ReaderAnnotationPresentation presentation) {
+        currentAnnotationPresentation = presentation == null
+                ? new ReaderAnnotationPresentation(List.of(), List.of()) : presentation;
+        refreshAnnotationTagFilter();
+        refreshAnnotationSidebarList();
+        refreshBookMapSidebar();
+    }
+
+    private void refreshAnnotationTagFilter() {
+        if (annotationSidebarTagFilter == null) return;
+        String selected = annotationSidebarTagFilter.getValue() == null
+                ? null : annotationSidebarTagFilter.getValue().tag();
+        LinkedHashSet<String> tags = new LinkedHashSet<>();
+        currentAnnotationPresentation.overlays().stream()
+                .flatMap(item -> item.tags().stream())
+                .filter(tag -> tag != null && !tag.isBlank())
+                .sorted(String.CASE_INSENSITIVE_ORDER)
+                .forEach(tags::add);
+        List<AnnotationTagChoice> choices = new ArrayList<>();
+        choices.add(new AnnotationTagChoice(null, i18n.text("ui.reader.annotation.sidebar.all_tags")));
+        tags.forEach(tag -> choices.add(new AnnotationTagChoice(tag, "#" + tag)));
+        annotationSidebarTagFilter.getItems().setAll(choices);
+        choices.stream().filter(choice -> Objects.equals(choice.tag(), selected)).findFirst()
+                .ifPresentOrElse(annotationSidebarTagFilter::setValue,
+                        () -> annotationSidebarTagFilter.getSelectionModel().selectFirst());
+    }
+
+    private void refreshAnnotationSidebarList() {
+        if (annotationSidebarList == null) return;
+        String query = annotationSidebarSearch == null || annotationSidebarSearch.getText() == null
+                ? "" : annotationSidebarSearch.getText().trim().toLowerCase(Locale.ROOT);
+        ReaderAnnotationType type = annotationSidebarTypeFilter == null || annotationSidebarTypeFilter.getValue() == null
+                ? null : annotationSidebarTypeFilter.getValue().type();
+        String tag = annotationSidebarTagFilter == null || annotationSidebarTagFilter.getValue() == null
+                ? null : annotationSidebarTagFilter.getValue().tag();
+        List<ReaderAnnotationOverlay> items = currentAnnotationPresentation.overlays().stream()
+                .filter(item -> type == null || item.type() == type)
+                .filter(item -> tag == null || item.tags().contains(tag))
+                .filter(item -> query.isEmpty() || annotationMatches(item, query))
+                .sorted(java.util.Comparator.comparingLong(ReaderAnnotationOverlay::startOffset)
+                        .thenComparing(ReaderAnnotationOverlay::updatedAt))
+                .toList();
+        AnnotationSidebarRow selectedRow = annotationSidebarList.getSelectionModel().getSelectedItem();
+        String selectedId = selectedRow == null || selectedRow.annotation() == null ? null : selectedRow.annotation().id();
+        List<AnnotationSidebarRow> rows = buildAnnotationSidebarRows(items);
+        annotationSidebarList.setItems(javafx.collections.FXCollections.observableArrayList(rows));
+        if (selectedId != null) {
+            rows.stream().filter(row -> row.annotation() != null && selectedId.equals(row.annotation().id())).findFirst()
+                    .ifPresent(annotationSidebarList.getSelectionModel()::select);
+        }
+        if (annotationSidebarCount != null) {
+            annotationSidebarCount.setText(i18n.format("ui.reader.annotation.sidebar.count", items.size(),
+                    currentAnnotationPresentation.overlays().size()));
+        }
+        if (annotationSidebarUnavailable != null) {
+            int unavailable = currentAnnotationPresentation.unavailable().size();
+            annotationSidebarUnavailable.setText(unavailable == 0 ? ""
+                    : i18n.format("ui.reader.annotation.sidebar.unavailable", unavailable));
+            annotationSidebarUnavailable.setVisible(unavailable > 0);
+            annotationSidebarUnavailable.setManaged(unavailable > 0);
+        }
+    }
+
+    private List<AnnotationSidebarRow> buildAnnotationSidebarRows(List<ReaderAnnotationOverlay> items) {
+        if (items == null || items.isEmpty()) return List.of();
+        ReaderDocument document = readerView == null || !readerView.isBookOpen()
+                ? null : readerView.getEngine().getCurrentDocument();
+        List<AnnotationSidebarRow> rows = new ArrayList<>();
+        Integer previousChapter = null;
+        for (ReaderAnnotationOverlay item : items) {
+            int chapterIndex = document == null ? -1 : Math.max(0, document.chapterIndexAt(item.startOffset()));
+            if (!Objects.equals(previousChapter, chapterIndex)) {
+                rows.add(AnnotationSidebarRow.header(annotationSidebarChapterLabel(document, chapterIndex, item)));
+                previousChapter = chapterIndex;
+            }
+            rows.add(AnnotationSidebarRow.annotation(annotationSidebarChapterLabel(document, chapterIndex, item), item));
+        }
+        return List.copyOf(rows);
+    }
+
+    private String annotationSidebarChapterLabel(ReaderDocument document, int chapterIndex, ReaderAnnotationOverlay item) {
+        if (document != null && chapterIndex >= 0 && chapterIndex < document.chapters().size()) {
+            String title = document.chapters().get(chapterIndex).title();
+            if (title != null && !title.isBlank()) return title;
+        }
+        if (item != null && item.chapterTitle() != null && !item.chapterTitle().isBlank()) return item.chapterTitle();
+        return i18n.text("ui.annotations.digest_no_chapter");
+    }
+
+    private static boolean annotationMatches(ReaderAnnotationOverlay item, String query) {
+        if (item == null || query == null || query.isBlank()) return true;
+        if (item.noteText().toLowerCase(Locale.ROOT).contains(query)) return true;
+        if (item.quote().toLowerCase(Locale.ROOT).contains(query)) return true;
+        if (item.chapterTitle().toLowerCase(Locale.ROOT).contains(query)) return true;
+        return item.tags().stream().anyMatch(tag -> tag.toLowerCase(Locale.ROOT).contains(query));
+    }
+
     private void createHighlightFromSelection(ReaderSelection selection) {
         if (!annotationActionAvailable(selection)) return;
-        String bookId = currentBookId.asString();
-        var anchor = ReaderAnnotationPresenter.anchor(bookId, currentReaderArtifactId, selection);
-        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
-        uiBackgroundExecutor.submit(() -> annotationService.createHighlight(anchor, AnnotationService.DEFAULT_COLOR, Set.of()))
-                .thenAccept(saved -> Platform.runLater(() -> {
-                    if (!sameOpenBook(requestToken, bookId)) return;
-                    readerView.clearTextSelection();
-                    appState.getStatusBar().setStatusText(i18n.text("ui.reader.annotation.highlight_saved"));
-                    refreshAnnotationsAsync();
-                }))
-                .exceptionally(error -> {
-                    handleAnnotationSaveFailure(requestToken, bookId, error);
-                    return null;
-                });
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.createHighlight(context, selection);
     }
 
     private void createNoteFromSelection(ReaderSelection selection) {
         if (!annotationActionAvailable(selection)) return;
-        TextInputDialog dialog = new TextInputDialog("");
-        dialog.setTitle(i18n.text("ui.reader.annotation.note.title"));
-        dialog.setHeaderText(i18n.text("ui.reader.annotation.note.header"));
-        dialog.setContentText(i18n.text("ui.reader.annotation.note.label"));
-        Optional<String> response = dialog.showAndWait();
-        if (response.isEmpty() || response.get() == null || response.get().isBlank()) return;
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.createNote(context, selection);
+    }
 
-        String note = response.get().trim();
+    private void showAnnotationPopover(ReaderAnnotationActivation activation) {
+        if (activation == null || activation.annotation() == null || isDisposed) return;
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.showPopover(context, activation);
+    }
+
+    private void editAnnotation(ReaderAnnotationOverlay annotation) {
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.edit(context, annotation);
+    }
+
+    private void deleteAnnotation(ReaderAnnotationOverlay annotation) {
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.delete(context, annotation);
+    }
+
+    private void reanchorAnnotation(ReaderAnnotationOverlay annotation) {
+        ReaderAnnotationCoordinator.Context context = annotationContext();
+        if (context != null) annotationCoordinator.reanchor(context, annotation);
+    }
+
+    private Set<String> knownAnnotationTags() {
+        LinkedHashSet<String> tags = new LinkedHashSet<>();
+        for (ReaderAnnotationOverlay item : currentAnnotationPresentation.overlays()) tags.addAll(item.tags());
+        return Set.copyOf(tags);
+    }
+
+    private ReaderAnnotationCoordinator.Context annotationContext() {
+        if (isDisposed || currentBookId == null || readerView == null || !readerView.isBookOpen()) return null;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        if (document == null || document.text() == null) return null;
         String bookId = currentBookId.asString();
-        var anchor = ReaderAnnotationPresenter.anchor(bookId, currentReaderArtifactId, selection);
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
-        uiBackgroundExecutor.submit(() -> annotationService.createNote(anchor, AnnotationService.DEFAULT_COLOR, note, Set.of()))
-                .thenAccept(saved -> Platform.runLater(() -> {
-                    if (!sameOpenBook(requestToken, bookId)) return;
-                    readerView.clearTextSelection();
-                    appState.getStatusBar().setStatusText(i18n.text("ui.reader.annotation.note_saved"));
-                    refreshAnnotationsAsync();
-                }))
-                .exceptionally(error -> {
-                    handleAnnotationSaveFailure(requestToken, bookId, error);
-                    return null;
-                });
+        javafx.stage.Window owner = readerContainer != null && readerContainer.getScene() != null
+                ? readerContainer.getScene().getWindow() : null;
+        return new ReaderAnnotationCoordinator.Context(
+                owner,
+                bookId,
+                currentReaderArtifactId,
+                document,
+                knownAnnotationTags(),
+                () -> sameOpenBook(requestToken, bookId),
+                () -> {
+                    if (readerView != null) readerView.clearTextSelection();
+                },
+                this::refreshAnnotationsAsync,
+                text -> appState.getStatusBar().setStatusText(text),
+                workspaceManager::showAnnotationManagerWorkspace,
+                () -> { if (readerView != null) readerView.requestFocus(); });
     }
 
     private boolean annotationActionAvailable(ReaderSelection selection) {
         return selectionActionAvailable(selection);
-    }
-
-    private void handleAnnotationSaveFailure(UiAsyncRequestToken requestToken, String bookId, Throwable error) {
-        log.error("Не вдалося зберегти annotation для книги {}", bookId, error);
-        Platform.runLater(() -> {
-            if (sameOpenBook(requestToken, bookId)) {
-                dialogService.showError(i18n.text("common.error"),
-                        i18n.format("ui.reader.annotation.save_failed", rootMessage(error)));
-            }
-        });
     }
 
     private void jumpToContentSearchTarget() {
@@ -1356,12 +1759,13 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         String bookId = currentBookId.asString();
         String artifactId = currentReaderArtifactId;
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
-        uiBackgroundExecutor.submit(() -> ReaderAnnotationPresenter.overlays(
+        uiBackgroundExecutor.submit(() -> ReaderAnnotationPresenter.presentation(
                         annotationService.listBookAnnotationViews(bookId), artifactId, document))
-                .thenAccept(overlays -> Platform.runLater(() -> {
+                .thenAccept(presentation -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
-                    readerView.setAnnotationOverlays(overlays);
-                    jumpToAnnotationTarget(document, overlays);
+                    readerView.setAnnotationOverlays(presentation.overlays());
+                    refreshAnnotationSidebar(presentation);
+                    jumpToAnnotationTarget(document, presentation);
                 }))
                 .exceptionally(error -> {
                     log.warn("Не вдалося завантажити annotations для книги {}: {}", bookId, rootMessage(error));
@@ -1369,13 +1773,17 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 });
     }
 
-    private void jumpToAnnotationTarget(ReaderDocument document, List<com.myhomelibcorp.reader.api.ReaderAnnotationOverlay> overlays) {
+    private void jumpToAnnotationTarget(ReaderDocument document, ReaderAnnotationPresentation presentation) {
         String target = annotationTargetId;
-        if (target == null || document == null || overlays == null || readerView == null) return;
-        var match = overlays.stream().filter(item -> target.equals(item.id())).findFirst().orElse(null);
+        if (target == null || document == null || presentation == null || readerView == null) return;
+        var match = presentation.overlays().stream().filter(item -> target.equals(item.id())).findFirst().orElse(null);
         annotationTargetId = null;
         if (match == null) {
-            appState.getStatusBar().setStatusText(i18n.text("ui.annotations.jump_unavailable"));
+            ReaderAnnotationUnavailable unavailable = presentation.unavailable(target);
+            String key = unavailable != null && unavailable.reason() == ReaderAnnotationUnavailableReason.ARTIFACT_MISMATCH
+                    ? "ui.reader.annotation.artifact_mismatch"
+                    : "ui.reader.annotation.unresolved";
+            appState.getStatusBar().setStatusText(i18n.text(key));
             return;
         }
         long offset = match.startOffset();
@@ -1445,6 +1853,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         saveFuture.thenAccept(bookmark -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
                     dialogService.showInfo(i18n.text("common.success"), i18n.format("ui.reader.bookmark.add.success", title));
+                    if (!currentPdf && !currentComic && !currentAudio) refreshTextBookmarks(bookId);
                     log.info("⭐ Закладку додано: {}", title);
                 }))
                 .exceptionally(error -> {
@@ -1466,6 +1875,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         boolean textOpen = !currentPdf && !currentComic && !currentAudio && readerView != null && readerView.isBookOpen();
         if (!pdfOpen && !comicOpen && !audioOpen && !textOpen) return;
         String bookId = currentBookId.asString();
+        if (textOpen) {
+            showTextBookmarksSidebar(bookId);
+            return;
+        }
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
         appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
         uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
@@ -1481,6 +1894,85 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                     });
                     return null;
                 });
+    }
+
+    private void showTextBookmarksSidebar(String bookId) {
+        loadTextBookmarks(bookId, true, true);
+    }
+
+    /** Refreshes text-reader bookmarks without forcing a sidebar tab switch when another tool is active. */
+    private void refreshTextBookmarks(String bookId) {
+        loadTextBookmarks(bookId, false, false);
+    }
+
+    private void loadTextBookmarks(String bookId, boolean selectBookmarksTab, boolean reportStatus) {
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
+        if (selectBookmarksTab) showReaderSidebar(bookmarkSidebarTab);
+        if (reportStatus) appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
+        uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
+                .thenAccept(bookmarks -> Platform.runLater(() -> {
+                    if (!sameOpenBook(requestToken, bookId)) return;
+                    currentSidebarBookmarks = bookmarks == null ? List.of() : List.copyOf(bookmarks);
+                    if (bookmarkSidebarList != null) {
+                        bookmarkSidebarList.setItems(javafx.collections.FXCollections.observableArrayList(currentSidebarBookmarks));
+                    }
+                    if (reportStatus) {
+                        appState.getStatusBar().setStatusText(currentSidebarBookmarks.isEmpty()
+                                ? i18n.text("ui.reader.bookmarks.empty")
+                                : i18n.format("ui.reader.bookmarks.loaded_count", currentSidebarBookmarks.size()));
+                    }
+                    refreshBookMapSidebar();
+                }))
+                .exceptionally(error -> {
+                    log.error("Не вдалося завантажити закладки", error);
+                    Platform.runLater(() -> {
+                        if (sameOpenBook(requestToken, bookId) && reportStatus) {
+                            dialogService.showError(i18n.text("ui.reader.bookmarks.title"),
+                                    i18n.format("ui.reader.bookmarks.load_error", rootMessage(error)));
+                        }
+                    });
+                    return null;
+                });
+    }
+
+    @FXML
+    public void goToSidebarBookmark() {
+        Bookmark bookmark = bookmarkSidebarList == null ? null : bookmarkSidebarList.getSelectionModel().getSelectedItem();
+        if (bookmark == null || readerView == null || !readerView.isBookOpen()) return;
+        ReaderPosition target = persistenceService.bookmarkToPosition(bookmark, currentDocumentLength());
+        readerView.goToPosition(target);
+        positionChanged = true;
+        if (positionAutosaver != null) positionAutosaver.mark(target);
+    }
+
+    @FXML
+    public void deleteSidebarBookmark() {
+        Bookmark bookmark = bookmarkSidebarList == null ? null : bookmarkSidebarList.getSelectionModel().getSelectedItem();
+        if (bookmark == null || currentBookId == null) return;
+        if (!dialogService.showConfirmation(i18n.text("ui.reader.bookmark.title"),
+                i18n.text("ui.reader.bookmark.action_prompt"),
+                new BookmarkChoice(bookmark, i18n.text("ui.reader.bookmark.default_title")).toString())) return;
+        String bookId = currentBookId.asString();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
+        uiBackgroundExecutor.submit(() -> {
+            persistenceService.deleteBookmark(bookmark.getId());
+            return persistenceService.loadBookmarks(bookId);
+        }).thenAccept(bookmarks -> Platform.runLater(() -> {
+            if (!sameOpenBook(requestToken, bookId)) return;
+            currentSidebarBookmarks = bookmarks == null ? List.of() : List.copyOf(bookmarks);
+            bookmarkSidebarList.setItems(javafx.collections.FXCollections.observableArrayList(currentSidebarBookmarks));
+            refreshBookMapSidebar();
+            appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmark.deleted"));
+        })).exceptionally(error -> {
+            log.error("Не вдалося видалити закладку", error);
+            Platform.runLater(() -> {
+                if (sameOpenBook(requestToken, bookId)) {
+                    dialogService.showError(i18n.text("ui.reader.bookmarks.title"),
+                            i18n.format("ui.reader.bookmark.delete_error", rootMessage(error)));
+                }
+            });
+            return null;
+        });
     }
 
     private void showBookmarksDialog(List<Bookmark> bookmarks, UiAsyncRequestToken requestToken, String bookId) {
@@ -1556,48 +2048,57 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private void showToc() {
         if (currentComic) return;
         if (currentAudio) { showAudioToc(); return; }
-        if (currentPdf) {
-            showPdfToc();
+        if (currentPdf) { showPdfToc(); return; }
+        if (isDisposed || readerView == null || !readerView.isBookOpen()) return;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        if (document == null || document.toc() == null || document.toc().isEmpty()) {
+            dialogService.showInfo(i18n.text("ui.reader.toc.title"), i18n.text("ui.reader.toc.empty"));
             return;
         }
-        if (isDisposed || readerView == null || !readerView.isBookOpen()) {
-            return;
+        currentSidebarToc = flattenToc(document.toc().entries());
+        refreshTocSidebarList();
+        showReaderSidebar(tocSidebarTab);
+        if (tocSidebarSearch != null) tocSidebarSearch.requestFocus();
+    }
+
+    private List<TocEntry> flattenToc(List<TocEntry> roots) {
+        List<TocEntry> result = new ArrayList<>();
+        appendToc(roots, result, 0);
+        return List.copyOf(result);
+    }
+
+    private void appendToc(List<TocEntry> entries, List<TocEntry> target, int inheritedLevel) {
+        if (entries == null) return;
+        for (TocEntry entry : entries) {
+            if (entry == null) continue;
+            int level = Math.max(inheritedLevel, entry.level());
+            target.add(new TocEntry(entry.title(), entry.textOffset(), level, List.of()));
+            appendToc(entry.children(), target, level + 1);
         }
+    }
 
-        try {
-            var document = readerView.getEngine().getCurrentDocument();
-            if (document == null || document.toc() == null || document.toc().isEmpty()) {
-                dialogService.showInfo(i18n.text("ui.reader.toc.title"), i18n.text("ui.reader.toc.empty"));
-                return;
-            }
+    private void refreshTocSidebarList() {
+        if (tocSidebarList == null) return;
+        String query = tocSidebarSearch == null || tocSidebarSearch.getText() == null
+                ? "" : tocSidebarSearch.getText().trim().toLowerCase(Locale.ROOT);
+        List<TocEntry> filtered = currentSidebarToc.stream()
+                .filter(entry -> query.isEmpty() || (entry.title() != null
+                        && entry.title().toLowerCase(Locale.ROOT).contains(query)))
+                .toList();
+        tocSidebarList.setItems(javafx.collections.FXCollections.observableArrayList(filtered));
+    }
 
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/toc-dialog.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Parent root = loader.load();
-
-            TOCDialogController controller = loader.getController();
-            controller.setEntries(document.toc().entries(), entry -> {
-                ReaderPosition pos = new ReaderPosition(
-                        Math.max(0, document.chapterIndexAt(entry.textOffset())),
-                        entry.textOffset(),
-                        0,
-                        0
-                );
-                readerView.goToPosition(pos);
-                positionChanged = true;
-            });
-
-            Stage stage = new Stage();
-            stage.setTitle(i18n.text("ui.reader.toc.title"));
-            stage.setScene(new Scene(root, 400, 500));
-            stage.initModality(Modality.WINDOW_MODAL);
-            stage.initOwner(readerContainer.getScene().getWindow());
-            stage.show();
-
-        } catch (Exception e) {
-            log.error("Помилка відкриття змісту", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.toc.open_error", e.getMessage()));
-        }
+    @FXML
+    public void goToSidebarTocEntry() {
+        TocEntry entry = tocSidebarList == null ? null : tocSidebarList.getSelectionModel().getSelectedItem();
+        if (entry == null || readerView == null || !readerView.isBookOpen()) return;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        if (document == null) return;
+        ReaderPosition pos = new ReaderPosition(Math.max(0, document.chapterIndexAt(entry.textOffset())),
+                entry.textOffset(), 0, 0);
+        readerView.goToPosition(pos);
+        positionChanged = true;
+        if (positionAutosaver != null) positionAutosaver.mark(pos);
     }
 
     private void showAudioToc() {
@@ -1711,41 +2212,134 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void showSearch() {
         if (currentComic || currentAudio) return;
-        if (currentPdf) {
-            showPdfSearch();
-            return;
-        }
-        if (isDisposed || readerView == null || !readerView.isBookOpen()) {
-            return;
-        }
+        if (currentPdf) { showPdfSearch(); return; }
+        if (isDisposed || readerView == null || !readerView.isBookOpen()) return;
+        showReaderSidebar(searchSidebarTab);
+        if (readerSidebarSearchField != null) readerSidebarSearchField.requestFocus();
+    }
 
+    @FXML
+    public void performSidebarSearch() {
+        if (isDisposed || readerView == null || !readerView.isBookOpen()) return;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        String query = readerSidebarSearchField == null ? "" : readerSidebarSearchField.getText();
+        if (document == null || query == null || query.isBlank()) {
+            if (readerSidebarSearchStatus != null) readerSidebarSearchStatus.setText(i18n.text("ui.reader.search.enter_text"));
+            if (readerSidebarSearchResults != null) readerSidebarSearchResults.getItems().clear();
+            return;
+        }
+        cancelReaderSidebarSearch();
+        long generation = readerSidebarSearchGeneration.incrementAndGet();
+        String bookId = currentBookId == null ? "" : currentBookId.asString();
+        UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
+        if (readerSidebarSearchStatus != null) readerSidebarSearchStatus.setText(i18n.text("ui.reader.search.searching"));
         try {
-            var document = readerView.getEngine().getCurrentDocument();
-            if (document == null) {
-                return;
-            }
-
-            FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-dialog.fxml"));
-            loader.setControllerFactory(springContext::getBean);
-            Parent root = loader.load();
-
-            SearchDialogController controller = loader.getController();
-            controller.setDocument(document, pos -> {
-                readerView.goToPosition(pos);
-                positionChanged = true;
+            readerSidebarSearchTask = uiBackgroundExecutor.submitCancellable(() -> {
+                try {
+                    List<ReaderSearchService.SearchResult> results = new ReaderSearchService().search(document, query.strip());
+                    Platform.runLater(() -> applySidebarSearchResults(generation, requestToken, bookId, results, null));
+                } catch (Throwable error) {
+                    Platform.runLater(() -> applySidebarSearchResults(generation, requestToken, bookId, List.of(), error));
+                }
+                return null;
             });
-
-            Stage stage = new Stage();
-            stage.setTitle(i18n.text("ui.reader.search.title"));
-            stage.setScene(new Scene(root, 500, 450));
-            stage.initModality(Modality.WINDOW_MODAL);
-            stage.initOwner(readerContainer.getScene().getWindow());
-            stage.show();
-
-        } catch (Exception e) {
-            log.error("Помилка відкриття пошуку", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.search.open_error", e.getMessage()));
+        } catch (RejectedExecutionException busy) {
+            if (readerSidebarSearchStatus != null) readerSidebarSearchStatus.setText(i18n.text("ui.reader.search.queue_busy"));
         }
+    }
+
+    private void applySidebarSearchResults(long generation, UiAsyncRequestToken requestToken, String bookId,
+                                           List<ReaderSearchService.SearchResult> results, Throwable error) {
+        if (generation != readerSidebarSearchGeneration.get() || !sameOpenBook(requestToken, bookId)) return;
+        if (error != null) {
+            if (error instanceof CancellationException) return;
+            if (readerSidebarSearchStatus != null) readerSidebarSearchStatus.setText(
+                    error.getMessage() == null ? i18n.text("ui.reader.search.error") : error.getMessage());
+            if (readerSidebarSearchResults != null) readerSidebarSearchResults.getItems().clear();
+            return;
+        }
+        if (readerSidebarSearchResults != null) {
+            readerSidebarSearchResults.setItems(javafx.collections.FXCollections.observableArrayList(results));
+        }
+        if (readerSidebarSearchStatus != null) readerSidebarSearchStatus.setText(results.isEmpty()
+                ? i18n.text("ui.reader.search.nothing_found")
+                : i18n.format("ui.reader.search.matches_found", results.size()));
+    }
+
+    @FXML
+    public void goToSidebarSearchResult() {
+        ReaderSearchService.SearchResult selected = readerSidebarSearchResults == null ? null
+                : readerSidebarSearchResults.getSelectionModel().getSelectedItem();
+        if (selected == null || readerView == null || !readerView.isBookOpen()) return;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        if (document == null) return;
+        ReaderPosition pos = new ReaderPosition(Math.max(0, document.chapterIndexAt(selected.textOffset())),
+                selected.textOffset(), selected.paragraphIndex(), 0);
+        readerView.goToPosition(pos);
+        positionChanged = true;
+        if (positionAutosaver != null) positionAutosaver.mark(pos);
+    }
+
+    private void cancelReaderSidebarSearch() {
+        readerSidebarSearchGeneration.incrementAndGet();
+        Future<?> task = readerSidebarSearchTask;
+        readerSidebarSearchTask = null;
+        if (task != null && !task.isDone()) task.cancel(true);
+    }
+
+    private void refreshBookMapSidebar() {
+        if (bookMapSidebarList == null || readerView == null || !readerView.isBookOpen()) return;
+        ReaderDocument document = readerView.getEngine().getCurrentDocument();
+        if (document == null || document.chapters() == null) return;
+        long currentOffset = readerView.getCurrentPosition() == null ? 0L : readerView.getCurrentPosition().textOffset();
+        List<BookMapRow> rows = new ArrayList<>();
+        for (int i = 0; i < document.chapters().size(); i++) {
+            ChapterIndex chapter = document.chapters().get(i);
+            int notes = 0;
+            int highlights = 0;
+            for (ReaderAnnotationOverlay annotation : currentAnnotationPresentation.overlays()) {
+                if (!chapter.containsOffset(annotation.startOffset())) continue;
+                if (annotation.note()) notes++; else highlights++;
+            }
+            int bookmarks = 0;
+            for (Bookmark bookmark : currentSidebarBookmarks) {
+                ReaderPosition position = persistenceService.bookmarkToPosition(bookmark, document.totalTextLength());
+                if (chapter.containsOffset(position.textOffset())) bookmarks++;
+            }
+            boolean passed = currentOffset >= chapter.endOffset();
+            boolean current = chapter.containsOffset(currentOffset);
+            rows.add(new BookMapRow(i, chapter.startOffset(), bookMapLabel(chapter, notes, highlights, bookmarks, passed, current)));
+        }
+        bookMapSidebarList.setItems(javafx.collections.FXCollections.observableArrayList(rows));
+    }
+
+    private String bookMapLabel(ChapterIndex chapter, int notes, int highlights, int bookmarks, boolean passed, boolean current) {
+        String state = current ? "▶ " : passed ? "✓ " : "○ ";
+        String title = chapter.title() == null || chapter.title().isBlank()
+                ? i18n.text("ui.reader.bookmap.untitled_chapter") : chapter.title();
+        return state + title + "   📝 " + notes + "   ▰ " + highlights + "   🔖 " + bookmarks;
+    }
+
+    @FXML
+    public void goToBookMapRow() {
+        BookMapRow row = bookMapSidebarList == null ? null : bookMapSidebarList.getSelectionModel().getSelectedItem();
+        if (row == null || readerView == null || !readerView.isBookOpen()) return;
+        ReaderPosition pos = new ReaderPosition(row.chapterIndex(), row.startOffset(), 0, 0);
+        readerView.goToPosition(pos);
+        positionChanged = true;
+        if (positionAutosaver != null) positionAutosaver.mark(pos);
+        refreshBookMapSidebar();
+    }
+
+    private void showBookMap() {
+        if (isDisposed || readerView == null || !readerView.isBookOpen() || currentPdf || currentComic || currentAudio) return;
+        showReaderSidebar(bookMapSidebarTab);
+        if (currentBookId != null) refreshTextBookmarks(currentBookId.asString());
+        refreshBookMapSidebar();
+    }
+
+    private record BookMapRow(int chapterIndex, long startOffset, String label) {
+        @Override public String toString() { return label; }
     }
 
     @Override
@@ -1756,6 +2350,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         isDisposed = true;
         openGeneration.incrementAndGet();
         cancelPendingOpen();
+        cancelReaderSidebarSearch();
+        annotationCoordinator.hidePopover();
         cancelTextProviderRequests();
         stopTts();
 

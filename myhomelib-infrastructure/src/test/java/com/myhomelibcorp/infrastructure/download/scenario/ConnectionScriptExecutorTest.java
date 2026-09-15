@@ -133,6 +133,55 @@ class ConnectionScriptExecutorTest {
         assertThat(requests.get()).isEqualTo(1);
     }
 
+
+    @Test
+    void rejectsDeclaredPayloadLargerThanConfiguredLimit() throws Exception {
+        byte[] body = new byte[2_048];
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/large", exchange -> {
+            exchange.sendResponseHeaders(200, body.length);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        MemorySettings cfg = settings();
+        cfg.put("online.maxDownloadBytes", "1024");
+        BookDto book = BookDto.builder().id("1").fileName("book.txt").build();
+        Path target = temp.resolve("book.txt");
+
+        assertThatThrownBy(() -> executor(cfg).execute(
+                "GET " + baseUrl() + "large", book, collection(null, null), temp, "book.txt",
+                target, false, null, ignored -> { }))
+                .isInstanceOf(DownloadScenarioException.class)
+                .hasMessageContaining("1024");
+        assertThat(target.resolveSibling("book.txt.script.part")).doesNotExist();
+    }
+
+    @Test
+    void stopsChunkedPayloadWhenStreamingLimitIsExceeded() throws Exception {
+        byte[] body = new byte[4_096];
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/chunked", exchange -> {
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write(body);
+            exchange.close();
+        });
+        server.start();
+
+        MemorySettings cfg = settings();
+        cfg.put("online.maxDownloadBytes", "1024");
+        BookDto book = BookDto.builder().id("1").fileName("book.txt").build();
+        Path target = temp.resolve("book.txt");
+
+        assertThatThrownBy(() -> executor(cfg).execute(
+                "GET " + baseUrl() + "chunked", book, collection(null, null), temp, "book.txt",
+                target, false, null, ignored -> { }))
+                .isInstanceOf(DownloadScenarioException.class)
+                .hasMessageContaining("1024");
+        assertThat(target.resolveSibling("book.txt.script.part")).doesNotExist();
+    }
+
     @Test
     void neverIncludesPassMacroValueInNetworkError() {
         String secret = "super-secret-value";

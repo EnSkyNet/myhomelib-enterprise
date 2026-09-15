@@ -81,8 +81,10 @@ def check_workflows() -> None:
         need("invoke-maven" in text, f"{label} workflow must use the external-Maven-compatible launcher helper")
     need("-Psbom" in rel, "release workflow must generate SBOM")
     need("bom.json" in rel and "bom.xml" in rel, "release workflow must publish JSON and XML SBOM")
-    need("github/codeql-action/init@v4" in codeql, "CodeQL v4 init missing")
-    need("github/codeql-action/analyze@v4" in codeql, "CodeQL v4 analyze missing")
+    need(re.search(r"github/codeql-action/init@[0-9a-fA-F]{40}\s+#\s*v4(?:\.|\b)", codeql) is not None,
+         "CodeQL v4 init must be pinned to a full commit SHA")
+    need(re.search(r"github/codeql-action/analyze@[0-9a-fA-F]{40}\s+#\s*v4(?:\.|\b)", codeql) is not None,
+         "CodeQL v4 analyze must be pinned to a full commit SHA")
     need("pull_request:" in codeql and "schedule:" in codeql, "CodeQL must run on PR and schedule")
     need("security-events: write" in codeql, "CodeQL workflow needs security-events: write")
     need("github-connected-acceptance.py" in rel and "--codeql-release-gate-only" in rel,

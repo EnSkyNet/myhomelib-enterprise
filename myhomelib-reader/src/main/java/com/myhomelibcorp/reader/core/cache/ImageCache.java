@@ -32,12 +32,14 @@ public class ImageCache {
             return;
         }
 
-        ensureCapacity(data.length);
-
-        byte[] existing = cache.put(key, data);
+        // Replacement must reserve only the additional bytes. Counting the whole new payload
+        // before subtracting the previous value can evict unrelated images unnecessarily.
+        byte[] existing = cache.remove(key);
         if (existing != null) {
             currentSize -= existing.length;
         }
+        ensureCapacity(data.length);
+        cache.put(key, data);
         currentSize += data.length;
     }
 
@@ -63,7 +65,7 @@ public class ImageCache {
         currentSize = 0;
     }
 
-    public long getCurrentSize() {
+    public synchronized long getCurrentSize() {
         return currentSize;
     }
 
@@ -71,11 +73,11 @@ public class ImageCache {
         return maxSizeBytes;
     }
 
-    public int size() {
+    public synchronized int size() {
         return cache.size();
     }
 
-    public boolean contains(String key) {
+    public synchronized boolean contains(String key) {
         return cache.containsKey(key);
     }
 
@@ -89,7 +91,7 @@ public class ImageCache {
         }
     }
 
-    public String getStats() {
+    public synchronized String getStats() {
         return String.format("Images: %d, Size: %.2f MB / %.2f MB",
                 cache.size(),
                 currentSize / 1024.0 / 1024.0,

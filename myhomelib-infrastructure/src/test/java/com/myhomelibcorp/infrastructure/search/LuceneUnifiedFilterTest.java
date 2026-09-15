@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.search;
 
+import com.myhomelibcorp.application.filter.BookAnnotationPresenceFilter;
 import com.myhomelibcorp.application.filter.BookFilterMode;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookQuickFilterField;
@@ -39,8 +40,8 @@ class LuceneUnifiedFilterTest {
 
         alpha = BookId.generate();
         beta = BookId.generate();
-        search.indexSnapshot(snapshot(alpha, "Alpha History", "Writer One", "uk", "alpha.fb2", 2022, 5, 100, true));
-        search.indexSnapshot(snapshot(beta, "Beta Space", "Writer Two", "en", "beta.epub", 2025, 2, 10, false));
+        search.indexSnapshot(snapshot(alpha, "Alpha History", "Writer One", "uk", "alpha.fb2", 2022, 5, 100, true, 2, 0));
+        search.indexSnapshot(snapshot(beta, "Beta Space", "Writer Two", "en", "beta.epub", 2025, 2, 10, false, 0, 3));
         search.commit();
         // Standalone service tests bypass LuceneCollectionIndexLifecycle, which normally
         // publishes query availability after the collection index is validated/rebuilt.
@@ -73,6 +74,26 @@ class LuceneUnifiedFilterTest {
     }
 
     @Test
+    void annotationPresenceUsesDerivedLuceneFlags() {
+        BookFilterSpec notes = new BookFilterSpec(
+                BookFilterMode.AND, null, null, null, null, null, null, null, null, false,
+                BookAnnotationPresenceFilter.NOTES, BookQuickFilterField.ANY, null);
+        BookFilterSpec highlights = new BookFilterSpec(
+                BookFilterMode.AND, null, null, null, null, null, null, null, null, false,
+                BookAnnotationPresenceFilter.HIGHLIGHTS, BookQuickFilterField.ANY, null);
+        BookFilterSpec anyAnnotation = new BookFilterSpec(
+                BookFilterMode.AND, null, null, null, null, null, null, null, null, false,
+                BookAnnotationPresenceFilter.NOTES_OR_HIGHLIGHTS, BookQuickFilterField.ANY, null);
+
+        assertThat(ids(search.search(SearchRequest.builder().text("").filterSpec(notes).build())))
+                .containsExactly(alpha);
+        assertThat(ids(search.search(SearchRequest.builder().text("").filterSpec(highlights).build())))
+                .containsExactly(beta);
+        assertThat(ids(search.search(SearchRequest.builder().text("").filterSpec(anyAnnotation).build())))
+                .containsExactlyInAnyOrder(alpha, beta);
+    }
+
+    @Test
     void quickFilterSupportsSafeContainsLikeSubstringMatching() {
         BookFilterSpec filter = BookFilterSpec.empty().withQuickFilter(BookQuickFilterField.TITLE, "pha");
         assertThat(ids(search.search(SearchRequest.builder().text("").filterSpec(filter).build())))
@@ -84,7 +105,7 @@ class LuceneUnifiedFilterTest {
     }
 
     private BookSnapshot snapshot(BookId id, String title, String authors, String language, String file,
-                                  int year, int rate, int progress, boolean local) {
+                                  int year, int rate, int progress, boolean local, int noteCount, int highlightCount) {
         LocalDateTime now = LocalDateTime.of(2026, 1, 1, 12, 0);
         return BookSnapshot.builder()
                 .id(id).title(title).authorsText(authors).authorIds("")
@@ -92,6 +113,7 @@ class LuceneUnifiedFilterTest {
                 .fileName(file).publisher("").translators("").city("")
                 .language(language).rate(rate).progress(progress).year(year).libraryRate(rate)
                 .libId(id.asString()).createdAt(now).updateDate(now).local(local).deleted(false)
+                .noteCount(noteCount).highlightCount(highlightCount)
                 .build();
     }
 }

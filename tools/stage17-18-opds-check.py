@@ -64,7 +64,7 @@ def http_smoke_fixture():
         'servesRootAndBoundedAuthorsWithoutJavaFx',
         'servesOpds2NavigationLibrarySearchGroupsFavoritesAndContinueReading',
         'rejectsPlainHttpWhenBindingBeyondLoopback',
-        'exposedServerUsesHttpsAndReportsHttpsUrls',
+        'exposedServerUsesHttpsAndRequiresAuthenticationByDefault',
         'bearerTokensAuthenticateRevokeImmediatelyAndEnforceScopes',
         'repeatedBadCredentialsTriggerPerClientThrottling',
         'maxConcurrentRequestsAppliesBackPressureWithoutBreakingNormalRequest',

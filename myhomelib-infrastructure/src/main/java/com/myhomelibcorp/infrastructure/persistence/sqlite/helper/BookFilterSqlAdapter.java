@@ -69,6 +69,12 @@ public final class BookFilterSqlAdapter {
         if (filter.hideUnrated()) {
             conditions.add("COALESCE(" + b + ".rate, 0) > 0");
         }
+        switch (filter.annotationPresence()) {
+            case NOTES -> conditions.add("EXISTS (SELECT 1 FROM annotations qann WHERE qann.book_id = " + b + ".id AND qann.annotation_type = 'NOTE')");
+            case HIGHLIGHTS -> conditions.add("EXISTS (SELECT 1 FROM annotations qann WHERE qann.book_id = " + b + ".id AND qann.annotation_type = 'HIGHLIGHT')");
+            case NOTES_OR_HIGHLIGHTS -> conditions.add("EXISTS (SELECT 1 FROM annotations qann WHERE qann.book_id = " + b + ".id)");
+            case ANY -> { }
+        }
         if (filter.quickValue() != null) {
             List<String> tokenConditions = new ArrayList<>();
             for (String token : filter.quickValue().toLowerCase(Locale.ROOT).split("\\s+")) {

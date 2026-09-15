@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.activity.BookActivityService;
+import com.myhomelibcorp.application.activity.BookActivitySummary;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
@@ -28,6 +30,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.OptionalLong;
 import java.util.concurrent.atomic.AtomicLong;
@@ -43,6 +46,7 @@ public class BookLoaderService {
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
     private final BookFilterStateService filterStateService;
+    private final BookActivityService bookActivityService;
 
     private static final int DEFAULT_PAGE_SIZE = 50;
     private final AtomicLong requestGeneration = new AtomicLong();
@@ -82,10 +86,13 @@ public class BookLoaderService {
             } else {
                 result = loadBooksUseCase.execute(submittedQuery);
             }
+            Map<String, BookActivitySummary> activity = bookActivityService.summarize(
+                    result.content().stream().map(BookDto::getId).toList());
             log.info("Завантажено {} книг з {}{}", result.content().size(), result.totalElements(),
                     submittedCursor == null ? "" : " (keyset)");
-            return result;
-        }).thenAccept(result -> UiExecutor.runOnUiThread(() -> {
+            return new LoadedBookPage(result, activity);
+        }).thenAccept(loaded -> UiExecutor.runOnUiThread(() -> {
+            PageResult<BookDto> result = loaded.page();
             if (!isCurrent(requestId, collectionId)) {
                 log.debug("Ігноруємо застарілий результат BookLoader request={} collection={}", requestId, collectionId);
                 return;
@@ -93,7 +100,12 @@ public class BookLoaderService {
             vm.setLoading(false);
 
             List<BookViewModel> vms = result.content().stream()
-                    .map(viewModelMapper::toViewModel)
+                    .map(dto -> {
+                        BookViewModel vmRow = viewModelMapper.toViewModel(dto);
+                        BookActivitySummary activity = loaded.activity().getOrDefault(dto.getId(), BookActivitySummary.empty(dto.getId()));
+                        vmRow.setActivityCounts(activity.noteCount(), activity.highlightCount(), activity.bookmarkCount());
+                        return vmRow;
+                    })
                     .collect(Collectors.toList());
 
             BookTableController controller = appState.getBookTableController();
@@ -378,4 +390,7 @@ public class BookLoaderService {
     }
 
     public BookQuery getLastQuery() { return lastQuery; }
+
+    private record LoadedBookPage(PageResult<BookDto> page, Map<String, BookActivitySummary> activity) { }
+
 }

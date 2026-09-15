@@ -40,6 +40,7 @@ import java.util.function.DoubleConsumer;
 public class InpxImportPipeline {
     private static final long AUTHOR_PRELOAD_MIN_RECORDS = 100_000L;
     private static final long SELECTIVE_PREVIEW_MIN_RECORDS = 100_000L;
+    private static final long LARGE_CATALOG_BATCH_MIN_RECORDS = 100_000L;
     private final InpxReader reader;
     private final JdbcBatchWriter batchWriter;
     private final BulkImportOptimizer bulkOptimizer;
@@ -56,6 +57,9 @@ public class InpxImportPipeline {
     @Value("${app.import.online-batch-size:5000}")
     private int onlineBatchSize;
 
+    @Value("${app.import.large-catalog-batch-size:5000}")
+    private int largeCatalogBatchSize;
+
     private Map<AuthorNameKey, String> authorCache;
     private Map<String, String> genreCache;
 
@@ -63,6 +67,24 @@ public class InpxImportPipeline {
 
     private int effectiveChangeTrackingLimit() {
         return ImportChangeAccumulator.normalizeLimit(changeTrackingLimit);
+    }
+
+    static int effectiveBatchSize(
+            int requestedBatch,
+            boolean onlineCollection,
+            boolean catalogFullSnapshot,
+            long totalRecords,
+            int onlineBatchSize,
+            int largeCatalogBatchSize) {
+        int requested = Math.max(50, Math.min(requestedBatch <= 0 ? 1_000 : requestedBatch, 10_000));
+        int configuredLarge = largeCatalogBatchSize <= 0 ? 5_000 : largeCatalogBatchSize;
+        int tunedLarge = catalogFullSnapshot && totalRecords >= LARGE_CATALOG_BATCH_MIN_RECORDS
+                ? Math.max(1_000, Math.min(configuredLarge, 10_000))
+                : requested;
+        if (!onlineCollection) return Math.max(requested, tunedLarge);
+        int configuredOnline = onlineBatchSize <= 0 ? 5_000 : onlineBatchSize;
+        int tunedOnline = Math.max(1_000, Math.min(configuredOnline, 10_000));
+        return Math.max(requested, Math.max(tunedLarge, tunedOnline));
     }
 
     public long importFile(Path file, int batchSize, Path rootDirectory) {
@@ -140,9 +162,6 @@ public class InpxImportPipeline {
                 .withCurrentItem(file.getFileName() == null ? file.toString() : file.getFileName().toString()));
 
         boolean onlineCollection = sourceKey.startsWith("remote-collection:");
-        int effectiveBatch = onlineCollection
-                ? Math.max(requestedBatch, Math.max(1_000, Math.min(onlineBatchSize, 10_000)))
-                : requestedBatch;
         long totalRecords = reader.count(file, cancelFlag, onlineCollection);
         if (isCancelled(cancelFlag)) {
             notifyStatus(statusConsumer, "Імпорт INPX скасовано під час аналізу індексу");
@@ -152,6 +171,10 @@ public class InpxImportPipeline {
         if (totalRecords < 0) {
             throw new IllegalStateException("Не вдалося проаналізувати INPX: " + file);
         }
+
+        int effectiveBatch = effectiveBatchSize(
+                requestedBatch, onlineCollection, catalogFullSnapshot, totalRecords,
+                onlineBatchSize, largeCatalogBatchSize);
 
         notifyStatus(statusConsumer, String.format(Locale.ROOT,
                 "Аналіз індексу: %,d записів", totalRecords));

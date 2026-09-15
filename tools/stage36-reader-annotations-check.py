@@ -19,11 +19,11 @@ def require(path, needles):
 require("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderSelection.java",
         ["startOffset", "endOffset", "chapterId", "paragraphId", "prefix", "suffix"])
 require("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/api/ReaderAnnotationOverlay.java",
-        ["startOffset", "endOffset", "color", "note"])
+        ["startOffset", "endOffset", "color", "ReaderAnnotationType", "noteText", "quote", "tags", "ReaderAnnotationState"])
 require("myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/AnnotationAnchorData.java",
         ["allowsArtifact", "startOffset", "quote", "prefix", "suffix"])
 require("myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/AnnotationReaderItem.java",
-        ["AnnotationAnchorData anchor", "boolean note", "fromDomain"])
+        ["AnnotationAnchorData anchor", "AnnotationReaderType type", "String noteText", "Set<String> tags", "Instant updatedAt", "fromDomain"])
 require("myhomelib-application/src/main/java/com/myhomelibcorp/application/annotation/AnnotationReaderResolver.java",
         ["AnnotationAnchorRelocator.resolve", "ResolvedRange"])
 require("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/ReaderSelectionController.java",
@@ -36,9 +36,12 @@ require("myhomelib-reader/src/main/java/com/myhomelibcorp/reader/render/javafx/R
 require("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationPresenter.java",
         ["AnnotationAnchorData", "AnnotationReaderItem", "AnnotationReaderResolver", "ReaderAnnotationOverlay"])
 require("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java",
-        ["AnnotationService annotationService", "setOnHighlightRequested", "setOnNoteRequested",
-         "uiBackgroundExecutor.submit(() -> annotationService.createHighlight",
-         "uiBackgroundExecutor.submit(() -> annotationService.createNote", "listBookAnnotationViews(bookId)", "refreshAnnotationsAsync"])
+        ["AnnotationService annotationService", "ReaderAnnotationCoordinator annotationCoordinator",
+         "setOnHighlightRequested", "setOnNoteRequested", "annotationCoordinator.createHighlight",
+         "annotationCoordinator.createNote", "listBookAnnotationViews(bookId)", "refreshAnnotationsAsync"])
+require("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationCoordinator.java",
+        ["annotationService.createHighlight", "annotationService.createNote", "annotationService.update",
+         "annotationService.delete", "annotationService.reanchor", "ReaderAnnotationPopover"] )
 
 presenter = ROOT / "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/reader/ReaderAnnotationPresenter.java"
 if presenter.is_file() and "com.myhomelibcorp.domain.model.annotation" in presenter.read_text(encoding="utf-8"):

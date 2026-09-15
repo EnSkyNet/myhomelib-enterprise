@@ -1,6 +1,5 @@
 package com.myhomelibcorp.ui.controller;
 
-import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
@@ -24,6 +23,7 @@ import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
 import javafx.scene.control.Button;
+import javafx.scene.control.Label;
 import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
@@ -32,6 +32,7 @@ import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Pane;
 import javafx.scene.layout.StackPane;
 import javafx.stage.Modality;
@@ -60,10 +61,10 @@ public class MainController {
     private final BookActionProfilesDialog bookActionProfilesDialog;
     private final OpdsUiService opdsUiService;
     private final MainLayoutService mainLayoutService;
-    private final CatalogUpdateService catalogUpdateService;
-    private final UiBackgroundExecutor uiBackgroundExecutor;
+    private final CatalogUpdateBadgeService catalogUpdateBadgeService;
     private final ApplicationThemeService applicationThemeService;
     private final DuplicateReviewUiService duplicateReviewUiService;
+    private final BookSelectionService bookSelectionService;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -85,11 +86,13 @@ public class MainController {
     private final com.myhomelibcorp.ui.service.CollectionPropertiesUiService collectionPropertiesUiService;
     // ===== FXML =====
     @FXML private BorderPane mainPane;
-    @FXML private FlowPane mainToolbar;
+    @FXML private HBox mainToolbar;
+    @FXML private FlowPane selectionToolbar;
+    @FXML private Label selectedBooksLabel;
+    @FXML private Label activeScopeLabel;
     @FXML private TextField searchField;
     @FXML private Button backButton;
     @FXML private Button forwardButton;
-    @FXML private Button themeButton;
     @FXML private StackPane workspaceStackPane;
     @FXML private StackPane leftSidebarContainer;
     @FXML private Pane rightSidebarContainer;
@@ -110,8 +113,6 @@ public class MainController {
     @FXML private MenuItem updatesMenuItem;
     @FXML private CheckMenuItem leftSidebarMenuItem;
     @FXML private CheckMenuItem rightSidebarMenuItem;
-
-    private long updateBadgeGeneration;
 
     @FXML
     public void initialize() {
@@ -135,10 +136,14 @@ public class MainController {
         if (languageMenu != null) languageMenu.setOnShowing(event -> populateLanguages());
         if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> mainNavigationCoordinator.populateRecentBooksMenu(recentBooksMenu));
         if (viewMenu != null) viewMenu.setOnShowing(event -> refreshUpdateBadge());
-        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> refreshUpdateBadge());
+        appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
+            refreshUpdateBadge();
+            updateActiveScope();
+        });
+        bookSelectionService.selectedCountProperty().addListener((obs, oldCount, newCount) -> updateSelectionToolbar());
+        updateActiveScope();
+        updateSelectionToolbar();
         Platform.runLater(this::refreshUpdateBadge);
-        updateThemeButtonTooltip();
-
         configureActionRegistry();
         updateNavigationButtons();
         // Book commands use BookDetailsViewModel as the canonical current-book source across
@@ -156,29 +161,37 @@ public class MainController {
         log.info("MainController готовий до роботи");
     }
 
-    private void refreshUpdateBadge() {
-        if (updatesMenuItem == null) return;
-        long generation = ++updateBadgeGeneration;
-        Collection collection = appState.getCurrentLibraryCollection();
-        String collectionId = collection == null || collection.getId() == null ? "" : collection.getId();
-        if (collectionId.isBlank()) {
-            updatesMenuItem.setText(localizationService.tr("Оновлення каталогу"));
-            return;
+    private void updateSelectionToolbar() {
+        int count = bookSelectionService.count();
+        if (selectionToolbar != null) {
+            selectionToolbar.setVisible(count > 0);
+            selectionToolbar.setManaged(count > 0);
         }
-        uiBackgroundExecutor.submit(catalogUpdateService::pendingUpdateCount)
-                .whenComplete((count, error) -> Platform.runLater(() -> {
-                    Collection current = appState.getCurrentLibraryCollection();
-                    String currentId = current == null || current.getId() == null ? "" : current.getId();
-                    if (generation != updateBadgeGeneration || !collectionId.equals(currentId)) return;
-                    if (error != null) {
-                        updatesMenuItem.setText(localizationService.tr("Оновлення каталогу"));
-                        return;
-                    }
-                    long unread = count == null ? 0L : count;
-                    updatesMenuItem.setText(unread > 0
-                            ? localizationService.tr("Оновлення каталогу") + " (" + unread + ")"
-                            : localizationService.tr("Оновлення каталогу"));
-                }));
+        if (selectedBooksLabel != null) {
+            selectedBooksLabel.setText(count <= 0
+                    ? localizationService.text("ui.main.selection.none")
+                    : localizationService.format("ui.main.selection.count", count));
+        }
+    }
+
+    private void updateActiveScope() {
+        if (activeScopeLabel == null) return;
+        Collection collection = appState.getCurrentLibraryCollection();
+        String name = collection == null || collection.getName() == null || collection.getName().isBlank()
+                ? localizationService.text("ui.main.scope.none")
+                : collection.getName();
+        activeScopeLabel.setText(localizationService.format("ui.main.scope.collection", name));
+        activeScopeLabel.setTooltip(new javafx.scene.control.Tooltip(
+                localizationService.format("ui.main.scope.collection_tooltip", name)));
+    }
+
+    private void refreshUpdateBadge() {
+        catalogUpdateBadgeService.refresh(updatesMenuItem, currentCollectionId(), this::currentCollectionId);
+    }
+
+    private String currentCollectionId() {
+        Collection collection = appState.getCurrentLibraryCollection();
+        return collection == null || collection.getId() == null ? "" : collection.getId();
     }
 
     private void bindSidebarMenuItems() {
@@ -206,8 +219,8 @@ public class MainController {
             item.setOnAction(e -> {
                 localizationService.setLanguage(entry.getKey());
                 dialogService.showInfo(
-                        "Мова / Language",
-                        entry.getValue() + " — перезапустіть MyHomeLib, щоб застосувати мову до всіх вікон."
+                        localizationService.text("ui.main.language.changed_title"),
+                        localizationService.format("ui.main.language.restart_required", entry.getValue())
                 );
             });
             languageMenu.getItems().add(item);
@@ -264,19 +277,6 @@ public class MainController {
     @FXML
     public void handleCycleApplicationTheme() {
         applicationThemeService.cyclePreset();
-        updateThemeButtonTooltip();
-    }
-
-    private void updateThemeButtonTooltip() {
-        if (themeButton == null) return;
-        String name = switch (applicationThemeService.current().mode()) {
-            case SYSTEM -> "Системна";
-            case LIGHT -> "Світла";
-            case DARK -> "Темна";
-            case AMOLED -> "AMOLED";
-            case CUSTOM -> "Власна";
-        };
-        themeButton.setTooltip(new javafx.scene.control.Tooltip("Тема програми: " + name + ". Натисніть для перемикання"));
     }
 
     @FXML
@@ -312,9 +312,8 @@ public class MainController {
 
     @FXML
     public void handleAbout() {
-        dialogService.showInfo("Про програму", "MyHomeLib",
-                "Версія 7.1.0\nJava 21, Spring Boot 3.5, JavaFX 21\n\n" +
-                        "Новий Reader на Canvas (без WebView)");
+        dialogService.showInfo(localizationService.text("ui.main.about.title"), "MyHomeLib",
+                localizationService.format("ui.main.about.body", SupportBundleService.runtimeVersion()));
     }
 
     @FXML
@@ -417,7 +416,7 @@ public class MainController {
             }
 
             Stage stage = new Stage();
-            stage.setTitle("Майстер створення колекції");
+            stage.setTitle(localizationService.text("ui.collection.wizard.title"));
             stage.setScene(new Scene(root, 620, 480));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(mainPane.getScene().getWindow());
@@ -431,7 +430,7 @@ public class MainController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття майстра колекцій", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити майстер: " + e.getMessage());
+            dialogService.showError(localizationService.text("common.error"), localizationService.format("ui.collection.wizard.open_error", e.getMessage()));
         }
     }
     // ==================== Дії з групами ====================
@@ -503,7 +502,7 @@ public class MainController {
             appState.getBookTableController().showColumnChooser();
             return;
         }
-        dialogService.showWarning("Таблиця недоступна", "У поточному workspace немає таблиці з налаштовуваними колонками.");
+        dialogService.showWarning(localizationService.text("ui.main.columns.unavailable_title"), localizationService.text("ui.main.columns.unavailable_message"));
     }
     // ==================== Експорт ====================
     @FXML
@@ -632,7 +631,7 @@ public class MainController {
     public void handleCloseReader() {
         cleanupReader();
         showDashboard();
-        dialogService.showInfo("Reader закрито", "Поточну книгу закрито.");
+        dialogService.showInfo(localizationService.text("ui.main.reader_closed_title"), localizationService.text("ui.main.reader_closed_message"));
     }
 
     @FXML public void handleExportUserData() { userDataUiService.exportData(mainPane.getScene().getWindow()); }
@@ -661,19 +660,15 @@ public class MainController {
 
     @FXML public void handleUpdateCollectionManual() { importController.importInpx(this::handleRefresh); }
     @FXML public void handleUpdateCollectionNetwork() { collectionUpdateUiService.updateFromNetwork(mainPane.getScene().getWindow(), this::handleRefresh); }
-    @FXML public void handleCancelCollectionUpdate() { if(!collectionUpdateUiService.cancel()) dialogService.showInfo("Оновлення", "Активного оновлення колекції немає."); }
+    @FXML public void handleCancelCollectionUpdate() { if(!collectionUpdateUiService.cancel()) dialogService.showInfo(localizationService.text("ui.main.update.title"), localizationService.text("ui.main.update.none")); }
 
     @FXML public void handleAttachCollection() {
-        try {
-            var result = collectionAttachUiService.attach(mainPane.getScene().getWindow());
-            if (result != null) collectionController.switchToCollection(result.collection(), this::showDashboard);
-        } catch (Exception e) {
-            dialogService.showError("Підключення колекції", e.getMessage());
-        }
+        collectionAttachUiService.attach(mainPane.getScene().getWindow(),
+                result -> collectionController.switchToCollection(result.collection(), this::showDashboard));
     }
     @FXML
     public void handleResetNavigation() {
         navigationPanelController.resetNavigation();
-        dialogService.showInfo("Навігація", "Навігаційну панель скинуто.");
+        dialogService.showInfo(localizationService.text("ui.main.navigation.title"), localizationService.text("ui.main.navigation.reset_message"));
     }
 }

@@ -80,7 +80,7 @@ checks={
 'Author master checkbox covers all author books even when series are collapsed': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/author/AuthorWorkspaceController.java',
  ['selectableConcreteBooks()', 'masterSelectionCheckBox.setIndeterminate',
-  'bookSelectionService.state(selectable)', 'Пакетно вибрано: ']),
+  'bookSelectionService.state(selectable)', 'ui.author.batch_selected']),
 'Series SQL sequence order': (
  ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/persistence/sqlite/helper/BookQueryBuilder.java',
  ['sortBy == SortBy.SERIES', 'b.sequence_number', "TRIM(COALESCE(b.series, ''))"]),

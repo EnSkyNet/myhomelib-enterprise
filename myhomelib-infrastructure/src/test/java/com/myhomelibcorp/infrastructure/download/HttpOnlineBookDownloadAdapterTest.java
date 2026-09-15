@@ -27,6 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -233,6 +234,31 @@ class HttpOnlineBookDownloadAdapterTest {
     }
 
     @Test
+    void connectionScriptPostFlowsThroughOnlineAdapterAndCommitsValidatedPayload() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            requests.incrementAndGet();
+            assertThat(exchange.getRequestMethod()).isEqualTo("POST");
+            String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+            assertThat(contentType).startsWith("multipart/form-data; boundary=");
+            String body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+            assertThat(body).contains("name=\"token\"").contains("iteration84");
+            respond(exchange, 200, "posted-book");
+        });
+
+        String script = "ADD token iteration84\nPOST %URL%post\nCHECK";
+        Collection collection = new Collection(
+                "online", "Online", temp, null, 1, null, null, baseUrl(), "", script);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+
+        adapter.download(book("post", "post.txt", "", ""), collection, null, null);
+
+        assertThat(requests.get()).isEqualTo(1);
+        assertThat(Files.readString(temp.resolve("post.txt"))).isEqualTo("posted-book");
+        assertThat(temp.resolve("post.txt.part")).doesNotExist();
+    }
+
+    @Test
     void legacyScriptPreambleSuppliesUrlMacroWhenCollectionUrlIsMissing() throws Exception {
         AtomicInteger requests = new AtomicInteger();
         server = server(exchange -> {
@@ -295,6 +321,46 @@ class HttpOnlineBookDownloadAdapterTest {
                 .isInstanceOf(HttpOnlineBookDownloadAdapter.DownloadCancelledException.class);
 
         assertThat(Files.readString(temp.resolve("resume.txt.part"))).isEqualTo("partial");
+    }
+
+
+    @Test
+    void rejectsDeclaredPayloadLargerThanConfiguredDownloadLimit() throws Exception {
+        byte[] payload = new byte[2048];
+        server = server(exchange -> {
+            exchange.sendResponseHeaders(200, payload.length);
+            exchange.getResponseBody().write(payload);
+        });
+        ApplicationSettingsPort constrained = settings();
+        when(constrained.get(eq("online.maxDownloadBytes"), anyString())).thenReturn("1024");
+        when(constrained.get(eq("online.minFreeSpaceBytes"), anyString())).thenReturn("0");
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(constrained, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("oversize", "oversize.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("ліміт")
+                .hasMessageContaining("1024");
+        assertThat(temp.resolve("oversize.txt.part")).doesNotExist();
+    }
+
+    @Test
+    void stopsChunkedPayloadWhenStreamingLimitIsExceeded() throws Exception {
+        byte[] payload = new byte[4096];
+        java.util.Arrays.fill(payload, (byte) 'x');
+        server = server(exchange -> {
+            exchange.sendResponseHeaders(200, 0); // chunked: no Content-Length
+            exchange.getResponseBody().write(payload);
+        });
+        ApplicationSettingsPort constrained = settings();
+        when(constrained.get(eq("online.maxDownloadBytes"), anyString())).thenReturn("1024");
+        when(constrained.get(eq("online.minFreeSpaceBytes"), anyString())).thenReturn("0");
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(constrained, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("chunked-limit", "chunked-limit.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("ліміт")
+                .hasMessageContaining("1024");
+        assertThat(temp.resolve("chunked-limit.txt.part")).doesNotExist();
     }
 
     @Test

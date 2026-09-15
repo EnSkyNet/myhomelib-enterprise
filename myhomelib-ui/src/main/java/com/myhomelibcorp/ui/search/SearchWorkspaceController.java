@@ -11,6 +11,7 @@ import com.myhomelibcorp.application.content.search.ContentSearchService;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
+import com.myhomelibcorp.application.dto.PinnedSmartCollectionDto;
 import com.myhomelibcorp.application.search.GlobalSearchResult;
 import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
@@ -22,6 +23,7 @@ import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
+import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
 import com.myhomelibcorp.application.usecase.search.BuildSmartCollectionSearchRequestUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -45,6 +47,7 @@ import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.input.KeyCode;
 import javafx.scene.layout.HBox;
+import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.VBox;
 import javafx.geometry.Pos;
 import javafx.scene.text.Text;
@@ -76,6 +79,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     private final FxmlLoaderFactory fxmlLoaderFactory;
     private final DialogService dialogService;
     private final SaveSearchUseCase saveSearchUseCase;
+    private final LoadSavedSearchesUseCase loadSavedSearchesUseCase;
     private final BuildSmartCollectionSearchRequestUseCase buildSmartCollectionRequestUseCase;
     private final UiBackgroundExecutor executor;
     private final BookFilterStateService filterStateService;
@@ -93,6 +97,9 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     @FXML private VBox resultsContainer;
     @FXML private Label statusLabel;
     @FXML private Label filterIndicatorLabel;
+    @FXML private FlowPane pinnedScopesPane;
+    @FXML private Label activeScopeLabel;
+    @FXML private Button clearScopeButton;
 
     @FXML private VBox authorsSection;
     @FXML private ListView<AuthorDto> authorsListView;
@@ -184,6 +191,8 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         if (annotationsTitleLabel != null) annotationsTitleLabel.setText(i18n.text("ui.search.annotations.title"));
         if (contentTitleLabel != null) contentTitleLabel.setText(i18n.text("ui.search.contents.title"));
         updateFilterIndicator();
+        refreshPinnedScopes();
+        updateActiveScopeIndicator();
         subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, oldCollection, newCollection) -> {
             String oldId = oldCollection == null ? null : oldCollection.getId();
             String newId = newCollection == null ? null : newCollection.getId();
@@ -194,6 +203,9 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                 resetBookPaging();
                 clearResults();
                 navigationPanelController.clearAuthorSearchResults();
+                activeSmartCollectionId = null;
+                activeSmartCollectionName = null;
+                updateActiveScopeIndicator();
             }
         });
     }
@@ -513,8 +525,9 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     public void performSearch(String query) {
         debounce.stop();
         cancelContentSearch();
-        activeSmartCollectionId = null;
-        activeSmartCollectionName = null;
+        // A pinned Smart Collection is an explicit search scope. Keep it active until
+        // the user clears the scope; typing a query refines the scoped result instead
+        // of silently falling back to the entire library.
         this.lastQuery = query == null ? "" : query;
         SearchScope scope = currentSearchScope();
         if (scope.includesMetadata()) {
@@ -523,10 +536,15 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             UiAsyncRequestGuard.next(searchGeneration, appState);
             clearMetadataResultsOnly();
         }
-        if (scope.includesContents()) {
+        if (scope.includesContents() && activeSmartCollectionId == null) {
             performContentSearch(query, scope);
         } else {
+            // ContentSearchService is collection-scoped, not SmartCollection-scoped. Do not
+            // leak unscoped content hits while a Smart Collection is visibly active.
             updateContentResults(ContentSearchResultPage.empty(CONTENT_RESULT_LIMIT));
+            if (scope == SearchScope.CONTENTS && activeSmartCollectionId != null) {
+                statusLabel.setText(i18n.text("ui.search.scope.content_requires_global"));
+            }
         }
     }
 
@@ -535,7 +553,8 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         SearchFormInput form = currentSearchForm(query);
         boolean advanced = SearchQueryFactory.hasAdvancedFilters(form);
         resetBookPaging();
-        if (form.freeText().isBlank() && !advanced && !filterStateService.current().isActive()) {
+        if (form.freeText().isBlank() && !advanced && !filterStateService.current().isActive()
+                && activeSmartCollectionId == null) {
             clearResults();
             statusLabel.setText(i18n.text("ui.search.status.enter_query_or_filters"));
             return;
@@ -543,11 +562,13 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
 
         statusLabel.setText(i18n.text("ui.search.status.searching"));
         if (!advanced) {
-            SearchRequest request = SearchQueryFactory.basic(form.freeText(), BOOK_PAGE_SIZE, 0);
+            SearchRequest request = applyActiveSmartCollectionScope(
+                    SearchQueryFactory.basic(form.freeText(), BOOK_PAGE_SIZE, 0));
+            boolean scoped = activeSmartCollectionId != null;
             executor.submit(() -> new SearchUiPage(
-                    searchService.searchOverview(form.freeText()),
+                    scoped ? GlobalSearchResult.empty() : searchService.searchOverview(form.freeText()),
                     searchService.searchPage(request),
-                    searchAnnotations(form.freeText()),
+                    scoped ? null : searchAnnotations(form.freeText()),
                     request
             )).thenAccept(result ->
                     UiExecutor.runOnUiThread(() -> {
@@ -564,17 +585,19 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
-        SearchRequest request = SearchQueryFactory.advanced(form, BOOK_PAGE_SIZE, 0);
+        SearchRequest request = applyActiveSmartCollectionScope(
+                SearchQueryFactory.advanced(form, BOOK_PAGE_SIZE, 0));
         String authorQuery = form.author();
+        boolean scoped = activeSmartCollectionId != null;
         executor.submit(() -> new AdvancedSearchUiResult(
                 searchService.searchPage(request),
-                authorQuery.isBlank() ? List.of() : searchService.searchAuthors(authorQuery, 200),
-                searchAnnotations(annotationQueryText(form)),
+                scoped || authorQuery.isBlank() ? List.of() : searchService.searchAuthors(authorQuery, 200),
+                scoped ? null : searchAnnotations(annotationQueryText(form)),
                 request
         )).thenAccept(result ->
                 UiExecutor.runOnUiThread(() -> {
                     if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
-                    if (!authorQuery.isBlank()) {
+                    if (!scoped && !authorQuery.isBlank()) {
                         mainLayoutService.setLeftSidebarVisible(true);
                         navigationPanelController.showAuthorSearchResults(authorQuery, result.authors());
                     } else {
@@ -899,6 +922,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         cancelContentSearch();
         activeSmartCollectionId = null;
         activeSmartCollectionName = null;
+        updateActiveScopeIndicator();
         resetBookPaging();
         navigationPanelController.clearAuthorSearchResults();
         setSectionVisible(authorsSection, false);
@@ -922,11 +946,9 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
 
     /** Re-run the current query after a storage/download change without leaving Search Workspace. */
     public void refreshStorageState() {
-        if (activeSmartCollectionId != null) {
-            performSmartCollection(activeSmartCollectionId, activeSmartCollectionName);
-        } else {
-            performSearch(lastQuery);
-        }
+        // Re-run the visible refinement; applyActiveSmartCollectionScope keeps the
+        // pinned scope intact when one is active.
+        performSearch(searchField == null ? lastQuery : searchField.getText());
     }
 
     public void setInitialQuery(String query) {
@@ -985,6 +1007,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
 
         try {
             saveSearchUseCase.execute(name, query, null);
+            refreshPinnedScopes();
             dialogService.showInfo(i18n.text("common.success"), i18n.format("ui.search.save.success", name));
         } catch (Exception e) {
             log.error("Помилка збереження пошуку", e);
@@ -1015,6 +1038,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             stage.setScene(new Scene(root, 450, 500));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(searchField.getScene().getWindow());
+            stage.setOnHidden(event -> refreshPinnedScopes());
             stage.show();
 
         } catch (Exception e) {
@@ -1023,12 +1047,91 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         }
     }
 
+    private void refreshPinnedScopes() {
+        if (pinnedScopesPane == null) return;
+        try {
+            List<PinnedSmartCollectionDto> pinned = loadSavedSearchesUseCase.executePinnedSmartCollections();
+            pinnedScopesPane.getChildren().clear();
+            for (PinnedSmartCollectionDto saved : pinned) {
+                Button chip = new Button("★ " + saved.name());
+                chip.getStyleClass().add("scope-chip");
+                chip.setAccessibleText(i18n.format("ui.search.scope.open", saved.name()));
+                chip.setOnAction(event -> performSmartCollection(saved.id(), saved.name()));
+                pinnedScopesPane.getChildren().add(chip);
+            }
+            pinnedScopesPane.setManaged(!pinned.isEmpty());
+            pinnedScopesPane.setVisible(!pinned.isEmpty());
+        } catch (RuntimeException error) {
+            log.warn("Не вдалося завантажити pinned Smart Collections", error);
+            pinnedScopesPane.getChildren().clear();
+            pinnedScopesPane.setManaged(false);
+            pinnedScopesPane.setVisible(false);
+        }
+    }
+
+    private SearchRequest applyActiveSmartCollectionScope(SearchRequest request) {
+        if (request == null || activeSmartCollectionId == null || activeSmartCollectionId.isBlank()) return request;
+        SearchRequest scope = buildSmartCollectionRequestUseCase.execute(activeSmartCollectionId, request.limit(), request.offset());
+        return SearchRequest.builder()
+                .text(request.text())
+                .authorId(request.authorId())
+                .genreId(request.genreId())
+                .language(request.language())
+                .ratingFrom(request.ratingFrom())
+                .ratingTo(request.ratingTo())
+                .yearFrom(request.yearFrom())
+                .yearTo(request.yearTo())
+                .addedFrom(request.addedFrom())
+                .addedTo(request.addedTo())
+                .localOnly(request.localOnly())
+                .filterSpec(request.filterSpec())
+                .smartCollectionSpec(scope.smartCollectionSpec())
+                .customFieldFilters(request.customFieldFilters())
+                .limit(request.limit())
+                .offset(request.offset())
+                .mode(request.mode())
+                .trackTotalHits(request.trackTotalHits())
+                .build();
+    }
+
+    private void updateActiveScopeIndicator() {
+        if (activeScopeLabel != null) {
+            boolean active = activeSmartCollectionId != null && !activeSmartCollectionId.isBlank();
+            activeScopeLabel.setText(active ? i18n.format("ui.search.scope.active", activeSmartCollectionName) : "");
+            activeScopeLabel.setVisible(active);
+            activeScopeLabel.setManaged(active);
+        }
+        if (clearScopeButton != null) {
+            boolean active = activeSmartCollectionId != null && !activeSmartCollectionId.isBlank();
+            clearScopeButton.setVisible(active);
+            clearScopeButton.setManaged(active);
+        }
+    }
+
+    @FXML
+    public void clearSmartCollectionScope() {
+        activeSmartCollectionId = null;
+        activeSmartCollectionName = null;
+        updateActiveScopeIndicator();
+        // Clearing the scope must not silently discard the user's refinement. Re-run the
+        // same query/advanced/global filters against the whole active library when present.
+        String query = searchField == null || searchField.getText() == null ? "" : searchField.getText();
+        SearchFormInput form = currentSearchForm(query);
+        if (!query.isBlank() || SearchQueryFactory.hasAdvancedFilters(form) || filterStateService.current().isActive()) {
+            performSearch(query);
+        } else {
+            clearResults();
+        }
+        if (searchField != null) searchField.requestFocus();
+    }
+
     private void performSmartCollection(String savedSearchId, String savedSearchName) {
         if (savedSearchId == null || savedSearchId.isBlank()) return;
         debounce.stop();
         clearResults();
         activeSmartCollectionId = savedSearchId;
         activeSmartCollectionName = savedSearchName == null ? "" : savedSearchName;
+        updateActiveScopeIndicator();
         this.lastQuery = activeSmartCollectionName;
         setSearchTextWithoutDebounce("");
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(searchGeneration, appState);
@@ -1061,14 +1164,18 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     public void onClear() {
         setSearchTextWithoutDebounce("");
         clearAdvancedFields();
-        clearResults();
+        if (activeSmartCollectionId != null) {
+            performSearch("");
+        } else {
+            clearResults();
+        }
         searchField.requestFocus();
     }
 
     @FXML
     public void onClearAdvancedFields() {
         clearAdvancedFields();
-        if (searchField.getText() != null && !searchField.getText().isBlank()) {
+        if ((searchField.getText() != null && !searchField.getText().isBlank()) || activeSmartCollectionId != null) {
             performSearch(searchField.getText());
         } else {
             clearResults();

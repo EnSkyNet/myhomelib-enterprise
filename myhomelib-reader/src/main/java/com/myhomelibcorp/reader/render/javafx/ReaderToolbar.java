@@ -4,7 +4,10 @@ import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.api.ReaderTheme;
 import javafx.geometry.Insets;
 import javafx.scene.control.Button;
+import javafx.scene.control.MenuButton;
+import javafx.scene.control.MenuItem;
 import javafx.scene.control.Separator;
+import javafx.scene.control.SeparatorMenuItem;
 import javafx.scene.control.Tooltip;
 import javafx.scene.control.ToolBar;
 import lombok.Getter;
@@ -47,15 +50,20 @@ public class ReaderToolbar extends ToolBar {
     @Getter private final Button bookmarksButton;
     @Getter private final Button tocButton;
     @Getter private final Button searchButton;
+    @Getter private final Button annotationsButton;
+    @Getter private final Button bookMapButton;
     @Getter private final Button ttsStartButton;
     @Getter private final Button ttsPauseButton;
     @Getter private final Button ttsStopButton;
+    @Getter private final MenuButton moreButton;
 
     private Consumer<ReaderSettings> onSettingsClick;
     private Runnable onBookmarkClick;
     private Runnable onBookmarksClick;
     private Runnable onTocClick;
     private Runnable onSearchClick;
+    private Runnable onAnnotationsClick;
+    private Runnable onBookMapClick;
     private Runnable onBackClick;
     private Runnable onToggleLeftSidebarClick;
     private Runnable onToggleRightSidebarClick;
@@ -102,19 +110,18 @@ public class ReaderToolbar extends ToolBar {
         bookmarksButton = createButton("🔖", "ui.reader.toolbar.bookmarks");
         tocButton = createButton("📑", "ui.reader.toolbar.toc");
         searchButton = createButton("🔍", "ui.reader.toolbar.search");
+        annotationsButton = createButton("📝", "ui.reader.toolbar.annotations");
+        bookMapButton = createButton("🗺", "ui.reader.toolbar.bookmap");
         ttsStartButton = createButton("🔊", "ui.reader.toolbar.tts_start");
         ttsPauseButton = createButton("⏯", "ui.reader.toolbar.tts_pause_resume");
         ttsStopButton = createButton("⏹", "ui.reader.toolbar.tts_stop");
+        moreButton = createMoreButton();
 
-        // ToolBar provides a native overflow popup when the Reader becomes narrow
-        // (for example with the right details panel visible or at 150–200% DPI).
-        // Keep sidebar controls close to the start so the user can always restore a
-        // hidden panel without depending on the available reader width.
+        // Keep only high-frequency reading actions permanently visible. Secondary
+        // display/application actions live in the explicit More menu; ToolBar's native
+        // overflow remains a final narrow-window/DPI fallback rather than the primary IA.
         getItems().addAll(
                 backButton,
-                new Separator(),
-                leftSidebarButton,
-                rightSidebarButton,
                 new Separator(),
                 prevChapterButton,
                 prevPageButton,
@@ -122,30 +129,55 @@ public class ReaderToolbar extends ToolBar {
                 nextChapterButton,
                 new Separator(),
                 pageModeButton,
-                autoScrollButton,
-                new Separator(),
                 zoomOutButton,
                 zoomInButton,
-                zoomResetButton,
-                new Separator(),
-                themeButton,
-                settingsButton,
-                fullscreenButton,
                 new Separator(),
                 bookmarkButton,
-                bookmarksButton,
                 tocButton,
                 searchButton,
+                annotationsButton,
+                bookMapButton,
                 new Separator(),
                 ttsStartButton,
                 ttsPauseButton,
-                ttsStopButton
+                ttsStopButton,
+                new Separator(),
+                moreButton
         );
 
         setupActions();
         updateState();
 
         log.info("✅ ReaderToolbar створено");
+    }
+
+
+    private MenuButton createMoreButton() {
+        MenuButton button = new MenuButton("⋮");
+        String accessibleName = text.apply("ui.reader.toolbar.more");
+        button.setAccessibleText(accessibleName);
+        button.setTooltip(new Tooltip(accessibleName));
+
+        button.getItems().addAll(
+                proxyItem("ui.reader.toolbar.bookmarks", bookmarksButton),
+                new SeparatorMenuItem(),
+                proxyItem("ui.reader.toolbar.auto_scroll", autoScrollButton),
+                proxyItem("ui.reader.toolbar.zoom_reset", zoomResetButton),
+                proxyItem("ui.reader.toolbar.theme", themeButton),
+                proxyItem("ui.reader.toolbar.settings", settingsButton),
+                proxyItem("ui.reader.toolbar.fullscreen", fullscreenButton),
+                new SeparatorMenuItem(),
+                proxyItem("ui.reader.toolbar.left_sidebar", leftSidebarButton),
+                proxyItem("ui.reader.toolbar.right_sidebar", rightSidebarButton)
+        );
+        return button;
+    }
+
+    private MenuItem proxyItem(String textKey, Button actionButton) {
+        MenuItem item = new MenuItem(text.apply(textKey));
+        item.disableProperty().bind(actionButton.disableProperty());
+        item.setOnAction(event -> actionButton.fire());
+        return item;
     }
 
     private Button createButton(String label, String tooltipKey) {
@@ -235,6 +267,12 @@ public class ReaderToolbar extends ToolBar {
                 onSearchClick.run();
             }
         });
+        annotationsButton.setOnAction(e -> {
+            if (onAnnotationsClick != null) onAnnotationsClick.run();
+        });
+        bookMapButton.setOnAction(e -> {
+            if (onBookMapClick != null) onBookMapClick.run();
+        });
         ttsStartButton.setOnAction(e -> { if (onTtsStartClick != null) onTtsStartClick.run(); });
         ttsPauseButton.setOnAction(e -> { if (onTtsPauseClick != null) onTtsPauseClick.run(); });
         ttsStopButton.setOnAction(e -> { if (onTtsStopClick != null) onTtsStopClick.run(); });
@@ -256,6 +294,8 @@ public class ReaderToolbar extends ToolBar {
         bookmarksButton.setDisable(!open);
         tocButton.setDisable(!open);
         searchButton.setDisable(!open);
+        annotationsButton.setDisable(!open);
+        bookMapButton.setDisable(!open);
         autoScrollButton.setDisable(!open || !canvas.isAutoScrollAllowed());
         ttsStartButton.setDisable(!open || ttsActive);
         ttsPauseButton.setDisable(!open || !ttsActive);
@@ -293,6 +333,14 @@ public class ReaderToolbar extends ToolBar {
 
     public void setOnSearchClick(Runnable listener) {
         this.onSearchClick = listener;
+    }
+
+    public void setOnAnnotationsClick(Runnable listener) {
+        this.onAnnotationsClick = listener;
+    }
+
+    public void setOnBookMapClick(Runnable listener) {
+        this.onBookMapClick = listener;
     }
 
     public void setOnBackClick(Runnable listener) {

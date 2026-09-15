@@ -116,6 +116,11 @@ class JdkOpdsServerTest {
         var legacy = get(client, base + "/opds");
         assertThat(legacy.headers().firstValue("Content-Type").orElse("")).contains("application/atom+xml");
         assertThat(legacy.body()).contains("OPDS 2.0", "/opds/v2");
+        assertThat(legacy.headers().firstValue("X-Content-Type-Options")).contains("nosniff");
+        assertThat(legacy.headers().firstValue("X-Frame-Options")).contains("DENY");
+        assertThat(legacy.headers().firstValue("Referrer-Policy")).contains("no-referrer");
+        assertThat(legacy.headers().firstValue("Content-Security-Policy").orElse(""))
+                .contains("frame-ancestors 'none'", "base-uri 'none'");
     }
 
     @Test
@@ -132,9 +137,12 @@ class JdkOpdsServerTest {
     }
 
     @Test
-    void exposedServerUsesHttpsAndReportsHttpsUrls() throws Exception {
+    void exposedServerUsesHttpsAndRequiresAuthenticationByDefault() throws Exception {
         System.setProperty(TLS_PASSWORD_PROPERTY, "changeit");
-        server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null);
+        MemorySettings tokenSettings = new MemorySettings();
+        OpdsAccessTokenService tokens = new OpdsAccessTokenService(tokenSettings);
+        var token = tokens.create("LAN client", Set.of(OpdsTokenScope.CATALOG_READ));
+        server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null, tokens);
         int port = freePort();
         OpdsSecurityLimits limits = new OpdsSecurityLimits(16, 16, 8, 60, 120, false);
         OpdsServerSettings settings = new OpdsServerSettings("0.0.0.0", port, false, "", "", false,
@@ -148,7 +156,12 @@ class JdkOpdsServerTest {
         assertThat(status.healthUrl()).isEqualTo("https://0.0.0.0:" + port + "/health");
 
         HttpClient client = httpsClient();
-        var root = get(client, "https://127.0.0.1:" + port + "/opds");
+        var denied = get(client, "https://127.0.0.1:" + port + "/opds");
+        assertThat(denied.statusCode()).isEqualTo(401);
+        assertThat(denied.headers().firstValue("WWW-Authenticate"))
+                .contains("Bearer realm=\"MyHomeLib OPDS\"");
+
+        var root = get(client, "https://127.0.0.1:" + port + "/opds", bearer(token.token()));
         assertThat(root.statusCode()).isEqualTo(200);
         assertThat(root.body()).contains("MyHomeLib");
     }
@@ -195,7 +208,7 @@ class JdkOpdsServerTest {
     }
 
     @Test
-    void exposedHealthCanBePrivateEvenWhenCatalogHasNoBasicAuth() throws Exception {
+    void exposedHealthAndCatalogArePrivateWhenBasicAuthIsDisabled() throws Exception {
         server = new JdkOpdsServer(new OpdsCatalogService(new FakeCatalog()), null);
         int port = freePort();
         OpdsServerSettings settings = new OpdsServerSettings("0.0.0.0", port, false, "", "", false,
@@ -203,7 +216,7 @@ class JdkOpdsServerTest {
         assertThat(server.start(settings).running()).isTrue();
 
         HttpClient client = httpsClient();
-        assertThat(get(client, "https://127.0.0.1:" + port + "/opds").statusCode()).isEqualTo(200);
+        assertThat(get(client, "https://127.0.0.1:" + port + "/opds").statusCode()).isEqualTo(401);
         assertThat(get(client, "https://127.0.0.1:" + port + "/health").statusCode()).isEqualTo(403);
     }
 

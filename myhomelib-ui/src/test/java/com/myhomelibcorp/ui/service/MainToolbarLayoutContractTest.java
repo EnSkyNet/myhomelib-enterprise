@@ -10,16 +10,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 class MainToolbarLayoutContractTest {
 
     @Test
-    void mainToolbarUsesWrappingPaneInsteadOfSingleLineToolbar() throws IOException {
+    void mainToolbarUsesSingleRowAdaptiveLayoutWithOverflowActions() throws IOException {
         try (var stream = getClass().getResourceAsStream("/view/MainView.fxml")) {
             assertThat(stream).isNotNull();
             String fxml = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
 
-            assertThat(fxml).contains("<FlowPane fx:id=\"mainToolbar\"");
+            assertThat(fxml).contains("<HBox fx:id=\"mainToolbar\"");
             assertThat(fxml).contains("styleClass=\"main-toolbar-wrap\"");
-            assertThat(fxml).contains("fx:id=\"themeButton\"");
+            assertThat(fxml).contains("HBox.hgrow=\"ALWAYS\"");
+            assertThat(fxml).contains("<MenuButton text=\"⋮\"");
             assertThat(fxml).contains("onAction=\"#handleCycleApplicationTheme\"");
-            assertThat(fxml).doesNotContain("<ToolBar styleClass=\"main-toolbar-wrap\"");
+            assertThat(fxml).doesNotContain("<FlowPane fx:id=\"mainToolbar\"");
+            assertThat(fxml).doesNotContain("fx:id=\"themeButton\"");
         }
     }
 }

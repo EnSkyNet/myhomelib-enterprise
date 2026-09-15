@@ -80,7 +80,7 @@ class CalibreCliBookConverterTest {
                 new ByteArrayInputStream("source".getBytes()), target, () -> false, 1024));
 
         assertEquals(3, args.get().size(), "No shell/template argument splitting is allowed");
-        assertEquals("/fake/ebook-convert", args.get().get(0));
+        assertEquals(Path.of("/fake/ebook-convert").toString(), args.get().get(0));
         assertEquals(target.toAbsolutePath().normalize().toString(), args.get().get(2));
         assertTrue(cwd.get().endsWith("cache/calibre"));
         assertEquals("converted", Files.readString(target));

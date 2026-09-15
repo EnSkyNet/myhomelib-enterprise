@@ -437,7 +437,17 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             return false;
         }
 
-        if (!s.basicAuthEnabled()) return true;
+        if (!s.basicAuthEnabled()) {
+            // Loopback keeps the historical anonymous mode for local desktop use. Once the server
+            // is exposed beyond loopback, TLS protects only the channel; it must not implicitly
+            // make the catalogue public. Bearer tokens remain a supported auth mode because they
+            // are handled above before this branch.
+            if (!activeExposedBeyondLoopback) return true;
+            exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"MyHomeLib OPDS\"");
+            exchange.getResponseHeaders().set("Connection", "close");
+            sendText(exchange, 401, "Authentication required for network OPDS access");
+            return false;
+        }
 
         String client = clientKey(exchange);
         OpdsRequestLimiter limiter = requestLimiter.get();
@@ -649,6 +659,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             headers.set("Content-Type", mime(download.fileName()));
             headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + encode(download.fileName()));
             headers.set("Cache-Control", "no-store");
+            applyBrowserHardening(headers);
             exchange.sendResponseHeaders(200, size);
             try (OutputStream out = exchange.getResponseBody()) {
                 Files.copy(path, out);
@@ -723,11 +734,24 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     }
     private static void send(HttpExchange exchange, int code, String type, String body) throws IOException {
         byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
-        exchange.getResponseHeaders().set("Content-Type", type);
-        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        Headers headers = exchange.getResponseHeaders();
+        headers.set("Content-Type", type);
+        headers.set("Cache-Control", "no-store");
+        applyBrowserHardening(headers);
         exchange.sendResponseHeaders(code, bytes.length);
         try (OutputStream out = exchange.getResponseBody()) { out.write(bytes); }
     }
+    private static void applyBrowserHardening(Headers headers) {
+        headers.set("X-Content-Type-Options", "nosniff");
+        headers.set("X-Frame-Options", "DENY");
+        headers.set("Referrer-Policy", "no-referrer");
+        headers.set("Permissions-Policy", "geolocation=(), camera=(), microphone=()");
+        headers.set("Content-Security-Policy",
+                "default-src 'none'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "
+                        + "script-src 'self' 'unsafe-inline'; connect-src 'self'; font-src 'self'; "
+                        + "base-uri 'none'; form-action 'self'; frame-ancestors 'none'");
+    }
+
     private static boolean isLoopback(String host) {
         try { return InetAddress.getByName(host).isLoopbackAddress(); } catch (Exception e) { return false; }
     }

@@ -1,33 +1,40 @@
 package com.myhomelibcorp.ui.annotation;
 
+import com.myhomelibcorp.application.annotation.AnnotationBatchUndoToken;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFacets;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFilter;
 import com.myhomelibcorp.application.annotation.AnnotationManagerItem;
 import com.myhomelibcorp.application.annotation.AnnotationManagerPage;
 import com.myhomelibcorp.application.annotation.AnnotationManagerService;
 import com.myhomelibcorp.application.annotation.AnnotationManagerType;
-import com.myhomelibcorp.application.annotation.AnnotationUndoToken;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportFormat;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportRequest;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportSelection;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportService;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportTemplates;
+import com.myhomelibcorp.application.annotation.knowledge.AnnotationDigestLabels;
+import com.myhomelibcorp.application.annotation.knowledge.AnnotationDigestService;
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownExportRequest;
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownExportService;
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownExportTemplates;
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownReExportPolicy;
+import com.myhomelibcorp.application.annotation.AnnotationService;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
+import javafx.collections.ListChangeListener;
 import javafx.fxml.FXML;
 import javafx.scene.control.*;
+import javafx.scene.input.KeyCode;
+import javafx.scene.input.KeyEvent;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.GridPane;
 import javafx.stage.Stage;
@@ -42,7 +49,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
@@ -58,8 +67,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private static final DateTimeFormatter DATE_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     private final AnnotationManagerService annotationManagerService;
+    private final AnnotationEditorDialog annotationEditorDialog;
     private final AnnotationExportService annotationExportService;
     private final KnowledgeMarkdownExportService knowledgeMarkdownExportService;
+    private final AnnotationDigestService annotationDigestService;
     private final WorkspaceManager workspaceManager;
     private final UiBackgroundExecutor executor;
     private final DialogService dialogs;
@@ -82,12 +93,17 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     @FXML private TableColumn<AnnotationManagerItem, String> tagsColumn;
     @FXML private TableColumn<AnnotationManagerItem, String> updatedColumn;
     @FXML private Label statusLabel;
+    @FXML private Label selectedLabel;
     @FXML private Label pageLabel;
     @FXML private ProgressIndicator progressIndicator;
     @FXML private Button openButton;
     @FXML private Button editButton;
     @FXML private Button deleteButton;
     @FXML private Button undoButton;
+    @FXML private Button batchColorButton;
+    @FXML private Button batchTagsButton;
+    @FXML private Button batchRemoveTagsButton;
+    @FXML private Button exportSelectedButton;
     @FXML private Button previousButton;
     @FXML private Button nextButton;
 
@@ -95,19 +111,28 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private volatile boolean disposed;
     private int offset;
     private AnnotationManagerPage currentPage = new AnnotationManagerPage(List.of(), 0, 0, PAGE_SIZE);
-    private AnnotationUndoToken lastUndoToken;
+    private static final int MAX_UNDO_OPERATIONS = 20;
+    private final Deque<AnnotationBatchUndoToken> undoStack = new ArrayDeque<>();
 
     @FXML
     public void initialize() {
         configureTable();
         configureFilters();
-        table.getSelectionModel().selectedItemProperty().addListener((obs, oldItem, item) -> updateActions());
+        table.getSelectionModel().getSelectedItems().addListener(
+                (ListChangeListener<AnnotationManagerItem>) change -> updateActions());
         table.setRowFactory(view -> {
             TableRow<AnnotationManagerItem> row = new TableRow<>();
             row.setOnMouseClicked(event -> {
                 if (event.getClickCount() == 2 && !row.isEmpty()) openSelected();
             });
             return row;
+        });
+        root.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+            if (event.getCode() == KeyCode.Z && event.isShortcutDown() && !undoStack.isEmpty()
+                    && (progressIndicator == null || !progressIndicator.isVisible())) {
+                undoDelete();
+                event.consume();
+            }
         });
         loadFacetsAndPage();
     }
@@ -179,21 +204,22 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
 
     @FXML
     public void openSelected() {
-        AnnotationManagerItem selected = table.getSelectionModel().getSelectedItem();
-        if (selected == null) return;
+        List<AnnotationManagerItem> selectedItems = selectedItems();
+        if (selectedItems.size() != 1) return;
+        AnnotationManagerItem selected = selectedItems.getFirst();
         workspaceManager.showAnnotationInReader(selected.bookId(), selected.id());
     }
 
     @FXML
     public void editSelected() {
-        AnnotationManagerItem selected = table.getSelectionModel().getSelectedItem();
-        if (selected == null) return;
-        EditValues edited = showEditDialog(selected);
+        List<AnnotationManagerItem> selectedItems = selectedItems();
+        if (selectedItems.size() != 1) return;
+        AnnotationManagerItem selected = selectedItems.getFirst();
+        Stage owner = root.getScene() != null && root.getScene().getWindow() instanceof Stage stage ? stage : null;
+        AnnotationEditorDialog.Result edited = annotationEditorDialog.showEdit(
+                owner, selected.type(), selected.quote(), selected.note(), selected.color(),
+                Set.copyOf(selected.tags()), knownTags()).orElse(null);
         if (edited == null) return;
-        if (selected.type() == AnnotationManagerType.NOTE && edited.note().isBlank()) {
-            dialogs.showWarning(i18n.text("common.warning"), i18n.text("ui.annotations.note_required"));
-            return;
-        }
         setBusy(true, i18n.text("ui.annotations.saving"));
         executor.submit(() -> {
             annotationManagerService.update(selected.id(), edited.note(), edited.color(), edited.tags());
@@ -211,12 +237,16 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
 
     @FXML
     public void deleteSelected() {
-        AnnotationManagerItem selected = table.getSelectionModel().getSelectedItem();
-        if (selected == null) return;
+        List<AnnotationManagerItem> selected = selectedItems();
+        if (selected.isEmpty()) return;
+        String confirmation = selected.size() == 1
+                ? selected.getFirst().bookTitle() + " — " + summaryText(selected.getFirst())
+                : i18n.format("ui.annotations.delete_confirm_many", selected.size());
         if (!dialogs.showConfirmation(i18n.text("ui.annotations.delete"),
-                i18n.text("ui.annotations.delete_confirm"), selected.bookTitle() + " — " + summaryText(selected))) return;
+                i18n.text("ui.annotations.delete_confirm"), confirmation)) return;
+        List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
         setBusy(true, i18n.text("ui.annotations.deleting"));
-        executor.submit(() -> annotationManagerService.deleteForUndo(selected.id()))
+        executor.submit(() -> annotationManagerService.deleteForUndo(ids))
                 .whenComplete((token, error) -> Platform.runLater(() -> {
                     if (disposed) return;
                     if (error != null) {
@@ -224,16 +254,15 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                         dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.delete_failed"), UiExceptionSupport.message(error));
                         return;
                     }
-                    lastUndoToken = token;
-                    undoButton.setDisable(false);
-                    if (currentPage.items().size() == 1 && offset > 0) offset = Math.max(0, offset - PAGE_SIZE);
+                    pushUndo(token);
+                    if (currentPage.items().size() <= selected.size() && offset > 0) offset = Math.max(0, offset - PAGE_SIZE);
                     loadFacetsAndPage();
                 }));
     }
 
     @FXML
     public void undoDelete() {
-        AnnotationUndoToken token = lastUndoToken;
+        AnnotationBatchUndoToken token = undoStack.peekFirst();
         if (token == null) return;
         setBusy(true, i18n.text("ui.annotations.restoring"));
         executor.submit(() -> {
@@ -246,9 +275,124 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.undo_failed"), UiExceptionSupport.message(error));
                 return;
             }
-            lastUndoToken = null;
-            undoButton.setDisable(true);
+            undoStack.removeFirst();
             loadFacetsAndPage();
+        }));
+    }
+
+    @FXML
+    public void changeSelectedColor() {
+        List<AnnotationManagerItem> selected = selectedItems();
+        if (selected.isEmpty()) return;
+        ColorPicker picker = new ColorPicker(parseColor(selected.getFirst().color()));
+        Dialog<String> dialog = new Dialog<>();
+        dialog.setTitle(i18n.text("ui.annotations.batch_color"));
+        dialog.getDialogPane().getButtonTypes().setAll(
+                new ButtonType(i18n.text("common.save"), ButtonBar.ButtonData.OK_DONE), ButtonType.CANCEL);
+        dialog.getDialogPane().setContent(picker);
+        dialog.setResultConverter(button -> button.getButtonData() == ButtonBar.ButtonData.OK_DONE
+                ? colorHex(picker.getValue()) : null);
+        String color = dialog.showAndWait().orElse(null);
+        if (color == null) return;
+        List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        setBusy(true, i18n.text("ui.annotations.saving"));
+        executor.submit(() -> annotationManagerService.updateColor(ids, color))
+                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
+    }
+
+    @FXML
+    public void addTagsToSelected() {
+        List<AnnotationManagerItem> selected = selectedItems();
+        if (selected.isEmpty()) return;
+        String value = dialogs.showTextInput(i18n.text("ui.annotations.batch_tags"),
+                i18n.text("ui.annotations.batch_tags_header"), i18n.text("ui.annotations.edit.tags"), "")
+                .orElse(null);
+        Set<String> tags = AnnotationEditorDialog.parseTags(value);
+        if (tags.isEmpty()) return;
+        List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        setBusy(true, i18n.text("ui.annotations.saving"));
+        executor.submit(() -> annotationManagerService.addTags(ids, tags))
+                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
+    }
+
+    @FXML
+    public void removeTagsFromSelected() {
+        List<AnnotationManagerItem> selected = selectedItems();
+        if (selected.isEmpty()) return;
+        String value = dialogs.showTextInput(i18n.text("ui.annotations.batch_remove_tags"),
+                i18n.text("ui.annotations.batch_remove_tags_header"), i18n.text("ui.annotations.edit.tags"), "")
+                .orElse(null);
+        Set<String> tags = AnnotationEditorDialog.parseTags(value);
+        if (tags.isEmpty()) return;
+        List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
+        setBusy(true, i18n.text("ui.annotations.saving"));
+        executor.submit(() -> annotationManagerService.removeTags(ids, tags))
+                .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
+    }
+
+    @FXML
+    public void exportDigest() {
+        Stage owner = root.getScene() != null && root.getScene().getWindow() instanceof Stage stage ? stage : null;
+        java.io.File file = fileChooserService.chooseFileToSave(owner,
+                i18n.text("ui.annotations.digest"), "annotations-digest.md");
+        if (file == null) return;
+
+        List<AnnotationManagerItem> selected = selectedItems();
+        if (!selected.isEmpty()) {
+            Path destination = file.toPath();
+            setBusy(true, i18n.text("ui.annotations.exporting"));
+            executor.submit(() -> exportSelectedDigest(selected, destination))
+                    .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(destination, count, error)));
+            return;
+        }
+
+        BookChoice book = bookFilter == null ? null : bookFilter.getValue();
+        AnnotationExportSelection selection = book != null && book.id() != null
+                ? AnnotationExportSelection.books(Set.of(book.id()))
+                : AnnotationExportSelection.all();
+        Path destination = file.toPath();
+        setBusy(true, i18n.text("ui.annotations.exporting"));
+        AnnotationDigestLabels labels = new AnnotationDigestLabels(
+                i18n.text("ui.annotations.digest_title"),
+                i18n.text("ui.annotations.digest_author"),
+                i18n.text("ui.annotations.digest_no_chapter"),
+                i18n.text("ui.annotations.digest_quote"),
+                i18n.text("ui.annotations.digest_highlight"),
+                i18n.text("ui.reader.annotation.editor.note"),
+                i18n.text("ui.reader.annotation.editor.tags"),
+                i18n.text("ui.annotations.digest_open"));
+        executor.submit(() -> annotationDigestService.export(selection, destination, labels))
+                .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(destination, count, error)));
+    }
+
+    private void finishDigestExport(Path destination, Long count, Throwable error) {
+        if (disposed) return;
+        if (error != null) {
+            setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
+            dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
+            return;
+        }
+        setBusy(false, i18n.format("ui.annotations.digest_exported", count == null ? 0 : count, destination));
+    }
+
+    @FXML
+    public void exportSelectedCsv() {
+        List<AnnotationManagerItem> selected = selectedItems();
+        if (selected.isEmpty()) return;
+        Stage owner = root.getScene() != null && root.getScene().getWindow() instanceof Stage stage ? stage : null;
+        java.io.File file = fileChooserService.chooseFileToSave(owner,
+                i18n.text("ui.annotations.export_csv"), "annotations-selected.csv");
+        if (file == null) return;
+        Path destination = file.toPath();
+        setBusy(true, i18n.text("ui.annotations.exporting"));
+        executor.submit(() -> exportSelectedRows(selected, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
+            if (disposed) return;
+            if (error != null) {
+                setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
+                dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.export_failed"), UiExceptionSupport.message(error));
+                return;
+            }
+            setBusy(false, i18n.format("ui.annotations.exported", count, destination));
         }));
     }
 
@@ -274,27 +418,28 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     }
 
     private long exportCsv(AnnotationManagerFilter filter, Path destination) throws Exception {
-        Path parent = destination.toAbsolutePath().getParent();
-        if (parent != null) Files.createDirectories(parent);
-        long written = 0;
-        int exportOffset = 0;
-        try (BufferedWriter writer = Files.newBufferedWriter(destination, StandardCharsets.UTF_8)) {
-            writer.write("id,book_id,book_title,type,color,chapter,quote,note,tags,created_at,updated_at\n");
-            while (!Thread.currentThread().isInterrupted()) {
-                AnnotationManagerPage page = annotationManagerService.query(filter, exportOffset, EXPORT_PAGE_SIZE);
-                for (AnnotationManagerItem item : page.items()) {
-                    writer.write(csv(item.id()) + ',' + csv(item.bookId()) + ',' + csv(item.bookTitle()) + ','
-                            + csv(item.type().name()) + ',' + csv(item.color()) + ',' + csv(item.chapterTitle()) + ','
-                            + csv(item.quote()) + ',' + csv(item.note()) + ',' + csv(String.join(";", item.tags())) + ','
-                            + csv(item.createdAt().toString()) + ',' + csv(item.updatedAt().toString()) + "\n");
-                    written++;
+        return writeAtomically(destination, temp -> {
+            long written = 0;
+            int exportOffset = 0;
+            try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                writer.write("id,book_id,book_title,type,color,chapter,quote,note,tags,created_at,updated_at\n");
+                while (true) {
+                    checkExportCancelled();
+                    AnnotationManagerPage page = annotationManagerService.query(filter, exportOffset, EXPORT_PAGE_SIZE);
+                    for (AnnotationManagerItem item : page.items()) {
+                        checkExportCancelled();
+                        writer.write(csv(item.id()) + ',' + csv(item.bookId()) + ',' + csv(item.bookTitle()) + ','
+                                + csv(item.type().name()) + ',' + csv(item.color()) + ',' + csv(item.chapterTitle()) + ','
+                                + csv(item.quote()) + ',' + csv(item.note()) + ',' + csv(String.join(";", item.tags())) + ','
+                                + csv(item.createdAt().toString()) + ',' + csv(item.updatedAt().toString()) + "\n");
+                        written++;
+                    }
+                    if (!page.hasNext()) break;
+                    exportOffset += page.limit();
                 }
-                if (!page.hasNext()) break;
-                exportOffset += page.limit();
             }
-        }
-        if (Thread.currentThread().isInterrupted()) throw new InterruptedException("annotation export cancelled");
-        return written;
+            return written;
+        });
     }
 
     @FXML
@@ -622,39 +767,175 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 .ifPresentOrElse(combo::setValue, () -> combo.getSelectionModel().selectFirst());
     }
 
-    private EditValues showEditDialog(AnnotationManagerItem selected) {
-        Dialog<EditValues> dialog = new Dialog<>();
-        dialog.setTitle(i18n.text("ui.annotations.edit"));
-        dialog.setHeaderText(selected.bookTitle());
-        ButtonType save = new ButtonType(i18n.text("common.save"), ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().setAll(save, ButtonType.CANCEL);
+    private Set<String> knownTags() {
+        if (tagFilter == null || tagFilter.getItems() == null) return Set.of();
+        LinkedHashSet<String> result = new LinkedHashSet<>();
+        for (ValueChoice<String> choice : tagFilter.getItems()) {
+            if (choice != null && choice.value() != null && !choice.value().isBlank()) result.add(choice.value());
+        }
+        return Set.copyOf(result);
+    }
 
-        TextArea note = new TextArea(selected.note());
-        note.setPrefRowCount(5);
-        note.setWrapText(true);
-        TextField color = new TextField(selected.color());
-        TextField tags = new TextField(String.join(", ", selected.tags()));
-        GridPane grid = new GridPane();
-        grid.setHgap(8); grid.setVgap(8);
-        grid.addRow(0, new Label(i18n.text("ui.annotations.edit.note")), note);
-        grid.addRow(1, new Label(i18n.text("ui.annotations.edit.color")), color);
-        grid.addRow(2, new Label(i18n.text("ui.annotations.edit.tags")), tags);
-        GridPane.setHgrow(note, javafx.scene.layout.Priority.ALWAYS);
-        GridPane.setHgrow(color, javafx.scene.layout.Priority.ALWAYS);
-        GridPane.setHgrow(tags, javafx.scene.layout.Priority.ALWAYS);
-        dialog.getDialogPane().setContent(grid);
-        dialog.getDialogPane().setPrefWidth(560);
-        dialog.setResultConverter(button -> button == save
-                ? new EditValues(note.getText(), color.getText(), parseTags(tags.getText())) : null);
-        return dialog.showAndWait().orElse(null);
+    private List<AnnotationManagerItem> selectedItems() {
+        return table == null ? List.of() : List.copyOf(table.getSelectionModel().getSelectedItems());
+    }
+
+    private void pushUndo(AnnotationBatchUndoToken token) {
+        if (token == null) return;
+        undoStack.addFirst(token);
+        while (undoStack.size() > MAX_UNDO_OPERATIONS) undoStack.removeLast();
+    }
+
+    private void finishBatchEdit(Throwable error, Integer count, String successKey) {
+        if (disposed) return;
+        if (error != null) {
+            setBusy(false, i18n.text("ui.annotations.save_failed") + ": " + UiExceptionSupport.message(error));
+            dialogs.showError(i18n.text("common.error"), i18n.text("ui.annotations.save_failed"), UiExceptionSupport.message(error));
+            return;
+        }
+        statusLabel.setText(i18n.format(successKey, count == null ? 0 : count));
+        loadFacetsAndPage();
+    }
+
+    private static String colorHex(javafx.scene.paint.Color c) {
+        javafx.scene.paint.Color color = c == null ? javafx.scene.paint.Color.web(AnnotationService.DEFAULT_COLOR) : c;
+        int r = (int) Math.round(color.getRed() * 255.0);
+        int g = (int) Math.round(color.getGreen() * 255.0);
+        int b = (int) Math.round(color.getBlue() * 255.0);
+        int a = (int) Math.round(color.getOpacity() * 255.0);
+        return a >= 255 ? String.format(java.util.Locale.ROOT, "#%02X%02X%02X", r, g, b)
+                : String.format(java.util.Locale.ROOT, "#%02X%02X%02X%02X", r, g, b, a);
+    }
+
+    private int exportSelectedRows(List<AnnotationManagerItem> selected, Path destination) throws Exception {
+        return writeAtomically(destination, temp -> {
+            try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                writer.write("type,book,chapter,quote,note,tags,color,updated");
+                writer.newLine();
+                for (AnnotationManagerItem item : selected) {
+                    checkExportCancelled();
+                    writer.write(String.join(",",
+                            csv(item.type().name()), csv(item.bookTitle()), csv(item.chapterTitle()),
+                            csv(item.quote()), csv(item.note()), csv(String.join(", ", item.tags())),
+                            csv(item.color()), csv(item.updatedAt().toString())));
+                    writer.newLine();
+                }
+            }
+            return selected.size();
+        });
+    }
+
+    private long exportSelectedDigest(List<AnnotationManagerItem> selected, Path destination) throws Exception {
+        List<AnnotationManagerItem> ordered = selected.stream()
+                .sorted(java.util.Comparator.comparing(AnnotationManagerItem::bookTitle, String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(AnnotationManagerItem::bookId)
+                        .thenComparingDouble(AnnotationManagerItem::position)
+                        .thenComparing(AnnotationManagerItem::chapterTitle, String.CASE_INSENSITIVE_ORDER)
+                        .thenComparing(AnnotationManagerItem::id))
+                .toList();
+        return writeAtomically(destination, temp -> {
+            try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+                writer.write("# " + markdownInline(i18n.text("ui.annotations.digest_title")));
+                writer.newLine(); writer.newLine();
+                String bookId = null;
+                String chapter = null;
+                for (AnnotationManagerItem item : ordered) {
+                    checkExportCancelled();
+                    if (!item.bookId().equals(bookId)) {
+                        bookId = item.bookId(); chapter = null;
+                        String bookHeading = item.bookTitle().isBlank() ? item.bookId() : item.bookTitle();
+                        writer.write("## " + markdownInline(bookHeading)); writer.newLine(); writer.newLine();
+                    }
+                    String nextChapter = item.chapterTitle().isBlank() ? i18n.text("ui.annotations.digest_no_chapter") : item.chapterTitle();
+                    if (!nextChapter.equals(chapter)) {
+                        chapter = nextChapter;
+                        writer.write("### " + markdownInline(chapter)); writer.newLine(); writer.newLine();
+                    }
+                    writer.write("- **" + typeLabel(item.type()) + ":** “" + markdownInline(item.quote()) + "”");
+                    writer.newLine();
+                    if (!item.note().isBlank()) {
+                        writer.write("  - **" + i18n.text("ui.reader.annotation.editor.note") + ":** " + markdownInline(item.note()));
+                        writer.newLine();
+                    }
+                    if (!item.tags().isEmpty()) {
+                        writer.write("  - **" + i18n.text("ui.reader.annotation.editor.tags") + ":** "
+                                + markdownInline(String.join(", ", item.tags())));
+                        writer.newLine();
+                    }
+                    writer.write("  - [" + i18n.text("ui.annotations.open") + "](myhomelib://book/"
+                            + java.net.URLEncoder.encode(item.bookId(), StandardCharsets.UTF_8).replace("+", "%20")
+                            + "?annotation=" + java.net.URLEncoder.encode(item.id(), StandardCharsets.UTF_8).replace("+", "%20") + ")");
+                    writer.newLine(); writer.newLine();
+                }
+            }
+            return (long) ordered.size();
+        });
+    }
+
+    private <T> T writeAtomically(Path destination, AtomicExportWriter<T> writer) throws Exception {
+        Path absolute = destination.toAbsolutePath();
+        Path parent = absolute.getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Path directory = parent != null ? parent : Path.of(".").toAbsolutePath();
+        Path temp = Files.createTempFile(directory, "." + absolute.getFileName() + ".", ".part");
+        boolean committed = false;
+        try {
+            T result = writer.write(temp);
+            checkExportCancelled();
+            AtomicFileSupport.moveReplacing(temp, absolute);
+            committed = true;
+            return result;
+        } finally {
+            if (!committed) Files.deleteIfExists(temp);
+        }
+    }
+
+    private static void checkExportCancelled() throws InterruptedException {
+        if (Thread.currentThread().isInterrupted()) throw new InterruptedException("annotation export cancelled");
+    }
+
+    private static javafx.scene.paint.Color parseColor(String value) {
+        try {
+            return javafx.scene.paint.Color.web(value == null || value.isBlank() ? AnnotationService.DEFAULT_COLOR : value);
+        } catch (RuntimeException ignored) {
+            return javafx.scene.paint.Color.web(AnnotationService.DEFAULT_COLOR);
+        }
+    }
+
+    @FunctionalInterface
+    private interface AtomicExportWriter<T> {
+        T write(Path temp) throws Exception;
+    }
+
+    private static String markdownInline(String value) {
+        if (value == null) return "";
+        return value.replace("\\", "\\\\").replace("`", "\\`")
+                .replace("*", "\\*").replace("_", "\\_")
+                .replace("[", "\\[").replace("]", "\\]")
+                .replace("\r\n", " ").replace("\r", " ").replace("\n", " ");
     }
 
     private void updateActions() {
-        boolean selected = table.getSelectionModel().getSelectedItem() != null;
-        openButton.setDisable(!selected || progressIndicator.isVisible());
-        editButton.setDisable(!selected || progressIndicator.isVisible());
-        deleteButton.setDisable(!selected || progressIndicator.isVisible());
-        undoButton.setDisable(lastUndoToken == null || progressIndicator.isVisible());
+        int selectedCount = table == null ? 0 : table.getSelectionModel().getSelectedItems().size();
+        boolean busy = progressIndicator != null && progressIndicator.isVisible();
+        openButton.setDisable(selectedCount != 1 || busy);
+        editButton.setDisable(selectedCount != 1 || busy);
+        deleteButton.setDisable(selectedCount == 0 || busy);
+        undoButton.setDisable(undoStack.isEmpty() || busy);
+        if (undoButton != null) {
+            int undoCount = undoStack.isEmpty() ? 0 : undoStack.peekFirst().annotations().size();
+            undoButton.setText(undoCount <= 0 ? i18n.text("ui.annotations.undo")
+                    : i18n.format("ui.annotations.undo_count", undoCount));
+        }
+        if (batchColorButton != null) batchColorButton.setDisable(selectedCount == 0 || busy);
+        if (batchTagsButton != null) batchTagsButton.setDisable(selectedCount == 0 || busy);
+        if (batchRemoveTagsButton != null) batchRemoveTagsButton.setDisable(selectedCount == 0 || busy);
+        if (exportSelectedButton != null) exportSelectedButton.setDisable(selectedCount == 0 || busy);
+        if (selectedLabel != null) {
+            selectedLabel.setText(selectedCount == 0 ? "" : i18n.format("ui.annotations.selected_count", selectedCount));
+            selectedLabel.setManaged(selectedCount > 0);
+            selectedLabel.setVisible(selectedCount > 0);
+        }
     }
 
     private void setBusy(boolean busy, String status) {
@@ -675,18 +956,16 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         return text.length() <= 180 ? text : text.substring(0, 177) + "…";
     }
 
-    private static Set<String> parseTags(String value) {
-        if (value == null || value.isBlank()) return Set.of();
-        Set<String> result = new LinkedHashSet<>();
-        for (String part : value.split("[,;]")) {
-            String tag = part.trim();
-            if (!tag.isEmpty()) result.add(tag);
-        }
-        return Set.copyOf(result);
-    }
-
-    private static String csv(String value) {
+    static String csv(String value) {
         String safe = value == null ? "" : value;
+        // Spreadsheet applications may execute cells beginning with formula markers even when the
+        // CSV field is quoted. Prefix only the exported representation; stored annotation data is
+        // left untouched. Leading whitespace is ignored when deciding whether the cell is risky.
+        int first = 0;
+        while (first < safe.length() && Character.isWhitespace(safe.charAt(first))) first++;
+        if (first < safe.length() && "=+-@".indexOf(safe.charAt(first)) >= 0) {
+            safe = safe.substring(0, first) + "'" + safe.substring(first);
+        }
         return '"' + safe.replace("\"", "\"\"") + '"';
     }
 
@@ -696,6 +975,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         disposed = true;
         loadGeneration.incrementAndGet();
         table.setItems(FXCollections.observableArrayList());
+        undoStack.clear();
     }
 
     private enum ExportScope { ONE_BOOK, SELECTED_BOOKS, ALL_BOOKS }
@@ -719,5 +999,4 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private record ValueChoice<T>(T value, String label) {
         @Override public String toString() { return label == null ? "" : label; }
     }
-    private record EditValues(String note, String color, Set<String> tags) { }
 }

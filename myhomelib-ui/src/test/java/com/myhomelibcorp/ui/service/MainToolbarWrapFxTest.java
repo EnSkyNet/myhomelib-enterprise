@@ -4,7 +4,8 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
-import javafx.scene.layout.FlowPane;
+import javafx.scene.control.TextField;
+import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
@@ -34,10 +35,11 @@ class MainToolbarWrapFxTest {
             Assumptions.abort("JavaFX runtime is not reachable: " + noDisplay.getMessage());
         }
         assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+        Platform.setImplicitExit(false);
     }
 
     @Test
-    void toolbarWrapsIntoTwoRowsAtMinimumSupportedWindowWidth() throws Exception {
+    void toolbarStaysSingleRowAndSearchCanShrinkAtMinimumSupportedWindowWidth() throws Exception {
         AtomicReference<Throwable> failure = new AtomicReference<>();
         CountDownLatch done = new CountDownLatch(1);
         Platform.runLater(() -> {
@@ -56,20 +58,16 @@ class MainToolbarWrapFxTest {
                 root.applyCss();
                 root.layout();
 
-                FlowPane toolbar = (FlowPane) root.lookup("#mainToolbar");
+                HBox toolbar = (HBox) root.lookup("#mainToolbar");
+                TextField search = (TextField) root.lookup("#searchField");
                 assertThat(toolbar).isNotNull();
-                java.util.List<Double> rowY = new java.util.ArrayList<>();
-                toolbar.getChildren().stream()
-                        .filter(node -> node.isManaged() && node.isVisible() && !(node instanceof javafx.scene.control.Separator))
-                        .map(node -> node.getBoundsInParent().getMinY())
-                        .sorted()
-                        .forEach(y -> {
-                            if (rowY.isEmpty() || Math.abs(y - rowY.get(rowY.size() - 1)) > 8.0) rowY.add(y);
-                        });
-
-                assertThat(rowY)
-                        .as("toolbar rows at 800px minimum supported window width")
-                        .hasSize(2);
+                assertThat(search).isNotNull();
+                assertThat(toolbar.getHeight()).isLessThan(55.0);
+                assertThat(search.getWidth()).isGreaterThanOrEqualTo(search.getMinWidth());
+                assertThat(search.getWidth()).isLessThanOrEqualTo(search.getMaxWidth());
+                assertThat(toolbar.getChildren()).allSatisfy(node ->
+                        assertThat(Math.abs(node.getBoundsInParent().getCenterY() - toolbar.getHeight() / 2.0))
+                                .isLessThan(22.0));
             } catch (Throwable error) {
                 failure.set(error);
             } finally {
@@ -80,6 +78,7 @@ class MainToolbarWrapFxTest {
         assertThat(done.await(15, TimeUnit.SECONDS)).isTrue();
         if (failure.get() != null) throw new AssertionError(failure.get());
     }
+
     /** Avoid poisoning the JavaFX singleton when CI exposes a stale/unreachable DISPLAY. */
     private static void assumeDisplayReachable() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
@@ -94,5 +93,4 @@ class MainToolbarWrapFxTest {
             Assumptions.abort("JavaFX DISPLAY is not reachable: " + unreachableDisplay.getMessage());
         }
     }
-
 }

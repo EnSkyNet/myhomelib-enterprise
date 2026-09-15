@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.filter;
 
 import com.myhomelibcorp.application.filter.BookFilterMode;
+import com.myhomelibcorp.application.filter.BookAnnotationPresenceFilter;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.query.book.BookFormat;
@@ -24,7 +25,15 @@ public class BookFilterDialogService {
     private final LocalizationService i18n;
 
     public Optional<BookFilterSpec> show(Window owner) {
-        BookFilterSpec current = filterStateService.current();
+        Dialog<BookFilterSpec> dialog = createDialog(owner, filterStateService.current());
+        Optional<BookFilterSpec> result = dialog.showAndWait();
+        result.ifPresent(filterStateService::save);
+        return result;
+    }
+
+    /** Builds the dialog without showing it so display-capable UI tests can inspect the real control tree. */
+    Dialog<BookFilterSpec> createDialog(Window owner, BookFilterSpec current) {
+        final BookFilterSpec effectiveCurrent = current == null ? BookFilterSpec.empty() : current;
         Dialog<BookFilterSpec> dialog = new Dialog<>();
         dialog.setTitle(i18n.tr("Фільтри книг"));
         dialog.setHeaderText(i18n.tr("Єдиний фільтр для навігації, пошуку й таблиці"));
@@ -47,22 +56,39 @@ public class BookFilterDialogService {
                 return BookFilterMode.AND;
             }
         });
-        mode.setValue(current.mode());
+        mode.setValue(effectiveCurrent.mode());
 
-        TextField language = field(current.language());
-        TextField yearFrom = field(current.yearFrom());
-        TextField yearTo = field(current.yearTo());
+        TextField language = field(effectiveCurrent.language());
+        TextField yearFrom = field(effectiveCurrent.yearFrom());
+        TextField yearTo = field(effectiveCurrent.yearTo());
         ComboBox<String> format = new ComboBox<>();
         format.getItems().add(i18n.tr("Будь-який"));
         for (BookFormat value : BookFormat.values()) format.getItems().add(value.name());
-        format.setValue(current.format() == null ? i18n.tr("Будь-який") : current.format().name());
+        format.setValue(effectiveCurrent.format() == null ? i18n.tr("Будь-який") : effectiveCurrent.format().name());
 
-        ComboBox<String> local = triState(i18n.tr("Будь-які"), i18n.tr("Тільки локальні"), i18n.tr("Тільки онлайн"), current.local());
-        ComboBox<String> read = triState(i18n.tr("Будь-які"), i18n.tr("Прочитані"), i18n.tr("Непрочитані"), current.read());
-        TextField ratingMin = field(current.ratingMin());
-        TextField ratingMax = field(current.ratingMax());
+        ComboBox<String> local = triState(i18n.tr("Будь-які"), i18n.tr("Тільки локальні"), i18n.tr("Тільки онлайн"), effectiveCurrent.local());
+        ComboBox<String> read = triState(i18n.tr("Будь-які"), i18n.tr("Прочитані"), i18n.tr("Непрочитані"), effectiveCurrent.read());
+        ComboBox<BookAnnotationPresenceFilter> annotationPresence = new ComboBox<>();
+        annotationPresence.setId("annotationPresenceFilter");
+        annotationPresence.setAccessibleText(i18n.text("ui.filter.annotation.label"));
+        annotationPresence.getItems().setAll(BookAnnotationPresenceFilter.values());
+        annotationPresence.setConverter(new StringConverter<>() {
+            @Override public String toString(BookAnnotationPresenceFilter value) {
+                if (value == null) return i18n.text("ui.filter.annotation.any");
+                return switch (value) {
+                    case ANY -> i18n.text("ui.filter.annotation.any");
+                    case NOTES -> i18n.text("ui.filter.annotation.notes");
+                    case HIGHLIGHTS -> i18n.text("ui.filter.annotation.highlights");
+                    case NOTES_OR_HIGHLIGHTS -> i18n.text("ui.filter.annotation.any_annotation");
+                };
+            }
+            @Override public BookAnnotationPresenceFilter fromString(String value) { return BookAnnotationPresenceFilter.ANY; }
+        });
+        annotationPresence.setValue(effectiveCurrent.annotationPresence());
+        TextField ratingMin = field(effectiveCurrent.ratingMin());
+        TextField ratingMax = field(effectiveCurrent.ratingMax());
         CheckBox hideUnrated = new CheckBox(i18n.tr("Приховати без оцінки"));
-        hideUnrated.setSelected(current.hideUnrated());
+        hideUnrated.setSelected(effectiveCurrent.hideUnrated());
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(9); grid.setPadding(new Insets(12));
@@ -73,6 +99,7 @@ public class BookFilterDialogService {
         grid.add(new Label(i18n.tr("Формат")), 0, r); grid.add(format, 1, r++);
         grid.add(new Label(i18n.tr("Локальність")), 0, r); grid.add(local, 1, r++);
         grid.add(new Label(i18n.tr("Статус читання")), 0, r); grid.add(read, 1, r++);
+        grid.add(new Label(i18n.text("ui.filter.annotation.label")), 0, r); grid.add(annotationPresence, 1, r++);
         grid.add(new Label(i18n.tr("Оцінка від / до")), 0, r); grid.add(new HBox(6, ratingMin, ratingMax), 1, r++);
         grid.add(hideUnrated, 1, r);
         dialog.getDialogPane().setContent(grid);
@@ -85,11 +112,9 @@ public class BookFilterDialogService {
                     triBoolean(local.getSelectionModel().getSelectedIndex()),
                     triBoolean(read.getSelectionModel().getSelectedIndex()),
                     integer(ratingMin), integer(ratingMax), hideUnrated.isSelected(),
-                    current.quickField(), current.quickValue());
+                    annotationPresence.getValue(), effectiveCurrent.quickField(), effectiveCurrent.quickValue());
         });
-        Optional<BookFilterSpec> result = dialog.showAndWait();
-        result.ifPresent(filterStateService::save);
-        return result;
+        return dialog;
     }
 
     private ComboBox<String> triState(String any, String yes, String no, Boolean value) {

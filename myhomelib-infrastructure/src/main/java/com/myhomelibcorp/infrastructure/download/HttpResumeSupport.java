@@ -32,7 +32,7 @@ final class HttpResumeSupport {
         Path temp = meta.resolveSibling(meta.getFileName() + ".tmp");
         try (OutputStream out = Files.newOutputStream(temp, StandardOpenOption.CREATE,
                 StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
-            properties.store(out, "MyHomeLib v7.1 resumable download metadata; no URL/credentials stored");
+            properties.store(out, "MyHomeLib 8.0.0 resumable download metadata; no URL/credentials stored");
         }
         AtomicFileSupport.moveReplacing(temp, meta);
     }

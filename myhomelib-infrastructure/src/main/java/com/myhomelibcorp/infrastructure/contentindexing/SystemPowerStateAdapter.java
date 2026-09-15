@@ -1,8 +1,10 @@
 package com.myhomelibcorp.infrastructure.contentindexing;
 
 import com.myhomelibcorp.application.port.out.contentindexing.PowerStatePort;
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.stereotype.Component;
+import lombok.extern.slf4j.Slf4j;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -15,6 +17,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 /** Non-blocking cached OS power-state detector. Slow host probes never run on the caller/UI thread. */
 @Component
+@Slf4j
 public class SystemPowerStateAdapter implements PowerStatePort, DisposableBean {
     private static final long CACHE_NANOS = TimeUnit.SECONDS.toNanos(30);
     private final AtomicBoolean refreshRunning = new AtomicBoolean();
@@ -24,7 +27,13 @@ public class SystemPowerStateAdapter implements PowerStatePort, DisposableBean {
         return thread;
     });
     private volatile long refreshAfter;
-    private volatile boolean cached;
+    private volatile boolean cached = conservativeInitialState();
+
+
+    private static boolean conservativeInitialState() {
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        return os.contains("linux") || os.contains("mac") || os.contains("win");
+    }
 
     @Override
     public boolean onBatteryPower() {
@@ -41,12 +50,19 @@ public class SystemPowerStateAdapter implements PowerStatePort, DisposableBean {
 
     private static boolean detect() {
         String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+        boolean knownPlatform = os.contains("linux") || os.contains("mac") || os.contains("win");
         try {
             if (os.contains("linux")) return linuxOnBattery();
             if (os.contains("mac")) return commandContains(new String[]{"pmset", "-g", "batt"}, "Battery Power");
             if (os.contains("win")) return commandContains(new String[]{"powershell", "-NoProfile", "-NonInteractive", "-Command",
                     "$b=Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object -First 1; if($b -and $b.BatteryStatus -eq 1){'ON_BATTERY'}"}, "ON_BATTERY");
-        } catch (Exception ignored) { }
+        } catch (Exception e) {
+            // Power state is a resource-safety signal. On supported platforms an unavailable probe
+            // is treated conservatively as battery power so indexing does not start heavy work on
+            // an unknown host state. The next cached refresh retries automatically.
+            log.debug("Cannot determine OS power state; using conservative battery mode: {}", e.toString());
+            return knownPlatform;
+        }
         return false;
     }
 
@@ -66,19 +82,17 @@ public class SystemPowerStateAdapter implements PowerStatePort, DisposableBean {
         return batteryPresent && !externalOnline;
     }
 
-    private static String read(Path file) {
-        try { return Files.readString(file, StandardCharsets.UTF_8).trim(); }
-        catch (Exception ignored) { return ""; }
+    private static String read(Path file) throws java.io.IOException {
+        return Files.readString(file, StandardCharsets.UTF_8).trim();
     }
 
     private static boolean commandContains(String[] command, String token) throws Exception {
-        Process process = new ProcessBuilder(command).redirectErrorStream(true).start();
-        if (!process.waitFor(1500, TimeUnit.MILLISECONDS)) {
-            process.destroyForcibly();
-            return false;
+        ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
+                java.util.List.of(command), null, java.time.Duration.ofMillis(1500), 64 * 1024);
+        if (result.exitCode() != 0) {
+            throw new java.io.IOException("Power-state probe exited with code " + result.exitCode());
         }
-        String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-        return output.contains(token);
+        return result.stdoutText().contains(token);
     }
 
     @Override public void destroy() { detector.shutdownNow(); }

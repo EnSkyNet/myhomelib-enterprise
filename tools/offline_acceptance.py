@@ -40,13 +40,9 @@ def main() -> int:
     nested = repo / "maven-offline-repo"
     if nested.is_dir():
         repo = nested
-    required = [
-        repo / "org/springframework/boot/spring-boot-dependencies/3.5.0/spring-boot-dependencies-3.5.0.pom",
-        repo / "org/openjfx/javafx/21.0.2/javafx-21.0.2.pom",
-    ]
-    missing = [str(path.relative_to(repo)) for path in required if not path.is_file()]
-    if missing:
-        raise SystemExit("Offline Maven repository is incomplete; missing: " + ", ".join(missing))
+    # Do not hard-code dependency versions here. The root POM is the source of truth,
+    # and the offline Maven invocation below is the authoritative completeness check.
+    # This keeps the acceptance harness valid across controlled dependency upgrades.
 
     mvn = maven_command()
     base = mvn + ["-o", "-B", "-ntp", f"-Dmaven.repo.local={repo}"]

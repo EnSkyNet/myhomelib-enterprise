@@ -744,6 +744,9 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                     safeNullableLimitedText(n, "paragraphId"), start, end, position,
                     quote, limitedText(n, "prefix", ""), limitedText(n, "suffix", ""));
             c.annotations++;
+            // Annotation presence is part of the derived Lucene document schema (Iteration 85).
+            // Mark the logical book as changed so portable restore refreshes has_note/has_highlight.
+            c.searchChanges.recordUpdated(bookId);
         });
     }
 

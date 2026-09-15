@@ -1,13 +1,13 @@
 package com.myhomelibcorp.reader.render.javafx;
 
 import com.myhomelibcorp.reader.api.PageDimensions;
+import com.myhomelibcorp.reader.api.ReaderAnnotationActivation;
 import com.myhomelibcorp.reader.api.ReaderAnnotationOverlay;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.api.ReaderSelection;
 import com.myhomelibcorp.reader.api.ReaderSettings;
 import com.myhomelibcorp.reader.api.ReaderTheme;
 import com.myhomelibcorp.reader.core.ReaderEngine;
-import com.myhomelibcorp.reader.model.LineLayout;
 import com.myhomelibcorp.reader.model.PageLayout;
 import com.myhomelibcorp.reader.render.api.ReaderRenderer;
 import javafx.animation.PauseTransition;
@@ -17,11 +17,11 @@ import javafx.scene.canvas.Canvas;
 import javafx.scene.control.ContextMenu;
 import javafx.scene.control.MenuItem;
 import javafx.scene.control.SeparatorMenuItem;
+import javafx.scene.Cursor;
 import javafx.scene.input.MouseEvent;
 import javafx.scene.input.SwipeEvent;
 import javafx.scene.input.ZoomEvent;
 import javafx.scene.layout.StackPane;
-import javafx.scene.paint.Color;
 import javafx.util.Duration;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
@@ -91,6 +91,8 @@ public class ReaderCanvas extends StackPane {
     private Consumer<ReaderSelection> onDictionaryRequested;
     private Consumer<ReaderSelection> onTranslationRequested;
     private Consumer<Optional<ReaderSelection>> onSelectionChanged;
+    private Consumer<ReaderAnnotationActivation> onAnnotationActivated;
+    private ReaderAnnotationOverlay keyboardAnnotation;
 
     public ReaderCanvas(ReaderEngine engine, ReaderRenderer renderer, Function<String, String> text) {
         if (engine == null) {
@@ -127,6 +129,7 @@ public class ReaderCanvas extends StackPane {
         setOnKeyPressed(keyboardScrollController::onKeyPressed);
         setOnScroll(keyboardScrollController::onScroll);
         setOnMouseClicked(this::onMouseClicked);
+        setOnMouseMoved(this::onMouseMoved);
         setOnMousePressed(this::onMousePressed);
         setOnMouseDragged(this::onMouseDragged);
         setOnMouseReleased(this::onMouseReleased);
@@ -139,7 +142,12 @@ public class ReaderCanvas extends StackPane {
             if (hasSelection()) {
                 selectionContextMenu.show(this, event.getScreenX(), event.getScreenY());
                 event.consume();
+                return;
             }
+            annotationAt(event.getX(), event.getY()).ifPresent(annotation -> {
+                activateAnnotation(annotation, event.getScreenX(), event.getScreenY());
+                event.consume();
+            });
         });
         setPadding(Insets.EMPTY);
     }
@@ -505,9 +513,48 @@ public class ReaderCanvas extends StackPane {
             requestFocus();
             return;
         }
-        executeTapAction(tapActionAt(event.getX(), event.getY(), false));
+        Optional<ReaderAnnotationOverlay> annotation = annotationAt(event.getX(), event.getY());
+        if (annotation.isPresent()) {
+            keyboardAnnotation = annotation.get();
+            activateAnnotation(annotation.get(), event.getScreenX(), event.getScreenY());
+        } else {
+            executeTapAction(tapActionAt(event.getX(), event.getY(), false));
+        }
         event.consume();
         requestFocus();
+    }
+
+    private void onMouseMoved(MouseEvent event) {
+        if (!engine.isOpen()) {
+            setCursor(Cursor.DEFAULT);
+            return;
+        }
+        Optional<ReaderAnnotationOverlay> annotation = annotationAt(event.getX(), event.getY());
+        keyboardAnnotation = annotation.orElse(null);
+        setCursor(annotation.isPresent() ? Cursor.HAND : Cursor.DEFAULT);
+    }
+
+    private Optional<ReaderAnnotationOverlay> annotationAt(double x, double y) {
+        return ReaderAnnotationHitTest.hit(annotationOverlays, renderedLeftPage, renderedRightPage,
+                renderedRightOffset, twoPageActive, x, y);
+    }
+
+    private void activateAnnotation(ReaderAnnotationOverlay annotation, double screenX, double screenY) {
+        if (annotation == null || onAnnotationActivated == null) return;
+        onAnnotationActivated.accept(new ReaderAnnotationActivation(annotation, screenX, screenY));
+    }
+
+    void activateNextAnnotationFromInput() {
+        List<ReaderAnnotationOverlay> visible = ReaderAnnotationHitTest.visibleOrdered(
+                annotationOverlays, renderedLeftPage, renderedRightPage, twoPageActive);
+        if (visible.isEmpty()) return;
+        int index = keyboardAnnotation == null ? -1 : visible.indexOf(keyboardAnnotation);
+        keyboardAnnotation = visible.get((index + 1) % visible.size());
+        double x = getScene() == null || getScene().getWindow() == null
+                ? 0.0 : getScene().getWindow().getX() + getScene().getWindow().getWidth() / 2.0;
+        double y = getScene() == null || getScene().getWindow() == null
+                ? 0.0 : getScene().getWindow().getY() + getScene().getWindow().getHeight() / 2.0;
+        activateAnnotation(keyboardAnnotation, x, y);
     }
 
     private String tapActionAt(double x, double y, boolean longPress) {
@@ -617,6 +664,9 @@ public class ReaderCanvas extends StackPane {
             selectionGestureHandled = true;
             notifySelectionChanged();
             render();
+            if (hasSelection()) {
+                selectionContextMenu.show(this, event.getScreenX(), event.getScreenY());
+            }
             event.consume();
             requestFocus();
         }
@@ -652,45 +702,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     private void renderAnnotationOverlay(ReaderAnnotationOverlay overlay, PageLayout page, double xOffset) {
-        if (overlay == null || page == null || page.isEmpty()) return;
-        var gc = renderer.getGraphicsContext();
-        long from = overlay.startOffset();
-        long to = overlay.endOffset();
-        gc.setFill(Color.web(overlay.color(), overlay.note() ? 0.22 : 0.30));
-        boolean painted = false;
-        for (LineLayout line : page.getLines()) {
-            long lineStart = line.textOffset();
-            long lineEnd = lineStart + Math.max(1, line.charLength());
-            long a = Math.max(from, lineStart);
-            long b = Math.min(to, lineEnd);
-            if (b <= a) continue;
-            double span = Math.max(1, lineEnd - lineStart);
-            double x1 = xOffset + line.x() + line.width() * ((a - lineStart) / span);
-            double x2 = xOffset + line.x() + line.width() * ((b - lineStart) / span);
-            gc.fillRoundRect(x1, line.y(), Math.max(2, x2 - x1), Math.max(2, line.height()), 3, 3);
-            painted = true;
-        }
-        if (overlay.note()) {
-            renderNoteMarker(overlay, page, xOffset, painted);
-        }
-    }
-
-    private void renderNoteMarker(ReaderAnnotationOverlay overlay, PageLayout page, double xOffset, boolean rangePainted) {
-        long offset = overlay.startOffset();
-        for (LineLayout line : page.getLines()) {
-            long lineStart = line.textOffset();
-            long lineEnd = lineStart + Math.max(1, line.charLength());
-            if (offset < lineStart || offset > lineEnd) continue;
-            double span = Math.max(1, lineEnd - lineStart);
-            double ratio = Math.max(0.0, Math.min(1.0, (offset - lineStart) / span));
-            double x = xOffset + line.x() + line.width() * ratio;
-            double y = line.y() + 2;
-            var gc = renderer.getGraphicsContext();
-            gc.setFill(Color.web(overlay.color(), 0.88));
-            double diameter = rangePainted ? 6 : 8;
-            gc.fillOval(x - diameter / 2, y - diameter / 2, diameter, diameter);
-            return;
-        }
+        ReaderOverlayPainter.renderAnnotation(renderer.getGraphicsContext(), overlay, page, xOffset);
     }
 
     private void renderSpeechHighlight() {
@@ -702,20 +714,7 @@ public class ReaderCanvas extends StackPane {
     }
 
     private void renderOffsetRange(long from, long to, PageLayout page, double xOffset, String color, double opacity) {
-        if (page == null || page.isEmpty()) return;
-        var gc = renderer.getGraphicsContext();
-        gc.setFill(Color.web(color, opacity));
-        for (LineLayout line : page.getLines()) {
-            long lineStart = line.textOffset();
-            long lineEnd = lineStart + Math.max(1, line.charLength());
-            long a = Math.max(from, lineStart);
-            long b = Math.min(to, lineEnd);
-            if (b <= a) continue;
-            double span = Math.max(1, lineEnd - lineStart);
-            double x1 = xOffset + line.x() + line.width() * ((a - lineStart) / span);
-            double x2 = xOffset + line.x() + line.width() * ((b - lineStart) / span);
-            gc.fillRoundRect(x1, line.y(), Math.max(2, x2 - x1), Math.max(2, line.height()), 3, 3);
-        }
+        ReaderOverlayPainter.renderRange(renderer.getGraphicsContext(), from, to, page, xOffset, color, opacity);
     }
 
     private void renderSelectionOverlay() {
@@ -829,6 +828,7 @@ public class ReaderCanvas extends StackPane {
         paginationController.close();
         clearSelection(false);
         annotationOverlays = List.of();
+        keyboardAnnotation = null;
         speechHighlightStart = -1L;
         speechHighlightEnd = -1L;
         sizeUpdated = false;
@@ -876,6 +876,8 @@ public class ReaderCanvas extends StackPane {
     public void setOnTranslationRequested(Consumer<ReaderSelection> listener) { this.onTranslationRequested = listener; }
 
     public void setOnSelectionChanged(Consumer<Optional<ReaderSelection>> listener) { this.onSelectionChanged = listener; }
+
+    public void setOnAnnotationActivated(Consumer<ReaderAnnotationActivation> listener) { this.onAnnotationActivated = listener; }
 
     public Optional<ReaderSelection> getSelection() { return selectionController.snapshot(); }
 
@@ -931,6 +933,7 @@ public class ReaderCanvas extends StackPane {
         pageHistory.clear();
         paginationController.close();
         annotationOverlays = List.of();
+        keyboardAnnotation = null;
         selectionContextMenu.hide();
         sizeUpdated = false;
     }

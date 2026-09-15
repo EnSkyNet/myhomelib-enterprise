@@ -1,4 +1,4 @@
-# Shared Windows host/session identity helpers for final MyHomeLib 7.1 acceptance.
+# Shared Windows host/session identity helpers for candidate-bound MyHomeLib acceptance.
 # This file is itself candidate-bound by acceptance-harness.sha256.
 
 function Get-MyHomeLibSha256Text {

@@ -6,7 +6,7 @@
     <parent>
         <groupId>com.myhomelibcorp</groupId>
         <artifactId>myhomelib-enterprise</artifactId>
-        <version>7.1.0</version>
+        <version>8.0.0</version>
     </parent>
     <modelVersion>4.0.0</modelVersion>
 
@@ -36,7 +36,7 @@
         </dependency>
         <dependency>
             <groupId>com.tngtech.archunit</groupId>
-            <artifactId>archunit-junit5</artifactId>
+            <artifactId>archunit</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

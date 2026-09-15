@@ -133,16 +133,13 @@
     -fx-border-width: 2;
 }
 
-/* Main action strip is intentionally a wrapping FlowPane: at normal widths it stays on one row;
-   when actions no longer fit it flows into a second row instead of disappearing past the client area. */
-.main-toolbar-wrap.flow-pane {
+/* Main action strip is intentionally a single-row HBox. Frequent actions stay visible;
+   infrequent actions live in the overflow menu so the toolbar does not wrap at narrow widths. */
+.main-toolbar-wrap {
     -fx-alignment: center-left;
-    -fx-column-halignment: left;
-    -fx-row-valignment: center;
 }
 
-/* Keep the complete action set visible even at the supported 800px minimum window width.
-   Compact controls plus FlowPane wrapping fit into two rows instead of a clipped third row. */
+/* Keep persistent controls compact at the supported 800px minimum window width. */
 .main-toolbar-wrap .button {
     -fx-font-size: 11px;
     -fx-padding: 4px 5px 4px 5px;
@@ -168,4 +165,43 @@
 .artifact-badge-unavailable {
     -fx-text-fill: -mhl-muted-text;
     -fx-opacity: 0.72;
+}
+
+/* Iteration 84: compact main toolbar + contextual multi-selection actions. */
+.selection-toolbar {
+    -fx-padding: 6 10 6 10;
+    -fx-background-color: derive(-mhl-accent, 88%);
+    -fx-border-color: -mhl-border;
+    -fx-border-width: 1 0 0 0;
+}
+.scope-chip {
+    -fx-padding: 3 9 3 9;
+    -fx-background-color: derive(-mhl-accent, 88%);
+    -fx-background-radius: 12;
+    -fx-text-fill: -mhl-text;
+}
+
+/* Iteration 84: unified Reader tool sidebar. */
+.reader-tools-sidebar {
+    -fx-background-color: -mhl-panel;
+    -fx-border-color: -mhl-border;
+    -fx-border-width: 0 0 0 1;
+}
+
+.reader-tools-sidebar .tab-pane .tab-header-area {
+    -fx-padding: 0 0 6 0;
+}
+
+.danger-button {
+    -fx-text-fill: -mhl-danger;
+    -fx-background-color: transparent;
+    -fx-padding: 2 6 2 6;
+}
+
+/* Reader annotations: non-interactive chapter grouping row. */
+.annotation-chapter-header {
+    -fx-font-weight: bold;
+    -fx-opacity: 0.82;
+    -fx-padding: 9 8 5 8;
+    -fx-background-color: -mhl-hover;
 }

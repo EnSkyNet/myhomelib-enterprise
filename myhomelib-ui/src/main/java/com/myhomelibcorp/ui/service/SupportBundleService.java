@@ -126,7 +126,8 @@ public class SupportBundleService {
         return out.toString();
     }
 
-    static String runtimeVersion() {
+    /** Runtime/build version used by About, diagnostics and support bundles. */
+    public static String runtimeVersion() {
         String packaged = trim(System.getProperty("jpackage.app-version"));
         if (!packaged.isBlank()) return packaged;
         Package pkg = SupportBundleService.class.getPackage();

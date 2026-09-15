@@ -31,6 +31,9 @@ final class ReaderKeyboardScrollController {
         } else if (code == KeyCode.N && event.isControlDown() && event.isShiftDown()) {
             event.consume();
             host.requestNoteFromInput();
+        } else if (code == KeyCode.N && event.isAltDown()) {
+            event.consume();
+            host.activateNextAnnotationFromInput();
         } else if (code == KeyCode.C && event.isControlDown()) {
             event.consume();
             host.copySelectionFromInput();

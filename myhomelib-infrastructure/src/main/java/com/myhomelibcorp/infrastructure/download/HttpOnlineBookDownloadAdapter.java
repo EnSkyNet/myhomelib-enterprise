@@ -44,6 +44,9 @@ import java.util.function.DoubleConsumer;
 @Component
 @Slf4j
 public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
+    private static final long DEFAULT_MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024;
+    private static final long DEFAULT_MIN_FREE_SPACE_BYTES = 256L * 1024 * 1024;
+    private static final long SPACE_RECHECK_BYTES = 16L * 1024 * 1024;
     private final ApplicationSettingsPort settings;
     private final ArchiveReader archiveReader;
     private final DownloadPayloadValidator payloadValidator;
@@ -245,8 +248,19 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                     Files.deleteIfExists(partMeta);
                     existing = 0L;
                 }
-                HttpResumeSupport.write(partMeta, uri, response);
                 long responseLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                long maxDownloadBytes = maxDownloadBytes();
+                long minFreeSpaceBytes = minFreeSpaceBytes();
+                if (existing > maxDownloadBytes
+                        || (responseLength >= 0 && responseLength > maxDownloadBytes - existing)) {
+                    try (InputStream responseBody = response.body()) { }
+                    Files.deleteIfExists(part);
+                    Files.deleteIfExists(partMeta);
+                    throw new NonRetryableHttpException(downloadLimitMessage(maxDownloadBytes));
+                }
+                ensureDownloadSpace(target.getParent(), minFreeSpaceBytes,
+                        responseLength > 0 ? responseLength : 0L);
+                HttpResumeSupport.write(partMeta, uri, response);
                 long total = responseLength > 0 ? existing + responseLength : -1L;
                 long done = existing;
                 StandardOpenOption[] outputOptions = resumed
@@ -257,11 +271,19 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                     int bufferKb = clamp(settings.getInt("online.downloadBufferKb", 256), 32, 1024);
                     byte[] buffer = new byte[bufferKb * 1024];
                     OnlineProgressThrottle progressThrottle = new OnlineProgressThrottle(done);
+                    long nextSpaceCheck = done + SPACE_RECHECK_BYTES;
                     for (int n; (n = in.read(buffer)) >= 0;) {
                         checkCancelled(cancel);
                         if (n == 0) continue;
+                        if (done > maxDownloadBytes - n) {
+                            throw new NonRetryableHttpException(downloadLimitMessage(maxDownloadBytes));
+                        }
                         out.write(buffer, 0, n);
                         done += n;
+                        if (done >= nextSpaceCheck) {
+                            ensureDownloadSpace(target.getParent(), minFreeSpaceBytes, 0L);
+                            nextSpaceCheck = done + SPACE_RECHECK_BYTES;
+                        }
                         if (total > 0 && progressThrottle.shouldEmit(done, total)) {
                             progress.accept(Math.min(1.0, (double) done / total));
                         }
@@ -635,6 +657,42 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                 || s.endsWith(".tar") || s.endsWith(".tar.gz") || s.endsWith(".tgz")
                 || s.endsWith(".tar.bz2") || s.endsWith(".tbz2")
                 || s.endsWith(".tar.xz") || s.endsWith(".txz") || s.endsWith(".cpio");
+    }
+
+    private long maxDownloadBytes() {
+        return positiveLongSetting("online.maxDownloadBytes", DEFAULT_MAX_DOWNLOAD_BYTES, 1024L, 64L * 1024 * 1024 * 1024);
+    }
+
+    private long minFreeSpaceBytes() {
+        return positiveLongSetting("online.minFreeSpaceBytes", DEFAULT_MIN_FREE_SPACE_BYTES, 0L, 16L * 1024 * 1024 * 1024);
+    }
+
+    private long positiveLongSetting(String key, long fallback, long min, long max) {
+        try {
+            long value = Long.parseLong(settings.get(key, Long.toString(fallback)).trim());
+            return Math.max(min, Math.min(max, value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static void ensureDownloadSpace(Path directory, long minimumFreeBytes, long expectedAdditionalBytes) throws IOException {
+        if (directory == null || minimumFreeBytes <= 0 && expectedAdditionalBytes <= 0) return;
+        long usable = Files.getFileStore(directory).getUsableSpace();
+        long required;
+        try {
+            required = Math.addExact(minimumFreeBytes, Math.max(0L, expectedAdditionalBytes));
+        } catch (ArithmeticException overflow) {
+            required = Long.MAX_VALUE;
+        }
+        if (usable < required) {
+            throw new NonRetryableHttpException("Недостатньо вільного місця для завантаження: доступно "
+                    + usable + " байт, потрібно щонайменше " + required + " байт");
+        }
+    }
+
+    private static String downloadLimitMessage(long maxDownloadBytes) {
+        return "Завантаження перевищує дозволений ліміт " + maxDownloadBytes + " байт";
     }
 
     private static int clamp(int value, int min, int max) {

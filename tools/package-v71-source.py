@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Build and verify the MyHomeLib Enterprise v7.1 source release artifacts.
+"""Build and verify MyHomeLib 8.0.0 source release artifacts.
 
-This is intentionally an offline source-packaging gate. It never claims Maven/GitHub
-success; those remain separate connected-machine acceptance requirements.
+The filename is retained as a compatibility entrypoint for older automation. Artifact
+names and release identity are derived from the current 8.0 line, not from the script name.
+This offline packaging gate never claims Maven/GitHub success; connected acceptance remains separate.
 """
 from __future__ import annotations
 
@@ -142,12 +143,12 @@ def create_patch(baseline: Path, current_clean: Path, patch: Path) -> None:
         # as the source ZIP instead of encoding wrapper binaries.
         run(["git", "config", "core.autocrlf", "false"], repo)
         # Stage the complete resulting tree so the patch includes additions/deletions as well as edits.
-        # Plain `git diff HEAD` omits untracked v7.1 files and can silently produce an incomplete upgrade patch.
+        # Plain `git diff HEAD` omits untracked 8.0 files and can silently produce an incomplete upgrade patch.
         run(["git", "add", "-A"], repo)
         cp = run(["git", "diff", "--binary", "--cached", "HEAD", "--", "."], repo, capture=True, accepted={0})
         patch.write_text(cp.stdout or "", encoding="utf-8")
         if patch.stat().st_size == 0:
-            raise RuntimeError("generated v7 -> v7.1 patch is empty")
+            raise RuntimeError("generated v7 -> v8.0 patch is empty")
 
 
 def _tree_manifest(root: Path) -> dict[str, tuple[str, str, int]]:
@@ -254,7 +255,7 @@ def verify_archive(archive: Path, top_dir: str) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--baseline", type=Path, default=DEFAULT_BASELINE)
-    ap.add_argument("--out-dir", type=Path, default=ROOT.parent / "release-v7.1")
+    ap.add_argument("--out-dir", type=Path, default=ROOT.parent / "release-v8.0.0")
     args = ap.parse_args()
     baseline = args.baseline.resolve()
     out = args.out_dir.resolve()
@@ -262,15 +263,15 @@ def main() -> int:
         raise SystemExit(f"baseline not found: {baseline}")
     out.mkdir(parents=True, exist_ok=True)
 
-    top = "myhomelib-enterprise-v7.1"
-    archive = out / "myhomelib-enterprise-v7.1.zip"
-    patch = out / "myhomelib-v7-to-v7.1.patch"
-    checksum = out / "myhomelib-enterprise-v7.1.zip.sha256"
-    report = out / "RELEASE-ARTIFACT-VALIDATION-v7.1.txt"
+    top = "myhomelib-enterprise-8.0.0"
+    archive = out / "myhomelib-enterprise-8.0.0.zip"
+    patch = out / "myhomelib-v7-to-v8.0.0.patch"
+    checksum = out / "myhomelib-enterprise-8.0.0.zip.sha256"
+    report = out / "RELEASE-ARTIFACT-VALIDATION-8.0.0.txt"
 
     # Validate a clean staging tree, not the developer workspace: Maven/test runs may leave
     # target/ and __pycache__ directories that are intentionally excluded from the release.
-    with tempfile.TemporaryDirectory(prefix="mhl-v71-clean-") as td:
+    with tempfile.TemporaryDirectory(prefix="mhl-v8-clean-") as td:
         clean = Path(td) / top
         copy_clean(ROOT, clean)
         offline_checks(clean)
@@ -282,14 +283,14 @@ def main() -> int:
     digest = sha256(archive)
     checksum.write_text(f"{digest}  {archive.name}\n", encoding="ascii")
     report.write_text(
-        "MyHomeLib Enterprise v7.1 source artifact validation\n"
+        "MyHomeLib 8.0.0 source artifact validation\n"
         "==================================================\n"
         "Status: OFFLINE SOURCE ARTIFACT CHECKS PASS\n"
         f"ZIP: {archive.name}\n"
         f"SHA-256: {digest}\n"
         "Verification: clean staged tree full offline suite PASS; extracted ZIP safety/source-policy PASS; patch↔ZIP equivalence PASS; Maven runtime/wrapper payload excluded.\n"
         "Included gates: migration immutability/upgrade, metadata migrations, XML/FXML, source invariants,\n"
-        "static release checks, architecture/lifecycle regression, standalone JDK v7.1 runtime smoke,\n"
+        "static release checks, architecture/lifecycle regression, standalone JDK runtime smoke,\n"
         "Stage 8+9, Stage 24 contract, Stage 25C, workflow YAML and root shell syntax.\n"
         "NOT VERIFIED: mvn clean verify -Pproduction; real GitHub Actions Ubuntu/Windows/macOS;\n"
         "JavaFX/jpackage runtime smoke; connected JVM/Lucene before/after benchmark.\n",

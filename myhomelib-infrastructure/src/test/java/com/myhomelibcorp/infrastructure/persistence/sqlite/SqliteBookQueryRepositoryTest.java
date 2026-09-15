@@ -19,8 +19,8 @@ import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.JdbcTest;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.JdbcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
@@ -150,6 +150,10 @@ public class SqliteBookQueryRepositoryTest {
                 2024, "2026-09-04 10:20:30.123");
         jdbc.update("INSERT INTO book_authors(book_id, author_id) VALUES (?, ?)", "11111111-1111-1111-1111-111111111111", "author-1");
         jdbc.update("INSERT INTO book_genres(book_id, genre_code) VALUES (?, ?)", "11111111-1111-1111-1111-111111111111", "sf");
+        jdbc.update("INSERT INTO annotations(id,book_id,annotation_type,color,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                "note-1", "11111111-1111-1111-1111-111111111111", "NOTE", "#FFF59D", "memo", "2026-09-14T10:00:00Z", "2026-09-14T10:00:00Z");
+        jdbc.update("INSERT INTO annotations(id,book_id,annotation_type,color,note,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                "highlight-1", "11111111-1111-1111-1111-111111111111", "HIGHLIGHT", "#FFF59D", "", "2026-09-14T10:00:01Z", "2026-09-14T10:00:01Z");
 
         jdbc.update("""
                 INSERT INTO books(id, title, file_name, deleted, local) VALUES (?, ?, ?, 1, 0)
@@ -170,6 +174,8 @@ public class SqliteBookQueryRepositoryTest {
         assertThat(snapshot.getCreatedAt()).isEqualTo(java.time.LocalDateTime.of(2026, 9, 4, 10, 20, 30, 123_000_000));
         assertThat(snapshot.isLocal()).isTrue();
         assertThat(snapshot.isDeleted()).isFalse();
+        assertThat(snapshot.getNoteCount()).isEqualTo(1);
+        assertThat(snapshot.getHighlightCount()).isEqualTo(1);
     }
 
 

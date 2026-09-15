@@ -248,7 +248,7 @@ public final class OpenLibraryMetadataProvider implements MetadataProvider {
         String base = new OnlineHttpPolicy(settings).userAgent();
         String contact = contact();
         String value = contact.isBlank() ? base : base + " (" + contact + ")";
-        return safeHeader(value, "MyHomeLib Enterprise/7.1");
+        return safeHeader(value, "MyHomeLib Enterprise/8.0.0");
     }
 
     private String contact() {

@@ -163,6 +163,36 @@ class HttpRemoteCatalogDownloadAdapterTest {
     }
 
     @Test
+    void followsRedirectToValidatedCatalogArchive() throws Exception {
+        byte[] archive = validInpx("20260914");
+        AtomicInteger redirectRequests = new AtomicInteger();
+        AtomicInteger catalogRequests = new AtomicInteger();
+        server = start(exchange -> {
+            String path = exchange.getRequestURI().getPath();
+            if ("/redirect.inpx".equals(path)) {
+                redirectRequests.incrementAndGet();
+                exchange.getResponseHeaders().add("Location", "/catalog.inpx");
+                exchange.sendResponseHeaders(302, -1);
+                return;
+            }
+            if ("/catalog.inpx".equals(path)) {
+                catalogRequests.incrementAndGet();
+                exchange.getResponseHeaders().add("Content-Type", "application/zip");
+                respond(exchange, 200, archive);
+                return;
+            }
+            exchange.sendResponseHeaders(404, -1);
+        });
+
+        Path downloaded = new HttpRemoteCatalogDownloadAdapter().download(
+                null, baseUrl() + "redirect.inpx", new AtomicBoolean(false), ignored -> {});
+
+        assertThat(redirectRequests.get()).isEqualTo(1);
+        assertThat(catalogRequests.get()).isEqualTo(1);
+        assertThat(Files.readAllBytes(downloaded)).isEqualTo(archive);
+    }
+
+    @Test
     void rejectsHtmlBeforeImporterCanSeeIt() throws Exception {
         server = start(exchange -> {
             exchange.getResponseHeaders().add("Content-Type", "text/html; charset=utf-8");

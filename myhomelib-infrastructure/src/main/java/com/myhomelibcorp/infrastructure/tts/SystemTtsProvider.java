@@ -1,5 +1,7 @@
 package com.myhomelibcorp.infrastructure.tts;
 
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
+
 import com.myhomelibcorp.application.tts.TtsProvider;
 import com.myhomelibcorp.application.tts.TtsVoice;
 import org.springframework.stereotype.Component;
@@ -235,8 +237,8 @@ public class SystemTtsProvider implements TtsProvider {
         @Override public boolean commandExists(String command) {
             if (command == null || command.isBlank()) return false;
             try {
-                Process p = new ProcessBuilder(command, versionArg(command)).redirectErrorStream(true).start();
-                if (!p.waitFor(3, TimeUnit.SECONDS)) p.destroyForcibly();
+                ProcessExecutionSupport.run(
+                        List.of(command, versionArg(command)), null, java.time.Duration.ofSeconds(3), 16 * 1024);
                 return true;
             } catch (Exception ignored) { return false; }
         }
@@ -247,24 +249,20 @@ public class SystemTtsProvider implements TtsProvider {
             return "--version";
         }
         @Override public String capture(List<String> command) throws IOException {
-            Process p = new ProcessBuilder(command).redirectErrorStream(false).start();
             try {
-                if (!p.waitFor(15, TimeUnit.SECONDS)) {
-                    p.destroyForcibly();
-                    throw new IOException("TTS discovery timed out");
-                }
-                byte[] stdout = p.getInputStream().readAllBytes();
-                byte[] stderr = p.getErrorStream().readAllBytes();
-                if (p.exitValue() != 0) {
-                    String diagnostic = new String(stderr, StandardCharsets.UTF_8).trim();
+                ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
+                        command, null, java.time.Duration.ofSeconds(15), 256 * 1024);
+                if (result.exitCode() != 0) {
+                    String diagnostic = result.stderrText().trim();
                     if (diagnostic.length() > 400) diagnostic = diagnostic.substring(0, 400);
-                    throw new IOException("TTS discovery exited with code " + p.exitValue()
+                    throw new IOException("TTS discovery exited with code " + result.exitCode()
                             + (diagnostic.isBlank() ? "" : ": " + diagnostic));
                 }
-                return new String(stdout, StandardCharsets.UTF_8);
+                return result.stdoutText();
+            } catch (ProcessExecutionSupport.ProcessTimeoutException e) {
+                throw new IOException("TTS discovery timed out", e);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
-                p.destroyForcibly();
                 throw new IOException("Interrupted", e);
             }
         }
@@ -278,7 +276,11 @@ public class SystemTtsProvider implements TtsProvider {
                 command = command.stream().filter(token -> !token.startsWith("--mhl-")).toList();
                 builder.command(command);
             }
-            return builder.redirectErrorStream(true).start();
+            // Speech output is not consumed by MyHomeLib. Discard both streams so a verbose
+            // native TTS backend cannot block while speak() waits for process completion.
+            return builder.redirectOutput(ProcessBuilder.Redirect.DISCARD)
+                    .redirectError(ProcessBuilder.Redirect.DISCARD)
+                    .start();
         }
     }
 }

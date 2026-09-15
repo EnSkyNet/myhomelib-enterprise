@@ -33,6 +33,7 @@
             <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
             <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="80"/>
             <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+            <TableColumn fx:id="activityColumn" text="ui.book.activity" prefWidth="140" sortable="false"/>
             <TableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>
         </columns>
     </TableView>

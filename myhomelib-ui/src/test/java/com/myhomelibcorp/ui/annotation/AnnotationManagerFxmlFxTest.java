@@ -30,6 +30,7 @@ class AnnotationManagerFxmlFxTest {
             Assumptions.abort("JavaFX runtime is not reachable: " + noDisplay.getMessage());
         }
         assertThat(started.await(5, TimeUnit.SECONDS)).isTrue();
+        Platform.setImplicitExit(false);
     }
 
     @Test

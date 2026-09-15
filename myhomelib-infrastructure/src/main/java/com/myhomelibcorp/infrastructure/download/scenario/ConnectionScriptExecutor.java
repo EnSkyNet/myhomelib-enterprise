@@ -35,6 +35,9 @@ import java.util.function.DoubleConsumer;
 /** Executes the declarative MyHomeLib ConnectionScript without dynamic-code facilities. */
 @Slf4j
 public final class ConnectionScriptExecutor {
+    private static final long DEFAULT_MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024;
+    private static final long DEFAULT_MIN_FREE_SPACE_BYTES = 256L * 1024 * 1024;
+    private static final long FREE_SPACE_RECHECK_BYTES = 16L * 1024 * 1024;
     public record Result(Path payload, URI responseUri, boolean checked, String resolvedArchiveEntry) { }
     private record FormField(String name, String value) { }
     private record ResponseState(Path payload, URI requestedUri, URI responseUri) {
@@ -225,7 +228,16 @@ public final class ConnectionScriptExecutor {
                 }
 
                 long total = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                long maxDownloadBytes = maxDownloadBytes();
+                long minFreeSpaceBytes = minFreeSpaceBytes();
+                if (total > maxDownloadBytes) {
+                    try (InputStream ignoredBody = response.body()) { }
+                    throw new NonRetryableRequestException(downloadLimitMessage(maxDownloadBytes));
+                }
+                ensureDownloadSpace(responseFile.getParent(), minFreeSpaceBytes, Math.max(0L, total));
+
                 long done = 0;
+                long nextSpaceCheck = FREE_SPACE_RECHECK_BYTES;
                 OnlineProgressThrottle progressThrottle = new OnlineProgressThrottle(0L);
 
                 try (InputStream in = response.body();
@@ -236,8 +248,15 @@ public final class ConnectionScriptExecutor {
                     while ((n = in.read(buffer)) >= 0) {
                         checkCancelled(cancel);
                         if (n == 0) continue;
+                        if (done > maxDownloadBytes - n) {
+                            throw new NonRetryableRequestException(downloadLimitMessage(maxDownloadBytes));
+                        }
                         out.write(buffer, 0, n);
                         done += n;
+                        if (done >= nextSpaceCheck) {
+                            ensureDownloadSpace(responseFile.getParent(), minFreeSpaceBytes, 0L);
+                            nextSpaceCheck = done + FREE_SPACE_RECHECK_BYTES;
+                        }
                         if (total > 0 && progressThrottle.shouldEmit(done, total)) {
                             progress.accept(Math.min(0.99, (double) done / total));
                         }
@@ -367,6 +386,49 @@ public final class ConnectionScriptExecutor {
         if (cancel != null && cancel.get() || Thread.currentThread().isInterrupted()) {
             throw new DownloadScenarioException("ConnectionScript скасовано");
         }
+    }
+
+    private long maxDownloadBytes() {
+        return positiveLongSetting("online.maxDownloadBytes", DEFAULT_MAX_DOWNLOAD_BYTES, 1024L, 64L * 1024 * 1024 * 1024);
+    }
+
+    private long minFreeSpaceBytes() {
+        return positiveLongSetting("online.minFreeSpaceBytes", DEFAULT_MIN_FREE_SPACE_BYTES, 0L, 16L * 1024 * 1024 * 1024);
+    }
+
+    private long positiveLongSetting(String key, long fallback, long min, long max) {
+        try {
+            long value = Long.parseLong(settings.get(key, Long.toString(fallback)).trim());
+            return Math.max(min, Math.min(max, value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static void ensureDownloadSpace(Path directory, long minimumFreeBytes, long expectedAdditionalBytes)
+            throws NonRetryableRequestException {
+        if (directory == null || minimumFreeBytes <= 0 && expectedAdditionalBytes <= 0) return;
+        try {
+            long usable = Files.getFileStore(directory).getUsableSpace();
+            long required;
+            try {
+                required = Math.addExact(minimumFreeBytes, Math.max(0L, expectedAdditionalBytes));
+            } catch (ArithmeticException overflow) {
+                required = Long.MAX_VALUE;
+            }
+            if (usable < required) {
+                throw new NonRetryableRequestException("Недостатньо вільного місця для завантаження: доступно "
+                        + usable + " байт, потрібно щонайменше " + required + " байт");
+            }
+        } catch (NonRetryableRequestException e) {
+            throw e;
+        } catch (IOException e) {
+            throw new NonRetryableRequestException("Не вдалося перевірити вільне місце перед завантаженням");
+        }
+    }
+
+    private static String downloadLimitMessage(long maxDownloadBytes) {
+        return "Завантаження перевищує дозволений ліміт " + maxDownloadBytes + " байт";
     }
 
     private static String uriText(URI uri) { return uri == null ? "" : uri.toString(); }

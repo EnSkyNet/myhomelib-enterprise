@@ -54,6 +54,7 @@ class AnnotationBackupRoundTripIntegrationTest {
         var restored = targetAdapter.restoreFrom(manifest);
         assertThat(restored.effectiveSchemaVersion()).isEqualTo(4);
         assertThat(restored.annotations()).isEqualTo(1);
+        assertThat(restored.searchChanges().updated()).contains("new-book");
 
         assertThat(target.jdbc().queryForObject("SELECT book_id FROM annotations WHERE id='ann-1'", String.class)).isEqualTo("new-book");
         assertThat(target.jdbc().queryForObject("SELECT artifact_id FROM annotations WHERE id='ann-1'", String.class)).isNull();

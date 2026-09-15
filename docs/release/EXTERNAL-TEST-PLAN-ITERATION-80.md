@@ -8,7 +8,7 @@ Purpose: close only the six gates that cannot be proven locally. The local sourc
 
 **Environment:** Git repository + release owner workstation.
 
-1. Decide the formal release identity (`7.1.0` as currently in `pom.xml`, or an explicitly approved version bump).
+1. Use the formal release identity from `pom.xml` (currently `8.0.0`); changing it invalidates candidate-bound evidence.
 2. Commit all approved changes, including the version decision.
 3. Record the exact candidate Git SHA.
 4. Run `python3 tools/external-acceptance-readiness.py --run-regressions` and require `READY_FOR_LIVE_EVIDENCE` with all six gates still `OPEN_EXTERNAL`.
@@ -78,7 +78,7 @@ mvn clean install -DskipTests
 mvn javafx:run -pl myhomelib-bootstrap
 ```
 
-The first command is intentional: `javafx:run -pl myhomelib-bootstrap` resolves sibling `7.1.0` modules from the local Maven repository, so a mere `package` can leave an older local `.m2` JAR in use.
+The first command is intentional: `javafx:run -pl myhomelib-bootstrap` resolves sibling modules at the current Maven project version from the local Maven repository, so a mere `package` can leave an older local `.m2` JAR in use.
 
 **PASS:** Spring context completes initialization, the main MyHomeLib window opens, and there is no `No default constructor found`, `NoSuchMethodException ... <init>()`, `Cannot subclass final class`, or other bean-creation failure. Save the console log.
 

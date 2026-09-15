@@ -121,8 +121,8 @@ public final class OnlineHttpPolicy {
     }
 
     public String userAgent() {
-        String value = setting("online.userAgent", "MyHomeLib Enterprise/7.1").trim();
-        return value.isBlank() ? "MyHomeLib Enterprise/7.1" : value;
+        String value = setting("online.userAgent", "MyHomeLib Enterprise/8.0.0").trim();
+        return value.isBlank() ? "MyHomeLib Enterprise/8.0.0" : value;
     }
 
     private String setting(String key, String defaultValue) {
