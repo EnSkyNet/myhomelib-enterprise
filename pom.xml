@@ -25,27 +25,27 @@
         <javafx.version>21.0.12</javafx.version>
         <sqlite.version>3.53.4.0</sqlite.version>
         <flyway.version>12.4.0</flyway.version>
-        <mapstruct.version>1.5.5.Final</mapstruct.version>
-        <lombok.version>1.18.30</lombok.version>
-        <caffeine.version>3.1.8</caffeine.version>
+        <mapstruct.version>1.6.3</mapstruct.version>
+        <lombok.version>1.18.48</lombok.version>
+        <caffeine.version>3.2.4</caffeine.version>
         <lucene.version>9.11.0</lucene.version>
         <commons-compress.version>1.28.0</commons-compress.version>
-        <junrar.version>8.1.0</junrar.version>
-        <zstd-jni.version>1.5.6-9</zstd-jni.version>
-        <xz.version>1.9</xz.version>
+        <junrar.version>8.1.1</junrar.version>
+        <zstd-jni.version>1.5.7-16</zstd-jni.version>
+        <xz.version>1.12</xz.version>
         <pdfbox.version>3.0.8</pdfbox.version>
         <jbig2-imageio.version>3.0.5</jbig2-imageio.version>
 
-        <junit.version>6.0.3</junit.version>
+        <junit.version>6.1.3</junit.version>
         <mockito.version>5.23.0</mockito.version>
         <assertj.version>3.27.7</assertj.version>
         <archunit.version>1.5.0</archunit.version>
         <testcontainers.version>2.0.5</testcontainers.version>
 
-        <maven-compiler-plugin.version>3.14.0</maven-compiler-plugin.version>
+        <maven-compiler-plugin.version>3.16.0</maven-compiler-plugin.version>
         <cyclonedx-maven-plugin.version>2.9.3</cyclonedx-maven-plugin.version>
         <dependency-check-maven.version>12.2.2</dependency-check-maven.version>
-        <jna.version>5.13.0</jna.version>
+        <jna.version>5.19.1</jna.version>
     </properties>
 
     <modules>
@@ -305,7 +305,7 @@
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId>
                     <artifactId>maven-surefire-plugin</artifactId>
-                    <version>3.5.6</version>
+                    <version>3.6.0</version>
                     <configuration>
                         <argLine>-Dfile.encoding=UTF-8 -Dconsole.encoding=UTF-8 -Dsun.jnu.encoding=UTF-8 ${mhl.test.jvmArgs}</argLine>
                         <includes>
