@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.integrity;
 
+import com.myhomelibcorp.shared.util.ThrowableText;
 import com.myhomelibcorp.application.port.out.integrity.DataIntegrityPort;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.application.usecase.integrity.IntegrityReport;
@@ -69,7 +70,7 @@ public class DataIntegrityService implements DataIntegrityPort {
                 issues.add("Lucene не відповідає SQLite: документів " + luceneDocuments + ", книг " + catalogBooks);
             }
         } catch (RuntimeException error) {
-            issues.add("Не вдалося перевірити Lucene: " + rootMessage(error));
+            issues.add("Не вдалося перевірити Lucene: " + ThrowableText.rootMessage(error, "невідома помилка"));
         }
 
         return new IntegrityReport(issues, booksWithoutAuthor, booksWithoutGenre, orphanedAuthors, orphanedGenres,
@@ -171,13 +172,6 @@ public class DataIntegrityService implements DataIntegrityPort {
         return count == null ? 0L : count;
     }
 
-    private static String rootMessage(Throwable error) {
-        Throwable current = error;
-        while (current != null && current.getCause() != null && current.getCause() != current) current = current.getCause();
-        if (current == null) return "невідома помилка";
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
-    }
 
     private record SqliteIntegrity(boolean ok, String message) { }
 

@@ -1,8 +1,8 @@
 package com.myhomelibcorp.application.export;
 
 import com.myhomelibcorp.application.dto.ExportRequest;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
-import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
@@ -18,7 +18,6 @@ import java.util.UUID;
 
 /** Built-in and user-defined removable-reader profiles. */
 @Component
-@RequiredArgsConstructor
 public class DeviceProfileService {
     public static final String GENERIC_FOLDER_ID = "generic-folder";
     public static final String KINDLE_ID = "kindle-usb";
@@ -30,6 +29,16 @@ public class DeviceProfileService {
     private static final String PREFIX = "deviceProfiles.profile.";
 
     private final ApplicationSettingsPort settings;
+    private RuntimeExtensionRegistry runtimeExtensions = new RuntimeExtensionRegistry();
+
+    public DeviceProfileService(ApplicationSettingsPort settings) {
+        this.settings = java.util.Objects.requireNonNull(settings, "settings");
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    void setRuntimeExtensions(RuntimeExtensionRegistry runtimeExtensions) {
+        this.runtimeExtensions = java.util.Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
+    }
 
     public List<DeviceTargetProfile> loadProfiles() {
         List<DeviceTargetProfile> result = new ArrayList<>(builtIns());
@@ -58,6 +67,14 @@ public class DeviceProfileService {
         if (mountRoot == null) return genericFolder();
         Path root = mountRoot.toAbsolutePath().normalize();
         if (!Files.isDirectory(root)) return genericFolder();
+        for (var detector : runtimeExtensions.deviceProfileDetectors()) {
+            try {
+                Optional<DeviceTargetProfile> detected = detector.detect(root);
+                if (detected != null && detected.isPresent()) return detected.get();
+            } catch (RuntimeException ignored) {
+                // One broken optional detector must not block built-in safe detection.
+            }
+        }
         if (exists(root, ".kobo")) return findById(KOBO_ID).orElseThrow();
         if (exists(root, "documents")) return findById(KINDLE_ID).orElseThrow();
         if (exists(root, "system") && (exists(root, "applications") || exists(root, "Books"))) {

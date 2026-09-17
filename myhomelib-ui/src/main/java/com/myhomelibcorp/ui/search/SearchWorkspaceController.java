@@ -100,6 +100,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     @FXML private FlowPane pinnedScopesPane;
     @FXML private Label activeScopeLabel;
     @FXML private Button clearScopeButton;
+    @FXML private Label scopeContentHintLabel;
 
     @FXML private VBox authorsSection;
     @FXML private ListView<AuthorDto> authorsListView;
@@ -222,6 +223,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         });
         searchModeChoice.getSelectionModel().select(SearchScope.BOTH);
         searchModeChoice.getSelectionModel().selectedItemProperty().addListener((obs, old, current) -> {
+            updateScopeContentHint();
             if (old != current && searchField != null && searchField.getText() != null && !searchField.getText().isBlank()) {
                 performSearch(searchField.getText());
             }
@@ -1022,6 +1024,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                     getClass().getResource("/view/saved-searches.fxml"));
             fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
 
             SavedSearchesController controller = loader.getController();
             controller.setOnSearchSelected(saved -> {
@@ -1095,17 +1098,27 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void updateActiveScopeIndicator() {
+        boolean active = activeSmartCollectionId != null && !activeSmartCollectionId.isBlank();
         if (activeScopeLabel != null) {
-            boolean active = activeSmartCollectionId != null && !activeSmartCollectionId.isBlank();
             activeScopeLabel.setText(active ? i18n.format("ui.search.scope.active", activeSmartCollectionName) : "");
             activeScopeLabel.setVisible(active);
             activeScopeLabel.setManaged(active);
         }
         if (clearScopeButton != null) {
-            boolean active = activeSmartCollectionId != null && !activeSmartCollectionId.isBlank();
             clearScopeButton.setVisible(active);
             clearScopeButton.setManaged(active);
         }
+        updateScopeContentHint();
+    }
+
+    private void updateScopeContentHint() {
+        if (scopeContentHintLabel == null) return;
+        boolean activeScope = activeSmartCollectionId != null && !activeSmartCollectionId.isBlank();
+        SearchScope mode = currentSearchScope();
+        boolean visible = activeScope && mode != null && mode.includesContents();
+        scopeContentHintLabel.setText(i18n.text("ui.search.scope.content_hint"));
+        scopeContentHintLabel.setVisible(visible);
+        scopeContentHintLabel.setManaged(visible);
     }
 
     @FXML

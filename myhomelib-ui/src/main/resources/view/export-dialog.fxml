@@ -53,7 +53,7 @@
         <Label text="Якщо файл існує:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
         <ComboBox fx:id="collisionPolicyComboBox" GridPane.columnIndex="1" GridPane.rowIndex="6" prefWidth="300"/>
 
-        <Label text="Post-action:" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
+        <Label text="Дія після експорту:" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
         <ComboBox fx:id="postActionComboBox" GridPane.columnIndex="1" GridPane.rowIndex="7" prefWidth="300"/>
 
         <Label text="Опції:" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>

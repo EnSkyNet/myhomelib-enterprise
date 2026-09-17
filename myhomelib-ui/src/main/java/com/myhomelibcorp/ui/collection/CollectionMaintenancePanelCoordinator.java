@@ -47,7 +47,7 @@ final class CollectionMaintenancePanelCoordinator {
         if (statusLabel != null) {
             statusLabel.setText(collection != null && collection.isActive()
                     ? "Аналіз ще не запускався"
-                    : "Maintenance доступний тільки для активної колекції");
+                    : "Обслуговування доступне тільки для активної колекції");
         }
         updateButtons(false, collection);
     }
@@ -59,7 +59,7 @@ final class CollectionMaintenancePanelCoordinator {
                 .whenComplete((report, error) -> UiExecutor.runOnUiThread(() -> {
                     setBusy(false, null, collection);
                     if (error != null) {
-                        dialogService.showError("Maintenance", UiExceptionSupport.message(error));
+                        dialogService.showError("Обслуговування", UiExceptionSupport.message(error));
                         return;
                     }
                     lastReport = report;
@@ -71,14 +71,14 @@ final class CollectionMaintenancePanelCoordinator {
     void dryRun(CollectionDto collection) {
         if (!requireActive(collection) || lastReport == null) return;
         Set<String> ids = repairableIssueIds(lastReport);
-        setBusy(true, "Dry run: перевірка плану без змін...", collection);
+        setBusy(true, "Пробний запуск: перевірка плану без змін...", collection);
         maintenanceUseCase.dryRun(collection.getId(), ids)
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     setBusy(false, null, collection);
                     if (error != null) {
-                        dialogService.showError("Dry run", UiExceptionSupport.message(error));
+                        dialogService.showError("Пробний запуск", UiExceptionSupport.message(error));
                     } else if (statusLabel != null) {
-                        statusLabel.setText("Dry run завершено: заплановано " + result.requested()
+                        statusLabel.setText("Пробний запуск завершено: заплановано " + result.requested()
                                 + ", пропущено " + result.skipped() + ". Дані не змінено.");
                     }
                 }));
@@ -90,35 +90,35 @@ final class CollectionMaintenancePanelCoordinator {
         if (ids.isEmpty()) return;
 
         boolean confirmed = dialogService.showConfirmation(
-                "Застосувати maintenance",
+                "Застосувати обслуговування",
                 "Буде застосовано до " + ids.size() + " перевірених проблем",
                 "Перед будь-якими змінами автоматично створюється повна резервна копія SQLite. "
                         + "Відсутні/пошкоджені локальні файли лише позначаються як не локальні; "
                         + "фізичні orphan-файли автоматично не видаляються.");
         if (!confirmed) return;
 
-        setBusy(true, "Створення backup і застосування repair...", collection);
+        setBusy(true, "Створення резервної копії та застосування виправлень...", collection);
         maintenanceUseCase.apply(collection.getId(), ids)
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     setBusy(false, null, collection);
                     if (error != null) {
-                        dialogService.showError("Maintenance", UiExceptionSupport.message(error));
+                        dialogService.showError("Обслуговування", UiExceptionSupport.message(error));
                         return;
                     }
                     lastReport = result.after();
                     renderReport(result.after());
                     if (statusLabel != null) {
-                        statusLabel.setText("Repair завершено: виправлено " + result.applied()
-                                + ", пропущено " + result.skipped() + ". Backup: " + result.backupFile());
+                        statusLabel.setText("Виправлення завершено: виправлено " + result.applied()
+                                + ", пропущено " + result.skipped() + ". Резервна копія: " + result.backupFile());
                     }
                     updateButtons(false, collection);
-                    dialogService.showInfo("Maintenance завершено", "Backup: " + result.backupFile());
+                    dialogService.showInfo("Обслуговування завершено", "Резервна копія: " + result.backupFile());
                 }));
     }
 
     private boolean requireActive(CollectionDto collection) {
         if (collection == null || !collection.isActive()) {
-            dialogService.showWarning("Maintenance", "Аналіз і repair можна виконувати тільки для активної колекції.");
+            dialogService.showWarning("Обслуговування", "Аналіз і виправлення можна виконувати тільки для активної колекції.");
             return false;
         }
         return true;
@@ -155,7 +155,7 @@ final class CollectionMaintenancePanelCoordinator {
         if (reportArea == null) return;
 
         StringBuilder sb = new StringBuilder();
-        sb.append("SQLite: ").append(report.databaseIntegrityOk() ? "OK" : report.databaseIntegrityMessage()).append('\n');
+        sb.append("База SQLite: ").append(report.databaseIntegrityOk() ? "OK" : report.databaseIntegrityMessage()).append('\n');
         sb.append("Перевірено локальних книг: ").append(report.scannedBooks()).append('\n');
         sb.append("Перевірено фізичних файлів: ").append(report.scannedFiles()).append('\n');
         sb.append("Відсутніх файлів: ").append(report.missingFiles()).append('\n');
@@ -168,7 +168,7 @@ final class CollectionMaintenancePanelCoordinator {
             sb.append("\n⚠ Список нижче семплований; повторіть аналіз після repair для наступної порції.\n");
         }
         sb.append("\n--- Preview ---\n");
-        report.issues().stream().limit(200).forEach(issue -> sb.append(issue.repairable() ? "[repair] " : "[report] ")
+        report.issues().stream().limit(200).forEach(issue -> sb.append(issue.repairable() ? "[виправлення] " : "[звіт] ")
                 .append(issue.description()).append('\n'));
         if (report.issues().size() > 200) {
             sb.append("... ще ").append(report.issues().size() - 200).append(" семплів\n");

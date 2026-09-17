@@ -76,6 +76,14 @@
 .table-view .column-header-background, .tree-table-view .column-header-background { -fx-background-color: -mhl-panel; }
 .table-row-cell, .tree-table-row-cell { -fx-background-color: -mhl-book-row; -fx-text-fill: -mhl-text; }
 .table-row-cell:filled:selected, .tree-table-row-cell:filled:selected { -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; }
+.operation-center-row {
+    -fx-border-color: transparent transparent -mhl-border transparent;
+    -fx-border-width: 0 0 1 0;
+    -fx-padding: 2 0 2 0;
+}
+.operation-center-row:filled:selected {
+    -fx-border-color: transparent transparent -mhl-on-accent transparent;
+}
 .author-series-row { -fx-background-color: -mhl-series-row; -fx-font-weight: bold; }
 .author-book-local-row { -fx-background-color: -mhl-downloaded-row; }
 

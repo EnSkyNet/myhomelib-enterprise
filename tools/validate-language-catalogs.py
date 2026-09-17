@@ -30,6 +30,9 @@ def main() -> int:
         version = data.get("schemaVersion", 1)
         translations = data.get("translations")
         genres = data.get("genres", {})
+        stray_ui_keys = sorted(str(key) for key in data if str(key).startswith(("ui.", "common.")))
+        if stray_ui_keys:
+            errors.append(f"{path}: UI keys must be inside translations, found at top level: {stray_ui_keys[:8]}")
         if not CODE_RE.fullmatch(code): errors.append(f"{path}: invalid code {code!r}")
         if not name: errors.append(f"{path}: name is required")
         if not isinstance(version, int): errors.append(f"{path}: schemaVersion must be an integer")

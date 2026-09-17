@@ -35,7 +35,7 @@ need('closeCurrentCollection()' in service and 'openCollection(collection)' in s
 need('Legacy database-only backup detected' in service, 'legacy DB-only backup compatibility missing')
 need('userDataOnly' in service and 'restoreDatabase' in service, 'user-data-only restore mode missing')
 need('restoreDatabaseCheckBox' in restore and 'user-data.json' in restore, 'restore UI mode/file detection missing')
-need('Versioned user data (LibID)' in restore_fxml and 'Versioned user data (LibID)' in backup_fxml, 'backup/restore UI labels missing')
+need('restoreMetadataCheckBox' in restore_fxml and 'includeMetadataCheckBox' in backup_fxml and 'LibID' in restore_fxml and 'LibID' in backup_fxml, 'backup/restore versioned-user-data controls missing')
 need('collectionManagementService.closeCurrentCollection()' not in restore, 'UI must not close collection before BackupRestoreService captures it')
 need("value(rs, cols, \"libid\")" in legacy and 'intValue(rs,cols,"rate",0)' in legacy and 'intValue(rs,cols,"progress",0)' in legacy, 'legacy HLC2 attach must preserve LibID/rate/progress')
 need("'old-1','L100'" in test and "'new-77','L100'" in test, 'LibID remap regression fixture missing')

@@ -86,7 +86,7 @@ def maintenance_contract() -> None:
     ui_coordinator = read("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/collection/CollectionMaintenancePanelCoordinator.java")
     ui = ui_controller + "\n" + ui_coordinator
     for marker in ("onAnalyzeMaintenance", "onDryRunMaintenance", "onApplyMaintenance",
-                   "Backup", "repairableIssueIds"):
+                   "Резервна копія", "repairableIssueIds"):
         require(ui, marker, "maintenance UI")
 
     legacy = read("myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/integrity/DataIntegrityChecker.java")

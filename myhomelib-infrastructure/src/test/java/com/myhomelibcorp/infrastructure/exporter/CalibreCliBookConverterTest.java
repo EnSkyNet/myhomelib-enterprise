@@ -88,6 +88,23 @@ class CalibreCliBookConverterTest {
     }
 
     @Test
+    void usesCalibreRecognizedFbzExtensionForFb2ZipSource() throws Exception {
+        previousDataDir = System.getProperty("myhomelib.dataDir");
+        System.setProperty("myhomelib.dataDir", temp.resolve("data").toString());
+        AtomicReference<Path> source = new AtomicReference<>();
+        CalibreCliBookConverter converter = availableConverter("epub", ".epub", (argv, cwd, cancelled, timeout) -> {
+            source.set(Path.of(argv.get(1)));
+            Files.writeString(Path.of(argv.get(2)), "converted");
+            return new CalibreCliBookConverter.CommandResult(0, "");
+        });
+
+        converter.convert(new BookConversionContext(book("book.fb2.zip"), "fb2_zip", "epub",
+                new ByteArrayInputStream("zip-source".getBytes()), temp.resolve("book.epub"), () -> false, 1024));
+
+        assertTrue(source.get().getFileName().toString().endsWith(".fbz"));
+    }
+
+    @Test
     void nonZeroExitCapturesBoundedDiagnosticAndDeletesSource() throws Exception {
         previousDataDir = System.getProperty("myhomelib.dataDir");
         System.setProperty("myhomelib.dataDir", temp.resolve("data").toString());

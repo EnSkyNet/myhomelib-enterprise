@@ -21,6 +21,7 @@ import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.NavigationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.util.ArtifactStateText;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -296,17 +297,24 @@ public class BookDetailsController {
         return artifact != null && artifact.isLocal() && "AVAILABLE".equalsIgnoreCase(artifact.getState());
     }
 
-    private static String artifactBadgeText(BookDto book, BookArtifactDto artifact) {
+    private String artifactBadgeText(BookDto book, BookArtifactDto artifact) {
         String format = value(artifact.getFormat(), "FILE").toUpperCase(Locale.ROOT);
         String preferred = artifact.getId() != null && artifact.getId().equals(book.getPreferredArtifactId()) ? " ★" : "";
-        String unavailable = isArtifactOpenable(artifact) ? "" : " · " + value(artifact.getState(), "UNAVAILABLE");
+        String unavailable = isArtifactOpenable(artifact) ? "" : " · " + localizedArtifactState(artifact);
         return format + preferred + unavailable;
     }
 
-    private static String artifactChoiceText(BookArtifactDto artifact) {
+    private String artifactChoiceText(BookArtifactDto artifact) {
         if (artifact == null) return "—";
-        String suffix = isArtifactOpenable(artifact) ? "" : " [" + value(artifact.getState(), "UNAVAILABLE") + "]";
+        String suffix = isArtifactOpenable(artifact) ? "" : " [" + localizedArtifactState(artifact) + "]";
         return artifact.getDisplayName() + suffix;
+    }
+
+
+    private String localizedArtifactState(BookArtifactDto artifact) {
+        return localizationService.tr(ArtifactStateText.sourceLabel(
+                artifact == null ? null : artifact.getState(),
+                artifact != null && artifact.isLocal()));
     }
 
     private static String artifactLocation(BookArtifactDto artifact) {
@@ -482,7 +490,7 @@ public class BookDetailsController {
         pane.getChildren().add(progress);
 
         if (info.length() > MAX_GALLERY_IMAGE_BYTES) {
-            pane.getChildren().setAll(new Label("Зображення занадто велике для preview"));
+            pane.getChildren().setAll(new Label("Зображення занадто велике для попереднього перегляду"));
             return pane;
         }
 
@@ -505,7 +513,7 @@ public class BookDetailsController {
                     }
                 }))
                 .exceptionally(ex -> {
-                    UiExecutor.runOnUiThread(() -> pane.getChildren().setAll(new Label("Помилка preview")));
+                    UiExecutor.runOnUiThread(() -> pane.getChildren().setAll(new Label("Помилка попереднього перегляду")));
                     return null;
                 });
         return pane;

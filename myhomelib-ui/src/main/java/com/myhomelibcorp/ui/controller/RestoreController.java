@@ -92,12 +92,12 @@ public class RestoreController {
                     hasDb = true;
                     addLog("  ✅ База даних: " + name);
                 } else if (name.equals("search-index") && Files.isDirectory(path)) {
-                    addLog("  ℹ️ Legacy search-index буде проігноровано; індекс перебудовується після restore");
+                    addLog("  ℹ️ Застарілий пошуковий індекс буде проігноровано; індекс перебудовується після відновлення");
                 } else if (name.equals("covers") && Files.isDirectory(path)) {
-                    addLog("  ℹ️ Legacy covers cache буде проігноровано; обкладинки формуються на вимогу");
+                    addLog("  ℹ️ Застарілий кеш обкладинок буде проігноровано; обкладинки формуються на вимогу");
                 } else if (name.equals("user-data.json") && Files.isRegularFile(path)) {
                     hasPortableUserData = true;
-                    addLog("  ✅ Versioned user data: user-data.json");
+                    addLog("  ✅ Версійні користувацькі дані: user-data.json");
                 }
             }
         } catch (Exception e) {
@@ -146,8 +146,8 @@ public class RestoreController {
 
         String details = restoreDatabase
                 ? "Папка: " + backupPath + "\nФайл бази даних: " + dbFile.getFileName()
-                    + "\n\n⚠️ Поточна база каталогу буде замінена. Перед заміною SQLite handles закриваються, потім колекція відкривається знову."
-                : "Папка: " + backupPath + "\n\nБаза каталогу НЕ замінюється. Ratings/progress/reviews/bookmarks/groups/history/filters/Reader settings будуть зіставлені за LibID.";
+                    + "\n\n⚠️ Поточна база каталогу буде замінена. Перед заміною з’єднання з SQLite закриваються, потім колекція відкривається знову."
+                : "Папка: " + backupPath + "\n\nБаза каталогу НЕ замінюється. Оцінки, прогрес читання, відгуки, закладки, групи, історія, фільтри та налаштування читалки будуть зіставлені за LibID.";
         if (!dialogService.showConfirmation("Відновлення з резервної копії",
                 restoreDatabase ? "Виконати повне відновлення?" : "Перенести лише користувацькі дані?", details)) return;
 
@@ -190,7 +190,7 @@ public class RestoreController {
                 OperationStage.RESTORING, false);
         addLog("=== Початок відновлення ===");
         addLog("Джерело: " + backupPath);
-        addLog("Режим: " + (options.restoreDatabase() ? "повне відновлення БД" : "лише user data за LibID"));
+        addLog("Режим: " + (options.restoreDatabase() ? "повне відновлення БД" : "лише користувацькі дані за LibID"));
         if (dbFile != null) addLog("Файл бази даних: " + dbFile.getFileName());
         addLog("Відновлення...");
 

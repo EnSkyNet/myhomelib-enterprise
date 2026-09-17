@@ -5,6 +5,7 @@ public enum PluginService {
     METADATA_PROVIDER(MetadataProvider.class),
     COVER_PROVIDER(CoverProvider.class),
     BOOK_IMPORTER(BookImporter.class),
+    BOOK_CONVERTER(BookConverter.class),
     METADATA_EXTRACTOR(MetadataExtractor.class),
     CONTENT_EXTRACTOR(ContentExtractor.class),
     EXPORT_PROVIDER(ExportProvider.class),

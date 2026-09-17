@@ -83,7 +83,7 @@ final class CollectionSourcePanelCoordinator {
         if (collection == null) return;
         String source = sourceFileField == null ? "" : sourceFileField.getText();
         if (source == null || source.isBlank()) {
-            dialogService.showWarning("Автооновлення", "Вкажіть локальний INPX/ZIP source-файл.");
+            dialogService.showWarning("Автооновлення", "Вкажіть локальний файл-джерело INPX/ZIP.");
             return;
         }
 
@@ -103,7 +103,7 @@ final class CollectionSourcePanelCoordinator {
     void checkNow(CollectionDto collection) {
         if (collection == null) return;
         if (autoUpdateUseCase.load(collection.getId()).isEmpty()) {
-            dialogService.showWarning("Автооновлення", "Спочатку збережіть source-файл.");
+            dialogService.showWarning("Автооновлення", "Спочатку збережіть файл-джерело.");
             return;
         }
 
@@ -147,7 +147,7 @@ final class CollectionSourcePanelCoordinator {
 
     private void setBusy(boolean busy) {
         if (checkButton != null) checkButton.setDisable(busy);
-        if (statusLabel != null && busy) statusLabel.setText("Перевірка source-файлу...");
+        if (statusLabel != null && busy) statusLabel.setText("Перевірка файла-джерела...");
     }
 
     private static String displayStatus(String status) {

@@ -36,7 +36,7 @@ public class BookActionProfilesDialog {
     public void show(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle("Дії з книгою / скрипти");
-        dialog.setHeaderText("Профілі запускаються через ProcessBuilder без cmd.exe/sh. Перегляд команди нічого не виконує.");
+        dialog.setHeaderText("Профілі запускаються напряму, без командної оболонки cmd.exe/sh. Перегляд команди нічого не виконує.");
         if (owner != null) dialog.initOwner(owner);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
 
@@ -59,7 +59,7 @@ public class BookActionProfilesDialog {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); return; }
                 setText(item.executable() + (item.arguments().isBlank() ? "" : "  " + item.arguments())
-                        + (item.waitForExit() ? "  [wait]" : ""));
+                        + (item.waitForExit() ? "  [очікувати]" : ""));
             }
         });
 
@@ -78,7 +78,7 @@ public class BookActionProfilesDialog {
         HBox commandButtons = new HBox(6, addCommand, editCommand, removeCommand, upCommand, downCommand, preview);
         commandButtons.setAlignment(Pos.CENTER_LEFT);
 
-        Label placeholders = new Label("Плейсхолдери: %FILE% %DIR% %FILENAME% %TITLE% %AUTHOR% %SERIES% %LANG% %YEAR% %ISBN% %PUBLISHER% %EXT% %BOOKID% %COLLECTION% %TMP%");
+        Label placeholders = new Label("Підстановки: %FILE% %DIR% %FILENAME% %TITLE% %AUTHOR% %SERIES% %LANG% %YEAR% %ISBN% %PUBLISHER% %EXT% %BOOKID% %COLLECTION% %TMP%");
         placeholders.setWrapText(true);
         VBox right = new VBox(8,
                 new Label("Назва"), name, enabled,
@@ -183,7 +183,7 @@ public class BookActionProfilesDialog {
         wait.setSelected(current != null && current.waitForExit());
         Button chooseExe = new Button("...");
         chooseExe.setOnAction(e -> {
-            FileChooser chooser = new FileChooser(); chooser.setTitle("Executable");
+            FileChooser chooser = new FileChooser(); chooser.setTitle("Виберіть виконуваний файл");
             File file = chooser.showOpenDialog(owner); if (file != null) executable.setText(file.getAbsolutePath());
         });
         Button chooseDir = new Button("...");
@@ -192,15 +192,15 @@ public class BookActionProfilesDialog {
             File dir = chooser.showDialog(owner); if (dir != null) working.setText(dir.getAbsolutePath());
         });
         GridPane grid = new GridPane(); grid.setHgap(8); grid.setVgap(8); grid.setPadding(new Insets(8));
-        grid.add(new Label("Executable"),0,0); grid.add(executable,1,0); grid.add(chooseExe,2,0);
-        grid.add(new Label("Arguments"),0,1); grid.add(arguments,1,1,2,1);
-        grid.add(new Label("Working directory"),0,2); grid.add(working,1,2); grid.add(chooseDir,2,2);
+        grid.add(new Label("Виконуваний файл"),0,0); grid.add(executable,1,0); grid.add(chooseExe,2,0);
+        grid.add(new Label("Аргументи"),0,1); grid.add(arguments,1,1,2,1);
+        grid.add(new Label("Робоча папка"),0,2); grid.add(working,1,2); grid.add(chooseDir,2,2);
         grid.add(wait,1,3,2,1);
         ColumnConstraints value = new ColumnConstraints(); value.setHgrow(Priority.ALWAYS); grid.getColumnConstraints().addAll(new ColumnConstraints(), value, new ColumnConstraints());
         dialog.getDialogPane().setContent(grid); dialog.getDialogPane().setPrefWidth(760);
         dialog.getDialogPane().lookupButton(ButtonType.OK).addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
             try {
-                if (executable.getText() == null || executable.getText().isBlank()) throw new IllegalArgumentException("Executable не задано");
+                if (executable.getText() == null || executable.getText().isBlank()) throw new IllegalArgumentException("Виконуваний файл не задано");
                 CommandTemplate.parse(arguments.getText());
             } catch (RuntimeException ex) {
                 dialogs.showWarning("Команда", ex.getMessage()); event.consume();

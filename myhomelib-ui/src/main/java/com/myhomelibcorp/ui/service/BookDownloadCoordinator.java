@@ -284,11 +284,11 @@ public class BookDownloadCoordinator {
 
         Collection collection = applicationState.getCurrentLibraryCollection();
         if (collection == null) {
-            return failedVisible("Файл відсутній локально, але активну online-колекцію не визначено");
+            return failedVisible("Файл відсутній локально, але активну онлайн-колекцію не визначено");
         }
         if ((collection.getUrl() == null || collection.getUrl().isBlank())
                 && (collection.getConnectionScript() == null || collection.getConnectionScript().isBlank())) {
-            return failedVisible("Файл відсутній локально, а URL/ConnectionScript online-колекції не налаштовано");
+            return failedVisible("Файл відсутній локально, а URL/ConnectionScript онлайн-колекції не налаштовано");
         }
 
         AtomicBoolean cancel = new AtomicBoolean(false);
@@ -419,7 +419,7 @@ public class BookDownloadCoordinator {
             String expectedFolder = LegacyOnlineBookLocation.archivePath(
                     author, book.getTitle(), book.getLibId(), book.getFileName());
             if (!expectedFolder.equals(book.getFolder())) {
-                log.debug("Нормалізовано online archive для книги {}: {} -> {}",
+                log.debug("Нормалізовано онлайн-архів для книги {}: {} -> {}",
                         book.getId(), book.getFolder(), expectedFolder);
                 book.setFolder(expectedFolder);
                 book.setArchiveEntry(book.getFileName());

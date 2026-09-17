@@ -24,6 +24,6 @@ class ContentIndexHealthUiContractTest {
         assertThat(controller).contains("ContentIndexMaintenanceService", "health.schemaVersion()",
                 "health.documentCount()", "health.sizeBytes()", "contentIndexMaintenance.rebuild",
                 "contentIndexCancel::get", "updateContentProgress",
-                "Metadata index перебудовується окремо через Database Tools");
+                "Індекс метаданих перебудовується окремо через «Інструменти бази даних»");
     }
 }

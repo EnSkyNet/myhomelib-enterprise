@@ -9,6 +9,7 @@ import com.myhomelibcorp.application.export.ExportCollisionDecision;
 import com.myhomelibcorp.application.export.ExportCollisionResolver;
 import com.myhomelibcorp.application.export.ExportCompletionService;
 import com.myhomelibcorp.application.export.ExportHistoryService;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -20,6 +21,7 @@ import com.myhomelibcorp.domain.model.book.BookArtifact;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
@@ -49,6 +51,12 @@ public class ExportToDeviceUseCase {
     private final ExportHistoryService historyService;
     private final ExportCompletionService completionService;
     private final ConvertBookUseCase convertBookUseCase;
+    private RuntimeExtensionRegistry runtimeExtensions = new RuntimeExtensionRegistry();
+
+    @Autowired
+    void setRuntimeExtensions(RuntimeExtensionRegistry runtimeExtensions) {
+        this.runtimeExtensions = java.util.Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
+    }
 
     private final Map<ExportRequest.ExportFormat, String> formatExtensions = Map.of(
             ExportRequest.ExportFormat.FB2, ".fb2",
@@ -408,6 +416,7 @@ public class ExportToDeviceUseCase {
     }
 
     private record DirectArtifact(BookArtifact artifact, ExportRequest.ExportFormat format) { }
+
     private record Conversion(ExportRequest.ExportFormat format, BookConverter converter) { }
 
     private java.util.Optional<ExportRequest.ExportFormat> exportFormat(String format) {
@@ -441,9 +450,8 @@ public class ExportToDeviceUseCase {
     private BookConverter findAnyAvailableConverter(ExportRequest.ExportFormat format) {
         String targetExt = formatExtensions.get(format);
         if (targetExt == null) return null;
-        for (BookConverter converter : converters) {
-            if (converter.isAvailable() && (converter.getTargetExtension().equalsIgnoreCase(targetExt)
-                    || converter.getFormatName().equalsIgnoreCase(format.name()))) return converter;
+        for (BookConverter converter : runtimeExtensions.mergeBookConverters(converters)) {
+            if (converter.isAvailable() && converterProduces(converter, format, targetExt)) return converter;
         }
         return null;
     }
@@ -451,15 +459,22 @@ public class ExportToDeviceUseCase {
     private BookConverter findConverter(ExportRequest.ExportFormat format, Book book) {
         String targetExt = formatExtensions.get(format);
         if (targetExt == null) return null;
-        for (BookConverter converter : converters) {
-            if (converter.isAvailable() && converter.supports(book)
-                    && converter.getTargetExtension().equalsIgnoreCase(targetExt)) return converter;
-        }
-        for (BookConverter converter : converters) {
-            if (converter.isAvailable() && converter.supports(book)
-                    && converter.getFormatName().equalsIgnoreCase(format.name())) return converter;
+        for (BookConverter converter : runtimeExtensions.mergeBookConverters(converters)) {
+            if (converter.isAvailable() && converter.supports(book) && converterProduces(converter, format, targetExt)) return converter;
         }
         return null;
+    }
+
+    private boolean converterProduces(BookConverter converter, ExportRequest.ExportFormat format, String targetExt) {
+        String normalizedTarget = com.myhomelibcorp.application.conversion.BookConversionCapability.normalizeFormat(format.name());
+        try {
+            if (converter.capabilities() != null && converter.capabilities().stream().anyMatch(capability ->
+                    capability != null && capability.produces(normalizedTarget))) return true;
+        } catch (RuntimeException ignored) {
+            // Fall back to the legacy single-target contract below.
+        }
+        return converter.getTargetExtension().equalsIgnoreCase(targetExt)
+                || converter.getFormatName().equalsIgnoreCase(format.name());
     }
 
     private String generateSubfolder(Book book, ExportRequest request) {

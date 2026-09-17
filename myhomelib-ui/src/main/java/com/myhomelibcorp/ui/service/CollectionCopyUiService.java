@@ -39,7 +39,7 @@ public class CollectionCopyUiService {
     public void copySelected(Window owner, Runnable onComplete) {
         List<BookId> ids = selection.snapshot();
         if (ids.isEmpty()) {
-            dialogs.showWarning("Немає книг", "Відмітьте книги checkbox для копіювання.");
+            dialogs.showWarning("Немає книг", "Позначте книги прапорцями для копіювання.");
             return;
         }
         Collection current = state.getCurrentLibraryCollection();

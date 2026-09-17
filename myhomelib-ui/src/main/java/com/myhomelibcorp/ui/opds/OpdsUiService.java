@@ -66,7 +66,7 @@ public class OpdsUiService {
         bind.setPromptText("127.0.0.1");
         Spinner<Integer> port = new Spinner<>(1, 65535, saved.port());
         port.setEditable(true);
-        CheckBox auth = new CheckBox("Basic authentication");
+        CheckBox auth = new CheckBox(i18n.text("ui.opds.basic_authentication"));
         auth.setSelected(saved.basicAuthEnabled());
         TextField username = new TextField(saved.username());
         PasswordField password = new PasswordField();
@@ -174,10 +174,10 @@ public class OpdsUiService {
                 setCertificateBusy, clearCertificateBusy));
         importPem.setOnAction(e -> {
             Path cert = chooseFile(owner, i18n.text("ui.opds.choose_certificate.title"),
-                    new FileChooser.ExtensionFilter("Certificate PEM", "*.pem", "*.crt", "*.cer"));
+                    new FileChooser.ExtensionFilter(i18n.text("ui.opds.certificate.file_filter"), "*.pem", "*.crt", "*.cer"));
             if (cert == null) return;
             Path key = chooseFile(owner, i18n.text("ui.opds.choose_private_key.title"),
-                    new FileChooser.ExtensionFilter("Private key PEM", "*.pem", "*.key"));
+                    new FileChooser.ExtensionFilter(i18n.text("ui.opds.private_key.file_filter"), "*.pem", "*.key"));
             if (key == null) return;
             runCertificateTask(
                     () -> certificateManager.importPem(cert, key),
@@ -188,8 +188,8 @@ public class OpdsUiService {
 
         GridPane form = new GridPane();
         form.setHgap(10); form.setVgap(8);
-        form.addRow(0, new Label("Bind address:"), bind);
-        form.addRow(1, new Label("Port:"), port);
+        form.addRow(0, new Label(i18n.text("ui.opds.bind_address.label")), bind);
+        form.addRow(1, new Label(i18n.text("ui.opds.port.label")), port);
         form.add(auth, 0, 2, 2, 1);
         form.addRow(3, new Label(i18n.text("ui.opds.username.label")), username);
         form.addRow(4, new Label(i18n.text("ui.opds.password.label")), password);
@@ -198,8 +198,8 @@ public class OpdsUiService {
         GridPane tlsForm = new GridPane();
         tlsForm.setHgap(10); tlsForm.setVgap(8);
         tlsForm.add(tlsEnabled, 0, 0, 2, 1);
-        tlsForm.addRow(1, new Label("Keystore:"), keyStorePath);
-        tlsForm.addRow(2, new Label("SHA-256 fingerprint:"), fingerprint);
+        tlsForm.addRow(1, new Label(i18n.text("ui.opds.keystore.label")), keyStorePath);
+        tlsForm.addRow(2, new Label(i18n.text("ui.opds.fingerprint.label")), fingerprint);
         tlsForm.add(certificateDetails, 0, 3, 2, 1);
         tlsForm.add(trustWarning, 0, 4, 2, 1);
         tlsForm.add(certificateActions, 0, 5, 2, 1);

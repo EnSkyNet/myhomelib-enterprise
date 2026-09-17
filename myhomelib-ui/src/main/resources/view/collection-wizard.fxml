@@ -56,10 +56,10 @@
                     <TextField fx:id="sourcePathField" HBox.hgrow="ALWAYS" promptText="INPX/INP, FB2, EPUB, TXT, ZIP, 7z, RAR..."/>
                     <Button text="📂 Обрати" onAction="#onSelectSourcePath"/>
                 </HBox>
-                <Label text="URL online-бібліотеки:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+                <Label text="URL онлайн-бібліотеки:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
                 <TextField fx:id="urlField" GridPane.columnIndex="1" GridPane.rowIndex="1" promptText="https://server/books/ або шаблон .../{archive}"/>
                 <Label fx:id="catalogUpdateUrlLabel" text="URL INPX для оновлення:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
-                <TextField fx:id="catalogUpdateUrlField" GridPane.columnIndex="1" GridPane.rowIndex="2" promptText="https://server/catalog.inpx або endpoint каталогу"/>
+                <TextField fx:id="catalogUpdateUrlField" GridPane.columnIndex="1" GridPane.rowIndex="2" promptText="https://server/catalog.inpx або адреса каталогу"/>
                 <Label text="Користувач:" GridPane.columnIndex="0" GridPane.rowIndex="3"/>
                 <TextField fx:id="userField" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
                 <Label text="Пароль:" GridPane.columnIndex="0" GridPane.rowIndex="4"/>
@@ -67,7 +67,7 @@
                 <Label fx:id="connectionScriptLabel" text="Сценарій підключення:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
                 <TextArea fx:id="connectionScriptArea" GridPane.columnIndex="1" GridPane.rowIndex="5" prefRowCount="6" wrapText="false" promptText="GET / POST / ADD / CHECK / REDIR / PAUSE"/>
             </GridPane>
-            <Label text="Для віддаленої колекції вкажіть INPX, базовий URL та, якщо джерело його потребує, ConnectionScript. Підтримуються шаблони {archive}, {file}, {entry}." wrapText="true" style="-fx-text-fill: -mhl-muted-text;"/>
+            <Label text="Для віддаленої колекції вкажіть INPX, базовий URL та, якщо джерело цього потребує, скрипт підключення. Підтримуються шаблони {archive}, {file}, {entry}." wrapText="true" style="-fx-text-fill: -mhl-muted-text;"/>
             <CheckBox fx:id="importOnCreateCheck" text="Імпортувати при створенні" selected="true"/>
             <CheckBox fx:id="createIndexCheck" text="Створити пошуковий індекс" selected="true"/>
             <Label fx:id="errorLabel" style="-fx-text-fill: -mhl-danger; -fx-wrap-text: true;"/>

@@ -315,7 +315,6 @@ class PerformanceBaselineTest {
 
     private static void forceGc() throws InterruptedException {
         System.gc();
-        System.runFinalization();
         Thread.sleep(50L);
         System.gc();
         Thread.sleep(50L);

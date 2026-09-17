@@ -15,6 +15,6 @@
     <Label fx:id="statusLabel" text="Готово до роботи" HBox.hgrow="ALWAYS"/>
     <Region HBox.hgrow="ALWAYS"/>
     <Label fx:id="operationsLabel" text="Операції: 0" onMouseClicked="#onOperationsClick" style="-fx-cursor: hand;"/>
-    <Label fx:id="statsLabel" text="Книг: 0 | Авторів: 0 | Серій: 0 | Lucene ✓ | SQLite ✓ | RAM: 0 MB"/>
+    <Label fx:id="statsLabel" text="Книг: 0 | Авторів: 0 | Серій: 0 | Індекс ✓ | База ✓ | ОЗП: 0 МБ"/>
     <ProgressBar fx:id="progressBar" visible="false" prefWidth="150"/>
 </HBox>

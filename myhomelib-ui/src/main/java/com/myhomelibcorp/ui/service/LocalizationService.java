@@ -155,8 +155,18 @@ public class LocalizationService {
     }
 
     private void translateNode(Node node) {
-        if (node instanceof Control control && control.getAccessibleText() != null && !control.getAccessibleText().isBlank()) {
-            control.setAccessibleText(tr(control.getAccessibleText()));
+        if (node instanceof Control control) {
+            if (control.getAccessibleText() != null && !control.getAccessibleText().isBlank()) {
+                control.setAccessibleText(tr(control.getAccessibleText()));
+            }
+            Tooltip tooltip = control.getTooltip();
+            if (tooltip != null && !tooltip.textProperty().isBound()) {
+                tooltip.setText(tr(tooltip.getText()));
+            }
+            ContextMenu contextMenu = control.getContextMenu();
+            if (contextMenu != null) {
+                for (MenuItem item : contextMenu.getItems()) translateMenu(item);
+            }
         }
         if (node instanceof Labeled labeled && !labeled.textProperty().isBound()) {
             labeled.setText(tr(labeled.getText()));
@@ -169,6 +179,9 @@ public class LocalizationService {
         }
         if (node instanceof MenuBar menuBar) {
             for (Menu menu : menuBar.getMenus()) translateMenu(menu);
+        }
+        if (node instanceof MenuButton menuButton) {
+            for (MenuItem item : menuButton.getItems()) translateMenu(item);
         }
         if (node instanceof TableView<?> tableView) {
             for (TableColumn<?, ?> column : tableView.getColumns()) translateColumn(column);

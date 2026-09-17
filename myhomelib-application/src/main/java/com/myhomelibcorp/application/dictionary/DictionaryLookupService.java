@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.dictionary;
 
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
 import com.myhomelibcorp.application.textprovider.TextProviderFailures;
@@ -24,14 +26,21 @@ public class DictionaryLookupService {
 
     private final List<DictionaryProvider> providers;
     private final ExecutorPort executor;
+    private final RuntimeExtensionRegistry runtimeExtensions;
 
     public DictionaryLookupService(List<DictionaryProvider> providers, ExecutorPort executor) {
+        this(providers, executor, new RuntimeExtensionRegistry());
+    }
+
+    @Autowired
+    public DictionaryLookupService(List<DictionaryProvider> providers, ExecutorPort executor, RuntimeExtensionRegistry runtimeExtensions) {
         this.providers = providers == null ? List.of() : providers.stream().filter(Objects::nonNull).toList();
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.runtimeExtensions = Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
     }
 
     public List<DictionaryProviderDescriptor> availableProviders() {
-        return providers.stream()
+        return allProviders().stream()
                 .filter(DictionaryProvider::isEnabled)
                 .sorted(Comparator.comparing(DictionaryProvider::isOffline).reversed()
                         .thenComparing(DictionaryProvider::id))
@@ -96,12 +105,12 @@ public class DictionaryLookupService {
     private DictionaryProvider selectProvider(String providerId) {
         String requested = clean(providerId);
         if (!requested.isBlank()) {
-            return providers.stream()
+            return allProviders().stream()
                     .filter(DictionaryProvider::isEnabled)
                     .filter(provider -> requested.equals(provider.id()))
                     .findFirst().orElse(null);
         }
-        return providers.stream()
+        return allProviders().stream()
                 .filter(DictionaryProvider::isEnabled)
                 .sorted(Comparator.comparing(DictionaryProvider::isOffline).reversed()
                         .thenComparing(DictionaryProvider::id))
@@ -164,4 +173,11 @@ public class DictionaryLookupService {
     }
 
     private static final class InvalidProviderAttribution extends RuntimeException {}
+    private List<DictionaryProvider> allProviders() {
+        java.util.LinkedHashMap<String, DictionaryProvider> result = new java.util.LinkedHashMap<>();
+        providers.forEach(provider -> result.putIfAbsent(provider.id(), provider));
+        runtimeExtensions.dictionaryProviders().forEach(provider -> result.putIfAbsent(provider.id(), provider));
+        return List.copyOf(result.values());
+    }
+
 }

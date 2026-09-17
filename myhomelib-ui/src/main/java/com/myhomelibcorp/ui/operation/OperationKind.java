@@ -12,5 +12,6 @@ public enum OperationKind {
     INTEGRITY_CHECK,
     MAINTENANCE,
     BOOK_DOWNLOAD,
+    BOOK_CONVERSION,
     GENERIC
 }

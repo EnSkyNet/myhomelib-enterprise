@@ -865,9 +865,7 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
             throw new IOException("filterSettings must be an object");
         }
         Map<String, String> restored = new LinkedHashMap<>();
-        var fields = node.fields();
-        while (fields.hasNext()) {
-            var entry = fields.next();
+        for (var entry : node.properties()) {
             if (!entry.getKey().startsWith(FILTER_PREFIX)) continue;
             JsonNode valueNode = entry.getValue();
             if (valueNode == null || valueNode.isNull()) continue;

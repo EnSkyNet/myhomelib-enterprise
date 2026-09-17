@@ -126,6 +126,7 @@ public class SavedSearchesController {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/smart-collection.fxml"));
             fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
             SmartCollectionDialogController controller = loader.getController();
             controller.setOnSaved(this::loadSearches);
             if (editing != null) controller.edit(editing.getId());

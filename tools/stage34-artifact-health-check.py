@@ -25,7 +25,7 @@ for token in ["MISSING_ARTIFACTS", "CORRUPT_ARTIFACTS", "CHANGED_ARTIFACTS", "DU
 
 ui = text("myhomelib-ui/src/main/resources/view/integrity-check.fxml")
 ui_controller = text("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java")
-for token in ["Library Health", "onShowMissing", "onShowCorrupt", "onShowChanged", "onShowDuplicates", "onShowMetadata", "onShowIndex", "onShowBackup", "onExportReport", "issueTable", "detailArea"]:
+for token in ['fx:id="overallStatusLabel"', "onShowMissing", "onShowCorrupt", "onShowChanged", "onShowDuplicates", "onShowMetadata", "onShowIndex", "onShowBackup", "onExportReport", "issueTable", "detailArea"]:
     assert token in ui, f"dashboard missing {token}"
 assert "executor.submit(healthService::refresh)" in ui_controller, "Library Health refresh must stay off the FX thread"
 

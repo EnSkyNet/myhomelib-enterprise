@@ -10,7 +10,7 @@
       prefWidth="940" prefHeight="700">
 
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="Library Health" style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
+        <Label text="Стан бібліотеки" style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
         <Label fx:id="overallStatusLabel" text="Стан ще не перевірено"
                style="-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: -mhl-muted-text;"/>
         <Region HBox.hgrow="ALWAYS"/>
@@ -25,12 +25,12 @@
 
     <VBox spacing="5" style="-fx-padding: 8; -fx-border-color: -mhl-border; -fx-border-radius: 4;">
         <HBox spacing="8" alignment="CENTER_LEFT">
-            <Label text="Full-text content index" style="-fx-font-weight: bold;"/>
+            <Label text="Повнотекстовий індекс" style="-fx-font-weight: bold;"/>
             <Label fx:id="contentIndexValue" text="—" style="-fx-font-weight: bold;"/>
             <Label fx:id="contentIndexDetailLabel" text="Стан завантажується…" HBox.hgrow="ALWAYS"/>
-            <Button text="Деталі" accessibleText="Деталі full-text content index" onAction="#onShowContentIndex"/>
-            <Button fx:id="contentIndexRebuildButton" text="Перебудувати content" accessibleText="Перебудувати full-text content index" onAction="#onRebuildContentIndex"/>
-            <Button fx:id="contentIndexCancelButton" text="Скасувати" accessibleText="Скасувати перебудову full-text content index" onAction="#onCancelContentIndexRebuild"/>
+            <Button text="Деталі" accessibleText="Деталі повнотекстового індексу" onAction="#onShowContentIndex"/>
+            <Button fx:id="contentIndexRebuildButton" text="Перебудувати вміст" accessibleText="Перебудувати повнотекстовий індекс" onAction="#onRebuildContentIndex"/>
+            <Button fx:id="contentIndexCancelButton" text="Скасувати" accessibleText="Скасувати перебудову повнотекстового індексу" onAction="#onCancelContentIndexRebuild"/>
         </HBox>
         <ProgressBar fx:id="contentIndexProgress" maxWidth="Infinity" progress="0" visible="false" managed="false"/>
     </VBox>
@@ -48,7 +48,7 @@
         </columnConstraints>
 
         <VBox GridPane.columnIndex="0" spacing="3" style="-fx-padding: 10; -fx-border-color: -mhl-border; -fx-border-radius: 4;">
-            <Label text="Локальні artifacts" style="-fx-text-fill: -mhl-muted-text;"/>
+            <Label text="Локальні файли" style="-fx-text-fill: -mhl-muted-text;"/>
             <Label fx:id="localArtifactsValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
         </VBox>
         <Button GridPane.columnIndex="1" accessibleText="Відсутні" onAction="#onShowMissing" maxWidth="Infinity" minHeight="62">
@@ -63,15 +63,15 @@
         <Button GridPane.columnIndex="4" accessibleText="Дублікати" onAction="#onShowDuplicates" maxWidth="Infinity" minHeight="62">
             <graphic><VBox alignment="CENTER"><Label text="Дублікати"/><Label fx:id="duplicatesValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
-        <Button GridPane.columnIndex="5" accessibleText="Metadata gaps" onAction="#onShowMetadata" maxWidth="Infinity" minHeight="62">
-            <graphic><VBox alignment="CENTER"><Label text="Metadata gaps"/><Label fx:id="metadataValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        <Button GridPane.columnIndex="5" accessibleText="Прогалини метаданих" onAction="#onShowMetadata" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="Прогалини метаданих"/><Label fx:id="metadataValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
         <VBox GridPane.columnIndex="6" spacing="4">
-            <Button accessibleText="Lucene" onAction="#onShowIndex" maxWidth="Infinity">
-                <graphic><VBox alignment="CENTER"><Label text="Lucene"/><Label fx:id="indexValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
+            <Button accessibleText="Пошуковий індекс" onAction="#onShowIndex" maxWidth="Infinity">
+                <graphic><VBox alignment="CENTER"><Label text="Пошуковий індекс"/><Label fx:id="indexValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
             </Button>
-            <Button accessibleText="Backup age" onAction="#onShowBackup" maxWidth="Infinity">
-                <graphic><VBox alignment="CENTER"><Label text="Backup age"/><Label fx:id="backupValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
+            <Button accessibleText="Вік резервної копії" onAction="#onShowBackup" maxWidth="Infinity">
+                <graphic><VBox alignment="CENTER"><Label text="Вік резервної копії"/><Label fx:id="backupValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
             </Button>
         </VBox>
     </GridPane>
@@ -90,13 +90,13 @@
                 </TableView>
             </VBox>
             <VBox spacing="6">
-                <Label text="Drill-down" style="-fx-font-weight: bold;"/>
+                <Label text="Деталі перевірки" style="-fx-font-weight: bold;"/>
                 <TextArea fx:id="detailArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"
                           style="-fx-font-family: 'Consolas', 'Monaco', monospace; -fx-font-size: 12px;"/>
             </VBox>
         </items>
     </SplitPane>
 
-    <Label text="Audit не виконує destructive auto-repair: він лише читає файли, порівнює size/SHA-256 та зберігає власний audit baseline/cache."
+    <Label text="Перевірка не виконує автоматичних небезпечних виправлень: вона лише читає файли, порівнює розмір і SHA-256 та зберігає власну базову контрольну інформацію й кеш."
            wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
 </VBox>

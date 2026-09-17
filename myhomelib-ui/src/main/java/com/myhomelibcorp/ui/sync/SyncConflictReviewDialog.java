@@ -15,6 +15,7 @@ import javafx.scene.layout.GridPane;
 import javafx.scene.layout.Priority;
 import javafx.scene.layout.VBox;
 import javafx.stage.Window;
+import javafx.util.StringConverter;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -39,7 +40,8 @@ public final class SyncConflictReviewDialog {
         dialog.setTitle(i18n.tr("Конфлікти синхронізації"));
         dialog.setHeaderText(i18n.tr("Перевірте конфлікти, які неможливо об’єднати автоматично без втрати даних."));
         ButtonType apply = new ButtonType(i18n.tr("Застосувати вибір"), ButtonBar.ButtonData.OK_DONE);
-        dialog.getDialogPane().getButtonTypes().setAll(apply, ButtonType.CANCEL);
+        ButtonType cancel = new ButtonType(i18n.tr("Скасувати"), ButtonBar.ButtonData.CANCEL_CLOSE);
+        dialog.getDialogPane().getButtonTypes().setAll(apply, cancel);
 
         List<RowEditor> editors = new ArrayList<>();
         VBox content = new VBox(12);
@@ -72,7 +74,7 @@ public final class SyncConflictReviewDialog {
             node.setPadding(new Insets(8));
             node.getStyleClass().add("sync-conflict-review-row");
 
-            Label entity = new Label(row.item().entityType() + " · " + row.item().logicalKey());
+            Label entity = new Label(row.item().entityType());
             entity.setAccessibleText(i18n.tr("Сутність конфлікту") + ": " + row.item().logicalKey());
             Label reason = new Label(row.item().reason());
             reason.setWrapText(true);
@@ -81,6 +83,19 @@ public final class SyncConflictReviewDialog {
             TextArea remote = payloadArea(i18n.tr("Віддалена версія"), row.item().remoteSnapshot());
 
             choice.getItems().setAll(SyncConflictReviewSelection.Side.LOCAL, SyncConflictReviewSelection.Side.REMOTE);
+            choice.setConverter(new StringConverter<>() {
+                @Override public String toString(SyncConflictReviewSelection.Side side) {
+                    if (side == null) return "";
+                    return side == SyncConflictReviewSelection.Side.LOCAL
+                            ? i18n.tr("Локальна версія")
+                            : i18n.tr("Віддалена версія");
+                }
+                @Override public SyncConflictReviewSelection.Side fromString(String value) {
+                    return i18n.tr("Віддалена версія").equals(value)
+                            ? SyncConflictReviewSelection.Side.REMOTE
+                            : SyncConflictReviewSelection.Side.LOCAL;
+                }
+            });
             choice.setValue(row.choice());
             choice.setAccessibleText(i18n.tr("Яку версію зберегти"));
 

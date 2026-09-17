@@ -15,6 +15,8 @@ import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.opds.OpdsUiService;
+import com.myhomelibcorp.ui.integration.IntegrationCenterDialog;
+import com.myhomelibcorp.ui.integration.AiBookAssistantUiService;
 import com.myhomelibcorp.ui.service.*;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
@@ -39,7 +41,6 @@ import javafx.stage.Modality;
 import javafx.stage.Stage;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationContext;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
@@ -55,7 +56,7 @@ public class MainController {
     private final MainNavigationCoordinator mainNavigationCoordinator;
     private final WorkspaceManager workspaceManager;
     private final ApplicationEventPublisher eventPublisher;
-    private final ApplicationContext springContext;
+    private final FxmlLoaderFactory fxmlLoaderFactory;
     private final ActionRegistry actionRegistry;
     private final ActionCustomizationDialog actionCustomizationDialog;
     private final BookActionProfilesDialog bookActionProfilesDialog;
@@ -65,6 +66,9 @@ public class MainController {
     private final ApplicationThemeService applicationThemeService;
     private final DuplicateReviewUiService duplicateReviewUiService;
     private final BookSelectionService bookSelectionService;
+    private final IntegrationCenterDialog integrationCenterDialog;
+    private final AiBookAssistantUiService aiBookAssistantUiService;
+    private final BookConversionUiService bookConversionUiService;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -327,6 +331,29 @@ public class MainController {
     }
 
     @FXML
+    public void handleIntegrations() {
+        integrationCenterDialog.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
+    }
+
+    @FXML
+    public void handleConvertBook() {
+        bookConversionUiService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+                bookCommandCoordinator.selectedBook());
+    }
+
+    @FXML
+    public void handleAiSummarizeBook() {
+        aiBookAssistantUiService.summarize(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+                bookCommandCoordinator.selectedBook());
+    }
+
+    @FXML
+    public void handleAiAskBook() {
+        aiBookAssistantUiService.ask(mainPane.getScene() == null ? null : mainPane.getScene().getWindow(),
+                bookCommandCoordinator.selectedBook());
+    }
+
+    @FXML
     public void handleCollectionProperties() {
         var updated = collectionPropertiesUiService.show(mainPane.getScene().getWindow());
         if (updated != null) { eventPublisher.publishEvent(new NavigationRefreshEvent()); navigationPanelController.refreshAll(); }
@@ -406,8 +433,9 @@ public class MainController {
     public void handleCollectionWizard() {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/collection-wizard.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            localizationService.apply(root);
 
             CollectionWizardController controller = loader.getController();
             // Передаємо список колекцій у візард

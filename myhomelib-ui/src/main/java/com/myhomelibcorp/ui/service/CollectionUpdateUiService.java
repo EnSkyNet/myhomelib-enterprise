@@ -134,7 +134,7 @@ public class CollectionUpdateUiService {
                             if (safeToRetry) {
                                 boolean retry = dialogs.showErrorWithRetry(
                                         "Оновлення колекції",
-                                        "Не вдалося завершити online-оновлення",
+                                        "Не вдалося завершити онлайн-оновлення",
                                         updateFailureDetails(failure));
                                 if (retry && isActiveCollection(collection.getId())) {
                                     Platform.runLater(() -> startManualUpdate(owner, onDone, collection, source));
@@ -192,7 +192,7 @@ public class CollectionUpdateUiService {
         active = flag;
         state.getStatusBar().setProgressVisible(true);
         state.getStatusBar().setProgress(0.0);
-        state.getStatusBar().setStatusText("Перевірка оновлення online-каталогу…");
+        state.getStatusBar().setStatusText("Перевірка оновлення онлайн-каталогу…");
 
         executor.submit(() -> useCase.execute(
                         collection, source, flag,
@@ -210,29 +210,29 @@ public class CollectionUpdateUiService {
                             if (cause instanceof CatalogUpdateFailureException failure) {
                                 state.getStatusBar().setStatusText(updateFailureStatus(failure));
                             } else {
-                                state.getStatusBar().setStatusText("Не вдалося перевірити online-каталог: " + safeMessage(cause));
+                                state.getStatusBar().setStatusText("Не вдалося перевірити онлайн-каталог: " + safeMessage(cause));
                             }
                         }
                         return;
                     }
                     if (result == null || (result.imported() == 0 && result.errors() == 0)) {
-                        state.getStatusBar().setStatusText("Online-каталог актуальний");
+                        state.getStatusBar().setStatusText("Онлайн-каталог актуальний");
                         return;
                     }
-                    state.getStatusBar().setStatusText("Online-каталог автоматично оновлено: " + result.imported() + " записів");
+                    state.getStatusBar().setStatusText("Онлайн-каталог автоматично оновлено: " + result.imported() + " записів");
                     if (onDone != null) onDone.run();
                 }));
     }
 
     private static String updateFailureStatus(CatalogUpdateFailureException failure) {
-        if (failure == null) return "Помилка online-оновлення";
+        if (failure == null) return "Помилка онлайн-оновлення";
         if (failure.mutationMayHaveCommitted() && failure.rollbackSucceeded()) {
             return "Помилка оновлення; попередній стан колекції відновлено";
         }
         if (failure.mutationMayHaveCommitted()) {
             return "Помилка оновлення; потрібна перевірка цілісності";
         }
-        return "Помилка online-оновлення на етапі: " + stageText(failure.stage());
+        return "Помилка онлайн-оновлення на етапі: " + stageText(failure.stage());
     }
 
     private static String updateFailureDetails(CatalogUpdateFailureException failure) {
@@ -242,13 +242,13 @@ public class CollectionUpdateUiService {
         if (!failure.mutationMayHaveCommitted()) {
             localState = "Локальну SQLite-базу не змінено.";
         } else if (failure.rollbackSucceeded()) {
-            localState = "Попередній стан SQLite, Lucene та статистики автоматично відновлено.";
+            localState = "Попередній стан бази SQLite, пошукового індексу та статистики автоматично відновлено.";
         } else if (failure.rollbackAttempted()) {
             localState = "Автоматичний відкат не завершено. Recovery checkpoint збережено; перед новим оновленням запустіть перевірку цілісності.";
         } else {
             localState = "Після зміни каталогу автоматичний rollback був недоступний. Перед новим оновленням запустіть перевірку цілісності.";
         }
-        return "Операція: online-оновлення каталогу"
+        return "Операція: онлайн-оновлення каталогу"
                 + "\nЕтап: " + stageText(failure.stage())
                 + "\nДжерело: " + source
                 + "\nТехнічна причина: " + rootMessage(failure)
@@ -277,13 +277,13 @@ public class CollectionUpdateUiService {
             case VALIDATING -> "валідація";
             case CREATING_CHECKPOINT -> "створення точки відновлення";
             case READING_CATALOG -> "читання каталогу";
-            case IMPORTING -> "імпорт SQLite";
+            case IMPORTING -> "імпорт до бази SQLite";
             case UPDATING_AUTHORS -> "оновлення авторів";
             case APPLYING_DELETIONS -> "застосування видалень";
-            case UPDATING_SEARCH_INDEX -> "оновлення Lucene";
+            case UPDATING_SEARCH_INDEX -> "оновлення пошукового індексу";
             case REFRESHING_STATISTICS -> "оновлення статистики";
             case ROLLING_BACK -> "відкат";
-            case FINALIZING -> "фіналізація source state";
+            case FINALIZING -> "завершення стану джерела";
             case INTEGRITY_CHECKS -> "перевірка цілісності";
             case SCANNING_DUPLICATES -> "пошук дублікатів";
             case SYNCHRONIZING_FILES -> "синхронізація файлів";
@@ -293,6 +293,7 @@ public class CollectionUpdateUiService {
             case CREATING_COLLECTION -> "створення колекції";
             case DELETING_COLLECTION -> "видалення колекції";
             case BOOK_DOWNLOAD -> "завантаження книги";
+            case CONVERTING -> "конвертація";
             case COMPLETED -> "завершення";
             case CANCELLED -> "скасування";
             case FAILED -> "помилка";

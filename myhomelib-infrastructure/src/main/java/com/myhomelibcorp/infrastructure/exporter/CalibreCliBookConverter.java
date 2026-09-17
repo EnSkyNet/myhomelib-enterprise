@@ -34,7 +34,9 @@ public final class CalibreCliBookConverter implements BookConverter {
     private static final int MAX_CAPTURE_BYTES = 64 * 1024;
     private static final int MAX_FAILURE_TEXT = 2048;
     private static final Set<String> SOURCE_FORMATS = Set.of(
-            "fb2", "fb2_zip", "epub", "mobi", "prc", "azw", "azw3", "txt", "html", "htm", "rtf", "docx", "pdf");
+            "azw", "azw3", "azw4", "cbz", "cbr", "cb7", "cbc", "chm", "djvu", "docx",
+            "epub", "fb2", "fb2_zip", "fbz", "html", "htm", "htmlz", "kepub", "lit", "lrf",
+            "mobi", "odt", "pdf", "prc", "pdb", "pml", "rb", "rtf", "snb", "tcr", "txt", "txtz");
 
     private final ApplicationSettingsPort settings;
     private final String targetFormat;
@@ -276,7 +278,7 @@ public final class CalibreCliBookConverter implements BookConverter {
 
     private static String sourceExtension(String format) {
         String normalized = BookConversionCapability.normalizeFormat(format);
-        if ("fb2_zip".equals(normalized)) return ".fb2.zip";
+        if ("fb2_zip".equals(normalized)) return ".fbz";
         String safe = normalized.replaceAll("[^a-z0-9]", "");
         return safe.isBlank() ? ".book" : "." + safe;
     }

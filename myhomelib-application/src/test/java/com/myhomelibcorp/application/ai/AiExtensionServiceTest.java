@@ -22,8 +22,8 @@ class AiExtensionServiceTest {
         AiExtensionService service = new AiExtensionService(Set.of(), settings, Optional.empty());
 
         assertThat(service.providerIds()).isEmpty();
-        assertThat(service.isBookOptedIn(42)).isFalse();
-        assertThatThrownBy(() -> service.execute("missing", request(42, ""), AiConsent.none(),
+        assertThat(service.isBookOptedIn("book-42")).isFalse();
+        assertThatThrownBy(() -> service.execute("missing", request("book-42", ""), AiConsent.none(),
                 Duration.ofSeconds(1), new AtomicBoolean()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("unknown AI provider");
@@ -40,20 +40,47 @@ class AiExtensionServiceTest {
                 });
         AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.empty());
 
-        assertThatThrownBy(() -> service.execute(provider.id(), request(7, ""), AiConsent.none(),
+        assertThatThrownBy(() -> service.execute(provider.id(), request("book-7", ""), AiConsent.none(),
                 Duration.ofSeconds(1), new AtomicBoolean()))
                 .isInstanceOf(AiProviderException.class)
                 .satisfies(error -> assertThat(((AiProviderException) error).kind())
                         .isEqualTo(AiProviderErrorKind.CONSENT_REQUIRED));
         assertThat(calls).hasValue(0);
 
-        service.setBookOptIn(7, true);
-        assertThat(service.isBookOptedIn(7)).isTrue();
-        assertThat(service.execute(provider.id(), request(7, ""), AiConsent.none(),
+        service.setBookOptIn("book-7", true);
+        assertThat(service.isBookOptedIn("book-7")).isTrue();
+        assertThat(service.execute(provider.id(), request("book-7", ""), AiConsent.none(),
                 Duration.ofSeconds(1), new AtomicBoolean()).text()).isEqualTo("summary");
 
-        service.setBookOptIn(7, false);
-        assertThat(service.isBookOptedIn(7)).isFalse();
+        service.setBookOptIn("book-7", false);
+        assertThat(service.isBookOptedIn("book-7")).isFalse();
+    }
+
+    @Test
+    void transientBookOptInDoesNotPersistHiddenConsent() throws Exception {
+        MemorySettings settings = new MemorySettings();
+        AiProvider provider = provider("local.once", AiProviderCapabilities.local(Set.of(AiOperation.SUMMARY)),
+                (request, context) -> new AiResponse("ok"));
+        AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.empty());
+
+        assertThat(service.isBookOptedIn("book-once")).isFalse();
+        assertThat(service.executeWithTransientBookOptIn(provider.id(), request("book-once", ""), AiConsent.none(),
+                Duration.ofSeconds(1), new AtomicBoolean()).text()).isEqualTo("ok");
+        assertThat(service.isBookOptedIn("book-once")).isFalse();
+    }
+
+    @Test
+    void transientBookOptInPreservesExistingExplicitPreferenceOnFailure() {
+        MemorySettings settings = new MemorySettings();
+        AiProvider provider = provider("local.fail", AiProviderCapabilities.local(Set.of(AiOperation.SUMMARY)),
+                (request, context) -> { throw new AiProviderException(AiProviderErrorKind.INVALID_RESPONSE, "boom"); });
+        AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.empty());
+        service.setBookOptIn("book-persist", true);
+
+        assertThatThrownBy(() -> service.executeWithTransientBookOptIn(provider.id(), request("book-persist", ""),
+                AiConsent.none(), Duration.ofSeconds(1), new AtomicBoolean()))
+                .isInstanceOf(AiProviderException.class);
+        assertThat(service.isBookOptedIn("book-persist")).isTrue();
     }
 
     @Test
@@ -63,8 +90,8 @@ class AiExtensionServiceTest {
                 new AiProviderCapabilities(Set.of(AiOperation.QUESTION_ANSWER), true, Set.of()),
                 (request, context) -> new AiResponse("answer"));
         AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.empty());
-        service.setBookOptIn(9, true);
-        AiRequest request = new AiRequest(9, AiOperation.QUESTION_ANSWER, "question", "private book text");
+        service.setBookOptIn("book-9", true);
+        AiRequest request = new AiRequest("book-9", AiOperation.QUESTION_ANSWER, "question", "private book text");
 
         assertThatThrownBy(() -> service.execute(provider.id(), request, new AiConsent(false, false),
                 Duration.ofSeconds(1), new AtomicBoolean()))
@@ -84,12 +111,12 @@ class AiExtensionServiceTest {
                 new AiProviderCapabilities(Set.of(AiOperation.SUMMARY), true, Set.of("api-key")),
                 (request, context) -> new AiResponse(context.secret("api-key").orElseThrow()));
         AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.of(secrets));
-        service.setBookOptIn(11, true);
+        service.setBookOptIn("book-11", true);
         service.saveProviderSecret(provider.id(), "api-key", "secret-value");
 
         assertThat(secrets.values).containsEntry("myhomelib.ai.cloud.secure.api-key", "secret-value");
         assertThat(settings.values).doesNotContainValue("secret-value");
-        AiResponse response = service.execute(provider.id(), request(11, ""), new AiConsent(true, false),
+        AiResponse response = service.execute(provider.id(), request("book-11", ""), new AiConsent(true, false),
                 Duration.ofSeconds(1), new AtomicBoolean());
         assertThat(response.text()).isEqualTo("secret-value");
         service.deleteProviderSecret(provider.id(), "api-key");
@@ -109,12 +136,12 @@ class AiExtensionServiceTest {
                     return new AiResponse("ok");
                 });
         AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.of(secrets));
-        service.setBookOptIn(12, true);
+        service.setBookOptIn("book-12", true);
 
         assertThatThrownBy(() -> service.saveProviderSecret(provider.id(), "other", "value"))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not declared");
-        assertThat(service.execute(provider.id(), request(12, ""), AiConsent.none(),
+        assertThat(service.execute(provider.id(), request("book-12", ""), AiConsent.none(),
                 Duration.ofSeconds(1), new AtomicBoolean()).text()).isEqualTo("ok");
     }
 
@@ -125,9 +152,9 @@ class AiExtensionServiceTest {
                 new AiProviderCapabilities(Set.of(AiOperation.SUMMARY), true, Set.of("token")),
                 (request, context) -> new AiResponse("should not run"));
         AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.empty());
-        service.setBookOptIn(13, true);
+        service.setBookOptIn("book-13", true);
 
-        assertThatThrownBy(() -> service.execute(provider.id(), request(13, ""), new AiConsent(true, false),
+        assertThatThrownBy(() -> service.execute(provider.id(), request("book-13", ""), new AiConsent(true, false),
                 Duration.ofSeconds(1), new AtomicBoolean()))
                 .isInstanceOf(AiProviderException.class)
                 .satisfies(error -> assertThat(((AiProviderException) error).kind())
@@ -144,10 +171,10 @@ class AiExtensionServiceTest {
                     return new AiResponse("late");
                 });
         AiExtensionService service = new AiExtensionService(Set.of(provider), settings, Optional.empty());
-        service.setBookOptIn(14, true);
+        service.setBookOptIn("book-14", true);
         AtomicBoolean cancelled = new AtomicBoolean(true);
 
-        assertThatThrownBy(() -> service.execute(provider.id(), request(14, ""), AiConsent.none(),
+        assertThatThrownBy(() -> service.execute(provider.id(), request("book-14", ""), AiConsent.none(),
                 Duration.ofSeconds(1), cancelled))
                 .isInstanceOf(AiProviderException.class)
                 .satisfies(error -> assertThat(((AiProviderException) error).kind())
@@ -155,7 +182,7 @@ class AiExtensionServiceTest {
         assertThat(calls).hasValue(0);
     }
 
-    private static AiRequest request(long bookId, String content) {
+    private static AiRequest request(String bookId, String content) {
         return new AiRequest(bookId, AiOperation.SUMMARY, "Summarize", content);
     }
 

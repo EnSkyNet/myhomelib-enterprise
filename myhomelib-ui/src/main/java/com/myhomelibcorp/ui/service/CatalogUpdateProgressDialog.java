@@ -221,6 +221,7 @@ public final class CatalogUpdateProgressDialog {
             case DELETING_COLLECTION -> "Видалення колекції";
             case FINALIZING -> "Завершення";
             case BOOK_DOWNLOAD -> "Завантаження книги";
+            case CONVERTING -> "Конвертація";
             case COMPLETED -> "Завершено";
             case CANCELLED -> "Скасовано";
             case FAILED -> "Помилка";

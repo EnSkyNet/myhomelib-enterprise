@@ -4,7 +4,7 @@ import java.util.Objects;
 
 /** Bounded provider-neutral request. Book content remains optional and requires explicit sharing consent. */
 public record AiRequest(
-        long bookId,
+        String bookId,
         AiOperation operation,
         String prompt,
         String bookContent
@@ -13,7 +13,7 @@ public record AiRequest(
     public static final int MAX_BOOK_CONTENT_CHARS = 524_288;
 
     public AiRequest {
-        if (bookId <= 0) throw new IllegalArgumentException("bookId must be positive");
+        bookId = cleanRequired(bookId, "bookId", 128);
         operation = Objects.requireNonNull(operation, "operation");
         prompt = cleanRequired(prompt, "prompt", MAX_PROMPT_CHARS);
         bookContent = cleanOptional(bookContent, MAX_BOOK_CONTENT_CHARS);

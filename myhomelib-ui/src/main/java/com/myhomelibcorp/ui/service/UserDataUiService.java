@@ -19,7 +19,7 @@ public class UserDataUiService {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Експорт користувацьких даних");
         chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("MyHomeLib user data", "*.mhluserdata.json", "*.json"));
+                new FileChooser.ExtensionFilter("Користувацькі дані MyHomeLib", "*.mhluserdata.json", "*.json"));
         chooser.setInitialFileName("myhomelib-user-data.mhluserdata.json");
         File file = chooser.showSaveDialog(owner);
         if (file == null) return;
@@ -28,7 +28,7 @@ public class UserDataUiService {
             var result = transfer.exportTo(file.toPath());
             dialogs.showInfo("Експорт завершено", String.format(
                     "Схема: v%d%nКнижкові записи: %d%nГрупові зв’язки: %d%nЗакладки: %d%nАнотації: %d%n" +
-                            "Історія: %d%nЗбережені пошуки: %d%nReader overrides: %d%n%n%s",
+                            "Історія: %d%nЗбережені пошуки: %d%nНалаштування читалки для книг: %d%n%n%s",
                     result.schemaVersion(), result.bookRecords(), result.groupMemberships(), result.bookmarks(),
                     result.annotations(), result.historyEntries(), result.savedSearches(), result.readerOverrides(), file));
         } catch (Exception e) {
@@ -40,7 +40,7 @@ public class UserDataUiService {
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Імпорт користувацьких даних");
         chooser.getExtensionFilters().add(
-                new FileChooser.ExtensionFilter("MyHomeLib user data", "*.mhluserdata.json", "*.json"));
+                new FileChooser.ExtensionFilter("Користувацькі дані MyHomeLib", "*.mhluserdata.json", "*.json"));
         File file = chooser.showOpenDialog(owner);
         if (file == null) return;
 
@@ -49,7 +49,7 @@ public class UserDataUiService {
             dialogs.showInfo("Імпорт завершено", String.format(
                     "Схема: v%d → v%d%nЗіставлено книг: %d%nНе зіставлено: %d%n" +
                             "Групи: %d%nГрупові зв’язки: %d%nЗакладки: %d%nАнотації: %d%nІсторія: %d%n" +
-                            "Збережені пошуки: %d%nReader overrides: %d",
+                            "Збережені пошуки: %d%nНалаштування читалки для книг: %d",
                     result.sourceSchemaVersion(), result.effectiveSchemaVersion(), result.matchedBooks(),
                     result.unmatchedBooks(), result.groups(), result.groupMemberships(), result.bookmarks(),
                     result.annotations(), result.historyEntries(), result.savedSearches(), result.readerOverrides()));

@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
@@ -26,6 +27,7 @@ import org.springframework.stereotype.Component;
 public class DatabaseToolsController {
 
     private final FxmlLoaderFactory fxmlLoaderFactory;
+    private final LocalizationService i18n;
     private final ApplicationState appState;
     private final DialogService dialogService;
     private final DatabaseToolsService databaseToolsService;
@@ -39,9 +41,10 @@ public class DatabaseToolsController {
                     getClass().getResource("/view/integrity-check.fxml"));
             fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
 
             Stage stage = new Stage();
-            stage.setTitle("Library Health");
+            stage.setTitle("Стан бібліотеки");
             stage.setScene(new Scene(root, 960, 740));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
@@ -107,7 +110,7 @@ public class DatabaseToolsController {
 
         Collection collection = appState.getCurrentLibraryCollection();
         String operationId = operationCenter.start(
-                "Перебудова Lucene", collection == null ? "" : collection.getId(),
+                "Перебудова пошукового індексу", collection == null ? "" : collection.getId(),
                 OperationStage.UPDATING_SEARCH_INDEX, false);
         databaseToolsService.rebuildIndexAsync()
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
@@ -134,6 +137,7 @@ public class DatabaseToolsController {
                     getClass().getResource("/view/backup-dialog.fxml"));
             fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
 
             BackupController controller = loader.getController();
 
@@ -159,6 +163,7 @@ public class DatabaseToolsController {
                     getClass().getResource("/view/restore-dialog.fxml"));
             fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
 
             RestoreController controller = loader.getController();
 
@@ -184,6 +189,7 @@ public class DatabaseToolsController {
                     getClass().getResource("/view/statistics.fxml"));
             fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
             StatisticsController controller = loader.getController();
 
             Stage stage = new Stage();

@@ -23,6 +23,7 @@ public enum OperationStage {
     DELETING_COLLECTION,
     FINALIZING,
     BOOK_DOWNLOAD,
+    CONVERTING,
     COMPLETED,
     CANCELLED,
     FAILED

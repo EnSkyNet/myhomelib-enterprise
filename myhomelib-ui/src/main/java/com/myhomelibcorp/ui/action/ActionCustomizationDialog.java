@@ -25,14 +25,14 @@ public class ActionCustomizationDialog {
     public void show(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle("Команди та гарячі клавіші");
-        dialog.setHeaderText("Змініть shortcut або приховайте команду. Порожнє поле вимикає shortcut.");
+        dialog.setHeaderText("Змініть комбінацію клавіш або приховайте команду. Порожнє поле вимикає комбінацію клавіш.");
         if (owner != null) dialog.initOwner(owner);
         ButtonType reset = new ButtonType("За замовчуванням", ButtonBar.ButtonData.LEFT);
         dialog.getDialogPane().getButtonTypes().addAll(reset, ButtonType.CANCEL, ButtonType.OK);
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(8));
-        grid.addRow(0, new Label("Команда"), new Label("Shortcut"), new Label("Видима"));
+        grid.addRow(0, new Label("Команда"), new Label("Комбінація клавіш"), new Label("Видима"));
         Map<String, Draft> drafts = new LinkedHashMap<>();
         int row = 1;
         for (ActionRegistry.ActionSnapshot action : registry.snapshot()) {

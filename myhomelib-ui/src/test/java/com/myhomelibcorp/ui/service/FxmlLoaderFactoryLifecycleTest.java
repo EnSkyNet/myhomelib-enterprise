@@ -28,7 +28,7 @@ class FxmlLoaderFactoryLifecycleTest {
 
         ApplicationContext context = mock(ApplicationContext.class);
         when(context.getAutowireCapableBeanFactory()).thenReturn(beanFactory);
-        FxmlLoaderFactory factory = new FxmlLoaderFactory(context);
+        FxmlLoaderFactory factory = new FxmlLoaderFactory(context, mock(LocalizationService.class));
 
         Set<Object> identities = Collections.newSetFromMap(new IdentityHashMap<>());
         for (int i = 0; i < 100; i++) {

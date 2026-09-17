@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.export;
 
 import com.myhomelibcorp.application.dto.ExportRequest;
+import com.myhomelibcorp.application.extension.DeviceProfileDetector;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -56,6 +58,38 @@ class DeviceProfileServiceTest {
         assertThat(custom.resolveDestination(temp)).isEqualTo(temp.resolve("Books/Fiction").toAbsolutePath().normalize());
         assertThat(service.orderedFormats(custom, ExportRequest.ExportFormat.PDF))
                 .containsExactly(ExportRequest.ExportFormat.PDF, ExportRequest.ExportFormat.FB2, ExportRequest.ExportFormat.EPUB);
+    }
+
+
+    @Test
+    void runtimePluginDetectorParticipatesImmediatelyAndBrokenDetectorFallsBackSafely() throws Exception {
+        DeviceProfileService service = new DeviceProfileService(new FakeSettings());
+        RuntimeExtensionRegistry registry = new RuntimeExtensionRegistry();
+        service.setRuntimeExtensions(registry);
+        Path root = Files.createDirectory(temp.resolve("plugin-device"));
+
+        DeviceTargetProfile pluginProfile = new DeviceTargetProfile("plugin-demo", "Demo Reader",
+                List.of(ExportRequest.ExportFormat.EPUB), "Books", true);
+        DeviceProfileDetector detector = new DeviceProfileDetector() {
+            @Override public String id() { return "demo"; }
+            @Override public java.util.Optional<DeviceTargetProfile> detect(Path mountRoot) {
+                return java.util.Optional.of(pluginProfile);
+            }
+        };
+        registry.replacePlugin("device.demo", new RuntimeExtensionRegistry.ExtensionBundle(
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(detector), List.of()));
+
+        assertThat(service.detectOrGeneric(root)).isEqualTo(pluginProfile);
+
+        registry.replacePlugin("device.demo", new RuntimeExtensionRegistry.ExtensionBundle(
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(),
+                List.of(new DeviceProfileDetector() {
+                    @Override public String id() { return "broken"; }
+                    @Override public java.util.Optional<DeviceTargetProfile> detect(Path mountRoot) {
+                        throw new IllegalStateException("boom");
+                    }
+                }), List.of()));
+        assertThat(service.detectOrGeneric(root).id()).isEqualTo(DeviceProfileService.GENERIC_FOLDER_ID);
     }
 
     @Test

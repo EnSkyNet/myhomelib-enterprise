@@ -70,7 +70,11 @@ class PdfDocumentSessionTest {
         }
 
         assertThatThrownBy(() -> PdfDocumentSession.open(new FileBookSource(pdf)))
-                .isInstanceOf(java.io.IOException.class);
+                .isInstanceOf(PdfPasswordRequiredException.class);
+
+        try (PdfDocumentSession session = PdfDocumentSession.open(new FileBookSource(pdf), "user-password")) {
+            assertThat(session.pageCount()).isEqualTo(1);
+        }
     }
 
     @Test

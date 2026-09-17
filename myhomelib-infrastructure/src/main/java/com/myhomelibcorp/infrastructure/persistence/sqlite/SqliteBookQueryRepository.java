@@ -23,7 +23,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Repository;
 
 import java.time.LocalDateTime;
@@ -51,7 +50,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                                      BookListRowMapper bookListRowMapper,
                                      BookAuthorHelper bookAuthorHelper,
                                      BookGenreHelper bookGenreHelper,
-                                     @Nullable BookArtifactHelper bookArtifactHelper,
+                                     BookArtifactHelper bookArtifactHelper,
                                      BookQueryBuilder queryBuilder) {
         this.collectionManager = collectionManager;
         this.bookRowMapper = bookRowMapper;

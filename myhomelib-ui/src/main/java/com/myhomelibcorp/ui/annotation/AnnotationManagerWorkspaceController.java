@@ -158,10 +158,10 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         tagFilter.setPromptText(i18n.text("ui.annotations.tag_filter"));
         dateFromFilter.setPromptText(i18n.text("ui.annotations.date_from"));
         dateToFilter.setPromptText(i18n.text("ui.annotations.date_to"));
-        typeFilter.setItems(FXCollections.observableArrayList(
-                new ValueChoice<>(null, i18n.text("ui.annotations.all_types")),
+        typeFilter.setItems(FXCollections.observableArrayList(List.of(
+                new ValueChoice<AnnotationManagerType>(null, i18n.text("ui.annotations.all_types")),
                 new ValueChoice<>(AnnotationManagerType.HIGHLIGHT, i18n.text("ui.annotations.type.highlight")),
-                new ValueChoice<>(AnnotationManagerType.NOTE, i18n.text("ui.annotations.type.note"))));
+                new ValueChoice<>(AnnotationManagerType.NOTE, i18n.text("ui.annotations.type.note")))));
         typeFilter.getSelectionModel().selectFirst();
     }
 

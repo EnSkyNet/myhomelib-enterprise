@@ -15,7 +15,7 @@ import javafx.util.Duration;
 /** Compact non-blocking progress window for one or many online book downloads. */
 public final class BookDownloadProgressDialog {
     private final Stage stage = new Stage();
-    private final Label statusLabel = new Label("Підключення до online-бібліотеки…");
+    private final Label statusLabel = new Label("Підключення до онлайн-бібліотеки…");
     private final Label processedLabel = new Label("Оброблено: 0 / 0");
     private final Label downloadedLabel = new Label("Завантажено: 0 / 0 книг");
     private final Label savedLabel = new Label("Збережено до бібліотеки: 0");
@@ -37,7 +37,7 @@ public final class BookDownloadProgressDialog {
         root.setPadding(new Insets(14));
         root.setPrefWidth(430);
         stage.setScene(new Scene(root));
-        update(0, Math.max(0, total), 0, 0, 0, "Підключення до online-бібліотеки…");
+        update(0, Math.max(0, total), 0, 0, 0, "Підключення до онлайн-бібліотеки…");
     }
 
     public void show() {

@@ -16,6 +16,7 @@ healthfxml=text('myhomelib-ui/src/main/resources/view/integrity-check.fxml')
 port=text('myhomelib-application/src/main/java/com/myhomelibcorp/application/port/out/content/ContentIndexPort.java')
 lucene=text('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/contentindex/LuceneContentIndexService.java')
 maintenance=text('myhomelib-application/src/main/java/com/myhomelibcorp/application/content/maintenance/ContentIndexMaintenanceService.java')
+app_paths=text('myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/AppPaths.java')
 
 check('MHL-304 modes', all(x in controller for x in ['METADATA("ui.search.mode.metadata")','CONTENTS("ui.search.mode.contents")','BOTH("ui.search.mode.both")']))
 check('MHL-304 FXML results', all(x in fxml for x in ['searchModeChoice','contentSection','contentListView','contentCountLabel']))
@@ -26,7 +27,7 @@ check('MHL-305 health fields', all(x in health for x in ['schemaVersion()','docu
 check('MHL-305 UI progress', all(x in healthfxml for x in ['contentIndexProgress','contentIndexRebuildButton','contentIndexCancelButton']))
 check('MHL-305 safe separate rebuild', 'Iterable<ContentIndexEntry>' in port and '.rebuild-' in lucene and 'swapDirectories' in lucene)
 check('MHL-305 streamed rebuild', 'entries::iterator' in maintenance and 'books.streamAll()' in maintenance)
-check('MHL-305 metadata/content separated', 'Database Tools' in health)
+check('MHL-305 metadata/content separated', all(x in app_paths for x in ['searchIndexDir()', 'contentIndexDir()', 'collectionSearchIndexDir(String collectionId)', 'collectionContentIndexDir(String collectionId)']) and all(x in healthfxml for x in ['indexValue', 'contentIndexValue']))
 for lang in ('uk','en','bg'):
     root=json.loads(text(f'Lang/{lang}.json')).get('translations', {})
     bundled=json.loads(text(f'myhomelib-ui/src/main/resources/lang/default/{lang}.json')).get('translations', {})

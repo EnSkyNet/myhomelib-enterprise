@@ -53,7 +53,7 @@
                     <MenuItem fx:id="collectionsMenuItem" text="Керування колекціями..." onAction="#onCollections"/>
                     <MenuItem text="Створити колекцію..." onAction="#handleNewCollection"/>
                     <MenuItem text="Майстер створення колекції..." onAction="#handleCollectionWizard"/>
-                    <MenuItem text="Підключити існуючу .hlc2 / SQLite..." onAction="#handleAttachCollection"/>
+                    <MenuItem text="Підключити наявну колекцію .hlc2 / SQLite..." onAction="#handleAttachCollection"/>
                     <MenuItem text="Властивості колекції..." onAction="#handleCollectionProperties"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Оновити з INPX..." onAction="#handleUpdateCollectionManual"/>
@@ -65,8 +65,9 @@
                 </Menu>
 
                 <Menu text="Книга">
-                    <MenuItem fx:id="openInternalMenuItem" text="Відкрити у Reader" onAction="#handleOpenNewReader"/>
+                    <MenuItem fx:id="openInternalMenuItem" text="Відкрити у читалці" onAction="#handleOpenNewReader"/>
                     <MenuItem fx:id="openExternalMenuItem" text="Відкрити у зовнішній читалці" onAction="#handleOpenExternalReader"/>
+                    <MenuItem text="Конвертувати книгу..." onAction="#handleConvertBook"/>
                     <MenuItem text="ui.reader.close" onAction="#handleCloseReader"/>
                     <MenuItem text="Завантажити" onAction="#handleDownloadBook"/>
                     <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
@@ -91,7 +92,7 @@
                     <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
                     <SeparatorMenuItem/>
                     <Menu fx:id="recentBooksMenu" text="Недавні книги"/>
-                    <Menu fx:id="languageMenu" text="Мова / Language"/>
+                    <Menu fx:id="languageMenu" text="Мова"/>
                 </Menu>
 
                 <Menu text="Інструменти">
@@ -105,16 +106,22 @@
                     </Menu>
                     <SeparatorMenuItem/>
                     <MenuItem text="Дублікати книг і файлів..." onAction="#handleDuplicates"/>
-                    <MenuItem text="Стан бібліотеки (Library Health)..." onAction="#handleCheckIntegrity"/>
+                    <MenuItem text="Стан бібліотеки..." onAction="#handleCheckIntegrity"/>
                     <MenuItem text="Статистика" onAction="#handleStatistics"/>
                     <MenuItem text="ui.annotations.menu" onAction="#onAnnotations"/>
                     <MenuItem text="Операції" onAction="#onOperations"/>
                     <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
-                    <MenuItem text="Оптимізувати БД (VACUUM)" onAction="#handleVacuum"/>
+                    <MenuItem text="Оптимізувати базу даних" onAction="#handleVacuum"/>
                     <SeparatorMenuItem/>
                     <MenuItem fx:id="bookActionsMenuItem" text="Дії з книгою / скрипти..." onAction="#handleBookActions"/>
                     <MenuItem fx:id="customizeActionsMenuItem" text="Команди та гарячі клавіші..." onAction="#handleCustomizeActions"/>
-                    <MenuItem fx:id="opdsMenuItem" text="OPDS сервер..." onAction="#handleOpds"/>
+                    <MenuItem fx:id="opdsMenuItem" text="Сервер OPDS..." onAction="#handleOpds"/>
+                    <SeparatorMenuItem/>
+                    <MenuItem text="Синхронізація, плагіни та ШІ..." onAction="#handleIntegrations"/>
+                    <Menu text="ШІ для вибраної книги">
+                        <MenuItem text="Підсумувати книгу..." onAction="#handleAiSummarizeBook"/>
+                        <MenuItem text="Поставити запитання до книги..." onAction="#handleAiAskBook"/>
+                    </Menu>
                 </Menu>
 
                 <Menu text="Налаштування">
@@ -123,7 +130,7 @@
 
                 <Menu text="Допомога">
                     <MenuItem fx:id="helpMenuItem" text="Довідка (F1)" onAction="#handleHelp"/>
-                    <MenuItem text="INPX / online" onAction="#handleInpxHelp"/>
+                    <MenuItem text="INPX / онлайн" onAction="#handleInpxHelp"/>
                     <SeparatorMenuItem/>
                     <MenuItem text="Про програму" onAction="#handleAbout"/>
                 </Menu>
@@ -140,7 +147,7 @@
                 <Button text="✕" accessibleText="Очистити пошук" onAction="#handleClearSearch"/>
                 <Button text="⟳" accessibleText="Оновити" onAction="#handleRefresh"/>
                 <Separator orientation="VERTICAL"/>
-                <Button text="📖 Reader" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
+                <Button text="📖 Читати" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
                 <MenuButton text="⋮" accessibleText="ui.main.more_actions">
                     <items>
                         <MenuItem text="Імпортувати книгу / архів..." onAction="#handleImportFb2"/>

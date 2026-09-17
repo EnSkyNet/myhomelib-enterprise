@@ -101,8 +101,9 @@ public class TreeBookTableController {
                     boundBook.selectedProperty().removeListener(rowListener);
                     boundBook = null;
                 }
-                TreeItem<BookViewModel> treeItem = empty || getTreeTableRow() == null
-                        ? null : getTreeTableRow().getTreeItem();
+                TreeTableRow<BookViewModel> tableRow = getTableRow();
+                TreeItem<BookViewModel> treeItem = empty || tableRow == null
+                        ? null : tableRow.getTreeItem();
                 BookViewModel book = treeItem == null ? null : treeItem.getValue();
                 if (book == null || book.isGroupHeader() || book.getId() == null || book.getId().isBlank()) {
                     setGraphic(null);

@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.translation;
 
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
 import com.myhomelibcorp.application.textprovider.TextProviderFailures;
@@ -24,14 +26,21 @@ public class TranslationService {
 
     private final List<TranslationProvider> providers;
     private final ExecutorPort executor;
+    private final RuntimeExtensionRegistry runtimeExtensions;
 
     public TranslationService(List<TranslationProvider> providers, ExecutorPort executor) {
+        this(providers, executor, new RuntimeExtensionRegistry());
+    }
+
+    @Autowired
+    public TranslationService(List<TranslationProvider> providers, ExecutorPort executor, RuntimeExtensionRegistry runtimeExtensions) {
         this.providers = providers == null ? List.of() : providers.stream().filter(Objects::nonNull).toList();
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.runtimeExtensions = Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
     }
 
     public List<TranslationProviderDescriptor> availableProviders() {
-        return providers.stream()
+        return allProviders().stream()
                 .filter(TranslationProvider::isEnabled)
                 .sorted(Comparator.comparing(TranslationProvider::isRemote)
                         .thenComparing(TranslationProvider::id))
@@ -93,12 +102,12 @@ public class TranslationService {
     private TranslationProvider selectProvider(String providerId) {
         String requested = clean(providerId);
         if (!requested.isBlank()) {
-            return providers.stream()
+            return allProviders().stream()
                     .filter(TranslationProvider::isEnabled)
                     .filter(provider -> requested.equals(provider.id()))
                     .findFirst().orElse(null);
         }
-        return providers.stream()
+        return allProviders().stream()
                 .filter(TranslationProvider::isEnabled)
                 .sorted(Comparator.comparing(TranslationProvider::isRemote)
                         .thenComparing(TranslationProvider::id))
@@ -156,4 +165,11 @@ public class TranslationService {
     private static String clean(String value) {
         return value == null ? "" : value.trim();
     }
+    private List<TranslationProvider> allProviders() {
+        java.util.LinkedHashMap<String, TranslationProvider> result = new java.util.LinkedHashMap<>();
+        providers.forEach(provider -> result.putIfAbsent(provider.id(), provider));
+        runtimeExtensions.translationProviders().forEach(provider -> result.putIfAbsent(provider.id(), provider));
+        return List.copyOf(result.values());
+    }
+
 }

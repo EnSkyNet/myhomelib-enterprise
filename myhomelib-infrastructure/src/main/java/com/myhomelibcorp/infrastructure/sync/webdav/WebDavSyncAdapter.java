@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.sync.webdav;
 
+import com.myhomelibcorp.shared.util.NetworkUris;
 import com.myhomelibcorp.application.port.out.sync.SyncTransportPort;
 import com.myhomelibcorp.domain.model.sync.ChangeSet;
 import com.myhomelibcorp.infrastructure.sync.folder.SyncBundleJsonCodec;
@@ -226,7 +227,7 @@ public final class WebDavSyncAdapter implements SyncTransportPort {
     private static URI normalizeFolderUri(URI uri) {
         Objects.requireNonNull(uri, "folderUri");
         String scheme = uri.getScheme();
-        if (scheme == null || !(scheme.equalsIgnoreCase("https") || isLoopbackHttp(uri))) {
+        if (scheme == null || !(scheme.equalsIgnoreCase("https") || NetworkUris.isLoopbackHttp(uri))) {
             throw new IllegalArgumentException("WebDAV requires HTTPS; plain HTTP is allowed only for loopback tests");
         }
         if (uri.getUserInfo() != null) throw new IllegalArgumentException("Credentials must not be embedded in WebDAV URL");
@@ -236,11 +237,6 @@ public final class WebDavSyncAdapter implements SyncTransportPort {
         return URI.create(text);
     }
 
-    private static boolean isLoopbackHttp(URI uri) {
-        if (!"http".equalsIgnoreCase(uri.getScheme())) return false;
-        String host = uri.getHost();
-        return "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host) || "::1".equals(host);
-    }
 
     private static boolean sameOrigin(URI a, URI b) {
         return Objects.equals(lower(a.getScheme()), lower(b.getScheme()))

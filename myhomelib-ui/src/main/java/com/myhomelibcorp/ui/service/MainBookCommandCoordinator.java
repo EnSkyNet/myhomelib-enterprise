@@ -33,6 +33,11 @@ public class MainBookCommandCoordinator {
         return currentBook() != null;
     }
 
+    /** Current selected book for explicit user actions implemented outside this coordinator. */
+    public BookDto selectedBook() {
+        return currentBook();
+    }
+
     /** Canonical current-book observable used by menu/shortcut context refresh across all workspaces. */
     public ObjectProperty<BookDto> selectedBookProperty() {
         return appState.getBookDetails().currentBookProperty();

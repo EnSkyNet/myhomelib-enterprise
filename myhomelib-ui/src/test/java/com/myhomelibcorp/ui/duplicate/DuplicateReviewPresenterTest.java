@@ -8,14 +8,25 @@ import com.myhomelibcorp.application.duplicate.fuzzy.DuplicateReviewSuggestion;
 import com.myhomelibcorp.application.duplicate.fuzzy.FuzzyDuplicateReason;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
 class DuplicateReviewPresenterTest {
-    private final DuplicateReviewPresenter presenter = new DuplicateReviewPresenter();
+    private final LocalizationService localization = mock(LocalizationService.class);
+    private final DuplicateReviewPresenter presenter = presenter();
+
+    private DuplicateReviewPresenter presenter() {
+        for (String value : List.of("Доступний", "Лише віддалено", "Файл відсутній", "Пошкоджений", "Недоступний", "Невідомий стан")) {
+            when(localization.tr(value)).thenReturn(value);
+        }
+        return new DuplicateReviewPresenter(localization);
+    }
 
     @Test
     void userFacingRowContainsScoreReasonsAndArtifactStatesForManualReview() {
@@ -27,13 +38,13 @@ class DuplicateReviewPresenterTest {
         var presentation = presenter.present(List.of(suggestion), source);
 
         assertThat(presentation.sourceTitle()).isEqualTo("Clean Code");
-        assertThat(presentation.sourceArtifacts()).contains("EPUB", "AVAILABLE", "clean.epub");
+        assertThat(presentation.sourceArtifacts()).contains("EPUB", "Доступний", "clean.epub");
         assertThat(presentation.rows()).hasSize(1);
         assertThat(presentation.rows().getFirst().candidateId()).isEqualTo("2");
         assertThat(presentation.rows().getFirst().score()).isEqualTo("94.7%");
         assertThat(presentation.rows().getFirst().reasons())
                 .contains("схожа назва", "автор збігається", "рік збігається");
-        assertThat(presentation.rows().getFirst().artifacts()).contains("PDF", "REMOTE_ONLY", "clean.pdf");
+        assertThat(presentation.rows().getFirst().artifacts()).contains("PDF", "Лише віддалено", "clean.pdf");
     }
 
     @Test

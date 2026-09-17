@@ -29,14 +29,17 @@ if adapter.count('LIMIT ? OFFSET ?') < 4: fail('OPDS SQLite lists are not consis
 if 'findAll(' in adapter or 'streamAll(' in adapter: fail('OPDS adapter must not materialize full catalog')
 if 'COUNT(DISTINCT LOWER(TRIM(series)))' not in adapter: fail('series count/group semantics must be case-insensitive')
 
-ui=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsUiService.java')
+raw_ui=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsUiService.java')
+ui=raw_ui
 lifecycle=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/opds/OpdsDesktopLifecycle.java')
 main=text('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java')
 fxml=text('myhomelib-ui/src/main/resources/view/MainView.fxml')
 import runpy
 ui = runpy.run_path(str(ROOT/'tools/localization-contract-support.py'))['localized_source'](ui)
-for marker in ('basicAuthEnabled','autostart','exposedBeyondLocalhost','127.0.0.1','firewall'):
+for marker in ('basicAuthEnabled','autostart','exposedBeyondLocalhost','127.0.0.1'):
     if marker not in ui and marker not in lifecycle: fail(f'Stage 18 UI/lifecycle missing {marker}')
+if not all(key in raw_ui for key in ('ui.opds.exposure.lan_https','ui.opds.exposure.running_lan_https')):
+    fail('Stage 18 UI/lifecycle missing localized LAN/firewall warning contract')
 if '@PostConstruct' not in lifecycle or '@PreDestroy' not in lifecycle: fail('OPDS desktop lifecycle missing start/stop hooks')
 if 'CoreActions.OPDS_MANAGE' not in main or 'fx:id="opdsMenuItem"' not in fxml: fail('OPDS main-menu ActionRegistry wiring missing')
 if 'com.myhomelibcorp.opds' in ui+lifecycle+main: fail('UI must depend on application OPDS control, not implementation')

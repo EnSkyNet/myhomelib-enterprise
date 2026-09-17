@@ -40,6 +40,16 @@ for langprefix in ['', 'en/', 'bg/']:
         p=ROOT/'myhomelib-ui/src/main/resources/help'/langprefix/f'{topic}.md'
         need(p.is_file(), f'missing help page {p.relative_to(ROOT)}')
 
+uk_settings = text('myhomelib-ui/src/main/resources/help/settings.md').lower()
+en_settings = text('myhomelib-ui/src/main/resources/help/en/settings.md').lower()
+bg_settings = text('myhomelib-ui/src/main/resources/help/bg/settings.md').lower()
+need(all(name in uk_settings for name in ['українська', 'англійська', 'болгарська']),
+     'Ukrainian settings help must list all shipped interface languages')
+need(all(name in en_settings for name in ['ukrainian', 'english', 'bulgarian']),
+     'English settings help must list all shipped interface languages')
+need(all(name in bg_settings for name in ['украински', 'английски', 'български']),
+     'Bulgarian settings help must list all shipped interface languages')
+
 catalogs={}
 for code in ['uk','en','bg']:
     rootp=ROOT/'Lang'/f'{code}.json'

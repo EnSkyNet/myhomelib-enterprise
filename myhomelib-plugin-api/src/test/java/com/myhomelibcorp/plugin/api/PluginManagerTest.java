@@ -90,6 +90,30 @@ class PluginManagerTest {
                 .extracting(PluginStatus::state).isEqualTo(PluginState.QUARANTINED);
     }
 
+
+    @Test
+    void checkedOperationalFailureDoesNotQuarantinePlugin() {
+        PluginEntrypoint plugin = devicePlugin("device.io-error", Set.of(), false);
+        PluginManager manager = new PluginManager(new PluginLoader(Set.of()));
+        manager.enable(plugin, PluginApproval.trusted(plugin.manifest()));
+
+        PluginInvocationResult<String> result = manager.invoke(
+                "device.io-error", PluginService.DEVICE_PROVIDER, DeviceProvider.class, provider -> {
+                    throw new java.io.IOException("temporary read failure");
+                });
+
+        assertThat(result.outcome()).isEqualTo(PluginInvocationResult.Outcome.OPERATION_ERROR);
+        assertThat(result.message()).contains("IOException").contains("temporary read failure");
+        assertThat(result.cause()).isInstanceOf(java.io.IOException.class);
+        assertThat(manager.status("device.io-error")).get()
+                .extracting(PluginStatus::state).isEqualTo(PluginState.ENABLED);
+
+        PluginInvocationResult<String> second = manager.invoke(
+                "device.io-error", PluginService.DEVICE_PROVIDER, DeviceProvider.class, DeviceProvider::id);
+        assertThat(second.outcome()).isEqualTo(PluginInvocationResult.Outcome.SUCCESS);
+        assertThat(second.value()).isEqualTo("device.io-error");
+    }
+
     @Test
     void managedInvocationFailsClosedWhenRequiredCapabilityWasNotApproved() {
         PluginEntrypoint plugin = devicePlugin("device.no-network", Set.of(PluginPermission.FILESYSTEM_READ), false);
@@ -138,6 +162,23 @@ class PluginManagerTest {
             assertThat(status.trustLevel()).isEqualTo(PluginTrustLevel.UNTRUSTED);
             assertThat(status.approvedPermissions()).isEmpty();
         });
+    }
+
+    @Test
+    void hostCanResetTrustWhenPackageBytesChangeWithoutVersionChange() {
+        PluginEntrypoint plugin = devicePlugin("device.same-version-new-bytes", Set.of(PluginPermission.FILESYSTEM_READ), false);
+        PluginManager manager = new PluginManager(new PluginLoader(Set.of()));
+        manager.enable(plugin, PluginApproval.trusted(plugin.manifest()));
+
+        manager.resetApproval(plugin.manifest());
+
+        assertThat(manager.status(plugin.manifest().pluginId())).get().satisfies(status -> {
+            assertThat(status.state()).isEqualTo(PluginState.DISABLED);
+            assertThat(status.trustLevel()).isEqualTo(PluginTrustLevel.UNTRUSTED);
+            assertThat(status.approvedPermissions()).isEmpty();
+        });
+        assertThat(manager.invoke(plugin.manifest().pluginId(), PluginService.DEVICE_PROVIDER, DeviceProvider.class, DeviceProvider::id).outcome())
+                .isEqualTo(PluginInvocationResult.Outcome.BLOCKED);
     }
 
     @Test

@@ -9,6 +9,7 @@ import javafx.collections.ObservableList;
 import javafx.fxml.FXML;
 import javafx.scene.control.Label;
 import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.animation.KeyFrame;
@@ -58,6 +59,11 @@ public class OperationCenterController implements WorkspaceLifecycle {
         durationColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(durationText(cell.getValue().duration(Instant.now()))));
         resultColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(resultText(cell.getValue())));
         operationsTable.setItems(rows);
+        operationsTable.setRowFactory(table -> {
+            TableRow<OperationCenterEntry> row = new TableRow<>();
+            row.getStyleClass().add("operation-center-row");
+            return row;
+        });
         operationsTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, selected) -> showDetails(selected));
 
         registration = operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> applySnapshot(snapshot)));
@@ -118,11 +124,11 @@ public class OperationCenterController implements WorkspaceLifecycle {
         text.append("Завершення: ").append(finishedText(entry)).append('\n');
         text.append("Тривалість: ").append(durationText(entry.duration(Instant.now()))).append('\n');
         text.append("Результат: ").append(resultText(entry)).append('\n');
-        if (!entry.collectionId().isBlank()) text.append("Collection ID: ").append(entry.collectionId()).append('\n');
+        if (!entry.collectionId().isBlank()) text.append("ID колекції: ").append(entry.collectionId()).append('\n');
         if (entry.inserted() != 0 || entry.updated() != 0 || entry.deleted() != 0) {
             text.append("Додано: ").append(entry.inserted())
                     .append(" · Оновлено: ").append(entry.updated())
-                    .append(" · DEL/змінено: ").append(entry.deleted()).append('\n');
+                    .append(" · Видалено/змінено: ").append(entry.deleted()).append('\n');
         }
         if (entry.skipped() != 0 || entry.duplicates() != 0 || entry.warnings() != 0 || entry.errors() != 0) {
             text.append("Пропущено: ").append(entry.skipped())
@@ -132,7 +138,7 @@ public class OperationCenterController implements WorkspaceLifecycle {
         }
         if (!entry.currentItem().isBlank()) text.append("Деталі: ").append(entry.currentItem()).append('\n');
         if (!entry.errorMessage().isBlank()) text.append("Помилка: ").append(entry.errorMessage()).append('\n');
-        text.append("ID: ").append(entry.operationId());
+        text.append("ID операції: ").append(entry.operationId());
         detailsArea.setText(text.toString());
     }
 
@@ -190,20 +196,21 @@ public class OperationCenterController implements WorkspaceLifecycle {
             case READING_CATALOG -> "Читання каталогу";
             case IMPORTING -> "Імпорт";
             case UPDATING_AUTHORS -> "Оновлення авторів";
-            case APPLYING_DELETIONS -> "Обробка DEL";
-            case UPDATING_SEARCH_INDEX -> "Lucene";
-            case ROLLING_BACK -> "Відкат оновлення";
-            case REFRESHING_STATISTICS -> "Статистика";
+            case APPLYING_DELETIONS -> "Обробка видалень";
+            case UPDATING_SEARCH_INDEX -> "Оновлення пошукового індексу";
+            case ROLLING_BACK -> "Відновлення попереднього стану";
+            case REFRESHING_STATISTICS -> "Оновлення статистики";
             case INTEGRITY_CHECKS -> "Перевірка цілісності";
             case SCANNING_DUPLICATES -> "Пошук дублікатів";
             case SYNCHRONIZING_FILES -> "Синхронізація файлів";
-            case OPTIMIZING_DATABASE -> "Оптимізація БД";
+            case OPTIMIZING_DATABASE -> "Оптимізація бази даних";
             case BACKING_UP -> "Резервне копіювання";
             case RESTORING -> "Відновлення";
             case CREATING_COLLECTION -> "Створення колекції";
             case DELETING_COLLECTION -> "Видалення колекції";
             case FINALIZING -> "Завершення";
             case BOOK_DOWNLOAD -> "Завантаження книги";
+            case CONVERTING -> "Конвертація";
             case COMPLETED -> "Готово";
             case CANCELLED -> "Скасовано";
             case FAILED -> "Помилка";
@@ -235,6 +242,7 @@ public class OperationCenterController implements WorkspaceLifecycle {
             case INTEGRITY_CHECK -> "Перевірка цілісності";
             case MAINTENANCE -> "Обслуговування";
             case BOOK_DOWNLOAD -> "Завантаження книги";
+            case BOOK_CONVERSION -> "Конвертація";
             case GENERIC -> "Інша";
         };
     }

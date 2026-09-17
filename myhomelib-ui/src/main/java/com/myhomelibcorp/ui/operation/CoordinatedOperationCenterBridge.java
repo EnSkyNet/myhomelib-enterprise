@@ -5,7 +5,6 @@ import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationOutcome;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.progress.OperationStage;
-import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -59,11 +58,12 @@ public final class CoordinatedOperationCenterBridge {
             // hasActiveKind(MAINTENANCE) for them could incorrectly suppress their own history row.
             if (operation == LibraryOperationType.INDEX && operationCenter.hasActiveKind(kind)) return;
 
-            Collection collection = applicationState.getCurrentLibraryCollection();
-            String collectionId = collection == null || collection.getId() == null ? "" : collection.getId();
+            String collectionId = applicationState.getCurrentLibraryCollectionId();
+            if (collectionId == null) collectionId = "";
+            String collectionName = applicationState.getCurrentLibraryCollectionName();
             String title = title(operation);
-            if (collection != null && collection.getName() != null && !collection.getName().isBlank()) {
-                title += " · " + collection.getName().trim();
+            if (collectionName != null && !collectionName.isBlank()) {
+                title += " · " + collectionName.trim();
             }
             String operationId = operationCenter.start(title, collectionId, kind, stage(operation), false);
             syntheticOperations.put(operation, operationId);

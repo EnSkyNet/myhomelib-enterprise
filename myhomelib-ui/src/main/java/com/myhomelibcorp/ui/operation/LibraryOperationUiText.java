@@ -54,6 +54,7 @@ public final class LibraryOperationUiText {
             case DELETING_COLLECTION -> "Видалення колекції…";
             case FINALIZING -> "Завершення фонової операції…";
             case BOOK_DOWNLOAD -> "Завантаження книги…";
+            case CONVERTING -> "Конвертація книги…";
             case COMPLETED, CANCELLED, FAILED -> entry.title();
         };
         double fraction = entry.fraction();

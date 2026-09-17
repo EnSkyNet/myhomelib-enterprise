@@ -9,22 +9,22 @@
       prefWidth="500" prefHeight="540">
 
     <HBox spacing="8" alignment="CENTER_LEFT">
-        <Label text="💾 Saved searches" style="-fx-font-size: 16px; -fx-font-weight: bold;" HBox.hgrow="ALWAYS"/>
-        <Button text="◈ Smart Collection" onAction="#onNewSmartCollection"/>
+        <Label text="💾 Збережені пошуки" style="-fx-font-size: 16px; -fx-font-weight: bold;" HBox.hgrow="ALWAYS"/>
+        <Button text="◈ Розумна колекція" onAction="#onNewSmartCollection"/>
     </HBox>
 
     <Separator/>
 
-    <Label text="Save classic search:" style="-fx-font-weight: bold;"/>
-    <TextField fx:id="searchNameField" promptText="Name..."/>
+    <Label text="Зберегти звичайний пошук:" style="-fx-font-weight: bold;"/>
+    <TextField fx:id="searchNameField" promptText="Назва..."/>
     <HBox spacing="5">
-        <TextField fx:id="searchQueryField" promptText="Query..." HBox.hgrow="ALWAYS"/>
-        <Button text="💾 Save" onAction="#onSaveSearch"/>
+        <TextField fx:id="searchQueryField" promptText="Запит..." HBox.hgrow="ALWAYS"/>
+        <Button text="💾 Зберегти" onAction="#onSaveSearch"/>
     </HBox>
 
     <Separator/>
     <ListView fx:id="savedSearchesListView" VBox.vgrow="ALWAYS"/>
     <HBox alignment="CENTER_RIGHT">
-        <Button text="Close" onAction="#onClose"/>
+        <Button text="Закрити" onAction="#onClose"/>
     </HBox>
 </VBox>

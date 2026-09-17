@@ -70,6 +70,6 @@
         <Label fx:id="currentBookLabel" text="Поточна: —"/>
         <Label fx:id="batchSelectionLabel" text="Пакетно вибрано: 0"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Label text="Space — checkbox · Ctrl+A — видимі · ←/→ — серія" styleClass="muted-text"/>
+        <Label text="Пробіл — вибір · Ctrl+A — усі видимі · ←/→ — серія" styleClass="muted-text"/>
     </HBox>
 </VBox>

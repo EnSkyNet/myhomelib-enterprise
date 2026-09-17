@@ -51,12 +51,12 @@ public final class AiExtensionService {
         return providers.keySet();
     }
 
-    public boolean isBookOptedIn(long bookId) {
+    public boolean isBookOptedIn(String bookId) {
         requireBookId(bookId);
         return settings.getBoolean(BOOK_OPT_IN_PREFIX + bookId, false);
     }
 
-    public void setBookOptIn(long bookId, boolean optedIn) {
+    public void setBookOptIn(String bookId, boolean optedIn) {
         requireBookId(bookId);
         String key = BOOK_OPT_IN_PREFIX + bookId;
         if (optedIn) settings.putBoolean(key, true);
@@ -78,6 +78,28 @@ public final class AiExtensionService {
             throw new IllegalArgumentException("secret is not declared by provider " + providerId);
         }
         requireSecretStore().delete(secretKey(providerId, secretName));
+    }
+
+    /**
+     * Executes one explicitly approved request without turning the lower-level per-book opt-in
+     * into a hidden persistent preference. If the book was already opted in, that preference is
+     * preserved; otherwise the temporary guard is removed in a finally block.
+     */
+    public AiResponse executeWithTransientBookOptIn(
+            String providerId,
+            AiRequest request,
+            AiConsent consent,
+            Duration timeout,
+            AtomicBoolean cancelFlag
+    ) throws AiProviderException {
+        Objects.requireNonNull(request, "request");
+        boolean alreadyOptedIn = isBookOptedIn(request.bookId());
+        if (!alreadyOptedIn) setBookOptIn(request.bookId(), true);
+        try {
+            return execute(providerId, request, consent, timeout, cancelFlag);
+        } finally {
+            if (!alreadyOptedIn) setBookOptIn(request.bookId(), false);
+        }
     }
 
     public AiResponse execute(
@@ -149,7 +171,8 @@ public final class AiExtensionService {
         return id;
     }
 
-    private static void requireBookId(long bookId) {
-        if (bookId <= 0) throw new IllegalArgumentException("bookId must be positive");
+    private static void requireBookId(String bookId) {
+        if (bookId == null || bookId.isBlank()) throw new IllegalArgumentException("bookId is required");
+        if (bookId.length() > 128) throw new IllegalArgumentException("bookId is too long");
     }
 }

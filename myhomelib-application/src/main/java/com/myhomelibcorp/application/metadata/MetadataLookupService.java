@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.metadata;
 
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
@@ -25,10 +27,17 @@ public class MetadataLookupService {
 
     private final List<MetadataProvider> providers;
     private final ExecutorPort executor;
+    private final RuntimeExtensionRegistry runtimeExtensions;
 
     public MetadataLookupService(List<MetadataProvider> providers, ExecutorPort executor) {
+        this(providers, executor, new RuntimeExtensionRegistry());
+    }
+
+    @Autowired
+    public MetadataLookupService(List<MetadataProvider> providers, ExecutorPort executor, RuntimeExtensionRegistry runtimeExtensions) {
         this.providers = providers == null ? List.of() : providers.stream().filter(Objects::nonNull).toList();
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.runtimeExtensions = Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
     }
 
     public CompletableFuture<MetadataLookupResult> search(MetadataQuery query) {
@@ -46,7 +55,7 @@ public class MetadataLookupService {
             return CompletableFuture.completedFuture(MetadataLookupResult.cancelled(List.of()));
         }
 
-        List<MetadataProvider> enabledProviders = providers.stream()
+        List<MetadataProvider> enabledProviders = allProviders().stream()
                 .filter(MetadataProvider::isEnabled)
                 .sorted(Comparator.comparing(MetadataProvider::id, Comparator.nullsLast(String::compareTo)))
                 .toList();
@@ -202,4 +211,11 @@ public class MetadataLookupService {
                     new MetadataProviderIssue(id, name, kind, message));
         }
     }
+    private List<MetadataProvider> allProviders() {
+        java.util.LinkedHashMap<String, MetadataProvider> result = new java.util.LinkedHashMap<>();
+        providers.forEach(provider -> result.putIfAbsent(provider.id(), provider));
+        runtimeExtensions.metadataProviders().forEach(provider -> result.putIfAbsent(provider.id(), provider));
+        return List.copyOf(result.values());
+    }
+
 }

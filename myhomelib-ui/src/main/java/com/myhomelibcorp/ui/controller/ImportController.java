@@ -1,9 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
 import com.myhomelibcorp.application.usecase.sync.SyncFolderUseCase;
-import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
-import com.myhomelibcorp.application.operation.LibraryOperationType;
-import com.myhomelibcorp.ui.operation.LibraryOperationUiText;
+import com.myhomelibcorp.ui.operation.LibraryOperationAvailabilityGuard;
 import com.myhomelibcorp.domain.model.sync.SyncOptions;
 import com.myhomelibcorp.domain.model.sync.SyncResult;
 import com.myhomelibcorp.ui.presenter.BookImportPresenter;
@@ -33,7 +31,7 @@ public class ImportController {
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final ApplicationState appState;
-    private final LibraryOperationCoordinator libraryOperations;
+    private final LibraryOperationAvailabilityGuard operationAvailabilityGuard;
 
     public void importFb2(Runnable onComplete) {
         bookImportPresenter.importFb2(onComplete);
@@ -44,11 +42,10 @@ public class ImportController {
     }
 
     public void updateCollectionFromInpx(Runnable onComplete) {
-        bookImportPresenter.importInpx(onComplete, "Оновлення колекції");
+        bookImportPresenter.updateCollectionFromInpx(onComplete);
     }
 
     public void importDirectory(Runnable onComplete) {
-        if (!ensureLibraryAvailable("Імпорт папки")) return;
         Stage stage = new Stage();
         File dir = fileChooserService.chooseDirectory(stage, "Виберіть папку з книгами");
         if (dir != null) {
@@ -57,7 +54,7 @@ public class ImportController {
     }
 
     public void handleSyncFolder(Runnable onComplete) {
-        if (!ensureLibraryAvailable("Синхронізація папки")) return;
+        if (!operationAvailabilityGuard.ensureAvailable("Синхронізація папки")) return;
         Stage stage = new Stage();
         DirectoryChooser chooser = new DirectoryChooser();
         chooser.setTitle("Виберіть папку для синхронізації");
@@ -134,14 +131,6 @@ public class ImportController {
         });
 
         return dialog;
-    }
-
-    private boolean ensureLibraryAvailable(String requestedAction) {
-        LibraryOperationType active = libraryOperations.activeOperation();
-        if (active == null) return true;
-        dialogService.showWarning("Фонова операція",
-                LibraryOperationUiText.blockingMessage(requestedAction, active));
-        return false;
     }
 
 }

@@ -29,8 +29,8 @@
 
     <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 5;">
         <CheckBox fx:id="restoreDatabaseCheckBox" text="📊 База даних каталогу (повне відновлення)" selected="true"/>
-        <CheckBox fx:id="restoreMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
-        <Label text="Зніміть «База даних каталогу», щоб перенести лише ratings/progress/reviews/bookmarks/groups/history/filters/Reader settings на свіжий каталог за LibID. Пошуковий індекс після restore перебудовується, кеш обкладинок формується на вимогу." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
+        <CheckBox fx:id="restoreMetadataCheckBox" text="👤 Версійні користувацькі дані (LibID)" selected="true"/>
+        <Label text="Зніміть «База даних каталогу», щоб перенести лише оцінки, прогрес читання, відгуки, закладки, групи, історію, фільтри та налаштування читалки на свіжий каталог за LibID. Після відновлення пошуковий індекс перебудовується, а кеш обкладинок формується на вимогу." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>

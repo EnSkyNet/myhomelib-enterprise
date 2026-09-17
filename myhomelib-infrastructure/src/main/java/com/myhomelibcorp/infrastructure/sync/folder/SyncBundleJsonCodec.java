@@ -12,7 +12,6 @@ import com.myhomelibcorp.domain.model.sync.SyncSchema;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
-import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -80,9 +79,7 @@ public final class SyncBundleJsonCodec {
                 if (payloadNode == null || !payloadNode.isObject()) throw new IllegalArgumentException("payload must be an object");
                 if (payloadNode.size() > MAX_PAYLOAD_FIELDS) throw new IllegalArgumentException("Too many payload fields");
                 Map<String, String> payload = new LinkedHashMap<>();
-                Iterator<Map.Entry<String, JsonNode>> fields = payloadNode.fields();
-                while (fields.hasNext()) {
-                    Map.Entry<String, JsonNode> field = fields.next();
+                for (Map.Entry<String, JsonNode> field : payloadNode.properties()) {
                     if (!field.getValue().isTextual()) throw new IllegalArgumentException("payload values must be strings");
                     payload.put(limited(field.getKey(), "payload key"), limited(field.getValue().asText(), "payload value"));
                 }

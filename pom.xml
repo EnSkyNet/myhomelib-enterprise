@@ -55,6 +55,7 @@
         <module>myhomelib-application</module>
         <module>myhomelib-plugin-api</module>
         <module>myhomelib-plugin-samples</module>
+        <module>myhomelib-converter-calibre-plugin</module>
         <module>myhomelib-infrastructure</module>
         <module>myhomelib-ui</module>
         <module>myhomelib-bootstrap</module>

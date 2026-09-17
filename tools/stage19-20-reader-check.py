@@ -50,7 +50,7 @@ if 'AtomicFileSupport.moveReplacing' not in legacy or 'StandardCopyOption.ATOMIC
     fail('global Reader settings persistence is not atomic')
 if ('ReaderPreferences.builder().build()' not in codec or 'valueToTree' not in codec or 'merged.set' not in codec): fail('legacy Reader preferences are not merged over current defaults')
 
-for marker in ('Типографіка','Стилі елементів','Кольори','Макет','Навігація','Статус','Застосувати preset','ui.reader.settings.per_book','livePreview','Скинути типографіку','Скинути навігацію','Скинути статус'):
+for marker in ('Типографіка','Стилі елементів','Кольори','Макет','Навігація','Статус','ui.reader.settings.preset.apply','ui.reader.settings.per_book','livePreview','Скинути типографіку','Скинути навігацію','Скинути статус'):
     if marker not in dialog: fail(f'categorized/live settings dialog missing: {marker}')
 if 'ReaderStatusBar' not in view or 'setBottom(statusBar)' not in view: fail('ReaderView has no dedicated status bar')
 for marker in ('showStatusProgress','showStatusChapter','showStatusPage'):

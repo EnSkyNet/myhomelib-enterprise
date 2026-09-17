@@ -1,22 +1,28 @@
 package com.myhomelibcorp.infrastructure.service;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.cover.CoverCache;
 import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.application.port.out.cover.CoverReader;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.context.annotation.Primary;
 import org.springframework.stereotype.Service;
 
 @Service
 @Primary
-@RequiredArgsConstructor
 @Slf4j
 public class CoverService implements CoverExtractor {
 
     private final CoverReader coverReader;
     private final CoverCache coverCache;
+    private final RuntimeExtensionRegistry runtimeExtensions;
+
+    public CoverService(CoverReader coverReader, CoverCache coverCache, RuntimeExtensionRegistry runtimeExtensions) {
+        this.coverReader = coverReader;
+        this.coverCache = coverCache;
+        this.runtimeExtensions = runtimeExtensions;
+    }
 
     @Override
     public byte[] extractCover(BookDto book) {
@@ -32,9 +38,17 @@ public class CoverService implements CoverExtractor {
         }
 
         byte[] imageData = coverReader.readCover(book);
-        if (imageData != null && imageData.length > 0) {
-            coverCache.put(cacheKey, imageData);
+        if (imageData == null || imageData.length == 0) {
+            for (CoverExtractor extension : runtimeExtensions.coverExtractors()) {
+                try {
+                    imageData = extension.extractCover(book);
+                    if (imageData != null && imageData.length > 0) break;
+                } catch (RuntimeException failure) {
+                    log.debug("Плагін обкладинки завершився помилкою: {}", failure.getMessage());
+                }
+            }
         }
+        if (imageData != null && imageData.length > 0) coverCache.put(cacheKey, imageData);
         return imageData;
     }
 }

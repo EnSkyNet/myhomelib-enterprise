@@ -27,6 +27,8 @@
         <Button fx:id="clearScopeButton" text="ui.search.scope.clear" onAction="#clearSmartCollectionScope"
                 visible="false" managed="false"/>
     </HBox>
+    <Label fx:id="scopeContentHintLabel" text="ui.search.scope.content_hint" wrapText="true"
+           visible="false" managed="false" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
 
     <TitledPane text="Розширений пошук (як у класичному MyHomeLib)" expanded="false">
         <content>

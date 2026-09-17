@@ -2,7 +2,7 @@ package com.myhomelibcorp.plugin.api;
 
 /** Semantic version of the public plugin SPI. */
 public record PluginApiVersion(int major, int minor) implements Comparable<PluginApiVersion> {
-    public static final PluginApiVersion CURRENT = new PluginApiVersion(1, 3);
+    public static final PluginApiVersion CURRENT = new PluginApiVersion(1, 4);
 
     public PluginApiVersion {
         if (major < 0 || minor < 0) {

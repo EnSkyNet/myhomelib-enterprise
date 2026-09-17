@@ -115,7 +115,7 @@ public class CustomFieldUiService {
         if (definitions.isEmpty()) { dialogs.showInfo("Користувацькі поля", "Немає створених полів."); return null; }
         Map<String, DefinitionView> byLabel = new LinkedHashMap<>();
         for (DefinitionView definition : definitions) {
-            byLabel.put(definition.name() + " (" + definition.type() + ")", definition);
+            byLabel.put(definition.name() + " (" + typeLabel(definition.type()) + ")", definition);
         }
         List<String> labels = new ArrayList<>(byLabel.keySet());
         ChoiceDialog<String> dialog = new ChoiceDialog<>(labels.getFirst(), labels);
@@ -129,10 +129,12 @@ public class CustomFieldUiService {
         TextField name = new TextField(current == null ? "" : current.name());
         ComboBox<String> type = new ComboBox<>(FXCollections.observableArrayList("TEXT", "NUMBER", "BOOL", "DATE", "ENUM"));
         type.setValue(current == null ? "TEXT" : current.type());
+        type.setCellFactory(list -> customFieldTypeCell());
+        type.setButtonCell(customFieldTypeCell());
         TextField options = new TextField(current == null ? "" : String.join(", ", current.enumOptions()));
-        options.setPromptText("Для ENUM: варіанти через кому");
+        options.setPromptText("Для типу «Перелік»: варіанти через кому");
         GridPane grid = new GridPane(); grid.setHgap(10); grid.setVgap(8);
-        grid.addRow(0, new Label("Назва"), name); grid.addRow(1, new Label("Тип"), type); grid.addRow(2, new Label("ENUM"), options);
+        grid.addRow(0, new Label("Назва"), name); grid.addRow(1, new Label("Тип"), type); grid.addRow(2, new Label("Варіанти переліку"), options);
         dialog.getDialogPane().setContent(grid);
         if (dialog.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return null;
         List<String> enumOptions = "ENUM".equals(type.getValue())
@@ -141,13 +143,34 @@ public class CustomFieldUiService {
         catch (RuntimeException e) { dialogs.showError("Користувацькі поля", e.getMessage()); return null; }
     }
 
+    private static ListCell<String> customFieldTypeCell() {
+        return new ListCell<>() {
+            @Override
+            protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : typeLabel(item));
+            }
+        };
+    }
+
+    private static String typeLabel(String type) {
+        return switch (type) {
+            case "TEXT" -> "Текст";
+            case "NUMBER" -> "Число";
+            case "BOOL" -> "Так / ні";
+            case "DATE" -> "Дата";
+            case "ENUM" -> "Перелік";
+            default -> type;
+        };
+    }
+
     private static Node controlFor(DefinitionView d, String value) {
         return switch (d.type()) {
             case "BOOL" -> { CheckBox box = new CheckBox(); box.setSelected(Boolean.parseBoolean(value)); yield box; }
             case "DATE" -> { DatePicker picker = new DatePicker(); if (!value.isBlank()) try { picker.setValue(LocalDate.parse(value)); } catch (RuntimeException ignored) { } yield picker; }
             case "ENUM" -> { ComboBox<String> box = new ComboBox<>(FXCollections.observableArrayList(d.enumOptions())); box.setEditable(false); if (!value.isBlank()) box.setValue(value); yield box; }
             case "TEXT", "NUMBER" -> new TextField(value);
-            default -> throw new IllegalArgumentException("Unsupported custom field type: " + d.type());
+            default -> throw new IllegalArgumentException("Непідтримуваний тип користувацького поля: " + d.type());
         };
     }
 

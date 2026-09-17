@@ -93,7 +93,7 @@ public class IntegrityCheckController {
         if (contentIndexProgress != null) { contentIndexProgress.setProgress(0); contentIndexProgress.setVisible(false); contentIndexProgress.setManaged(false); }
         if (contentIndexCancelButton != null) { contentIndexCancelButton.setDisable(true); }
         refreshContentIndexHealth();
-        detailArea.setText("Натисніть «Оновити стан», щоб виконати integrity/hash audit та зібрати KPI бібліотеки.");
+        detailArea.setText("Натисніть «Оновити стан», щоб перевірити цілісність і хеші та зібрати показники бібліотеки.");
     }
 
     private void configureIssueTable() {
@@ -115,12 +115,12 @@ public class IntegrityCheckController {
     public void onCheckIntegrity() {
         checkButton.setDisable(true);
         progressIndicator.setVisible(true);
-        statusLabel.setText("Перевірка локальних artifacts, SQLite та Lucene...");
-        detailArea.setText("Виконується інкрементальний audit. Незмінені файли використовують попередній hash baseline.");
+        statusLabel.setText("Перевірка локальних файлів, бази SQLite та пошукового індексу...");
+        detailArea.setText("Виконується інкрементальна перевірка. Для незмінених файлів використовуються попередні контрольні хеш-значення.");
 
         var collection = appState.getCurrentLibraryCollection();
         String operationId = operationCenter.start(
-                "Library Health audit", collection == null ? "" : collection.getId(),
+                "Перевірка стану бібліотеки", collection == null ? "" : collection.getId(),
                 OperationStage.INTEGRITY_CHECKS, false);
         executor.submit(healthService::refresh)
                 .whenComplete((report, error) -> UiExecutor.runOnUiThread(() -> {
@@ -130,7 +130,7 @@ public class IntegrityCheckController {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
                         statusLabel.setText("Помилка перевірки: " + cause.getMessage());
-                        dialogService.showError("Library Health", "Не вдалося оновити стан: " + cause.getMessage());
+                        dialogService.showError("Стан бібліотеки", "Не вдалося оновити стан: " + cause.getMessage());
                         log.error("Library Health refresh failed", cause);
                         return;
                     }
@@ -152,24 +152,24 @@ public class IntegrityCheckController {
         changedValue.setText(formatNumber(report.changedArtifacts()));
         duplicatesValue.setText(formatNumber(report.duplicateBooks()));
         metadataValue.setText(formatNumber(report.metadataGaps()));
-        indexValue.setText(report.searchIndexFresh() ? "Актуальний" : "Потребує rebuild");
+        indexValue.setText(report.searchIndexFresh() ? "Актуальний" : "Потребує перебудови");
         backupValue.setText(report.latestBackupAt() == null
                 ? "Не знайдено"
                 : formatAge(report.backupAgeHours()));
 
         if (report.healthy()) {
-            overallStatusLabel.setText("Library Health: основні перевірки пройдено");
+            overallStatusLabel.setText("Стан бібліотеки: основні перевірки пройдено");
             overallStatusLabel.setStyle("-fx-text-fill: -mhl-success; -fx-font-weight: bold; -fx-font-size: 15px;");
         } else {
-            overallStatusLabel.setText("Library Health: проблем — " + formatNumber(report.totalProblemCount()));
+            overallStatusLabel.setText("Стан бібліотеки: проблем — " + formatNumber(report.totalProblemCount()));
             overallStatusLabel.setStyle("-fx-text-fill: -mhl-warning; -fx-font-weight: bold; -fx-font-size: 15px;");
         }
 
         issueTable.setItems(FXCollections.observableArrayList(report.issues()));
         if (report.issues().isEmpty()) {
             detailArea.setText("Проблем не виявлено.\n\n"
-                    + "Artifact audit: перевірено " + formatNumber(report.auditInspected())
-                    + ", reuse без повторного hash: " + formatNumber(report.auditReused())
+                    + "Перевірка файлів: перевірено " + formatNumber(report.auditInspected())
+                    + ", повторно використано без обчислення хешу: " + formatNumber(report.auditReused())
                     + ", прочитано: " + formatBytes(report.auditBytesRead()) + ".");
         } else {
             issueTable.getSelectionModel().selectFirst();
@@ -186,7 +186,7 @@ public class IntegrityCheckController {
 
         List<ArtifactIntegrityFinding> matches = artifactFindings(issue.type());
         if (!matches.isEmpty()) {
-            text.append("\n\nArtifacts (деталі audit, максимум у поточному звіті):\n");
+            text.append("\n\nФайли (деталі перевірки, максимум у поточному звіті):\n");
             for (ArtifactIntegrityFinding finding : matches) {
                 text.append("• ").append(finding.bookTitle().isBlank() ? finding.bookId() : finding.bookTitle())
                         .append(" [").append(finding.status()).append("]\n  ")
@@ -222,17 +222,17 @@ public class IntegrityCheckController {
     public void onRebuildContentIndex() {
         String id = currentCollectionId();
         if (id.isBlank()) {
-            dialogService.showWarning("Full-text index", "Активну бібліотеку не вибрано.");
+            dialogService.showWarning("Повнотекстовий індекс", "Активну бібліотеку не вибрано.");
             return;
         }
-        if (!dialogService.showConfirmation("Перебудова full-text index",
+        if (!dialogService.showConfirmation("Перебудова повнотекстового індексу",
                 "Перебудувати окремий індекс вмісту книг?",
                 "Активний індекс залишиться доступним до успішного завершення атомарної перебудови.")) return;
 
         contentIndexCancel.set(false);
         setContentRebuildRunning(true);
         updateContentProgress(new ContentIndexRebuildProgress(0, 0, "", "starting"));
-        String operationTitle = "Перебудова full-text індексу";
+        String operationTitle = "Перебудова повнотекстового індексу";
         String operationId = operationCenter.start(operationTitle, id, OperationKind.INDEX_REBUILD,
                 OperationStage.UPDATING_SEARCH_INDEX, true);
         contentIndexRebuildTask = executor.submit(() -> contentIndexMaintenance.rebuild(
@@ -251,9 +251,9 @@ public class IntegrityCheckController {
                         operationCenter.fail(operationId, "Перебудова завершилась без результату");
                     } else if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
                         operationCenter.complete(operationId, "Книг: " + result.processedBooks()
-                                + " · artifacts: " + result.indexedArtifacts());
+                                + " · проіндексовано файлів: " + result.indexedArtifacts());
                     } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
-                        operationCenter.cancel(operationId, "Перебудову full-text індексу скасовано");
+                        operationCenter.cancel(operationId, "Перебудову повнотекстового індексу скасовано");
                     } else {
                         operationCenter.fail(operationId, result.message());
                     }
@@ -261,22 +261,22 @@ public class IntegrityCheckController {
                         setContentRebuildRunning(false);
                         if (error != null) {
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                            dialogService.showError("Full-text index", "Помилка перебудови: " + cause.getMessage());
+                            dialogService.showError("Повнотекстовий індекс", "Помилка перебудови: " + cause.getMessage());
                             refreshContentIndexHealth();
                             return;
                         }
                         if (result == null) return;
                         displayContentIndexHealth(result.health());
                         if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
-                            detailArea.setText("Full-text index успішно перебудовано.\n"
+                            detailArea.setText("Повнотекстовий індекс успішно перебудовано.\n"
                                     + "Книг оброблено: " + formatNumber(result.processedBooks()) + "\n"
-                                    + "Artifacts проіндексовано: " + formatNumber(result.indexedArtifacts()) + "\n\n"
+                                    + "Проіндексовано файлів: " + formatNumber(result.indexedArtifacts()) + "\n\n"
                                     + formatContentIndexHealth(result.health()));
                         } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
-                            detailArea.setText("Перебудову скасовано. Попередній активний content index збережено.\n\n"
+                            detailArea.setText("Перебудову скасовано. Попередній активний індекс вмісту збережено.\n\n"
                                     + formatContentIndexHealth(result.health()));
                         } else {
-                            detailArea.setText("Перебудова завершилась помилкою; попередній активний content index збережено.\n"
+                            detailArea.setText("Перебудова завершилась помилкою; попередній активний індекс вмісту збережено.\n"
                                     + result.message() + "\n\n" + formatContentIndexHealth(result.health()));
                         }
                     });
@@ -310,21 +310,21 @@ public class IntegrityCheckController {
 
     private void displayContentIndexHealth(ContentIndexHealth health) {
         if (health == null) return;
-        if (contentIndexValue != null) contentIndexValue.setText(health.compatible() ? "OK" : "Rebuild");
+        if (contentIndexValue != null) contentIndexValue.setText(health.compatible() ? "OK" : "Перебудувати");
         if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(
-                "v" + health.schemaVersion() + " · " + formatNumber(health.documentCount()) + " docs · " + formatBytes(health.sizeBytes()));
+                "v" + health.schemaVersion() + " · документів: " + formatNumber(health.documentCount()) + " · " + formatBytes(health.sizeBytes()));
     }
 
     private String formatContentIndexHealth(ContentIndexHealth health) {
-        if (health == null) return "Full-text index: стан недоступний";
-        return "Full-text content index\n"
-                + "Collection: " + health.collectionId() + "\n"
-                + "Schema version: " + health.schemaVersion() + "\n"
-                + "Documents: " + formatNumber(health.documentCount()) + "\n"
-                + "Size: " + formatBytes(health.sizeBytes()) + "\n"
-                + "Compatible: " + (health.compatible() ? "YES" : "NO") + "\n"
-                + "Status: " + health.message() + "\n\n"
-                + "Metadata index перебудовується окремо через Database Tools → Rebuild Index.";
+        if (health == null) return "Повнотекстовий індекс: стан недоступний";
+        return "Повнотекстовий індекс вмісту\n"
+                + "Колекція: " + health.collectionId() + "\n"
+                + "Версія схеми: " + health.schemaVersion() + "\n"
+                + "Документів: " + formatNumber(health.documentCount()) + "\n"
+                + "Розмір: " + formatBytes(health.sizeBytes()) + "\n"
+                + "Сумісний: " + (health.compatible() ? "ТАК" : "НІ") + "\n"
+                + "Стан: " + health.message() + "\n\n"
+                + "Індекс метаданих перебудовується окремо через «Інструменти бази даних» → «Перебудувати індекс».";
     }
 
     private void updateContentProgress(ContentIndexRebuildProgress progress) {
@@ -336,8 +336,19 @@ public class IntegrityCheckController {
         }
         if (contentIndexDetailLabel != null) {
             String current = progress.currentBook().isBlank() ? "" : " · " + progress.currentBook();
-            contentIndexDetailLabel.setText(progress.phase() + " · " + progress.processedBooks() + "/" + progress.totalBooks() + current);
+            contentIndexDetailLabel.setText(contentIndexPhaseText(progress.phase()) + " · " + progress.processedBooks() + "/" + progress.totalBooks() + current);
         }
+    }
+
+    private static String contentIndexPhaseText(String phase) {
+        if (phase == null || phase.isBlank()) return "Обробка";
+        return switch (phase.toLowerCase(java.util.Locale.ROOT)) {
+            case "starting" -> "Підготовка";
+            case "extracting" -> "Видобування тексту";
+            case "extracted" -> "Текст опрацьовано";
+            case "complete" -> "Завершено";
+            default -> phase;
+        };
     }
 
     private void setContentRebuildRunning(boolean running) {
@@ -373,26 +384,26 @@ public class IntegrityCheckController {
 
     private String noIssueMessage(LibraryHealthIssueType type) {
         return switch (type) {
-            case MISSING_ARTIFACTS -> "Відсутніх локальних artifacts не виявлено.";
-            case CORRUPT_ARTIFACTS -> "Пошкоджених або нечитабельних artifacts не виявлено.";
-            case CHANGED_ARTIFACTS -> "Artifacts зі зміненим вмістом не виявлено.";
+            case MISSING_ARTIFACTS -> "Відсутніх локальних файлів не виявлено.";
+            case CORRUPT_ARTIFACTS -> "Пошкоджених або нечитабельних локальних файлів не виявлено.";
+            case CHANGED_ARTIFACTS -> "Локальних файлів зі зміненим вмістом не виявлено.";
             case DUPLICATES -> "Фізичних дублікатів не виявлено.";
-            case METADATA_GAPS -> "Критичних прогалин metadata не виявлено.";
+            case METADATA_GAPS -> "Критичних прогалин метаданих не виявлено.";
             case STALE_SEARCH_INDEX -> "Пошуковий індекс актуальний.\n" + lastReport.searchIndexDetail();
             case BACKUP_AGE -> lastReport.latestBackupAt() == null
                     ? "Резервну копію не знайдено."
                     : "Остання резервна копія: " + DATE_TIME.format(lastReport.latestBackupAt())
                     + " (" + formatAge(lastReport.backupAgeHours()) + ").";
-            case DATABASE_INTEGRITY -> "SQLite integrity_check: OK.";
+            case DATABASE_INTEGRITY -> "Перевірка цілісності SQLite: без помилок.";
         };
     }
 
     @FXML
     public void onSafeRepairInfo() {
         dialogService.showInfo("Безпечне обслуговування",
-                "Artifact audit є лише діагностичним і не змінює файли чи hash baseline у book_artifacts. "
-                        + "Для виправлень використовуйте Collection Maintenance з Analyze → Dry run → Apply; "
-                        + "для stale index — окрему команду перебудови індексу.");
+                "Перевірка файлів є лише діагностичною і не змінює файли чи базові хеш-значення у book_artifacts. "
+                        + "Для виправлень використовуйте «Обслуговування колекції»: «Аналіз» → «Пробний запуск» → «Застосувати»; "
+                        + "для застарілого індексу — окрему команду перебудови.");
     }
 
     @FXML
@@ -402,9 +413,9 @@ public class IntegrityCheckController {
             return;
         }
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Експорт Library Health report");
+        chooser.setTitle("Експорт звіту про стан бібліотеки");
         chooser.setInitialFileName("myhomelib-library-health.txt");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Text report", "*.txt"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Текстовий звіт", "*.txt"));
         File target = chooser.showSaveDialog(detailArea.getScene() == null ? null : detailArea.getScene().getWindow());
         if (target == null) return;
         try {
@@ -418,41 +429,41 @@ public class IntegrityCheckController {
 
     private String formatExport(LibraryHealthReport report) {
         StringBuilder out = new StringBuilder();
-        out.append("MyHomeLib Library Health Report\n")
-                .append("Generated: ").append(DATE_TIME.format(report.generatedAt())).append("\n\n")
-                .append("Local artifacts: ").append(report.localArtifacts()).append('\n')
-                .append("Missing: ").append(report.missingArtifacts()).append('\n')
-                .append("Corrupt/unreadable: ").append(report.corruptArtifacts()).append('\n')
-                .append("Changed: ").append(report.changedArtifacts()).append('\n')
-                .append("Duplicates: ").append(report.duplicateBooks()).append('\n')
-                .append("Metadata gaps: ").append(report.metadataGaps()).append('\n')
-                .append("SQLite: ").append(report.databaseHealthy() ? "OK" : "ERROR").append('\n')
-                .append("Lucene: ").append(report.searchIndexFresh() ? "FRESH" : "STALE")
+        out.append("MyHomeLib — звіт про стан бібліотеки\n")
+                .append("Створено: ").append(DATE_TIME.format(report.generatedAt())).append("\n\n")
+                .append("Локальних файлів: ").append(report.localArtifacts()).append('\n')
+                .append("Відсутніх: ").append(report.missingArtifacts()).append('\n')
+                .append("Пошкоджених/нечитабельних: ").append(report.corruptArtifacts()).append('\n')
+                .append("Змінених: ").append(report.changedArtifacts()).append('\n')
+                .append("Дублікатів: ").append(report.duplicateBooks()).append('\n')
+                .append("Прогалин метаданих: ").append(report.metadataGaps()).append('\n')
+                .append("База SQLite: ").append(report.databaseHealthy() ? "без помилок" : "помилка").append('\n')
+                .append("Пошуковий індекс: ").append(report.searchIndexFresh() ? "актуальний" : "застарілий")
                 .append(" (").append(report.searchIndexDetail()).append(")\n")
-                .append("Backup: ").append(report.latestBackupAt() == null ? "not found" : DATE_TIME.format(report.latestBackupAt()))
-                .append("; ageHours=").append(report.backupAgeHours()).append('\n')
-                .append("Artifact audit: inspected=").append(report.auditInspected())
-                .append(", reused=").append(report.auditReused())
-                .append(", bytesRead=").append(report.auditBytesRead()).append("\n\n");
+                .append("Резервна копія: ").append(report.latestBackupAt() == null ? "не знайдено" : DATE_TIME.format(report.latestBackupAt()))
+                .append("; вік, год=").append(report.backupAgeHours()).append('\n')
+                .append("Перевірка файлів: перевірено=").append(report.auditInspected())
+                .append(", повторно використано=").append(report.auditReused())
+                .append(", прочитано байтів=").append(report.auditBytesRead()).append("\n\n");
 
-        out.append("Issues\n------\n");
-        if (report.issues().isEmpty()) out.append("none\n");
+        out.append("Проблеми\n--------\n");
+        if (report.issues().isEmpty()) out.append("немає\n");
         for (LibraryHealthIssue issue : report.issues()) {
-            out.append(issue.severity()).append(" | ").append(issue.type()).append(" | count=")
+            out.append(issue.severity()).append(" | ").append(issue.type()).append(" | кількість=")
                     .append(issue.count()).append(" | ").append(issue.title()).append('\n')
                     .append("  ").append(issue.detail()).append('\n')
-                    .append("  action: ").append(issue.action()).append('\n');
+                    .append("  дія: ").append(issue.action()).append('\n');
         }
 
         if (!report.artifactFindings().isEmpty()) {
-            out.append("\nArtifact findings\n-----------------\n");
+            out.append("\nЗнайдені проблеми файлів\n------------------------\n");
             for (ArtifactIntegrityFinding finding : report.artifactFindings()) {
                 out.append(finding.status()).append(" | ").append(finding.artifactId())
-                        .append(" | book=").append(finding.bookId()).append(" | ").append(finding.path()).append('\n');
+                        .append(" | книга=").append(finding.bookId()).append(" | ").append(finding.path()).append('\n');
                 if (!finding.detail().isBlank()) out.append("  ").append(finding.detail()).append('\n');
                 if (!finding.baselineSha256().isBlank() || !finding.observedSha256().isBlank()) {
-                    out.append("  baselineSha256=").append(finding.baselineSha256())
-                            .append(" observedSha256=").append(finding.observedSha256()).append('\n');
+                    out.append("  базовий SHA-256=").append(finding.baselineSha256())
+                            .append(" поточний SHA-256=").append(finding.observedSha256()).append('\n');
                 }
             }
         }

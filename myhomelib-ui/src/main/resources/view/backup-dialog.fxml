@@ -27,9 +27,9 @@
     <Label text="📋 Вміст резервної копії:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
     <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 5;">
-        <CheckBox fx:id="includeMetadataCheckBox" text="👤 Versioned user data (LibID)" selected="true"/>
-        <Label text="Portable user-data.json містить ratings/progress/reviews/bookmarks/groups/history/saved searches/filters/Reader settings і може бути накладений на свіжий каталог." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
-        <Label text="📊 Узгоджений SQLite snapshot завжди включений. Пошуковий індекс і кеш обкладинок є похідними та не архівуються." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
+        <CheckBox fx:id="includeMetadataCheckBox" text="👤 Версійні користувацькі дані (LibID)" selected="true"/>
+        <Label text="Переносний user-data.json містить оцінки, прогрес читання, відгуки, закладки, групи, історію, збережені пошуки, фільтри та налаштування читалки й може бути накладений на свіжий каталог." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
+        <Label text="📊 Узгоджений знімок бази SQLite завжди включено. Пошуковий індекс і кеш обкладинок є похідними та не архівуються." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>

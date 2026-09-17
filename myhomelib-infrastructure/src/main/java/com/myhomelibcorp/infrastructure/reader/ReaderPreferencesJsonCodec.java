@@ -20,7 +20,7 @@ public class ReaderPreferencesJsonCodec {
     public ReaderPreferences decode(JsonNode input) throws IOException {
         if (input == null || !input.isObject()) return ReaderPreferences.builder().build();
         ObjectNode merged = objectMapper.valueToTree(ReaderPreferences.builder().build());
-        input.fields().forEachRemaining(entry -> {
+        input.properties().forEach(entry -> {
             if (!entry.getValue().isNull()) merged.set(entry.getKey(), entry.getValue());
         });
         return objectMapper.treeToValue(merged, ReaderPreferences.class);

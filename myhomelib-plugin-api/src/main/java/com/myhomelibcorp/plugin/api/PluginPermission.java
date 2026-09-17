@@ -4,5 +4,6 @@ package com.myhomelibcorp.plugin.api;
 public enum PluginPermission {
     NETWORK_ACCESS,
     FILESYSTEM_READ,
-    FILESYSTEM_WRITE
+    FILESYSTEM_WRITE,
+    EXTERNAL_PROCESS_EXECUTION
 }

@@ -32,7 +32,7 @@ public class UiBackgroundExecutor {
                     @Override
                     public Thread newThread(Runnable r) {
                         Thread t = defaultFactory.newThread(r);
-                        t.setName("ui-bg-" + t.getId());
+                        t.setName("ui-bg-" + t.threadId());
                         t.setDaemon(true);
                         return t;
                     }

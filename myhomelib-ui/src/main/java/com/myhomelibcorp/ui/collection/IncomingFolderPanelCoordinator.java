@@ -50,7 +50,7 @@ final class IncomingFolderPanelCoordinator {
 
     void browse(CollectionDto collection) {
         if (collection == null) {
-            dialogs.showWarning("Incoming folder", "Спочатку виберіть колекцію.");
+            dialogs.showWarning("Папка надходження", "Спочатку виберіть колекцію.");
             return;
         }
         DirectoryChooser chooser = new DirectoryChooser();
@@ -65,14 +65,14 @@ final class IncomingFolderPanelCoordinator {
         if (collection == null) return;
         String text = folderField == null ? "" : folderField.getText();
         if (text == null || text.isBlank()) {
-            dialogs.showWarning("Incoming folder", "Вкажіть папку автоматичного імпорту.");
+            dialogs.showWarning("Папка надходження", "Вкажіть папку автоматичного імпорту.");
             return;
         }
         setBusy(true, "Збереження налаштувань...");
         useCase.configure(collection.getId(), Paths.get(text), enabled.isSelected())
                 .whenComplete((state, error) -> UiExecutor.runOnUiThread(() -> {
                     setBusy(false, null);
-                    if (error != null) dialogs.showError("Incoming folder", UiExceptionSupport.message(error));
+                    if (error != null) dialogs.showError("Папка надходження", UiExceptionSupport.message(error));
                     else render(state);
                 }));
     }
@@ -80,13 +80,13 @@ final class IncomingFolderPanelCoordinator {
     void scanNow(CollectionDto collection) {
         if (collection == null) return;
         if (useCase.load(collection.getId()).isEmpty()) {
-            dialogs.showWarning("Incoming folder", "Спочатку збережіть налаштування папки.");
+            dialogs.showWarning("Папка надходження", "Спочатку збережіть налаштування папки.");
             return;
         }
         setBusy(true, "Сканування папки...");
         useCase.scanNow(collection.getId()).whenComplete((state, error) -> UiExecutor.runOnUiThread(() -> {
             setBusy(false, null);
-            if (error != null) dialogs.showError("Incoming folder", UiExceptionSupport.message(error));
+            if (error != null) dialogs.showError("Папка надходження", UiExceptionSupport.message(error));
             else render(state);
         }));
     }
@@ -106,7 +106,7 @@ final class IncomingFolderPanelCoordinator {
     private void clear() {
         if (folderField != null) folderField.clear();
         if (enabled != null) enabled.setSelected(false);
-        if (status != null) status.setText("Incoming folder не налаштовано");
+        if (status != null) status.setText("Папку надходження не налаштовано");
     }
 
     private void configureInitialDirectory(DirectoryChooser chooser) {
@@ -129,7 +129,7 @@ final class IncomingFolderPanelCoordinator {
         if (value.startsWith("WATCH_ERROR:")) return "помилка WatchService";
         return switch (value) {
             case "CONFIGURED" -> "налаштовано";
-            case "WATCHING" -> "Watcher активний";
+            case "WATCHING" -> "Спостереження за папкою активне";
             case "FOLDER_MISSING" -> "папку не знайдено";
             default -> value;
         };

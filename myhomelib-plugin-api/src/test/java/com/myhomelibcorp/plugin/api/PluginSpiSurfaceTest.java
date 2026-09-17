@@ -8,11 +8,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class PluginSpiSurfaceTest {
     @Test
-    void exposesExactlyTheTenReleaseEightExtensionPoints() {
+    void exposesReleaseEightExtensionPointsIncludingBookConversion() {
         assertThat(Set.of(PluginService.values())).containsExactlyInAnyOrder(
                 PluginService.METADATA_PROVIDER,
                 PluginService.COVER_PROVIDER,
                 PluginService.BOOK_IMPORTER,
+                PluginService.BOOK_CONVERTER,
                 PluginService.METADATA_EXTRACTOR,
                 PluginService.CONTENT_EXTRACTOR,
                 PluginService.EXPORT_PROVIDER,
@@ -34,7 +35,7 @@ class PluginSpiSurfaceTest {
     @Test
     void currentMajorRangeAcceptsCurrentApiVersion() {
         assertThat(PluginApiRange.currentMajor().supports(PluginApiVersion.CURRENT)).isTrue();
-        assertThat(PluginApiVersion.CURRENT).isEqualTo(new PluginApiVersion(1, 3));
+        assertThat(PluginApiVersion.CURRENT).isEqualTo(new PluginApiVersion(1, 4));
         assertThat(PluginApiRange.currentMajor().min()).isEqualTo(new PluginApiVersion(1, 0));
     }
 
@@ -43,7 +44,8 @@ class PluginSpiSurfaceTest {
         assertThat(Set.of(PluginPermission.values())).containsExactlyInAnyOrder(
                 PluginPermission.NETWORK_ACCESS,
                 PluginPermission.FILESYSTEM_READ,
-                PluginPermission.FILESYSTEM_WRITE
+                PluginPermission.FILESYSTEM_WRITE,
+                PluginPermission.EXTERNAL_PROCESS_EXECUTION
         );
     }
 }

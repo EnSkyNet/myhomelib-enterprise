@@ -4,6 +4,9 @@ import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.duplicate.fuzzy.DuplicateReviewSuggestion;
 import com.myhomelibcorp.application.duplicate.fuzzy.FuzzyDuplicateReason;
+import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.util.ArtifactStateText;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -12,7 +15,10 @@ import java.util.stream.Collectors;
 
 /** Converts application suggestions into explicit, user-facing evidence strings. */
 @Component
+@RequiredArgsConstructor
 public class DuplicateReviewPresenter {
+
+    private final LocalizationService localizationService;
 
     public DuplicateReviewPresentation present(List<DuplicateReviewSuggestion> suggestions, BookDto source) {
         BookDto effectiveSource = source != null ? source
@@ -46,7 +52,7 @@ public class DuplicateReviewPresenter {
     private String artifact(BookArtifactDto artifact) {
         if (artifact == null) return "";
         String format = safe(artifact.getFormat()).isBlank() ? "FILE" : artifact.getFormat().toUpperCase(Locale.ROOT);
-        String state = safe(artifact.getState()).isBlank() ? (artifact.isLocal() ? "AVAILABLE" : "REMOTE_ONLY") : artifact.getState();
+        String state = localizationService.tr(ArtifactStateText.sourceLabel(artifact.getState(), artifact.isLocal()));
         String preferredLocation = safe(artifact.getArchiveEntry());
         if (preferredLocation.isBlank()) preferredLocation = safe(artifact.getFileName());
         return preferredLocation.isBlank()

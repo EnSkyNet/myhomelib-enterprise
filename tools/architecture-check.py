@@ -59,6 +59,7 @@ EXPECTED_INTERNAL_DEPS = {
         "myhomelib-domain",
         "myhomelib-application",
         "myhomelib-infrastructure",
+        "myhomelib-plugin-api",
         "myhomelib-ui",
         "myhomelib-opds",
     },

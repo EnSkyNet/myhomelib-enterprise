@@ -147,7 +147,7 @@ final class MetabibDatasetValidator {
         if (ref != null && ref.isTextual() && !ref.asText().isBlank() && !ids.contains(ref.asText())) {
             throw new IllegalArgumentException("record " + recordNumber + ": missing observation " + ref.asText() + " at " + path);
         }
-        node.fields().forEachRemaining(e -> validateObservationReferences(e.getValue(), ids, recordNumber, path + "." + e.getKey()));
+        node.properties().forEach(e -> validateObservationReferences(e.getValue(), ids, recordNumber, path + "." + e.getKey()));
     }
 
     private static void validateArtifactOccurrences(JsonNode artifacts, Context validation, long recordNumber) {

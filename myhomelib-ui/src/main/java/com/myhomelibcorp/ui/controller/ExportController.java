@@ -21,6 +21,8 @@ import com.myhomelibcorp.ui.mapper.BookViewModelMapper;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.BookDownloadCoordinator;
 import com.myhomelibcorp.ui.service.DialogService;
+import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
+import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
@@ -41,7 +43,6 @@ import javafx.util.Duration;
 import javafx.util.StringConverter;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.context.ApplicationContext;
 import org.springframework.stereotype.Component;
 
 import java.io.File;
@@ -74,7 +75,8 @@ public class ExportController {
     private final BookViewModelMapper bookViewModelMapper;
     private final UiBackgroundExecutor executor;
     private final DialogService dialogService;
-    private final ApplicationContext springContext;
+    private final FxmlLoaderFactory fxmlLoaderFactory;
+    private final LocalizationService i18n;
 
     @FXML private ComboBox<ExportProfile> profileComboBox;
     @FXML private ComboBox<DeviceTargetProfile> deviceProfileComboBox;
@@ -261,8 +263,9 @@ public class ExportController {
         }
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/export-dialog.fxml"));
-            loader.setControllerFactory(springContext::getBean);
+            fxmlLoaderFactory.configureControllerFactory(loader);
             Parent root = loader.load();
+            i18n.apply(root);
             ExportController controller = loader.getController();
             controller.setSelectedBooks(selectedBooks);
             controller.successfulExportCallback = onSuccessfulExport == null ? () -> { } : onSuccessfulExport;
@@ -291,7 +294,7 @@ public class ExportController {
         if (!selectedIds.isEmpty()) {
             bookIds = selectedIds;
         } else {
-            if (!dialogService.showConfirmation("Експорт всіх книг", "Жодна книга не відмічена checkbox", "Експортувати всі книги колекції?")) return;
+            if (!dialogService.showConfirmation("Експорт всіх книг", "Жодну книгу не позначено прапорцем", "Експортувати всі книги колекції?")) return;
             bookIds = null;
         }
 
@@ -302,7 +305,7 @@ public class ExportController {
         if (file == null) return;
 
         var currentCollection = appState.getCurrentLibraryCollection();
-        String collectionName = currentCollection != null ? currentCollection.getName() : "MyHomeLib Collection";
+        String collectionName = currentCollection != null ? currentCollection.getName() : "Колекція MyHomeLib";
         InpxExportRequest request = InpxExportRequest.builder()
                 .bookIds(bookIds).outputFile(file.toPath()).collectionName(collectionName)
                 .collectionVersion(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")))
@@ -334,7 +337,7 @@ public class ExportController {
     @FXML private void onSaveProfileAs() {
         if (formatComboBox.getValue() == null) { dialogService.showWarning("Профіль", "Спочатку виберіть сумісний формат."); return; }
         TextInputDialog dialog = new TextInputDialog(profileComboBox.getValue() == null ? "Новий профіль" : profileComboBox.getValue().name());
-        dialog.setTitle("Зберегти export profile");
+        dialog.setTitle("Зберегти профіль експорту");
         dialog.setHeaderText("Назва нового профілю");
         if (stage != null) dialog.initOwner(stage);
         dialog.showAndWait().map(String::trim).filter(s -> !s.isBlank()).ifPresent(name -> {
@@ -357,7 +360,7 @@ public class ExportController {
     @FXML private void onDeleteProfile() {
         ExportProfile current = profileComboBox.getValue();
         if (current == null) return;
-        if (!dialogService.showConfirmation("Видалити профіль", current.name(), "Видалити цей export profile?")) return;
+        if (!dialogService.showConfirmation("Видалити профіль", current.name(), "Видалити цей профіль експорту?")) return;
         exportProfileService.delete(current.id());
         loadProfiles(null);
     }
@@ -475,7 +478,7 @@ public class ExportController {
 
     private void loadPostActions(String selectId) {
         List<ActionChoice> choices = new java.util.ArrayList<>();
-        choices.add(new ActionChoice("", "Без post-action"));
+        choices.add(new ActionChoice("", "Без дії після експорту"));
         for (BookActionProfile p : bookActionProfileService.loadProfiles()) {
             if (p.enabled() && !p.commands().isEmpty()) choices.add(new ActionChoice(p.id(), p.name()));
         }

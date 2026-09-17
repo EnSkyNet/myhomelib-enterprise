@@ -68,9 +68,9 @@ public class CollectionPropertiesUiService {
         });
         GridPane g=new GridPane();g.setHgap(8);g.setVgap(8);g.setPadding(new Insets(12));int r=0;
         g.addRow(r++,new Label("Назва:"),name);g.addRow(r++,new Label("Тип:"),type);g.addRow(r++,new Label("Коренева папка:"),root,browse);
-        g.addRow(r++,new Label("Base URL книг/архівів:"),baseUrl);g.addRow(r++,new Label("URL INPX для оновлення:"),inpxUrl);
+        g.addRow(r++,new Label("Базовий URL книг/архівів:"),baseUrl);g.addRow(r++,new Label("URL INPX для оновлення:"),inpxUrl);
         g.addRow(r++,new Label("Користувач:"),user);g.addRow(r++,new Label("Пароль:"),pass);g.addRow(r++,new Label("Нотатки:"),notes);
-        g.addRow(r++,new Label("ConnectionScript:"),connectionScript);
+        g.addRow(r++,new Label("Скрипт підключення:"),connectionScript);
         d.getDialogPane().setContent(g);
         if(d.showAndWait().orElse(ButtonType.CANCEL)!=ButtonType.OK)return null;
         try {

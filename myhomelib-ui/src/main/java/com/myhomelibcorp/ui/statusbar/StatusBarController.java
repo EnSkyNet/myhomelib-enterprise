@@ -99,8 +99,8 @@ public class StatusBarController {
 
         UiExecutor.runOnUiThread(() -> {
             String text = stats.isStale()
-                    ? String.format("Статистика: оновлюється… | RAM: %d MB", usedMB)
-                    : String.format("Книг: %d | Авторів: %d | Серій: %d | RAM: %d MB",
+                    ? String.format("Статистика: оновлюється… | ОЗП: %d МБ", usedMB)
+                    : String.format("Книг: %d | Авторів: %d | Серій: %d | ОЗП: %d МБ",
                     stats.getBooksCount(),
                     stats.getAuthorsCount(),
                     stats.getSeriesCount(),

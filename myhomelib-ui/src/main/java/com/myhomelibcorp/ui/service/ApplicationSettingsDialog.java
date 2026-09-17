@@ -58,7 +58,7 @@ public class ApplicationSettingsDialog {
     public void show(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
         dialog.setTitle("Налаштування MyHomeLib");
-        dialog.setHeaderText("Загальні, Reader, зовнішні програми, конвертери та пристрій");
+        dialog.setHeaderText("Загальні, читалка, зовнішні програми, конвертери та пристрій");
         if (owner != null) dialog.initOwner(owner);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
 
@@ -79,7 +79,7 @@ public class ApplicationSettingsDialog {
         tabs.getTabs().add(tab("Зовнішнє читання", externalReadersPane(text)));
         tabs.getTabs().add(tab("Конвертери", convertersPane(text)));
         tabs.getTabs().add(tab("Пристрій / експорт", devicePane(text)));
-        tabs.getTabs().add(tab("Online", onlinePane(text, secrets, unreadableSecrets, bool)));
+        tabs.getTabs().add(tab("Онлайн", onlinePane(text, secrets, unreadableSecrets, bool)));
         tabs.setPrefSize(790, 590);
         dialog.getDialogPane().setContent(tabs);
 
@@ -91,6 +91,7 @@ public class ApplicationSettingsDialog {
         }
 
         text.forEach((key, field) -> settings.put(key, field.getText() == null ? "" : field.getText().trim()));
+        synchronizeCalibreRuntimeProperties();
         secrets.forEach((key, field) -> {
             if (unreadableSecrets.contains(key)) {
                 field.clear();
@@ -104,6 +105,14 @@ public class ApplicationSettingsDialog {
         bool.forEach((key, check) -> settings.putBoolean(key, check.isSelected()));
         themeService.save(themeEditor.config());
         indexingPerformanceSettingsService.save(indexingEditor.value());
+    }
+
+    private void synchronizeCalibreRuntimeProperties() {
+        String executable = settings.get("converter.calibre.executable", "").trim();
+        String timeout = settings.get("converter.calibre.timeoutSeconds", "300").trim();
+        if (executable.isBlank()) System.clearProperty("myhomelib.calibre.executable");
+        else System.setProperty("myhomelib.calibre.executable", executable);
+        System.setProperty("myhomelib.calibre.timeoutSeconds", timeout.isBlank() ? "300" : timeout);
     }
 
     private Tab tab(String title, Node content) { return new Tab(title, content); }
@@ -125,7 +134,7 @@ public class ApplicationSettingsDialog {
         CheckBox confirmDelete = checkbox(bool, "ui.confirmDelete", "Підтверджувати видалення книг", true);
         CheckBox restoreSession = checkbox(bool, "ui.restoreSession", "Відновлювати останню сесію", true);
         CheckBox reducedMotion = checkbox(bool, "ui.accessibility.reducedMotion", "Зменшити рух та автоматичну прокрутку", false);
-        Label paths = new Label("Каталог даних: " + AppPaths.dataDir() + "\nPortable mode: " + (AppPaths.portableMode() ? "увімкнено" : "вимкнено"));
+        Label paths = new Label("Каталог даних: " + AppPaths.dataDir() + "\nПереносний режим: " + (AppPaths.portableMode() ? "увімкнено" : "вимкнено"));
         paths.setWrapText(true);
         Button languageDiagnostics = new Button("Діагностика мов...");
         languageDiagnostics.setOnAction(e -> showLanguageDiagnostics());
@@ -150,12 +159,18 @@ public class ApplicationSettingsDialog {
 
     private Node convertersPane(Map<String, TextField> text) {
         VBox box = section();
-        box.getChildren().add(new Label("Шаблони команд: %SRC% — джерело, %DST% — результат, %TITLE%, %BOOKID%."));
+        Label calibreInfo = new Label("Рекомендований рушій: calibre ebook-convert. Якщо шлях порожній, MyHomeLib шукає його у PATH і стандартній папці calibre. Зовнішні шаблони нижче лишаються резервним/спеціальним варіантом.");
+        calibreInfo.setWrapText(true);
+        box.getChildren().add(calibreInfo);
+        box.getChildren().add(row("calibre ebook-convert", field(text, "converter.calibre.executable", "")));
+        box.getChildren().add(row("Ліміт часу calibre, с", field(text, "converter.calibre.timeoutSeconds", "300")));
+        box.getChildren().add(new Separator());
+        box.getChildren().add(new Label("Шаблони зовнішніх команд: %SRC% — джерело, %DST% — результат, %TITLE%, %BOOKID%."));
         addConverterRow(box, text, "FB2 → EPUB", "converter.epub.command", "epub");
         addConverterRow(box, text, "FB2 → PDF", "converter.pdf.command", "pdf");
         addConverterRow(box, text, "FB2 → MOBI", "converter.mobi.command", "mobi");
         addConverterRow(box, text, "FB2 → LRF", "converter.lrf.command", "lrf");
-        box.getChildren().add(row("Timeout, секунд", field(text, "converter.timeoutSeconds", "300")));
+        box.getChildren().add(row("Ліміт часу, секунд", field(text, "converter.timeoutSeconds", "300")));
         return scroll(box);
     }
 
@@ -169,34 +184,34 @@ public class ApplicationSettingsDialog {
 
     private Node onlinePane(Map<String, TextField> text, Map<String, PasswordField> secrets, Set<String> unreadableSecrets, Map<String, CheckBox> bool) {
         VBox box = section();
-        Label intro = new Label("Для online-колекцій URL задається у властивостях колекції. TLS за замовчуванням використовує стандартну перевірку JVM; режим trust-all відсутній.");
+        Label intro = new Label("Для онлайн-колекцій URL задається у властивостях колекції. TLS за замовчуванням використовує стандартну перевірку JVM; режим без перевірки сертифіката відсутній.");
         intro.setWrapText(true);
         box.getChildren().add(intro);
-        box.getChildren().add(row("Timeout connect, сек", field(text, "online.connectTimeoutSeconds", "20")));
-        box.getChildren().add(row("Timeout read, сек", field(text, "online.readTimeoutSeconds", "120")));
+        box.getChildren().add(row("Час очікування підключення, с", field(text, "online.connectTimeoutSeconds", "20")));
+        box.getChildren().add(row("Час очікування читання, с", field(text, "online.readTimeoutSeconds", "120")));
         box.getChildren().add(row("User-Agent", field(text, "online.userAgent", "MyHomeLib Enterprise/8.0.0")));
         box.getChildren().add(row("Макс. паралельних завантажень", field(text, "online.maxParallelDownloads", "2")));
         box.getChildren().add(row("Макс. паралельних на один хост", field(text, "online.maxParallelDownloadsPerHost", "2")));
         box.getChildren().add(checkbox(bool, "online.archive.highReliabilityValidation",
-                "Повна CRC/size перевірка ZIP після завантаження (повільніше)", false));
+                "Повна перевірка CRC і розміру ZIP після завантаження (повільніше)", false));
 
         box.getChildren().add(new Separator());
-        Label proxy = new Label("Proxy: SYSTEM, NONE або HTTP. Для SOCKS використовуйте system proxy JVM/OS.");
+        Label proxy = new Label("Проксі: SYSTEM, NONE або HTTP. Для SOCKS використовуйте системний проксі JVM/ОС.");
         proxy.setWrapText(true);
         box.getChildren().add(proxy);
-        box.getChildren().add(row("Proxy mode", field(text, "online.proxy.mode", "SYSTEM")));
-        box.getChildren().add(row("Proxy host", field(text, "online.proxy.host", "")));
-        box.getChildren().add(row("Proxy port", field(text, "online.proxy.port", "8080")));
-        box.getChildren().add(row("Proxy user", field(text, "online.proxy.user", "")));
-        box.getChildren().add(row("Proxy password", secretField(secrets, unreadableSecrets, "online.proxy.password")));
+        box.getChildren().add(row("Режим проксі", field(text, "online.proxy.mode", "SYSTEM")));
+        box.getChildren().add(row("Хост проксі", field(text, "online.proxy.host", "")));
+        box.getChildren().add(row("Порт проксі", field(text, "online.proxy.port", "8080")));
+        box.getChildren().add(row("Користувач проксі", field(text, "online.proxy.user", "")));
+        box.getChildren().add(row("Пароль проксі", secretField(secrets, unreadableSecrets, "online.proxy.password")));
 
         box.getChildren().add(new Separator());
-        Label tls = new Label("Custom CA: вкажіть JKS/PKCS12 trust store. Порожній шлях = стандартне JVM trust store.");
+        Label tls = new Label("Власний центр сертифікації: вкажіть сховище довіри JKS/PKCS12. Порожній шлях означає стандартне сховище довіри JVM.");
         tls.setWrapText(true);
         box.getChildren().add(tls);
-        box.getChildren().add(row("TLS trust store", field(text, "online.tls.trustStore", "")));
-        box.getChildren().add(row("Trust store type", field(text, "online.tls.trustStoreType", "PKCS12")));
-        box.getChildren().add(row("Trust store password", secretField(secrets, unreadableSecrets, "online.tls.trustStorePassword")));
+        box.getChildren().add(row("Сховище довіри TLS", field(text, "online.tls.trustStore", "")));
+        box.getChildren().add(row("Тип сховища довіри", field(text, "online.tls.trustStoreType", "PKCS12")));
+        box.getChildren().add(row("Пароль сховища довіри", secretField(secrets, unreadableSecrets, "online.tls.trustStorePassword")));
         return scroll(box);
     }
 
@@ -227,14 +242,14 @@ public class ApplicationSettingsDialog {
             });
             applyToControls(initial);
 
-            Label hint = new Label("Зміни застосовуються одразу для всіх відкритих вікон. Reader має власну незалежну тему читання.");
+            Label hint = new Label("Зміни застосовуються одразу для всіх відкритих вікон. Читалка має власну незалежну тему читання.");
             hint.setWrapText(true);
             pane.getChildren().addAll(
                     row("Режим", mode),
                     row("Фон програми", background),
                     row("Панелі", panel),
                     row("Текст", text),
-                    row("Accent", accent),
+                    row("Акцентний колір", accent),
                     row("Рядок серії", seriesRow),
                     row("Рядок книги", bookRow),
                     row("Завантажена книга", downloadedRow),
@@ -323,8 +338,8 @@ public class ApplicationSettingsDialog {
 
     private void createSupportBundle(Window owner) {
         CheckBox logs = new CheckBox("Додати санітизовані логи");
-        CheckBox threads = new CheckBox("Додати санітизований thread dump");
-        CheckBox releaseDocs = new CheckBox("Додати release/architecture документи");
+        CheckBox threads = new CheckBox("Додати очищений дамп потоків");
+        CheckBox releaseDocs = new CheckBox("Додати документи випуску й архітектури");
         logs.setSelected(true);
         threads.setSelected(true);
         releaseDocs.setSelected(true);
@@ -342,7 +357,7 @@ public class ApplicationSettingsDialog {
 
         Dialog<ButtonType> contents = new Dialog<>();
         contents.setTitle("Склад діагностичного ZIP");
-        contents.setHeaderText("Перевірте склад bundle перед експортом. Приватні шляхи, URL, секрети та metadata полів очищуються.");
+        contents.setHeaderText("Перевірте склад діагностичного пакета перед експортом. Приватні шляхи, URL, секрети та метадані полів очищуються.");
         if (owner != null) contents.initOwner(owner);
         contents.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         contents.getDialogPane().setContent(new VBox(8, logs, threads, releaseDocs, preview));
@@ -352,7 +367,7 @@ public class ApplicationSettingsDialog {
                 logs.isSelected(), threads.isSelected(), releaseDocs.isSelected());
         FileChooser chooser = new FileChooser();
         chooser.setTitle("Зберегти діагностичний ZIP");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("ZIP archive", "*.zip"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Архів ZIP", "*.zip"));
         chooser.setInitialFileName("MyHomeLib-support-" + java.time.LocalDate.now() + ".zip");
         var selected = chooser.showSaveDialog(owner);
         if (selected == null) return;
@@ -393,12 +408,12 @@ public class ApplicationSettingsDialog {
         try {
             ProcessExecutionSupport.Result process = ProcessExecutionSupport.run(
                     args, null, java.time.Duration.ofSeconds(timeout), maxCaptureBytes);
-            String details = "Exit code: " + process.exitCode() + "\nКоманда: " + String.join(" | ", args)
+            String details = "Код завершення: " + process.exitCode() + "\nКоманда: " + String.join(" | ", args)
                     + "\n\n" + commandOutput(process);
             return new CommandTestResult(process.exitCode() == 0 ? Alert.AlertType.INFORMATION : Alert.AlertType.ERROR,
                     details);
         } catch (ProcessExecutionSupport.ProcessTimeoutException timeoutError) {
-            return new CommandTestResult(Alert.AlertType.WARNING, "Timeout після " + timeout + " с.");
+            return new CommandTestResult(Alert.AlertType.WARNING, "Перевищено час очікування після " + timeout + " с.");
         }
     }
 
@@ -408,11 +423,11 @@ public class ApplicationSettingsDialog {
         StringBuilder text = new StringBuilder();
         if (!stdout.isBlank()) text.append(stdout.stripTrailing());
         if (!stderr.isBlank()) {
-            if (!text.isEmpty()) text.append("\n\n[stderr]\n");
+            if (!text.isEmpty()) text.append("\n\n[потік помилок]\n");
             text.append(stderr.stripTrailing());
         }
-        if (process.stdoutTruncated() || process.stderrTruncated()) text.append("\n… output truncated …");
-        return text.isEmpty() ? "(stdout/stderr порожній)" : text.toString();
+        if (process.stdoutTruncated() || process.stderrTruncated()) text.append("\n… вивід скорочено …");
+        return text.isEmpty() ? "(стандартний вивід і потік помилок порожні)" : text.toString();
     }
 
     private static String rootMessage(Throwable error) {
@@ -437,6 +452,18 @@ public class ApplicationSettingsDialog {
 
         IndexingSettingsEditor(IndexingPerformanceSettings current) {
             profile.getItems().setAll(IndexingResourceProfile.values());
+            profile.setCellFactory(list -> new ListCell<>() {
+                @Override protected void updateItem(IndexingResourceProfile item, boolean empty) {
+                    super.updateItem(item, empty);
+                    setText(empty || item == null ? null : resourceProfileText(item));
+                }
+            });
+            profile.setButtonCell(new ListCell<>() {
+                @Override protected void updateItem(IndexingResourceProfile item, boolean empty) {
+                    super.updateItem(item, empty);
+                    setText(empty || item == null ? null : resourceProfileText(item));
+                }
+            });
             profile.setValue(current.profile());
             profile.setAccessibleText("Профіль ресурсів повнотекстового індексування");
             pauseOnBattery.setSelected(current.pauseOnBattery());
@@ -448,7 +475,7 @@ public class ApplicationSettingsDialog {
         Node pane() {
             VBox box = new VBox(10);
             box.setPadding(new Insets(12));
-            Label explanation = new Label("Eco мінімізує навантаження, Balanced — рекомендований режим, Fast використовує більше CPU та I/O.");
+            Label explanation = new Label("Економний режим мінімізує навантаження, збалансований — рекомендований, швидкий використовує більше процесорних та дискових ресурсів.");
             explanation.setWrapText(true);
             summary.setWrapText(true);
             GridPane row = new GridPane();
@@ -466,12 +493,20 @@ public class ApplicationSettingsDialog {
             return new IndexingPerformanceSettings(selected, pauseOnBattery.isSelected());
         }
 
+        private static String resourceProfileText(IndexingResourceProfile profile) {
+            return switch (profile) {
+                case ECO -> "Економний";
+                case BALANCED -> "Збалансований";
+                case FAST -> "Швидкий";
+            };
+        }
+
         private void updateSummary() {
             IndexingPerformanceSettings value = value();
             int processors = Math.max(1, Runtime.getRuntime().availableProcessors());
             long io = value.ioBytesPerSecond();
-            String ioLabel = io <= 0 ? "без програмного I/O-ліміту" : (io / 1024 / 1024) + " МБ/с";
-            summary.setText("Worker threads: " + value.workerThreads(processors) + "; I/O: " + ioLabel + ".");
+            String ioLabel = io <= 0 ? "без програмного обмеження введення/виведення" : (io / 1024 / 1024) + " МБ/с";
+            summary.setText("Робочих потоків: " + value.workerThreads(processors) + "; введення/виведення: " + ioLabel + ".");
         }
     }
 

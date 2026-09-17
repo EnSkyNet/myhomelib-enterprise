@@ -58,6 +58,7 @@ import com.myhomelibcorp.reader.render.comic.ComicPageSource;
 import com.myhomelibcorp.reader.render.comic.ComicReaderView;
 import com.myhomelibcorp.reader.render.pdf.PdfDocumentSession;
 import com.myhomelibcorp.reader.render.pdf.PdfOutlineEntry;
+import com.myhomelibcorp.reader.render.pdf.PdfPasswordRequiredException;
 import com.myhomelibcorp.reader.render.pdf.PdfReaderView;
 import com.myhomelibcorp.reader.render.pdf.PdfSearchOutcome;
 import com.myhomelibcorp.reader.render.pdf.PdfSearchResult;
@@ -82,9 +83,11 @@ import javafx.scene.control.ButtonType;
 import javafx.scene.control.ChoiceDialog;
 import javafx.scene.control.Button;
 import javafx.scene.control.ComboBox;
+import javafx.scene.control.Dialog;
 import javafx.scene.control.Label;
 import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
+import javafx.scene.control.PasswordField;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.TextField;
 import javafx.scene.control.TextInputDialog;
@@ -454,9 +457,13 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
 
+        beginBookOpen(bookId, null, true);
+    }
+
+    private void beginBookOpen(BookId bookId, String pdfPassword, boolean replaceCurrent) {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(openGeneration, appState);
         cancelPendingOpen();
-        closeCurrentBookForReplacement();
+        if (replaceCurrent) closeCurrentBookForReplacement();
         setLoading(true);
         log.info("📖 Асинхронна підготовка книги: {}", bookId);
 
@@ -464,7 +471,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             ReaderEngine engine = readerView.getEngine();
             openTask = uiBackgroundExecutor.submitCancellable(() -> {
                 try {
-                    PreparedOpen prepared = prepareOpen(bookId, engine);
+                    PreparedOpen prepared = prepareOpen(bookId, engine, pdfPassword);
                     if (Thread.currentThread().isInterrupted()) {
                         prepared.closeAbandoned();
                         return null;
@@ -501,7 +508,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         });
     }
 
-    private PreparedOpen prepareOpen(BookId bookId, ReaderEngine engine) throws Exception {
+    private PreparedOpen prepareOpen(BookId bookId, ReaderEngine engine, String pdfPassword) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Reader open cancelled");
 
         long openStarted = System.nanoTime();
@@ -555,7 +562,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             if (audio) {
                 audioDocument = openAudioSession(book, materialized.readerPath());
             } else if ("pdf".equalsIgnoreCase(source.extension())) {
-                pdfDocument = PdfDocumentSession.open(source);
+                pdfDocument = PdfDocumentSession.open(source, pdfPassword);
             } else if (isComicExtension(source.extension())) {
                 comicDocument = openComicSession(materialized.readerPath());
             } else {
@@ -691,8 +698,29 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             log.debug("Reader open cancelled for {}", bookId);
             return;
         }
+        if (root instanceof PdfPasswordRequiredException) {
+            requestPdfPassword().ifPresent(password -> beginBookOpen(bookId, password, false));
+            return;
+        }
         log.error("❌ Помилка відкриття книги {}", bookId, root);
         dialogService.showError(i18n.text("common.error"), i18n.format("ui.reader.error.open_failed", rootMessage(root)));
+    }
+
+    private Optional<String> requestPdfPassword() {
+        Dialog<String> dialog = new Dialog<>();
+        dialog.setTitle(i18n.text("ui.reader.pdf.password.title"));
+        dialog.setHeaderText(i18n.text("ui.reader.pdf.password.header"));
+        PasswordField password = new PasswordField();
+        password.setPromptText(i18n.text("ui.reader.pdf.password.prompt"));
+        dialog.getDialogPane().setContent(password);
+        ButtonType open = new ButtonType(i18n.text("ui.reader.pdf.password.open"), javafx.scene.control.ButtonBar.ButtonData.OK_DONE);
+        dialog.getDialogPane().getButtonTypes().setAll(open, ButtonType.CANCEL);
+        javafx.scene.Node openButton = dialog.getDialogPane().lookupButton(open);
+        openButton.disableProperty().bind(password.textProperty().isEmpty());
+        dialog.setResultConverter(button -> button == open ? password.getText() : null);
+        Optional<String> result = dialog.showAndWait().filter(value -> value != null && !value.isBlank());
+        password.clear();
+        return result;
     }
 
     private void closeCurrentBookForReplacement() {

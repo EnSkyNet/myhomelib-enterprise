@@ -11,7 +11,8 @@ class PdfReaderWorkflowContractTest {
     @Test
     void readerRoutesPdfThroughBackgroundPreparedOpenAndPersistsPagePosition() throws Exception {
         String controller = Files.readString(Path.of("src/main/java/com/myhomelibcorp/ui/reader/NewReaderWorkspaceController.java"));
-        assertThat(controller).contains("PdfDocumentSession.open(source)", "PdfReaderView", "pdfReaderView.openPrepared",
+        assertThat(controller).contains("PdfDocumentSession.open(source, pdfPassword)", "PdfPasswordRequiredException",
+                "requestPdfPassword()", "PasswordField", "PdfReaderView", "pdfReaderView.openPrepared",
                 "pdfReaderView.currentPosition()", "pdfReaderView.progressPercent()", "uiBackgroundExecutor");
         assertThat(controller).doesNotContain("PDDocument.load");
     }

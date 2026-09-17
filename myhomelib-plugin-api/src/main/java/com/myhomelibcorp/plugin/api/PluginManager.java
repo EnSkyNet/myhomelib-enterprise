@@ -76,8 +76,42 @@ public final class PluginManager {
         return true;
     }
 
+    /**
+     * Forget prior trust for package bytes that changed without a version change. The host calls this
+     * after its own SHA-256 comparison; PluginManager intentionally does not know about filesystem packages.
+     */
+    public void resetApproval(PluginManifest manifest) {
+        Objects.requireNonNull(manifest, "manifest");
+        String pluginId = manifest.pluginId();
+        enabled.remove(pluginId);
+        loader.unload(pluginId);
+        statuses.put(pluginId, new PluginStatus(manifest, PluginTrustLevel.UNTRUSTED,
+                PluginState.DISABLED, Set.of(), ""));
+    }
+
     public Optional<PluginStatus> status(String pluginId) {
         return Optional.ofNullable(statuses.get(pluginId));
+    }
+
+    /** Immutable snapshot for management UIs. */
+    public Map<String, PluginStatus> statuses() {
+        return Map.copyOf(statuses);
+    }
+
+    /**
+     * Returns an enabled trusted service implementation to host code. The service is exposed only
+     * after the same manifest/approval checks used by managed invocation have succeeded.
+     */
+    public <S> Optional<S> enabledService(String pluginId, PluginService service, Class<S> serviceType) {
+        Objects.requireNonNull(pluginId, "pluginId");
+        Objects.requireNonNull(service, "service");
+        Objects.requireNonNull(serviceType, "serviceType");
+        LoadedPlugin plugin = enabled.get(pluginId);
+        if (plugin == null) return Optional.empty();
+        Object implementation = plugin.services().get(service);
+        if (implementation == null || !serviceType.isInstance(implementation)
+                || !service.contractType().isAssignableFrom(serviceType)) return Optional.empty();
+        return Optional.of(serviceType.cast(implementation));
     }
 
     public <S, R> PluginInvocationResult<R> invoke(
@@ -120,8 +154,12 @@ public final class PluginManager {
 
         try {
             return PluginInvocationResult.success(invocation.invoke(serviceType.cast(implementation)));
-        } catch (Exception failure) {
+        } catch (RuntimeException failure) {
             return quarantineAndFail(plugin, failure);
+        } catch (Exception operationalFailure) {
+            // Checked exceptions describe one failed operation, not a broken plugin.
+            // Keep the trusted plugin enabled and let the host surface the concrete error.
+            return PluginInvocationResult.operationError(operationalFailure);
         } catch (LinkageError | AssertionError failure) {
             return quarantineAndFail(plugin, failure);
         }
@@ -129,7 +167,7 @@ public final class PluginManager {
 
     private <R> PluginInvocationResult<R> quarantineAndFail(LoadedPlugin plugin, Throwable failure) {
         quarantine(plugin, failure);
-        return PluginInvocationResult.failed(summarize(failure));
+        return PluginInvocationResult.failed(failure);
     }
 
     private void quarantine(LoadedPlugin plugin, Throwable failure) {

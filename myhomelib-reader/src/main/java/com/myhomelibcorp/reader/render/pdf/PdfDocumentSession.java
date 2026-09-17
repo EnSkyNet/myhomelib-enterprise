@@ -74,6 +74,11 @@ public final class PdfDocumentSession implements AutoCloseable {
     }
 
     public static PdfDocumentSession open(BookSource source) throws IOException, InterruptedException {
+        return open(source, "");
+    }
+
+    /** Opens a PDF with an optional user-supplied password. The password is never persisted by the Reader. */
+    public static PdfDocumentSession open(BookSource source, String password) throws IOException, InterruptedException {
         if (source == null) throw new IllegalArgumentException("source is required");
         checkInterrupted();
         Path copy = Files.createTempFile("myhomelib-pdf-", ".pdf");
@@ -81,17 +86,14 @@ public final class PdfDocumentSession implements AutoCloseable {
         try {
             copySource(source, copy);
             checkInterrupted();
-            doc = Loader.loadPDF(copy.toFile(), IOUtils.createTempFileOnlyStreamCache());
+            doc = Loader.loadPDF(copy.toFile(), password == null ? "" : password, IOUtils.createTempFileOnlyStreamCache());
             checkInterrupted();
-            if (doc.isEncrypted()) {
-                throw new IOException("Encrypted PDF is not supported by the internal Reader");
-            }
             if (doc.getNumberOfPages() <= 0) throw new IOException("PDF contains no pages");
             List<PdfPageSize> pageSizes = readPageSizes(doc);
             List<PdfOutlineEntry> outlineEntries = readOutlineBestEffort(doc);
             return new PdfDocumentSession(doc, pageSizes, outlineEntries, source.id(), source.name(), copy, DEFAULT_CACHE_BYTES);
         } catch (InvalidPasswordException encrypted) {
-            IOException failure = new IOException("Encrypted PDF is not supported by the internal Reader", encrypted);
+            PdfPasswordRequiredException failure = new PdfPasswordRequiredException("PDF password is required or incorrect", encrypted);
             closeAndDeleteAfterOpenFailure(doc, copy, failure);
             throw failure;
         } catch (Throwable error) {

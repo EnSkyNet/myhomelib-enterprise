@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.conversion;
 
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -43,6 +44,34 @@ class ConvertBookUseCaseTest {
             assertThat(view.capability().sourceFormats()).containsExactlyInAnyOrder("fb2", "txt");
             assertThat(view.capability().targetFormat()).isEqualTo("epub");
         });
+    }
+
+    @Test
+    void selectedBookCapabilityMatrixHidesTargetsThatCannotUseAnyAvailableArtifact() {
+        Fixture f = new Fixture(new CopyConverter("txt-only", Set.of("txt"), "epub", ".epub"));
+
+        assertThat(f.useCase.capabilityMatrix(f.id)).isEmpty();
+        assertThat(f.useCase.capabilityMatrix()).singleElement()
+                .satisfies(view -> assertThat(view.capability().targetFormat()).isEqualTo("epub"));
+    }
+
+    @Test
+    void runtimePluginConverterAppearsAndDisappearsWithoutRecreatingUseCase() {
+        Fixture f = new Fixture(new CopyConverter("core-txt", Set.of("txt"), "epub", ".epub"));
+        RuntimeExtensionRegistry registry = new RuntimeExtensionRegistry();
+        f.useCase.setRuntimeExtensions(registry);
+        BookConverter plugin = new CopyConverter("plugin-calibre", Set.of("fb2"), "azw3", ".azw3");
+
+        assertThat(f.useCase.capabilityMatrix(f.id)).isEmpty();
+
+        registry.replacePlugin("converter.calibre", new RuntimeExtensionRegistry.ExtensionBundle(
+                List.of(), List.of(), List.of(), List.of(), List.of(), List.of(), List.of(plugin), List.of(), List.of(), List.of()));
+        assertThat(f.useCase.capabilityMatrix(f.id))
+                .extracting(view -> view.capability().targetFormat())
+                .containsExactly("azw3");
+
+        registry.removePlugin("converter.calibre");
+        assertThat(f.useCase.capabilityMatrix(f.id)).isEmpty();
     }
 
     @Test

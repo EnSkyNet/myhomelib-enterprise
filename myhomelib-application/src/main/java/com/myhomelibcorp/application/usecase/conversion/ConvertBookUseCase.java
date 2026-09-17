@@ -2,6 +2,7 @@ package com.myhomelibcorp.application.usecase.conversion;
 
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
+import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
@@ -12,6 +13,7 @@ import com.myhomelibcorp.domain.model.book.BookArtifactState;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.FilterInputStream;
@@ -53,6 +55,12 @@ public class ConvertBookUseCase {
     private final List<BookConverter> converters;
     private final BookResourcePort resources;
     private final CommittedCatalogMutationService mutations;
+    private RuntimeExtensionRegistry runtimeExtensions = new RuntimeExtensionRegistry();
+
+    @Autowired
+    void setRuntimeExtensions(RuntimeExtensionRegistry runtimeExtensions) {
+        this.runtimeExtensions = Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
+    }
 
     public record Request(BookId bookId,
                           String targetFormat,
@@ -87,10 +95,32 @@ public class ConvertBookUseCase {
 
     public List<CapabilityView> capabilityMatrix() {
         List<CapabilityView> matrix = new ArrayList<>();
-        for (BookConverter converter : converters == null ? List.<BookConverter>of() : converters) {
+        for (BookConverter converter : runtimeExtensions.mergeBookConverters(converters)) {
             boolean available = safeAvailable(converter);
             for (BookConversionCapability capability : safeCapabilities(converter)) {
                 matrix.add(new CapabilityView(converter.id(), available, capability));
+            }
+        }
+        return List.copyOf(matrix);
+    }
+
+    /**
+     * Capabilities that can actually be used for the selected book. This prevents the UI from
+     * advertising a target format merely because a converter exists globally when none of the
+     * book's available artifacts can be accepted by that converter.
+     */
+    public List<CapabilityView> capabilityMatrix(BookId bookId) {
+        Objects.requireNonNull(bookId, "bookId");
+        Book book = books.findById(bookId)
+                .orElseThrow(() -> new IllegalArgumentException("Book not found: " + bookId));
+        List<Source> sources = sourceCandidates(book);
+        List<CapabilityView> matrix = new ArrayList<>();
+        for (BookConverter converter : runtimeExtensions.mergeBookConverters(converters)) {
+            boolean available = safeAvailable(converter);
+            for (BookConversionCapability capability : safeCapabilities(converter)) {
+                boolean compatible = available && sources.stream().anyMatch(source ->
+                        capability.supportsSource(source.format()) && safeSupports(converter, book, source.format()));
+                if (compatible) matrix.add(new CapabilityView(converter.id(), true, capability));
             }
         }
         return List.copyOf(matrix);
@@ -180,7 +210,7 @@ public class ConvertBookUseCase {
     private SelectedJob selectJob(Book book, String targetFormat) {
         List<Source> sources = sourceCandidates(book);
         for (Source source : sources) {
-            for (BookConverter converter : converters == null ? List.<BookConverter>of() : converters) {
+            for (BookConverter converter : runtimeExtensions.mergeBookConverters(converters)) {
                 if (!safeAvailable(converter) || !safeSupports(converter, book, source.format())) continue;
                 for (BookConversionCapability capability : safeCapabilities(converter)) {
                     if (capability.produces(targetFormat) && capability.supportsSource(source.format())) {
@@ -304,7 +334,11 @@ public class ConvertBookUseCase {
             case "txt" -> "text/plain";
             case "fb2" -> "application/x-fictionbook+xml";
             case "fb2_zip" -> "application/zip";
-            case "mobi" -> "application/x-mobipocket-ebook";
+            case "mobi", "azw", "azw3" -> "application/x-mobipocket-ebook";
+            case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            case "rtf" -> "application/rtf";
+            case "htmlz", "zip", "txtz" -> "application/zip";
+            case "lrf" -> "application/x-sony-bbeb";
             default -> "application/octet-stream";
         };
     }
@@ -366,4 +400,5 @@ public class ConvertBookUseCase {
             if (cancelled.getAsBoolean()) throw new CancellationException("Book conversion cancelled");
         }
     }
+
 }

@@ -37,6 +37,10 @@ public class ApplicationState {
         Collection collection = currentLibraryCollection.get();
         return collection == null ? null : collection.getId();
     }
+    public String getCurrentLibraryCollectionName() {
+        Collection collection = currentLibraryCollection.get();
+        return collection == null ? null : collection.getName();
+    }
     public void setCurrentLibraryCollection(Collection collection) {
         Collection previous = currentLibraryCollection.get();
         String previousId = previous == null ? null : previous.getId();

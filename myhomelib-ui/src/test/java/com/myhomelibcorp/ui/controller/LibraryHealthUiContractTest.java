@@ -14,7 +14,7 @@ class LibraryHealthUiContractTest {
             assertThat(in).isNotNull();
             fxml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
-        assertThat(fxml).contains("Library Health", "#onCheckIntegrity", "#onShowMissing", "#onShowCorrupt",
+        assertThat(fxml).contains("Стан бібліотеки", "#onCheckIntegrity", "#onShowMissing", "#onShowCorrupt",
                 "#onShowChanged", "#onShowDuplicates", "#onShowMetadata", "#onShowIndex", "#onShowBackup",
                 "#onExportReport", "issueTable", "detailArea");
 

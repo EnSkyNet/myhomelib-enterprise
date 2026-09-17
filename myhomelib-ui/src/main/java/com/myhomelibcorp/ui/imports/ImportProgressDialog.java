@@ -212,6 +212,7 @@ public class ImportProgressDialog {
             case DELETING_COLLECTION -> i18n.text("ui.import.stage.deleting_collection");
             case FINALIZING -> i18n.text("ui.import.stage.finalizing");
             case BOOK_DOWNLOAD -> i18n.text("ui.import.stage.book_download");
+            case CONVERTING -> i18n.tr("Конвертація");
             case COMPLETED -> i18n.text("ui.import.stage.completed");
             case CANCELLED -> i18n.text("ui.import.stage.cancelled");
             case FAILED -> i18n.text("ui.import.stage.failed");

@@ -52,7 +52,7 @@ checks={
  ['getContinueReadingShelf()', 'createContinueReadingRow(item)', 'open.setOnAction', 'navigationService.navigateToBook']),
 'Integrity legacy repair action replaced by safe maintenance': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java',
- ['onSafeRepairInfo()', 'Artifact audit', 'Collection Maintenance', 'Dry run']),
+ ['onSafeRepairInfo()', 'Перевірка файлів є лише діагностичною', 'Обслуговування колекції', 'Пробний запуск']),
 'Online open confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java',
  ['ensureLocalForOpen(', 'Книга фізично відсутня на комп’ютері', 'showConfirmation(']),

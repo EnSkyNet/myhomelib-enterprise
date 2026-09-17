@@ -25,12 +25,14 @@ import java.util.List;
 public class FxmlLoaderFactory {
 
     private final ApplicationContext springContext;
+    private final LocalizationService localizationService;
 
     public Pane loadWorkspace(String fxmlPath) {
         try {
             FXMLLoader loader = new FXMLLoader(getClass().getResource(fxmlPath));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
 
             Object controller = loader.getController();
             if (controller != null) {
@@ -53,6 +55,7 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/author-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
 
             AuthorWorkspaceController controller = loader.getController();
             if (authorId == null) {
@@ -74,6 +77,7 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/book-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
             BookWorkspaceController controller = loader.getController();
             controller.setBookId(bookId);
             pane.setUserData(controller);
@@ -89,6 +93,7 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/groups-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
             GroupWorkspaceController controller = loader.getController();
             if (group != null) {
                 controller.setGroup(group);
@@ -117,6 +122,7 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/new-reader-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
 
             NewReaderWorkspaceController controller = loader.getController();
             controller.setAnnotationTargetId(annotationId);
@@ -138,6 +144,7 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
             SearchWorkspaceController controller = loader.getController();
             controller.setInitialQuery(query);
             pane.setUserData(controller);
@@ -153,6 +160,7 @@ public class FxmlLoaderFactory {
             FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/search-workspace.fxml"));
             configureControllerFactory(loader);
             Pane pane = loader.load();
+            localizationService.apply(pane);
             SearchWorkspaceController controller = loader.getController();
             controller.setResults(results);
             pane.setUserData(controller);
