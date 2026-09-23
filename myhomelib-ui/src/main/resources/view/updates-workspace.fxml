@@ -10,12 +10,12 @@
         <VBox spacing="8" BorderPane.alignment="CENTER">
             <padding><Insets top="14" right="16" bottom="10" left="16"/></padding>
             <HBox spacing="10" alignment="CENTER_LEFT">
-                <Label text="Оновлення каталогу" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+                <Label text="ui.fxml.updates_workspace.catalog_updates" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
                 <Region HBox.hgrow="ALWAYS"/>
                 <ProgressIndicator fx:id="progressIndicator" prefWidth="24" prefHeight="24" visible="false" managed="false"/>
-                <Button fx:id="refreshButton" text="Оновити" onAction="#refresh"/>
+                <Button fx:id="refreshButton" text="ui.fxml.updates_workspace.refresh" onAction="#refresh"/>
             </HBox>
-            <Label fx:id="summaryLabel" text="Оновлення"/>
+            <Label fx:id="summaryLabel" text="ui.fxml.updates_workspace.updates"/>
             <Separator/>
         </VBox>
     </top>
@@ -23,20 +23,20 @@
         <StackPane>
             <padding><Insets right="16" bottom="10" left="16"/></padding>
             <TreeView fx:id="updatesTree"/>
-            <Label fx:id="emptyLabel" text="Немає нових оновлень каталогу"
+            <Label fx:id="emptyLabel" text="ui.fxml.updates_workspace.no_new_catalog_updates"
                    visible="false" managed="false" style="-fx-font-size: 15px; -fx-opacity: 0.75;"/>
         </StackPane>
     </center>
     <bottom>
         <VBox spacing="8">
             <padding><Insets top="8" right="16" bottom="14" left="16"/></padding>
-            <Label fx:id="detailLabel" text="Виберіть книгу для перегляду або завантаження." wrapText="true"/>
+            <Label fx:id="detailLabel" text="ui.fxml.updates_workspace.select_a_book_to_view_or_download" wrapText="true"/>
             <HBox spacing="8">
-                <Button fx:id="openAuthorButton" text="Відкрити автора" onAction="#openAuthor"/>
-                <Button fx:id="openBookButton" text="Відкрити книгу" onAction="#openBook"/>
-                <Button fx:id="downloadButton" text="Завантажити / оновити" onAction="#downloadSelected"/>
-                <Button fx:id="acknowledgeButton" text="Позначити переглянутим" onAction="#acknowledgeSelected"/>
-                <Button fx:id="acknowledgeAllButton" text="Позначити все переглянутим" onAction="#acknowledgeAll"/>
+                <Button fx:id="openAuthorButton" text="ui.fxml.updates_workspace.open_author" onAction="#openAuthor"/>
+                <Button fx:id="openBookButton" text="ui.fxml.updates_workspace.open_book" onAction="#openBook"/>
+                <Button fx:id="downloadButton" text="ui.fxml.updates_workspace.download_update" onAction="#downloadSelected"/>
+                <Button fx:id="acknowledgeButton" text="ui.fxml.updates_workspace.mark_as_viewed" onAction="#acknowledgeSelected"/>
+                <Button fx:id="acknowledgeAllButton" text="ui.fxml.updates_workspace.mark_all_as_viewed" onAction="#acknowledgeAll"/>
             </HBox>
         </VBox>
     </bottom>

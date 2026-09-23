@@ -21,16 +21,16 @@ class AsyncWorkspaceControllerContractTest {
         String source = source("book/BookWorkspaceController.java");
 
         assertThat(source)
-                .contains("backgroundExecutor.submitCancellable")
+                .contains("backgroundExecutor.submitCollectionScopedCancellable")
                 .contains("loadBookByIdUseCase.execute(bookId)")
                 .contains("previous.cancel(true)")
                 .contains("UiAsyncRequestGuard.next(loadGeneration, appState)")
                 .contains("UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)")
-                .contains("setLoadState(\"Завантаження…\", true)")
-                .contains("setLoadState(\"Книгу не знайдено\", true)")
-                .contains("setLoadState(\"Не вдалося завантажити книгу\", true)");
+                .contains("setLoadState(UiText.text(\"ui.fxml.book_workspace.loading\"), true)")
+                .contains("setLoadState(UiText.text(\"ui.java.book_workspace_controller.457c748374\"), true)")
+                .contains("setLoadState(UiText.text(\"ui.java.book_workspace_controller.b1ab2d5954\"), true)");
 
-        assertThat(source.indexOf("backgroundExecutor.submitCancellable"))
+        assertThat(source.indexOf("backgroundExecutor.submitCollectionScopedCancellable"))
                 .isLessThan(source.indexOf("loadBookByIdUseCase.execute(bookId)"));
     }
 
@@ -39,14 +39,14 @@ class AsyncWorkspaceControllerContractTest {
         String source = source("group/GroupWorkspaceController.java");
 
         assertThat(source)
-                .contains("executor.submit(loadGroupsUseCase::execute)")
+                .contains("executor.submitCollectionScoped(LibraryOperationType.QUERY, loadGroupsUseCase::execute)")
                 .contains("UiAsyncRequestGuard.next(groupListGeneration, appState)")
                 .contains("UiAsyncRequestGuard.isCurrent(requestToken, groupListGeneration, appState)")
                 .contains("appState.currentLibraryCollectionProperty()")
                 .contains("UiAsyncRequestGuard.invalidate(groupListGeneration)")
-                .contains("setGroupsState(\"Завантаження…\", true, true)")
-                .contains("setGroupsState(\"Груп немає\", true, false)")
-                .contains("Не вдалося завантажити групи")
+                .contains("setGroupsState(UiText.text(\"ui.fxml.book_workspace.loading\"), true, true)")
+                .contains("setGroupsState(UiText.text(\"ui.java.group_workspace_controller.6b88e66ffc\"), true, false)")
+                .contains("UiText.text(\"ui.java.group_workspace_controller.f8e3a3637c\")")
                 .contains("requestedGroupId = group.getId().asLong()")
                 .contains("selectRequestedGroup()");
     }

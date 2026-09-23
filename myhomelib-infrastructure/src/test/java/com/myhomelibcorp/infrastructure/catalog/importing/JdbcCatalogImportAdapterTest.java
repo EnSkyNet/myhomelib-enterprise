@@ -3,8 +3,10 @@ package com.myhomelibcorp.infrastructure.catalog.importing;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.catalog.importing.*;
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.context.StaleImportSourceException;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
+import com.myhomelibcorp.shared.util.Sha256Support;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -21,6 +23,7 @@ import java.util.NoSuchElementException;
 import java.util.UUID;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -133,6 +136,57 @@ class JdbcCatalogImportAdapterTest {
     }
 
     @Test
+    void unsafeCatalogResourcePathsAreNotPersistedAsFilesystemAuthorities() {
+        CatalogPerson author = person("Ann", "", "One", "person", "1");
+        CatalogRecord traversal = new CatalogRecord("escape", "Escape", List.of(author), "", null, List.of("fiction"),
+                "eng", "fb2", "../outside.fb2", "../outside.zip", "../entry.fb2", 123L, false,
+                "", "", null, "", List.of(), "", List.of(), null, null, Map.of(),
+                List.of(), List.of(new ExternalIdentity("record", "escape")), List.of());
+        reader.records = List.of(traversal);
+
+        adapter.importCatalog(context(true));
+
+        Map<String, Object> stored = jdbc.queryForMap(
+                "SELECT file_name, folder, archive_entry FROM books WHERE id=?", stableId("escape"));
+        assertThat(stored.get("file_name")).isEqualTo("");
+        assertThat(stored.get("folder")).isEqualTo("");
+        assertThat(stored.get("archive_entry")).isEqualTo("");
+    }
+
+
+    @Test
+    void watcherCatalogChangeDuringStreamingRollsBackWholeTransaction() throws Exception {
+        reader.records = List.of(
+                record("one", false, person("Ann", "", "One", "person", "1")),
+                record("two", false, person("Bob", "", "Two", "person", "2")),
+                record("three", false, person("Cat", "", "Three", "person", "3")));
+        String readyFingerprint = Sha256Support.file(source);
+        reader.onFirstNext = () -> {
+            try {
+                Files.writeString(source, "dataset-changed-during-import", StandardCharsets.UTF_8);
+            } catch (Exception failure) {
+                throw new IllegalStateException(failure);
+            }
+        };
+
+        ImportContext watcher = ImportContext.builder()
+                .file(source)
+                .rootDirectory(temp)
+                .catalogSourceKey(SOURCE_KEY)
+                .catalogFullSnapshot(true)
+                .indexAfterSave(false)
+                .batchSize(2)
+                .expectedSourceSha256(readyFingerprint)
+                .build();
+
+        assertThatThrownBy(() -> adapter.importCatalog(watcher))
+                .isInstanceOf(StaleImportSourceException.class)
+                .hasMessageContaining("changed during import");
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM books", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject("SELECT count(*) FROM catalog_manifests", Integer.class)).isZero();
+    }
+
+    @Test
     void preservesDatasetProvenanceRelationsAndAllArtifactOccurrences() {
         reader.datasetMetadata = Map.of(
                 "generator.name", "metabib", "generator.version", "1.2.3",
@@ -160,7 +214,7 @@ class JdbcCatalogImportAdapterTest {
                 Map.entry("occurrence.1.index", "4"));
         CatalogRecord record = new CatalogRecord("one", "Title", List.of(person("Ann", "", "One", "person", "1")),
                 "", null, List.of("fiction"), "eng", "fb2", "1.fb2", "a.zip", "1.fb2", 200L, false,
-                "9780306406157", "Publisher", 2024, "City", List.of(), "Annotation", List.of(), 4.0,
+                "9780306406157", "Publisher", 2024, "City", List.of(), "Annotation", List.of(), 4.0, null,
                 sourceMetadata, List.of(new CatalogArtifact("1.fb2", "application/fb2+xml", "fb2", "a.zip", "1.fb2",
                 200L, "", "fp", artifactMetadata)), List.of(), List.of());
         reader.records = List.of(record);
@@ -211,7 +265,7 @@ class JdbcCatalogImportAdapterTest {
     private static CatalogRecord record(String id, boolean deleted, CatalogPerson author) {
         return new CatalogRecord(id, "Title " + id, List.of(author), "", null, List.of("fiction"), "eng",
                 "fb2", id + ".fb2", "", "", 123L, deleted, "9780306406157", "Publisher", 2024,
-                "City", List.of(), "Annotation", List.of("keyword"), 4.0, Map.of(),
+                "City", List.of(), "Annotation", List.of("keyword"), 4.0, null, Map.of(),
                 List.of(new CatalogArtifact(id + ".fb2", "application/fb2+xml", "fb2", "", "", 123L,
                         "", "", Map.of())), List.of(new ExternalIdentity("record", id)), List.of());
     }
@@ -219,6 +273,7 @@ class JdbcCatalogImportAdapterTest {
     private static final class MutableReader implements CatalogReader {
         List<CatalogRecord> records = List.of();
         Map<String, String> datasetMetadata = Map.of();
+        Runnable onFirstNext;
         int opens;
 
         @Override public boolean supports(Path source) { return source != null && source.toString().endsWith(".jsonl"); }
@@ -231,7 +286,16 @@ class JdbcCatalogImportAdapterTest {
                     return new CatalogDatasetInfo("metabib.dataset/1", "metabib.dataset_record/1", "test", "test", (long) snapshot.size(), datasetMetadata);
                 }
                 @Override public boolean hasNext() { return index < snapshot.size(); }
-                @Override public CatalogRecord next() { if (!hasNext()) throw new NoSuchElementException(); return snapshot.get(index++); }
+                @Override public CatalogRecord next() {
+                    if (!hasNext()) throw new NoSuchElementException();
+                    CatalogRecord record = snapshot.get(index++);
+                    if (index == 1 && onFirstNext != null) {
+                        Runnable hook = onFirstNext;
+                        onFirstNext = null;
+                        hook.run();
+                    }
+                    return record;
+                }
                 @Override public void close() { }
             };
         }

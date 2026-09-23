@@ -3,13 +3,25 @@ package com.myhomelibcorp.application.usecase.search;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.port.out.repository.SavedSearchRepository;
 import com.myhomelibcorp.application.query.search.SearchRequest;
-import lombok.RequiredArgsConstructor;
-
-@RequiredArgsConstructor
 public class BuildSmartCollectionSearchRequestUseCase {
     private final SavedSearchRepository repository;
+    private final SavedSearchOperationExecutor operations;
+
+    public BuildSmartCollectionSearchRequestUseCase(SavedSearchRepository repository) {
+        this(repository, null);
+    }
+
+    public BuildSmartCollectionSearchRequestUseCase(SavedSearchRepository repository, SavedSearchOperationExecutor operations) {
+        this.repository = repository;
+        this.operations = operations;
+    }
 
     public SearchRequest execute(String id, int limit, int offset) {
+        if (operations == null) return executeLocked(id, limit, offset);
+        return operations.query(() -> executeLocked(id, limit, offset));
+    }
+
+    private SearchRequest executeLocked(String id, int limit, int offset) {
         var saved = repository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Smart collection not found: " + id));
         if (!saved.isSmartCollection()) {

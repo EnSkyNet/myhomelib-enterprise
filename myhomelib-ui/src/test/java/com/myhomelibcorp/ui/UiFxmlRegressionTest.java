@@ -23,7 +23,7 @@ class UiFxmlRegressionTest {
                 "Global search must absorb remaining toolbar width");
         assertTrue(fxml.contains("onAction=\"#handleClearSearch\""),
                 "Global search must expose an explicit clear button");
-        assertTrue(fxml.contains("<MenuButton text=\"⋮\""),
+        assertTrue(fxml.contains("<MenuButton text=\"ui.fxml.mainview.value_8515dcc\""),
                 "Infrequent actions must remain reachable from toolbar overflow");
         assertTrue(fxml.contains("onAction=\"#handleCycleApplicationTheme\""),
                 "Whole-application theme switch must remain reachable from overflow");
@@ -36,12 +36,12 @@ class UiFxmlRegressionTest {
         String fxml = resource("/view/collection-wizard.fxml");
 
         for (int step = 1; step <= 3; step++) {
-            assertTrue(fxml.contains("text=\"Крок " + step + "\" styleClass=\"wizard-step-indicator\""),
+            assertTrue(fxml.contains("text=\"ui.fxml.collection_wizard.step_" + step + "\" styleClass=\"wizard-step-indicator\""),
                     "Each wizard step indicator must share the dynamic style class");
         }
         assertTrue(fxml.contains("fx:id=\"catalogUpdateUrlField\""),
                 "Online collection wizard must include the INPX update URL field");
-        assertTrue(fxml.contains("text=\"URL INPX для оновлення:\""),
+        assertTrue(fxml.contains("text=\"ui.fxml.collection_wizard.inpx_update_url\""),
                 "Online INPX field must have a clear label");
     }
 

@@ -6,15 +6,14 @@ import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.extern.slf4j.Slf4j;
 
-import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -22,7 +21,7 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.CancellationException;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BooleanSupplier;
 
@@ -36,7 +35,7 @@ public final class CalibreCliBookConverter implements BookConverter {
     private static final Set<String> SOURCE_FORMATS = Set.of(
             "azw", "azw3", "azw4", "cbz", "cbr", "cb7", "cbc", "chm", "djvu", "docx",
             "epub", "fb2", "fb2_zip", "fbz", "html", "htm", "htmlz", "kepub", "lit", "lrf",
-            "mobi", "odt", "pdf", "prc", "pdb", "pml", "rb", "rtf", "snb", "tcr", "txt", "txtz");
+            "mobi", "odt", "pdf", "prc", "pdb", "pml", "pmlz", "rb", "rtf", "snb", "tcr", "txt", "txtz");
 
     private final ApplicationSettingsPort settings;
     private final String targetFormat;
@@ -63,6 +62,8 @@ public final class CalibreCliBookConverter implements BookConverter {
     }
 
     @Override public String id() { return "calibre-cli:" + targetFormat; }
+
+    @Override public int priority() { return 100; }
 
     @Override
     public boolean isAvailable() {
@@ -93,43 +94,69 @@ public final class CalibreCliBookConverter implements BookConverter {
         if (!targetFormat.equals(requested)) {
             throw new IllegalArgumentException("Calibre converter target mismatch: " + requested + " != " + targetFormat);
         }
-        convertInternal(context.book(), context.sourceFormat(), context.sourceStream(), context.targetFile(), context.cancelled());
+        convertInternal(context.book(), context.sourceFormat(), context.sourceStream(), context.targetFile(), context.cancelled(), context.maxOutputBytes());
     }
 
     @Override
     public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
-        convertInternal(book, sourceFormat(book), sourceStream, targetFile, () -> false);
+        convertInternal(book, sourceFormat(book), sourceStream, targetFile, () -> false, Long.MAX_VALUE);
     }
 
     private void convertInternal(Book book,
                                  String sourceFormat,
                                  InputStream sourceStream,
                                  Path targetFile,
-                                 BooleanSupplier cancelled) throws Exception {
+                                 BooleanSupplier cancelled,
+                                 long maxOutputBytes) throws Exception {
         Path executable = executable().orElseThrow(() -> new IllegalStateException("calibre ebook-convert is not available"));
         checkCancelled(cancelled);
 
-        Path sandbox = AppPaths.cacheDir().resolve("calibre").toAbsolutePath().normalize();
-        Files.createDirectories(sandbox);
+        Path sandbox = SafeFilePublication.createDirectoriesNoLinks(
+                AppPaths.cacheDir().resolve("calibre").toAbsolutePath().normalize(), "Calibre cache");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                sandbox, "mhl-calibre-", "Calibre workspace");
         String sourceExtension = sourceExtension(sourceFormat);
-        Path source = Files.createTempFile(sandbox, "mhl-calibre-", sourceExtension).toAbsolutePath().normalize();
-        if (!source.startsWith(sandbox)) throw new IllegalStateException("calibre source escaped converter sandbox");
-
+        Path source = workspace.resolve("input" + sourceExtension);
+        Path processOutput = workspace.resolve("output" + targetExtension);
         Path normalizedTarget = targetFile.toAbsolutePath().normalize();
-        Path parent = normalizedTarget.getParent();
-        if (parent == null) throw new IllegalArgumentException("Target file must have a parent directory");
-        Files.createDirectories(parent);
 
         try {
-            Files.copy(sourceStream, source, StandardCopyOption.REPLACE_EXISTING);
+            SafeFilePublication.copyFresh(sourceStream, source, "Calibre staged input");
             checkCancelled(cancelled);
 
-            // Application callers hand converters an owned staging path that may already exist as an empty temp file.
-            // calibre expects to create/replace its output itself, so remove only that supplied staging file before launch.
-            Files.deleteIfExists(normalizedTarget);
-            List<String> argv = List.of(executable.toString(), source.toString(), normalizedTarget.toString());
+            List<String> argv = List.of(executable.toString(), source.toString(), processOutput.toString());
             int timeoutSeconds = Math.max(10, Math.min(3600, settings.getInt(TIMEOUT_SETTING, 300)));
-            CommandResult result = commandRunner.run(argv, sandbox, cancelled, Duration.ofSeconds(timeoutSeconds));
+            AtomicBoolean outputTooLarge = new AtomicBoolean();
+            AtomicReference<Exception> unsafeOutput = new AtomicReference<>();
+            BooleanSupplier guardedCancellation = () -> {
+                if (cancelled.getAsBoolean()) return true;
+                try {
+                    SafeFilePublication.requireSafeDirectoryPath(workspace, "Calibre workspace monitor");
+                    if (Files.exists(processOutput, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        SafeFilePublication.requireSafeRegularFile(processOutput, "Calibre monitored output");
+                        if (Files.size(processOutput) > maxOutputBytes) {
+                            outputTooLarge.set(true);
+                            return true;
+                        }
+                    }
+                    return false;
+                } catch (Exception unsafe) {
+                    unsafeOutput.compareAndSet(null, unsafe);
+                    return true;
+                }
+            };
+            CommandResult result;
+            try {
+                result = commandRunner.run(argv, sandbox, guardedCancellation, Duration.ofSeconds(timeoutSeconds));
+            } catch (CancellationException cancelledError) {
+                if (unsafeOutput.get() != null) {
+                    throw new IllegalStateException("Unsafe calibre output path/type", unsafeOutput.get());
+                }
+                if (outputTooLarge.get()) {
+                    throw new IllegalStateException("calibre output exceeded limit " + maxOutputBytes + " bytes");
+                }
+                throw cancelledError;
+            }
             if (!result.output().isBlank()) {
                 log.debug("calibre {} conversion output: {}", targetFormat, result.output());
             }
@@ -138,11 +165,18 @@ public final class CalibreCliBookConverter implements BookConverter {
                         + failureSuffix(result.output()));
             }
             checkCancelled(cancelled);
-            if (!Files.isRegularFile(normalizedTarget)) {
-                throw new IllegalStateException("calibre ebook-convert did not create output file");
+            SafeFilePublication.requireSafeRegularFile(processOutput, "Calibre converter output");
+            long outputBytes = Files.size(processOutput);
+            if (outputBytes > maxOutputBytes) {
+                throw new IllegalStateException("calibre output exceeded limit " + maxOutputBytes + " bytes");
             }
+            SafeFilePublication.moveNoReplace(processOutput, normalizedTarget, "Calibre converter publication");
         } finally {
-            Files.deleteIfExists(source);
+            try {
+                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+            } catch (IOException cleanupFailure) {
+                log.warn("Cannot remove temporary calibre workspace {}", workspace, cleanupFailure);
+            }
         }
     }
 
@@ -163,13 +197,9 @@ public final class CalibreCliBookConverter implements BookConverter {
         Optional<Path> onPath = findOnPath(exe);
         if (onPath.isPresent()) return onPath;
 
-        if (isWindows()) {
-            for (String env : List.of("ProgramFiles", "ProgramFiles(x86)")) {
-                String base = System.getenv(env);
-                if (base == null || base.isBlank()) continue;
-                Optional<Path> candidate = validateExecutable(Path.of(base, "Calibre2", "ebook-convert.exe"));
-                if (candidate.isPresent()) return candidate;
-            }
+        for (Path path : standardInstallCandidates(System.getProperty("os.name", ""), System.getenv())) {
+            Optional<Path> candidate = validateExecutable(path);
+            if (candidate.isPresent()) return candidate;
         }
         return Optional.empty();
     }
@@ -197,7 +227,7 @@ public final class CalibreCliBookConverter implements BookConverter {
 
     private static Optional<Path> validateExecutable(Path path) {
         try {
-            if (!Files.isRegularFile(path)) return Optional.empty();
+            if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
             if (!isWindows() && !Files.isExecutable(path)) return Optional.empty();
             return Optional.of(path);
         } catch (RuntimeException failure) {
@@ -210,52 +240,30 @@ public final class CalibreCliBookConverter implements BookConverter {
                                             BooleanSupplier cancelled,
                                             Duration timeout) throws Exception {
         ProcessBuilder builder = new ProcessBuilder(new ArrayList<>(argv))
-                .directory(workingDirectory.toFile())
-                .redirectErrorStream(true);
-        Process process = builder.start();
-        AtomicReference<String> output = new AtomicReference<>("");
-        Thread reader = Thread.ofVirtual().start(() -> output.set(readBounded(process.getInputStream())));
-        long deadline = System.nanoTime() + timeout.toNanos();
+                .directory(workingDirectory.toFile());
         try {
-            while (!process.waitFor(200, TimeUnit.MILLISECONDS)) {
-                if (cancelled != null && cancelled.getAsBoolean()) {
-                    process.destroyForcibly();
-                    throw new CancellationException("Book conversion cancelled");
-                }
-                if (System.nanoTime() >= deadline) {
-                    process.destroyForcibly();
-                    throw new IllegalStateException("calibre ebook-convert timed out after " + timeout.toSeconds() + " s");
-                }
-            }
-            reader.join(2000);
-            return new CommandResult(process.exitValue(), output.get());
-        } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
-            process.destroyForcibly();
-            throw interrupted;
-        } finally {
-            if (process.isAlive()) process.destroyForcibly();
+            ProcessExecutionSupport.Result result = ProcessExecutionSupport.run(
+                    builder, null, timeout, MAX_CAPTURE_BYTES,
+                    cancelled == null ? () -> false : cancelled);
+            String output = mergeProcessOutput(result);
+            return new CommandResult(result.exitCode(), output);
+        } catch (ProcessExecutionSupport.ProcessTimeoutException timeoutError) {
+            throw new IllegalStateException(
+                    "calibre ebook-convert timed out after " + timeout.toSeconds() + " s", timeoutError);
+        } catch (CancellationException cancelledError) {
+            throw new CancellationException("Book conversion cancelled");
         }
     }
 
-    private static String readBounded(InputStream in) {
-        try (InputStream stream = in; ByteArrayOutputStream captured = new ByteArrayOutputStream()) {
-            byte[] buffer = new byte[4096];
-            int read;
-            int remaining = MAX_CAPTURE_BYTES;
-            while ((read = stream.read(buffer)) >= 0) {
-                if (read <= 0) continue;
-                if (remaining > 0) {
-                    int keep = Math.min(read, remaining);
-                    captured.write(buffer, 0, keep);
-                    remaining -= keep;
-                }
-            }
-            String text = captured.toString(StandardCharsets.UTF_8);
-            return remaining == 0 ? text + "\n[output truncated]" : text;
-        } catch (IOException failure) {
-            return "[unable to capture calibre output: " + failure.getClass().getSimpleName() + "]";
-        }
+    private static String mergeProcessOutput(ProcessExecutionSupport.Result result) {
+        String stdout = result.stdoutText();
+        String stderr = result.stderrText();
+        String joined;
+        if (stdout.isBlank()) joined = stderr;
+        else if (stderr.isBlank()) joined = stdout;
+        else joined = stdout + "\n" + stderr;
+        if (result.stdoutTruncated() || result.stderrTruncated()) joined += "\n[output truncated]";
+        return joined;
     }
 
     private static String failureSuffix(String output) {
@@ -306,7 +314,32 @@ public final class CalibreCliBookConverter implements BookConverter {
     }
 
     private static boolean isWindows() {
-        return System.getProperty("os.name", "").toLowerCase(Locale.ROOT).contains("win");
+        return isWindows(System.getProperty("os.name", ""));
+    }
+
+    private static boolean isWindows(String osName) {
+        return osName != null && osName.toLowerCase(Locale.ROOT).contains("win");
+    }
+
+    private static boolean isMac(String osName) {
+        if (osName == null) return false;
+        String normalized = osName.toLowerCase(Locale.ROOT);
+        return normalized.contains("mac") || normalized.contains("darwin");
+    }
+
+    static List<Path> standardInstallCandidates(String osName, java.util.Map<String, String> environment) {
+        List<Path> result = new ArrayList<>();
+        java.util.Map<String, String> env = environment == null ? java.util.Map.of() : environment;
+        if (isWindows(osName)) {
+            for (String name : List.of("ProgramFiles", "ProgramFiles(x86)")) {
+                String base = env.get(name);
+                if (base == null || base.isBlank()) continue;
+                result.add(Path.of(base, "Calibre2", "ebook-convert.exe"));
+            }
+        } else if (isMac(osName)) {
+            result.add(Path.of("/Applications/calibre.app/Contents/MacOS/ebook-convert"));
+        }
+        return List.copyOf(result);
     }
 
     @FunctionalInterface

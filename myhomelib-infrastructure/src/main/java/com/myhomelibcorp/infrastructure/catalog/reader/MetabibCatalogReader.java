@@ -6,19 +6,25 @@ import com.github.luben.zstd.ZstdInputStream;
 import com.myhomelibcorp.application.catalog.importing.*;
 import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
 import com.myhomelibcorp.application.imports.diagnostics.ImportSeverity;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
 import com.myhomelibcorp.domain.service.LanguageResolver;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
+import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.*;
 import java.util.zip.GZIPInputStream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 /**
  * Native, streaming reader for the public metabib.dataset/1 JSONL format.
@@ -29,21 +35,29 @@ import java.util.zip.ZipFile;
 public class MetabibCatalogReader implements CatalogReader {
     public static final String DATASET_SCHEMA = "metabib.dataset/1";
     public static final String RECORD_SCHEMA = "metabib.dataset_record/1";
+    /** A dataset may be arbitrarily large, but one JSONL object must stay memory-bounded. */
+    static final int MAX_JSONL_RECORD_CHARS = 8 * 1024 * 1024;
 
     private final ObjectMapper objectMapper;
 
     @Override
     public boolean supports(Path source) {
-        if (source == null || source.getFileName() == null || !Files.isRegularFile(source)) return false;
-        String name = source.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (source == null || source.getFileName() == null) return false;
+        final Path safeSource;
+        try {
+            safeSource = SafeFilePublication.requireSafeRegularFile(source, "Metabib source");
+        } catch (IOException unsafe) {
+            return false;
+        }
+        String name = safeSource.getFileName().toString().toLowerCase(Locale.ROOT);
         if (name.endsWith(".jsonl") || name.endsWith(".jsonl.gz") || name.endsWith(".jsonl.zst")) return true;
         if (!name.endsWith(".zip")) return false;
         // Do not steal legacy INPX update ZIPs from the existing importer: a ZIP is metabib
-        // only when it actually contains a JSONL dataset entry.
-        try (ZipFile zip = new ZipFile(source.toFile())) {
-            return zip.stream().anyMatch(e -> !e.isDirectory()
-                    && e.getName().toLowerCase(Locale.ROOT).endsWith(".jsonl"));
-        } catch (IOException e) {
+        // only when it actually contains a JSONL dataset entry. Bound the central-directory scan
+        // so a hostile archive cannot turn a lightweight supports() probe into unbounded work.
+        try (SafeZipArchive opened = SafeZipArchive.openDetected(safeSource, "Metabib ZIP source")) {
+            return selectZipDatasetEntry(opened.zip()) != null;
+        } catch (IOException | RuntimeException e) {
             return false;
         }
     }
@@ -51,7 +65,11 @@ public class MetabibCatalogReader implements CatalogReader {
     @Override
     public CatalogReadSession open(Path source) {
         try {
-            OpenedInput opened = openInput(source);
+            if (source == null || source.getFileName() == null) {
+                throw new IOException("Metabib source is not a safe regular file: " + source);
+            }
+            Path safeSource = SafeFilePublication.requireSafeRegularFile(source, "Metabib source");
+            OpenedInput opened = openInput(safeSource);
             BufferedReader reader = new BufferedReader(new InputStreamReader(opened.stream(), StandardCharsets.UTF_8), 128 * 1024);
             String headerLine = readNonBlank(reader);
             if (headerLine == null) {
@@ -171,10 +189,9 @@ public class MetabibCatalogReader implements CatalogReader {
 
         String title = firstClaimText(bibliographic, "title");
         if (title.isBlank()) title = firstClaimText(publication, "book_name");
-        if (title.isBlank()) title = "Без назви";
+        if (title.isBlank()) title = sourceBookId;
 
         List<CatalogPerson> authors = peopleClaims(bibliographic, "authors", validation, dataset.datasetId());
-        if (authors.isEmpty()) authors = List.of(new CatalogPerson("", "", "Невідомий Автор", "", "", "", List.of()));
         List<CatalogPerson> translators = peopleClaims(bibliographic, "translators", validation, dataset.datasetId());
 
         JsonNode sequence = firstClaimValue(bibliographic, "sequences");
@@ -238,7 +255,7 @@ public class MetabibCatalogReader implements CatalogReader {
 
         return new CatalogRecord(sourceBookId, title, authors, series, sequenceNumber, genres, language,
                 format, fileName, archive, archiveEntry, size, deleted, isbn, publisher, year, city,
-                translators, annotation, keywords, rating, sourceMetadata, artifacts, identities, issues);
+                translators, annotation, keywords, rating, null, sourceMetadata, artifacts, identities, issues);
     }
 
     private static Map<String, String> datasetMetadata(JsonNode header) {
@@ -491,24 +508,90 @@ public class MetabibCatalogReader implements CatalogReader {
     private static String firstNonBlank(String... values) { for (String v : values) if (v != null && !v.isBlank()) return v.trim(); return ""; }
     private static <T extends Collection<String>> void addNonBlank(T out, String value) { if (value != null && !value.isBlank()) out.add(value.trim()); }
     private static String stripBom(String line) { return line != null && !line.isEmpty() && line.charAt(0) == '\uFEFF' ? line.substring(1) : line; }
-    private static String readNonBlank(BufferedReader reader) throws IOException { for (String line; (line = reader.readLine()) != null;) if (!line.isBlank()) return line; return null; }
+    private static String readNonBlank(BufferedReader reader) throws IOException {
+        while (true) {
+            String line = readBoundedLine(reader);
+            if (line == null || !line.isBlank()) return line;
+        }
+    }
+
+    private static String readBoundedLine(BufferedReader reader) throws IOException {
+        StringBuilder line = new StringBuilder(Math.min(4096, MAX_JSONL_RECORD_CHARS));
+        while (true) {
+            int next = reader.read();
+            if (next < 0) return line.isEmpty() ? null : line.toString();
+            if (next == '\n') return line.toString();
+            if (next == '\r') {
+                reader.mark(1);
+                int after = reader.read();
+                if (after >= 0 && after != '\n') reader.reset();
+                return line.toString();
+            }
+            if (line.length() >= MAX_JSONL_RECORD_CHARS) {
+                throw new IOException("Metabib JSONL record exceeds safety limit of "
+                        + MAX_JSONL_RECORD_CHARS + " characters");
+            }
+            line.append((char) next);
+        }
+    }
 
     private static OpenedInput openInput(Path source) throws IOException {
-        String name = source.getFileName().toString().toLowerCase(Locale.ROOT);
-        if (name.endsWith(".jsonl")) return new OpenedInput(Files.newInputStream(source), null);
-        if (name.endsWith(".jsonl.gz")) return new OpenedInput(new GZIPInputStream(Files.newInputStream(source), 128 * 1024), null);
-        if (name.endsWith(".jsonl.zst")) return new OpenedInput(new ZstdInputStream(Files.newInputStream(source)), null);
+        Path safeSource = SafeFilePublication.requireSafeRegularFile(source, "Metabib source");
+        String name = safeSource.getFileName().toString().toLowerCase(Locale.ROOT);
+        if (name.endsWith(".jsonl")) {
+            return new OpenedInput(Files.newInputStream(safeSource, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS), null);
+        }
+        if (name.endsWith(".jsonl.gz")) {
+            InputStream raw = Files.newInputStream(safeSource, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            try { return new OpenedInput(new GZIPInputStream(raw, 128 * 1024), null); }
+            catch (IOException | RuntimeException failure) { try { raw.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); } throw failure; }
+        }
+        if (name.endsWith(".jsonl.zst")) {
+            InputStream raw = Files.newInputStream(safeSource, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            try { return new OpenedInput(new ZstdInputStream(raw), null); }
+            catch (IOException | RuntimeException failure) { try { raw.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); } throw failure; }
+        }
         if (name.endsWith(".zip")) {
-            ZipFile zip = new ZipFile(source.toFile());
-            ZipEntry entry = zip.stream().filter(e -> !e.isDirectory() && e.getName().toLowerCase(Locale.ROOT).endsWith(".jsonl"))
-                    .sorted(Comparator.comparing(ZipEntry::getName)).findFirst().orElse(null);
-            if (entry == null) { zip.close(); throw new IOException("ZIP contains no .jsonl dataset: " + source); }
-            return new OpenedInput(zip.getInputStream(entry), zip);
+            SafeZipArchive opened = SafeZipArchive.openDetected(safeSource, "Metabib ZIP source");
+            try {
+                ZipFile zip = opened.zip();
+                ZipArchiveEntry entry = selectZipDatasetEntry(zip);
+                if (entry == null) throw new IOException("ZIP contains no .jsonl dataset: " + source);
+                InputStream bounded = new LimitedInputStream(
+                        zip.getInputStream(entry), ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
+                return new OpenedInput(bounded, opened);
+            } catch (IOException | RuntimeException failure) {
+                try { opened.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                throw failure;
+            }
         }
         throw new IOException("Unsupported metabib container: " + source);
     }
 
-    private record OpenedInput(InputStream stream, ZipFile zip) implements AutoCloseable {
+    private static ZipArchiveEntry selectZipDatasetEntry(ZipFile zip) throws IOException {
+        ZipArchiveEntry selected = null;
+        int count = 0;
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
+        while (entries.hasMoreElements()) {
+            ZipArchiveEntry entry = entries.nextElement();
+            if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                throw new IOException("Metabib ZIP contains too many entries: " + count);
+            }
+            if (entry.isDirectory() || !entry.getName().toLowerCase(Locale.ROOT).endsWith(".jsonl")) continue;
+            long size = entry.getSize();
+            long compressed = entry.getCompressedSize();
+            if (size > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
+                throw new IOException("Metabib JSONL entry is too large: " + entry.getName());
+            }
+            if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
+                throw new IOException("Metabib JSONL entry has suspicious compression ratio: " + entry.getName());
+            }
+            if (selected == null || entry.getName().compareTo(selected.getName()) < 0) selected = entry;
+        }
+        return selected;
+    }
+
+    private record OpenedInput(InputStream stream, SafeZipArchive zip) implements AutoCloseable {
         @Override public void close() throws IOException {
             IOException error = null;
             try { stream.close(); } catch (IOException e) { error = e; }

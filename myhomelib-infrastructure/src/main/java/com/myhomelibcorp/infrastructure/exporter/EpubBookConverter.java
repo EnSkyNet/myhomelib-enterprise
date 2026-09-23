@@ -3,17 +3,19 @@ package com.myhomelibcorp.infrastructure.exporter;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.Set;
 
 @Component
 public class EpubBookConverter implements BookConverter {
+    @Override public int priority() { return 1000; }
+
     @Override
     public Set<BookConversionCapability> capabilities() {
         return Set.of(new BookConversionCapability(Set.of("epub"), "EPUB", ".epub"));
@@ -32,6 +34,6 @@ public class EpubBookConverter implements BookConverter {
     @Override public String getTargetExtension() { return ".epub"; }
     @Override public String getFormatName() { return "EPUB"; }
     @Override public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
-        Files.copy(sourceStream, targetFile, StandardCopyOption.REPLACE_EXISTING);
+        SafeFilePublication.copyFresh(sourceStream, targetFile, "EPUB copy output");
     }
 }

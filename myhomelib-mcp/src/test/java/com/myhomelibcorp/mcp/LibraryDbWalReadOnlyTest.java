@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -15,6 +17,26 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class LibraryDbWalReadOnlyTest {
     @TempDir Path temp;
 
+
+
+    @Test
+    void rejectsDatabaseThroughSymlinkedParentDirectory() throws Exception {
+        Path outside = Files.createDirectories(temp.resolve("outside"));
+        Path dbPath = outside.resolve("collection.db");
+        Files.writeString(dbPath, "not-needed-because-path-must-be-rejected-first");
+        Path linked = temp.resolve("linked");
+        try {
+            Files.createSymbolicLink(linked, outside);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort("Symbolic links are unavailable: " + unsupported.getMessage());
+        }
+
+        IllegalArgumentException error = assertThrows(IllegalArgumentException.class,
+                () -> new LibraryDb(linked.resolve("collection.db"), new ObjectMapper()));
+        assertTrue(error.getCause() != null, error.getMessage());
+        assertTrue(error.getCause().getMessage().toLowerCase(java.util.Locale.ROOT).contains("symbolic link"),
+                error.getCause().getMessage());
+    }
 
     @Test
     void rejectsDatabaseWithIncompatiblePhysicalSchema() throws Exception {

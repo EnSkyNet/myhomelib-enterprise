@@ -12,7 +12,7 @@ public record FollowedAuthorSummary(
 ) {
     public FollowedAuthorSummary {
         authorId = authorId == null ? "" : authorId;
-        authorName = authorName == null || authorName.isBlank() ? "Без автора" : authorName;
+        authorName = authorName == null ? "" : authorName;
         lastBookTitle = lastBookTitle == null ? "" : lastBookTitle;
         lastBookDate = lastBookDate == null ? "" : lastBookDate;
         followedAt = followedAt == null ? "" : followedAt;

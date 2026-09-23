@@ -69,7 +69,7 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         verify(f.search).commit();
         verify(f.search, never()).rebuildIndex();
         verify(f.state).recordApplied("remote-collection:collection-42", "20260825");
-        verify(f.backup).createDatabaseSnapshot(eq(collection), any(Path.class));
+        verify(f.backup).createRecoveryCheckpoint(eq(collection), any(Path.class));
         verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
         InOrder lifecycleOrder = inOrder(f.search, f.statistics, f.state);
         lifecycleOrder.verify(f.search).commit();
@@ -166,7 +166,7 @@ class UpdateCollectionFromNetworkUseCaseStage6Test {
         assertThat(result.skipped()).isEqualTo(562_307);
         verifyNoInteractions(f.search, f.statistics);
         verify(f.state).recordApplied("remote-collection:c-noop", "20260905");
-        verify(f.backup).createDatabaseSnapshot(eq(collection), any(Path.class));
+        verify(f.backup).createRecoveryCheckpoint(eq(collection), any(Path.class));
         verify(f.backup, never()).restoreDatabaseSnapshot(any(), any());
     }
 

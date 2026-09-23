@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.ui.util.UiExceptionMessages;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -10,7 +11,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.File;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.util.List;
 import java.util.Locale;
 
@@ -31,12 +31,12 @@ public class BookListExportService {
                 .map(BookListExportService::snapshot)
                 .toList();
         if (books.isEmpty()) {
-            dialogs.showWarning("Порожній список", "Немає книг для експорту.");
+            dialogs.showWarning(UiText.text("ui.java.book_list_export_service.0fdd0f46e8"), UiText.text("ui.java.book_list_export_service.b48f0b18f3"));
             return;
         }
         String f = format.toLowerCase(Locale.ROOT);
         FileChooser fc = new FileChooser();
-        fc.setTitle("Експорт поточного списку");
+        fc.setTitle(UiText.text("ui.main.fxml.export_current_list"));
         fc.setInitialFileName("books." + f);
         fc.getExtensionFilters().add(new FileChooser.ExtensionFilter(f.toUpperCase(Locale.ROOT), "*." + f));
         File file = fc.showSaveDialog(owner);
@@ -48,11 +48,11 @@ public class BookListExportService {
                 case "rtf" -> rtf(books);
                 default -> txt(books);
             };
-            Files.writeString(file.toPath(), data, StandardCharsets.UTF_8);
+            AtomicFileSupport.writeStringReplacing(file.toPath(), data, StandardCharsets.UTF_8);
             return books.size();
         }).whenComplete((count, error) -> UiExecutor.runOnUiThread(() -> {
-            if (error != null) dialogs.showError("Помилка експорту", UiExceptionMessages.root(error));
-            else dialogs.showInfo("Експорт завершено", count + " книг -> " + file);
+            if (error != null) dialogs.showError(UiText.text("ui.java.book_list_export_service.68c7ce9fff"), UiExceptionMessages.root(error));
+            else dialogs.showInfo(UiText.text("ui.java.book_list_export_service.61676a8b43"), count + UiText.text("ui.java.book_list_export_service.f363a5a5f6") + file);
         }));
     }
 
@@ -69,8 +69,8 @@ public class BookListExportService {
 
     private String html(List<ExportRow> books) {
         StringBuilder s = new StringBuilder("<!doctype html><meta charset=\"utf-8\"><title>MyHomeLib</title>"
-                + "<h1>MyHomeLib</h1><table border=\"1\"><tr><th>#</th><th>Автор</th><th>Назва</th>"
-                + "<th>Серія</th><th>Жанри</th><th>Рейтинг</th></tr>");
+                + UiText.text("ui.java.book_list_export_service.50d4c8ee76")
+                + UiText.text("ui.java.book_list_export_service.55be5d0555"));
         int i = 1;
         for (var x : books) {
             s.append("<tr><td>").append(i++).append("</td><td>").append(esc(x.authors()))

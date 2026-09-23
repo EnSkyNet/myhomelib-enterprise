@@ -9,6 +9,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 class BookDtoArtifactProjectionTest {
 
     @Test
+    void artifactDisplayNameDecodesLegacyArchiveEscapesWithoutChangingRawIdentity() {
+        String raw = "books/#U0412#U043e#U0437#U0432#U0440#U0430#U0449#U0435#U043d#U0438#U0435_1.fb2";
+        BookArtifactDto artifact = BookArtifactDto.builder()
+                .format("fb2")
+                .fileName("bundle.zip")
+                .archiveEntry(raw)
+                .build();
+
+        assertThat(artifact.getDisplayName()).isEqualTo("FB2 — books/Возвращение_1.fb2");
+        assertThat(artifact.getArchiveEntry()).isEqualTo(raw);
+    }
+
+    @Test
     void selectedArtifactProjectionChangesOnlyOperationalStorageFields() {
         BookArtifactDto epub = BookArtifactDto.builder()
                 .id("epub").format("epub").fileName("book.epub").folder("epub")

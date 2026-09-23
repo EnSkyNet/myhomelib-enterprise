@@ -2,10 +2,11 @@ package com.myhomelibcorp.infrastructure.sync;
 
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.extern.slf4j.Slf4j;
 
-import java.nio.file.Files;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -29,7 +30,7 @@ final class FolderSyncAvailabilitySupport {
                 Book book = iterator.next();
                 if (book == null || !book.isLocal()) continue;
                 Path physical = syncSupport.physicalPath(book, root);
-                if (physical == null || !physical.startsWith(root) || Files.isRegularFile(physical)) continue;
+                if (physical != null && physical.startsWith(root) && isSafeRegularFile(physical)) continue;
                 try {
                     mark(book, false, mutations);
                     unavailable++;
@@ -40,6 +41,16 @@ final class FolderSyncAvailabilitySupport {
             }
         }
         return new Result(unavailable, errors);
+    }
+
+    private boolean isSafeRegularFile(Path path) {
+        try {
+            SafeFilePublication.requireSafeRegularFile(path, "folder-sync book resource");
+            return true;
+        } catch (IOException | SecurityException unsafeOrMissing) {
+            log.debug("Локальний ресурс книги відсутній або небезпечний {}: {}", path, unsafeOrMissing.getMessage());
+            return false;
+        }
     }
 
     int restore(List<Book> books, CommittedCatalogMutationService mutations) {

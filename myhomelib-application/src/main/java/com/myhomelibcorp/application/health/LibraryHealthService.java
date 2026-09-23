@@ -48,14 +48,27 @@ public class LibraryHealthService {
     }
 
     public LibraryHealthReport refresh() {
+        return refresh(null);
+    }
+
+    /**
+     * Refreshes health for the collection that was active when the caller queued the work.
+     * The expected id is checked only after INTEGRITY_AUDIT owns the lifecycle barrier, so a
+     * queued refresh can never silently drift to a different active collection.
+     */
+    public LibraryHealthReport refresh(String expectedCollectionId) {
         try (var ignored = operationCoordinator.acquire(LibraryOperationType.INTEGRITY_AUDIT)) {
-            return refreshLocked();
+            return refreshLocked(expectedCollectionId);
         }
     }
 
-    private LibraryHealthReport refreshLocked() {
+    private LibraryHealthReport refreshLocked(String expectedCollectionId) {
         Collection collection = backupPort.getCurrentCollection();
         if (collection == null) throw new IllegalStateException("Колекцію не вибрано");
+        if (expectedCollectionId != null && !expectedCollectionId.isBlank()
+                && !expectedCollectionId.trim().equals(collection.getId())) {
+            throw new IllegalStateException("Активна колекція змінилася до початку перевірки цілісності");
+        }
 
         ArtifactIntegrityReport artifacts = artifactIntegrityPort.auditIncremental(FINDING_LIMIT);
         IntegrityReport integrity = integrityChecker.check();

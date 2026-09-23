@@ -17,6 +17,7 @@ import java.time.Instant;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class IncomingFolderWatchAdapterTest {
     @TempDir Path tempDir;
@@ -72,7 +73,9 @@ class IncomingFolderWatchAdapterTest {
         verify(events, never()).publish(any(IncomingFolderFileReadyEvent.class));
 
         await(() -> !adapter.listReady("c1", 10).isEmpty(), Duration.ofSeconds(4));
-        verify(events, times(1)).publish(any(IncomingFolderFileReadyEvent.class));
+        // READY is persisted immediately before the asynchronous notification is published.
+        // Wait for the notification instead of racing the scheduler thread after observing READY.
+        verify(events, timeout(1000).times(1)).publish(any(IncomingFolderFileReadyEvent.class));
     }
 
     @Test
@@ -93,6 +96,84 @@ class IncomingFolderWatchAdapterTest {
         adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
         adapter.startConfigured();
         assertThat(adapter.listReady("c1", 10)).hasSize(1);
+    }
+
+
+    @Test
+    void releaseClaimReturnsProcessingCandidateToReadyWithoutChangingFingerprint() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path incoming = Files.createDirectory(tempDir.resolve("incoming-release"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        Path file = incoming.resolve("retry.txt");
+        Files.writeString(file, "retry");
+        adapter.scanNow("c1");
+        await(() -> !adapter.listReady("c1", 10).isEmpty(), Duration.ofSeconds(5));
+        var candidate = adapter.listReady("c1", 10).getFirst();
+
+        assertThat(adapter.claimReady("c1", candidate.file(), candidate.fingerprint())).isTrue();
+        adapter.releaseClaim("c1", candidate.file(), candidate.fingerprint());
+
+        assertThat(adapter.listReady("c1", 10)).singleElement()
+                .satisfies(requeued -> assertThat(requeued.fingerprint()).isEqualTo(candidate.fingerprint()));
+    }
+
+    @Test
+    void scanIgnoresSymlinkedIncomingFile() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        DomainEventPublisher events = mock(DomainEventPublisher.class);
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), events);
+        Path incoming = Files.createDirectory(tempDir.resolve("incoming-symlink-file"));
+        adapter.configure("c1", incoming, false, 1, 1);
+        Path outside = tempDir.resolve("outside.txt");
+        Files.writeString(outside, "outside");
+        Path link = incoming.resolve("linked.txt");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+            assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+
+        adapter.scanNow("c1");
+        Thread.sleep(1200);
+
+        assertThat(adapter.listReady("c1", 10)).isEmpty();
+        verify(events, never()).publish(any(IncomingFolderFileReadyEvent.class));
+    }
+
+    @Test
+    void incomingDirectoryBehindSymlinkedParentIsRejected() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path realParent = Files.createDirectory(tempDir.resolve("real-parent"));
+        Path realIncoming = Files.createDirectory(realParent.resolve("incoming"));
+        Path linkedParent = tempDir.resolve("linked-parent");
+        try {
+            Files.createSymbolicLink(linkedParent, realParent);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+            assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+
+        var state = adapter.configure("c1", linkedParent.resolve(realIncoming.getFileName()), false, 1, 1);
+
+        assertThat(state.status()).isEqualTo("FOLDER_MISSING");
+    }
+
+    @Test
+    void symlinkedIncomingDirectoryIsNotTreatedAsConfiguredFolder() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new IncomingFolderWatchAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path real = Files.createDirectory(tempDir.resolve("real-incoming"));
+        Path link = tempDir.resolve("incoming-link");
+        try {
+            Files.createSymbolicLink(link, real);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+            assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+
+        var state = adapter.configure("c1", link, false, 1, 1);
+
+        assertThat(state.status()).isEqualTo("FOLDER_MISSING");
     }
 
     private JdbcTemplate metadataJdbc() {

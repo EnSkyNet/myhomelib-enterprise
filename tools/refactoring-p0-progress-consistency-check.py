@@ -21,7 +21,7 @@ assert 'statisticsRepository.invalidate();' in update_uc and 'statisticsReposito
 assert update_uc.index('statisticsRepository.refreshStatistics();') < update_uc.index('sourceState.recordApplied(sourceKey, applied);'), 'appliedVersion advances before statistics refresh'
 assert 'changes.insertedCount()' in update_ui and 'changes.updatedCount()' in update_ui, 'bounded ID sets are still used as full counters'
 assert 'changes.inserted().size()' not in update_ui and 'changes.updated().size()' not in update_ui
-assert 'Записи, позначені джерелом як видалені (DEL)' in update_ui
+assert 'ui.java.collection_update_ui_service.e8b7572cd7' in update_ui
 assert 'Явно видалено' not in update_ui
 assert 'INPX Hikari [' in pipeline and 'transaction committed' in pipeline and 'connection-returned' in pipeline
 assert 'statisticsService.invalidate();' in stats_handler, 'ordinary import does not mark statistics stale before refresh'

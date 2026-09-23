@@ -12,7 +12,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 STEREOTYPE = re.compile(r"@(Component|Service|Repository|Controller|Configuration)\b")
-CLASS = re.compile(r"\bclass\s+(\w+)")
+CLASS = re.compile(r"(?m)^\s*(?:(?:public|protected|private|abstract|final|sealed|non-sealed|static)\s+)*class\s+(\w+)\b")
 
 
 def constructor_params(source: str, class_name: str):

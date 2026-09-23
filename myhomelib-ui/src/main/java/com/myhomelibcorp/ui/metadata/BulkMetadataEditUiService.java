@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.metadata;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditAction;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditField;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditPreview;
@@ -9,6 +10,7 @@ import com.myhomelibcorp.application.bulkedit.BatchMetadataEditUseCase;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditableSnapshot;
 import com.myhomelibcorp.application.history.LibraryOperationHistoryEntry;
 import com.myhomelibcorp.application.history.LibraryOperationHistoryUseCase;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -109,7 +111,8 @@ public class BulkMetadataEditUiService {
 
     public void undoLatest(Window owner, Runnable onApplied) {
         var token = UiAsyncRequestGuard.next(generation, state);
-        background.submit(history::latestUndoable).whenComplete((latest, error) -> Platform.runLater(() -> {
+        background.submitCollectionScoped(LibraryOperationType.QUERY, history::latestUndoable)
+                .whenComplete((latest, error) -> Platform.runLater(() -> {
             if (!UiAsyncRequestGuard.isCurrent(token, generation, state)) return;
             if (error != null) {
                 dialogs.showError(i18n.text("ui.history.title"), UiExceptionMessages.root(error));
@@ -176,6 +179,7 @@ public class BulkMetadataEditUiService {
 
     private Optional<List<BatchMetadataEditRule>> editRules(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.bulkedit.title"));
         dialog.setHeaderText(i18n.text("ui.bulkedit.rules_header"));
         if (owner != null) dialog.initOwner(owner);
@@ -183,8 +187,10 @@ public class BulkMetadataEditUiService {
         dialog.getDialogPane().getButtonTypes().addAll(apply, ButtonType.CANCEL);
 
         ComboBox<BatchMetadataEditField> field = new ComboBox<>(FXCollections.observableArrayList(BatchMetadataEditField.values()));
+        field.setConverter(enumLabelConverter(this::fieldLabel));
         field.getSelectionModel().selectFirst();
         ComboBox<BatchMetadataEditAction> action = new ComboBox<>();
+        action.setConverter(enumLabelConverter(this::actionLabel));
         TextField value = new TextField();
         TextField pattern = new TextField();
         TextField replacement = new TextField();
@@ -277,6 +283,7 @@ public class BulkMetadataEditUiService {
         if (changedSample == 0) text.append(i18n.text("ui.bulkedit.preview_no_sample_changes"));
 
         Dialog<ButtonType> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.bulkedit.title"));
         dialog.setHeaderText(i18n.text("ui.bulkedit.preview_header"));
         if (owner != null) dialog.initOwner(owner);
@@ -299,6 +306,7 @@ public class BulkMetadataEditUiService {
     private Dialog<ButtonType> showProgress(Window owner, Label label, ProgressBar bar,
                                             AtomicBoolean finished, AtomicBoolean cancelled) {
         Dialog<ButtonType> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.bulkedit.title"));
         if (owner != null) dialog.initOwner(owner);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CANCEL);
@@ -329,6 +337,13 @@ public class BulkMetadataEditUiService {
     private static void setManagedVisible(Node node, boolean visible) {
         node.setVisible(visible);
         node.setManaged(visible);
+    }
+
+    private <E> javafx.util.StringConverter<E> enumLabelConverter(java.util.function.Function<E, String> labeler) {
+        return new javafx.util.StringConverter<>() {
+            @Override public String toString(E value) { return value == null ? "" : labeler.apply(value); }
+            @Override public E fromString(String value) { return null; }
+        };
     }
 
     private String ruleLabel(BatchMetadataEditRule rule) {

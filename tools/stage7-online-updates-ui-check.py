@@ -35,7 +35,7 @@ require('markDownloadedBaseline(bookId)' in text('myhomelib-application/src/main
         'successful download does not acknowledge catalog baseline')
 require('showUpdatesWorkspace' in manager and '/view/updates-workspace.fxml' in manager, 'Updates workspace not wired')
 require('navigateToAuthor' in workspace and 'navigateToBook' in workspace, 'author/book deep links missing')
-require('Немає нових оновлень каталогу' in workspace, 'empty state missing')
+require('ui.text.no_new_catalog_updates' in workspace or 'ui.fxml.updates_workspace.no_new_catalog_updates' in workspace, 'localized empty state key missing')
 
 ET.parse(ROOT / 'myhomelib-ui/src/main/resources/view/updates-workspace.fxml')
 

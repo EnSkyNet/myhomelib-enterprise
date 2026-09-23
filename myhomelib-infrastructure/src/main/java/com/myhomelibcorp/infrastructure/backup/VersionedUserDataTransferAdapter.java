@@ -8,8 +8,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.application.port.out.backup.UserDataTransferPort;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.Sha256Support;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -19,8 +20,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.jdbc.datasource.DataSourceTransactionManager;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.util.*;
@@ -55,8 +59,12 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     @Override
     public ExportResult exportTo(Path targetFile) throws IOException {
         Objects.requireNonNull(targetFile, "targetFile");
-        Files.createDirectories(targetFile.toAbsolutePath().getParent());
-        Path tmp = targetFile.resolveSibling(targetFile.getFileName() + ".tmp");
+        Path safeTarget = SafeFilePublication.prepareTarget(targetFile, "Portable user-data export destination");
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                safeTarget, "Portable user-data export destination");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                safeTarget.getParent(), ".mhl-user-data-export-", "Portable user-data export workspace");
+        Path staged = workspace.resolve("portable-user-data.json");
         AtomicLong bookRecords = new AtomicLong();
         AtomicLong groupMemberships = new AtomicLong();
         AtomicLong bookmarks = new AtomicLong();
@@ -65,51 +73,53 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         AtomicLong savedSearches = new AtomicLong();
         AtomicLong readerOverrides = new AtomicLong();
 
-        try (JsonGenerator g = mapper.getFactory().createGenerator(tmp.toFile(), com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
-            g.useDefaultPrettyPrinter();
-            g.writeStartObject();
-            g.writeNumberField("schemaVersion", CURRENT_SCHEMA_VERSION);
-            g.writeStringField("format", "myhomelib-user-data");
-            g.writeStringField("exportedAt", Instant.now().toString());
+        try {
+            try (OutputStream out = SafeFilePublication.openFreshOutputStream(
+                         staged, "Portable user-data staged export");
+                 JsonGenerator g = mapper.getFactory().createGenerator(out, com.fasterxml.jackson.core.JsonEncoding.UTF8)) {
+                g.useDefaultPrettyPrinter();
+                g.writeStartObject();
+                g.writeNumberField("schemaVersion", CURRENT_SCHEMA_VERSION);
+                g.writeStringField("format", "myhomelib-user-data");
+                g.writeStringField("exportedAt", Instant.now().toString());
 
-            exportBookState(g, bookRecords);
-            exportReadingProgress(g, null);
-            exportReadingHistory(g, history);
-            exportReadingStats(g, null);
-            exportBookmarks(g, bookmarks);
-            exportAnnotations(g, annotations);
-            exportAnnotationTags(g);
-            exportGroups(g, null);
-            exportGroupMemberships(g, groupMemberships);
-            exportSavedSearches(g, savedSearches);
-            exportCustomFieldDefinitions(g);
-            exportCustomFieldValues(g);
+                exportBookState(g, bookRecords);
+                exportReadingProgress(g, null);
+                exportReadingHistory(g, history);
+                exportReadingStats(g, null);
+                exportBookmarks(g, bookmarks);
+                exportAnnotations(g, annotations);
+                exportAnnotationTags(g);
+                exportGroups(g, null);
+                exportGroupMemberships(g, groupMemberships);
+                exportSavedSearches(g, savedSearches);
+                exportCustomFieldDefinitions(g);
+                exportCustomFieldValues(g);
 
-            g.writeFieldName("filterSettings");
-            Map<String, String> filterSettings = settings.findByPrefix(FILTER_PREFIX);
-            mapper.writeValue(g, filterSettings == null ? Map.of() : filterSettings);
+                g.writeFieldName("filterSettings");
+                Map<String, String> filterSettings = settings.findByPrefix(FILTER_PREFIX);
+                mapper.writeValue(g, filterSettings == null ? Map.of() : filterSettings);
 
-            g.writeObjectFieldStart("readerSettings");
-            exportReaderSettings(g, readerOverrides);
-            g.writeEndObject();
+                g.writeObjectFieldStart("readerSettings");
+                exportReaderSettings(g, readerOverrides);
+                g.writeEndObject();
 
-            g.writeEndObject();
+                g.writeEndObject();
+            }
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    staged, safeTarget, expectedTargetHash, "Portable user-data export");
         } catch (UncheckedIOException e) {
-            Files.deleteIfExists(tmp);
             throw portableExportFailure(e.getCause());
         } catch (IOException e) {
-            Files.deleteIfExists(tmp);
             throw portableExportFailure(e);
         } catch (Exception e) {
-            Files.deleteIfExists(tmp);
             throw portableExportFailure(e);
-        }
-
-        try {
-            AtomicFileSupport.moveReplacing(tmp, targetFile);
-        } catch (IOException e) {
-            Files.deleteIfExists(tmp);
-            throw portableExportFailure(e);
+        } finally {
+            try {
+                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+            } catch (IOException cleanupFailure) {
+                log.warn("Cannot clean portable user-data export workspace {}: {}", workspace, cleanupFailure.toString());
+            }
         }
         return new ExportResult(CURRENT_SCHEMA_VERSION, bookRecords.get(), groupMemberships.get(), bookmarks.get(),
                 annotations.get(), history.get(), savedSearches.get(), readerOverrides.get());
@@ -126,11 +136,35 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     @Override
     public ImportResult restoreFrom(Path sourceFile) throws IOException {
         Objects.requireNonNull(sourceFile, "sourceFile");
-        ManifestHeader header = inspectManifest(sourceFile);
-        if (header.sourceVersion() >= 2 && header.sourceVersion() <= CURRENT_SCHEMA_VERSION) {
-            return restoreCurrentSchemaStreaming(sourceFile, header);
+        Path safeSource = SafeFilePublication.requireSafeRegularFile(
+                sourceFile, "Portable user-data import source");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                AppPaths.cacheDir(), ".mhl-user-data-import-", "Portable user-data import workspace");
+        Path stableSource = workspace.resolve("portable-user-data.json");
+        try {
+            try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.copyFresh(in, stableSource, "Portable user-data stable import snapshot");
+            }
+            String snapshotHash = SafeFilePublication.sha256(
+                    stableSource, "Portable user-data stable import snapshot");
+            String currentSourceHash = SafeFilePublication.sha256(
+                    safeSource, "Portable user-data import source after snapshot");
+            if (!snapshotHash.equalsIgnoreCase(currentSourceHash)) {
+                throw new IOException("Portable user-data import source changed while it was being snapshotted");
+            }
+
+            ManifestHeader header = inspectManifest(stableSource);
+            if (header.sourceVersion() >= 2 && header.sourceVersion() <= CURRENT_SCHEMA_VERSION) {
+                return restoreCurrentSchemaStreaming(stableSource, header);
+            }
+            return restoreLegacyManifest(stableSource, header.sourceVersion());
+        } finally {
+            try {
+                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+            } catch (IOException cleanupFailure) {
+                log.warn("Cannot clean portable user-data import workspace {}: {}", workspace, cleanupFailure.toString());
+            }
         }
-        return restoreLegacyManifest(sourceFile, header.sourceVersion());
     }
 
     private ImportResult restoreLegacyManifest(Path sourceFile, int detectedVersion) throws IOException {
@@ -146,13 +180,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 try {
                     restoreLegacyV1DatabaseStreaming(sourceFile, identities, counters, readerSettings);
                     restoreNonDatabaseSectionsStreaming(sourceFile);
-                    restoreReaderGlobal(readerSettings);
+                    restoreReaderGlobal(readerSettings, externalState.readerPreferences());
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
             });
         } catch (IOException failure) {
-            rollbackExternalState(externalState, failure);
+            rollbackExternalState(externalState, readerSettings, failure);
             throw failure;
         }
         return importResult(1, CURRENT_SCHEMA_VERSION, counters);
@@ -342,50 +376,85 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         Map<String, String> filterSnapshot = new LinkedHashMap<>(settings.findByPrefix(FILTER_PREFIX));
         fileLock.readLock().lock();
         try {
-            if (!Files.isRegularFile(readerPreferencesFile)) {
-                return new ExternalStateSnapshot(filterSnapshot, new ReaderPreferencesSnapshot(false, new byte[0]));
+            if (!Files.exists(readerPreferencesFile, LinkOption.NOFOLLOW_LINKS)) {
+                return new ExternalStateSnapshot(filterSnapshot,
+                        new ReaderPreferencesSnapshot(false, new byte[0], null));
             }
-            long size = Files.size(readerPreferencesFile);
-            if (size > MAX_READER_PREFERENCES_JSON_BYTES) {
-                throw new IOException("Reader preferences exceed safety limit (" + size + " bytes): " + readerPreferencesFile);
+            Path safePreferences = SafeFilePublication.requireSafeRegularFile(
+                    readerPreferencesFile, "Reader preferences snapshot");
+            byte[] bytes = readBoundedFile(readerPreferencesFile, MAX_READER_PREFERENCES_JSON_BYTES,
+                    "Reader preferences");
+            String hash = SafeFilePublication.sha256(safePreferences, "Reader preferences snapshot");
+            var digest = Sha256Support.newDigest();
+            digest.update(bytes);
+            String bytesHash = Sha256Support.finish(digest);
+            if (!bytesHash.equalsIgnoreCase(hash)) {
+                throw new IOException("Reader preferences changed while being snapshotted: " + readerPreferencesFile);
             }
             return new ExternalStateSnapshot(filterSnapshot,
-                    new ReaderPreferencesSnapshot(true, Files.readAllBytes(readerPreferencesFile)));
+                    new ReaderPreferencesSnapshot(true, bytes, hash));
         } finally {
             fileLock.readLock().unlock();
         }
     }
 
-    private void rollbackExternalState(ExternalStateSnapshot snapshot, IOException original) {
+    private void rollbackExternalState(ExternalStateSnapshot snapshot,
+                                       ReaderSettingsRestoreState readerState,
+                                       IOException original) {
         try {
             settings.replaceByPrefix(FILTER_PREFIX, snapshot.filterSettings());
         } catch (RuntimeException settingsFailure) {
             original.addSuppressed(settingsFailure);
         }
         try {
-            restoreReaderPreferencesSnapshot(snapshot.readerPreferences());
+            restoreReaderPreferencesSnapshot(snapshot.readerPreferences(), readerState);
         } catch (IOException readerFailure) {
             original.addSuppressed(readerFailure);
         }
     }
 
-    private void restoreReaderPreferencesSnapshot(ReaderPreferencesSnapshot snapshot) throws IOException {
+    private void restoreReaderPreferencesSnapshot(ReaderPreferencesSnapshot snapshot,
+                                                  ReaderSettingsRestoreState readerState) throws IOException {
+        if (!readerState.readerPreferencesChanged()) return;
         fileLock.writeLock().lock();
         try {
-            Path tmp = readerPreferencesFile.resolveSibling(readerPreferencesFile.getFileName() + ".rollback.tmp");
             if (!snapshot.existed()) {
-                Files.deleteIfExists(readerPreferencesFile);
-                Files.deleteIfExists(tmp);
+                if (readerState.installedReaderPreferencesHash() != null) {
+                    SafeFilePublication.removeIfOwned(
+                            readerPreferencesFile,
+                            readerState.installedReaderPreferencesHash(),
+                            "Reader preferences rollback cleanup");
+                } else if (Files.exists(readerPreferencesFile, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("Reader preferences changed concurrently before rollback: "
+                            + readerPreferencesFile);
+                }
                 return;
             }
-            Files.createDirectories(readerPreferencesFile.toAbsolutePath().getParent());
+
+            Path parent = SafeFilePublication.createDirectoriesNoLinks(
+                    readerPreferencesFile.toAbsolutePath().getParent(), "Reader preferences rollback parent");
+            Path workspace = SafeFilePublication.createPrivateWorkspace(
+                    parent, ".mhl-reader-preferences-rollback-", "Reader preferences rollback workspace");
+            Path staged = workspace.resolve("reader-preferences.json");
+            boolean cleanup = true;
             try {
-                Files.write(tmp, snapshot.bytes());
-                AtomicFileSupport.moveReplacing(tmp, readerPreferencesFile);
+                try (OutputStream out = SafeFilePublication.openFreshOutputStream(
+                        staged, "Reader preferences rollback staging")) {
+                    out.write(snapshot.bytes());
+                }
+                SafeFilePublication.publishReplacingIfUnchanged(
+                        staged,
+                        readerPreferencesFile,
+                        readerState.installedReaderPreferencesHash(),
+                        "Reader preferences rollback");
             } catch (IOException failure) {
-                try { Files.deleteIfExists(tmp); }
-                catch (IOException cleanup) { failure.addSuppressed(cleanup); }
-                throw failure;
+                cleanup = false;
+                IOException preserved = new IOException(
+                        "Reader preferences rollback failed; snapshot evidence preserved at " + workspace,
+                        failure);
+                throw preserved;
+            } finally {
+                if (cleanup) SafeFilePublication.cleanupPrivateWorkspace(workspace);
             }
         } finally {
             fileLock.writeLock().unlock();
@@ -403,13 +472,13 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
                 try {
                     restoreDatabaseSectionsStreaming(sourceFile, identities, counters, readerSettings, header.sourceVersion());
                     restoreNonDatabaseSectionsStreaming(sourceFile);
-                    restoreReaderGlobal(readerSettings);
+                    restoreReaderGlobal(readerSettings, externalState.readerPreferences());
                 } catch (IOException e) {
                     throw new UncheckedIOException(e);
                 }
             });
         } catch (IOException failure) {
-            rollbackExternalState(externalState, failure);
+            rollbackExternalState(externalState, readerSettings, failure);
             throw failure;
         }
         return importResult(header.sourceVersion(), CURRENT_SCHEMA_VERSION, counters);
@@ -571,16 +640,47 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         return node;
     }
 
-    private void restoreReaderGlobal(ReaderSettingsRestoreState state) throws IOException {
+    private void restoreReaderGlobal(ReaderSettingsRestoreState state,
+                                     ReaderPreferencesSnapshot baseline) throws IOException {
         if (!state.globalSeen()) return;
         fileLock.writeLock().lock();
         try {
             JsonNode global = state.global();
             if (global == null || global.isNull()) {
-                Files.deleteIfExists(readerPreferencesFile);
-                Files.deleteIfExists(readerPreferencesFile.resolveSibling(readerPreferencesFile.getFileName() + ".tmp"));
+                if (baseline.existed()) {
+                    SafeFilePublication.removeIfOwned(
+                            readerPreferencesFile,
+                            baseline.sha256(),
+                            "Reader preferences import delete");
+                } else {
+                    Path safeTarget = SafeFilePublication.prepareTarget(
+                            readerPreferencesFile, "Reader preferences import target");
+                    if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                        throw new IOException("Reader preferences changed concurrently before import: " + safeTarget);
+                    }
+                }
+                state.markReaderPreferencesChanged(null);
             } else {
-                writeJsonAtomic(readerPreferencesFile, global);
+                Path parent = SafeFilePublication.createDirectoriesNoLinks(
+                        readerPreferencesFile.toAbsolutePath().getParent(), "Reader preferences import parent");
+                Path workspace = SafeFilePublication.createPrivateWorkspace(
+                        parent, ".mhl-reader-preferences-import-", "Reader preferences import workspace");
+                Path staged = workspace.resolve("reader-preferences.json");
+                try {
+                    try (OutputStream out = SafeFilePublication.openFreshOutputStream(
+                            staged, "Reader preferences import staging")) {
+                        mapper.writerWithDefaultPrettyPrinter().writeValue(out, global);
+                    }
+                    SafeFilePublication.publishReplacingIfUnchanged(
+                            staged,
+                            readerPreferencesFile,
+                            baseline.sha256(),
+                            "Reader preferences import");
+                    state.markReaderPreferencesChanged(SafeFilePublication.sha256(
+                            readerPreferencesFile, "Reader preferences imported target"));
+                } finally {
+                    SafeFilePublication.cleanupPrivateWorkspace(workspace);
+                }
             }
         } finally {
             fileLock.writeLock().unlock();
@@ -594,15 +694,23 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
     }
 
     private record ManifestHeader(int sourceVersion, String format) { }
-    private record ReaderPreferencesSnapshot(boolean existed, byte[] bytes) { }
+    private record ReaderPreferencesSnapshot(boolean existed, byte[] bytes, String sha256) { }
     private record ExternalStateSnapshot(Map<String, String> filterSettings, ReaderPreferencesSnapshot readerPreferences) { }
 
     private static final class ReaderSettingsRestoreState {
         private JsonNode global;
         private boolean globalSeen;
+        private boolean readerPreferencesChanged;
+        private String installedReaderPreferencesHash;
         JsonNode global() { return global; }
         boolean globalSeen() { return globalSeen; }
         void global(JsonNode value) { this.global = value; this.globalSeen = true; }
+        boolean readerPreferencesChanged() { return readerPreferencesChanged; }
+        String installedReaderPreferencesHash() { return installedReaderPreferencesHash; }
+        void markReaderPreferencesChanged(String installedHash) {
+            this.readerPreferencesChanged = true;
+            this.installedReaderPreferencesHash = installedHash;
+        }
     }
 
 
@@ -1147,29 +1255,25 @@ public class VersionedUserDataTransferAdapter implements UserDataTransferPort {
         g.writeEndArray();
     }
 
-    private void writeJsonAtomic(Path file, JsonNode value) throws IOException {
-        Files.createDirectories(file.toAbsolutePath().getParent());
-        Path tmp = file.resolveSibling(file.getFileName() + ".tmp");
+    private JsonNode readJsonUnlocked(Path file) throws IOException {
+        if (!Files.exists(file, LinkOption.NOFOLLOW_LINKS)) return null;
+        SafeFilePublication.requireSafeRegularFile(file, "Reader preferences");
         try {
-            mapper.writerWithDefaultPrettyPrinter().writeValue(tmp.toFile(), value);
-            AtomicFileSupport.moveReplacing(tmp, file);
-        } catch (IOException failure) {
-            try { Files.deleteIfExists(tmp); }
-            catch (IOException cleanup) { failure.addSuppressed(cleanup); }
-            throw failure;
+            return mapper.readTree(readBoundedFile(file, MAX_READER_PREFERENCES_JSON_BYTES, "Reader preferences"));
+        } catch (IOException e) {
+            throw new IOException("Cannot read Reader preferences: " + file, e);
         }
     }
 
-    private JsonNode readJsonUnlocked(Path file) throws IOException {
-        if (!Files.isRegularFile(file)) return null;
-        long size = Files.size(file);
-        if (size > MAX_READER_PREFERENCES_JSON_BYTES) {
-            throw new IOException("Reader preferences exceed safety limit (" + size + " bytes): " + file);
-        }
-        try {
-            return mapper.readTree(file.toFile());
-        } catch (IOException e) {
-            throw new IOException("Cannot read Reader preferences: " + file, e);
+
+    private static byte[] readBoundedFile(Path file, int maxBytes, String label) throws IOException {
+        Path safe = SafeFilePublication.requireSafeRegularFile(file, label);
+        try (InputStream in = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] bytes = in.readNBytes(maxBytes + 1);
+            if (bytes.length > maxBytes) {
+                throw new IOException(label + " exceed safety limit (" + maxBytes + " bytes): " + file);
+            }
+            return bytes;
         }
     }
 

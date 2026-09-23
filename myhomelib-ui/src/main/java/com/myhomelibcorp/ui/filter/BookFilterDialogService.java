@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.filter;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.application.filter.BookFilterMode;
 import com.myhomelibcorp.application.filter.BookAnnotationPresenceFilter;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
@@ -35,24 +36,25 @@ public class BookFilterDialogService {
     Dialog<BookFilterSpec> createDialog(Window owner, BookFilterSpec current) {
         final BookFilterSpec effectiveCurrent = current == null ? BookFilterSpec.empty() : current;
         Dialog<BookFilterSpec> dialog = new Dialog<>();
-        dialog.setTitle(i18n.tr("Фільтри книг"));
-        dialog.setHeaderText(i18n.tr("Єдиний фільтр для навігації, пошуку й таблиці"));
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(i18n.text("ui.text.book_filters"));
+        dialog.setHeaderText(i18n.text("ui.text.unified_filter_for_navigation_search_and_table"));
         if (owner != null) dialog.initOwner(owner);
 
-        ButtonType apply = new ButtonType(i18n.tr("Застосувати"), ButtonBar.ButtonData.OK_DONE);
-        ButtonType reset = new ButtonType(i18n.tr("Скинути фільтр"), ButtonBar.ButtonData.LEFT);
+        ButtonType apply = new ButtonType(i18n.text("ui.text.apply"), ButtonBar.ButtonData.OK_DONE);
+        ButtonType reset = new ButtonType(i18n.text("ui.text.reset_filter"), ButtonBar.ButtonData.LEFT);
         dialog.getDialogPane().getButtonTypes().addAll(apply, reset, ButtonType.CANCEL);
 
         ComboBox<BookFilterMode> mode = new ComboBox<>();
         mode.getItems().setAll(BookFilterMode.values());
         mode.setConverter(new StringConverter<>() {
             @Override public String toString(BookFilterMode value) {
-                return value == BookFilterMode.OR ? i18n.tr("Будь-яка умова (OR)") : i18n.tr("Усі умови (AND)");
+                return value == BookFilterMode.OR ? i18n.text("ui.text.any_condition_or") : i18n.text("ui.text.all_conditions_and");
             }
             @Override public BookFilterMode fromString(String value) {
                 if (value == null || value.isBlank()) return BookFilterMode.AND;
                 String normalized = value.trim();
-                if (normalized.equalsIgnoreCase(i18n.tr("Будь-яка умова (OR)")) || normalized.equalsIgnoreCase("OR")) return BookFilterMode.OR;
+                if (normalized.equalsIgnoreCase(i18n.text("ui.text.any_condition_or")) || normalized.equalsIgnoreCase("OR")) return BookFilterMode.OR;
                 return BookFilterMode.AND;
             }
         });
@@ -62,12 +64,12 @@ public class BookFilterDialogService {
         TextField yearFrom = field(effectiveCurrent.yearFrom());
         TextField yearTo = field(effectiveCurrent.yearTo());
         ComboBox<String> format = new ComboBox<>();
-        format.getItems().add(i18n.tr("Будь-який"));
+        format.getItems().add(i18n.text("ui.text.any"));
         for (BookFormat value : BookFormat.values()) format.getItems().add(value.name());
-        format.setValue(effectiveCurrent.format() == null ? i18n.tr("Будь-який") : effectiveCurrent.format().name());
+        format.setValue(effectiveCurrent.format() == null ? i18n.text("ui.text.any") : effectiveCurrent.format().name());
 
-        ComboBox<String> local = triState(i18n.tr("Будь-які"), i18n.tr("Тільки локальні"), i18n.tr("Тільки онлайн"), effectiveCurrent.local());
-        ComboBox<String> read = triState(i18n.tr("Будь-які"), i18n.tr("Прочитані"), i18n.tr("Непрочитані"), effectiveCurrent.read());
+        ComboBox<String> local = triState(i18n.text("ui.text.any_2ce12a5"), i18n.text("ui.text.local_only"), i18n.text("ui.text.online_only"), effectiveCurrent.local());
+        ComboBox<String> read = triState(i18n.text("ui.text.any_2ce12a5"), i18n.text("ui.text.read"), i18n.text("ui.text.unread"), effectiveCurrent.read());
         ComboBox<BookAnnotationPresenceFilter> annotationPresence = new ComboBox<>();
         annotationPresence.setId("annotationPresenceFilter");
         annotationPresence.setAccessibleText(i18n.text("ui.filter.annotation.label"));
@@ -87,20 +89,20 @@ public class BookFilterDialogService {
         annotationPresence.setValue(effectiveCurrent.annotationPresence());
         TextField ratingMin = field(effectiveCurrent.ratingMin());
         TextField ratingMax = field(effectiveCurrent.ratingMax());
-        CheckBox hideUnrated = new CheckBox(i18n.tr("Приховати без оцінки"));
+        CheckBox hideUnrated = new CheckBox(i18n.text("ui.text.hide_unrated"));
         hideUnrated.setSelected(effectiveCurrent.hideUnrated());
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(9); grid.setPadding(new Insets(12));
         int r = 0;
-        grid.add(new Label(i18n.tr("Режим")), 0, r); grid.add(mode, 1, r++);
-        grid.add(new Label(i18n.tr("Мова")), 0, r); grid.add(language, 1, r++);
-        grid.add(new Label(i18n.tr("Рік від / до")), 0, r); grid.add(new HBox(6, yearFrom, yearTo), 1, r++);
-        grid.add(new Label(i18n.tr("Формат")), 0, r); grid.add(format, 1, r++);
-        grid.add(new Label(i18n.tr("Локальність")), 0, r); grid.add(local, 1, r++);
-        grid.add(new Label(i18n.tr("Статус читання")), 0, r); grid.add(read, 1, r++);
+        grid.add(new Label(i18n.text("ui.text.mode")), 0, r); grid.add(mode, 1, r++);
+        grid.add(new Label(i18n.text("ui.text.language")), 0, r); grid.add(language, 1, r++);
+        grid.add(new Label(i18n.text("ui.text.year_from_to")), 0, r); grid.add(new HBox(6, yearFrom, yearTo), 1, r++);
+        grid.add(new Label(i18n.text("ui.text.format")), 0, r); grid.add(format, 1, r++);
+        grid.add(new Label(i18n.text("ui.text.availability")), 0, r); grid.add(local, 1, r++);
+        grid.add(new Label(i18n.text("ui.text.reading_status")), 0, r); grid.add(read, 1, r++);
         grid.add(new Label(i18n.text("ui.filter.annotation.label")), 0, r); grid.add(annotationPresence, 1, r++);
-        grid.add(new Label(i18n.tr("Оцінка від / до")), 0, r); grid.add(new HBox(6, ratingMin, ratingMax), 1, r++);
+        grid.add(new Label(i18n.text("ui.text.rating_from_to")), 0, r); grid.add(new HBox(6, ratingMin, ratingMax), 1, r++);
         grid.add(hideUnrated, 1, r);
         dialog.getDialogPane().setContent(grid);
 

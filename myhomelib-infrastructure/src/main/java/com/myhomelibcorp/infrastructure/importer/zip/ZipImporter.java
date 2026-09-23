@@ -2,10 +2,11 @@ package com.myhomelibcorp.infrastructure.importer.zip;
 
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
-import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
+import com.myhomelibcorp.shared.archive.SafeZipSupport;
 
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
@@ -17,8 +18,8 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
-import java.nio.charset.Charset;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.LinkedList;
 import java.util.Queue;
@@ -27,8 +28,9 @@ import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
+import java.util.Enumeration;
 
 @Component
 @Slf4j
@@ -50,14 +52,13 @@ public class ZipImporter implements BookImporterPort {
 
     @Override
     public Stream<Book> importBooks(Path file) {
-        if (file == null || !Files.isRegularFile(file)) return Stream.empty();
+        if (file == null) return Stream.empty();
 
         log.info("Імпорт ZIP-архіву: {}", file);
         try {
-            Charset charset = ZipCharsetSupport.detect(file);
-            InputStream input = Files.newInputStream(file);
-            ZipInputStream zip = new ZipInputStream(input, charset);
-            ZipIterator iterator = new ZipIterator(zip, file.toAbsolutePath().normalize());
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "ZIP import source");
+            ZipFile zip = SafeZipSupport.openDetected(safeFile, "ZIP import source");
+            ZipIterator iterator = new ZipIterator(zip, safeFile);
             Spliterator<Book> spliterator = Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED);
             return StreamSupport.stream(spliterator, false).onClose(iterator::close);
         } catch (Exception e) {
@@ -67,22 +68,22 @@ public class ZipImporter implements BookImporterPort {
 
     @Override
     public long countBooks(Path file) {
-        if (file == null || !Files.isRegularFile(file)) return -1;
+        if (file == null) return -1;
         try {
-            Charset charset = ZipCharsetSupport.detect(file);
-            try (InputStream in = Files.newInputStream(file); ZipInputStream zip = new ZipInputStream(in, charset)) {
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "ZIP import source");
+            try (ZipFile zip = SafeZipSupport.openDetected(safeFile, "ZIP import source")) {
                 long count = 0;
-                int entries = 0;
-                ZipEntry entry;
-                while ((entry = zip.getNextEntry()) != null) {
-                    if (++entries > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return -1;
+                int inspected = 0;
+                Enumeration<ZipArchiveEntry> entries = zip.getEntries();
+                while (entries.hasMoreElements()) {
+                    if (++inspected > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return -1;
+                    ZipArchiveEntry entry = entries.nextElement();
                     String name = entry.getName();
                     if (!entry.isDirectory()
                             && ArchiveImportSupport.isSafeEntryName(name)
                             && ArchiveImportSupport.isSupportedBookEntry(name, importerRegistry)) {
                         count++;
                     }
-                    zip.closeEntry();
                 }
                 return count;
             }
@@ -95,23 +96,23 @@ public class ZipImporter implements BookImporterPort {
     // ==================== ВНУТРІШНІЙ КЛАС ІТЕРАТОРА ====================
 
     private class ZipIterator implements java.util.Iterator<Book> {
-        private final ZipInputStream zis;
+        private final ZipFile zip;
+        private final Enumeration<ZipArchiveEntry> entries;
         private final Path archivePath;
         private final Queue<Book> bookQueue = new LinkedList<>();
         private boolean finished;
-        private int entryCount = 0;
-        private long totalDecompressedSize = 0;
+        private int entryCount;
+        private long totalDecompressedSize;
 
-        private ZipIterator(ZipInputStream zis, Path archivePath) {
-            this.zis = zis;
+        private ZipIterator(ZipFile zip, Path archivePath) {
+            this.zip = zip;
+            this.entries = zip.getEntries();
             this.archivePath = archivePath;
         }
 
         @Override
         public boolean hasNext() {
-            while (bookQueue.isEmpty() && !finished) {
-                processNextEntry();
-            }
+            while (bookQueue.isEmpty() && !finished) processNextEntry();
             return !bookQueue.isEmpty();
         }
 
@@ -129,86 +130,61 @@ public class ZipImporter implements BookImporterPort {
             }
 
             try {
-                ZipEntry entry = zis.getNextEntry();
-                if (entry == null) {
+                if (!entries.hasMoreElements()) {
                     close();
                     log.info("ZIP-архів оброблено, всього записів: {}", entryCount);
                     return false;
                 }
 
-                entryCount++;
-
-                // Перевірка лімітів безпеки
-                if (entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                ZipArchiveEntry entry = entries.nextElement();
+                if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                     throw new IOException("ZIP contains more than " + ArchiveSafetyLimits.MAX_ENTRY_COUNT + " entries");
                 }
 
-                // Перевірка Zip Slip
-                if (!ArchiveImportSupport.isSafeEntryName(entry.getName())) {
-                    log.warn("Підозрілий запис (Zip Slip): {}", entry.getName());
-                    zis.closeEntry();
+                String rawEntryName = entry.getName();
+                if (!ArchiveImportSupport.isSafeEntryName(rawEntryName)) {
+                    log.warn("Підозрілий запис (Zip Slip): {}", rawEntryName);
                     return true;
                 }
-
-                String rawEntryName = entry.getName();
                 if (ArchiveImportSupport.isNestedArchive(rawEntryName)) {
                     log.debug("Пропущено вкладений архів (підтримується один archive layer): {}", rawEntryName);
-                    zis.closeEntry();
                     return true;
                 }
-                if (entry.isDirectory()) {
-                    zis.closeEntry();
-                    return true;
-                }
+                if (entry.isDirectory()) return true;
 
-                // Declared sizes may be -1 for streaming ZIPs. Never trust them alone.
                 long entrySize = entry.getSize();
                 long compressedSize = entry.getCompressedSize();
                 if (ArchiveSafetyLimits.declaredEntryTooLarge(entrySize)) {
                     log.warn("Пропущено ZIP entry, що перевищує ліміт: {} ({} bytes)", rawEntryName, entrySize);
-                    zis.closeEntry();
                     return true;
                 }
 
                 Path tempFile = Files.createTempFile("zip_import_", ArchiveImportSupport.suffixFor(rawEntryName));
                 try {
-                    // Do NOT close this wrapper: FilterInputStream.close() would close the whole
-                    // ZipInputStream and truncate multi-entry imports after the first book.
-                    LimitedInputStream limitedIn = new LimitedInputStream(zis, ArchiveSafetyLimits.MAX_ENTRY_BYTES);
-                    try {
-                        Files.copy(limitedIn, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-                    } catch (IOException limitFailure) {
-                        if (limitFailure.getMessage() != null && limitFailure.getMessage().contains("Maximum size limit exceeded")) {
-                            log.warn("Пропущено ZIP entry, що фактично перевищив ліміт: {}", rawEntryName);
-                            zis.closeEntry();
-                            return true;
+                    long actualSize;
+                    try (InputStream entryInput = zip.getInputStream(entry);
+                         LimitedInputStream limitedIn = new LimitedInputStream(entryInput, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
+                        try {
+                            Files.copy(limitedIn, tempFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                        } catch (IOException limitFailure) {
+                            if (limitFailure.getMessage() != null && limitFailure.getMessage().contains("Maximum size limit exceeded")) {
+                                log.warn("Пропущено ZIP entry, що фактично перевищив ліміт: {}", rawEntryName);
+                                return true;
+                            }
+                            throw limitFailure;
                         }
-                        throw limitFailure;
+                        actualSize = limitedIn.getTotalRead();
                     }
 
-                    // Перевіряємо фактичний розмір
-                    long actualSize = limitedIn.getTotalRead();
                     totalDecompressedSize += actualSize;
-
-                    // Перевірка загального розміру
                     if (totalDecompressedSize > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
                         throw new IOException("ZIP exceeds cumulative decompression safety limit: "
                                 + totalDecompressedSize + " > " + ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES);
                     }
-
-                    // Compression-ratio guard uses compressed size, not the declared
-                    // uncompressed size (which would make the ratio almost always 1).
-                    if (compressedSize > 0 && actualSize > 0) {
-                        long ratio = actualSize / Math.max(1, compressedSize);
-                        if (ratio > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
-                            log.warn("Підозрілий compression ratio: {} (compressed: {}, unpacked: {})",
-                                    ratio, compressedSize, actualSize);
-                            zis.closeEntry();
-                            return true;
-                        }
+                    if (ArchiveSafetyLimits.exceedsCompressionRatio(actualSize, compressedSize)) {
+                        log.warn("Підозрілий compression ratio (compressed: {}, unpacked: {})", compressedSize, actualSize);
+                        return true;
                     }
-
-                    zis.closeEntry();
 
                     BookImporterPort importer;
                     try {
@@ -226,9 +202,7 @@ public class ZipImporter implements BookImporterPort {
                 } finally {
                     Files.deleteIfExists(tempFile);
                 }
-
                 return true;
-
             } catch (IOException e) {
                 close();
                 throw new UncheckedIOException("Не вдалося прочитати ZIP " + archivePath, e);
@@ -242,12 +216,14 @@ public class ZipImporter implements BookImporterPort {
         }
 
         private void close() {
+            if (finished) return;
             finished = true;
             try {
-                zis.close();
+                zip.close();
             } catch (IOException e) {
-                log.debug("Не вдалося закрити ZIP stream {}: {}", archivePath, e.getMessage());
+                log.debug("Не вдалося закрити ZIP {}: {}", archivePath, e.getMessage());
             }
         }
     }
+
 }

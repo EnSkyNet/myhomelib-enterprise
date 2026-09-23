@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.following;
 
 import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.catalog.FollowedAuthorSummary;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -56,10 +57,10 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
     @FXML
     public void initialize() {
         disposed = false;
-        authorColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().authorName()));
+        authorColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(displayAuthor(cell.getValue().authorName())));
         booksColumn.setCellValueFactory(cell -> new ReadOnlyLongWrapper(cell.getValue().activeBookCount()));
         newColumn.setCellValueFactory(cell -> new ReadOnlyLongWrapper(cell.getValue().newBookCount()));
-        lastBookColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().lastBookTitle()));
+        lastBookColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(displayTitle(cell.getValue().lastBookTitle())));
         dateColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().lastBookDate()));
         followedTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, selected) -> updateActions(selected));
         followedTable.setOnMouseClicked(event -> {
@@ -89,7 +90,7 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
         FollowedAuthorSummary selected = selected();
         if (selected == null || selected.authorId().isBlank()) return;
         runMutation(
-                localizationService.tr("Позначення оновлень автора…"),
+                localizationService.text("ui.text.marking_author_updates"),
                 () -> catalogUpdateService.acknowledgeAuthorUpdates(AuthorId.fromString(selected.authorId())));
     }
 
@@ -98,20 +99,28 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
         FollowedAuthorSummary selected = selected();
         if (selected == null || selected.authorId().isBlank()) return;
         if (!dialogService.showConfirmation(
-                localizationService.tr("Не стежити за автором?"),
-                selected.authorName(),
-                localizationService.tr("Автор залишиться у бібліотеці, але нові книги більше не створюватимуть події стеження."))) {
+                localizationService.text("ui.text.unfollow_author"),
+                displayAuthor(selected.authorName()),
+                localizationService.text("ui.text.the_author_will_remain_in_the_library_but_new_bo_4d94067"))) {
             return;
         }
         runMutation(
-                localizationService.tr("Оновлення підписки…"),
+                localizationService.text("ui.text.updating_follow_status"),
                 () -> catalogUpdateService.setAuthorFollowed(AuthorId.fromString(selected.authorId()), false));
+    }
+
+    private String displayAuthor(String value) {
+        return value == null || value.isBlank() ? localizationService.text("common.author.unknown") : value;
+    }
+
+    private String displayTitle(String value) {
+        return value == null || value.isBlank() ? localizationService.text("common.title.untitled") : value;
     }
 
     private void runMutation(String status, Runnable action) {
         setBusy(true);
         detailLabel.setText(status);
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             action.run();
             return null;
         }).whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
@@ -119,8 +128,8 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
             setBusy(false);
             if (error != null) {
                 Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                detailLabel.setText(localizationService.tr("Операція не виконана") + ": "
-                        + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                detailLabel.setText(localizationService.text("ui.text.operation_was_not_completed") + ": "
+                        + UiExceptionSupport.message(cause));
                 return;
             }
             load();
@@ -131,8 +140,8 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
         long generation = ++loadGeneration;
         String collectionId = currentCollectionId();
         setBusy(true);
-        detailLabel.setText(localizationService.tr("Завантаження списку стеження…"));
-        executor.submit(catalogUpdateService::followedAuthors)
+        detailLabel.setText(localizationService.text("ui.text.loading_followed_authors"));
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, catalogUpdateService::followedAuthors)
                 .whenComplete((rows, error) -> UiExecutor.runOnUiThread(() -> {
                     if (disposed || generation != loadGeneration || !collectionId.equals(currentCollectionId())) return;
                     setBusy(false);
@@ -140,9 +149,9 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         followedTable.getItems().clear();
                         applyEmptyState(true);
-                        summaryLabel.setText(localizationService.tr("Стеження за авторами"));
-                        detailLabel.setText(localizationService.tr("Не вдалося завантажити список") + ": "
-                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        summaryLabel.setText(localizationService.text("ui.text.author_tracking"));
+                        detailLabel.setText(localizationService.text("ui.text.failed_to_load_the_list") + ": "
+                                + UiExceptionSupport.message(cause));
                         return;
                     }
                     applyRows(rows == null ? List.of() : rows);
@@ -153,13 +162,13 @@ public class FollowedAuthorsWorkspaceController implements WorkspaceLifecycle {
         followedTable.getItems().setAll(rows);
         long newBooks = rows.stream().mapToLong(FollowedAuthorSummary::newBookCount).sum();
         summaryLabel.setText(String.format("%s: %,d   •   %s: %,d",
-                localizationService.tr("Авторів"), rows.size(),
-                localizationService.tr("Нових книг"), newBooks));
+                localizationService.text("ui.text.authors"), rows.size(),
+                localizationService.text("ui.text.new_books"), newBooks));
         boolean empty = rows.isEmpty();
         applyEmptyState(empty);
         detailLabel.setText(empty
-                ? localizationService.tr("Ви ще не стежите за авторами. Відкрийте автора та виберіть «Стежити». ")
-                : localizationService.tr("Виберіть автора. Лічильник «Нових» оновлюється після online update."));
+                ? localizationService.text("ui.text.you_are_not_following_any_authors_yet_open_an_au_8e151a4")
+                : localizationService.text("ui.text.select_an_author_the_new_counter_is_refreshed_af_db1a1c2"));
         updateActions(selected());
     }
 

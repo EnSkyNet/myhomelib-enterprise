@@ -77,6 +77,51 @@ class DownloadPayloadValidatorTest {
                 .hasMessageContaining("дубльоване");
     }
 
+
+
+    @Test
+    void highReliabilityModeRejectsZipBombCompressionRatioBeforeFullInflation() throws Exception {
+        Path zip = temp.resolve("zip-bomb.zip");
+        String payload = "<FictionBook>" + "A".repeat(200_000) + "</FictionBook>";
+        writeZip(zip, new Entry("book.fb2", payload));
+        ArchiveReader reader = reader(List.of("book.fb2"), "<FictionBook/>");
+
+        assertThatThrownBy(() -> validator(reader).validate(zip, zip, book("book.fb2"), true))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("compression ratio");
+    }
+
+    @Test
+    void archiveValidationDoesNotDeleteLegacyPredictableSiblingAlias() throws Exception {
+        Path zip = temp.resolve("books.zip");
+        writeZip(zip, new Entry("book.fb2", "<?xml version=\"1.0\"?><FictionBook><body/></FictionBook>"));
+        Path legacyAlias = temp.resolve(".validate-books.zip");
+        Files.writeString(legacyAlias, "FOREIGN");
+        ArchiveReader reader = reader(List.of("book.fb2"), "<?xml version=\"1.0\"?><FictionBook/>");
+
+        validator(reader).validate(zip, zip, book("book.fb2"), true);
+
+        org.assertj.core.api.Assertions.assertThat(Files.readString(legacyAlias)).isEqualTo("FOREIGN");
+    }
+
+    @Test
+    void symlinkedPayloadIsRejectedWithoutReadingReferencedFile() throws Exception {
+        Path real = temp.resolve("real.zip");
+        writeZip(real, new Entry("book.fb2", "<FictionBook/>"));
+        Path link = temp.resolve("payload.zip");
+        try {
+            Files.createSymbolicLink(link, real.getFileName());
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+        ArchiveReader reader = reader(List.of("book.fb2"), "<FictionBook/>");
+
+        assertThatThrownBy(() -> validator(reader).validate(link, link, book("book.fb2"), true))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("небезпечний");
+        org.assertj.core.api.Assertions.assertThat(Files.size(real)).isPositive();
+    }
+
     private DownloadPayloadValidator validator(ArchiveReader reader) {
         ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
         when(settings.getBoolean(anyString(), org.mockito.ArgumentMatchers.anyBoolean()))

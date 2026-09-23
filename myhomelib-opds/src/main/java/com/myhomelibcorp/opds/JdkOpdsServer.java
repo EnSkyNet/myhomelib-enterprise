@@ -1,10 +1,12 @@
 package com.myhomelibcorp.opds;
 
 import com.myhomelibcorp.application.opds.*;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.webreader.WebReaderUseCase;
 import com.myhomelibcorp.application.usecase.reading.ContinueReadingService;
 import com.myhomelibcorp.web.WebLibraryRenderer;
 import com.myhomelibcorp.web.WebReaderRenderer;
+import com.myhomelibcorp.web.WebTextCatalog;
 import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -15,6 +17,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -23,9 +26,12 @@ import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.net.URLEncoder;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.security.KeyStore;
 import java.security.MessageDigest;
 import java.time.Instant;
@@ -47,13 +53,15 @@ import javax.net.ssl.SSLParameters;
 public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsServerControl {
     private static final String ATOM = "application/atom+xml;profile=opds-catalog;charset=utf-8";
     private static final int DEFAULT_LIMIT = 50;
+    private static final int MAX_TLS_KEYSTORE_BYTES = 32 * 1024 * 1024;
 
     private final OpdsCatalogService catalog;
     private final OpdsDownloadService downloads;
     private final OpdsAccessTokenService accessTokens;
-    private final Opds2JsonRenderer opds2 = new Opds2JsonRenderer();
-    private final WebLibraryRenderer web = new WebLibraryRenderer();
-    private final WebReaderRenderer webReaderRenderer = new WebReaderRenderer();
+    private final WebTextCatalog webText = new WebTextCatalog();
+    private final Opds2JsonRenderer opds2 = new Opds2JsonRenderer(webText);
+    private final WebLibraryRenderer web = new WebLibraryRenderer(webText);
+    private final WebReaderRenderer webReaderRenderer = new WebReaderRenderer(webText);
     private final WebReaderUseCase webReader;
     private final ContinueReadingService continueReading;
 
@@ -120,8 +128,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             String host = displayHost(settings.bindAddress());
             OpdsServerStatus result = new OpdsServerStatus(true, settings.bindAddress(), actualPort,
                     scheme + "://" + host + ":" + actualPort + "/opds", exposed,
-                    exposed ? "OPDS працює через HTTPS у мережі" :
-                            (settings.tls().enabled() ? "OPDS працює локально через HTTPS" : "OPDS працює локально"));
+                    "ui.opds.status.running", "");
             status.set(result);
             log.info("OPDS started at {}", result.baseUrl());
             return result;
@@ -131,7 +138,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             activeExposedBeyondLoopback = false;
             requestLimiter.set(new OpdsRequestLimiter(OpdsSecurityLimits.defaults()));
             OpdsServerStatus failed = new OpdsServerStatus(false, settings.bindAddress(), settings.port(), "",
-                    !isLoopback(settings.bindAddress()), "Не вдалося запустити OPDS: " + safeMessage(e));
+                    !isLoopback(settings.bindAddress()), "ui.opds.status.start_failed", safeMessage(e));
             status.set(failed);
             log.warn("Cannot start OPDS: {}", safeMessage(e));
             return failed;
@@ -157,13 +164,15 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     public OpdsServerStatus status() { return status.get(); }
 
     private void handle(HttpExchange exchange) throws IOException {
+        String language = requestLanguage(exchange);
+        exchange.getResponseHeaders().set("Content-Language", language);
         OpdsRequestLimiter limiter = requestLimiter.get();
         OpdsRequestLimiter.RequestPermit permit = limiter.tryAcquireRequest();
         if (permit == null) {
             try (exchange) {
                 exchange.getResponseHeaders().set("Retry-After", "1");
                 exchange.getResponseHeaders().set("Connection", "close");
-                sendText(exchange, 503, "OPDS server is busy");
+                sendText(exchange, 503, t(language, "web.error.server_busy"));
             }
             return;
         }
@@ -176,7 +185,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                 if (!"GET".equals(method) && !webProgressPost) {
                     exchange.getResponseHeaders().set("Allow", "GET");
                     exchange.getResponseHeaders().set("Connection", "close");
-                    sendText(exchange, 405, "Method Not Allowed");
+                    sendText(exchange, 405, t(language, "web.error.method_not_allowed"));
                     return;
                 }
                 if ("GET".equals(method)) exchange.getRequestBody().close();
@@ -189,11 +198,11 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                     OpdsTokenScope requiredScope = path.startsWith("/web/download/")
                             ? OpdsTokenScope.DOWNLOAD : OpdsTokenScope.CATALOG_READ;
                     if (!webAuthorized(exchange, requiredScope)) return;
-                    handleWeb(exchange, path, query(exchange.getRequestURI()), method);
+                    handleWeb(exchange, path, query(exchange.getRequestURI()), method, language);
                     return;
                 }
                 if (!path.startsWith("/opds")) {
-                    sendText(exchange, 404, "Not Found");
+                    sendText(exchange, 404, t(language, "web.error.not_found"));
                     return;
                 }
                 OpdsTokenScope requiredScope = path.startsWith("/opds/download/")
@@ -202,141 +211,141 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
 
                 Map<String, String> query = query(exchange.getRequestURI());
                 if ("/opds/v2".equals(path) || "/opds/v2/".equals(path)) {
-                    sendOpds2(exchange, 200, opds2.root());
+                    sendOpds2(exchange, 200, opds2.root(language));
                 } else if ("/opds/v2/library".equals(path)) {
-                    sendOpds2(exchange, 200, opds2.publications("Бібліотека", "/opds/v2/library",
+                    sendOpds2(exchange, 200, opds2.publications(language, t(language, "web.opds.library"), "/opds/v2/library",
                             catalog.books(OpdsBookQuery.all(offset(query), limit(query)))));
                 } else if ("/opds/v2/collections".equals(path)) {
-                    sendOpds2(exchange, 200, opds2.collections(catalog.currentCollection()));
+                    sendOpds2(exchange, 200, opds2.collections(language, catalog.currentCollection()));
                 } else if (path.startsWith("/opds/v2/collections/")) {
                     String id = decode(segmentAfter(path, "/opds/v2/collections/"));
                     var active = catalog.currentCollection();
                     if (active.isEmpty() || !Objects.equals(active.get().id(), id)) {
-                        sendText(exchange, 404, "Collection not found");
+                        sendText(exchange, 404, t(language, "web.error.collection_not_found"));
                     } else {
                         String self = "/opds/v2/collections/" + encode(id);
-                        sendOpds2(exchange, 200, opds2.publications(active.get().label(), self,
+                        sendOpds2(exchange, 200, opds2.publications(language, active.get().label(), self,
                                 catalog.books(OpdsBookQuery.all(offset(query), limit(query)))));
                     }
                 } else if ("/opds/v2/groups".equals(path)) {
-                    sendOpds2(exchange, 200, opds2.groups(catalog.groups(offset(query), limit(query))));
+                    sendOpds2(exchange, 200, opds2.groups(language, catalog.groups(offset(query), limit(query))));
                 } else if (path.startsWith("/opds/v2/groups/")) {
                     String id = decode(segmentAfter(path, "/opds/v2/groups/"));
                     String self = "/opds/v2/groups/" + encode(id);
-                    sendOpds2(exchange, 200, opds2.publications("Група", self,
+                    sendOpds2(exchange, 200, opds2.publications(language, t(language, "web.opds.group"), self,
                             catalog.groupBooks(id, offset(query), limit(query))));
                 } else if ("/opds/v2/favorites".equals(path)) {
-                    sendOpds2(exchange, 200, opds2.publications("Обране", "/opds/v2/favorites",
+                    sendOpds2(exchange, 200, opds2.publications(language, t(language, "web.opds.favorites"), "/opds/v2/favorites",
                             catalog.favorites(offset(query), limit(query))));
                 } else if ("/opds/v2/continue".equals(path)) {
-                    sendOpds2(exchange, 200, opds2.publications("Продовжити читання", "/opds/v2/continue",
+                    sendOpds2(exchange, 200, opds2.publications(language, t(language, "web.opds.continue"), "/opds/v2/continue",
                             catalog.continueReading(offset(query), limit(query))));
                 } else if ("/opds/v2/search".equals(path)) {
                     String search = query.getOrDefault("q", "");
                     String self = "/opds/v2/search?q=" + encode(search);
-                    sendOpds2(exchange, 200, opds2.publications("Пошук: " + search, self,
+                    sendOpds2(exchange, 200, opds2.publications(language, t(language, "web.opds.search_title", search), self,
                             catalog.books(new OpdsBookQuery("", "", "", search, offset(query), limit(query)))));
                 } else if (path.startsWith("/opds/v2/books/")) {
                     String id = decode(segmentAfter(path, "/opds/v2/books/"));
                     var book = catalog.book(id);
-                    if (book.isEmpty()) sendText(exchange, 404, "Book not found");
-                    else sendOpds2(exchange, 200, opds2.publication(book.get()));
+                    if (book.isEmpty()) sendText(exchange, 404, t(language, "web.error.book_not_found"));
+                    else sendOpds2(exchange, 200, opds2.publication(language, book.get()));
                 } else if ("/opds".equals(path) || "/opds/".equals(path)) {
-                    sendXml(exchange, 200, rootFeed());
+                    sendXml(exchange, 200, rootFeed(language));
                 } else if ("/opds/authors".equals(path)) {
-                    sendXml(exchange, 200, facetFeed("Автори", "/opds/authors", catalog.authors(offset(query), limit(query))));
+                    sendXml(exchange, 200, facetFeed(language, t(language, "web.opds.authors"), "/opds/authors", catalog.authors(offset(query), limit(query))));
                 } else if (path.startsWith("/opds/authors/")) {
                     String id = decode(segmentAfter(path, "/opds/authors/"));
-                    sendXml(exchange, 200, booksFeed("Книги автора", "/opds/authors/" + encode(id),
+                    sendXml(exchange, 200, booksFeed(language, t(language, "web.opds.books_author"), "/opds/authors/" + encode(id),
                             catalog.books(new OpdsBookQuery(id, "", "", "", offset(query), limit(query)))));
                 } else if ("/opds/series".equals(path)) {
-                    sendXml(exchange, 200, facetFeed("Серії", "/opds/series", catalog.series(offset(query), limit(query))));
+                    sendXml(exchange, 200, facetFeed(language, t(language, "web.opds.series"), "/opds/series", catalog.series(offset(query), limit(query))));
                 } else if (path.startsWith("/opds/series/")) {
                     String id = decode(segmentAfter(path, "/opds/series/"));
-                    sendXml(exchange, 200, booksFeed("Книги серії", "/opds/series/" + encode(id),
+                    sendXml(exchange, 200, booksFeed(language, t(language, "web.opds.books_series"), "/opds/series/" + encode(id),
                             catalog.books(new OpdsBookQuery("", id, "", "", offset(query), limit(query)))));
                 } else if ("/opds/genres".equals(path)) {
-                    sendXml(exchange, 200, facetFeed("Жанри", "/opds/genres", catalog.genres(offset(query), limit(query))));
+                    sendXml(exchange, 200, facetFeed(language, t(language, "web.opds.genres"), "/opds/genres", catalog.genres(offset(query), limit(query))));
                 } else if (path.startsWith("/opds/genres/")) {
                     String id = decode(segmentAfter(path, "/opds/genres/"));
-                    sendXml(exchange, 200, booksFeed("Книги жанру", "/opds/genres/" + encode(id),
+                    sendXml(exchange, 200, booksFeed(language, t(language, "web.opds.books_genre"), "/opds/genres/" + encode(id),
                             catalog.books(new OpdsBookQuery("", "", id, "", offset(query), limit(query)))));
                 } else if ("/opds/search".equals(path)) {
                     String search = query.getOrDefault("q", "");
-                    sendXml(exchange, 200, booksFeed("Пошук: " + search, "/opds/search?q=" + encode(search),
+                    sendXml(exchange, 200, booksFeed(language, t(language, "web.opds.search_title", search), "/opds/search?q=" + encode(search),
                             catalog.books(new OpdsBookQuery("", "", "", search, offset(query), limit(query)))));
                 } else if (path.startsWith("/opds/books/")) {
                     String id = decode(segmentAfter(path, "/opds/books/"));
                     var book = catalog.book(id);
-                    if (book.isEmpty()) sendText(exchange, 404, "Book not found");
-                    else sendXml(exchange, 200, bookEntry(book.get()));
+                    if (book.isEmpty()) sendText(exchange, 404, t(language, "web.error.book_not_found"));
+                    else sendXml(exchange, 200, bookEntry(language, book.get()));
                 } else if (path.startsWith("/opds/download/")) {
                     download(exchange, decode(segmentAfter(path, "/opds/download/")));
                 } else {
-                    sendText(exchange, 404, "Not Found");
+                    sendText(exchange, 404, t(language, "web.error.not_found"));
                 }
             } catch (IllegalStateException e) {
-                sendTextSafe(exchange, 503, "No active collection");
+                sendTextSafe(exchange, 503, t(language, "web.error.no_active_collection"));
             } catch (Exception e) {
                 log.warn("OPDS request failed: {}", exchange.getRequestURI(), e);
-                sendTextSafe(exchange, 500, "Internal Server Error");
+                sendTextSafe(exchange, 500, t(language, "web.error.internal"));
             }
         }
     }
 
-    private void handleWeb(HttpExchange exchange, String path, Map<String, String> query, String method) throws IOException {
+    private void handleWeb(HttpExchange exchange, String path, Map<String, String> query, String method, String language) throws IOException {
         if ("POST".equals(method) && path.startsWith("/web/read/") && path.endsWith("/progress")) {
-            saveWebReaderProgress(exchange, path);
+            saveWebReaderProgress(exchange, path, language);
             return;
         }
         if ("/web".equals(path) || "/web/".equals(path)) {
-            sendHtml(exchange, 200, web.books("Бібліотека", "/web/", "",
+            sendHtml(exchange, 200, web.books(language, t(language, "web.library.title"), "/web/", "",
                     catalog.books(OpdsBookQuery.all(offset(query), limit(query)))));
         } else if ("/web/search".equals(path)) {
             String search = query.getOrDefault("q", "");
-            sendHtml(exchange, 200, web.books("Пошук: " + search, "/web/search?q=" + encode(search), search,
+            sendHtml(exchange, 200, web.books(language, t(language, "web.search.title", search), "/web/search?q=" + encode(search), search,
                     catalog.books(new OpdsBookQuery("", "", "", search, offset(query), limit(query)))));
         } else if ("/web/continue".equals(path)) {
             if (continueReading != null) {
-                sendHtml(exchange, 200, web.continueReading(continueReading.recent(limit(query))));
+                sendHtml(exchange, 200, web.continueReading(language, continueReading.recent(limit(query))));
             } else {
-                sendHtml(exchange, 200, web.books("Продовжити читання", "/web/continue", "",
+                sendHtml(exchange, 200, web.books(language, t(language, "web.continue.title"), "/web/continue", "",
                         catalog.continueReading(offset(query), limit(query))));
             }
         } else if (path.startsWith("/web/read/")) {
             if (webReader == null) {
-                sendText(exchange, 503, "Web Reader is unavailable");
+                sendText(exchange, 503, t(language, "web.reader.unavailable"));
                 return;
             }
             String id = decode(segmentAfter(path, "/web/read/"));
             int chapter = integer(query.get("chapter"), -1, -1, 1_000_000);
             var document = webReader.open(id, chapter);
-            if (document.isEmpty()) sendHtml(exchange, 404, webReaderRenderer.notFound());
-            else sendHtml(exchange, 200, webReaderRenderer.render(document.get()));
+            if (document.isEmpty()) sendHtml(exchange, 404, webReaderRenderer.notFound(language));
+            else sendHtml(exchange, 200, webReaderRenderer.render(language, document.get()));
         } else if (path.startsWith("/web/books/")) {
             String id = decode(segmentAfter(path, "/web/books/"));
             var book = catalog.book(id);
-            if (book.isEmpty()) sendHtml(exchange, 404, web.notFound());
-            else sendHtml(exchange, 200, web.book(book.get()));
+            if (book.isEmpty()) sendHtml(exchange, 404, web.notFound(language));
+            else sendHtml(exchange, 200, web.book(language, book.get()));
         } else if (path.startsWith("/web/download/")) {
             download(exchange, decode(segmentAfter(path, "/web/download/")));
         } else {
-            sendText(exchange, 404, "Not Found");
+            sendText(exchange, 404, t(language, "web.error.not_found"));
         }
     }
 
-    private void saveWebReaderProgress(HttpExchange exchange, String path) throws IOException {
+    private void saveWebReaderProgress(HttpExchange exchange, String path, String language) throws IOException {
         if (webReader == null) {
-            sendText(exchange, 503, "Web Reader is unavailable");
+            sendText(exchange, 503, t(language, "web.reader.unavailable"));
             return;
         }
         if (!"1".equals(exchange.getRequestHeaders().getFirst("X-MyHomeLib-Request"))) {
-            sendText(exchange, 403, "Missing same-origin request marker");
+            sendText(exchange, 403, t(language, "web.error.same_origin_marker"));
             return;
         }
         String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
         if (contentType == null || !contentType.toLowerCase(Locale.ROOT).startsWith("application/json")) {
-            sendText(exchange, 415, "Expected application/json");
+            sendText(exchange, 415, t(language, "web.error.expected_json"));
             return;
         }
         String idPart = path.substring("/web/read/".length(), path.length() - "/progress".length());
@@ -346,7 +355,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         Long chapter = jsonLong(json, "chapter");
         Long offset = jsonLong(json, "offset");
         if (chapter == null || offset == null || chapter < 0 || chapter > 1_000_000 || offset < 0) {
-            sendText(exchange, 400, "Invalid progress payload");
+            sendText(exchange, 400, t(language, "web.error.invalid_progress"));
             return;
         }
         var saved = webReader.saveProgress(id, chapter.intValue(), offset);
@@ -384,7 +393,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         if (bearer || activeSettings.basicAuthEnabled()) return authorized(exchange, requiredScope);
         exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"MyHomeLib Web\"");
         exchange.getResponseHeaders().set("Connection", "close");
-        sendText(exchange, 401, "Authentication required");
+        sendText(exchange, 401, t(requestLanguage(exchange), "web.error.auth_required"));
         return false;
     }
 
@@ -393,7 +402,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         if (!activeExposedBeyondLoopback || !s.limits().healthRequiresAuthWhenExposed()) return true;
         if (!s.basicAuthEnabled()) {
             exchange.getResponseHeaders().set("Connection", "close");
-            sendText(exchange, 403, "Health endpoint is private when OPDS is exposed");
+            sendText(exchange, 403, t(requestLanguage(exchange), "web.error.health_private"));
             return false;
         }
         return authorized(exchange, OpdsTokenScope.CATALOG_READ);
@@ -424,7 +433,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
                 exchange.getResponseHeaders().set("WWW-Authenticate",
                         "Bearer realm=\"MyHomeLib OPDS\", error=\"insufficient_scope\"");
                 exchange.getResponseHeaders().set("Connection", "close");
-                sendText(exchange, 403, "Token scope does not allow this operation");
+                sendText(exchange, 403, t(requestLanguage(exchange), "web.error.insufficient_scope"));
                 return false;
             }
             OpdsRequestLimiter.AuthThrottle afterFailure = limiter.authenticationFailed(client);
@@ -432,7 +441,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             else {
                 exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"MyHomeLib OPDS\"");
                 exchange.getResponseHeaders().set("Connection", "close");
-                sendText(exchange, 401, "Invalid or revoked bearer token");
+                sendText(exchange, 401, t(requestLanguage(exchange), "web.error.invalid_token"));
             }
             return false;
         }
@@ -445,7 +454,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             if (!activeExposedBeyondLoopback) return true;
             exchange.getResponseHeaders().set("WWW-Authenticate", "Bearer realm=\"MyHomeLib OPDS\"");
             exchange.getResponseHeaders().set("Connection", "close");
-            sendText(exchange, 401, "Authentication required for network OPDS access");
+            sendText(exchange, 401, t(requestLanguage(exchange), "web.error.network_auth_required"));
             return false;
         }
 
@@ -475,15 +484,15 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         } else {
             exchange.getResponseHeaders().set("WWW-Authenticate", "Basic realm=\"MyHomeLib OPDS\", charset=\"UTF-8\"");
             exchange.getResponseHeaders().set("Connection", "close");
-            sendText(exchange, 401, "Authentication required");
+            sendText(exchange, 401, t(requestLanguage(exchange), "web.error.auth_required"));
         }
         return false;
     }
 
-    private static void sendThrottled(HttpExchange exchange, long retryAfterSeconds) throws IOException {
+    private void sendThrottled(HttpExchange exchange, long retryAfterSeconds) throws IOException {
         exchange.getResponseHeaders().set("Retry-After", Long.toString(Math.max(1, retryAfterSeconds)));
         exchange.getResponseHeaders().set("Connection", "close");
-        sendText(exchange, 429, "Too many authentication failures");
+        sendText(exchange, 429, t(requestLanguage(exchange), "web.error.too_many_auth_failures"));
     }
 
     private static String clientKey(HttpExchange exchange) {
@@ -526,13 +535,20 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             throw new IllegalArgumentException("TLS is enabled but opds.tls.keyStorePath is empty");
         }
         Path path = Path.of(tls.keyStorePath()).toAbsolutePath().normalize();
-        if (!Files.isRegularFile(path)) {
-            throw new IllegalArgumentException("TLS keystore does not exist: " + path);
+        Path safePath;
+        try {
+            safePath = SafeFilePublication.requireSafeRegularFile(path, "OPDS TLS keystore");
+        } catch (IOException unsafe) {
+            throw new IllegalArgumentException("TLS keystore does not exist or is unsafe: " + path, unsafe);
         }
         char[] password = resolveKeyStorePassword(tls);
+        byte[] keyStoreBytes = null;
         try {
+            String expectedHash = SafeFilePublication.sha256(safePath, "OPDS TLS keystore snapshot");
+            keyStoreBytes = SafeFilePublication.readOwnedBytes(
+                    safePath, expectedHash, MAX_TLS_KEYSTORE_BYTES, "OPDS TLS keystore");
             KeyStore keyStore = KeyStore.getInstance(tls.keyStoreType());
-            try (InputStream in = Files.newInputStream(path)) {
+            try (InputStream in = new ByteArrayInputStream(keyStoreBytes)) {
                 keyStore.load(in, password);
             }
             KeyManagerFactory kmf = KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
@@ -542,6 +558,7 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
             return ssl;
         } finally {
             Arrays.fill(password, '\0');
+            if (keyStoreBytes != null) Arrays.fill(keyStoreBytes, (byte) 0);
         }
     }
 
@@ -570,41 +587,41 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
         return host != null && host.contains(":") && !host.startsWith("[") ? "[" + host + "]" : host;
     }
 
-    private String rootFeed() {
+    private String rootFeed(String language) {
         String updated = Instant.now().toString();
         return feedStart("MyHomeLib", "urn:myhomelib:opds:root", "/opds", updated)
-                + navigationEntry("authors", "Автори", "/opds/authors")
-                + navigationEntry("series", "Серії", "/opds/series")
-                + navigationEntry("genres", "Жанри", "/opds/genres")
-                + navigationEntry("search", "Пошук", "/opds/search?q=")
+                + navigationEntry("authors", t(language, "web.opds.authors"), "/opds/authors")
+                + navigationEntry("series", t(language, "web.opds.series"), "/opds/series")
+                + navigationEntry("genres", t(language, "web.opds.genres"), "/opds/genres")
+                + navigationEntry("search", t(language, "web.opds.search"), "/opds/search?q=")
                 + navigationEntry("opds2", "OPDS 2.0", "/opds/v2")
                 + "</feed>";
     }
 
-    private String facetFeed(String title, String self, OpdsPage<OpdsFacetDto> page) {
+    private String facetFeed(String language, String title, String self, OpdsPage<OpdsFacetDto> page) {
         StringBuilder xml = new StringBuilder(feedStart(title, "urn:myhomelib:opds:" + self, self, Instant.now().toString()));
         paginationLinks(xml, self, page.offset(), page.limit(), page.hasPrevious(), page.hasNext());
         for (OpdsFacetDto item : page.items()) {
             xml.append("<entry><id>urn:myhomelib:facet:").append(escape(item.id())).append("</id>")
-                    .append("<title>").append(escape(item.label())).append("</title>")
-                    .append("<content type=\"text\">").append(item.bookCount()).append(" книг</content>")
+                    .append("<title>").append(escape(nonBlank(item.label(), t(language, "web.opds.unnamed")))).append("</title>")
+                    .append("<content type=\"text\">").append(escape(t(language, "web.opds.books_count", Long.toString(item.bookCount())))).append("</content>")
                     .append("<link rel=\"subsection\" type=\"").append(ATOM).append("\" href=\"")
                     .append(escapeAttr(self + "/" + encode(item.id()))).append("\"/></entry>");
         }
         return xml.append("</feed>").toString();
     }
 
-    private String booksFeed(String title, String self, OpdsPage<OpdsBookDto> page) {
+    private String booksFeed(String language, String title, String self, OpdsPage<OpdsBookDto> page) {
         StringBuilder xml = new StringBuilder(feedStart(title, "urn:myhomelib:books:" + self, self, Instant.now().toString()));
         paginationLinks(xml, self, page.offset(), page.limit(), page.hasPrevious(), page.hasNext());
-        for (OpdsBookDto book : page.items()) xml.append(bookEntry(book));
+        for (OpdsBookDto book : page.items()) xml.append(bookEntry(language, book));
         return xml.append("</feed>").toString();
     }
 
-    private String bookEntry(OpdsBookDto book) {
+    private String bookEntry(String language, OpdsBookDto book) {
         StringBuilder xml = new StringBuilder("<entry>");
         xml.append("<id>urn:myhomelib:book:").append(escape(book.id())).append("</id>")
-                .append("<title>").append(escape(book.title())).append("</title>")
+                .append("<title>").append(escape(nonBlank(book.title(), t(language, "web.opds.untitled")))).append("</title>")
                 .append("<updated>").append(Instant.now()).append("</updated>");
         if (!blank(book.authors())) xml.append("<author><name>").append(escape(book.authors())).append("</name></author>");
         if (!blank(book.language())) xml.append("<dc:language>").append(escape(book.language())).append("</dc:language>");
@@ -641,28 +658,35 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     }
 
     private void download(HttpExchange exchange, String bookId) throws IOException {
+        String language = webText.resolveLanguage(exchange.getRequestHeaders().getFirst("Accept-Language"));
         Optional<OpdsDownloadService.Download> opened;
         try {
             opened = downloads.open(bookId);
         } catch (Exception e) {
-            sendText(exchange, 500, "Cannot open book: " + safeMessage(e));
+            log.warn("Cannot open OPDS book {}", bookId, e);
+            sendText(exchange, 500, t(language, "web.error.cannot_open_book"));
             return;
         }
         if (opened.isEmpty()) {
-            sendText(exchange, 404, "Local book file not found");
+            sendText(exchange, 404, t(language, "web.error.local_file_not_found"));
             return;
         }
         try (OpdsDownloadService.Download download = opened.get()) {
-            var path = download.content().path();
-            long size = Files.size(path);
-            Headers headers = exchange.getResponseHeaders();
-            headers.set("Content-Type", mime(download.fileName()));
-            headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + encode(download.fileName()));
-            headers.set("Cache-Control", "no-store");
-            applyBrowserHardening(headers);
-            exchange.sendResponseHeaders(200, size);
-            try (OutputStream out = exchange.getResponseBody()) {
-                Files.copy(path, out);
+            Path path = SafeFilePublication.requireSafeRegularFile(
+                    download.content().path(), "OPDS download source");
+            try (FileChannel source = FileChannel.open(
+                    path, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+                long size = source.size();
+                Headers headers = exchange.getResponseHeaders();
+                headers.set("Content-Type", mime(download.fileName()));
+                headers.set("Content-Disposition", "attachment; filename*=UTF-8''" + encode(download.fileName()));
+                headers.set("Cache-Control", "no-store");
+                applyBrowserHardening(headers);
+                exchange.sendResponseHeaders(200, size);
+                try (InputStream in = Channels.newInputStream(source);
+                     OutputStream out = exchange.getResponseBody()) {
+                    in.transferTo(out);
+                }
             }
         } catch (Exception e) {
             // Якщо сталася помилка під час відправки, закриття download вже виконано
@@ -720,9 +744,16 @@ public class JdkOpdsServer implements com.myhomelibcorp.application.opds.OpdsSer
     static String encodePathSegment(String value) { return encode(value); }
     private static String encode(String value) { return URLEncoder.encode(value == null ? "" : value, StandardCharsets.UTF_8).replace("+", "%20"); }
     private static String decode(String value) { return URLDecoder.decode(value == null ? "" : value, StandardCharsets.UTF_8); }
+    private static String nonBlank(String value, String fallback) { return blank(value) ? fallback : value; }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
     private static String escape(String value) { return (value == null ? "" : value).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"); }
     private static String escapeAttr(String value) { return escape(value).replace("\"", "&quot;").replace("'", "&apos;"); }
+
+    private String requestLanguage(HttpExchange exchange) {
+        return webText.resolveLanguage(exchange == null ? null : exchange.getRequestHeaders().getFirst("Accept-Language"));
+    }
+
+    private String t(String language, String key, Object... args) { return webText.text(language, key, args); }
 
     private static void sendXml(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, ATOM, body); }
     private static void sendOpds2(HttpExchange exchange, int code, String body) throws IOException { send(exchange, code, Opds2JsonRenderer.TYPE, body); }

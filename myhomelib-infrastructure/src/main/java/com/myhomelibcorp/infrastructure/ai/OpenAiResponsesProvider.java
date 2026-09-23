@@ -14,6 +14,7 @@ import com.myhomelibcorp.application.ai.AiProviderException;
 import com.myhomelibcorp.application.ai.AiRequest;
 import com.myhomelibcorp.application.ai.AiResponse;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.shared.util.BoundedHttpBodyHandlers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -45,6 +46,7 @@ public final class OpenAiResponsesProvider implements AiProvider {
     public static final String DEFAULT_MODEL = "gpt-5.6-luna";
     private static final int DEFAULT_MAX_OUTPUT_TOKENS = 2048;
     private static final int MAX_MAX_OUTPUT_TOKENS = 32768;
+    private static final int MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
     private static final int MAX_ERROR_BODY = 16_384;
 
     private final ApplicationSettingsPort settings;
@@ -108,7 +110,8 @@ public final class OpenAiResponsesProvider implements AiProvider {
                 .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                 .build();
 
-        CompletableFuture<HttpResponse<byte[]>> future = http.sendAsync(httpRequest, HttpResponse.BodyHandlers.ofByteArray());
+        CompletableFuture<HttpResponse<byte[]>> future = http.sendAsync(
+                httpRequest, BoundedHttpBodyHandlers.ofByteArray(MAX_RESPONSE_BYTES));
         try {
             HttpResponse<byte[]> response = await(future, context);
             return parseResponse(response);
@@ -127,8 +130,9 @@ public final class OpenAiResponsesProvider implements AiProvider {
         developer.put("role", "developer");
         ArrayNode developerContent = developer.putArray("content");
         developerContent.addObject().put("type", "input_text").put("text",
-                "Ти допомагаєш користувачу працювати з особистою електронною бібліотекою. "
-                        + "Відповідай українською, не вигадуй відсутні факти і чітко відділяй зміст книги від власних висновків.");
+                "You help the user work with a personal ebook library. "
+                        + "Answer in the language of the user's request unless the user explicitly asks for another language. "
+                        + "Do not invent facts that are absent from the supplied book text, and clearly distinguish book content from your own conclusions.");
 
         ObjectNode user = input.addObject();
         user.put("role", "user");
@@ -139,12 +143,12 @@ public final class OpenAiResponsesProvider implements AiProvider {
 
     private static String buildUserText(AiRequest request) {
         String task = switch (request.operation()) {
-            case SUMMARY -> "Стисло підсумуй наданий текст книги. ";
-            case QUESTION_ANSWER -> "Дай відповідь на запитання, спираючись лише на наданий текст книги. ";
+            case SUMMARY -> "Summarize the supplied book text according to the user's request. ";
+            case QUESTION_ANSWER -> "Answer the user's question using only the supplied book text as the factual source. ";
         };
-        StringBuilder text = new StringBuilder(task).append("Запит користувача: ").append(request.prompt());
+        StringBuilder text = new StringBuilder(task).append("User request: ").append(request.prompt());
         if (request.sharesBookContent()) {
-            text.append("\n\nТекст книги:\n").append(request.bookContent());
+            text.append("\n\nBook text:\n").append(request.bookContent());
         }
         return text.toString();
     }
@@ -216,7 +220,7 @@ public final class OpenAiResponsesProvider implements AiProvider {
     }
 
     private static HttpResponse<byte[]> await(CompletableFuture<HttpResponse<byte[]>> future,
-                                              AiProviderContext context) throws AiProviderException {
+                                               AiProviderContext context) throws AiProviderException {
         while (true) {
             context.throwIfStopped();
             Duration remaining = context.remainingTimeout();

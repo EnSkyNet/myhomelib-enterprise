@@ -36,7 +36,7 @@ public final class LibraryOperationCoordinator {
             LocalSession current = local.get();
             if (active == null) {
                 UUID sessionId = UUID.randomUUID();
-                active = new ActiveSession(sessionId, operation, 1);
+                active = new ActiveSession(sessionId, operation, 1, false);
                 LocalSession created = new LocalSession(sessionId);
                 created.stack.push(operation);
                 local.set(created);
@@ -68,10 +68,74 @@ public final class LibraryOperationCoordinator {
         synchronized (monitor) {
             if (active != null) throw conflict(operation);
             UUID sessionId = UUID.randomUUID();
-            active = new ActiveSession(sessionId, operation, 1);
+            active = new ActiveSession(sessionId, operation, 1, false);
             lease = new Lease(this, sessionId, operation, true);
         }
         publishActiveOperation(operation);
+        return lease;
+    }
+
+    /**
+     * Acquires a detached lease that may share one root lifecycle barrier with explicitly compatible
+     * collection-scoped operations. This is used by UI pre-queue guards and application boundaries:
+     * the first lease blocks destructive lifecycle operations, while additional compatible workers
+     * can run in parallel without opening a SWITCH queue-gap.
+     */
+    public Lease acquireDetachedShared(LibraryOperationType operation) {
+        Objects.requireNonNull(operation, "operation");
+        Lease lease;
+        boolean rootStarted = false;
+        synchronized (monitor) {
+            if (active == null) {
+                UUID sessionId = UUID.randomUUID();
+                active = new ActiveSession(sessionId, operation, 1, true);
+                lease = new Lease(this, sessionId, operation, true);
+                rootStarted = true;
+            } else if (active.sharedDetachedRoot && isSharedCompatible(active.rootOperation, operation)) {
+                active.depth++;
+                lease = new Lease(this, active.sessionId, operation, true);
+            } else {
+                throw conflict(operation);
+            }
+        }
+        if (rootStarted) publishActiveOperation(operation);
+        return lease;
+    }
+
+    /**
+     * Waits until a shared lifecycle barrier can be acquired. If the current root is already a
+     * compatible shared-detached session, the new lease joins it immediately; otherwise this
+     * method waits for the root to become idle and starts a new shared session.
+     *
+     * <p>This is intended for queued collection-scoped maintenance that must not fail merely
+     * because the operation that scheduled it still owns the coordinator, while still allowing
+     * application-boundary QUERY/EDIT guards inside the worker to join the same barrier.</p>
+     */
+    public Lease acquireDetachedSharedAwait(LibraryOperationType operation) {
+        Objects.requireNonNull(operation, "operation");
+        Lease lease;
+        boolean rootStarted = false;
+        synchronized (monitor) {
+            while (active != null
+                    && !(active.sharedDetachedRoot && isSharedCompatible(active.rootOperation, operation))) {
+                try {
+                    monitor.wait();
+                } catch (InterruptedException interrupted) {
+                    Thread.currentThread().interrupt();
+                    throw new IllegalStateException("Interrupted while waiting for shared library operation lease", interrupted);
+                }
+            }
+            if (active == null) {
+                UUID sessionId = UUID.randomUUID();
+                active = new ActiveSession(sessionId, operation, 1, true);
+                lease = new Lease(this, sessionId, operation, true);
+                rootStarted = true;
+            } else {
+                active.depth++;
+                lease = new Lease(this, active.sessionId, operation, true);
+            }
+        }
+        if (rootStarted) publishActiveOperation(operation);
         return lease;
     }
 
@@ -92,7 +156,7 @@ public final class LibraryOperationCoordinator {
                 }
             }
             UUID sessionId = UUID.randomUUID();
-            active = new ActiveSession(sessionId, operation, 1);
+            active = new ActiveSession(sessionId, operation, 1, false);
             lease = new Lease(this, sessionId, operation, true);
         }
         publishActiveOperation(operation);
@@ -146,6 +210,52 @@ public final class LibraryOperationCoordinator {
         if (parent == LibraryOperationType.IMPORT && child == LibraryOperationType.IMPORT) return true;
         return (parent == LibraryOperationType.CREATE || parent == LibraryOperationType.UPDATE)
                 && child == LibraryOperationType.IMPORT;
+    }
+
+    private static boolean isSharedCompatible(LibraryOperationType root, LibraryOperationType requested) {
+        if (root == null || requested == null) return false;
+        if (root == requested) {
+            return root == LibraryOperationType.DOWNLOAD
+                    || root == LibraryOperationType.EDIT
+                    || root == LibraryOperationType.ANNOTATION
+                    || root == LibraryOperationType.CONVERSION
+                    || root == LibraryOperationType.EXPORT
+                    || root == LibraryOperationType.QUERY
+                    || root == LibraryOperationType.READER_STATE
+                    || root == LibraryOperationType.INDEX
+                    || root == LibraryOperationType.SYNC;
+        }
+        // Background Lucene rebuild keeps the same active collection and does not touch
+        // reader state or catalog rows. UI startup reads must not be blocked by it, and
+        // a running reader-state read must not force the background rebuild to fail.
+        if ((root == LibraryOperationType.INDEX && requested == LibraryOperationType.READER_STATE)
+                || (root == LibraryOperationType.READER_STATE && requested == LibraryOperationType.INDEX)) {
+            return true;
+        }
+        return (root == LibraryOperationType.EXPORT && requested == LibraryOperationType.CONVERSION)
+                || (root == LibraryOperationType.CONVERSION && requested == LibraryOperationType.EXPORT)
+                || queryCompatiblePair(root, requested);
+    }
+
+    private static boolean queryCompatiblePair(LibraryOperationType root, LibraryOperationType requested) {
+        // A protected mutation/download/export may perform nested read-only lookups while keeping the
+        // same active collection. The reverse direction stays blocked so an unrelated mutation cannot
+        // join a long-running QUERY root merely because both are collection-scoped.
+        if (requested == LibraryOperationType.QUERY) return supportsStableCollectionQuery(root);
+        // Reader state and ordinary queries are both stable collection reads/updates and were already
+        // explicitly allowed to coexist in either acquisition order.
+        return root == LibraryOperationType.QUERY && requested == LibraryOperationType.READER_STATE;
+    }
+
+    /** Operations that keep the same active collection for their complete lifetime. */
+    private static boolean supportsStableCollectionQuery(LibraryOperationType operation) {
+        return operation == LibraryOperationType.DOWNLOAD
+                || operation == LibraryOperationType.EDIT
+                || operation == LibraryOperationType.ANNOTATION
+                || operation == LibraryOperationType.CONVERSION
+                || operation == LibraryOperationType.EXPORT
+                || operation == LibraryOperationType.READER_STATE
+                || operation == LibraryOperationType.INDEX;
     }
 
     private void release(UUID sessionId, LibraryOperationType operation, boolean detached,
@@ -210,14 +320,16 @@ public final class LibraryOperationCoordinator {
     private static final class ActiveSession {
         private final UUID sessionId;
         private final LibraryOperationType rootOperation;
+        private final boolean sharedDetachedRoot;
         private int depth;
         private LibraryOperationOutcome outcome = LibraryOperationOutcome.COMPLETED;
         private String detail = "";
 
-        private ActiveSession(UUID sessionId, LibraryOperationType rootOperation, int depth) {
+        private ActiveSession(UUID sessionId, LibraryOperationType rootOperation, int depth, boolean sharedDetachedRoot) {
             this.sessionId = sessionId;
             this.rootOperation = rootOperation;
             this.depth = depth;
+            this.sharedDetachedRoot = sharedDetachedRoot;
         }
 
         private void recordOutcome(LibraryOperationOutcome candidate, String candidateDetail) {

@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionDatabaseOwnershipPort;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.catalog.CollectionInfoPort;
 import com.myhomelibcorp.application.catalog.collectioninfo.CollectionSourceProperties;
@@ -17,7 +18,10 @@ import lombok.extern.slf4j.Slf4j;
 
 import java.nio.file.Path;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import java.io.IOException;
 
 @RequiredArgsConstructor
 @Slf4j
@@ -29,6 +33,18 @@ public class CreateCollectionUseCase {
     private final CollectionInfoPort collectionInfoPort;
     private final LibraryOperationCoordinator operationCoordinator;
     private final CollectionStorageManager storageManager;
+    private final CollectionDatabaseOwnershipPort databaseOwnership;
+
+    /** Compatibility constructor for isolated tests created before explicit database ownership metadata. */
+    public CreateCollectionUseCase(CollectionRepository collectionRepository,
+                                   CollectionLifecycleService collectionLifecycleService,
+                                   ImportFileUseCase importFileUseCase,
+                                   CollectionInfoPort collectionInfoPort,
+                                   LibraryOperationCoordinator operationCoordinator,
+                                   CollectionStorageManager storageManager) {
+        this(collectionRepository, collectionLifecycleService, importFileUseCase, collectionInfoPort,
+                operationCoordinator, storageManager, null);
+    }
 
     public Collection execute(CreateCollectionRequest request) {
         try (var ignored = operationCoordinator.acquire(LibraryOperationType.CREATE)) {
@@ -45,6 +61,7 @@ public class CreateCollectionUseCase {
         }
 
         Path source = validateSourceIfRequested(request);
+        validateRequestedDatabaseTarget(request);
         Collection previous = collectionLifecycleService.getCurrentCollection();
 
         log.info("📚 Створення нової колекції: {}", request.getName());
@@ -74,6 +91,9 @@ public class CreateCollectionUseCase {
 
         boolean initialized = false;
         try {
+            if (databaseOwnership != null) {
+                databaseOwnership.setOwnership(saved.getId(), CollectionDatabaseOwnershipPort.Ownership.OWNED);
+            }
             if (source != null) {
                 Path root = saved.getRootFolder() != null ? saved.getRootFolder() : source.getParent();
                 collectionLifecycleService.initializeCollection(saved, false);
@@ -82,6 +102,7 @@ public class CreateCollectionUseCase {
                 var context = ImportContext.builder()
                         .file(source)
                         .rootDirectory(root)
+                        .expectedCollectionId(saved.getId())
                         .updateExisting(false)
                         .indexAfterSave(false)
                         .batchSize(1000);
@@ -102,15 +123,40 @@ public class CreateCollectionUseCase {
         }
     }
 
+
+    private void validateRequestedDatabaseTarget(CreateCollectionRequest request) {
+        if (request.getDbFile() == null) return;
+        Path database = request.getDbFile().toAbsolutePath().normalize();
+        Path parent = database.getParent();
+        if (parent == null) {
+            throw new IllegalArgumentException("Шлях до БД не має батьківської директорії: " + database);
+        }
+        try {
+            SafeFilePublication.requireSafeDirectoryPath(parent, "collection database parent");
+            if (!Files.isWritable(parent)) {
+                throw new IllegalArgumentException("Немає прав на запис у директорію БД: " + parent);
+            }
+            if (Files.exists(database, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.requireSafeRegularFile(database, "collection database");
+                if (!Files.isWritable(database)) {
+                    throw new IllegalArgumentException("Файл БД недоступний для запису: " + database);
+                }
+            }
+        } catch (IOException unsafePath) {
+            throw new IllegalArgumentException("Небезпечний шлях до БД: " + database, unsafePath);
+        }
+    }
+
     private Path validateSourceIfRequested(CreateCollectionRequest request) {
         if (!request.isImportOnCreate() || request.getSourcePath() == null || request.getSourcePath().isBlank()) {
             return null;
         }
         Path source = Path.of(request.getSourcePath()).toAbsolutePath().normalize();
-        if (!Files.isRegularFile(source)) {
-            throw new IllegalArgumentException("Файл джерела не існує: " + source);
+        try {
+            return SafeFilePublication.requireSafeRegularFile(source, "collection import source");
+        } catch (IOException unsafeSource) {
+            throw new IllegalArgumentException("Небезпечний або відсутній файл джерела: " + source, unsafeSource);
         }
-        return source;
     }
 
     private void rollbackFailedCreation(Collection failed, Collection previous, boolean initialized, RuntimeException original) {
@@ -147,7 +193,14 @@ public class CreateCollectionUseCase {
 
     private CollectionSourceProperties sourceProperties(CreateCollectionRequest request) {
         if (request.getSourcePath() == null || request.getSourcePath().isBlank()) return null;
-        return collectionInfoPort.read(Path.of(request.getSourcePath()).toAbsolutePath().normalize()).orElse(null);
+        Path source = Path.of(request.getSourcePath()).toAbsolutePath().normalize();
+        try {
+            source = SafeFilePublication.requireSafeRegularFile(source, "collection metadata source");
+        } catch (IOException unsafeSource) {
+            log.warn("Пропущено небезпечне/відсутнє collection source під час читання metadata: {}", source);
+            return null;
+        }
+        return collectionInfoPort.read(source).orElse(null);
     }
 
     private static String firstNonBlank(String local, String source) {

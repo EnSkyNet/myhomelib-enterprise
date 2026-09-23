@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
 import com.myhomelibcorp.application.textprovider.TextProviderRequestContext;
 import com.myhomelibcorp.shared.util.EncryptionUtil;
+import com.myhomelibcorp.shared.util.BoundedHttpBodyHandlers;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -26,6 +27,7 @@ import java.util.concurrent.TimeoutException;
 
 /** Shared safe HTTP mechanics for explicit text-provider requests. */
 public final class TextProviderHttpSupport {
+    private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
     private TextProviderHttpSupport() {}
 
     public static HttpResponse<String> send(
@@ -37,7 +39,8 @@ public final class TextProviderHttpSupport {
         Objects.requireNonNull(request, "request");
         Objects.requireNonNull(context, "context");
         context.throwIfStopped();
-        var future = client.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+        var future = client.sendAsync(request,
+                BoundedHttpBodyHandlers.ofString(MAX_RESPONSE_BYTES, StandardCharsets.UTF_8));
         try {
             while (true) {
                 context.throwIfStopped();

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.navigation;
 
+import com.myhomelibcorp.ui.service.UiText;
 import javafx.fxml.FXML;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -52,15 +53,15 @@ public class AlphabetToolbarController {
         row1.setAlignment(Pos.CENTER);
         row1.setPadding(new Insets(1, 2, 1, 2));
 
-        // Кнопка "Всі"
-        Button allBtn = createLetterButton('*', "Всі", "alphabet-all");
+        // Кнопка UiText.text("ui.navigation.alphabet.all")
+        Button allBtn = createLetterButton('*', UiText.text("ui.navigation.alphabet.all"), "alphabet-all");
         this.allButton = allBtn;
-        allBtn.setTooltip(new Tooltip("Всі"));
+        allBtn.setTooltip(new Tooltip(UiText.text("ui.navigation.alphabet.all")));
         row1.getChildren().add(allBtn);
 
         // Кнопка "#" (не літери)
         Button nonAlphaBtn = createLetterButton('#', "#", "alphabet-non-alpha");
-        nonAlphaBtn.setTooltip(new Tooltip("Не літери (цифри, символи)"));
+        nonAlphaBtn.setTooltip(new Tooltip(UiText.text("ui.navigation.alphabet.non_letters")));
         row1.getChildren().add(nonAlphaBtn);
 
         // Роздільник
@@ -127,7 +128,7 @@ public class AlphabetToolbarController {
             if (text.length() == 1) {
                 return text.charAt(0);
             }
-            if (text.equals("Всі")) {
+            if (selectedButton == allButton) {
                 return '*';
             }
             if (text.equals("#")) {
@@ -149,7 +150,7 @@ public class AlphabetToolbarController {
                                     selectButton(btn);
                                     return;
                                 }
-                                if (letter == '*' && btn.getText().equals("Всі")) {
+                                if (letter == '*' && btn == allButton) {
                                     selectButton(btn);
                                     return;
                                 }
@@ -167,22 +168,8 @@ public class AlphabetToolbarController {
     }
 
     public void selectAll() {
-        for (javafx.scene.Node node : alphabetToolbarContainer.getChildren()) {
-            if (node instanceof VBox) {
-                for (javafx.scene.Node row : ((VBox) node).getChildren()) {
-                    if (row instanceof FlowPane) {
-                        for (javafx.scene.Node child : ((FlowPane) row).getChildren()) {
-                            if (child instanceof Button) {
-                                Button btn = (Button) child;
-                                if (btn.getText().equals("Всі")) {
-                                    selectButton(btn);
-                                    return;
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+        if (allButton != null) {
+            selectButton(allButton);
         }
     }
 

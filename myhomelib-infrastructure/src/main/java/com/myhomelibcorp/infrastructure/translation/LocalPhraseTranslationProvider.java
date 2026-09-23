@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.translation;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.textprovider.TextProviderErrorKind;
 import com.myhomelibcorp.application.textprovider.TextProviderException;
@@ -16,6 +17,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.text.Normalizer;
 import java.util.Locale;
@@ -48,7 +50,7 @@ public final class LocalPhraseTranslationProvider implements TranslationProvider
         context.throwIfStopped();
 
         Path custom = customPath();
-        if (custom != null && Files.isRegularFile(custom)) {
+        if (custom != null && Files.isRegularFile(custom, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             TranslationResult result = scanFile(custom, query, context);
             if (result != null) return result;
         }
@@ -67,8 +69,12 @@ public final class LocalPhraseTranslationProvider implements TranslationProvider
 
     private TranslationResult scanFile(Path file, TranslationQuery query, TextProviderRequestContext context)
             throws TextProviderException {
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            return scan(reader, query, context);
+        try {
+            Path safe = SafeFilePublication.requireSafeRegularFile(file, "Local translations");
+            try (InputStream input = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS);
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                return scan(reader, query, context);
+            }
         } catch (IOException error) {
             throw new TextProviderException(TextProviderErrorKind.UNAVAILABLE, "Local translations cannot be read", error);
         }

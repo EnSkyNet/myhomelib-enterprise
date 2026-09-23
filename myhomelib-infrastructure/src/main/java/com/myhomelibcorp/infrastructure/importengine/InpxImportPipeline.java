@@ -27,6 +27,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.io.IOException;
 import java.util.*;
@@ -39,6 +40,8 @@ import java.util.function.DoubleConsumer;
 @Slf4j
 public class InpxImportPipeline {
     private static final long AUTHOR_PRELOAD_MIN_RECORDS = 100_000L;
+    private static final int AUTHOR_SEEN_FILTER_BITS = 1 << 24; // 2 MiB Bloom filter
+    private static final int AUTHOR_SEEN_FILTER_MASK = AUTHOR_SEEN_FILTER_BITS - 1;
     private static final long SELECTIVE_PREVIEW_MIN_RECORDS = 100_000L;
     private static final long LARGE_CATALOG_BATCH_MIN_RECORDS = 100_000L;
     private final InpxReader reader;
@@ -361,6 +364,12 @@ public class InpxImportPipeline {
 
         Map<AuthorNameKey, Author> pendingAuthors = new LinkedHashMap<>();
         Map<String, Genre> pendingGenres = new LinkedHashMap<>();
+        // Keep a compact no-false-negative history of author-name hashes for an initial empty
+        // catalog. After an ID falls out of the bounded LRU cache, this filter tells us whether
+        // a name may already exist and therefore needs exact DB resolution. False positives only
+        // cost a lookup; they cannot create duplicate author identities.
+        BitSet seenInitialAuthorNames = fastInitialBaseline && authorTableInitiallyEmpty
+                ? new BitSet(AUTHOR_SEEN_FILTER_BITS) : null;
         Map<String, Boolean> localCache = new HashMap<>();
         List<NormalizedBook> books = new ArrayList<>(effectiveBatch);
 
@@ -421,7 +430,8 @@ public class InpxImportPipeline {
 
                     if (books.size() >= effectiveBatch) {
                         int batchCount = books.size();
-                        flush(books, pendingAuthors, pendingGenres, syncSession, tracked, changes, fastInitialBaseline, authorTableInitiallyEmpty);
+                        flush(books, pendingAuthors, pendingGenres, syncSession, tracked, changes,
+                                fastInitialBaseline, authorTableInitiallyEmpty, seenInitialAuthorNames);
                         imported += batchCount;
                         books.clear();
                     }
@@ -439,7 +449,8 @@ public class InpxImportPipeline {
 
             if (!cancelled && !books.isEmpty()) {
                 int batchCount = books.size();
-                flush(books, pendingAuthors, pendingGenres, syncSession, tracked, changes, fastInitialBaseline, authorTableInitiallyEmpty);
+                flush(books, pendingAuthors, pendingGenres, syncSession, tracked, changes,
+                                fastInitialBaseline, authorTableInitiallyEmpty, seenInitialAuthorNames);
                 imported += batchCount;
                 books.clear();
             }
@@ -667,7 +678,7 @@ public class InpxImportPipeline {
             if (preview.deleted()) explicitlyDeleted++;
         }
 
-        Map<String, String> authorResolution = flushPendingEntities(pendingAuthors, pendingGenres, false);
+        Map<String, String> authorResolution = flushPendingEntities(pendingAuthors, pendingGenres, false, null);
         if (!persistenceBooks.isEmpty()) {
             batchWriter.batchInsertFull(persistenceBooks.stream().map(NormalizedBook::row).toList(), authorResolution);
         }
@@ -692,9 +703,11 @@ public class InpxImportPipeline {
             boolean tracked,
             ImportChangeAccumulator changes,
             boolean fastInitialBaseline,
-            boolean authorTableInitiallyEmpty) {
-        boolean fastAuthorInsert = fastInitialBaseline && authorTableInitiallyEmpty && !authorCacheHasEvicted();
-        Map<String, String> authorResolution = flushPendingEntities(pendingAuthors, pendingGenres, fastAuthorInsert);
+            boolean authorTableInitiallyEmpty,
+            BitSet seenInitialAuthorNames) {
+        boolean fastAuthorInsert = fastInitialBaseline && authorTableInitiallyEmpty;
+        Map<String, String> authorResolution = flushPendingEntities(
+                pendingAuthors, pendingGenres, fastAuthorInsert, seenInitialAuthorNames);
         BatchClassification classification = null;
         if (fastInitialBaseline) {
             classifyInitialSearchChanges(books, changes);
@@ -898,22 +911,30 @@ public class InpxImportPipeline {
     private Map<String, String> flushPendingEntities(
             Map<AuthorNameKey, Author> pendingAuthors,
             Map<String, Genre> pendingGenres,
-            boolean assumeNewAuthors) {
+            boolean assumeNewAuthors,
+            BitSet seenInitialAuthorNames) {
         Map<String, String> resolution = new HashMap<>();
         if (!pendingAuthors.isEmpty()) {
             List<Map.Entry<AuthorNameKey, Author>> entries = new ArrayList<>(pendingAuthors.entrySet());
-            List<Author> candidates = entries.stream().map(Map.Entry::getValue).toList();
-            Map<String, String> resolved = assumeNewAuthors
-                    ? batchWriter.batchInsertAuthorsAndResolveIdsAssumingNew(candidates)
-                    : batchWriter.batchInsertAuthorsAndResolveIds(candidates);
+            if (assumeNewAuthors && seenInitialAuthorNames != null) {
+                List<Map.Entry<AuthorNameKey, Author>> definitelyNew = new ArrayList<>();
+                List<Map.Entry<AuthorNameKey, Author>> maybeExisting = new ArrayList<>();
+                for (Map.Entry<AuthorNameKey, Author> entry : entries) {
+                    if (mightHaveSeenAuthor(seenInitialAuthorNames, entry.getKey())) maybeExisting.add(entry);
+                    else definitelyNew.add(entry);
+                }
+                resolution.putAll(resolveAuthorEntries(definitelyNew, true));
+                resolution.putAll(resolveAuthorEntries(maybeExisting, false));
+            } else {
+                resolution.putAll(resolveAuthorEntries(entries, false));
+            }
             for (Map.Entry<AuthorNameKey, Author> entry : entries) {
                 String candidateId = entry.getValue().getId().asString();
-                String persistentId = resolved.get(candidateId);
+                String persistentId = resolution.get(candidateId);
                 if (persistentId == null || persistentId.isBlank()) {
                     throw new IllegalStateException("Author batch did not resolve candidate ID: " + candidateId);
                 }
                 authorCache.put(entry.getKey(), persistentId);
-                resolution.put(candidateId, persistentId);
             }
             pendingAuthors.clear();
         }
@@ -926,6 +947,44 @@ public class InpxImportPipeline {
             pendingGenres.clear();
         }
         return resolution;
+    }
+
+    private Map<String, String> resolveAuthorEntries(
+            List<Map.Entry<AuthorNameKey, Author>> entries, boolean definitelyNew) {
+        if (entries == null || entries.isEmpty()) return Map.of();
+        List<Author> candidates = entries.stream().map(Map.Entry::getValue).toList();
+        return definitelyNew
+                ? batchWriter.batchInsertAuthorsAndResolveIdsAssumingNew(candidates)
+                : batchWriter.batchInsertAuthorsAndResolveIds(candidates);
+    }
+
+    /**
+     * Bloom-filter membership with no false negatives for names added through this method.
+     * A false positive is intentionally safe: it merely selects the exact DB-resolution path.
+     */
+    private static boolean mightHaveSeenAuthor(BitSet filter, AuthorNameKey key) {
+        int h1 = mixAuthorHash(key.hashCode());
+        int h2 = mixAuthorHash(31 * key.firstName().hashCode()
+                + 17 * key.middleName().hashCode() + key.lastName().hashCode());
+        if (h2 == 0) h2 = 0x9E3779B9;
+        int i1 = h1 & AUTHOR_SEEN_FILTER_MASK;
+        int i2 = (h1 + h2) & AUTHOR_SEEN_FILTER_MASK;
+        int i3 = (h1 + 2 * h2) & AUTHOR_SEEN_FILTER_MASK;
+        boolean maybeSeen = filter.get(i1) && filter.get(i2) && filter.get(i3);
+        filter.set(i1);
+        filter.set(i2);
+        filter.set(i3);
+        return maybeSeen;
+    }
+
+    private static int mixAuthorHash(int value) {
+        int x = value;
+        x ^= x >>> 16;
+        x *= 0x7feb352d;
+        x ^= x >>> 15;
+        x *= 0x846ca68b;
+        x ^= x >>> 16;
+        return x;
     }
 
     private static boolean shouldPreloadAuthorCache(boolean onlineCollection, boolean catalogFullSnapshot, long totalRecords) {
@@ -973,13 +1032,8 @@ public class InpxImportPipeline {
         return new BoundedAuthorCache(limit, initialCapacity);
     }
 
-    private boolean authorCacheHasEvicted() {
-        return authorCache instanceof BoundedAuthorCache bounded && bounded.hasEvicted();
-    }
-
     private static final class BoundedAuthorCache extends LinkedHashMap<AuthorNameKey, String> {
         private final int limit;
-        private boolean evicted;
 
         private BoundedAuthorCache(int limit, int initialCapacity) {
             super(initialCapacity, 0.75f, true);
@@ -988,13 +1042,7 @@ public class InpxImportPipeline {
 
         @Override
         protected boolean removeEldestEntry(Map.Entry<AuthorNameKey, String> eldest) {
-            boolean remove = size() > limit;
-            if (remove) evicted = true;
-            return remove;
-        }
-
-        private boolean hasEvicted() {
-            return evicted;
+            return size() > limit;
         }
     }
 
@@ -1037,14 +1085,14 @@ public class InpxImportPipeline {
      * per-record check into an O(1) hash lookup. Files.walk does not follow directory symlinks.
      */
     private static Set<Path> indexExistingLocalFiles(Path root, AtomicBoolean cancelFlag) {
-        if (root == null || !Files.isDirectory(root)) return Set.of();
+        if (root == null || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS)) return Set.of();
         Set<Path> result = new HashSet<>();
         try (var paths = Files.walk(root)) {
             var iterator = paths.iterator();
             while (iterator.hasNext()) {
                 if (isCancelled(cancelFlag)) return Set.of();
                 Path path = iterator.next();
-                if (Files.isRegularFile(path)) result.add(path.toAbsolutePath().normalize());
+                if (Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)) result.add(path.toAbsolutePath().normalize());
             }
             return Collections.unmodifiableSet(result);
         } catch (IOException | RuntimeException e) {

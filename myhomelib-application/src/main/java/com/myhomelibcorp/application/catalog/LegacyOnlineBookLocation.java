@@ -6,16 +6,21 @@ package com.myhomelibcorp.application.catalog;
  * It generates: <first-letter>/<author>/<libId> <title>.fb2.zip.
  */
 public final class LegacyOnlineBookLocation {
+    /** Stable filesystem sentinel used by legacy MyHomeLib online FB2 storage. Never localize. */
+    public static final String UNKNOWN_AUTHOR_STORAGE = "Без автора";
+    /** Stable filesystem sentinel used by legacy MyHomeLib online FB2 storage. Never localize. */
+    public static final String UNTITLED_STORAGE = "Без назви";
+
     private LegacyOnlineBookLocation() { }
 
     public static String archivePath(String firstAuthorFullName, String title, String libId, String fileName) {
         String author = cleanComponent(firstAuthorFullName);
-        if (author.isBlank()) author = "Невідомий Автор";
+        if (author.isBlank()) author = UNKNOWN_AUTHOR_STORAGE;
         char first = author.charAt(0);
         String letter = Character.isLetterOrDigit(first) ? String.valueOf(first) : "_";
 
         String safeTitle = cleanComponent(title);
-        if (safeTitle.isBlank()) safeTitle = "Без назви";
+        if (safeTitle.isBlank()) safeTitle = UNTITLED_STORAGE;
         String id = cleanComponent(libId);
         if (id.isBlank()) id = stem(fileName);
         if (id.isBlank()) id = "book";

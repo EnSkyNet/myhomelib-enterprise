@@ -38,6 +38,27 @@
 
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-converter-toolchain</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-library-organizer</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-epub-optimizer</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-reader</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-domain</artifactId>
             <version>${project.parent.version}</version>
         </dependency>

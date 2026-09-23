@@ -15,7 +15,7 @@
                 <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
                            style="-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);"/>
             </VBox>
-            <Label fx:id="titleLabel" text="Назва" wrapText="true"
+            <Label fx:id="titleLabel" text="ui.fxml.details.title" wrapText="true"
                    style="-fx-font-weight: bold; -fx-font-size: 15px;"/>
             <Label fx:id="documentWarningLabel" wrapText="true" visible="false" managed="false"
                    style="-fx-text-fill: -mhl-warning-text; -fx-background-color: -mhl-warning-bg; -fx-padding: 6;"/>
@@ -23,21 +23,21 @@
             <TitledPane text="ui.details.section.main" expanded="true" animated="false">
                 <content>
                     <VBox spacing="6" style="-fx-padding: 8;">
-                        <Label text="Автори" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.authors" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="authorsLinksPane" hgap="6" vgap="3"/>
-                        <Label text="Серія" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.series" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="seriesLinksPane" hgap="6" vgap="3"/>
-                        <Label text="Жанри" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.genres" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="genresLinksPane" hgap="6" vgap="3"/>
-                        <Label text="Анотація книги" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.book_annotation" style="-fx-font-weight: bold;"/>
                         <Label fx:id="annotationLabel" wrapText="true" maxWidth="1.7976931348623157E308"/>
                         <Separator/>
-                        <Label fx:id="languageLabel" text="Мова: —" wrapText="true"/>
-                        <Label fx:id="sourceLanguageLabel" text="Мова оригіналу: —" wrapText="true"/>
-                        <Label fx:id="yearLabel" text="Рік: —"/>
-                        <Hyperlink fx:id="publisherLink" text="Видавництво: —" wrapText="true"/>
-                        <Label fx:id="isbnLabel" text="ISBN: —" wrapText="true"/>
-                        <Label fx:id="translatorsLabel" text="Перекладачі: —" wrapText="true"/>
+                        <Label fx:id="languageLabel" text="ui.fxml.details.language" wrapText="true"/>
+                        <Label fx:id="sourceLanguageLabel" text="ui.fxml.details.original_language" wrapText="true"/>
+                        <Label fx:id="yearLabel" text="ui.fxml.details.year"/>
+                        <Hyperlink fx:id="publisherLink" text="ui.fxml.details.publisher" wrapText="true"/>
+                        <Label fx:id="isbnLabel" text="ui.fxml.details.isbn" wrapText="true"/>
+                        <Label fx:id="translatorsLabel" text="ui.fxml.details.translators" wrapText="true"/>
                     </VBox>
                 </content>
             </TitledPane>
@@ -45,13 +45,13 @@
             <TitledPane text="ui.details.section.reading" expanded="true" animated="false">
                 <content>
                     <VBox spacing="6" style="-fx-padding: 8;">
-                        <Label fx:id="localStatusLabel" text="Статус: —"/>
-                        <Label fx:id="ratingLabel" text="Оцінка: —"/>
-                        <Label fx:id="progressLabel" text="Прочитано: —"/>
-                        <Label fx:id="libraryRateLabel" text="Рейтинг каталогу: —"/>
-                        <Label text="Швидкі переходи" style="-fx-font-weight: bold;"/>
+                        <Label fx:id="localStatusLabel" text="ui.fxml.details.status"/>
+                        <Label fx:id="ratingLabel" text="ui.fxml.details.rating"/>
+                        <Label fx:id="progressLabel" text="ui.fxml.details.read"/>
+                        <Label fx:id="libraryRateLabel" text="ui.fxml.details.catalog_rating"/>
+                        <Label text="ui.fxml.details.quick_links" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="reviewLinksPane" hgap="6" vgap="4"/>
-                        <Label text="Мій відгук" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.my_review" style="-fx-font-weight: bold;"/>
                         <TextArea fx:id="reviewArea" wrapText="true" prefHeight="90" editable="false"/>
                     </VBox>
                 </content>
@@ -60,22 +60,22 @@
             <TitledPane text="ui.details.section.files" expanded="false" animated="false">
                 <content>
                     <VBox spacing="6" style="-fx-padding: 8;">
-                        <Label fx:id="formatLabel" text="Формат: —"/>
-                        <Label fx:id="fileSizeLabel" text="Розмір файла: —"/>
-                        <Label text="Доступні формати" style="-fx-font-weight: bold;"/>
+                        <Label fx:id="formatLabel" text="ui.fxml.details.format"/>
+                        <Label fx:id="fileSizeLabel" text="ui.fxml.details.file_size"/>
+                        <Label text="ui.fxml.details.available_formats" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="artifactBadgesPane" hgap="5" vgap="4"/>
-                        <ComboBox fx:id="artifactComboBox" maxWidth="1.7976931348623157E308" promptText="Виберіть формат"/>
-                        <Label fx:id="artifactLocationLabel" text="Джерело/розташування: —" wrapText="true" styleClass="muted-text"/>
+                        <ComboBox fx:id="artifactComboBox" maxWidth="1.7976931348623157E308" promptText="ui.fxml.details.select_format"/>
+                        <Label fx:id="artifactLocationLabel" text="ui.fxml.details.source_location" wrapText="true" styleClass="muted-text"/>
                         <HBox spacing="6">
-                            <Button fx:id="setPreferredArtifactButton" text="Зробити основним" onAction="#onSetPreferredArtifact" disable="true"/>
-                            <Button fx:id="openArtifactButton" text="Відкрити як" onAction="#onOpenSelectedArtifact" disable="true"/>
+                            <Button fx:id="setPreferredArtifactButton" text="ui.fxml.details.make_primary" onAction="#onSetPreferredArtifact" disable="true"/>
+                            <Button fx:id="openArtifactButton" text="ui.fxml.details.open_as" onAction="#onOpenSelectedArtifact" disable="true"/>
                         </HBox>
                         <Separator/>
-                        <Label fx:id="textStatsLabel" text="Текст: —" wrapText="true"/>
-                        <Label fx:id="imagesCountLabel" text="Зображення: 0"/>
-                        <Button fx:id="showImagesButton" text="Переглянути зображення" onAction="#onShowImages"
+                        <Label fx:id="textStatsLabel" text="ui.fxml.details.text" wrapText="true"/>
+                        <Label fx:id="imagesCountLabel" text="ui.fxml.details.images_0"/>
+                        <Button fx:id="showImagesButton" text="ui.fxml.details.view_images" onAction="#onShowImages"
                                 visible="false" managed="false"/>
-                        <Label text="Зміст" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.table_of_contents" style="-fx-font-weight: bold;"/>
                         <VBox fx:id="tocPreviewBox" spacing="2"/>
                     </VBox>
                 </content>
@@ -84,9 +84,9 @@
             <TitledPane text="ui.details.section.library" expanded="false" animated="false">
                 <content>
                     <VBox spacing="6" style="-fx-padding: 8;">
-                        <Label text="Групи" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.groups" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="groupLinksPane" hgap="6" vgap="4"/>
-                        <Label text="Ключові слова" style="-fx-font-weight: bold;"/>
+                        <Label text="ui.fxml.details.keywords" style="-fx-font-weight: bold;"/>
                         <FlowPane fx:id="keywordsLinksPane" hgap="6" vgap="4"/>
                     </VBox>
                 </content>
@@ -95,18 +95,18 @@
             <TitledPane text="ui.details.section.technical" expanded="false" animated="false">
                 <content>
                     <VBox spacing="6" style="-fx-padding: 8;">
-                        <Label text="Джерело" style="-fx-font-weight: bold;"/>
-                        <Label fx:id="sourceUrlLabel" text="Джерело: —" wrapText="true"/>
+                        <Label text="ui.fxml.details.source" style="-fx-font-weight: bold;"/>
+                        <Label fx:id="sourceUrlLabel" text="ui.fxml.details.source_da86429" wrapText="true"/>
                     </VBox>
                 </content>
             </TitledPane>
 
             <HBox spacing="8" style="-fx-padding: 8 0 6 0;">
-                <Button text="Читати" onAction="#onRead"
+                <Button text="ui.fxml.details.read_1b059c1" onAction="#onRead"
                         style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="Редагувати" onAction="#onEdit"
+                <Button text="ui.fxml.details.edit" onAction="#onEdit"
                         style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
-                <Button text="Папка" onAction="#onOpenFolder"/>
+                <Button text="ui.fxml.details.folder" onAction="#onOpenFolder"/>
             </HBox>
         </VBox>
     </content>

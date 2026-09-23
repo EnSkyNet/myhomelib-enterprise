@@ -10,17 +10,23 @@ import org.springframework.stereotype.Component;
 public class RenameGroupUseCase {
 
     private final GroupRepository groupRepository;
+    private final GroupMutationExecutor mutationExecutor;
 
     public Group execute(Long groupId, String newName) {
+        return execute(groupId, newName, null);
+    }
+
+    public Group execute(Long groupId, String newName, String expectedCollectionId) {
         if (groupId == null) {
             throw new IllegalArgumentException("Group ID cannot be null");
         }
         if (newName == null || newName.isBlank()) {
             throw new IllegalArgumentException("New group name cannot be empty");
         }
-        Group existing = groupRepository.findById(groupId)
-                .orElseThrow(() -> new IllegalArgumentException("Group not found: " + groupId));
-        Group renamed = existing.rename(newName);
-        return groupRepository.save(renamed);
+        return mutationExecutor.execute(expectedCollectionId, () -> {
+            Group existing = groupRepository.findById(groupId)
+                    .orElseThrow(() -> new IllegalArgumentException("Group not found: " + groupId));
+            return groupRepository.save(existing.rename(newName));
+        });
     }
 }

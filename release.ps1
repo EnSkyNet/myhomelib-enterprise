@@ -11,6 +11,8 @@ $env:MHL_SKIP_BUILD = "1"
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & .\smoke-desktop.ps1
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+& .\tools\smoke-runtime-tools.ps1
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 & .\smoke-portable.ps1
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 

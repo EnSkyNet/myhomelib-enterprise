@@ -7,6 +7,7 @@ import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.InterruptedIOException;
 import java.io.UncheckedIOException;
@@ -120,6 +121,60 @@ class ZipArchiveReaderTransparencyTest {
     }
 
     @Test
+    void materializeRejectsSymlinkTargetWithoutTouchingReferencedFile(@TempDir Path dir) throws Exception {
+        Path archive = dir.resolve("symlink-target.zip");
+        byte[] payload = "safe-payload".getBytes(StandardCharsets.UTF_8);
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(archive))) {
+            putZip(out, "book.fb2", payload);
+        }
+        Path foreign = dir.resolve("foreign.fb2");
+        Files.writeString(foreign, "FOREIGN");
+        Path target = dir.resolve("reader.fb2");
+        Files.createSymbolicLink(target, foreign.getFileName());
+
+        assertThatThrownBy(() -> reader.materializeEntry(archive, "book.fb2", target, 1024, () -> false))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("symbolic link");
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+    }
+
+    @Test
+    void materializeDoesNotOverwriteTargetChangedDuringStreaming(@TempDir Path dir) throws Exception {
+        Path archive = dir.resolve("target-race.zip");
+        byte[] payload = new byte[256 * 1024];
+        new java.util.Random(47L).nextBytes(payload);
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(archive))) {
+            ZipEntry entry = new ZipEntry("book.fb2");
+            entry.setMethod(ZipEntry.STORED);
+            java.util.zip.CRC32 crc = new java.util.zip.CRC32();
+            crc.update(payload);
+            entry.setSize(payload.length);
+            entry.setCompressedSize(payload.length);
+            entry.setCrc(crc.getValue());
+            out.putNextEntry(entry);
+            out.write(payload);
+            out.closeEntry();
+        }
+        Path target = dir.resolve("reader.fb2");
+        Files.writeString(target, "ORIGINAL");
+        AtomicInteger checks = new AtomicInteger();
+
+        assertThatThrownBy(() -> reader.materializeEntry(archive, "book.fb2", target, payload.length + 1L, () -> {
+            if (checks.incrementAndGet() == 2) {
+                try {
+                    Files.writeString(target, "FOREIGN REPLACEMENT");
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+            return false;
+        })).isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("changed before detach");
+        assertThat(Files.readString(target)).isEqualTo("FOREIGN REPLACEMENT");
+        assertNoStagingFiles(dir);
+    }
+
+    @Test
     void materializeRejectsEntryOverCallerLimitWithoutPublishingPartialTarget(@TempDir Path dir) throws Exception {
         Path archive = dir.resolve("limited.zip");
         byte[] payload = "x".repeat(4096).getBytes(StandardCharsets.UTF_8);
@@ -188,6 +243,21 @@ class ZipArchiveReaderTransparencyTest {
         assertThat(direct.materializeEntry(archive, "nested/book.fb2", target, 1024, () -> false)).isTrue();
         assertThat(Files.readString(target)).isEqualTo("tar-stream");
         assertNoStagingFiles(dir);
+    }
+
+    @Test
+    void sevenZRejectsSymlinkedParentBeforeOpeningArchive(@TempDir Path dir) throws Exception {
+        Path realDir = Files.createDirectory(dir.resolve("real-seven"));
+        Path archive = realDir.resolve("books.7z");
+        try (SevenZOutputFile out = new SevenZOutputFile(archive.toFile())) {
+            put7z(out, "book.fb2", "payload".getBytes(StandardCharsets.UTF_8));
+        }
+        Path alias = dir.resolve("alias-seven");
+        Files.createSymbolicLink(alias, realDir.getFileName());
+
+        assertThatThrownBy(() -> reader.listEntries(alias.resolve("books.7z")))
+                .hasRootCauseInstanceOf(IOException.class)
+                .hasMessageContaining("books.7z");
     }
 
     @Test

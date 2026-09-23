@@ -3,8 +3,8 @@ package com.myhomelibcorp.mcp;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.*;
 import java.util.*;
@@ -16,7 +16,11 @@ final class LibraryDb implements AutoCloseable {
 
     LibraryDb(Path db, ObjectMapper json) throws Exception {
         Path p = db.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(p)) throw new IllegalArgumentException("Collection DB not found: " + p);
+        try {
+            p = AtomicFileSupport.requireSafeRegularFile(p, "MCP collection database");
+        } catch (java.io.IOException unsafePath) {
+            throw new IllegalArgumentException("Collection DB is not a safe regular file: " + p, unsafePath);
+        }
         this.json = json;
         String uri = p.toUri().toASCIIString();
         this.connection = DriverManager.getConnection("jdbc:sqlite:" + uri + "?mode=ro");

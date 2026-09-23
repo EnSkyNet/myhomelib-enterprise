@@ -1,6 +1,9 @@
 package com.myhomelibcorp.ui.search;
 
-import com.myhomelibcorp.shared.util.ThrowableMessages;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.ui.service.BookDisplayText;
+
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFilter;
 import com.myhomelibcorp.application.annotation.AnnotationManagerItem;
 import com.myhomelibcorp.application.annotation.AnnotationManagerPage;
@@ -8,6 +11,7 @@ import com.myhomelibcorp.application.annotation.AnnotationManagerService;
 import com.myhomelibcorp.application.content.search.ContentSearchResultItem;
 import com.myhomelibcorp.application.content.search.ContentSearchResultPage;
 import com.myhomelibcorp.application.content.search.ContentSearchService;
+import com.myhomelibcorp.application.content.search.ContentIndexUnavailableException;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
@@ -17,6 +21,7 @@ import com.myhomelibcorp.application.search.SearchService;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.ui.filter.BookFilterDialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.service.BookSelectionService;
 import com.myhomelibcorp.ui.service.MainLayoutService;
 import com.myhomelibcorp.ui.service.FxmlLoaderFactory;
@@ -25,6 +30,7 @@ import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
 import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
 import com.myhomelibcorp.application.usecase.search.BuildSmartCollectionSearchRequestUseCase;
+import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.ui.controller.SavedSearchesController;
@@ -257,6 +263,21 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
     // ==================== НАЛАШТУВАННЯ СПИСКІВ ====================
 
     private void setupListViews() {
+        authorsListView.setCellFactory(lv -> new ListCell<>() {
+            @Override protected void updateItem(AuthorDto item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : authorDisplayName(item));
+            }
+        });
+        authorsListView.setOnMouseClicked(e -> {
+            if (e.getClickCount() == 2) {
+                AuthorDto selected = authorsListView.getSelectionModel().getSelectedItem();
+                if (selected != null && selected.getId() != null && !selected.getId().isBlank()) {
+                    navigationService.navigateToAuthor(AuthorId.fromString(selected.getId()));
+                }
+            }
+        });
+
         seriesListView.setCellFactory(lv -> new ListCell<>() {
             @Override protected void updateItem(String item, boolean empty) {
                 super.updateItem(item, empty);
@@ -342,8 +363,8 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                         ? "" : String.valueOf(cell.getValue().getSequenceNumber())));
         yearColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(
                 cell.getValue().getYear() == null || cell.getValue().getYear() <= 0 ? "" : String.valueOf(cell.getValue().getYear())));
-        localColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getLocalStatus()));
-        fileSizeColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getFileSizeFormatted()));
+        localColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(BookDisplayText.localStatus(cell.getValue())));
+        fileSizeColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(BookDisplayText.fileSize(cell.getValue().getFileSize())));
         ratingColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getRateStars()));
         progressColumn.setCellValueFactory(cell -> new javafx.beans.property.ReadOnlyStringWrapper(cell.getValue().getProgressFormatted()));
 
@@ -508,6 +529,15 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         return "";
     }
 
+    private static String authorDisplayName(AuthorDto author) {
+        if (author == null) return "";
+        if (author.getFullName() != null && !author.getFullName().isBlank()) return author.getFullName();
+        if (author.getShortName() != null && !author.getShortName().isBlank()) return author.getShortName();
+        return java.util.stream.Stream.of(author.getLastName(), author.getFirstName(), author.getMiddleName())
+                .filter(value -> value != null && !value.isBlank())
+                .collect(java.util.stream.Collectors.joining(" "));
+    }
+
     private static String safe(String value) { return value == null ? "" : value; }
 
     // ==================== ПОШУК ====================
@@ -567,7 +597,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             SearchRequest request = applyActiveSmartCollectionScope(
                     SearchQueryFactory.basic(form.freeText(), BOOK_PAGE_SIZE, 0));
             boolean scoped = activeSmartCollectionId != null;
-            executor.submit(() -> new SearchUiPage(
+            executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> new SearchUiPage(
                     scoped ? GlobalSearchResult.empty() : searchService.searchOverview(form.freeText()),
                     searchService.searchPage(request),
                     scoped ? null : searchAnnotations(form.freeText()),
@@ -580,7 +610,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                     })).exceptionally(ex -> {
                 log.error("Search failed", ex);
                 UiExecutor.runOnUiThread(() -> {
-                    if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText(i18n.format("ui.search.status.error", ex.getMessage()));
+                    if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText(i18n.format("ui.search.status.error", UiExceptionSupport.message(ex)));
                 });
                 return null;
             });
@@ -591,7 +621,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                 SearchQueryFactory.advanced(form, BOOK_PAGE_SIZE, 0));
         String authorQuery = form.author();
         boolean scoped = activeSmartCollectionId != null;
-        executor.submit(() -> new AdvancedSearchUiResult(
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> new AdvancedSearchUiResult(
                 searchService.searchPage(request),
                 scoped || authorQuery.isBlank() ? List.of() : searchService.searchAuthors(authorQuery, 200),
                 scoped ? null : searchAnnotations(annotationQueryText(form)),
@@ -610,7 +640,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                 })).exceptionally(ex -> {
             log.error("Advanced search failed", ex);
             UiExecutor.runOnUiThread(() -> {
-                if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText(i18n.format("ui.search.status.error", ex.getMessage()));
+                if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) statusLabel.setText(i18n.format("ui.search.status.error", UiExceptionSupport.message(ex)));
             });
             return null;
         });
@@ -624,7 +654,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             return;
         }
         UiAsyncRequestToken token = UiAsyncRequestGuard.snapshot(searchGeneration, appState);
-        contentSearchTask = executor.submitCancellable(() -> {
+        contentSearchTask = executor.submitCollectionScopedCancellable(LibraryOperationType.QUERY, () -> {
             try {
                 ContentSearchResultPage page = contentSearchService.search(collectionId, normalized, 0, CONTENT_RESULT_LIMIT);
                 if (Thread.currentThread().isInterrupted()) return null;
@@ -643,8 +673,12 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                 if (!Thread.currentThread().isInterrupted()) {
                     log.error("Content search failed", failure);
                     UiExecutor.runOnUiThread(() -> {
-                        if (UiAsyncRequestGuard.isCurrent(token, searchGeneration, appState))
-                            statusLabel.setText(i18n.format("ui.search.status.error", ThrowableMessages.rootMessage(failure, i18n.text("common.error.unknown"))));
+                        if (!UiAsyncRequestGuard.isCurrent(token, searchGeneration, appState)) return;
+                        if (failure instanceof ContentIndexUnavailableException) {
+                            statusLabel.setText(i18n.text("ui.search.contents.index_not_ready"));
+                        } else {
+                            statusLabel.setText(i18n.format("ui.search.status.error", UiExceptionSupport.message(failure)));
+                        }
                     });
                 }
             }
@@ -826,7 +860,11 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         String text = item.note().isBlank() ? item.quote() : item.note();
         text = text == null ? "" : text.replaceAll("\\s+", " ").trim();
         if (text.isBlank()) text = item.chapterTitle();
-        if (text == null || text.isBlank()) text = item.type().name();
+        if (text == null || text.isBlank()) {
+            text = item.type() == com.myhomelibcorp.application.annotation.AnnotationManagerType.NOTE
+                    ? UiText.text("ui.annotations.type.note")
+                    : UiText.text("ui.annotations.type.highlight");
+        }
         return text.length() > 140 ? text.substring(0, 137) + "…" : text;
     }
 
@@ -862,7 +900,8 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         updateLoadMoreButton();
         statusLabel.setText(i18n.text("ui.search.status.loading_next"));
 
-        executor.submit(() -> searchService.searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, activeBookTotal)).thenAccept(page ->
+        executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                () -> searchService.searchPage(requestSnapshot, BOOK_PAGE_SIZE, offset, activeBookTotal)).thenAccept(page ->
                 UiExecutor.runOnUiThread(() -> {
                     if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
                     loadingMoreBooks = false;
@@ -882,7 +921,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
                 if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
                 loadingMoreBooks = false;
                 updateLoadMoreButton();
-                statusLabel.setText(i18n.format("ui.search.status.next_page_error", ThrowableMessages.rootMessage(ex, i18n.text("common.error.unknown"))));
+                statusLabel.setText(i18n.format("ui.search.status.next_page_error", UiExceptionSupport.message(ex)));
             });
             return null;
         });
@@ -1013,7 +1052,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             dialogService.showInfo(i18n.text("common.success"), i18n.format("ui.search.save.success", name));
         } catch (Exception e) {
             log.error("Помилка збереження пошуку", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.save.error", e.getMessage()));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.save.error", UiExceptionSupport.message(e)));
         }
     }
 
@@ -1046,7 +1085,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
 
         } catch (Exception e) {
             log.error("Помилка відкриття збережених пошуків", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.saved.open_error", e.getMessage()));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.search.saved.open_error", UiExceptionSupport.message(e)));
         }
     }
 
@@ -1150,7 +1189,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(searchGeneration, appState);
         SearchRequest request = buildSmartCollectionRequestUseCase.execute(savedSearchId, BOOK_PAGE_SIZE, 0);
         statusLabel.setText(i18n.format("ui.smart_collection.loading", activeSmartCollectionName));
-        executor.submit(() -> searchService.searchPage(request)).thenAccept(page ->
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> searchService.searchPage(request)).thenAccept(page ->
                 UiExecutor.runOnUiThread(() -> {
                     if (!UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) return;
                     activeBookRequest = request;
@@ -1161,7 +1200,7 @@ public class SearchWorkspaceController implements WorkspaceLifecycle {
             log.error("Smart collection search failed", ex);
             UiExecutor.runOnUiThread(() -> {
                 if (UiAsyncRequestGuard.isCurrent(requestToken, searchGeneration, appState)) {
-                    statusLabel.setText(i18n.format("ui.smart_collection.load_error", ex.getMessage()));
+                    statusLabel.setText(i18n.format("ui.smart_collection.load_error", UiExceptionSupport.message(ex)));
                 }
             });
             return null;

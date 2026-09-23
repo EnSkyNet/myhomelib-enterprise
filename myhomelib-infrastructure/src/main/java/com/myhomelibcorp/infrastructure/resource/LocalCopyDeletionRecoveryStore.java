@@ -1,18 +1,18 @@
 package com.myhomelibcorp.infrastructure.resource;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.shared.util.AppPaths;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import lombok.extern.slf4j.Slf4j;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -20,28 +20,34 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Properties;
 import java.util.UUID;
 
 /**
  * Durable intent log for crash-safe local-copy deletion.
  *
- * <p>The marker is persisted before the visible book path is removed. At the next collection open
- * it is reconciled against the committed {@code books.local} flags in SQLite:</p>
- * <ul>
- *   <li>all affected rows still local -> restore the recovery file;</li>
- *   <li>all affected rows non-local -> release the recovery file;</li>
- *   <li>mixed state -> keep all recovery artifacts and fail closed.</li>
- * </ul>
+ * <p>Version 2 binds the marker to the SHA-256 of the staged book bytes. Recovery therefore never
+ * deletes or restores a path merely because its name matches a journal entry: the bytes must still
+ * be owned by the operation. Legacy v1 markers are retained as evidence and fail closed because
+ * they cannot prove ownership.</p>
  */
 @Slf4j
 public final class LocalCopyDeletionRecoveryStore {
-    private static final String VERSION = "1";
+    private static final String VERSION = "2";
+    private static final String LEGACY_VERSION = "1";
     private static final String EXTENSION = ".pending";
+    private static final int MAX_MARKER_BYTES = 256 * 1024;
 
     private LocalCopyDeletionRecoveryStore() { }
 
-    public static Path prepare(Path original, Path recovery, Path managedRoot, String collectionId, List<BookId> affectedBookIds) throws IOException {
+    public static PreparedMarker prepare(
+            Path original,
+            Path recovery,
+            Path managedRoot,
+            String collectionId,
+            List<BookId> affectedBookIds,
+            String contentSha256) throws IOException {
         if (original == null || recovery == null || managedRoot == null) {
             throw new IllegalArgumentException("Local-copy recovery paths are required");
         }
@@ -51,42 +57,59 @@ public final class LocalCopyDeletionRecoveryStore {
         if (affectedBookIds == null || affectedBookIds.isEmpty()) {
             throw new IllegalArgumentException("Affected book ids are required for crash recovery");
         }
+        String contentHash = normalizeHash(contentSha256, "book content SHA-256");
 
-        Path dir = recoveryDir();
-        Files.createDirectories(dir);
+        Path dir = SafeFilePublication.createDirectoriesNoLinks(
+                recoveryDir(), "local-copy deletion recovery directory");
         Path marker = dir.resolve(UUID.randomUUID() + EXTENSION);
-        Path temporary = marker.resolveSibling(marker.getFileName() + ".tmp");
-
         Properties properties = new Properties();
         properties.setProperty("version", VERSION);
         properties.setProperty("original", original.toAbsolutePath().normalize().toString());
         properties.setProperty("recovery", recovery.toAbsolutePath().normalize().toString());
         properties.setProperty("managedRoot", managedRoot.toAbsolutePath().normalize().toString());
         properties.setProperty("collectionId", collectionId);
-        properties.setProperty("bookIds", affectedBookIds.stream().map(BookId::asString).distinct().reduce((a, b) -> a + "," + b).orElseThrow());
+        properties.setProperty("bookIds", affectedBookIds.stream().map(BookId::asString).distinct()
+                .reduce((a, b) -> a + "," + b).orElseThrow());
+        properties.setProperty("contentSha256", contentHash);
 
-        try (OutputStream output = Files.newOutputStream(temporary,
-                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
-            properties.store(output, "MyHomeLib pending local-copy deletion");
-        }
+        ByteArrayOutputStream encoded = new ByteArrayOutputStream();
+        properties.store(encoded, "MyHomeLib pending local-copy deletion");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                dir, ".local-copy-marker-work-", "local-copy deletion marker workspace");
         try {
-            AtomicFileSupport.moveReplacing(temporary, marker);
-        } catch (IOException moveFailure) {
-            Files.deleteIfExists(temporary);
-            throw moveFailure;
+            Path staged = workspace.resolve("marker.pending");
+            try (OutputStream output = SafeFilePublication.openFreshOutputStream(
+                    staged, "staged local-copy deletion marker")) {
+                encoded.writeTo(output);
+            }
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    staged, marker, null, "local-copy deletion marker publication");
+            String markerHash = SafeFilePublication.sha256(marker, "local-copy deletion marker");
+            return new PreparedMarker(marker, markerHash);
+        } finally {
+            try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+            catch (Exception ignored) { }
         }
-        return marker;
     }
 
-    public static void clear(Path marker) throws IOException {
-        if (marker != null) Files.deleteIfExists(marker);
+    public static void clear(PreparedMarker marker) throws IOException {
+        if (marker == null) return;
+        SafeFilePublication.removeIfOwned(
+                marker.path(), marker.sha256(), "local-copy deletion marker cleanup");
     }
 
     /** Reconciles only markers whose complete affected-id set belongs to the database being opened. */
     public static void recoverForDatabase(String collectionId, Path database) throws IOException {
-        if (collectionId == null || collectionId.isBlank() || database == null || !Files.isRegularFile(database)) return;
+        if (collectionId == null || collectionId.isBlank() || database == null
+                || !Files.exists(database, LinkOption.NOFOLLOW_LINKS)) return;
+        Path safeDatabase = SafeFilePublication.requireSafeRegularFile(database, "collection database for local-copy recovery");
         Path dir = recoveryDir();
-        if (!Files.isDirectory(dir)) return;
+        if (!Files.exists(dir, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            SafeFilePublication.createDirectoriesNoLinks(dir, "local-copy deletion recovery directory");
+        } catch (IOException unsafe) {
+            throw new IOException("Unsafe local-copy deletion recovery directory: " + dir, unsafe);
+        }
 
         List<Path> markers;
         try (var stream = Files.list(dir)) {
@@ -94,13 +117,16 @@ public final class LocalCopyDeletionRecoveryStore {
         }
         if (markers.isEmpty()) return;
 
-        String url = "jdbc:sqlite:" + database.toAbsolutePath().normalize();
+        String url = "jdbc:sqlite:" + safeDatabase;
         try (Connection connection = DriverManager.getConnection(url)) {
-            for (Path marker : markers) {
-                recoverMarkerIfOwned(collectionId, connection, marker);
-            }
+            // JDBC reopens SQLite by pathname; refuse to reconcile recovery markers if the path
+            // became a symlink/reparse entry during that open. The database itself is intentionally
+            // mutated by recovery, so identity is checked structurally rather than by content hash.
+            SafeFilePublication.requireSafeRegularFile(safeDatabase, "opened collection database for local-copy recovery");
+            for (Path marker : markers) recoverMarkerIfOwned(collectionId, connection, marker);
+            SafeFilePublication.requireSafeRegularFile(safeDatabase, "collection database after local-copy recovery");
         } catch (SQLException databaseFailure) {
-            throw new IOException("Cannot reconcile pending local-copy deletion against " + database, databaseFailure);
+            throw new IOException("Cannot reconcile pending local-copy deletion against " + safeDatabase, databaseFailure);
         }
     }
 
@@ -112,9 +138,12 @@ public final class LocalCopyDeletionRecoveryStore {
         RecoveryRecord record = read(marker);
         if (!collectionId.equals(record.collectionId())) return;
         List<Integer> localFlags = findLocalFlags(connection, record.bookIds());
-        if (localFlags.isEmpty()) return; // Marker belongs to another collection DB.
+        if (localFlags.isEmpty()) return;
         if (localFlags.size() != record.bookIds().size()) {
             throw new IOException("Pending local-copy deletion matches only part of its affected book set: " + marker);
+        }
+        if (record.contentSha256() == null) {
+            throw new IOException("Legacy local-copy deletion marker cannot prove file ownership; evidence kept: " + marker);
         }
 
         validateRecoveryPaths(record);
@@ -126,23 +155,34 @@ public final class LocalCopyDeletionRecoveryStore {
 
         if (allLocal) {
             restoreVisibleFile(record);
-            clear(marker);
+            clear(record.marker());
             log.warn("Recovered interrupted local-copy deletion by restoring {}", record.original());
             return;
         }
 
-        // The catalog transaction committed. The hidden recovery bytes are now obsolete.
-        Files.deleteIfExists(record.recovery());
-        clear(marker);
+        if (Files.exists(record.recovery(), LinkOption.NOFOLLOW_LINKS)) {
+            SafeFilePublication.removeIfOwned(
+                    record.recovery(), record.contentSha256(), "committed local-copy recovery cleanup");
+        }
+        clear(record.marker());
         log.warn("Completed interrupted local-copy deletion cleanup for {}", record.original());
     }
 
     private static RecoveryRecord read(Path marker) throws IOException {
+        Path safeMarker = SafeFilePublication.requireSafeRegularFile(marker, "local-copy deletion recovery marker");
+        String beforeHash = SafeFilePublication.sha256(safeMarker, "local-copy deletion recovery marker before read");
         Properties properties = new Properties();
-        try (InputStream input = Files.newInputStream(marker)) {
-            properties.load(input);
+        try (InputStream input = Files.newInputStream(safeMarker, LinkOption.NOFOLLOW_LINKS);
+             InputStream bounded = new java.io.ByteArrayInputStream(
+                     BoundedIoSupport.readFully(input, MAX_MARKER_BYTES))) {
+            properties.load(bounded);
         }
-        if (!VERSION.equals(properties.getProperty("version"))) {
+        String afterHash = SafeFilePublication.sha256(safeMarker, "local-copy deletion recovery marker after read");
+        if (!beforeHash.equalsIgnoreCase(afterHash)) {
+            throw new IOException("Local-copy deletion recovery marker changed while being read: " + marker);
+        }
+        String version = properties.getProperty("version");
+        if (!VERSION.equals(version) && !LEGACY_VERSION.equals(version)) {
             throw new IOException("Unsupported local-copy deletion recovery marker version: " + marker);
         }
         try {
@@ -157,7 +197,11 @@ public final class LocalCopyDeletionRecoveryStore {
                 if (!trimmed.isEmpty() && !bookIds.contains(trimmed)) bookIds.add(trimmed);
             }
             if (bookIds.isEmpty()) throw new IOException("Recovery marker has no book ids: " + marker);
-            return new RecoveryRecord(original, recovery, managedRoot, collectionId, List.copyOf(bookIds));
+            String contentHash = VERSION.equals(version)
+                    ? normalizeHash(required(properties, "contentSha256"), "marker content SHA-256")
+                    : null;
+            return new RecoveryRecord(original, recovery, managedRoot, collectionId, List.copyOf(bookIds),
+                    contentHash, new PreparedMarker(safeMarker, afterHash));
         } catch (RuntimeException invalidMarker) {
             throw new IOException("Invalid local-copy deletion recovery marker: " + marker, invalidMarker);
         }
@@ -167,6 +211,14 @@ public final class LocalCopyDeletionRecoveryStore {
         String value = properties.getProperty(key);
         if (value == null || value.isBlank()) throw new IOException("Recovery marker field is missing: " + key);
         return value;
+    }
+
+    private static String normalizeHash(String value, String role) {
+        String normalized = value == null ? "" : value.trim().toLowerCase(Locale.ROOT);
+        if (!normalized.matches("[0-9a-f]{64}")) {
+            throw new IllegalArgumentException(role + " is invalid");
+        }
+        return normalized;
     }
 
     private static List<Integer> findLocalFlags(Connection connection, List<String> bookIds) throws SQLException {
@@ -184,33 +236,31 @@ public final class LocalCopyDeletionRecoveryStore {
 
     private static void validateRecoveryPaths(RecoveryRecord record) throws IOException {
         Path root = record.managedRoot().toAbsolutePath().normalize();
-        if (root.getParent() == null || !Files.isDirectory(root, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(root)) {
+        if (root.getParent() == null) {
             throw new IOException("Unsafe managed root in local-copy recovery marker: " + root);
         }
-        Path canonicalRoot = root.toRealPath();
+        Path canonicalRoot = SafeFilePublication.requireSafeDirectoryPath(
+                root, "local-copy recovery managed root").toRealPath(LinkOption.NOFOLLOW_LINKS);
 
         Path original = record.original().toAbsolutePath().normalize();
         Path recovery = record.recovery().toAbsolutePath().normalize();
         Path originalParent = original.getParent();
         Path recoveryParent = recovery.getParent();
-        if (originalParent == null || recoveryParent == null || !Files.isDirectory(originalParent)) {
-            throw new IOException("Recovery parent directory is unavailable: " + original);
+        if (originalParent == null || recoveryParent == null) {
+            throw new IOException("Recovery parent directory is unavailable or unsafe: " + original);
         }
-        Path canonicalParent = originalParent.toRealPath();
-        Path canonicalRecoveryParent = recoveryParent.toRealPath();
+        Path canonicalParent = SafeFilePublication.requireSafeDirectoryPath(
+                originalParent, "local-copy recovery original parent").toRealPath(LinkOption.NOFOLLOW_LINKS);
+        Path canonicalRecoveryParent = SafeFilePublication.requireSafeDirectoryPath(
+                recoveryParent, "local-copy recovery staging parent").toRealPath(LinkOption.NOFOLLOW_LINKS);
         if (!canonicalParent.startsWith(canonicalRoot) || !canonicalRecoveryParent.equals(canonicalParent)) {
             throw new IOException("Recovery marker escapes its managed root: " + original);
         }
-        if (Files.isSymbolicLink(original) || Files.isSymbolicLink(recovery)) {
-            throw new IOException("Symbolic links are forbidden in local-copy deletion recovery");
+        if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+            SafeFilePublication.requireSafeRegularFile(recovery, "local-copy recovery artifact");
         }
-        if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)
-                && !Files.isRegularFile(recovery, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Recovery artifact is not a regular file: " + recovery);
-        }
-        if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)
-                && !Files.isRegularFile(original, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Original recovery target is not a regular file: " + original);
+        if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)) {
+            SafeFilePublication.requireSafeRegularFile(original, "local-copy recovery original");
         }
         String originalName = original.getFileName() == null ? "" : original.getFileName().toString();
         String recoveryName = recovery.getFileName() == null ? "" : recovery.getFileName().toString();
@@ -223,18 +273,40 @@ public final class LocalCopyDeletionRecoveryStore {
         Path original = record.original().toAbsolutePath().normalize();
         Path recovery = record.recovery().toAbsolutePath().normalize();
         if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)) {
-            Files.deleteIfExists(recovery); // Crash happened before the visible path was removed.
+            String originalHash = SafeFilePublication.sha256(original, "visible book during local-copy recovery");
+            if (!record.contentSha256().equalsIgnoreCase(originalHash)) {
+                throw new IOException("Visible book changed during local-copy recovery; recovery evidence kept: " + original);
+            }
+            if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.removeIfOwned(
+                        recovery, record.contentSha256(), "duplicate local-copy recovery cleanup");
+            }
             return;
         }
-        if (!Files.isRegularFile(recovery, LinkOption.NOFOLLOW_LINKS)) {
-            throw new IOException("Recovery bytes are missing for interrupted local-copy deletion: " + original);
+        String recoveryHash = SafeFilePublication.sha256(recovery, "local-copy recovery bytes");
+        if (!record.contentSha256().equalsIgnoreCase(recoveryHash)) {
+            throw new IOException("Recovery bytes changed for interrupted local-copy deletion: " + original);
         }
-        try {
-            Files.move(recovery, original, StandardCopyOption.ATOMIC_MOVE);
-        } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-            Files.move(recovery, original);
+        SafeFilePublication.moveNoReplace(recovery, original, "local-copy recovery restore");
+        String restoredHash = SafeFilePublication.sha256(original, "restored local-copy book");
+        if (!record.contentSha256().equalsIgnoreCase(restoredHash)) {
+            throw new IOException("Restored local-copy bytes differ from recovery marker hash: " + original);
         }
     }
 
-    private record RecoveryRecord(Path original, Path recovery, Path managedRoot, String collectionId, List<String> bookIds) { }
+    public record PreparedMarker(Path path, String sha256) {
+        public PreparedMarker {
+            if (path == null) throw new IllegalArgumentException("marker path is required");
+            sha256 = normalizeHash(sha256, "marker SHA-256");
+        }
+    }
+
+    private record RecoveryRecord(
+            Path original,
+            Path recovery,
+            Path managedRoot,
+            String collectionId,
+            List<String> bookIds,
+            String contentSha256,
+            PreparedMarker marker) { }
 }

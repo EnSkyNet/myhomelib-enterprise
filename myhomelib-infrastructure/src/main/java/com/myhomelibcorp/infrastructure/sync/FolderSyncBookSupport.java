@@ -1,12 +1,15 @@
 package com.myhomelibcorp.infrastructure.sync;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
 import java.util.List;
@@ -39,13 +42,13 @@ final class FolderSyncBookSupport {
             folder = relativeFolder(root, physicalFile);
             entry = "";
             fileName = physicalFile.getFileName().toString();
-            size = Files.size(physicalFile);
+            size = safeAttributes(physicalFile, "Folder-sync source").size();
         }
 
         BookFile newFile = new BookFile(fileName, folder, entry, size, root.toString());
         return parsed.toBuilder()
                 .file(newFile)
-                .updateDate(fileTimestamp(physicalFile))
+                .updateDate(sourceTimestamp(physicalFile, parsed.getUpdateDate()))
                 .local(true)
                 .missingSince(null)
                 .build();
@@ -53,8 +56,9 @@ final class FolderSyncBookSupport {
 
     boolean fileChanged(Path file, Book existing) {
         try {
-            if (Files.size(file) != existing.getFileSize()) return true;
-            return Files.getLastModifiedTime(file).toMillis() > toEpochMillis(existing.getUpdateDate());
+            BasicFileAttributes attrs = safeAttributes(file, "Folder-sync source");
+            if (attrs.size() != existing.getFileSize()) return true;
+            return attrs.lastModifiedTime().toMillis() > toEpochMillis(existing.getUpdateDate());
         } catch (IOException e) {
             log.warn("Помилка перевірки змін файлу {}: {}", file, e.getMessage());
             return true;
@@ -63,7 +67,7 @@ final class FolderSyncBookSupport {
 
     boolean archiveChanged(Path file, List<Book> existing) {
         try {
-            long modified = Files.getLastModifiedTime(file).toMillis();
+            long modified = safeAttributes(file, "Folder-sync archive").lastModifiedTime().toMillis();
             long newestCatalogTimestamp = existing.stream()
                     .map(Book::getUpdateDate)
                     .filter(java.util.Objects::nonNull)
@@ -135,12 +139,20 @@ final class FolderSyncBookSupport {
         return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
     }
 
-    private LocalDateTime fileTimestamp(Path file) {
+    private LocalDateTime sourceTimestamp(Path file, LocalDateTime fallback) {
         try {
-            return LocalDateTime.ofInstant(Files.getLastModifiedTime(file).toInstant(), ZoneId.systemDefault());
+            return LocalDateTime.ofInstant(safeAttributes(file, "Folder-sync source").lastModifiedTime().toInstant(), ZoneId.systemDefault());
         } catch (IOException e) {
-            return LocalDateTime.now();
+            log.debug("Не вдалося прочитати last-modified для {}: {}", file, e.getMessage());
+            return fallback;
         }
+    }
+
+    private BasicFileAttributes safeAttributes(Path file, String role) throws IOException {
+        Path safe = SafeFilePublication.requireSafeRegularFile(file, role);
+        BasicFileAttributes attrs = Files.readAttributes(safe, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attrs.isRegularFile()) throw new IOException(role + " is not a regular file: " + safe);
+        return attrs;
     }
 
     private long toEpochMillis(LocalDateTime value) {

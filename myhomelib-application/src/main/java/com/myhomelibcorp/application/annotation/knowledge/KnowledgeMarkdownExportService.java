@@ -3,18 +3,25 @@ package com.myhomelibcorp.application.annotation.knowledge;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportPage;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportRow;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationExportQueryPort;
-import lombok.RequiredArgsConstructor;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.shared.util.SafeFileNameSupport;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedReader;
+import java.io.InputStreamReader;
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.channels.Channels;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Locale;
@@ -29,24 +36,54 @@ import java.util.regex.Pattern;
  * only a target that carries the ownership marker for the same book id.
  */
 @Service
-@RequiredArgsConstructor
 public class KnowledgeMarkdownExportService {
     static final String MANAGED_MARKER_PREFIX = "<!-- myhomelib-managed: book-id=";
     private static final String MANAGED_MARKER_SUFFIX = "; export=mhl-509 -->";
     private static final int PAGE_SIZE = 250;
     private static final int OWNERSHIP_SCAN_CHARS = 16 * 1024;
-    private static final int MAX_SEGMENT_CHARS = 140;
+    private static final int MAX_SEGMENT_UTF8_BYTES = 220;
     private static final Pattern PLACEHOLDER = Pattern.compile("\\$\\{([A-Za-z][A-Za-z0-9]*)\\}");
-    private static final Pattern WINDOWS_RESERVED = Pattern.compile("(?i)^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\\..*)?$");
     private static final Set<String> BOOK_PLACEHOLDERS = Set.of(
             "bookId", "bookTitle", "authors", "series", "language", "fileName", "isbn");
 
     private final AnnotationExportQueryPort queryPort;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for isolated tests/non-Spring embedding. */
+    public KnowledgeMarkdownExportService(AnnotationExportQueryPort queryPort) {
+        this(queryPort, null);
+    }
+
+    @Autowired
+    public KnowledgeMarkdownExportService(AnnotationExportQueryPort queryPort,
+                                          LibraryOperationCoordinator operationCoordinator) {
+        this.queryPort = java.util.Objects.requireNonNull(queryPort, "queryPort");
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public KnowledgeMarkdownExportResult export(KnowledgeMarkdownExportRequest request)
             throws IOException, InterruptedException {
-        Files.createDirectories(request.rootDirectory());
-        if (!Files.isDirectory(request.rootDirectory())) {
+        if (operationCoordinator == null) return exportLocked(request);
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EXPORT);
+        try {
+            KnowledgeMarkdownExportResult result = exportLocked(request);
+            lease.markCompleted("");
+            return result;
+        } catch (IOException | InterruptedException | RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } catch (Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private KnowledgeMarkdownExportResult exportLocked(KnowledgeMarkdownExportRequest request)
+            throws IOException, InterruptedException {
+        SafeFilePublication.createDirectoriesNoLinks(request.rootDirectory(), "Knowledge export root");
+        if (!Files.isDirectory(request.rootDirectory(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Knowledge export root is not a directory: " + request.rootDirectory());
         }
 
@@ -83,9 +120,10 @@ public class KnowledgeMarkdownExportService {
     private BookOutput openBook(KnowledgeMarkdownExportRequest request, AnnotationExportRow row, ExportCounters counters)
             throws IOException {
         Path target = targetPath(request, row);
-        Files.createDirectories(target.getParent());
+        SafeFilePublication.createDirectoriesNoLinks(target.getParent(), "Knowledge export target parent");
 
-        if (Files.exists(target)) {
+        String expectedTargetHash = null;
+        if (Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             switch (request.reExportPolicy()) {
                 case SKIP_EXISTING -> {
                     counters.skippedBooks++;
@@ -93,9 +131,8 @@ public class KnowledgeMarkdownExportService {
                 }
                 case FAIL_IF_EXISTS -> throw new IOException("Knowledge export target already exists: " + target);
                 case REPLACE_MANAGED -> {
-                    if (!isManagedByBook(target, row.bookId())) {
-                        throw new IOException("Refusing to replace unmanaged or differently-owned Markdown file: " + target);
-                    }
+                    Path safeTarget = SafeFilePublication.requireSafeRegularFile(target, "Knowledge export managed target");
+                    expectedTargetHash = managedTargetSnapshot(safeTarget, row.bookId());
                 }
             }
         }
@@ -104,7 +141,7 @@ public class KnowledgeMarkdownExportService {
         BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8);
         try {
             writeDocumentHeader(writer, row, request.includeFrontmatter());
-            return new BookOutput(row.bookId(), target, temp, writer, request.templates().annotationTemplate(), false);
+            return new BookOutput(row.bookId(), target, temp, writer, request.templates().annotationTemplate(), false, expectedTargetHash);
         } catch (IOException | RuntimeException e) {
             try { writer.close(); } catch (IOException ignored) { }
             Files.deleteIfExists(temp);
@@ -253,16 +290,8 @@ public class KnowledgeMarkdownExportService {
     }
 
     private static String sanitizeSegment(String value) {
-        String safe = value == null ? "" : value
-                .replaceAll("[<>:\"/\\\\|?*\\p{Cntrl}]", "_")
-                .replaceAll("\\s+", " ")
-                .trim();
-        safe = safe.replace("..", "_");
-        while (safe.endsWith(".") || safe.endsWith(" ")) safe = safe.substring(0, safe.length() - 1);
-        if (safe.equals(".") || safe.equals("..")) safe = "_";
-        if (WINDOWS_RESERVED.matcher(safe).matches()) safe = "_" + safe;
-        if (safe.length() > MAX_SEGMENT_CHARS) safe = safe.substring(0, MAX_SEGMENT_CHARS).trim();
-        return safe;
+        String safe = value == null ? "" : value.replace("..", "_");
+        return SafeFileNameSupport.sanitizeComponent(safe, MAX_SEGMENT_UTF8_BYTES);
     }
 
     private static String markdownEscape(String value) {
@@ -325,25 +354,65 @@ public class KnowledgeMarkdownExportService {
         return (value == null ? "" : value).replace("--", "__").replace("\n", "_").replace("\r", "_");
     }
 
-    private static boolean isManagedByBook(Path target, String bookId) throws IOException {
+    private static String managedTargetSnapshot(Path target, String bookId) throws IOException {
         String expected = managedMarker(bookId);
         StringBuilder head = new StringBuilder();
-        try (BufferedReader reader = Files.newBufferedReader(target, StandardCharsets.UTF_8)) {
-            char[] buffer = new char[2048];
-            while (head.length() < OWNERSHIP_SCAN_CHARS) {
-                int read = reader.read(buffer, 0, Math.min(buffer.length, OWNERSHIP_SCAN_CHARS - head.length()));
-                if (read < 0) break;
-                head.append(buffer, 0, read);
+        String openedHash;
+        try (FileChannel channel = FileChannel.open(
+                target, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            openedHash = SafeFilePublication.sha256(channel, "Knowledge export managed target opened snapshot");
+            channel.position(0L);
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                    Channels.newInputStream(channel), StandardCharsets.UTF_8))) {
+                char[] buffer = new char[2048];
+                while (head.length() < OWNERSHIP_SCAN_CHARS) {
+                    int read = reader.read(buffer, 0, Math.min(buffer.length, OWNERSHIP_SCAN_CHARS - head.length()));
+                    if (read < 0) break;
+                    head.append(buffer, 0, read);
+                }
             }
         }
-        return head.indexOf(expected) >= 0;
+        if (head.indexOf(expected) < 0) {
+            throw new IOException("Refusing to replace unmanaged or differently-owned Markdown file: " + target);
+        }
+        SafeFilePublication.requireOwnedPath(
+                target, openedHash, "Knowledge export managed target pathname verification");
+        return openedHash;
     }
 
-    private static void publish(Path temp, Path target) throws IOException {
+    private static void publish(Path temp, Path target, String expectedTargetHash) throws IOException {
+        String stagedHash = SafeFilePublication.sha256(temp, "Knowledge export staged Markdown");
+        Path detached = null;
+        boolean published = false;
         try {
-            Files.move(temp, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException unsupported) {
-            Files.move(temp, target, StandardCopyOption.REPLACE_EXISTING);
+            if (expectedTargetHash != null) {
+                detached = SafeFilePublication.detachIfOwned(
+                        target, expectedTargetHash, "Knowledge export managed replacement");
+            }
+            SafeFilePublication.moveNoReplace(temp, target, "Knowledge export publication");
+            String publishedHash = SafeFilePublication.sha256(target, "Knowledge export published Markdown");
+            if (!stagedHash.equalsIgnoreCase(publishedHash)) {
+                throw new IOException("Knowledge export published bytes differ from staged Markdown: " + target);
+            }
+            published = true;
+        } finally {
+            if (!published && detached != null && Files.exists(detached, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                    && !Files.exists(target, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    SafeFilePublication.moveNoReplace(detached, target, "Knowledge export rollback");
+                    detached = null;
+                } catch (IOException restoreFailure) {
+                    // The original target is preserved as detached evidence if a concurrent path appears.
+                }
+            }
+            if (published && detached != null) {
+                try {
+                    SafeFilePublication.removeIfOwned(
+                            detached, expectedTargetHash, "Knowledge export old managed target cleanup");
+                } catch (IOException cleanupFailure) {
+                    // Publication is already verified. Retain evidence rather than delete an unverified replacement.
+                }
+            }
         }
     }
 
@@ -364,20 +433,22 @@ public class KnowledgeMarkdownExportService {
         private final BufferedWriter writer;
         private final String annotationTemplate;
         private final boolean skipped;
+        private final String expectedTargetHash;
         private boolean finished;
 
         private BookOutput(String bookId, Path target, Path temp, BufferedWriter writer,
-                           String annotationTemplate, boolean skipped) {
+                           String annotationTemplate, boolean skipped, String expectedTargetHash) {
             this.bookId = bookId;
             this.target = target;
             this.temp = temp;
             this.writer = writer;
             this.annotationTemplate = annotationTemplate;
             this.skipped = skipped;
+            this.expectedTargetHash = expectedTargetHash;
         }
 
         static BookOutput skipped(String bookId, Path target, String template) {
-            return new BookOutput(bookId, target, null, null, template, true);
+            return new BookOutput(bookId, target, null, null, template, true, null);
         }
 
         String bookId() { return bookId; }
@@ -396,7 +467,7 @@ public class KnowledgeMarkdownExportService {
             }
             try {
                 writer.close();
-                publish(temp, target);
+                publish(temp, target, expectedTargetHash);
                 counters.writtenBooks++;
                 finished = true;
             } catch (IOException e) {

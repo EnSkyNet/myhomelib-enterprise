@@ -32,7 +32,7 @@ public final class AudioReaderView extends BorderPane implements AutoCloseable {
     private Runnable onAddBookmark = () -> {};
     private Runnable onBookmarks = () -> {};
     private Consumer<AudioPosition> onPositionChanged = p -> {};
-    private Consumer<String> onError = s -> {};
+    private Consumer<Throwable> onError = ignored -> {};
 
     public AudioReaderView(Function<String, String> text) {
         this.text = text == null ? key -> key : text;
@@ -107,7 +107,7 @@ public final class AudioReaderView extends BorderPane implements AutoCloseable {
     public void setOnAddBookmark(Runnable value) { onAddBookmark = value == null ? () -> {} : value; }
     public void setOnBookmarks(Runnable value) { onBookmarks = value == null ? () -> {} : value; }
     public void setOnPositionChanged(Consumer<AudioPosition> value) { onPositionChanged = value == null ? p -> {} : value; }
-    public void setOnError(Consumer<String> value) { onError = value == null ? s -> {} : value; }
+    public void setOnError(Consumer<Throwable> value) { onError = value == null ? ignored -> {} : value; }
 
     public void closeDocument() {
         ticker.stop();
@@ -181,7 +181,7 @@ public final class AudioReaderView extends BorderPane implements AutoCloseable {
 
     private void updatePlayLabel() { playPause.setText(session != null && session.isPlaying() ? text.apply("ui.reader.audio.pause") : text.apply("ui.reader.audio.play")); }
     private void notifyPosition() { if (session != null) onPositionChanged.accept(session.currentPosition()); }
-    private void fail(Exception e) { onError.accept(e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()); }
+    private void fail(Exception e) { onError.accept(e); }
     private static String formatTime(long millis) {
         long seconds = Math.max(0L, millis / 1000L); long h = seconds / 3600; long m = (seconds % 3600) / 60; long s = seconds % 60;
         return h > 0 ? String.format("%d:%02d:%02d", h, m, s) : String.format("%d:%02d", m, s);

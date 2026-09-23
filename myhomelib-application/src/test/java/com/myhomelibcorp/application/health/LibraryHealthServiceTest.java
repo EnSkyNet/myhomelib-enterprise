@@ -82,4 +82,24 @@ class LibraryHealthServiceTest {
         }
     }
 
+    @Test
+    void queuedAuditRefusesDifferentActiveCollectionBeforeAnyAuditRead() {
+        ArtifactIntegrityPort artifacts = mock(ArtifactIntegrityPort.class);
+        DataIntegrityPort integrityPort = mock(DataIntegrityPort.class);
+        DataIntegrityChecker checker = new DataIntegrityChecker(integrityPort);
+        Collection active = mock(Collection.class);
+        when(active.getId()).thenReturn("collection-b");
+        CollectionBackupPort backup = mock(CollectionBackupPort.class);
+        when(backup.getCurrentCollection()).thenReturn(active);
+        SearchIndexLifecycle search = mock(SearchIndexLifecycle.class);
+        LibraryHealthService service = new LibraryHealthService(
+                checker, artifacts, backup, search, new LibraryOperationCoordinator(), 168);
+
+        assertThatThrownBy(() -> service.refresh("collection-a"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Активна колекція змінилася");
+
+        org.mockito.Mockito.verifyNoInteractions(artifacts, integrityPort, search);
+    }
+
 }

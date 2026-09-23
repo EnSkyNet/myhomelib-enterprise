@@ -26,11 +26,14 @@ class ExportBatchCompletionContractTest {
                 StandardCharsets.UTF_8);
 
         assertThat(export)
-                .contains("result.failed() == 0 && result.errors().isEmpty()")
+                .contains("result.failed() == 0 && result.issues().isEmpty()")
                 .contains("bookSelectionService.setSelectedIds(List.copyOf(selectedBookIds), false)")
                 .contains("successfulExportCallback.run()")
                 .contains("Failed/cancelled exports deliberately")
-                .contains("handleExport(Window owner, Runnable onSuccessfulExport)");
+                .contains("handleExport(Window owner, Runnable onSuccessfulExport)")
+                .contains("renderExportIssues(result)")
+                .contains("UiText.format(issue.key(), issue.arguments().toArray())")
+                .doesNotContain("String.join(\"\n\", result.errors())");
 
         assertThat(author)
                 .contains("String currentBookId = selectedConcreteBookId()")

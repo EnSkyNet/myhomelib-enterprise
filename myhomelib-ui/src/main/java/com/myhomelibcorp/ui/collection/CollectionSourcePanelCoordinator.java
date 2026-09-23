@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.collection;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.collection.CollectionSourceState;
 import com.myhomelibcorp.application.dto.CollectionDto;
@@ -21,7 +23,9 @@ import org.springframework.stereotype.Component;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicLong;
 
 /** Owns the local INPX/ZIP source-monitor panel behavior for Collection Workspace. */
 @Component
@@ -37,6 +41,8 @@ final class CollectionSourcePanelCoordinator {
     private Label statusLabel;
     private Button checkButton;
     private Node ownerNode;
+    private final AtomicLong requestGeneration = new AtomicLong();
+    private String displayedCollectionId;
 
     void attach(TextField sourceFileField, CheckBox enabledCheckBox, Label statusLabel,
                 Button checkButton, Node ownerNode) {
@@ -48,6 +54,9 @@ final class CollectionSourcePanelCoordinator {
     }
 
     void show(CollectionDto collection) {
+        displayedCollectionId = collection == null ? null : collection.getId();
+        requestGeneration.incrementAndGet();
+        setBusy(false);
         if (sourceFileField == null || collection == null) {
             clear();
             return;
@@ -62,14 +71,14 @@ final class CollectionSourcePanelCoordinator {
 
     void browse(CollectionDto collection) {
         if (collection == null) {
-            dialogService.showWarning("Колекція", "Спочатку виберіть колекцію.");
+            dialogService.showWarning(UiText.text("ui.fxml.collection_workspace.collection"), UiText.text("ui.java.collection_source_panel_coordinator.6686ed3c16"));
             return;
         }
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Виберіть локальний INPX/ZIP для автооновлення");
+        chooser.setTitle(UiText.text("ui.java.collection_source_panel_coordinator.7e07fe6985"));
         chooser.getExtensionFilters().addAll(
                 ImportFileChooserFilters.catalogAndZipSources(localizationService),
-                new FileChooser.ExtensionFilter("Усі файли", "*.*"));
+                new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_source_panel_coordinator.3efc61c5fd"), "*.*"));
         configureInitialDirectory(chooser);
 
         var window = ownerNode == null || ownerNode.getScene() == null ? null : ownerNode.getScene().getWindow();
@@ -83,19 +92,22 @@ final class CollectionSourcePanelCoordinator {
         if (collection == null) return;
         String source = sourceFileField == null ? "" : sourceFileField.getText();
         if (source == null || source.isBlank()) {
-            dialogService.showWarning("Автооновлення", "Вкажіть локальний файл-джерело INPX/ZIP.");
+            dialogService.showWarning(UiText.text("ui.java.collection_source_panel_coordinator.88645354c9"), UiText.text("ui.java.collection_source_panel_coordinator.379e9b588f"));
             return;
         }
 
+        String collectionId = collection.getId();
+        long requestId = requestGeneration.incrementAndGet();
         setBusy(true);
-        autoUpdateUseCase.configure(collection.getId(), Paths.get(source), enabledCheckBox.isSelected())
+        autoUpdateUseCase.configure(collectionId, Paths.get(source), enabledCheckBox.isSelected())
                 .whenComplete((state, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrent(collectionId, requestId)) return;
                     setBusy(false);
                     if (error != null) {
-                        dialogService.showError("Автооновлення", UiExceptionSupport.message(error));
+                        dialogService.showError(UiText.text("ui.java.collection_source_panel_coordinator.88645354c9"), UiExceptionSupport.message(error));
                     } else {
                         render(state);
-                        appState.getStatusBar().setStatusText("Налаштування автооновлення збережено");
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_source_panel_coordinator.d7f644f993"));
                     }
                 }));
     }
@@ -103,15 +115,18 @@ final class CollectionSourcePanelCoordinator {
     void checkNow(CollectionDto collection) {
         if (collection == null) return;
         if (autoUpdateUseCase.load(collection.getId()).isEmpty()) {
-            dialogService.showWarning("Автооновлення", "Спочатку збережіть файл-джерело.");
+            dialogService.showWarning(UiText.text("ui.java.collection_source_panel_coordinator.88645354c9"), UiText.text("ui.java.collection_source_panel_coordinator.ccf21b3750"));
             return;
         }
 
+        String collectionId = collection.getId();
+        long requestId = requestGeneration.incrementAndGet();
         setBusy(true);
-        autoUpdateUseCase.checkNow(collection.getId())
+        autoUpdateUseCase.checkNow(collectionId)
                 .whenComplete((state, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrent(collectionId, requestId)) return;
                     setBusy(false);
-                    if (error != null) dialogService.showError("Перевірка джерела", UiExceptionSupport.message(error));
+                    if (error != null) dialogService.showError(UiText.text("ui.java.collection_source_panel_coordinator.69a2d0969a"), UiExceptionSupport.message(error));
                     else render(state);
                 }));
     }
@@ -119,7 +134,7 @@ final class CollectionSourcePanelCoordinator {
     private void clear() {
         if (sourceFileField != null) sourceFileField.clear();
         if (enabledCheckBox != null) enabledCheckBox.setSelected(false);
-        if (statusLabel != null) statusLabel.setText("Джерело автооновлення не налаштовано");
+        if (statusLabel != null) statusLabel.setText(UiText.text("ui.fxml.collection_workspace.auto_update_source_is_not_configured"));
     }
 
     private void render(CollectionSourceState state) {
@@ -128,7 +143,7 @@ final class CollectionSourcePanelCoordinator {
         }
         if (enabledCheckBox != null) enabledCheckBox.setSelected(state.enabled());
         if (statusLabel != null) {
-            String prefix = state.updateAvailable() ? "⚠ Доступне оновлення" : "✓ Без нових змін";
+            String prefix = state.updateAvailable() ? UiText.text("ui.java.collection_source_panel_coordinator.7093fa4e86") : UiText.text("ui.java.collection_source_panel_coordinator.80183792e4");
             statusLabel.setText(prefix + " · " + displayStatus(state.status()));
         }
     }
@@ -147,18 +162,22 @@ final class CollectionSourcePanelCoordinator {
 
     private void setBusy(boolean busy) {
         if (checkButton != null) checkButton.setDisable(busy);
-        if (statusLabel != null && busy) statusLabel.setText("Перевірка файла-джерела...");
+        if (statusLabel != null && busy) statusLabel.setText(UiText.text("ui.java.collection_source_panel_coordinator.f3cf68c364"));
+    }
+
+    private boolean isCurrent(String collectionId, long requestId) {
+        return requestId == requestGeneration.get() && Objects.equals(displayedCollectionId, collectionId);
     }
 
     private static String displayStatus(String status) {
-        if (status == null) return "стан невідомий";
+        if (status == null) return UiText.text("ui.java.collection_source_panel_coordinator.f6a66ef515");
         return switch (status) {
-            case "READY" -> "джерело доступне";
-            case "APPLIED" -> "оновлення застосовано";
-            case "SOURCE_MISSING" -> "файл джерела не знайдено";
-            case "SOURCE_NOT_READABLE" -> "файл джерела недоступний для читання";
-            case "SOURCE_DIRECTORY_MISSING" -> "каталог джерела не існує";
-            default -> status.startsWith("SOURCE_ARCHIVE_INVALID") ? "пошкоджений INPX/ZIP" : status;
+            case "READY" -> UiText.text("ui.java.collection_source_panel_coordinator.56b5ffea34");
+            case "APPLIED" -> UiText.text("ui.java.collection_source_panel_coordinator.670eea73e1");
+            case "SOURCE_MISSING" -> UiText.text("ui.java.collection_source_panel_coordinator.2589da9149");
+            case "SOURCE_NOT_READABLE" -> UiText.text("ui.java.collection_source_panel_coordinator.bb7ada9f29");
+            case "SOURCE_DIRECTORY_MISSING" -> UiText.text("ui.java.collection_source_panel_coordinator.864af386fe");
+            default -> status.startsWith("SOURCE_ARCHIVE_INVALID") ? UiText.text("ui.java.collection_source_panel_coordinator.92ca06bda4") : status;
         };
     }
 

@@ -119,6 +119,32 @@ class AnnotationExportServiceTest {
     }
 
     @Test
+    void concurrentDestinationReplacementIsPreservedAndExportFailsClosed() throws Exception {
+        Path destination = tempDir.resolve("annotations.json");
+        Files.writeString(destination, "ORIGINAL", StandardCharsets.UTF_8);
+        List<AnnotationExportRow> rows = new ArrayList<>();
+        for (int i = 0; i < 251; i++) {
+            rows.add(row("a-" + i, "book-1", "Book", "q" + i, "n", List.of()));
+        }
+        AnnotationExportQueryPort replacing = (selection, offset, limit) -> {
+            if (offset > 0) {
+                try { Files.writeString(destination, "FOREIGN", StandardCharsets.UTF_8); }
+                catch (java.io.IOException e) { throw new RuntimeException(e); }
+            }
+            int from = Math.min(offset, rows.size());
+            int to = Math.min(rows.size(), from + limit);
+            return new AnnotationExportPage(rows.subList(from, to), offset, limit, to < rows.size());
+        };
+        AnnotationExportService service = new AnnotationExportService(replacing);
+
+        assertThatThrownBy(() -> service.export(new AnnotationExportRequest(
+                AnnotationExportFormat.JSON, AnnotationExportSelection.all(), destination, null)))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("target changed before detach");
+        assertThat(Files.readString(destination, StandardCharsets.UTF_8)).isEqualTo("FOREIGN");
+    }
+
+    @Test
     void cancellationNeverPublishesPartialReplacement() throws Exception {
         Path destination = tempDir.resolve("annotations.json");
         Files.writeString(destination, "ORIGINAL", StandardCharsets.UTF_8);

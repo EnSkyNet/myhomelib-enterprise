@@ -3,6 +3,9 @@ package com.myhomelibcorp.application.history;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditResult;
 import com.myhomelibcorp.application.bulkedit.BatchMetadataEditUseCase;
 import com.myhomelibcorp.application.duplicate.merge.BookMergeResult;
+import com.myhomelibcorp.application.duplicate.merge.BookMergeMutationResult;
+import com.myhomelibcorp.application.port.out.duplicate.BookMergePort;
+import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.port.out.history.OperationHistoryPort;
 import com.myhomelibcorp.application.usecase.duplicate.MergeBooksUseCase;
@@ -75,6 +78,32 @@ class LibraryOperationHistoryUseCaseTest {
         assertThat(result.searchIndexSynchronizedOrScheduled()).isTrue();
         verify(merge).undo("merge-1");
         verifyNoInteractions(batch);
+    }
+
+
+    @Test
+    void mergeUndoCanNestInsideSharedEditBarrierWithProductionCoordinator() {
+        OperationHistoryPort history = mock(OperationHistoryPort.class);
+        BatchMetadataEditUseCase batch = mock(BatchMetadataEditUseCase.class);
+        BookMergePort mergePort = mock(BookMergePort.class);
+        SearchIndexSynchronizer searchIndex = mock(SearchIndexSynchronizer.class);
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        MergeBooksUseCase merge = new MergeBooksUseCase(mergePort, searchIndex, coordinator);
+        BookId survivor = BookId.fromString("00000000-0000-0000-0000-000000000011");
+        BookId merged = BookId.fromString("00000000-0000-0000-0000-000000000012");
+
+        when(history.latestUndoable()).thenReturn(Optional.of(entry("merge-shared", LibraryOperationHistoryType.BOOK_MERGE)));
+        when(mergePort.undo("merge-shared")).thenReturn(new BookMergeMutationResult(
+                "merge-shared", survivor, merged, Instant.parse("2026-09-22T12:00:00Z"), true));
+        when(searchIndex.synchronizeSafelyNow(any())).thenReturn(true);
+
+        var useCase = new LibraryOperationHistoryUseCase(history, batch, merge, coordinator);
+        LibraryOperationUndoResult result = useCase.undo(
+                "c1", "merge-shared", new AtomicBoolean(), ignored -> { });
+
+        assertThat(result.operationId()).isEqualTo("merge-shared");
+        assertThat(result.searchIndexSynchronizedOrScheduled()).isTrue();
+        verify(mergePort).undo("merge-shared");
     }
 
     private static LibraryOperationHistoryEntry entry(String id, LibraryOperationHistoryType type) {

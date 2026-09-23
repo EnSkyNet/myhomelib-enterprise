@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.book;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.author.Author;
@@ -7,10 +9,9 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -19,16 +20,45 @@ import java.util.List;
  * and therefore occurs only after the collection transaction commits.
  */
 @Service
-@RequiredArgsConstructor
 public class EditBookUseCase {
 
     private final BookQueryRepository books;
     private final CommittedCatalogMutationService committedMutations;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for focused tests without the application lifecycle coordinator. */
+    public EditBookUseCase(BookQueryRepository books, CommittedCatalogMutationService committedMutations) {
+        this(books, committedMutations, null);
+    }
+
+    @Autowired
+    public EditBookUseCase(BookQueryRepository books,
+                           CommittedCatalogMutationService committedMutations,
+                           LibraryOperationCoordinator operationCoordinator) {
+        this.books = books;
+        this.committedMutations = committedMutations;
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public Book execute(Request request) {
         if (request == null || request.bookId() == null) {
             throw new IllegalArgumentException("Book id is required");
         }
+        if (operationCoordinator == null) return executeUnderLease(request);
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            Book result = executeUnderLease(request);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private Book executeUnderLease(Request request) {
         String title = normalizeRequired(request.title(), "Book title cannot be blank");
         Book current = books.findById(request.bookId())
                 .orElseThrow(() -> new BookNotFoundException(request.bookId()));
@@ -61,7 +91,6 @@ public class EditBookUseCase {
                 .series(normalizeNullable(request.series()))
                 .sequenceNumber(request.sequenceNumber())
                 .metadata(metadata)
-                .updateDate(LocalDateTime.now())
                 .build();
 
         committedMutations.save(updated);

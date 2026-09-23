@@ -1,6 +1,9 @@
 package com.myhomelibcorp.application.annotation;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationManagerQueryPort;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.AnnotationRepository;
 import com.myhomelibcorp.application.search.BookSearchIndexRefreshService;
 import com.myhomelibcorp.domain.model.annotation.Annotation;
@@ -15,6 +18,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
+import java.util.function.Supplier;
 
 /** Application boundary for querying and editing the global Annotation Manager workspace. */
 @Service
@@ -24,139 +28,181 @@ public class AnnotationManagerService {
     private final AnnotationManagerQueryPort queryPort;
     private final AnnotationRepository repository;
     private final BookSearchIndexRefreshService indexRefresh;
+    private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecyclePort;
     private final Clock clock = Clock.systemUTC();
 
     public AnnotationManagerService(AnnotationManagerQueryPort queryPort, AnnotationRepository repository) {
-        this(queryPort, repository, null);
+        this(queryPort, repository, null, null, null);
+    }
+
+    public AnnotationManagerService(AnnotationManagerQueryPort queryPort, AnnotationRepository repository,
+                                    BookSearchIndexRefreshService indexRefresh) {
+        this(queryPort, repository, indexRefresh, null, null);
+    }
+
+    /** Compatibility constructor retained for existing isolated tests. */
+    public AnnotationManagerService(AnnotationManagerQueryPort queryPort, AnnotationRepository repository,
+                                    BookSearchIndexRefreshService indexRefresh,
+                                    LibraryOperationCoordinator operationCoordinator) {
+        this(queryPort, repository, indexRefresh, operationCoordinator, null);
     }
 
     @Autowired
     public AnnotationManagerService(AnnotationManagerQueryPort queryPort, AnnotationRepository repository,
-                                    BookSearchIndexRefreshService indexRefresh) {
+                                    BookSearchIndexRefreshService indexRefresh,
+                                    LibraryOperationCoordinator operationCoordinator,
+                                    CollectionLifecyclePort collectionLifecyclePort) {
         this.queryPort = queryPort;
         this.repository = repository;
         this.indexRefresh = indexRefresh;
+        this.operationCoordinator = operationCoordinator;
+        this.collectionLifecyclePort = collectionLifecyclePort;
     }
 
     public AnnotationManagerPage query(AnnotationManagerFilter filter, int offset, int limit) {
         AnnotationManagerFilter effective = filter == null ? AnnotationManagerFilter.empty() : filter;
         int safeOffset = Math.max(0, offset);
         int safeLimit = Math.max(1, Math.min(MAX_PAGE_SIZE, limit));
-        return queryPort.query(effective, safeOffset, safeLimit);
+        return withQueryLease(() -> queryPort.query(effective, safeOffset, safeLimit));
     }
 
     public AnnotationManagerFacets facets() {
-        return queryPort.facets();
+        return withQueryLease(queryPort::facets);
     }
 
     public void update(String annotationId, String note, String color, Set<String> tags) {
-        Annotation current = required(annotationId);
-        Instant now = Instant.now(clock);
-        repository.save(new Annotation(
-                current.id(), current.type(), current.anchor(), color, note, tags,
-                current.createdAt(), now));
-        refreshBooks(List.of(current.anchor().bookId()));
+        withAnnotationLease(() -> {
+            Annotation current = required(annotationId);
+            Instant now = Instant.now(clock);
+            repository.save(new Annotation(
+                    current.id(), current.type(), current.anchor(), color, note, tags,
+                    current.createdAt(), now));
+            refreshBooks(List.of(current.anchor().bookId()));
+            return null;
+        });
     }
 
     public AnnotationUndoToken deleteForUndo(String annotationId) {
-        Annotation current = required(annotationId);
-        AnnotationUndoToken token = snapshot(current);
-        repository.deleteById(current.id());
-        refreshBooks(List.of(current.anchor().bookId()));
-        return token;
+        return withAnnotationLease(() -> {
+            Annotation current = required(annotationId);
+            AnnotationUndoToken token = snapshot(current, activeCollectionIdForToken());
+            repository.deleteById(current.id());
+            refreshBooks(List.of(current.anchor().bookId()));
+            return token;
+        });
     }
 
     /** Deletes the requested annotations as one logical operation and returns one undo token. */
     public AnnotationBatchUndoToken deleteForUndo(Collection<String> annotationIds) {
-        List<String> ids = normalizedIds(annotationIds);
-        if (ids.isEmpty()) throw new IllegalArgumentException("annotationIds are required");
+        return withAnnotationLease(() -> {
+            List<String> ids = normalizedIds(annotationIds);
+            if (ids.isEmpty()) throw new IllegalArgumentException("annotationIds are required");
 
-        List<AnnotationUndoToken> snapshots = ids.stream()
-                .map(this::required)
-                .map(AnnotationManagerService::snapshot)
-                .toList();
-        List<AnnotationUndoToken> deleted = new ArrayList<>();
-        try {
-            for (AnnotationUndoToken token : snapshots) {
-                repository.deleteById(token.id());
-                deleted.add(token);
-            }
-            refreshBooks(snapshots.stream().map(token -> token.anchor().bookId()).toList());
-            return new AnnotationBatchUndoToken(snapshots);
-        } catch (RuntimeException failure) {
-            // Keep the operation all-or-nothing even when the repository has no surrounding transaction.
-            for (int i = deleted.size() - 1; i >= 0; i--) {
-                try {
-                    restoreDeleted(deleted.get(i));
-                } catch (RuntimeException rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
+            String collectionId = activeCollectionIdForToken();
+            List<AnnotationUndoToken> snapshots = ids.stream()
+                    .map(this::required)
+                    .map(annotation -> snapshot(annotation, collectionId))
+                    .toList();
+            List<AnnotationUndoToken> deleted = new ArrayList<>();
+            try {
+                for (AnnotationUndoToken token : snapshots) {
+                    repository.deleteById(token.id());
+                    deleted.add(token);
                 }
+                refreshBooks(snapshots.stream().map(token -> token.anchor().bookId()).toList());
+                return new AnnotationBatchUndoToken(snapshots);
+            } catch (RuntimeException failure) {
+                // Keep the operation all-or-nothing even when the repository has no surrounding transaction.
+                for (int i = deleted.size() - 1; i >= 0; i--) {
+                    try {
+                        repository.save(fromSnapshot(deleted.get(i)));
+                    } catch (RuntimeException rollbackFailure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                }
+                throw failure;
             }
-            throw failure;
-        }
+        });
     }
 
     public void restoreDeleted(AnnotationUndoToken token) {
-        if (token == null) throw new IllegalArgumentException("undo token is required");
-        repository.save(fromSnapshot(token));
-        refreshBooks(List.of(token.anchor().bookId()));
+        withAnnotationLease(() -> {
+            if (token == null) throw new IllegalArgumentException("undo token is required");
+            assertUndoTokenCollection(token);
+            repository.save(fromSnapshot(token));
+            refreshBooks(List.of(token.anchor().bookId()));
+            return null;
+        });
     }
 
     /** Restores every annotation deleted by one batch operation as one logical operation. */
     public void restoreDeleted(AnnotationBatchUndoToken token) {
-        if (token == null) throw new IllegalArgumentException("undo token is required");
-        List<AnnotationUndoToken> restored = new ArrayList<>();
-        try {
-            for (AnnotationUndoToken item : token.annotations()) {
-                repository.save(fromSnapshot(item));
-                restored.add(item);
-            }
-            refreshBooks(token.annotations().stream().map(item -> item.anchor().bookId()).toList());
-        } catch (RuntimeException failure) {
-            // If an undo fails half way, put the repository back into the pre-undo (deleted) state.
-            for (int i = restored.size() - 1; i >= 0; i--) {
-                try {
-                    repository.deleteById(restored.get(i).id());
-                } catch (RuntimeException rollbackFailure) {
-                    failure.addSuppressed(rollbackFailure);
+        withAnnotationLease(() -> {
+            if (token == null) throw new IllegalArgumentException("undo token is required");
+            for (AnnotationUndoToken item : token.annotations()) assertUndoTokenCollection(item);
+            List<AnnotationUndoToken> restored = new ArrayList<>();
+            try {
+                for (AnnotationUndoToken item : token.annotations()) {
+                    repository.save(fromSnapshot(item));
+                    restored.add(item);
                 }
+                refreshBooks(token.annotations().stream().map(item -> item.anchor().bookId()).toList());
+            } catch (RuntimeException failure) {
+                // If an undo fails half way, put the repository back into the pre-undo (deleted) state.
+                for (int i = restored.size() - 1; i >= 0; i--) {
+                    try {
+                        repository.deleteById(restored.get(i).id());
+                    } catch (RuntimeException rollbackFailure) {
+                        failure.addSuppressed(rollbackFailure);
+                    }
+                }
+                throw failure;
             }
-            throw failure;
-        }
+            return null;
+        });
     }
 
     /** Applies one color to every selected annotation while preserving note text and tags. */
     public int updateColor(Collection<String> annotationIds, String color) {
-        Instant now = Instant.now(clock);
-        return updateBatch(annotationIds, current -> current.withColor(color, now));
+        return withAnnotationLease(() -> {
+            Instant now = Instant.now(clock);
+            return updateBatch(annotationIds, current -> current.withColor(color, now));
+        });
     }
 
     /** Replaces tags on every selected annotation while preserving all other fields. */
     public int updateTags(Collection<String> annotationIds, Set<String> tags) {
-        Set<String> normalized = tags == null ? Set.of() : Set.copyOf(tags);
-        Instant now = Instant.now(clock);
-        return updateBatch(annotationIds, current -> current.withTags(normalized, now));
+        return withAnnotationLease(() -> {
+            Set<String> normalized = tags == null ? Set.of() : Set.copyOf(tags);
+            Instant now = Instant.now(clock);
+            return updateBatch(annotationIds, current -> current.withTags(normalized, now));
+        });
     }
 
     /** Adds tags to every selected annotation without removing existing tags. */
     public int addTags(Collection<String> annotationIds, Set<String> tags) {
-        Set<String> additions = tags == null ? Set.of() : Set.copyOf(tags);
-        Instant now = Instant.now(clock);
-        return updateBatch(annotationIds, current -> {
-            LinkedHashSet<String> merged = new LinkedHashSet<>(current.tags());
-            merged.addAll(additions);
-            return current.withTags(merged, now);
+        return withAnnotationLease(() -> {
+            Set<String> additions = tags == null ? Set.of() : Set.copyOf(tags);
+            Instant now = Instant.now(clock);
+            return updateBatch(annotationIds, current -> {
+                LinkedHashSet<String> merged = new LinkedHashSet<>(current.tags());
+                merged.addAll(additions);
+                return current.withTags(merged, now);
+            });
         });
     }
 
     /** Removes the requested tags from every selected annotation without touching other tags. */
     public int removeTags(Collection<String> annotationIds, Set<String> tags) {
-        Set<String> removals = tags == null ? Set.of() : Set.copyOf(tags);
-        Instant now = Instant.now(clock);
-        return updateBatch(annotationIds, current -> {
-            LinkedHashSet<String> remaining = new LinkedHashSet<>(current.tags());
-            remaining.removeAll(removals);
-            return current.withTags(remaining, now);
+        return withAnnotationLease(() -> {
+            Set<String> removals = tags == null ? Set.of() : Set.copyOf(tags);
+            Instant now = Instant.now(clock);
+            return updateBatch(annotationIds, current -> {
+                LinkedHashSet<String> remaining = new LinkedHashSet<>(current.tags());
+                remaining.removeAll(removals);
+                return current.withTags(remaining, now);
+            });
         });
     }
 
@@ -189,6 +235,37 @@ public class AnnotationManagerService {
     }
 
 
+    private <T> T withQueryLease(Supplier<T> action) {
+        if (operationCoordinator == null) return action.get();
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private <T> T withAnnotationLease(Supplier<T> action) {
+        if (operationCoordinator == null) return action.get();
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.ANNOTATION);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+
     private void refreshBooks(Collection<String> bookIds) {
         if (indexRefresh != null) indexRefresh.refreshBooks(bookIds);
     }
@@ -216,10 +293,32 @@ public class AnnotationManagerService {
                 .orElseThrow(() -> new IllegalArgumentException("Annotation not found: " + annotationId));
     }
 
-    private static AnnotationUndoToken snapshot(Annotation annotation) {
+    private AnnotationUndoToken snapshot(Annotation annotation, String collectionId) {
         return new AnnotationUndoToken(
                 annotation.id(), AnnotationManagerType.fromDomain(annotation.type()),
                 AnnotationAnchorData.fromDomain(annotation.anchor()), annotation.color(), annotation.note(),
-                annotation.tags(), annotation.createdAt(), annotation.updatedAt());
+                annotation.tags(), annotation.createdAt(), annotation.updatedAt(), collectionId);
+    }
+
+    private String activeCollectionIdForToken() {
+        if (collectionLifecyclePort == null) return "";
+        var active = collectionLifecyclePort.getCurrentCollection();
+        if (active == null || active.getId() == null || active.getId().isBlank()) {
+            throw new IllegalStateException("Active collection is required for annotation undo");
+        }
+        return active.getId().trim();
+    }
+
+    private void assertUndoTokenCollection(AnnotationUndoToken token) {
+        if (collectionLifecyclePort == null) return;
+        String expected = token.collectionId();
+        if (expected == null || expected.isBlank()) {
+            throw new IllegalStateException("Annotation undo token is not bound to a collection");
+        }
+        var active = collectionLifecyclePort.getCurrentCollection();
+        String actual = active == null || active.getId() == null ? "" : active.getId().trim();
+        if (!expected.equals(actual)) {
+            throw new IllegalStateException("Annotation undo token belongs to another collection");
+        }
     }
 }

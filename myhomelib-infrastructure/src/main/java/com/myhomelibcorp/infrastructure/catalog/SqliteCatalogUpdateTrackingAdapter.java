@@ -419,7 +419,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                     JOIN books b ON b.id = ba.book_id AND COALESCE(b.deleted, 0) = 0
                 )
                 SELECT f.author_id,
-                       COALESCE(NULLIF(f.author_name, ''), 'Без автора') AS author_name,
+                       COALESCE(NULLIF(f.author_name, ''), '') AS author_name,
                        COALESCE(ac.active_book_count, 0) AS active_book_count,
                        COALESCE(pc.new_book_count, 0) AS new_book_count,
                        COALESCE(lb.title, '') AS last_book_title,
@@ -429,7 +429,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                 LEFT JOIN active_counts ac ON ac.author_id = f.author_id
                 LEFT JOIN pending_counts pc ON pc.author_id = f.author_id
                 LEFT JOIN latest_books lb ON lb.author_id = f.author_id AND lb.rn = 1
-                ORDER BY LOWER(COALESCE(NULLIF(f.author_name, ''), 'Без автора')), f.author_id
+                ORDER BY LOWER(COALESCE(NULLIF(f.author_name, ''), '')), f.author_id
                 """;
         return jdbc().query(sql, (rs, rowNum) -> new FollowedAuthorSummary(
                 rs.getString("author_id"),
@@ -529,7 +529,7 @@ public class SqliteCatalogUpdateTrackingAdapter implements CatalogUpdateTracking
                     e.book_id, e.update_type, e.detected_at,
                     b.title, b.local,
                     COALESCE(ra.author_id, '') AS author_id,
-                    COALESCE(NULLIF(ra.author_name, ''), 'Без автора') AS author_name
+                    COALESCE(NULLIF(ra.author_name, ''), '') AS author_name
                 FROM catalog_update_events e
                 JOIN books b ON b.id = e.book_id
                 LEFT JOIN ranked_authors ra ON ra.book_id = e.book_id AND ra.rn = 1

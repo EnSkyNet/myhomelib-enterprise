@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.operation;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.progress.OperationStage;
 
 import java.time.Duration;
@@ -30,7 +32,7 @@ public record OperationCenterEntry(
 ) {
     public OperationCenterEntry {
         if (operationId == null || operationId.isBlank()) throw new IllegalArgumentException("operationId is required");
-        title = title == null || title.isBlank() ? "Операція" : title;
+        title = title == null || title.isBlank() ? UiText.text("ui.fxml.operation_center_workspace.operation") : title;
         collectionId = collectionId == null ? "" : collectionId;
         kind = kind == null ? OperationKind.GENERIC : kind;
         stage = stage == null ? OperationStage.IMPORTING : stage;

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.session.SessionService;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.group.Group;
@@ -15,6 +16,7 @@ import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.MainNavigationCoordinator;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.opds.OpdsUiService;
+import com.myhomelibcorp.ui.organizer.LibraryOrganizerUiService;
 import com.myhomelibcorp.ui.integration.IntegrationCenterDialog;
 import com.myhomelibcorp.ui.integration.AiBookAssistantUiService;
 import com.myhomelibcorp.ui.service.*;
@@ -29,8 +31,6 @@ import javafx.scene.control.Label;
 import javafx.scene.control.CheckMenuItem;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
-import javafx.scene.control.RadioMenuItem;
-import javafx.scene.control.ToggleGroup;
 import javafx.scene.control.TextField;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.FlowPane;
@@ -69,6 +69,7 @@ public class MainController {
     private final IntegrationCenterDialog integrationCenterDialog;
     private final AiBookAssistantUiService aiBookAssistantUiService;
     private final BookConversionUiService bookConversionUiService;
+    private final LibraryOrganizerUiService libraryOrganizerUiService;
     // ===== Контролери =====
     private final CollectionController collectionController;
     private final GroupController groupController;
@@ -136,8 +137,8 @@ public class MainController {
         showDashboard();
         localizationService.apply(mainPane);
         UiAccessibilitySupport.enhance(mainPane);
-        populateLanguages();
-        if (languageMenu != null) languageMenu.setOnShowing(event -> populateLanguages());
+        mainNavigationCoordinator.populateLanguageMenu(languageMenu);
+        if (languageMenu != null) languageMenu.setOnShowing(event -> mainNavigationCoordinator.populateLanguageMenu(languageMenu));
         if (recentBooksMenu != null) recentBooksMenu.setOnShowing(event -> mainNavigationCoordinator.populateRecentBooksMenu(recentBooksMenu));
         if (viewMenu != null) viewMenu.setOnShowing(event -> refreshUpdateBadge());
         appState.currentLibraryCollectionProperty().addListener((obs, oldCollection, newCollection) -> {
@@ -209,27 +210,6 @@ public class MainController {
         }
     }
 
-    private void populateLanguages() {
-        if (languageMenu == null) return;
-        var languages = localizationService.availableLanguages();
-        var selectedLanguage = localizationService.language();
-        var toggleGroup = new ToggleGroup();
-        languageMenu.getItems().clear();
-
-        for (var entry : languages.entrySet()) {
-            RadioMenuItem item = new RadioMenuItem(entry.getValue());
-            item.setToggleGroup(toggleGroup);
-            item.setSelected(entry.getKey().equals(selectedLanguage));
-            item.setOnAction(e -> {
-                localizationService.setLanguage(entry.getKey());
-                dialogService.showInfo(
-                        localizationService.text("ui.main.language.changed_title"),
-                        localizationService.format("ui.main.language.restart_required", entry.getValue())
-                );
-            });
-            languageMenu.getItems().add(item);
-        }
-    }
     // ==================== Навігація по воркспейсах ====================
     public void showDashboard() {
         workspaceManager.showDashboard();
@@ -458,7 +438,7 @@ public class MainController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття майстра колекцій", e);
-            dialogService.showError(localizationService.text("common.error"), localizationService.format("ui.collection.wizard.open_error", e.getMessage()));
+            dialogService.showError(localizationService.text("common.error"), localizationService.format("ui.collection.wizard.open_error", UiExceptionSupport.message(e)));
         }
     }
     // ==================== Дії з групами ====================
@@ -569,6 +549,11 @@ public class MainController {
     @FXML
     public void handleSyncFolder() {
         importController.handleSyncFolder(this::handleRefresh);
+    }
+
+    @FXML
+    public void handleOrganizeLibrary() {
+        libraryOrganizerUiService.show(mainPane.getScene() == null ? null : mainPane.getScene().getWindow());
     }
     // ==================== Інструменти БД ====================
     @FXML

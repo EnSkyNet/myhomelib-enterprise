@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.imports;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
 import com.myhomelibcorp.application.progress.OperationProgress;
@@ -116,20 +118,22 @@ public class ImportWorkspaceController {
         });
         progressDialog.show();
 
+        String expectedCollectionId = currentCollectionId();
         startImport(() -> {
             ImportContext context = ImportContext.builder()
                     .rootDirectory(dir)
+                    .expectedCollectionId(expectedCollectionId)
                     .updateExisting(true)
                     .batchSize(batchSize)
                     .indexAfterSave(true)
                     .cancelFlag(cancelFlag)
                     .operationId("directory-import-" + UUID.randomUUID())
-                    .progressListener(this::updateProgress)
-                    .operationProgressListener(this::updateOperationProgress)
-                    .statusConsumer(this::updateStatus)
+                    .progressListener(value -> { if (isCurrentCollection(expectedCollectionId)) updateProgress(value); })
+                    .operationProgressListener(progress -> updateOperationProgress(expectedCollectionId, progress))
+                    .statusConsumer(text -> { if (isCurrentCollection(expectedCollectionId)) updateStatus(text); })
                     .build();
             return importDirectoryUseCase.execute(context);
-        });
+        }, expectedCollectionId);
     }
 
     @FXML
@@ -153,22 +157,24 @@ public class ImportWorkspaceController {
         });
         progressDialog.show();
 
+        String expectedCollectionId = currentCollectionId();
         startImport(() -> {
             ImportContext context = ImportContext.builder()
                     .file(file)
+                    .expectedCollectionId(expectedCollectionId)
                     .batchSize(batchSize)
                     .indexAfterSave(true)
                     .cancelFlag(cancelFlag)
                     .operationId("file-import-" + UUID.randomUUID())
-                    .progressListener(this::updateProgress)
-                    .operationProgressListener(this::updateOperationProgress)
-                    .statusConsumer(this::updateStatus)
+                    .progressListener(value -> { if (isCurrentCollection(expectedCollectionId)) updateProgress(value); })
+                    .operationProgressListener(progress -> updateOperationProgress(expectedCollectionId, progress))
+                    .statusConsumer(text -> { if (isCurrentCollection(expectedCollectionId)) updateStatus(text); })
                     .build();
             return importFileUseCase.execute(context);
-        });
+        }, expectedCollectionId);
     }
 
-    private void startImport(java.util.concurrent.Callable<ImportResult> task) {
+    private void startImport(java.util.concurrent.Callable<ImportResult> task, String expectedCollectionId) {
         if (importRunning) {
             dialogService.showWarning(i18n.text("common.warning"), i18n.text("ui.import.warning.already_running"), i18n.text("ui.import.warning.wait_current"));
             if (progressDialog != null) progressDialog.show();
@@ -192,6 +198,10 @@ public class ImportWorkspaceController {
                     importRunning = false;
                     if (cancelButton != null) {
                         cancelButton.setDisable(true);
+                    }
+                    if (!isCurrentCollection(expectedCollectionId)) {
+                        if (progressDialog != null) progressDialog.close();
+                        return;
                     }
                     appState.getStatusBar().setProgressVisible(false);
 
@@ -226,23 +236,36 @@ public class ImportWorkspaceController {
                         if (cancelButton != null) {
                             cancelButton.setDisable(true);
                         }
+                        if (!isCurrentCollection(expectedCollectionId)) {
+                            if (progressDialog != null) progressDialog.close();
+                            return;
+                        }
                         appState.getStatusBar().setProgressVisible(false);
 
                         if (progressDialog != null) {
-                            progressDialog.updateStatus(i18n.format("common.error.with_message", ex.getMessage()));
+                            progressDialog.updateStatus(i18n.format("common.error.with_message", UiExceptionSupport.message(ex)));
                             closeProgressDialogAfter(Duration.seconds(1.5));
                         }
 
                         if (cancelFlag.get()) {
                             setStatus(i18n.text("ui.import.status.cancelled"));
                         } else {
-                            setStatus(i18n.format("ui.import.status.error", ex.getMessage()));
-                            dialogService.showError(i18n.text("common.error"), i18n.format("ui.import.error.failed", ex.getMessage()));
+                            setStatus(i18n.format("ui.import.status.error", UiExceptionSupport.message(ex)));
+                            dialogService.showError(i18n.text("common.error"), i18n.format("ui.import.error.failed", UiExceptionSupport.message(ex)));
                         }
                     });
                     log.error("Import failed", ex);
                     return null;
                 });
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null || collection.getId() == null ? "" : collection.getId();
+    }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return java.util.Objects.equals(expectedCollectionId, currentCollectionId());
     }
 
     @FXML
@@ -264,6 +287,7 @@ public class ImportWorkspaceController {
     @FXML
     private void onSettings() {
         TextInputDialog dialog = new TextInputDialog(String.valueOf(batchSize));
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.import.settings.title"));
         dialog.setHeaderText(i18n.text("ui.import.settings.batch_header"));
         dialog.setContentText(i18n.text("ui.import.settings.batch_label"));
@@ -319,10 +343,10 @@ public class ImportWorkspaceController {
         if (progressDialog != null && value < 0) progressDialog.setIndeterminate(true);
     }
 
-    private void updateOperationProgress(OperationProgress progress) {
+    private void updateOperationProgress(String expectedCollectionId, OperationProgress progress) {
         if (progress == null) return;
-        var collection = appState.getCurrentLibraryCollection();
-        operationCenter.accept(i18n.text("ui.import.operation.title"), collection == null ? "" : collection.getId(), progress);
+        operationCenter.accept(i18n.text("ui.import.operation.title"), expectedCollectionId, progress);
+        if (!isCurrentCollection(expectedCollectionId)) return;
         double fraction = progress.fraction();
         setProgress(fraction);
         ImportProgressDialog dialog = progressDialog;

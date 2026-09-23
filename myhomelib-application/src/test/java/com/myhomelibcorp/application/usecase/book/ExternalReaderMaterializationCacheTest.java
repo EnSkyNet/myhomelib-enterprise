@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.book;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.ByteArrayInputStream;
@@ -21,6 +22,28 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ExternalReaderMaterializationCacheTest {
     @TempDir Path temp;
+
+    @Test
+    void symlinkedCacheRootIsRejectedWithoutDeletingTargetDirectoryFiles() throws Exception {
+        Path real = Files.createDirectories(temp.resolve("real-cache-target"));
+        Path foreign = Files.writeString(real.resolve("book-foreign.fb2"), "FOREIGN");
+        Path cacheDir = temp.resolve("external-reader-link");
+        try {
+            Files.createSymbolicLink(cacheDir, real);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException e) {
+            Assumptions.assumeTrue(false, "Symbolic links are unavailable on this platform");
+        }
+
+        ExternalReaderMaterializationCache cache = cache(cacheDir, 1024, Duration.ofHours(1));
+        cache.initialize();
+
+        assertThat(foreign).exists();
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+        assertThatThrownBy(() -> cache.materialize(bytes("book"), "fb2"))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("symbolic link");
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+    }
 
     @Test
     void startupDeletesCrashLeftovers() throws Exception {

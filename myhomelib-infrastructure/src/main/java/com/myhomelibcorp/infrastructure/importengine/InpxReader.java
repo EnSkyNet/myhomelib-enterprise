@@ -1,7 +1,8 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
-import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
 import com.myhomelibcorp.shared.util.Utf8Validator;
 import lombok.extern.slf4j.Slf4j;
@@ -13,8 +14,8 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.*;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 /**
  * Streaming reader for MyHomeLib INP/INPX indexes.
@@ -49,17 +50,23 @@ public class InpxReader {
      */
     public Iterator<InpxRecord> read(Path file, boolean onlineCollection) {
         Objects.requireNonNull(file, "file");
-        String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        final Path safeFile;
+        try {
+            safeFile = SafeFilePublication.requireSafeRegularFile(file, "INP/INPX source");
+        } catch (IOException unsafe) {
+            throw new UncheckedIOException("Unsafe INP/INPX source: " + file, unsafe);
+        }
+        String lower = safeFile.getFileName().toString().toLowerCase(Locale.ROOT);
         if (lower.endsWith(".inp")) {
-            return readStandaloneInp(file);
+            return readStandaloneInp(safeFile);
         }
         if (!lower.endsWith(".inpx")) {
-            throw new IllegalArgumentException("Unsupported INPX source: " + file);
+            throw new IllegalArgumentException("Unsupported INPX source: " + safeFile);
         }
         try {
-            return new ZipInpxIterator(file, onlineCollection);
+            return new ZipInpxIterator(safeFile, onlineCollection);
         } catch (IOException e) {
-            throw new UncheckedIOException("Failed to read INPX: " + file, e);
+            throw new UncheckedIOException("Failed to read INPX: " + safeFile, e);
         }
     }
 
@@ -76,30 +83,38 @@ public class InpxReader {
     }
 
     public long count(Path file, java.util.concurrent.atomic.AtomicBoolean cancelFlag, boolean onlineCollection) {
+        Objects.requireNonNull(file, "file");
+        final Path safeFile;
+        try {
+            safeFile = SafeFilePublication.requireSafeRegularFile(file, "INP/INPX source");
+        } catch (IOException unsafe) {
+            throw new UncheckedIOException("Unsafe INP/INPX source: " + file, unsafe);
+        }
         long count = 0;
-        String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
+        String lower = safeFile.getFileName().toString().toLowerCase(Locale.ROOT);
         if (lower.endsWith(".inp")) {
-            try (InputStream input = Files.newInputStream(file)) {
+            try (InputStream input = Files.newInputStream(safeFile, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 return countLines(input, cancelFlag);
             } catch (IOException e) {
-                throw new UncheckedIOException("Не вдалося прочитати INP: " + file, e);
+                throw new UncheckedIOException("Не вдалося прочитати INP: " + safeFile, e);
             }
         }
 
         if (!lower.endsWith(".inpx")) {
-            throw new IllegalArgumentException("Unsupported INPX source: " + file);
+            throw new IllegalArgumentException("Unsupported INPX source: " + safeFile);
         }
 
-        try (ZipFile zip = openZip(file)) {
+        try (SafeZipArchive opened = SafeZipArchive.openDetected(safeFile, "INPX source")) {
+            ZipFile zip = opened.zip();
             validateArchive(zip);
-            List<? extends ZipEntry> inpEntries = zip.stream()
+            List<ZipArchiveEntry> inpEntries = zipEntries(zip).stream()
                     .filter(e -> isCatalogInpMember(e, onlineCollection))
-                    .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
+                    .sorted(Comparator.comparing(ZipArchiveEntry::getName, String.CASE_INSENSITIVE_ORDER))
                     .toList();
             if (inpEntries.isEmpty()) {
-                throw new IOException("No .inp entries in " + file);
+                throw new IOException("No .inp entries in " + safeFile);
             }
-            for (ZipEntry entry : inpEntries) {
+            for (ZipArchiveEntry entry : inpEntries) {
                 try (InputStream input = boundedEntryStream(zip, entry, ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
                     long entryCount = countLines(input, cancelFlag);
                     if (entryCount < 0) return -1L;
@@ -109,11 +124,11 @@ public class InpxReader {
             log.debug("Підраховано {} записів INPX без декодування рядків", count);
             return count;
         } catch (IOException e) {
-            throw new UncheckedIOException("Не вдалося прочитати INPX: " + file, e);
+            throw new UncheckedIOException("Не вдалося прочитати INPX: " + safeFile, e);
         }
     }
 
-    private static boolean isCatalogInpMember(ZipEntry entry, boolean onlineCollection) {
+    private static boolean isCatalogInpMember(ZipArchiveEntry entry, boolean onlineCollection) {
         if (entry == null || entry.isDirectory()) return false;
         String normalized = entry.getName().replace('\\', '/');
         String lower = normalized.toLowerCase(Locale.ROOT);
@@ -135,7 +150,7 @@ public class InpxReader {
 
     private Iterator<InpxRecord> readStandaloneInp(Path file) {
         try {
-            BufferedReader br = newDetectedReader(Files.newInputStream(file));
+            BufferedReader br = newDetectedReader(Files.newInputStream(file, java.nio.file.LinkOption.NOFOLLOW_LINKS));
             String base = stripExtension(file.getFileName().toString());
             return new SingleReaderIterator(br, DEFAULT_STRUCTURE, true, file.getFileName().toString(), base + ".zip");
         } catch (IOException e) {
@@ -144,30 +159,31 @@ public class InpxReader {
     }
 
     private static final class ZipInpxIterator implements Iterator<InpxRecord>, AutoCloseable {
+        private final SafeZipArchive opened;
         private final ZipFile zip;
-        private final List<ZipEntry> inpEntries;
+        private final List<ZipArchiveEntry> inpEntries;
         private final List<String> structure;
         private final boolean inferFallbackStructure;
         private final Map<String, String> archivesByStem;
         private int entryIndex;
         private BufferedReader currentReader;
-        private ZipEntry currentEntry;
+        private ZipArchiveEntry currentEntry;
         private InpxRecord next;
         private boolean closed;
         private long recordCount;
 
         private ZipInpxIterator(Path path, boolean onlineCollection) throws IOException {
-            this.zip = openZip(path);
+            this.opened = SafeZipArchive.openDetected(path, "INPX source");
+            this.zip = opened.zip();
             try {
                 validateArchive(this.zip);
                 StructureInfo structureInfo = readStructure(zip);
                 this.structure = structureInfo.fields();
                 this.inferFallbackStructure = structureInfo.inferred();
                 this.archivesByStem = readArchives(zip);
-                this.inpEntries = zip.stream()
+                this.inpEntries = zipEntries(zip).stream()
                         .filter(e -> isCatalogInpMember(e, onlineCollection))
-                        .map(e -> (ZipEntry) e)
-                        .sorted(Comparator.comparing(ZipEntry::getName, String.CASE_INSENSITIVE_ORDER))
+                        .sorted(Comparator.comparing(ZipArchiveEntry::getName, String.CASE_INSENSITIVE_ORDER))
                         .toList();
                 if (inpEntries.isEmpty()) {
                     close();
@@ -176,7 +192,7 @@ public class InpxReader {
                 log.info("Знайдено {} INP файлів в INPX", inpEntries.size());
                 advance();
             } catch (IOException | RuntimeException failure) {
-                try { zip.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
+                try { opened.close(); } catch (IOException cleanup) { failure.addSuppressed(cleanup); }
                 throw failure;
             }
         }
@@ -239,7 +255,7 @@ public class InpxReader {
             if (currentReader != null) {
                 try { currentReader.close(); } catch (IOException e) { error = e; }
             }
-            try { zip.close(); } catch (IOException e) { if (error == null) error = e; }
+            try { opened.close(); } catch (IOException e) { if (error == null) error = e; }
             if (error != null) throw error;
         }
     }
@@ -344,7 +360,7 @@ public class InpxReader {
     }
 
     private static StructureInfo readStructure(ZipFile zip) throws IOException {
-        ZipEntry entry = findIgnoreCase(zip, "structure.info");
+        ZipArchiveEntry entry = findIgnoreCase(zip, "structure.info");
         if (entry == null) return new StructureInfo(DEFAULT_STRUCTURE, true);
         try (BufferedReader reader = newDetectedReader(boundedEntryStream(zip, entry, MAX_METADATA_BYTES))) {
             String text = readSmallText(reader, 64 * 1024).replace("\uFEFF", "").trim();
@@ -368,7 +384,7 @@ public class InpxReader {
 
     private static Map<String, String> readArchives(ZipFile zip) throws IOException {
         Map<String, String> result = new HashMap<>();
-        ZipEntry entry = findIgnoreCase(zip, "archives.info");
+        ZipArchiveEntry entry = findIgnoreCase(zip, "archives.info");
         if (entry == null) return result;
         try (BufferedReader br = newDetectedReader(boundedEntryStream(zip, entry, MAX_METADATA_BYTES))) {
             for (String line; (line = br.readLine()) != null;) {
@@ -447,8 +463,11 @@ public class InpxReader {
         return slash >= 0 ? normalized.substring(slash + 1) : normalized;
     }
 
-    private static ZipEntry findIgnoreCase(ZipFile zip, String wanted) {
-        return zip.stream().filter(e -> archiveFileName(e.getName()).equalsIgnoreCase(wanted)).findFirst().orElse(null);
+    private static ZipArchiveEntry findIgnoreCase(ZipFile zip, String wanted) {
+        return zipEntries(zip).stream()
+                .filter(e -> archiveFileName(e.getName()).equalsIgnoreCase(wanted))
+                .findFirst()
+                .orElse(null);
     }
 
     /**
@@ -617,9 +636,9 @@ public class InpxReader {
 
     private static void validateArchive(ZipFile zip) throws IOException {
         int count = 0;
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         while (entries.hasMoreElements()) {
-            ZipEntry entry = entries.nextElement();
+            ZipArchiveEntry entry = entries.nextElement();
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                 throw new IOException("INPX contains too many entries: " + count);
             }
@@ -629,14 +648,13 @@ public class InpxReader {
             }
             long compressed = entry.getCompressedSize();
             long size = entry.getSize();
-            if (compressed > 0 && size > 0
-                    && size / Math.max(1L, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+            if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
                 throw new IOException("INPX entry has suspicious compression ratio: " + entry.getName());
             }
         }
     }
 
-    private static InputStream boundedEntryStream(ZipFile zip, ZipEntry entry, long maxBytes) throws IOException {
+    private static InputStream boundedEntryStream(ZipFile zip, ZipArchiveEntry entry, long maxBytes) throws IOException {
         if (entry == null) throw new IOException("Missing INPX entry");
         if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize()) || entry.getSize() > maxBytes) {
             throw new IOException("INPX entry is too large: " + entry.getName());
@@ -644,7 +662,10 @@ public class InpxReader {
         return new LimitedInputStream(zip.getInputStream(entry), maxBytes);
     }
 
-    private static ZipFile openZip(Path path) throws IOException {
-        return ZipCharsetSupport.open(path);
+    private static List<ZipArchiveEntry> zipEntries(ZipFile zip) {
+        List<ZipArchiveEntry> result = new ArrayList<>();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
+        while (entries.hasMoreElements()) result.add(entries.nextElement());
+        return result;
     }
 }

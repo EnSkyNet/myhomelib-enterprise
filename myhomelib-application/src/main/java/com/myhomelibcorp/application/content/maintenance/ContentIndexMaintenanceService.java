@@ -7,9 +7,13 @@ import com.myhomelibcorp.application.content.ContentExtractionSource;
 import com.myhomelibcorp.application.content.ContentExtractionStatus;
 import com.myhomelibcorp.application.content.index.ContentIndexEntry;
 import com.myhomelibcorp.application.content.index.ContentIndexHealth;
+import com.myhomelibcorp.application.content.indexing.ContentIndexingQueueService;
 import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.port.out.backup.CollectionBackupPort;
 import com.myhomelibcorp.application.port.out.content.ContentIndexPort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.usecase.book.ResolveBookContentUseCase;
@@ -17,12 +21,15 @@ import com.myhomelibcorp.application.usecase.book.ResolvedBookContent;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import com.myhomelibcorp.shared.util.ThrowableMessages;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -45,17 +52,37 @@ public class ContentIndexMaintenanceService {
     private final BookMapper bookMapper;
     private final ResolveBookContentUseCase resolveBookContent;
     private final ContentExtractionService extractionService;
+    private final ContentIndexingQueueService indexingQueue;
+    private final CollectionBackupPort backupPort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
+    /** Compatibility constructor for focused tests without lifecycle wiring. */
     public ContentIndexMaintenanceService(ContentIndexPort contentIndex,
                                           BookQueryRepository books,
                                           BookMapper bookMapper,
                                           ResolveBookContentUseCase resolveBookContent,
-                                          ContentExtractionService extractionService) {
+                                          ContentExtractionService extractionService,
+                                          ContentIndexingQueueService indexingQueue) {
+        this(contentIndex, books, bookMapper, resolveBookContent, extractionService, indexingQueue, null, null);
+    }
+
+    @Autowired
+    public ContentIndexMaintenanceService(ContentIndexPort contentIndex,
+                                          BookQueryRepository books,
+                                          BookMapper bookMapper,
+                                          ResolveBookContentUseCase resolveBookContent,
+                                          ContentExtractionService extractionService,
+                                          ContentIndexingQueueService indexingQueue,
+                                          CollectionBackupPort backupPort,
+                                          LibraryOperationCoordinator operationCoordinator) {
         this.contentIndex = Objects.requireNonNull(contentIndex);
         this.books = Objects.requireNonNull(books);
         this.bookMapper = Objects.requireNonNull(bookMapper);
         this.resolveBookContent = Objects.requireNonNull(resolveBookContent);
         this.extractionService = Objects.requireNonNull(extractionService);
+        this.indexingQueue = Objects.requireNonNull(indexingQueue);
+        this.backupPort = backupPort;
+        this.operationCoordinator = operationCoordinator;
     }
 
     public ContentIndexHealth health(String collectionId) {
@@ -66,12 +93,35 @@ public class ContentIndexMaintenanceService {
                                              BooleanSupplier cancelled,
                                              Consumer<ContentIndexRebuildProgress> progress) {
         String id = requiredCollection(collectionId);
+        if (operationCoordinator == null) return rebuildLocked(id, cancelled, progress);
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.INDEX)) {
+            assertActiveCollection(id);
+            return rebuildLocked(id, cancelled, progress);
+        }
+    }
+
+    private ContentIndexRebuildResult rebuildLocked(String id,
+                                                     BooleanSupplier cancelled,
+                                                     Consumer<ContentIndexRebuildProgress> progress) {
         BooleanSupplier cancel = cancelled == null ? () -> false : cancelled;
         Consumer<ContentIndexRebuildProgress> listener = progress == null ? ignored -> { } : progress;
         long totalBooks = Math.max(0L, books.countAll());
         AtomicLong processed = new AtomicLong();
         AtomicLong indexedArtifacts = new AtomicLong();
         listener.accept(new ContentIndexRebuildProgress(0L, totalBooks, "", "starting"));
+
+        indexingQueue.restore(id);
+        ContentIndexHealth previousHealth = contentIndex.health(id);
+        boolean hadOutstandingWork = indexingQueue.outstandingTasks().stream()
+                .anyMatch(task -> id.equals(task.collectionId()));
+        indexingQueue.holdStale(id);
+        if (!indexingQueue.supersedeCollection(id, 5_000L)) {
+            indexingQueue.requireRebuild(id);
+            indexingQueue.releaseStaleHold(id);
+            ContentIndexHealth health = contentIndex.health(id);
+            return new ContentIndexRebuildResult(ContentIndexRebuildResult.Status.FAILED,
+                    0L, 0L, health, "Background content-index tasks did not stop before rebuild");
+        }
 
         try (Stream<Book> source = books.streamAll()) {
             Stream<ContentIndexEntry> entries = source
@@ -89,19 +139,32 @@ public class ContentIndexMaintenanceService {
             // LuceneContentIndexService builds into a sibling directory and only swaps after
             // every entry is written successfully. Any exception leaves the active index intact.
             contentIndex.rebuild(id, entries::iterator);
+            indexingQueue.acknowledgeFresh(id);
             ContentIndexHealth health = contentIndex.health(id);
             listener.accept(new ContentIndexRebuildProgress(processed.get(), totalBooks, "", "complete"));
             return new ContentIndexRebuildResult(ContentIndexRebuildResult.Status.COMPLETED,
                     processed.get(), indexedArtifacts.get(), health, "");
         } catch (CancellationException cancelledFailure) {
+            restoreFreshnessAfterUncommittedRebuild(id, previousHealth, hadOutstandingWork);
             ContentIndexHealth health = contentIndex.health(id);
             return new ContentIndexRebuildResult(ContentIndexRebuildResult.Status.CANCELLED,
-                    processed.get(), indexedArtifacts.get(), health, "cancelled");
+                    processed.get(), indexedArtifacts.get(), health, "");
         } catch (RuntimeException failure) {
+            restoreFreshnessAfterUncommittedRebuild(id, previousHealth, hadOutstandingWork);
             ContentIndexHealth health = contentIndex.health(id);
             return new ContentIndexRebuildResult(ContentIndexRebuildResult.Status.FAILED,
                     processed.get(), indexedArtifacts.get(), health, ThrowableMessages.rootMessage(failure));
         }
+    }
+
+
+    private void restoreFreshnessAfterUncommittedRebuild(String collectionId,
+                                                          ContentIndexHealth previousHealth,
+                                                          boolean hadOutstandingWork) {
+        if (hadOutstandingWork || (previousHealth != null && previousHealth.state() == ContentIndexHealth.State.STALE)) {
+            indexingQueue.requireRebuild(collectionId);
+        }
+        indexingQueue.releaseStaleHold(collectionId);
     }
 
     private List<ContentIndexEntry> entriesForBook(Book book, BooleanSupplier cancelled) {
@@ -162,6 +225,15 @@ public class ContentIndexMaintenanceService {
         if (Thread.currentThread().isInterrupted() || cancelled.getAsBoolean()) throw new CancellationException("cancelled");
     }
 
+    private void assertActiveCollection(String expectedCollectionId) {
+        if (backupPort == null) return;
+        var active = backupPort.getCurrentCollection();
+        String activeId = active == null || active.getId() == null ? "" : active.getId().trim();
+        if (!expectedCollectionId.equals(activeId)) {
+            throw new IllegalStateException("Активна колекція змінилася до початку перебудови full-text індексу");
+        }
+    }
+
     private static String requiredCollection(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) throw new IllegalArgumentException("collectionId is required");
         return collectionId.trim();
@@ -170,10 +242,16 @@ public class ContentIndexMaintenanceService {
     private record PathSource(Path path) implements ContentExtractionSource {
         @Override public String id() { return path.toString(); }
         @Override public String name() { return path.getFileName() == null ? path.toString() : path.getFileName().toString(); }
-        @Override public InputStream openStream() throws IOException { return Files.newInputStream(path); }
+        @Override public InputStream openStream() throws IOException {
+            return Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS);
+        }
         @Override public OptionalLong size() {
-            try { return OptionalLong.of(Files.size(path)); }
-            catch (IOException ignored) { return OptionalLong.empty(); }
+            try {
+                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                return attributes.isRegularFile() ? OptionalLong.of(attributes.size()) : OptionalLong.empty();
+            } catch (IOException ignored) {
+                return OptionalLong.empty();
+            }
         }
     }
 }

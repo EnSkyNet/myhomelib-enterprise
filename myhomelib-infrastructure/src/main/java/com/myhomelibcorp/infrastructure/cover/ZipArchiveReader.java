@@ -3,8 +3,9 @@ package com.myhomelibcorp.infrastructure.cover;
 import com.github.junrar.Archive;
 import com.github.junrar.rarfile.FileHeader;
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
-import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry;
 import org.apache.commons.compress.archivers.sevenz.SevenZFile;
@@ -21,10 +22,10 @@ import java.io.InterruptedIOException;
 import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.io.BufferedInputStream;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.AtomicMoveNotSupportedException;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -33,8 +34,8 @@ import java.util.Locale;
 import java.util.Optional;
 import java.util.function.BooleanSupplier;
 import java.util.function.Predicate;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 /**
  * Multi-format archive reader used by the catalogue, cover loader, exporter and Reader.
@@ -72,7 +73,7 @@ public class ZipArchiveReader implements ArchiveReader {
 
     @Override
     public List<String> listEntries(Path archivePath) {
-        if (archivePath == null || !Files.isRegularFile(archivePath)) return List.of();
+        if (archivePath == null || !Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) return List.of();
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
             if (lower.endsWith(".7z")) return list7z(archivePath);
@@ -90,7 +91,7 @@ public class ZipArchiveReader implements ArchiveReader {
 
     @Override
     public Optional<InputStream> readEntry(Path archivePath, String entryName) {
-        if (archivePath == null || entryName == null || entryName.isBlank() || !Files.isRegularFile(archivePath)) {
+        if (archivePath == null || entryName == null || entryName.isBlank() || !Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) {
             return Optional.empty();
         }
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
@@ -110,7 +111,7 @@ public class ZipArchiveReader implements ArchiveReader {
 
     @Override
     public Optional<InputStream> findFirstEntry(Path archivePath, Predicate<String> filter) {
-        if (archivePath == null || filter == null || !Files.isRegularFile(archivePath)) return Optional.empty();
+        if (archivePath == null || filter == null || !Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
         try {
             if (lower.endsWith(".7z")) return findFirst7zEntry(archivePath, filter);
@@ -130,16 +131,19 @@ public class ZipArchiveReader implements ArchiveReader {
     public boolean materializeEntry(Path archivePath, String entryName, Path target, long maxBytes,
                                     BooleanSupplier cancelled) throws IOException {
         if (archivePath == null || entryName == null || entryName.isBlank() || target == null
-                || !Files.isRegularFile(archivePath)) return false;
+                || !Files.isRegularFile(archivePath, LinkOption.NOFOLLOW_LINKS)) return false;
         if (maxBytes <= 0) throw new IllegalArgumentException("maxBytes must be positive");
 
         long limit = Math.min(maxBytes, ArchiveSafetyLimits.MAX_ENTRY_BYTES);
         checkCancelled(cancelled);
-        Path absoluteTarget = target.toAbsolutePath().normalize();
+        Path absoluteTarget = SafeFilePublication.prepareTarget(target, "Archive materialization target");
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                absoluteTarget, "Archive materialization target");
         Path parent = absoluteTarget.getParent();
         if (parent == null) throw new IOException("Materialization target has no parent: " + target);
-        Files.createDirectories(parent);
-        Path staging = Files.createTempFile(parent, ".mhl-archive-materialize-", ".part");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                parent, ".mhl-archive-materialize-", "Archive materialization workspace");
+        Path staging = Files.createTempFile(workspace, "entry-", ".part");
         boolean published = false;
         try {
             String lower = archivePath.getFileName().toString().toLowerCase(Locale.ROOT);
@@ -165,22 +169,30 @@ public class ZipArchiveReader implements ArchiveReader {
             }
             if (!found) return false;
             checkCancelled(cancelled);
-            publishStaging(staging, absoluteTarget);
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    staging, absoluteTarget, expectedTargetHash, "Archive materialization");
             published = true;
             return true;
         } finally {
-            if (!published) Files.deleteIfExists(staging);
+            try {
+                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+            } catch (IOException cleanupFailure) {
+                if (!published) throw cleanupFailure;
+                log.warn("Cannot clean archive materialization workspace {}: {}", workspace, cleanupFailure.toString());
+            }
         }
     }
 
     private boolean materializeZipEntry(Path path, String requestedName, Path staging, long limit,
                                         BooleanSupplier cancelled) throws IOException {
-        try (ZipFile zip = ZipCharsetSupport.open(path)) {
-            ZipEntry entry = findZipEntryChecked(zip, requestedName);
+        try (SafeZipArchive opened = SafeZipArchive.openDetected(path, "ZIP archive")) {
+            ZipFile zip = opened.zip();
+            ZipArchiveEntry entry = findZipEntryChecked(zip, requestedName);
             if (entry == null || entry.isDirectory()) return false;
             validateZipEntry(entry, limit);
             try (InputStream in = zip.getInputStream(entry);
-                 OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                 OutputStream out = Files.newOutputStream(staging, StandardOpenOption.WRITE,
+                         StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
                 copyBounded(in, out, limit, cancelled, "ZIP entry");
             }
             return true;
@@ -189,8 +201,10 @@ public class ZipArchiveReader implements ArchiveReader {
 
     private boolean materialize7zEntry(Path path, String requestedName, Path staging, long limit,
                                        BooleanSupplier cancelled) throws IOException {
-        try (SevenZFile sevenZ = SevenZFile.builder()
-                .setFile(path.toFile())
+        Path safe = SafeFilePublication.requireSafeRegularFile(path, "7z archive");
+        try (FileChannel channel = FileChannel.open(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+             SevenZFile sevenZ = SevenZFile.builder()
+                .setSeekableByteChannel(channel)
                 .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB)
                 .get()) {
             SevenZArchiveEntry entry;
@@ -200,7 +214,8 @@ public class ZipArchiveReader implements ArchiveReader {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("7z contains too many entries");
                 if (entry.isDirectory() || entry.getName() == null || !sameEntry(entry.getName(), requestedName)) continue;
                 if (declaredTooLarge(entry.getSize(), limit)) throw new IOException("7z entry is too large: " + entry.getSize());
-                try (OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                try (OutputStream out = Files.newOutputStream(staging, StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
                     byte[] buffer = new byte[64 * 1024];
                     long total = 0;
                     int read;
@@ -219,7 +234,8 @@ public class ZipArchiveReader implements ArchiveReader {
 
     private boolean materializeRarEntry(Path path, String requestedName, Path staging, long limit,
                                         BooleanSupplier cancelled) throws Exception {
-        try (Archive archive = new Archive(path.toFile())) {
+        try (RarHandle handle = openRarNoFollow(path)) {
+            Archive archive = handle.archive();
             if (archive.isPasswordProtected()) {
                 throw new IOException("RAR archive is password-protected; configure/extract it before import");
             }
@@ -229,7 +245,8 @@ public class ZipArchiveReader implements ArchiveReader {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("RAR contains too many entries");
                 if (header.isDirectory() || header.getFileName() == null || !sameEntry(header.getFileName(), requestedName)) continue;
                 try (InputStream in = archive.getInputStream(header);
-                     OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                     OutputStream out = Files.newOutputStream(staging, StandardOpenOption.WRITE,
+                             StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
                     copyBounded(in, out, limit, cancelled, "RAR entry");
                 }
                 return true;
@@ -248,7 +265,8 @@ public class ZipArchiveReader implements ArchiveReader {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
                 if (entry.isDirectory() || entry.getName() == null || !sameEntry(entry.getName(), requestedName)) continue;
                 if (declaredTooLarge(entry.getSize(), limit)) throw new IOException("Archive entry is too large: " + entry.getSize());
-                try (OutputStream out = Files.newOutputStream(staging, StandardOpenOption.TRUNCATE_EXISTING)) {
+                try (OutputStream out = Files.newOutputStream(staging, StandardOpenOption.WRITE,
+                        StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
                     copyBounded(in, out, limit, cancelled, "Archive entry");
                 }
                 return true;
@@ -258,47 +276,46 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private Optional<InputStream> findFirstZipEntry(Path path, Predicate<String> filter) throws IOException {
-        ZipFile zip = ZipCharsetSupport.open(path);
+        SafeZipArchive opened = SafeZipArchive.openDetected(path, "ZIP archive");
+        ZipFile zip = opened.zip();
         try {
-            Enumeration<? extends ZipEntry> entries = zip.entries();
+            Enumeration<ZipArchiveEntry> entries = zip.getEntries();
             int count = 0;
             while (entries.hasMoreElements()) {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                     throw new IOException("ZIP contains too many entries");
                 }
-                ZipEntry entry = entries.nextElement();
+                ZipArchiveEntry entry = entries.nextElement();
                 if (entry.isDirectory() || entry.getName() == null || !filter.test(entry.getName())) continue;
                 if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
                     throw new IOException("ZIP entry is too large: " + entry.getSize());
                 }
                 long compressed = entry.getCompressedSize();
                 long size = entry.getSize();
-                if (compressed > 0 && size > 0
-                        && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+                if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
                     throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
                 }
                 InputStream delegate = zip.getInputStream(entry);
-                ZipFile owner = zip;
-                return Optional.of(boundedOwnerStream(delegate, owner::close, "ZIP entry"));
+                return Optional.of(boundedOwnerStream(delegate, opened::close, "ZIP entry"));
             }
-            zip.close();
+            opened.close();
             return Optional.empty();
         } catch (IOException | RuntimeException e) {
-            try { zip.close(); } catch (Exception ignored) { }
+            try { opened.close(); } catch (Exception cleanup) { e.addSuppressed(cleanup); }
             throw e;
         }
     }
 
     private List<String> listZip(Path path) throws IOException {
-        try (ZipFile zip = ZipCharsetSupport.open(path)) {
+        try (SafeZipArchive opened = SafeZipArchive.openDetected(path, "ZIP archive")) {
             List<String> result = new ArrayList<>();
-            Enumeration<? extends ZipEntry> entries = zip.entries();
+            Enumeration<ZipArchiveEntry> entries = opened.zip().getEntries();
             int count = 0;
             while (entries.hasMoreElements()) {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                     throw new IOException("ZIP contains too many entries");
                 }
-                ZipEntry entry = entries.nextElement();
+                ZipArchiveEntry entry = entries.nextElement();
                 if (!entry.isDirectory()) result.add(entry.getName());
             }
             return result;
@@ -306,42 +323,39 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private Optional<InputStream> readZipEntry(Path path, String requestedName) throws IOException {
-        ZipFile zip = ZipCharsetSupport.open(path);
+        SafeZipArchive opened = SafeZipArchive.openDetected(path, "ZIP archive");
+        ZipFile zip = opened.zip();
         try {
-            ZipEntry entry = findZipEntry(zip, requestedName);
+            ZipArchiveEntry entry = findZipEntry(zip, requestedName);
             if (entry == null || entry.isDirectory()) {
-                zip.close();
+                opened.close();
                 return Optional.empty();
             }
             if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
-                zip.close();
                 throw new IOException("ZIP entry is too large: " + entry.getSize());
             }
             long compressed = entry.getCompressedSize();
             long size = entry.getSize();
-            if (compressed > 0 && size > 0
-                    && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
-                zip.close();
+            if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
                 throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
             }
             InputStream delegate = zip.getInputStream(entry);
-            ZipFile owner = zip;
-            return Optional.of(boundedOwnerStream(delegate, owner::close, "ZIP entry"));
+            return Optional.of(boundedOwnerStream(delegate, opened::close, "ZIP entry"));
         } catch (IOException | RuntimeException e) {
-            try { zip.close(); } catch (Exception ignored) { }
+            try { opened.close(); } catch (Exception cleanup) { e.addSuppressed(cleanup); }
             throw e;
         }
     }
 
-    private ZipEntry findZipEntry(ZipFile zip, String requestedName) {
-        ZipEntry direct = zip.getEntry(requestedName);
+    private ZipArchiveEntry findZipEntry(ZipFile zip, String requestedName) {
+        ZipArchiveEntry direct = zip.getEntry(requestedName);
         if (direct != null) return direct;
         String normalized = normalizeEntryName(requestedName);
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements()) {
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) return null;
-            ZipEntry entry = entries.nextElement();
+            ZipArchiveEntry entry = entries.nextElement();
             if (normalizeEntryName(entry.getName()).equalsIgnoreCase(normalized)) return entry;
         }
         return null;
@@ -349,8 +363,10 @@ public class ZipArchiveReader implements ArchiveReader {
 
     private List<String> list7z(Path path) throws IOException {
         List<String> result = new ArrayList<>();
-        try (SevenZFile sevenZ = SevenZFile.builder()
-                .setFile(path.toFile())
+        Path safe = SafeFilePublication.requireSafeRegularFile(path, "7z archive");
+        try (FileChannel channel = FileChannel.open(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+             SevenZFile sevenZ = SevenZFile.builder()
+                .setSeekableByteChannel(channel)
                 .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB)
                 .get()) {
             SevenZArchiveEntry entry;
@@ -369,8 +385,10 @@ public class ZipArchiveReader implements ArchiveReader {
 
     private Optional<InputStream> findFirst7zEntry(Path path, Predicate<String> filter) throws IOException {
         Path temp = null;
-        try (SevenZFile sevenZ = SevenZFile.builder()
-                .setFile(path.toFile())
+        Path safe = SafeFilePublication.requireSafeRegularFile(path, "7z archive");
+        try (FileChannel channel = FileChannel.open(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+             SevenZFile sevenZ = SevenZFile.builder()
+                .setSeekableByteChannel(channel)
                 .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB)
                 .get()) {
             SevenZArchiveEntry entry;
@@ -403,7 +421,8 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private List<String> listRar(Path path) throws Exception {
-        try (Archive archive = new Archive(path.toFile())) {
+        try (RarHandle handle = openRarNoFollow(path)) {
+            Archive archive = handle.archive();
             if (archive.isPasswordProtected()) {
                 throw new IOException("RAR archive is password-protected; configure/extract it before import");
             }
@@ -422,7 +441,8 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private Optional<InputStream> findFirstRarEntry(Path path, Predicate<String> filter) throws Exception {
-        Archive archive = new Archive(path.toFile());
+        RarHandle handle = openRarNoFollow(path);
+        Archive archive = handle.archive();
         try {
             if (archive.isPasswordProtected()) {
                 throw new IOException("RAR archive is password-protected; configure/extract it before import");
@@ -432,13 +452,43 @@ public class ZipArchiveReader implements ArchiveReader {
                 if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("RAR contains too many entries");
                 if (header.isDirectory() || header.getFileName() == null || !filter.test(header.getFileName())) continue;
                 InputStream delegate = archive.getInputStream(header);
-                return Optional.of(boundedOwnerStream(delegate, archive::close, "RAR entry"));
+                return Optional.of(boundedOwnerStream(delegate, handle::close, "RAR entry"));
             }
-            archive.close();
+            handle.close();
             return Optional.empty();
         } catch (Exception e) {
-            try { archive.close(); } catch (Exception ignored) { }
+            try { handle.close(); } catch (Exception ignored) { }
             throw e;
+        }
+    }
+
+    private RarHandle openRarNoFollow(Path path) throws Exception {
+        Path safe = SafeFilePublication.requireSafeRegularFile(path, "RAR archive");
+        InputStream raw = Files.newInputStream(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        try {
+            return new RarHandle(raw, new Archive(raw));
+        } catch (Exception failure) {
+            try { raw.close(); } catch (Exception closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
+    }
+
+    private record RarHandle(InputStream raw, Archive archive) implements AutoCloseable {
+        @Override
+        public void close() throws Exception {
+            Exception failure = null;
+            try {
+                archive.close();
+            } catch (Exception closeArchive) {
+                failure = closeArchive;
+            }
+            try {
+                raw.close();
+            } catch (Exception closeRaw) {
+                if (failure == null) failure = closeRaw;
+                else failure.addSuppressed(closeRaw);
+            }
+            if (failure != null) throw failure;
         }
     }
 
@@ -449,8 +499,9 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
     private ArchiveInputStream<?> openStreamArchive(Path path) throws Exception {
-        String lower = path.getFileName().toString().toLowerCase(Locale.ROOT);
-        InputStream raw = new BufferedInputStream(Files.newInputStream(path), 64 * 1024);
+        Path safe = SafeFilePublication.requireSafeRegularFile(path, "Stream archive");
+        String lower = safe.getFileName().toString().toLowerCase(Locale.ROOT);
+        InputStream raw = new BufferedInputStream(Files.newInputStream(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS), 64 * 1024);
         InputStream source = raw;
         try {
             if (lower.endsWith(".tar.gz") || lower.endsWith(".tgz")) {
@@ -515,15 +566,15 @@ public class ZipArchiveReader implements ArchiveReader {
     }
 
 
-    private ZipEntry findZipEntryChecked(ZipFile zip, String requestedName) throws IOException {
-        ZipEntry direct = zip.getEntry(requestedName);
+    private ZipArchiveEntry findZipEntryChecked(ZipFile zip, String requestedName) throws IOException {
+        ZipArchiveEntry direct = zip.getEntry(requestedName);
         if (direct != null) return direct;
         String normalized = normalizeEntryName(requestedName);
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements()) {
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("ZIP contains too many entries");
-            ZipEntry entry = entries.nextElement();
+            ZipArchiveEntry entry = entries.nextElement();
             if (normalizeEntryName(entry.getName()).equalsIgnoreCase(normalized)) return entry;
         }
         return null;
@@ -562,22 +613,13 @@ public class ZipArchiveReader implements ArchiveReader {
         }
     }
 
-    private static void publishStaging(Path staging, Path target) throws IOException {
-        try {
-            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(staging, target, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
-    private static void validateZipEntry(ZipEntry entry, long limit) throws IOException {
+    private static void validateZipEntry(ZipArchiveEntry entry, long limit) throws IOException {
         if (declaredTooLarge(entry.getSize(), limit)) {
             throw new IOException("ZIP entry is too large: " + entry.getSize());
         }
         long compressed = entry.getCompressedSize();
         long size = entry.getSize();
-        if (compressed > 0 && size > 0
-                && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
             throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
         }
     }

@@ -9,59 +9,59 @@
       spacing="15" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
       prefWidth="540" prefHeight="620">
 
-    <Label text="📊 Статистика колекції" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
+    <Label text="ui.fxml.statistics.collection_statistics" style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <Separator/>
 
     <GridPane hgap="15" vgap="10">
-        <Label text="📚 Книг:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
-        <Label fx:id="booksCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+        <Label text="ui.fxml.statistics.books" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+        <Label fx:id="booksCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
 
-        <Label text="👤 Авторів:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
-        <Label fx:id="authorsCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+        <Label text="ui.fxml.statistics.authors" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+        <Label fx:id="authorsCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
 
-        <Label text="📖 Серій:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
-        <Label fx:id="seriesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+        <Label text="ui.fxml.statistics.series" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+        <Label fx:id="seriesCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
 
-        <Label text="🏷️ Жанрів:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
-        <Label fx:id="genresCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+        <Label text="ui.fxml.statistics.genres" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+        <Label fx:id="genresCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
 
-        <Label text="🌐 Мов:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
-        <Label fx:id="languagesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
+        <Label text="ui.fxml.statistics.languages" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
+        <Label fx:id="languagesCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="4"/>
 
-        <Label text="🏢 Видавництв:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
-        <Label fx:id="publishersCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
+        <Label text="ui.fxml.statistics.publishers" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
+        <Label fx:id="publishersCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="5"/>
 
-        <Label text="📦 Розмір:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
-        <Label fx:id="totalSize" text="0 B" GridPane.columnIndex="1" GridPane.rowIndex="6"/>
+        <Label text="ui.fxml.statistics.size" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
+        <Label fx:id="totalSize" text="ui.fxml.statistics.0_b" GridPane.columnIndex="1" GridPane.rowIndex="6"/>
 
-        <Label text="🔄 Дублікатів:" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
-        <Label fx:id="duplicatesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="7"/>
+        <Label text="ui.fxml.statistics.duplicates" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
+        <Label fx:id="duplicatesCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="7"/>
 
-        <Label text="🖼️ Без обкладинок:" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
-        <Label fx:id="missingCoversCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="8"/>
+        <Label text="ui.fxml.statistics.without_covers" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
+        <Label fx:id="missingCoversCount" text="ui.fxml.statistics.0" GridPane.columnIndex="1" GridPane.rowIndex="8"/>
 
-        <Label text="💾 Локальних:" GridPane.columnIndex="0" GridPane.rowIndex="9" style="-fx-font-weight: bold;"/>
-        <Label fx:id="localBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="9"/>
-        <Label text="☁ Віддалених:" GridPane.columnIndex="0" GridPane.rowIndex="10" style="-fx-font-weight: bold;"/>
-        <Label fx:id="remoteBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="10"/>
-        <Label text="✅ Прочитаних:" GridPane.columnIndex="0" GridPane.rowIndex="11" style="-fx-font-weight: bold;"/>
-        <Label fx:id="readBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="11"/>
-        <Label text="📘 Непрочитаних:" GridPane.columnIndex="0" GridPane.rowIndex="12" style="-fx-font-weight: bold;"/>
-        <Label fx:id="unreadBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="12"/>
-        <Label text="★ Обраних:" GridPane.columnIndex="0" GridPane.rowIndex="13" style="-fx-font-weight: bold;"/>
-        <Label fx:id="favoritesCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="13"/>
-        <Label text="🗑 Видалених:" GridPane.columnIndex="0" GridPane.rowIndex="14" style="-fx-font-weight: bold;"/>
-        <Label fx:id="deletedBooksCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="14"/>
-        <Label text="🔗 Джерел:" GridPane.columnIndex="0" GridPane.rowIndex="15" style="-fx-font-weight: bold;"/>
-        <Label fx:id="sourcesCount" text="—" GridPane.columnIndex="1" GridPane.rowIndex="15"/>
+        <Label text="ui.fxml.statistics.local" GridPane.columnIndex="0" GridPane.rowIndex="9" style="-fx-font-weight: bold;"/>
+        <Label fx:id="localBooksCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="9"/>
+        <Label text="ui.fxml.statistics.remote" GridPane.columnIndex="0" GridPane.rowIndex="10" style="-fx-font-weight: bold;"/>
+        <Label fx:id="remoteBooksCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="10"/>
+        <Label text="ui.fxml.statistics.read" GridPane.columnIndex="0" GridPane.rowIndex="11" style="-fx-font-weight: bold;"/>
+        <Label fx:id="readBooksCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="11"/>
+        <Label text="ui.fxml.statistics.unread" GridPane.columnIndex="0" GridPane.rowIndex="12" style="-fx-font-weight: bold;"/>
+        <Label fx:id="unreadBooksCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="12"/>
+        <Label text="ui.fxml.statistics.favorites" GridPane.columnIndex="0" GridPane.rowIndex="13" style="-fx-font-weight: bold;"/>
+        <Label fx:id="favoritesCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="13"/>
+        <Label text="ui.fxml.statistics.deleted" GridPane.columnIndex="0" GridPane.rowIndex="14" style="-fx-font-weight: bold;"/>
+        <Label fx:id="deletedBooksCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="14"/>
+        <Label text="ui.fxml.statistics.sources" GridPane.columnIndex="0" GridPane.rowIndex="15" style="-fx-font-weight: bold;"/>
+        <Label fx:id="sourcesCount" text="ui.fxml.statistics.value" GridPane.columnIndex="1" GridPane.rowIndex="15"/>
     </GridPane>
 
     <Separator/>
 
     <HBox spacing="10" alignment="CENTER_RIGHT">
-        <Button text="🔄 Оновити" onAction="#onRefresh" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
-        <Button text="✕ Закрити" onAction="#onClose" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="ui.fxml.statistics.refresh" onAction="#onRefresh" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="ui.fxml.statistics.close" onAction="#onClose" style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
 </VBox>

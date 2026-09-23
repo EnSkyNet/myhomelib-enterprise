@@ -7,15 +7,17 @@ import com.myhomelibcorp.reader.core.resource.HybridResourceRepository;
 import com.myhomelibcorp.reader.core.text.TextStorageImpl;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import javax.xml.stream.*;
 import java.io.*;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
 import java.nio.file.*;
 import java.util.*;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /**
  * EPUB2/EPUB3 reader parser. Text follows the OPF spine; TOC follows EPUB3 nav
@@ -29,7 +31,7 @@ public final class EpubParser implements BookParser {
     public BookDocumentMetadata readMetadata(BookSource source) throws IOException {
         if (source == null) throw new IOException("EPUB source is null");
         try (MaterializedSource materialized = materialize(source);
-             ZipFile zip = new ZipFile(materialized.path().toFile())) {
+             ZipFile zip = openZipNoFollow(materialized.path())) {
             validateArchive(zip);
             PackageData pkg = readPackage(zip, source);
             boolean images = pkg.manifest().values().stream().anyMatch(i -> isImage(i.mediaType()));
@@ -47,7 +49,7 @@ public final class EpubParser implements BookParser {
         HybridResourceRepository resources = new HybridResourceRepository();
         boolean success = false;
         try (MaterializedSource materialized = materialize(source);
-             ZipFile zip = new ZipFile(materialized.path().toFile())) {
+             ZipFile zip = openZipNoFollow(materialized.path())) {
             validateArchive(zip);
             PackageData pkg = readPackage(zip, source);
             preloadImages(zip, pkg, resources, effective);
@@ -61,7 +63,7 @@ public final class EpubParser implements BookParser {
             int chapterNumber = 0;
             for (String path : documents) {
                 checkCancelled();
-                ZipEntry entry = findZip(zip, path);
+                ZipArchiveEntry entry = findZip(zip, path);
                 if (entry == null || entry.isDirectory()) continue;
                 checkEntry(entry, "EPUB document");
                 long start = text.length();
@@ -75,7 +77,7 @@ public final class EpubParser implements BookParser {
                 }
                 long end = text.length();
                 if (end <= start) continue;
-                String title = firstNonBlank(detectedTitle, fileTitle(path), "Розділ " + (++chapterNumber));
+                String title = firstNonBlank(detectedTitle, fileTitle(path), "#" + (++chapterNumber));
                 chapters.add(new ChapterIndex("epub-" + chapters.size(), title, start, end,
                         text.getParagraphCount() - paragraphsBefore));
             }
@@ -101,7 +103,7 @@ public final class EpubParser implements BookParser {
     private PackageData readPackage(ZipFile zip, BookSource source) throws IOException, XMLStreamException {
         String opfPath = locateOpf(zip);
         if (opfPath == null) throw new IOException("EPUB META-INF/container.xml has no rootfile");
-        ZipEntry opf = findZip(zip, opfPath);
+        ZipArchiveEntry opf = findZip(zip, opfPath);
         if (opf == null) throw new IOException("EPUB OPF not found: " + opfPath);
         checkEntry(opf, "EPUB OPF");
 
@@ -109,7 +111,7 @@ public final class EpubParser implements BookParser {
         List<String> spineIds = new ArrayList<>();
         List<String> authors = new ArrayList<>();
         List<String> genres = new ArrayList<>();
-        String title = null, language = "", publisher = "", year = "", isbn = null;
+        String title = null, language = "und", publisher = "", year = "", isbn = null;
         String series = null;
         Integer sequence = null;
         String tocId = null;
@@ -162,7 +164,7 @@ public final class EpubParser implements BookParser {
                             if (v.length() >= 4 && v.substring(0, 4).chars().allMatch(Character::isDigit)) year = v.substring(0, 4);
                         }
                         case "identifier" -> {
-                            String scheme = firstNonBlank(attrByLocal(r, "scheme"), "");
+                            String scheme = lower(attrByLocal(r, "scheme"));
                             String v = readMetadataText(r);
                             if (isbn == null && (scheme.toLowerCase(Locale.ROOT).contains("isbn") || v.replaceAll("[^0-9Xx]", "").length() >= 10)) isbn = v;
                         }
@@ -203,15 +205,14 @@ public final class EpubParser implements BookParser {
             }
         }
 
-        String effectiveTitle = firstNonBlank(title, fileTitle(source.name()), "Без назви");
-        if (authors.isEmpty()) authors.add("Невідомий автор");
+        String effectiveTitle = firstNonBlank(title, fileTitle(source.name()), source.id(), "");
         BookMetadata metadata = new BookMetadata(source.id(), effectiveTitle, List.copyOf(authors), language,
                 series, sequence, List.copyOf(genres), "", publisher, year, isbn, source.size().orElse(0));
         return new PackageData(metadata, Map.copyOf(manifest), List.copyOf(spine), navPath, ncxPath, base);
     }
 
     private String locateOpf(ZipFile zip) throws IOException, XMLStreamException {
-        ZipEntry container = findZip(zip, "META-INF/container.xml");
+        ZipArchiveEntry container = findZip(zip, "META-INF/container.xml");
         if (container == null) throw new IOException("EPUB META-INF/container.xml not found");
         checkEntry(container, "EPUB container.xml");
         try (InputStream in = bounded(zip.getInputStream(container), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
@@ -235,7 +236,7 @@ public final class EpubParser implements BookParser {
             if (!isImage(item.mediaType())) continue;
             String id = resolveZipPath(pkg.opfBase(), item.href());
             if (!options.loadImages()) { resources.addMetadata(id, item.mediaType()); continue; }
-            ZipEntry entry = findZip(zip, id);
+            ZipArchiveEntry entry = findZip(zip, id);
             if (entry == null || entry.isDirectory()) continue;
             checkEntry(entry, "EPUB image");
             long max = options.maxImageSizeBytes() > 0
@@ -339,7 +340,7 @@ public final class EpubParser implements BookParser {
         if (!enabled) return toc;
         List<NavItem> items = List.of();
         if (pkg.navPath() != null) {
-            ZipEntry nav = findZip(zip, pkg.navPath());
+            ZipArchiveEntry nav = findZip(zip, pkg.navPath());
             if (nav != null) {
                 checkEntry(nav, "EPUB nav");
                 try (InputStream in = bounded(zip.getInputStream(nav), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
@@ -348,7 +349,7 @@ public final class EpubParser implements BookParser {
             }
         }
         if (items.isEmpty() && pkg.ncxPath() != null) {
-            ZipEntry ncx = findZip(zip, pkg.ncxPath());
+            ZipArchiveEntry ncx = findZip(zip, pkg.ncxPath());
             if (ncx != null) {
                 checkEntry(ncx, "EPUB NCX");
                 try (InputStream in = bounded(zip.getInputStream(ncx), ArchiveSafetyLimits.MAX_ENTRY_BYTES)) {
@@ -436,31 +437,34 @@ public final class EpubParser implements BookParser {
 
     private void validateArchive(ZipFile zip) throws IOException {
         int count = 0;
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         while (entries.hasMoreElements()) {
-            ZipEntry e = entries.nextElement();
+            ZipArchiveEntry e = entries.nextElement();
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("EPUB contains too many ZIP entries");
             checkEntry(e, "EPUB entry");
         }
     }
 
-    private void checkEntry(ZipEntry entry, String role) throws IOException {
+    private void checkEntry(ZipArchiveEntry entry, String role) throws IOException {
         if (entry == null || entry.isDirectory()) return;
         if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) throw new IOException(role + " exceeds Reader archive limit: " + entry.getName());
         long compressed = entry.getCompressedSize(), size = entry.getSize();
-        if (compressed > 0 && size > 0 && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO)
+        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed))
             throw new IOException(role + " has suspicious compression ratio: " + entry.getName());
     }
 
     private List<String> fallbackDocuments(ZipFile zip) {
-        return Collections.list(zip.entries()).stream().filter(e -> !e.isDirectory())
-                .map(ZipEntry::getName).filter(n -> {
+        return Collections.list(zip.getEntries()).stream().filter(e -> !e.isDirectory())
+                .map(ZipArchiveEntry::getName).filter(n -> {
                     String x = n.toLowerCase(Locale.ROOT); return x.endsWith(".xhtml") || x.endsWith(".html") || x.endsWith(".htm");
                 }).sorted().toList();
     }
 
     private MaterializedSource materialize(BookSource source) throws IOException {
-        if (source instanceof FileBookSource file && Files.isRegularFile(file.getPath())) return new MaterializedSource(file.getPath(), false);
+        if (source instanceof FileBookSource file) {
+            Path safe = AtomicFileSupport.requireSafeRegularFile(file.getPath(), "Reader EPUB source");
+            return new MaterializedSource(safe, false);
+        }
         Path tmp = Files.createTempFile("myhomelib-reader-", ".epub");
         try (InputStream in = source.openStream(); OutputStream out = Files.newOutputStream(tmp)) {
             byte[] buffer = new byte[64 * 1024]; long total = 0; int n;
@@ -477,6 +481,20 @@ public final class EpubParser implements BookParser {
         return new MaterializedSource(tmp, true);
     }
 
+    private ZipFile openZipNoFollow(Path source) throws IOException {
+        Path safe = AtomicFileSupport.requireSafeRegularFile(source, "Reader EPUB source");
+        FileChannel channel = FileChannel.open(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        try {
+            return ZipFile.builder()
+                    .setSeekableByteChannel(channel)
+                    .setCharset(StandardCharsets.UTF_8)
+                    .get();
+        } catch (IOException | RuntimeException failure) {
+            try { channel.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
+    }
+
     private InputStream bounded(InputStream input, long max) {
         return new FilterInputStream(input) {
             private long total;
@@ -486,13 +504,13 @@ public final class EpubParser implements BookParser {
         };
     }
 
-    private ZipEntry findZip(ZipFile zip, String wanted) {
+    private ZipArchiveEntry findZip(ZipFile zip, String wanted) {
         if (wanted == null) return null;
         String normalized = norm(stripFragment(wanted));
-        ZipEntry direct = zip.getEntry(normalized);
+        ZipArchiveEntry direct = zip.getEntry(normalized);
         if (direct != null) return direct;
-        Enumeration<? extends ZipEntry> it = zip.entries();
-        while (it.hasMoreElements()) { ZipEntry e = it.nextElement(); if (norm(e.getName()).equalsIgnoreCase(normalized)) return e; }
+        Enumeration<ZipArchiveEntry> it = zip.getEntries();
+        while (it.hasMoreElements()) { ZipArchiveEntry e = it.nextElement(); if (norm(e.getName()).equalsIgnoreCase(normalized)) return e; }
         return null;
     }
 

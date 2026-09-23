@@ -24,8 +24,11 @@ class SyncConflictReviewServiceTest {
 
         List<SyncConflictReviewItem> items = service.manualItems(List.of(conflict));
         assertThat(items).singleElement().satisfies(item -> {
-            assertThat(item.localSnapshot()).contains("device=local", "value=a");
-            assertThat(item.remoteSnapshot()).contains("device=remote", "value=b");
+            assertThat(item.entityType().key()).isEqualTo("ui.sync.entity.setting");
+            assertThat(item.reason().key()).isEqualTo("ui.sync.conflict.reason.manual");
+            assertThat(item.localSnapshot().key()).isEqualTo("ui.sync.conflict.snapshot.record.active");
+            assertThat(item.localSnapshot().arguments()).contains("local").anySatisfy(value -> assertThat(value).contains("value=a"));
+            assertThat(item.remoteSnapshot().arguments()).contains("remote").anySatisfy(value -> assertThat(value).contains("value=b"));
         });
         assertThat(service.applySelections(List.of(conflict), List.of(
                 new SyncConflictReviewSelection("SETTING:setting:x", SyncConflictReviewSelection.Side.REMOTE))))

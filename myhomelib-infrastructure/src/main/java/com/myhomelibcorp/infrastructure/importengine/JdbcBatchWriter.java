@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.LinkedHashMap;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.Collection;
 
 @Component
@@ -69,7 +71,7 @@ public class JdbcBatchWriter {
                 annotation = excluded.annotation,
                 rate = books.rate,
                 progress = books.progress,
-                update_date = excluded.update_date,
+                update_date = COALESCE(excluded.update_date, books.update_date),
                 isbn = excluded.isbn,
                 deleted = excluded.deleted,
                 local = CASE WHEN books.local = 1 THEN 1 ELSE excluded.local END,
@@ -239,10 +241,10 @@ public class JdbcBatchWriter {
     }
 
     /**
-     * Fast path for a catalog import that started with an empty author table and whose in-memory
-     * author cache has not evicted entries. Under those preconditions every pending name is new,
-     * so the expensive existence lookup can be skipped. Any unexpected INSERT OR IGNORE conflict
-     * falls back to the exact lookup instead of risking a broken book-author relation.
+     * Fast path for author names that the caller has proven were not imported earlier in the
+     * current empty-catalog baseline. The expensive pre-insert name lookup is skipped. A cheap
+     * primary-key verification guards INSERT OR IGNORE anomalies; only missing candidate IDs fall
+     * back to exact name resolution.
      */
     public Map<String, String> batchInsertAuthorsAndResolveIdsAssumingNew(List<Author> authors) {
         if (authors == null || authors.isEmpty()) return Map.of();
@@ -250,15 +252,19 @@ public class JdbcBatchWriter {
         Map<AuthorName, List<Author>> byName = groupAuthorsByName(authors);
         List<Map.Entry<AuthorName, List<Author>>> entries = new ArrayList<>(byName.entrySet());
         List<Author> representatives = entries.stream().map(entry -> entry.getValue().getFirst()).toList();
-        int[] updateCounts = insertAuthors(representatives);
+        insertAuthors(representatives);
 
+        // SQLite JDBC does not reliably distinguish an INSERT OR IGNORE conflict through
+        // batch update counts. Resolve successful inserts by their generated primary keys;
+        // this is a cheap indexed lookup and leaves the expensive name lookup only for true
+        // conflicts (for example, an author evicted from the bounded import cache).
+        Set<String> insertedIds = findExistingAuthorIdsByCandidateId(representatives);
         Map<AuthorName, String> persistentByName = new HashMap<>();
         List<AuthorName> conflicts = new ArrayList<>();
-        for (int i = 0; i < entries.size(); i++) {
-            var entry = entries.get(i);
+        for (var entry : entries) {
             Author representative = entry.getValue().getFirst();
-            int count = i < updateCounts.length ? updateCounts[i] : java.sql.Statement.SUCCESS_NO_INFO;
-            if (count > 0) persistentByName.put(entry.getKey(), representative.getId().asString());
+            String candidateId = representative.getId().asString();
+            if (insertedIds.contains(candidateId)) persistentByName.put(entry.getKey(), candidateId);
             else conflicts.add(entry.getKey());
         }
         if (!conflicts.isEmpty()) persistentByName.putAll(findExistingAuthorIds(conflicts));
@@ -302,6 +308,23 @@ public class JdbcBatchWriter {
             });
         }
         return getJdbcTemplate().batchUpdate(sql, batch);
+    }
+
+    private Set<String> findExistingAuthorIdsByCandidateId(List<Author> authors) {
+        Set<String> result = new HashSet<>();
+        if (authors == null || authors.isEmpty()) return result;
+        final int idsPerQuery = 500;
+        for (int from = 0; from < authors.size(); from += idsPerQuery) {
+            int to = Math.min(authors.size(), from + idsPerQuery);
+            String placeholders = String.join(",", java.util.Collections.nCopies(to - from, "?"));
+            Object[] args = new Object[to - from];
+            for (int i = from; i < to; i++) args[i - from] = authors.get(i).getId().asString();
+            getJdbcTemplate().query(
+                    "SELECT id FROM authors WHERE id IN (" + placeholders + ")",
+                    (org.springframework.jdbc.core.RowCallbackHandler) rs -> result.add(rs.getString(1)),
+                    args);
+        }
+        return result;
     }
 
     private Map<AuthorName, String> findExistingAuthorIds(List<AuthorName> names) {

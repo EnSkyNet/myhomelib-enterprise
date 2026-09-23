@@ -2,6 +2,7 @@ package com.myhomelibcorp.application.usecase.book;
 
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.InitializingBean;
 import org.springframework.stereotype.Component;
@@ -11,7 +12,7 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.file.attribute.FileTime;
 import java.time.Clock;
 import java.time.Duration;
@@ -64,7 +65,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
         synchronized (lock) {
             if (initialized) return;
             try {
-                Files.createDirectories(directory);
+                SafeFilePublication.createDirectoriesNoLinks(directory, "External-reader cache");
                 cleanupCrashLeftoversLocked();
                 cleanupInactiveLocked();
             } catch (IOException ignored) {
@@ -78,7 +79,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
         if (input == null) throw new IllegalArgumentException("Input stream is required");
         ensureInitialized();
         synchronized (lock) {
-            Files.createDirectories(directory);
+            SafeFilePublication.createDirectoriesNoLinks(directory, "External-reader cache");
             cleanupInactiveLocked();
             long base = totalSizeLocked();
             if (base >= maxBytes) throw new IOException("External-reader cache is full");
@@ -86,7 +87,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
             Path target = newTarget(extension);
             boolean success = false;
             long copied = 0;
-            try (var out = Files.newOutputStream(target)) {
+            try (var out = SafeFilePublication.openFreshOutputStream(target, "External-reader materialization")) {
                 byte[] buffer = new byte[64 * 1024];
                 for (int n; (n = input.read(buffer)) >= 0;) {
                     if (n == 0) continue;
@@ -99,7 +100,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
             } finally {
                 if (!success) Files.deleteIfExists(target);
             }
-            Files.setLastModifiedTime(target, FileTime.from(clock.instant()));
+            Files.setAttribute(target, "basic:lastModifiedTime", FileTime.from(clock.instant()), LinkOption.NOFOLLOW_LINKS);
             active.add(target);
             return new Lease(this, target);
         }
@@ -112,25 +113,45 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
         }
         ensureInitialized();
         synchronized (lock) {
-            Files.createDirectories(directory);
+            SafeFilePublication.createDirectoriesNoLinks(directory, "External-reader cache");
             cleanupInactiveLocked();
-            long size = Files.size(source);
+            Path safeSource = SafeFilePublication.requireSafeRegularFile(source, "External-reader adopted source");
+            long size = Files.readAttributes(safeSource, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS).size();
             if (size > maxFileBytes) throw new IOException("Materialized book exceeds the per-file cache limit");
             if (totalSizeLocked() + size > maxBytes) throw new IOException("External-reader cache size limit exceeded");
 
             Path target = newTarget(extension(source.getFileName() == null ? "" : source.getFileName().toString()));
+            String sourceHash = SafeFilePublication.sha256(safeSource, "External-reader adopted source");
+            boolean published = false;
             try {
                 try {
-                    Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
+                    SafeFilePublication.moveNoReplace(safeSource, target, "External-reader adopted move");
                 } catch (java.nio.file.FileSystemException moveFailure) {
-                    Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
-                    Files.deleteIfExists(source);
+                    try (InputStream in = Files.newInputStream(
+                            SafeFilePublication.requireSafeRegularFile(safeSource, "External-reader adopted source"),
+                            LinkOption.NOFOLLOW_LINKS)) {
+                        SafeFilePublication.copyFresh(in, target, "External-reader adopted copy");
+                    }
+                    String copiedHash = SafeFilePublication.sha256(target, "External-reader adopted target");
+                    if (!sourceHash.equalsIgnoreCase(copiedHash)) {
+                        throw new IOException("External-reader adopted copy failed SHA-256 verification");
+                    }
+                    SafeFilePublication.removeIfOwned(safeSource, sourceHash, "External-reader adopted source cleanup");
                 }
-            } catch (IOException e) {
-                Files.deleteIfExists(target);
-                throw e;
+                published = true;
+            } finally {
+                if (!published && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    try {
+                        String current = SafeFilePublication.sha256(target, "External-reader failed adopted target");
+                        if (sourceHash.equalsIgnoreCase(current)) {
+                            SafeFilePublication.removeIfOwned(target, sourceHash, "External-reader failed target cleanup");
+                        }
+                    } catch (IOException ignored) {
+                        // Preserve unverified evidence rather than deleting a concurrently replaced path.
+                    }
+                }
             }
-            Files.setLastModifiedTime(target, FileTime.from(clock.instant()));
+            Files.setAttribute(target, "basic:lastModifiedTime", FileTime.from(clock.instant()), LinkOption.NOFOLLOW_LINKS);
             active.add(target);
             return new Lease(this, target);
         }
@@ -151,7 +172,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
     }
 
     private void cleanupCrashLeftoversLocked() throws IOException {
-        if (!Files.isDirectory(directory)) return;
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return;
         for (Path file : cacheFilesLocked()) {
             // No file can be active before this JVM has issued a lease, therefore every pre-existing file is stale.
             Files.deleteIfExists(file);
@@ -159,7 +180,7 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
     }
 
     private void cleanupInactiveLocked() throws IOException {
-        if (!Files.isDirectory(directory)) return;
+        if (!Files.isDirectory(directory, LinkOption.NOFOLLOW_LINKS)) return;
         Instant cutoff = clock.instant().minus(maxAge);
         List<Path> candidates = new ArrayList<>();
         for (Path file : cacheFilesLocked()) {
@@ -188,7 +209,8 @@ public class ExternalReaderMaterializationCache implements AutoCloseable, Initia
     }
 
     private List<Path> cacheFilesLocked() throws IOException {
-        if (!Files.isDirectory(directory)) return List.of();
+        if (!Files.exists(directory, LinkOption.NOFOLLOW_LINKS)) return List.of();
+        SafeFilePublication.requireSafeDirectoryPath(directory, "External-reader cache");
         try (var stream = Files.list(directory)) {
             return stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) || Files.isSymbolicLink(path))
                     .map(path -> path.toAbsolutePath().normalize())

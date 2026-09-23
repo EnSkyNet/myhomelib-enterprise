@@ -4,6 +4,8 @@ import com.myhomelibcorp.application.dto.BookListItem;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookQuickFilterField;
 import com.myhomelibcorp.application.mapper.BookListItemMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.query.book.BookPageCursor;
 import com.myhomelibcorp.application.query.book.BookPageDirection;
@@ -13,22 +15,41 @@ import com.myhomelibcorp.application.query.common.Pagination;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 import java.util.OptionalLong;
 
 @Component
-@RequiredArgsConstructor
 public class LoadBooksByAuthorUseCase {
 
     private final BookQueryRepository bookQueryRepository;
     private final BookListItemMapper bookListItemMapper;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for isolated tests/non-Spring embedding. */
+    public LoadBooksByAuthorUseCase(BookQueryRepository bookQueryRepository, BookListItemMapper bookListItemMapper) {
+        this(bookQueryRepository, bookListItemMapper, null);
+    }
+
+    @Autowired
+    public LoadBooksByAuthorUseCase(BookQueryRepository bookQueryRepository, BookListItemMapper bookListItemMapper,
+                                    LibraryOperationCoordinator operationCoordinator) {
+        this.bookQueryRepository = bookQueryRepository;
+        this.bookListItemMapper = bookListItemMapper;
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public PageResult<BookListItem> execute(AuthorId authorId, String filterText,
                                             SortBy sortBy, SortDirection direction,
                                             int limit, int offset) {
+        return query(() -> executeLocked(authorId, filterText, sortBy, direction, limit, offset));
+    }
+
+    private PageResult<BookListItem> executeLocked(AuthorId authorId, String filterText,
+                                                   SortBy sortBy, SortDirection direction,
+                                                   int limit, int offset) {
         if (authorId == null) return PageResult.empty();
         int safeLimit = Math.max(1, Math.min(limit, 200));
         int safeOffset = Math.max(0, offset);
@@ -48,6 +69,11 @@ public class LoadBooksByAuthorUseCase {
      */
     public List<BookListItem> executeAll(AuthorId authorId, String filterText,
                                          SortBy sortBy, SortDirection direction) {
+        return query(() -> executeAllLocked(authorId, filterText, sortBy, direction));
+    }
+
+    private List<BookListItem> executeAllLocked(AuthorId authorId, String filterText,
+                                                SortBy sortBy, SortDirection direction) {
         if (authorId == null) return List.of();
         final int chunkSize = 200;
         final SortBy effectiveSort = sortBy == null ? SortBy.TITLE : sortBy;
@@ -84,6 +110,21 @@ public class LoadBooksByAuthorUseCase {
             if (!page.hasNext()) break;
         }
         return List.copyOf(all);
+    }
+
+    private <T> T query(java.util.function.Supplier<T> action) {
+        if (operationCoordinator == null) return action.get();
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
     }
 
     private BookFilterSpec buildFilter(String filterText) {

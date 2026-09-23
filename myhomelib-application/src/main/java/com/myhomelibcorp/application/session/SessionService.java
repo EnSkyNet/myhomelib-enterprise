@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.session;
 
 import com.myhomelibcorp.domain.event.collection.CollectionOpenedEvent;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.SessionRepository;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
@@ -11,6 +13,7 @@ import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Service;
 
 import java.util.prefs.Preferences;
+import java.util.function.Supplier;
 
 @Service
 @RequiredArgsConstructor
@@ -20,14 +23,15 @@ public class SessionService {
     private final SessionRepository sessionRepository;
     private final CollectionLifecyclePort collectionLifecyclePort;
     private final ApplicationSettingsPort settings;
+    private final LibraryOperationCoordinator operationCoordinator;
     private final Preferences prefs = Preferences.userNodeForPackage(SessionService.class);
 
     private static final String LAST_COLLECTION_KEY = "lastCollectionId";
     private static final String WORKSPACE_TYPE_PREFIX = "workspaceType_";
     private static final String WORKSPACE_ID_PREFIX = "workspaceId_";
 
-    private String currentCollectionId;
-    private String currentBookId;
+    private volatile String currentCollectionId;
+    private volatile String currentBookId;
 
     @EventListener
     public void onCollectionOpened(CollectionOpenedEvent event) {
@@ -58,48 +62,57 @@ public class SessionService {
             return;
         }
 
-        Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
-        if (currentCollection == null) {
-            log.warn("Спроба зберегти книгу без активної колекції");
-            return;
-        }
+        withReaderState(() -> {
+            Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
+            if (currentCollection == null) {
+                log.warn("Спроба зберегти книгу без активної колекції");
+                return null;
+            }
 
-        String collectionId = currentCollection.getId();
-        this.currentCollectionId = collectionId;
-        this.currentBookId = bookId;
+            String collectionId = currentCollection.getId();
+            this.currentCollectionId = collectionId;
+            this.currentBookId = bookId;
 
-        sessionRepository.saveLastOpenedBookId(collectionId, bookId);
-        log.debug("Збережено останню книгу для колекції {}: {}", collectionId, bookId);
+            sessionRepository.saveLastOpenedBookId(collectionId, bookId);
+            log.debug("Збережено останню книгу для колекції {}: {}", collectionId, bookId);
+            return null;
+        });
     }
 
     public String getLastOpenedBookId() {
-        Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
-        if (currentCollection == null) {
-            log.warn("Спроба отримати книгу без активної колекції");
-            return null;
-        }
+        return withReaderState(() -> {
+            Collection currentCollection = collectionLifecyclePort.getCurrentCollection();
+            if (currentCollection == null) {
+                log.warn("Спроба отримати книгу без активної колекції");
+                return null;
+            }
 
-        String collectionId = currentCollection.getId();
-        this.currentCollectionId = collectionId;
+            String collectionId = currentCollection.getId();
+            this.currentCollectionId = collectionId;
 
-        if (currentBookId != null) {
-            return currentBookId;
-        }
+            if (currentBookId != null) {
+                return currentBookId;
+            }
 
-        String bookId = sessionRepository.getLastOpenedBookId(collectionId);
-        if (bookId != null) {
-            currentBookId = bookId;
-        }
-        return bookId;
+            String bookId = sessionRepository.getLastOpenedBookId(collectionId);
+            if (bookId != null) {
+                currentBookId = bookId;
+            }
+            return bookId;
+        });
     }
 
     public String getCurrentCollectionId() {
-        if (currentCollectionId == null) {
-            Collection current = collectionLifecyclePort.getCurrentCollection();
-            if (current != null) {
-                currentCollectionId = current.getId();
-            }
+        return withReaderState(this::currentCollectionIdLocked);
+    }
+
+    private String currentCollectionIdLocked() {
+        Collection current = collectionLifecyclePort.getCurrentCollection();
+        if (current == null || current.getId() == null || current.getId().isBlank()) {
+            currentCollectionId = null;
+            return null;
         }
+        currentCollectionId = current.getId();
         return currentCollectionId;
     }
 
@@ -112,18 +125,25 @@ public class SessionService {
     }
 
     public void saveWorkspaceState(String type, String id) {
-        String collectionId = getCurrentCollectionId();
-        if (collectionId == null || type == null || type.isBlank()) return;
-        prefs.put(WORKSPACE_TYPE_PREFIX + collectionId, type);
-        prefs.put(WORKSPACE_ID_PREFIX + collectionId, id == null ? "" : id);
+        if (type == null || type.isBlank()) return;
+        withReaderState(() -> {
+            String collectionId = currentCollectionIdLocked();
+            if (collectionId == null) return null;
+            prefs.put(WORKSPACE_TYPE_PREFIX + collectionId, type);
+            prefs.put(WORKSPACE_ID_PREFIX + collectionId, id == null ? "" : id);
+            return null;
+        });
     }
 
     public WorkspaceState getWorkspaceState() {
-        String collectionId = getCurrentCollectionId();
-        if (collectionId == null || !isRestoreEnabled()) return null;
-        String type = prefs.get(WORKSPACE_TYPE_PREFIX + collectionId, "");
-        if (type.isBlank()) return null;
-        return new WorkspaceState(type, prefs.get(WORKSPACE_ID_PREFIX + collectionId, ""));
+        if (!isRestoreEnabled()) return null;
+        return withReaderState(() -> {
+            String collectionId = currentCollectionIdLocked();
+            if (collectionId == null) return null;
+            String type = prefs.get(WORKSPACE_TYPE_PREFIX + collectionId, "");
+            if (type.isBlank()) return null;
+            return new WorkspaceState(type, prefs.get(WORKSPACE_ID_PREFIX + collectionId, ""));
+        });
     }
 
     public void saveWindowState(double width, double height) {
@@ -146,12 +166,29 @@ public class SessionService {
     }
 
     public void clearCurrentSession() {
-        String collectionId = getCurrentCollectionId();
-        if (collectionId == null) {
-            return;
+        withReaderState(() -> {
+            Collection active = collectionLifecyclePort.getCurrentCollection();
+            if (active == null || active.getId() == null || active.getId().isBlank()) return null;
+            String collectionId = active.getId();
+            currentCollectionId = collectionId;
+            currentBookId = null;
+            sessionRepository.clearSession(collectionId);
+            log.info("Очищено session для колекції {}", collectionId);
+            return null;
+        });
+    }
+
+    private <T> T withReaderState(Supplier<T> action) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.READER_STATE);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
         }
-        currentBookId = null;
-        sessionRepository.clearSession(collectionId);
-        log.info("Очищено session для колекції {}", collectionId);
     }
 }

@@ -15,6 +15,7 @@ public interface IncomingFolderWatchPort {
     IncomingFolderWatchState scanNow(String collectionId);
     List<IncomingFolderCandidate> listReady(String collectionId, int limit);
     boolean claimReady(String collectionId, Path file, String fingerprint);
+    void releaseClaim(String collectionId, Path file, String fingerprint);
     void markImported(String collectionId, Path file, String fingerprint,
                       long imported, long duplicates, long errors);
     void markFailed(String collectionId, Path file, String fingerprint, String error);

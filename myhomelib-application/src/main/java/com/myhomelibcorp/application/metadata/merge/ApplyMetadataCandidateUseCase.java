@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.metadata.merge;
 
 import com.myhomelibcorp.application.metadata.MetadataCandidate;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.service.CommittedCatalogMutationService;
 import com.myhomelibcorp.domain.model.author.Author;
@@ -9,9 +11,9 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
 import com.myhomelibcorp.domain.service.LanguageResolver;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.EnumSet;
 import java.util.List;
@@ -23,13 +25,39 @@ import java.util.Set;
 public class ApplyMetadataCandidateUseCase {
     private final BookQueryRepository books;
     private final CommittedCatalogMutationService committedMutations;
+    private final LibraryOperationCoordinator operationCoordinator;
 
+    /** Compatibility constructor for isolated tests/non-Spring embedding. */
     public ApplyMetadataCandidateUseCase(BookQueryRepository books, CommittedCatalogMutationService committedMutations) {
+        this(books, committedMutations, null);
+    }
+
+    @Autowired
+    public ApplyMetadataCandidateUseCase(BookQueryRepository books, CommittedCatalogMutationService committedMutations,
+                                         LibraryOperationCoordinator operationCoordinator) {
         this.books = Objects.requireNonNull(books, "books");
         this.committedMutations = Objects.requireNonNull(committedMutations, "committedMutations");
+        this.operationCoordinator = operationCoordinator;
     }
 
     public Book execute(Request request) {
+        if (operationCoordinator == null || operationCoordinator.isHeldByCurrentThread()) {
+            return executeLocked(request);
+        }
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            Book result = executeLocked(request);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private Book executeLocked(Request request) {
         Book updated = prepare(request);
         if (!request.selectedFields().isEmpty()) committedMutations.save(updated);
         return updated;
@@ -73,7 +101,6 @@ public class ApplyMetadataCandidateUseCase {
                 .title(title)
                 .authors(authors)
                 .metadata(updatedMetadata)
-                .updateDate(LocalDateTime.now())
                 .build();
         return updated;
     }

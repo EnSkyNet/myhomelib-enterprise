@@ -1,5 +1,10 @@
 package com.myhomelibcorp.application.content.indexing;
 
+import com.myhomelibcorp.application.content.index.ContentIndexEntry;
+import com.myhomelibcorp.application.content.index.ContentIndexHealth;
+import com.myhomelibcorp.application.content.index.ContentIndexPage;
+import com.myhomelibcorp.application.content.index.ContentIndexQuery;
+import com.myhomelibcorp.application.port.out.content.ContentIndexPort;
 import com.myhomelibcorp.application.port.out.contentindexing.ContentIndexQueueCheckpointPort;
 import com.myhomelibcorp.application.port.out.contentindexing.ContentIndexingTaskProcessor;
 import com.myhomelibcorp.application.port.out.contentindexing.PowerStatePort;
@@ -13,6 +18,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -74,6 +80,24 @@ class ContentIndexingQueueServiceTest {
     }
 
     @Test
+    void staleIndexWithoutCheckpointFailsClosedToPersistedFullRebuildRequirement() {
+        MemoryCheckpoint checkpoint = new MemoryCheckpoint();
+        MemoryContentIndex contentIndex = new MemoryContentIndex(ContentIndexHealth.State.STALE);
+        MemorySettings settings = new MemorySettings();
+        IndexingPerformanceSettingsService settingsService = new IndexingPerformanceSettingsService(settings);
+        settingsService.save(new IndexingPerformanceSettings(IndexingResourceProfile.ECO, true));
+        ContentIndexingQueueService queue = new ContentIndexingQueueService(
+                (task, control) -> ContentIndexingOutcome.completed(), checkpoint, settingsService,
+                () -> false, contentIndex, 2);
+        services.add(queue);
+
+        assertThat(queue.restore("c1")).isZero();
+        assertThat(checkpoint.load("c1")).isPresent();
+        assertThat(checkpoint.load("c1").orElseThrow().rebuildRequired()).isTrue();
+        assertThat(checkpoint.load("c1").orElseThrow().tasks()).isEmpty();
+    }
+
+    @Test
     void cancelSignalsActiveProcessorAndRemovesTask() throws Exception {
         CountDownLatch started = new CountDownLatch(1);
         CountDownLatch observedCancel = new CountDownLatch(1);
@@ -91,6 +115,41 @@ class ContentIndexingQueueServiceTest {
         assertThat(queue.cancel("cancel-me")).isTrue();
         assertThat(observedCancel.await(2, TimeUnit.SECONDS)).isTrue();
         await(() -> queue.outstandingTasks().isEmpty());
+    }
+
+    @Test
+    void discardWaitsUntilWorkerDerivedStateFinalizationFinishes() throws Exception {
+        MemoryCheckpoint checkpoint = new MemoryCheckpoint();
+        CountDownLatch enteredFresh = new CountDownLatch(1);
+        CountDownLatch releaseFresh = new CountDownLatch(1);
+        MemoryContentIndex contentIndex = new MemoryContentIndex(ContentIndexHealth.State.READY) {
+            @Override public void markFresh(String collectionId) {
+                enteredFresh.countDown();
+                try { releaseFresh.await(3, TimeUnit.SECONDS); }
+                catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+                super.markFresh(collectionId);
+            }
+        };
+        MemorySettings settings = new MemorySettings();
+        IndexingPerformanceSettingsService settingsService = new IndexingPerformanceSettingsService(settings);
+        settingsService.save(new IndexingPerformanceSettings(IndexingResourceProfile.ECO, true));
+        ContentIndexingQueueService queue = new ContentIndexingQueueService(
+                (task, control) -> ContentIndexingOutcome.completed(), checkpoint, settingsService,
+                () -> false, contentIndex, 2);
+        services.add(queue);
+
+        queue.enqueue(task("finalizing", ContentIndexingPriority.NORMAL));
+        assertThat(enteredFresh.await(2, TimeUnit.SECONDS)).isTrue();
+
+        CompletableFuture<Boolean> discarded = CompletableFuture.supplyAsync(
+                () -> queue.discardCollection("c1", 2_000L));
+        TimeUnit.MILLISECONDS.sleep(100);
+        assertThat(discarded.isDone()).isFalse();
+
+        releaseFresh.countDown();
+        assertThat(discarded.get(2, TimeUnit.SECONDS)).isTrue();
+        assertThat(checkpoint.load("c1")).isEmpty();
+        assertThat(queue.hasOutstandingForCollection("c1")).isFalse();
     }
 
     @Test
@@ -168,6 +227,21 @@ class ContentIndexingQueueServiceTest {
             values.forEach((key, value) -> { if (key.startsWith(prefix)) result.put(key, value); });
             return result;
         }
+    }
+
+    static class MemoryContentIndex implements ContentIndexPort {
+        private volatile ContentIndexHealth.State state;
+        MemoryContentIndex(ContentIndexHealth.State state) { this.state = state; }
+        @Override public void replaceArtifact(String collectionId, ContentIndexEntry entry) { }
+        @Override public void deleteArtifact(String collectionId, String artifactId) { }
+        @Override public void deleteBook(String collectionId, String bookId) { }
+        @Override public void rebuild(String collectionId, Iterable<ContentIndexEntry> entries) { state = ContentIndexHealth.State.READY; }
+        @Override public ContentIndexPage search(ContentIndexQuery query) { return new ContentIndexPage(List.of(), 0, query.offset(), query.limit()); }
+        @Override public ContentIndexHealth health(String collectionId) {
+            return new ContentIndexHealth(collectionId, 1, 0, 0, true, state, "");
+        }
+        @Override public void markStale(String collectionId) { state = ContentIndexHealth.State.STALE; }
+        @Override public void markFresh(String collectionId) { state = ContentIndexHealth.State.READY; }
     }
 
     static final class MemoryCheckpoint implements ContentIndexQueueCheckpointPort {

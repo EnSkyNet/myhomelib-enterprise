@@ -4,6 +4,9 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.infrastructure.archive.ArchiveEntryNameSupport;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
@@ -12,6 +15,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.charset.Charset;
 import java.util.HashSet;
@@ -19,8 +23,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 import java.util.zip.CRC32;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 
 @Slf4j
 @Component
@@ -51,17 +54,22 @@ public class DownloadPayloadValidator {
      * resolved entry instead of assuming catalog archiveEntry is also the ZIP entry name.
      */
     public String validate(Path payload, Path intendedTarget, BookDto book, boolean archived) throws IOException {
-        if (payload == null || !Files.isRegularFile(payload) || Files.size(payload) <= 0) {
-            throw new IOException("Сервер повернув порожній payload");
+        if (payload == null) throw new IOException("Сервер повернув порожній payload");
+        final Path safePayload;
+        try {
+            safePayload = SafeFilePublication.requireSafeRegularFile(payload, "Downloaded payload");
+        } catch (IOException unsafe) {
+            throw new IOException("Завантажений payload відсутній або небезпечний", unsafe);
         }
-        rejectHtmlOrTextError(payload);
+        if (Files.size(safePayload) <= 0) throw new IOException("Сервер повернув порожній payload");
+        rejectHtmlOrTextError(safePayload);
         if (archived) {
-            String foundEntry = validateArchive(payload, intendedTarget, book);
+            String foundEntry = validateArchive(safePayload, intendedTarget, book);
             log.info("Archive validated. Found entry: {}", foundEntry);
             return foundEntry;
         }
         if (looksLikeFb2(intendedTarget, book)) {
-            validateFb2(payload);
+            validateFb2(safePayload);
         }
         return "";
     }
@@ -71,14 +79,24 @@ public class DownloadPayloadValidator {
      * @return ім'я entry, яке було знайдено (може відрізнятися від запитуваного)
      */
     private String validateArchive(Path payload, Path target, BookDto book) throws IOException {
-        Path alias = payload.resolveSibling(".validate-" + target.getFileName());
-        boolean linked = false;
-        String foundEntry = null;
-
+        Path parent = payload.toAbsolutePath().normalize().getParent();
+        if (parent == null) throw new IOException("Downloaded payload has no parent directory");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                parent, ".validate-work-", "Download archive validation workspace");
+        String targetLeaf = target == null || target.getFileName() == null
+                ? "payload.zip" : target.getFileName().toString();
+        Path alias = workspace.resolve(targetLeaf);
         try {
-            Files.deleteIfExists(alias);
-            try { Files.createLink(alias, payload); linked = true; }
-            catch (Exception e) { Files.copy(payload, alias); }
+            try {
+                Files.createLink(alias, payload);
+            } catch (UnsupportedOperationException | IOException hardLinkFailure) {
+                try (InputStream in = Files.newInputStream(payload, LinkOption.NOFOLLOW_LINKS)) {
+                    SafeFilePublication.copyFresh(in, alias, "Download archive validation alias");
+                } catch (IOException copyFailure) {
+                    copyFailure.addSuppressed(hardLinkFailure);
+                    throw copyFailure;
+                }
+            }
 
             // Отримуємо список записів без try-with-resources
             List<String> entries = archiveReader.listEntries(alias);
@@ -88,7 +106,7 @@ public class DownloadPayloadValidator {
             String requested = normalize(book.getArchiveEntry());
             log.debug("validateArchive: requested entry='{}', entries count={}", requested, entries.size());
 
-            foundEntry = resolveArchiveEntry(entries, requested, book);
+            String foundEntry = resolveArchiveEntry(entries, requested, book);
 
             // ===== ВИКОРИСТОВУЄМО ЗНАЙДЕНИЙ ENTRY =====
             final String entryToRead = foundEntry;
@@ -105,7 +123,8 @@ public class DownloadPayloadValidator {
             return foundEntry;
 
         } finally {
-            Files.deleteIfExists(alias);
+            try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+            catch (IOException ignored) { /* preserve unexpected replacement as evidence */ }
         }
     }
 
@@ -201,17 +220,29 @@ public class DownloadPayloadValidator {
     private void validateZipIntegrity(Path archive, String requested) throws IOException {
         IOException last = null;
         for (Charset charset : ZIP_CHARSETS) {
-            try (ZipFile zip = new ZipFile(archive.toFile(), charset)) {
+            try (SafeZipArchive opened = SafeZipArchive.open(archive, charset, "Downloaded ZIP payload")) {
+                var zip = opened.zip();
                 Set<String> seen = new HashSet<>();
-                var entries = zip.entries();
+                var entries = zip.getEntries();
                 boolean requestedSeen = requested == null || requested.isBlank();
+                int entryCount = 0;
+                long cumulativeSize = 0L;
                 while (entries.hasMoreElements()) {
-                    ZipEntry entry = entries.nextElement();
+                    ZipArchiveEntry entry = entries.nextElement();
+                    if (++entryCount > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
+                        throw new IOException("ZIP contains more than " + ArchiveSafetyLimits.MAX_ENTRY_COUNT + " entries");
+                    }
                     if (entry.isDirectory()) continue;
                     String normalized = normalize(entry.getName());
                     String key = normalized.toLowerCase(Locale.ROOT);
                     if (!seen.add(key)) throw new IOException("ZIP містить дубльоване ім'я запису: " + entry.getName());
                     if (!requestedSeen && normalized.equalsIgnoreCase(requested)) requestedSeen = true;
+                    if (ArchiveSafetyLimits.declaredEntryTooLarge(entry.getSize())) {
+                        throw new IOException("ZIP entry exceeds safety limit: " + entry.getName());
+                    }
+                    if (ArchiveSafetyLimits.exceedsCompressionRatio(entry.getSize(), entry.getCompressedSize())) {
+                        throw new IOException("ZIP entry has suspicious compression ratio: " + entry.getName());
+                    }
 
                     CRC32 crc = new CRC32();
                     long actualSize = 0L;
@@ -221,13 +252,20 @@ public class DownloadPayloadValidator {
                         byte[] buffer = new byte[64 * 1024];
                         for (int n; (n = in.read(buffer)) >= 0;) {
                             if (n == 0) continue;
+                            if (actualSize > ArchiveSafetyLimits.MAX_ENTRY_BYTES - n) {
+                                throw new IOException("ZIP entry exceeds decompression safety limit: " + entry.getName());
+                            }
+                            if (cumulativeSize > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES - n) {
+                                throw new IOException("ZIP exceeds cumulative decompression safety limit");
+                            }
+                            actualSize += n;
+                            cumulativeSize += n;
                             crc.update(buffer, 0, n);
                             if (prefixSize < prefix.length) {
                                 int copy = Math.min(n, prefix.length - prefixSize);
                                 System.arraycopy(buffer, 0, prefix, prefixSize, copy);
                                 prefixSize += copy;
                             }
-                            actualSize += n;
                         }
                     }
                     if (entry.getSize() >= 0 && actualSize != entry.getSize()) {
@@ -264,7 +302,7 @@ public class DownloadPayloadValidator {
 
     private void rejectHtmlOrTextError(Path file) throws IOException {
         byte[] prefix;
-        try (InputStream in = Files.newInputStream(file)) { prefix = in.readNBytes(PREFIX_LIMIT); }
+        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) { prefix = in.readNBytes(PREFIX_LIMIT); }
         String s = new String(prefix, StandardCharsets.UTF_8).stripLeading().toLowerCase(Locale.ROOT);
         if (s.startsWith("<!doctype html") || s.startsWith("<html") || s.contains("<form") && s.contains("password")) {
             throw new IOException("Сервер повернув HTML/login page замість книги");
@@ -276,7 +314,7 @@ public class DownloadPayloadValidator {
 
     private void validateFb2(Path file) throws IOException {
         byte[] prefix;
-        try (InputStream in = Files.newInputStream(file)) { prefix = in.readNBytes(PREFIX_LIMIT); }
+        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) { prefix = in.readNBytes(PREFIX_LIMIT); }
         String s = new String(prefix, StandardCharsets.UTF_8).toLowerCase(Locale.ROOT);
         if (!s.contains("<fictionbook") && !s.contains(":fictionbook")) {
             throw new IOException("Некоректний FB2 payload: відсутній FictionBook root element");

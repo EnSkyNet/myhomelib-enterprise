@@ -300,7 +300,7 @@ class InpxImportPipelineTest {
 
     @Test
     @SuppressWarnings("unchecked")
-    void authorCacheEvictionForcesSafeDatabaseResolutionPath() throws Exception {
+    void cacheEvictedPreviouslySeenAuthorUsesExactResolutionWhileNewAuthorKeepsFastPath() throws Exception {
         Method cacheFactory = InpxImportPipeline.class.getDeclaredMethod("newBoundedAuthorCache", int.class);
         cacheFactory.setAccessible(true);
         Map<AuthorNameKey, String> cache = (Map<AuthorNameKey, String>) cacheFactory.invoke(null, 10_000);
@@ -315,25 +315,40 @@ class InpxImportPipelineTest {
         genreCache.setAccessible(true);
         genreCache.set(pipeline, new HashMap<String, String>());
 
-        AuthorNameKey key = new AuthorNameKey("Дмитрий", "", "Дорничев");
-        Author candidate = new Author(key.firstName(), key.middleName(), key.lastName());
+        AuthorNameKey seenKey = new AuthorNameKey("Дмитрий", "", "Дорничев");
+        Author seenCandidate = new Author(seenKey.firstName(), seenKey.middleName(), seenKey.lastName());
+        AuthorNameKey newKey = new AuthorNameKey("Новый", "", "Автор");
+        Author newCandidate = new Author(newKey.firstName(), newKey.middleName(), newKey.lastName());
         Map<AuthorNameKey, Author> pendingAuthors = new LinkedHashMap<>();
-        pendingAuthors.put(key, candidate);
-        String persistentId = "persistent-dornichev";
+        pendingAuthors.put(seenKey, seenCandidate);
+        pendingAuthors.put(newKey, newCandidate);
+
+        java.util.BitSet seenFilter = new java.util.BitSet();
+        Method seenMethod = InpxImportPipeline.class.getDeclaredMethod(
+                "mightHaveSeenAuthor", java.util.BitSet.class, AuthorNameKey.class);
+        seenMethod.setAccessible(true);
+        seenMethod.invoke(null, seenFilter, seenKey);
+
+        String persistentSeenId = "persistent-dornichev";
         when(batchWriter.batchInsertAuthorsAndResolveIds(anyList())).thenReturn(
-                Map.of(candidate.getId().asString(), persistentId));
+                Map.of(seenCandidate.getId().asString(), persistentSeenId));
+        when(batchWriter.batchInsertAuthorsAndResolveIdsAssumingNew(anyList())).thenReturn(
+                Map.of(newCandidate.getId().asString(), newCandidate.getId().asString()));
 
         Method flush = InpxImportPipeline.class.getDeclaredMethod(
                 "flush", List.class, Map.class, Map.class, CatalogSyncSession.class, boolean.class,
-                ImportChangeAccumulator.class, boolean.class, boolean.class);
+                ImportChangeAccumulator.class, boolean.class, boolean.class, java.util.BitSet.class);
         flush.setAccessible(true);
         flush.invoke(pipeline, List.of(), pendingAuthors, new LinkedHashMap<String, com.myhomelibcorp.domain.model.genre.Genre>(),
                 new CatalogSyncSession("source", "source", 1L, "fp", true, true), false,
-                new ImportChangeAccumulator(100), true, true);
+                new ImportChangeAccumulator(100), true, true, seenFilter);
 
-        verify(batchWriter).batchInsertAuthorsAndResolveIds(anyList());
-        verify(batchWriter, never()).batchInsertAuthorsAndResolveIdsAssumingNew(anyList());
-        assertThat(cache.get(key)).isEqualTo(persistentId);
+        verify(batchWriter).batchInsertAuthorsAndResolveIds(argThat(list ->
+                list.size() == 1 && list.getFirst().getId().equals(seenCandidate.getId())));
+        verify(batchWriter).batchInsertAuthorsAndResolveIdsAssumingNew(argThat(list ->
+                list.size() == 1 && list.getFirst().getId().equals(newCandidate.getId())));
+        assertThat(cache.get(seenKey)).isEqualTo(persistentSeenId);
+        assertThat(cache.get(newKey)).isEqualTo(newCandidate.getId().asString());
     }
 
     @Test

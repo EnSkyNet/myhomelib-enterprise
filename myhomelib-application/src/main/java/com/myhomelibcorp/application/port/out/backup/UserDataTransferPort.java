@@ -19,7 +19,7 @@ public interface UserDataTransferPort {
     ImportResult restoreFrom(Path sourceFile) throws IOException;
 
     default boolean isPortableBackup(Path backupDir) {
-        return backupDir != null && java.nio.file.Files.isRegularFile(backupDir.resolve(FILE_NAME));
+        return backupDir != null && java.nio.file.Files.isRegularFile(backupDir.resolve(FILE_NAME), java.nio.file.LinkOption.NOFOLLOW_LINKS);
     }
 
     record ExportResult(int schemaVersion, long bookRecords, long groupMemberships,

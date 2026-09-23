@@ -30,93 +30,93 @@
     <Label fx:id="scopeContentHintLabel" text="ui.search.scope.content_hint" wrapText="true"
            visible="false" managed="false" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
 
-    <TitledPane text="Розширений пошук (як у класичному MyHomeLib)" expanded="false">
+    <TitledPane text="ui.fxml.search_workspace.advanced_search_classic_myhomelib_compatible" expanded="false">
         <content>
             <VBox spacing="8" style="-fx-padding: 10;">
                 <GridPane hgap="8" vgap="8">
-                    <Label text="Назва" GridPane.columnIndex="0" GridPane.rowIndex="0"/><TextField fx:id="titleFilter" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
-                    <Label text="Автор" GridPane.columnIndex="2" GridPane.rowIndex="0"/><TextField fx:id="authorFilter" GridPane.columnIndex="3" GridPane.rowIndex="0"/>
-                    <Label text="Серія" GridPane.columnIndex="0" GridPane.rowIndex="1"/><TextField fx:id="seriesFilter" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
-                    <Label text="Жанр" GridPane.columnIndex="2" GridPane.rowIndex="1"/><TextField fx:id="genreFilter" GridPane.columnIndex="3" GridPane.rowIndex="1"/>
-                    <Label text="Ключові слова" GridPane.columnIndex="0" GridPane.rowIndex="2"/><TextField fx:id="keywordFilter" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
-                    <Label text="Анотація" GridPane.columnIndex="2" GridPane.rowIndex="2"/><TextField fx:id="annotationFilter" GridPane.columnIndex="3" GridPane.rowIndex="2"/>
-                    <Label text="Ім'я файлу" GridPane.columnIndex="0" GridPane.rowIndex="3"/><TextField fx:id="fileFilter" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
-                    <Label text="Мова" GridPane.columnIndex="2" GridPane.rowIndex="3"/><TextField fx:id="languageFilter" promptText="uk, en..." GridPane.columnIndex="3" GridPane.rowIndex="3"/>
-                    <Label text="Оцінка бібліотеки від/до" GridPane.columnIndex="0" GridPane.rowIndex="4"/>
-                    <HBox spacing="4" GridPane.columnIndex="1" GridPane.rowIndex="4"><TextField fx:id="ratingFromFilter" prefWidth="55"/><Label text="—"/><TextField fx:id="ratingToFilter" prefWidth="55"/></HBox>
-                    <Label text="Рік від/до" GridPane.columnIndex="2" GridPane.rowIndex="4"/>
-                    <HBox spacing="4" GridPane.columnIndex="3" GridPane.rowIndex="4"><TextField fx:id="yearFromFilter" prefWidth="70"/><Label text="—"/><TextField fx:id="yearToFilter" prefWidth="70"/></HBox>
-                    <Label text="Додано від/до" GridPane.columnIndex="0" GridPane.rowIndex="5"/>
+                    <Label text="ui.fxml.search_workspace.title" GridPane.columnIndex="0" GridPane.rowIndex="0"/><TextField fx:id="titleFilter" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+                    <Label text="ui.fxml.search_workspace.author" GridPane.columnIndex="2" GridPane.rowIndex="0"/><TextField fx:id="authorFilter" GridPane.columnIndex="3" GridPane.rowIndex="0"/>
+                    <Label text="ui.fxml.search_workspace.series" GridPane.columnIndex="0" GridPane.rowIndex="1"/><TextField fx:id="seriesFilter" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+                    <Label text="ui.fxml.search_workspace.genre" GridPane.columnIndex="2" GridPane.rowIndex="1"/><TextField fx:id="genreFilter" GridPane.columnIndex="3" GridPane.rowIndex="1"/>
+                    <Label text="ui.fxml.search_workspace.keywords" GridPane.columnIndex="0" GridPane.rowIndex="2"/><TextField fx:id="keywordFilter" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+                    <Label text="ui.fxml.search_workspace.annotation" GridPane.columnIndex="2" GridPane.rowIndex="2"/><TextField fx:id="annotationFilter" GridPane.columnIndex="3" GridPane.rowIndex="2"/>
+                    <Label text="ui.fxml.search_workspace.file_name" GridPane.columnIndex="0" GridPane.rowIndex="3"/><TextField fx:id="fileFilter" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+                    <Label text="ui.fxml.search_workspace.language" GridPane.columnIndex="2" GridPane.rowIndex="3"/><TextField fx:id="languageFilter" promptText="ui.fxml.search_workspace.uk_en" GridPane.columnIndex="3" GridPane.rowIndex="3"/>
+                    <Label text="ui.fxml.search_workspace.library_rating_from_to" GridPane.columnIndex="0" GridPane.rowIndex="4"/>
+                    <HBox spacing="4" GridPane.columnIndex="1" GridPane.rowIndex="4"><TextField fx:id="ratingFromFilter" prefWidth="55"/><Label text="ui.fxml.search_workspace.value"/><TextField fx:id="ratingToFilter" prefWidth="55"/></HBox>
+                    <Label text="ui.fxml.search_workspace.year_from_to" GridPane.columnIndex="2" GridPane.rowIndex="4"/>
+                    <HBox spacing="4" GridPane.columnIndex="3" GridPane.rowIndex="4"><TextField fx:id="yearFromFilter" prefWidth="70"/><Label text="ui.fxml.search_workspace.value"/><TextField fx:id="yearToFilter" prefWidth="70"/></HBox>
+                    <Label text="ui.fxml.search_workspace.added_from_to" GridPane.columnIndex="0" GridPane.rowIndex="5"/>
                     <HBox spacing="4" GridPane.columnIndex="1" GridPane.rowIndex="5"><DatePicker fx:id="addedFromPicker"/><DatePicker fx:id="addedToPicker"/></HBox>
-                    <CheckBox fx:id="localOnlyCheck" text="Тільки локальні" GridPane.columnIndex="2" GridPane.rowIndex="5" GridPane.columnSpan="2"/>
+                    <CheckBox fx:id="localOnlyCheck" text="ui.fxml.search_workspace.local_only" GridPane.columnIndex="2" GridPane.rowIndex="5" GridPane.columnSpan="2"/>
                     <columnConstraints>
                         <ColumnConstraints minWidth="95"/><ColumnConstraints hgrow="ALWAYS" minWidth="150"/>
                         <ColumnConstraints minWidth="95"/><ColumnConstraints hgrow="ALWAYS" minWidth="150"/>
                     </columnConstraints>
                 </GridPane>
                 <HBox alignment="CENTER_RIGHT">
-                    <Button text="Очистити поля" onAction="#onClearAdvancedFields"/>
+                    <Button text="ui.fxml.search_workspace.clear_fields" onAction="#onClearAdvancedFields"/>
                 </HBox>
-                <Label text="Підтримується класичний синтаксис: %текст%, =&quot;точна фраза&quot;, OR; також title:, author:, series:, genre:, file:, lang:." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
+                <Label text="ui.fxml.search_workspace.classic_syntax_is_supported_text_quote_exact_b9371bf" wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
             </VBox>
         </content>
     </TitledPane>
 
-    <Label fx:id="statusLabel" text="Введіть запит для пошуку" style="-fx-text-fill: -mhl-muted-text;"/>
+    <Label fx:id="statusLabel" text="ui.fxml.search_workspace.enter_search_query" style="-fx-text-fill: -mhl-muted-text;"/>
 
     <VBox fx:id="resultsContainer" spacing="8" VBox.vgrow="ALWAYS">
         <!-- Authors are intentionally rendered in the left navigation panel. -->
         <VBox fx:id="authorsSection" visible="false" managed="false">
-            <Label fx:id="authorsCountLabel" text="(0)"/>
+            <Label fx:id="authorsCountLabel" text="ui.fxml.search_workspace.0"/>
             <ListView fx:id="authorsListView"/>
         </VBox>
 
         <HBox spacing="10" visible="true" managed="true">
             <VBox fx:id="seriesSection" spacing="4" HBox.hgrow="ALWAYS" maxHeight="130">
-                <HBox spacing="6"><Label text="Серії" style="-fx-font-weight: bold;"/><Label fx:id="seriesCountLabel" text="(0)"/></HBox>
+                <HBox spacing="6"><Label text="ui.fxml.search_workspace.series_ee6d3f5" style="-fx-font-weight: bold;"/><Label fx:id="seriesCountLabel" text="ui.fxml.search_workspace.0"/></HBox>
                 <ListView fx:id="seriesListView" prefHeight="90"/>
             </VBox>
             <VBox fx:id="genresSection" spacing="4" HBox.hgrow="ALWAYS" maxHeight="130">
-                <HBox spacing="6"><Label text="Жанри" style="-fx-font-weight: bold;"/><Label fx:id="genresCountLabel" text="(0)"/></HBox>
+                <HBox spacing="6"><Label text="ui.fxml.search_workspace.genres" style="-fx-font-weight: bold;"/><Label fx:id="genresCountLabel" text="ui.fxml.search_workspace.0"/></HBox>
                 <ListView fx:id="genresListView" prefHeight="90"/>
             </VBox>
         </HBox>
 
         <VBox fx:id="annotationsSection" spacing="4" visible="false" managed="false" maxHeight="170">
             <HBox spacing="6">
-                <Label fx:id="annotationsTitleLabel" text="Нотатки та виділення" style="-fx-font-weight: bold;"/>
-                <Label fx:id="annotationsCountLabel" text="(0)"/>
+                <Label fx:id="annotationsTitleLabel" text="ui.fxml.search_workspace.notes_and_highlights" style="-fx-font-weight: bold;"/>
+                <Label fx:id="annotationsCountLabel" text="ui.fxml.search_workspace.0"/>
             </HBox>
             <ListView fx:id="annotationsListView" prefHeight="125"/>
         </VBox>
 
         <VBox fx:id="contentSection" spacing="4" visible="false" managed="false" maxHeight="230">
             <HBox spacing="6">
-                <Label fx:id="contentTitleLabel" text="Збіги у тексті" style="-fx-font-weight: bold;"/>
-                <Label fx:id="contentCountLabel" text="(0)"/>
+                <Label fx:id="contentTitleLabel" text="ui.fxml.search_workspace.text_matches" style="-fx-font-weight: bold;"/>
+                <Label fx:id="contentCountLabel" text="ui.fxml.search_workspace.0"/>
             </HBox>
             <ListView fx:id="contentListView" prefHeight="185"/>
         </VBox>
 
         <VBox fx:id="booksSection" spacing="4" VBox.vgrow="ALWAYS">
-            <HBox spacing="6"><Label text="Книги" style="-fx-font-weight: bold;"/><Label fx:id="booksCountLabel" text="(0)"/></HBox>
+            <HBox spacing="6"><Label text="ui.fxml.search_workspace.books" style="-fx-font-weight: bold;"/><Label fx:id="booksCountLabel" text="ui.fxml.search_workspace.0"/></HBox>
             <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
                 <columns>
                     <TableColumn fx:id="selectColumn" text="" prefWidth="42"/>
-                    <TableColumn fx:id="authorColumn" text="Автор" prefWidth="200"/>
-                    <TableColumn fx:id="titleColumn" text="Назва" prefWidth="260"/>
-                    <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="145"/>
-                    <TableColumn fx:id="bookGenresColumn" text="Жанри" prefWidth="175"/>
-                    <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="45"/>
-                    <TableColumn fx:id="yearColumn" text="Рік" prefWidth="65"/>
-                    <TableColumn fx:id="localColumn" text="Статус" prefWidth="105"/>
-                    <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
-                    <TableColumn fx:id="ratingColumn" text="Оцінка" prefWidth="95"/>
-                    <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+                    <TableColumn fx:id="authorColumn" text="ui.fxml.search_workspace.author" prefWidth="200"/>
+                    <TableColumn fx:id="titleColumn" text="ui.fxml.search_workspace.title" prefWidth="260"/>
+                    <TableColumn fx:id="seriesColumn" text="ui.fxml.search_workspace.series" prefWidth="145"/>
+                    <TableColumn fx:id="bookGenresColumn" text="ui.fxml.search_workspace.genres" prefWidth="175"/>
+                    <TableColumn fx:id="seqNumberColumn" text="ui.fxml.search_workspace.value_60b6b99" prefWidth="45"/>
+                    <TableColumn fx:id="yearColumn" text="ui.fxml.search_workspace.year" prefWidth="65"/>
+                    <TableColumn fx:id="localColumn" text="ui.fxml.search_workspace.status" prefWidth="105"/>
+                    <TableColumn fx:id="fileSizeColumn" text="ui.fxml.search_workspace.size" prefWidth="90"/>
+                    <TableColumn fx:id="ratingColumn" text="ui.fxml.search_workspace.rating" prefWidth="95"/>
+                    <TableColumn fx:id="progressColumn" text="ui.fxml.search_workspace.progress" prefWidth="80"/>
                 </columns>
             </TableView>
             <HBox alignment="CENTER" spacing="8">
-                <Button fx:id="loadMoreBooksButton" text="Завантажити ще" onAction="#onLoadMoreBooks" visible="false" managed="false"/>
+                <Button fx:id="loadMoreBooksButton" text="ui.fxml.search_workspace.load_more" onAction="#onLoadMoreBooks" visible="false" managed="false"/>
             </HBox>
         </VBox>
     </VBox>

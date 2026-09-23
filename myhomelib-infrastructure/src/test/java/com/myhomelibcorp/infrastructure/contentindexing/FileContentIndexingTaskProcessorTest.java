@@ -7,6 +7,11 @@ import com.myhomelibcorp.application.content.index.ContentIndexPage;
 import com.myhomelibcorp.application.content.index.ContentIndexQuery;
 import com.myhomelibcorp.application.content.indexing.*;
 import com.myhomelibcorp.application.port.out.content.ContentIndexPort;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
+import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
+import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.usecase.book.ResolveBookContentUseCase;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.content.TxtContentExtractor;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -19,6 +24,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.*;
 
 class FileContentIndexingTaskProcessorTest {
     @TempDir Path temp;
@@ -38,6 +44,31 @@ class FileContentIndexingTaskProcessorTest {
         assertThat(result.status()).isEqualTo(ContentIndexingOutcome.Status.COMPLETED);
         assertThat(index.collectionId.get()).isEqualTo("c1");
         assertThat(index.entry.get().content().chapters().getFirst().text()).contains("Український", "café");
+    }
+
+    @Test
+    void productionResolverRejectsTaskForInactiveCollectionBeforeReadingDynamicCatalogue() throws Exception {
+        Path source = temp.resolve("book.txt");
+        Files.writeString(source, "text");
+        CapturingIndex index = new CapturingIndex();
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookMapper mapper = mock(BookMapper.class);
+        ResolveBookContentUseCase resolver = mock(ResolveBookContentUseCase.class);
+        CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
+        Collection active = mock(Collection.class);
+        when(active.getId()).thenReturn("c2");
+        when(lifecycle.getCurrentCollection()).thenReturn(active);
+        FileContentIndexingTaskProcessor processor = new FileContentIndexingTaskProcessor(
+                new ContentExtractionService(List.of(new TxtContentExtractor())), index,
+                books, mapper, resolver, lifecycle);
+
+        ContentIndexingOutcome result = processor.process(task(source),
+                new ContentIndexingControl(() -> false, ignored -> { }, 0));
+
+        assertThat(result.status()).isEqualTo(ContentIndexingOutcome.Status.FAILED);
+        assertThat(result.message()).contains("inactive collection");
+        verifyNoInteractions(books, mapper, resolver);
+        assertThat(index.entry.get()).isNull();
     }
 
     @Test

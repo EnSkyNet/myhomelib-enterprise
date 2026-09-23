@@ -11,8 +11,9 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
+import java.nio.file.attribute.BasicFileAttributes;
 
 @Component
 @Slf4j
@@ -34,13 +35,17 @@ public class Fb2Importer extends AbstractBookImporter {
     protected Book parseBook(Path file) throws Exception {
         log.debug("Парсинг FB2 файлу: {}", file);
 
-        long fileSize = Files.size(file);
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isRegularFile()) {
+            throw new java.io.IOException("FB2 source is not a safe regular file: " + file);
+        }
+        long fileSize = attributes.size();
         String fileName = file.getFileName().toString();
         String folder = file.getParent() != null ? file.getParent().toString() : "";
 
         // ОДИН прохід по файлу
         Fb2Parser.ParseResult result;
-        try (var is = Files.newInputStream(file)) {
+        try (var is = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
             result = fb2Parser.parse(is);
         }
 
@@ -60,15 +65,21 @@ public class Fb2Importer extends AbstractBookImporter {
                 null
         );
 
+        String title = result.getTitle();
+        if (title == null || title.isBlank()) {
+            int dot = fileName.lastIndexOf('.');
+            title = (dot > 0 ? fileName.substring(0, dot) : fileName).strip();
+        }
+
         return createBook(
-                result.getTitle(),
+                title,
                 result.getAuthors(),
                 result.getGenres(),
                 result.getSeries(),
                 result.getSequenceNumber(),
                 metadata,
                 bookFile,
-                LocalDateTime.now()
+                fileUpdateTime(file)
         );
     }
 }

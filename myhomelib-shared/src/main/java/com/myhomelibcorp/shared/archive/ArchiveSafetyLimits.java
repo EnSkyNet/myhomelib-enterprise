@@ -26,4 +26,11 @@ public final class ArchiveSafetyLimits {
     public static boolean declaredEntryTooLarge(long size) {
         return size >= 0 && size > MAX_ENTRY_BYTES;
     }
+
+    /** Overflow-safe suspicious compression-ratio check. Unknown/non-positive sizes are not classified here. */
+    public static boolean exceedsCompressionRatio(long uncompressed, long compressed) {
+        if (uncompressed <= 0 || compressed <= 0) return false;
+        if (compressed > Long.MAX_VALUE / MAX_COMPRESSION_RATIO) return false;
+        return uncompressed > compressed * MAX_COMPRESSION_RATIO;
+    }
 }

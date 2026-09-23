@@ -12,8 +12,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.DriverManager;
 import java.util.List;
+import java.util.Properties;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 class LocalCopyDeletionRecoveryStoreTest {
@@ -93,6 +95,170 @@ class LocalCopyDeletionRecoveryStoreTest {
         assertThat(staged.recoveryPath()).exists();
         assertThat(pendingMarkers()).hasSize(1);
         staged.rollback();
+    }
+
+    @Test
+    void commitDoesNotDeleteRecoveryFileReplacedByForeignBytes() throws Exception {
+        BookId id = BookId.generate();
+        Path root = Files.createDirectories(temp.resolve("library-commit-race"));
+        Path book = root.resolve("book.fb2");
+        Files.writeString(book, "owned bytes");
+
+        BookResourcePort.StagedDeletion staged = resolver.stagePhysicalFileForDeletion(
+                book, root, "collection-test", List.of(id));
+        Path recovery = staged.recoveryPath();
+        Files.writeString(recovery, "FOREIGN REPLACEMENT");
+
+        assertThatThrownBy(staged::commit)
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("changed before detach");
+
+        assertThat(book).doesNotExist();
+        assertThat(Files.readString(recovery)).isEqualTo("FOREIGN REPLACEMENT");
+        assertThat(pendingMarkers()).hasSize(1);
+    }
+
+    @Test
+    void startupRecoveryDoesNotDeleteForeignRecoveryWhenCatalogCommitted() throws Exception {
+        BookId id = BookId.generate();
+        Path root = Files.createDirectories(temp.resolve("library-foreign-recovery"));
+        Path book = root.resolve("book.fb2");
+        Files.writeString(book, "owned bytes");
+        Path database = createDatabase(id, false);
+
+        BookResourcePort.StagedDeletion staged = resolver.stagePhysicalFileForDeletion(
+                book, root, "collection-test", List.of(id));
+        Path recovery = staged.recoveryPath();
+        Files.writeString(recovery, "FOREIGN RECOVERY");
+
+        assertThatThrownBy(() -> LocalCopyDeletionRecoveryStore.recoverForDatabase("collection-test", database))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("changed before detach");
+
+        assertThat(book).doesNotExist();
+        assertThat(Files.readString(recovery)).isEqualTo("FOREIGN RECOVERY");
+        assertThat(pendingMarkers()).hasSize(1);
+    }
+
+    @Test
+    void startupRecoveryDoesNotOverwriteForeignVisibleBook() throws Exception {
+        BookId id = BookId.generate();
+        Path root = Files.createDirectories(temp.resolve("library-foreign-visible"));
+        Path book = root.resolve("book.fb2");
+        Files.writeString(book, "owned bytes");
+        Path database = createDatabase(id, true);
+
+        BookResourcePort.StagedDeletion staged = resolver.stagePhysicalFileForDeletion(
+                book, root, "collection-test", List.of(id));
+        Path recovery = staged.recoveryPath();
+        Files.writeString(book, "FOREIGN VISIBLE BOOK");
+
+        assertThatThrownBy(() -> LocalCopyDeletionRecoveryStore.recoverForDatabase("collection-test", database))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("Visible book changed");
+
+        assertThat(Files.readString(book)).isEqualTo("FOREIGN VISIBLE BOOK");
+        assertThat(Files.readString(recovery)).isEqualTo("owned bytes");
+        assertThat(pendingMarkers()).hasSize(1);
+    }
+
+    @Test
+    void startupRecoveryRejectsSymlinkMarkerWithoutTouchingExternalFile() throws Exception {
+        BookId id = BookId.generate();
+        Path root = Files.createDirectories(temp.resolve("library-marker-symlink"));
+        Path book = root.resolve("book.fb2");
+        Files.writeString(book, "owned bytes");
+        Path database = createDatabase(id, true);
+
+        BookResourcePort.StagedDeletion staged = resolver.stagePhysicalFileForDeletion(
+                book, root, "collection-test", List.of(id));
+        Path marker = pendingMarkers().getFirst();
+        Path external = temp.resolve("outside-marker.txt");
+        Files.writeString(external, "FOREIGN MARKER TARGET");
+        Files.delete(marker);
+        Files.createSymbolicLink(marker, external);
+
+        assertThatThrownBy(() -> LocalCopyDeletionRecoveryStore.recoverForDatabase("collection-test", database))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("symbolic link");
+
+        assertThat(Files.readString(external)).isEqualTo("FOREIGN MARKER TARGET");
+        assertThat(staged.recoveryPath()).exists();
+        assertThat(book).doesNotExist();
+        assertThat(Files.isSymbolicLink(marker)).isTrue();
+    }
+
+    @Test
+    void startupRecoveryRejectsManagedRootReachedThroughSymlinkedParentWhenSupported() throws Exception {
+        BookId id = BookId.generate();
+        Path outsideParent = Files.createDirectories(temp.resolve("outside-parent"));
+        Path realRoot = Files.createDirectories(outsideParent.resolve("library"));
+        Path aliasParent = temp.resolve("alias-parent");
+        try {
+            Files.createSymbolicLink(aliasParent, outsideParent);
+        } catch (UnsupportedOperationException | java.io.IOException unavailable) {
+            return;
+        }
+
+        Path rootThroughLink = aliasParent.resolve("library");
+        Path original = rootThroughLink.resolve("book.fb2");
+        Path recovery = rootThroughLink.resolve(".book.fb2.mhl-delete-parent-link.recovery");
+        Files.writeString(realRoot.resolve(recovery.getFileName()), "owned bytes");
+        String contentHash = com.myhomelibcorp.application.util.SafeFilePublication.sha256(
+                realRoot.resolve(recovery.getFileName()), "test recovery bytes");
+        Path database = createDatabase(id, true);
+
+        Path markerDir = Files.createDirectories(LocalCopyDeletionRecoveryStore.recoveryDir());
+        Path marker = markerDir.resolve("parent-link.pending");
+        Properties properties = new Properties();
+        properties.setProperty("version", "2");
+        properties.setProperty("original", original.toAbsolutePath().normalize().toString());
+        properties.setProperty("recovery", recovery.toAbsolutePath().normalize().toString());
+        properties.setProperty("managedRoot", rootThroughLink.toAbsolutePath().normalize().toString());
+        properties.setProperty("collectionId", "collection-test");
+        properties.setProperty("bookIds", id.asString());
+        properties.setProperty("contentSha256", contentHash);
+        try (var out = Files.newOutputStream(marker)) {
+            properties.store(out, "parent symlink marker");
+        }
+
+        assertThatThrownBy(() -> LocalCopyDeletionRecoveryStore.recoverForDatabase("collection-test", database))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("symbolic link");
+
+        assertThat(marker).exists();
+        assertThat(realRoot.resolve(recovery.getFileName())).exists();
+    }
+
+    @Test
+    void legacyMarkerIsKeptAsEvidenceBecauseItCannotProveOwnership() throws Exception {
+        BookId id = BookId.generate();
+        Path root = Files.createDirectories(temp.resolve("library-legacy-marker"));
+        Path book = root.resolve("book.fb2");
+        Path recovery = root.resolve(".book.fb2.mhl-delete-legacy.recovery");
+        Files.writeString(recovery, "legacy bytes");
+        Path database = createDatabase(id, true);
+        Path dir = Files.createDirectories(LocalCopyDeletionRecoveryStore.recoveryDir());
+        Path marker = dir.resolve("legacy.pending");
+
+        Properties properties = new Properties();
+        properties.setProperty("version", "1");
+        properties.setProperty("original", book.toAbsolutePath().normalize().toString());
+        properties.setProperty("recovery", recovery.toAbsolutePath().normalize().toString());
+        properties.setProperty("managedRoot", root.toAbsolutePath().normalize().toString());
+        properties.setProperty("collectionId", "collection-test");
+        properties.setProperty("bookIds", id.asString());
+        try (var out = Files.newOutputStream(marker)) {
+            properties.store(out, "legacy marker");
+        }
+
+        assertThatThrownBy(() -> LocalCopyDeletionRecoveryStore.recoverForDatabase("collection-test", database))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("Legacy local-copy deletion marker cannot prove file ownership");
+
+        assertThat(marker).exists();
+        assertThat(recovery).exists();
+        assertThat(book).doesNotExist();
     }
 
     private Path createDatabase(BookId id, boolean local) throws Exception {

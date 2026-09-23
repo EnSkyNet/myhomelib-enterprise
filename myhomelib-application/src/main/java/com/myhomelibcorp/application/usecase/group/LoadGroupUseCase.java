@@ -11,8 +11,9 @@ import java.util.Optional;
 @RequiredArgsConstructor
 public class LoadGroupUseCase {
     private final GroupRepository groupRepository;
+    private final GroupQueryExecutor queryExecutor;
 
     public Optional<Group> execute(Long groupId) {
-        return groupId == null ? Optional.empty() : groupRepository.findById(groupId);
+        return groupId == null ? Optional.empty() : queryExecutor.execute(() -> groupRepository.findById(groupId));
     }
 }

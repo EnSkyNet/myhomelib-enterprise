@@ -51,14 +51,15 @@ public final class ImportBookMergePolicy {
                 .title(preferIncoming(incoming.getTitle(), existing.getTitle()))
                 .authors(incoming.getAuthors() == null || incoming.getAuthors().isEmpty()
                         ? new ArrayList<>(existing.getAuthors()) : new ArrayList<>(incoming.getAuthors()))
-                .genres(incoming.getGenres() == null
+                .genres(incoming.getGenres() == null || incoming.getGenres().isEmpty()
                         ? new ArrayList<>(existing.getGenres()) : new ArrayList<>(incoming.getGenres()))
-                .series(incoming.getSeries())
-                .sequenceNumber(incoming.getSequenceNumber())
+                .series(preferIncoming(incoming.getSeries(), existing.getSeries()))
+                .sequenceNumber(incoming.getSequenceNumber() != null
+                        ? incoming.getSequenceNumber() : existing.getSequenceNumber())
                 .metadata(mergedMetadata)
                 .file(effectiveFile)
                 .cover(effectiveCover)
-                .updateDate(incoming.getUpdateDate())
+                .updateDate(incoming.getUpdateDate() != null ? incoming.getUpdateDate() : existing.getUpdateDate())
                 .local(effectiveLocal)
                 .missingSince(effectiveMissingSince)
                 .build();

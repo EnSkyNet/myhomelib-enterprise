@@ -56,7 +56,7 @@ class Fb2ImporterTest {
     }
 
     @Test
-    void usesDefaultLanguageWhenLangTagMissing() throws Exception {
+    void usesUndeterminedLanguageWhenLangTagMissing() throws Exception {
         Path file = tempDir.resolve("no-lang.fb2");
         Files.writeString(file, """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -73,11 +73,11 @@ class Fb2ImporterTest {
         List<Book> books = importer.importBooks(file).toList();
 
         assertThat(books).hasSize(1);
-        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("und");
     }
 
     @Test
-    void usesDefaultLanguageWhenLangTagEmpty() throws Exception {
+    void usesUndeterminedLanguageWhenLangTagEmpty() throws Exception {
         Path file = tempDir.resolve("empty-lang.fb2");
         Files.writeString(file, """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -95,11 +95,11 @@ class Fb2ImporterTest {
         List<Book> books = importer.importBooks(file).toList();
 
         assertThat(books).hasSize(1);
-        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("und");
     }
 
     @Test
-    void usesDefaultLanguageWhenLangTagInvalid() throws Exception {
+    void usesUndeterminedLanguageWhenLangTagInvalid() throws Exception {
         Path file = tempDir.resolve("invalid-lang.fb2");
         Files.writeString(file, """
                 <?xml version="1.0" encoding="UTF-8"?>
@@ -117,7 +117,7 @@ class Fb2ImporterTest {
         List<Book> books = importer.importBooks(file).toList();
 
         assertThat(books).hasSize(1);
-        assertThat(books.get(0).getLanguage().toString()).isEqualTo("ru");
+        assertThat(books.get(0).getLanguage().toString()).isEqualTo("und");
     }
 
     @Test

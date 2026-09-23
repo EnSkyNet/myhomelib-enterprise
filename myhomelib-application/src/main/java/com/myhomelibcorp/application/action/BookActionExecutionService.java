@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.action;
 
 import com.myhomelibcorp.application.util.CommandTemplate;
+import com.myhomelibcorp.shared.util.ProcessExecutionSupport;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
@@ -51,21 +52,37 @@ public class BookActionExecutionService {
                 String cwd = CommandTemplate.expandToken(command.workingDirectory(), placeholders).trim();
                 if (!cwd.isBlank()) {
                     Path dir = Path.of(cwd).toAbsolutePath().normalize();
-                    if (!Files.isDirectory(dir)) throw new IllegalArgumentException("Робоча папка не існує: " + dir);
+                    if (!Files.isDirectory(dir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                        throw new IllegalArgumentException("Робоча папка не існує або є symbolic link: " + dir);
+                    }
                     builder.directory(dir.toFile());
                 }
                 Process process = builder.start();
                 started++;
                 if (command.waitForExit()) {
-                    if (!process.waitFor(WAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
-                        process.destroyForcibly();
-                        return BookActionRunResult.failure(started, "Команда перевищила ліміт очікування 30 хвилин");
+                    try {
+                        if (!process.waitFor(WAIT_TIMEOUT_MINUTES, TimeUnit.MINUTES)) {
+                            ProcessExecutionSupport.terminate(process);
+                            return BookActionRunResult.failure(started, "Команда перевищила ліміт очікування 30 хвилин");
+                        }
+                    } catch (InterruptedException interrupted) {
+                        // Never orphan a child process when the owning action worker is cancelled/interrupted.
+                        ProcessExecutionSupport.terminate(process);
+                        Thread.currentThread().interrupt();
+                        return BookActionRunResult.failure(started, "Виконання команди перервано");
                     }
                     if (process.exitValue() != 0) {
                         return BookActionRunResult.failure(started, "Команда завершилась з кодом " + process.exitValue());
                     }
                 } else {
-                    observer.accept(process);
+                    try {
+                        observer.accept(process);
+                    } catch (RuntimeException observerFailure) {
+                        // start() already succeeded, therefore an observer failure must not leave an
+                        // unowned detached process running after execute() reports failure.
+                        ProcessExecutionSupport.terminate(process);
+                        throw observerFailure;
+                    }
                 }
             }
             return BookActionRunResult.success(started);

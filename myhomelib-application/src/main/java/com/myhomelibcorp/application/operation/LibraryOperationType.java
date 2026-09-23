@@ -1,6 +1,6 @@
 package com.myhomelibcorp.application.operation;
 
-/** Mutating/maintenance operations that must not race on one library lifecycle. */
+/** Coordinated collection operations that must not race with destructive library lifecycle changes. */
 public enum LibraryOperationType {
     IMPORT,
     UPDATE,
@@ -12,5 +12,14 @@ public enum LibraryOperationType {
     DELETE,
     CREATE,
     SYNC,
-    INTEGRITY_AUDIT
+    DOWNLOAD,
+    EDIT,
+    ANNOTATION,
+    CONVERSION,
+    COPY,
+    EXPORT,
+    QUERY,
+    READER_STATE,
+    INTEGRITY_AUDIT,
+    ORGANIZE
 }

@@ -96,10 +96,17 @@ public class CollectionLifecycleService {
 
         } catch (Exception e) {
             log.error("❌ Помилка ініціалізації колекції: {}", e.getMessage(), e);
+            RuntimeException failure = new RuntimeException(
+                    "Не вдалося ініціалізувати колекцію: " + e.getMessage(), e);
             if (changedCollection) {
-                restorePreviousCollection(previous);
+                try {
+                    restorePreviousCollection(previous);
+                } catch (RuntimeException rollbackError) {
+                    failure.addSuppressed(rollbackError);
+                    failClosedAfterRollbackFailure(failure);
+                }
             }
-            throw new RuntimeException("Не вдалося ініціалізувати колекцію: " + e.getMessage(), e);
+            throw failure;
         } finally {
             isInitializing.set(false);
         }
@@ -286,26 +293,45 @@ public class CollectionLifecycleService {
                                CompletableFuture<Void> future) { }
 
     /**
-     * Best-effort rollback after a failed migration/cache/index initialization.
+     * Strict rollback after a failed migration/cache/index initialization. If rollback itself fails,
+     * the caller must fail closed rather than leave a half-switched DataSource/index pair usable.
      */
     private void restorePreviousCollection(Collection previous) {
+        searchIndexLifecycle.closeCurrentIndex();
+        if (previous == null) {
+            collectionLifecyclePort.closeCurrentCollection();
+            cacheInvalidationPort.invalidateAll();
+            log.warn("Невдалу першу колекцію закрито після помилки ініціалізації");
+            return;
+        }
+        Collection failed = collectionLifecyclePort.getCurrentCollection();
+        collectionLifecyclePort.switchToCollection(previous);
+        if (failed != null) searchIndexLifecycle.sealClosedIndex(failed);
+        databaseMigrationPort.migrateCurrentCollection();
+        cacheInvalidationPort.invalidateAll();
+        if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();
+        log.warn("Після помилки відновлено попередню колекцію та її пошуковий індекс: {}", previous.getName());
+    }
+
+    private void failClosedAfterRollbackFailure(RuntimeException primaryFailure) {
+        log.error("❌ Відкат попередньої колекції не завершився; примусово закриваємо активний стан");
         try {
             searchIndexLifecycle.closeCurrentIndex();
-            if (previous == null) {
-                collectionLifecyclePort.closeCurrentCollection();
-                cacheInvalidationPort.invalidateAll();
-                log.warn("Невдалу першу колекцію закрито після помилки ініціалізації");
-                return;
-            }
-            Collection failed = collectionLifecyclePort.getCurrentCollection();
-            collectionLifecyclePort.switchToCollection(previous);
-            if (failed != null) searchIndexLifecycle.sealClosedIndex(failed);
-            databaseMigrationPort.migrateCurrentCollection();
+        } catch (RuntimeException closeIndexFailure) {
+            primaryFailure.addSuppressed(closeIndexFailure);
+            log.error("❌ Не вдалося закрити Lucene під час fail-closed cleanup", closeIndexFailure);
+        }
+        try {
+            collectionLifecyclePort.closeCurrentCollection();
+        } catch (RuntimeException closeCollectionFailure) {
+            primaryFailure.addSuppressed(closeCollectionFailure);
+            log.error("❌ Не вдалося закрити DataSource під час fail-closed cleanup", closeCollectionFailure);
+        }
+        try {
             cacheInvalidationPort.invalidateAll();
-            if (!searchIndexLifecycle.activateCollectionIndex(previous)) indexRebuilder.rebuildIndex();
-            log.warn("Після помилки відновлено попередню колекцію та її пошуковий індекс: {}", previous.getName());
-        } catch (Exception rollbackError) {
-            log.error("❌ Не вдалося відновити попередню колекцію після помилки ініціалізації", rollbackError);
+        } catch (RuntimeException invalidateFailure) {
+            primaryFailure.addSuppressed(invalidateFailure);
+            log.error("❌ Не вдалося очистити кеші під час fail-closed cleanup", invalidateFailure);
         }
     }
 

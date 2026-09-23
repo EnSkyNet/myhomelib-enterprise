@@ -84,7 +84,7 @@ class WebReaderServiceTest {
 
         assertThat(doc.supported()).isFalse();
         assertThat(doc.format()).isEqualTo("pdf");
-        assertThat(doc.message()).contains("не підтримується");
+        assertThat(doc.messageKey()).isEqualTo("web.reader.unsupported_format");
         verifyNoInteractions(resolve, extraction);
     }
 

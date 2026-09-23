@@ -66,7 +66,8 @@ class CoordinatedOperationCenterBridgeTest {
 
             OperationCenterEntry finished = center.snapshot().getFirst();
             assertThat(finished.stage()).isEqualTo(OperationStage.FAILED);
-            assertThat(finished.errorMessage()).contains("Lucene write failed");
+            assertThat(finished.errorMessage()).doesNotContain("Lucene write failed");
+            assertThat(finished.errorMessage()).contains("Не вдалося виконати операцію");
         } finally {
             bridge.stop();
         }
@@ -89,7 +90,8 @@ class CoordinatedOperationCenterBridgeTest {
 
             OperationCenterEntry finished = center.snapshot().getFirst();
             assertThat(finished.stage()).isEqualTo(OperationStage.COMPLETED);
-            assertThat(finished.currentItem()).isEqualTo("Синхронізовано 42 файли");
+            assertThat(finished.currentItem()).isEqualTo("Операцію завершено");
+            assertThat(finished.currentItem()).doesNotContain("Синхронізовано 42 файли");
             assertThat(finished.finishedAt()).isNotNull();
         } finally {
             bridge.stop();

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.settings.UiPreferenceService;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
 import javafx.collections.ListChangeListener;
 import javafx.scene.Scene;
@@ -11,8 +12,10 @@ import org.springframework.stereotype.Service;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.Locale;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 
 /** Whole-application theme manager. Reader content keeps its independent ReaderTheme. */
@@ -157,9 +160,9 @@ public class ApplicationThemeService {
     }
 
     private Path writeGeneratedCss(ThemeConfig config) throws IOException {
-        Files.createDirectories(AppPaths.cacheDir());
+        Path cacheDir = SafeFilePublication.createDirectoriesNoLinks(AppPaths.cacheDir(), "Generated theme cache");
         long id = generation.incrementAndGet();
-        Path file = AppPaths.cacheDir().resolve(GENERATED_MARKER + id + ".css");
+        Path file = cacheDir.resolve(GENERATED_MARKER + id + "-" + UUID.randomUUID() + ".css");
         String css = String.format(Locale.ROOT, """
                 .root {
                     -mhl-background: %s;
@@ -196,26 +199,45 @@ public class ApplicationThemeService {
                 codeBackground(config), codeText(config),
                 config.panel(), config.background(), config.panel(), config.text(), config.text(), config.accent(), config.accent(),
                 config.fontSize());
-        Files.writeString(file, css, StandardCharsets.UTF_8);
+        try (var out = SafeFilePublication.openFreshOutputStream(file, "Generated theme stylesheet")) {
+            out.write(css.getBytes(StandardCharsets.UTF_8));
+        }
         cleanupOldGenerated();
-        return file;
+        return SafeFilePublication.requireSafeRegularFile(file, "Generated theme stylesheet");
     }
 
     /** Keep a small rolling cache so already-open scenes never reference a stylesheet deleted mid-session. */
     private void cleanupOldGenerated() {
-        try (var paths = Files.list(AppPaths.cacheDir())) {
-            var generated = paths
-                    .filter(path -> path.getFileName().toString().startsWith(GENERATED_MARKER))
-                    .sorted((left, right) -> Long.compare(lastModified(right), lastModified(left)))
-                    .toList();
-            for (int i = 8; i < generated.size(); i++) {
-                try { Files.deleteIfExists(generated.get(i)); } catch (IOException ignored) { }
+        try {
+            Path cacheDir = SafeFilePublication.requireSafeDirectoryPath(AppPaths.cacheDir(), "Generated theme cache cleanup");
+            try (var paths = Files.list(cacheDir)) {
+                var generated = paths
+                        .filter(path -> path.getFileName().toString().startsWith(GENERATED_MARKER))
+                        .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                        .filter(this::isSafeGeneratedFile)
+                        .sorted((left, right) -> Long.compare(lastModified(right), lastModified(left)))
+                        .toList();
+                for (int i = 8; i < generated.size(); i++) {
+                    try {
+                        Path safe = SafeFilePublication.requireSafeRegularFile(generated.get(i), "Generated theme cache entry");
+                        Files.delete(safe);
+                    } catch (IOException ignored) { }
+                }
             }
         } catch (IOException ignored) { }
     }
 
+    private boolean isSafeGeneratedFile(Path path) {
+        try {
+            SafeFilePublication.requireSafeRegularFile(path, "Generated theme cache entry");
+            return true;
+        } catch (IOException unsafe) {
+            return false;
+        }
+    }
+
     private long lastModified(Path path) {
-        try { return Files.getLastModifiedTime(path).toMillis(); }
+        try { return Files.getLastModifiedTime(path, LinkOption.NOFOLLOW_LINKS).toMillis(); }
         catch (IOException ignored) { return Long.MIN_VALUE; }
     }
 

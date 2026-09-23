@@ -1,20 +1,242 @@
 package com.myhomelibcorp.shared.util;
 
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
+import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.UUID;
 
-/** Cross-platform atomic-replace helper with a safe fallback for filesystems without ATOMIC_MOVE. */
+/**
+ * Cross-platform file publication helper.
+ *
+ * <p>The legacy implementation used {@code REPLACE_EXISTING}, which was atomic against partial
+ * writes but not against symlink/TOCTOU replacement of the destination. The current implementation
+ * is fail-closed: parent components must not be links/special files and an existing destination is
+ * replaced only when its bytes are unchanged from the snapshot taken at the beginning of the
+ * operation.</p>
+ */
 public final class AtomicFileSupport {
     private AtomicFileSupport() { }
 
-    public static Path moveReplacing(Path source, Path target) throws IOException {
+    public static void writeStringReplacing(Path target, CharSequence content, Charset charset) throws IOException {
+        if (target == null) throw new IllegalArgumentException("target cannot be null");
+        if (charset == null) throw new IllegalArgumentException("charset cannot be null");
+        Path absolute = target.toAbsolutePath().normalize();
+        Path parent = absolute.getParent();
+        if (parent == null) throw new IOException("Target has no parent directory: " + target);
+        createDirectoriesNoLinks(parent, "atomic-write parent");
+        String expectedTargetHash = snapshotTarget(absolute, "atomic-write target");
+
+        Path staging = Files.createTempFile(parent, ".mhl-write-", ".part");
+        String stagingHash = null;
         try {
-            return Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            return Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+            Files.writeString(staging, content == null ? "" : content, charset,
+                    StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+            stagingHash = sha256(staging, "atomic-write staging");
+            publishReplacingIfUnchanged(staging, absolute, expectedTargetHash, "atomic write");
+        } finally {
+            cleanupOwnedStaging(staging, stagingHash);
+        }
+    }
+
+    /**
+     * Compatibility API for callers that already created a staging file. This snapshots the target
+     * at invocation time and protects the commit itself against symlink/TOCTOU replacement. Callers
+     * that need to protect the whole generation window should take their snapshot before generation
+     * and use a higher-level publication primitive.
+     */
+    public static Path moveReplacing(Path source, Path target) throws IOException {
+        Path absolute = target.toAbsolutePath().normalize();
+        String expectedTargetHash = snapshotTarget(absolute, "atomic-move target");
+        publishReplacingIfUnchanged(source, absolute, expectedTargetHash, "atomic move");
+        return absolute;
+    }
+
+    private static void publishReplacingIfUnchanged(
+            Path source, Path target, String expectedTargetHash, String role) throws IOException {
+        Path safeSource = requireSafeRegularFile(source, role + " source");
+        String sourceHash = sha256(safeSource, role + " source");
+        Path detached = null;
+        boolean published = false;
+        IOException failure = null;
+        try {
+            if (expectedTargetHash != null) {
+                detached = detachIfOwned(target, expectedTargetHash, role + " target");
+            } else {
+                Path safeTarget = prepareTarget(target, role + " target");
+                if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new FileAlreadyExistsException(safeTarget.toString());
+                }
+            }
+            moveNoReplace(safeSource, target, role + " publication");
+            if (!sourceHash.equalsIgnoreCase(sha256(target, role + " published target"))) {
+                throw new IOException(role + " published bytes differ from staged bytes: " + target);
+            }
+            published = true;
+        } catch (IOException e) {
+            failure = e;
+            throw e;
+        } finally {
+            if (!published && detached != null && Files.exists(detached, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    moveNoReplace(detached, target, role + " rollback");
+                    detached = null;
+                } catch (IOException restoreFailure) {
+                    if (failure != null) failure.addSuppressed(restoreFailure);
+                }
+            }
+            if (published && detached != null) {
+                try {
+                    removeIfOwned(detached, expectedTargetHash, role + " old-target cleanup");
+                } catch (IOException ignored) {
+                    // Publication is already verified. Preserve unknown evidence rather than deleting it.
+                }
+            }
+        }
+    }
+
+    private static String snapshotTarget(Path target, String role) throws IOException {
+        Path safe = prepareTarget(target, role);
+        if (!Files.exists(safe, LinkOption.NOFOLLOW_LINKS)) return null;
+        return sha256(safe, role + " snapshot");
+    }
+
+    private static Path prepareTarget(Path target, String role) throws IOException {
+        Path absolute = target.toAbsolutePath().normalize();
+        Path parent = absolute.getParent();
+        if (parent == null) throw new IOException(role + " has no parent directory: " + absolute);
+        createDirectoriesNoLinks(parent, role + " parent");
+        if (Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
+            requireSafeRegularFile(absolute, role);
+        }
+        return absolute;
+    }
+
+    public static Path createDirectoriesNoLinks(Path directory, String role) throws IOException {
+        Path absolute = directory.toAbsolutePath().normalize();
+        Path current = absolute.getRoot();
+        for (Path component : absolute) {
+            current = current == null ? component : current.resolve(component);
+            if (Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+                requireSafeDirectory(current, role);
+            } else {
+                try {
+                    Files.createDirectory(current);
+                } catch (FileAlreadyExistsException race) {
+                    requireSafeDirectory(current, role);
+                }
+            }
+        }
+        return absolute;
+    }
+
+    public static void requireSafeDirectory(Path directory, String role) throws IOException {
+        if (Files.isSymbolicLink(directory)) {
+            throw new IOException(role + " contains a symbolic link: " + directory);
+        }
+        BasicFileAttributes attrs = Files.readAttributes(
+                directory, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attrs.isDirectory() || attrs.isOther()) {
+            throw new IOException(role + " is not a safe directory: " + directory);
+        }
+    }
+
+    public static Path requireSafeRegularFile(Path file, String role) throws IOException {
+        Path absolute = file.toAbsolutePath().normalize();
+        Path current = absolute.getRoot();
+        for (Path component : absolute) {
+            current = current == null ? component : current.resolve(component);
+            if (!Files.exists(current, LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException(role + " does not exist: " + absolute);
+            }
+            if (Files.isSymbolicLink(current)) {
+                throw new IOException(role + " contains a symbolic link: " + current);
+            }
+            BasicFileAttributes attrs = Files.readAttributes(
+                    current, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (attrs.isOther()) {
+                throw new IOException(role + " contains a special/reparse entry: " + current);
+            }
+        }
+        if (!Files.isRegularFile(absolute, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException(role + " is not a regular file: " + absolute);
+        }
+        return absolute;
+    }
+
+    private static Path moveNoReplace(Path source, Path target, String role) throws IOException {
+        Path safeSource = requireSafeRegularFile(source, role + " source");
+        Path safeTarget = prepareTarget(target, role + " target");
+        if (Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+            throw new FileAlreadyExistsException(safeTarget.toString());
+        }
+        Files.move(safeSource, safeTarget);
+        return requireSafeRegularFile(safeTarget, role + " target");
+    }
+
+    private static Path detachIfOwned(Path target, String expectedHash, String role) throws IOException {
+        Path safeTarget = requireSafeRegularFile(target, role + " target");
+        String before = sha256(safeTarget, role + " target snapshot");
+        if (!expectedHash.equalsIgnoreCase(before)) {
+            throw new IOException(role + " changed before detach: " + safeTarget);
+        }
+        Path evidence = safeTarget.getParent().resolve(
+                "." + safeTarget.getFileName() + ".mhl-evidence-" + UUID.randomUUID() + ".tmp");
+        moveNoReplace(safeTarget, evidence, role + " detach");
+        String after = sha256(evidence, role + " detached target");
+        if (!expectedHash.equalsIgnoreCase(after)) {
+            try {
+                if (!Files.exists(safeTarget, LinkOption.NOFOLLOW_LINKS)) {
+                    moveNoReplace(evidence, safeTarget, role + " changed-target restore");
+                }
+            } catch (IOException restoreFailure) {
+                IOException failure = new IOException(role + " changed during detach; evidence preserved at " + evidence);
+                failure.addSuppressed(restoreFailure);
+                throw failure;
+            }
+            throw new IOException(role + " changed during detach");
+        }
+        return evidence;
+    }
+
+    private static void removeIfOwned(Path target, String expectedHash, String role) throws IOException {
+        if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) return;
+        Path detached = detachIfOwned(target, expectedHash, role);
+        Files.delete(detached);
+    }
+
+    private static String sha256(Path file, String role) throws IOException {
+        Path safe = requireSafeRegularFile(file, role);
+        MessageDigest digest;
+        try {
+            digest = MessageDigest.getInstance("SHA-256");
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+        try (InputStream in = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] buffer = new byte[64 * 1024];
+            for (int read; (read = in.read(buffer)) >= 0; ) {
+                if (read > 0) digest.update(buffer, 0, read);
+            }
+        }
+        return HexFormat.of().formatHex(digest.digest());
+    }
+
+    private static void cleanupOwnedStaging(Path staging, String expectedHash) {
+        if (staging == null || expectedHash == null || !Files.exists(staging, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            removeIfOwned(staging, expectedHash, "atomic-write staging cleanup");
+        } catch (IOException ignored) {
+            // Preserve unknown replacement instead of deleting it.
         }
     }
 }

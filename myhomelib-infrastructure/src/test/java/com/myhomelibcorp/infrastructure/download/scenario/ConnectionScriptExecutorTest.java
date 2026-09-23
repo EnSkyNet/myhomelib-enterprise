@@ -191,11 +191,49 @@ class ConnectionScriptExecutorTest {
         cfg.put("online.retryCount", "0");
 
         assertThatThrownBy(() -> executor(cfg).execute(
-                "GET http://127.0.0.1:1/%PASS%?token=%PASS%",
+                "GET https://127.0.0.1:1/%PASS%?token=%PASS%",
                 book, collection, temp, "book.txt", temp.resolve("book.txt"), false, null, ignored -> { }))
                 .isInstanceOf(DownloadScenarioException.class)
-                .hasMessageNotContaining(secret)
-                .hasMessageContaining("network request failed");
+                .hasMessageContaining("network request failed")
+                .hasMessageNotContaining(secret);
+    }
+
+
+
+    @Test
+    void malformedExpandedUrlNeverIncludesPassMacroValueInError() {
+        String secret = "super-secret-invalid-url";
+        BookDto book = BookDto.builder().id("1").fileName("book.txt").build();
+        Collection collection = collection("reader", secret);
+
+        assertThatThrownBy(() -> executor(settings()).execute(
+                "GET https://[invalid/%PASS%",
+                book, collection, temp, "book.txt", temp.resolve("book.txt"), false, null, ignored -> { }))
+                .isInstanceOf(DownloadScenarioException.class)
+                .hasMessageContaining("Некоректний ConnectionScript URL")
+                .hasMessageNotContaining(secret);
+    }
+
+    @Test
+    void neverSendsCollectionBasicAuthOverPlainHttp() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/book", exchange -> {
+            requests.incrementAndGet();
+            exchange.sendResponseHeaders(200, 0);
+            exchange.close();
+        });
+        server.start();
+
+        BookDto book = BookDto.builder().id("1").fileName("book.txt").build();
+        Collection collection = collection("reader", "secret-password");
+
+        assertThatThrownBy(() -> executor(settings()).execute(
+                "GET " + baseUrl() + "book", book, collection, temp, "book.txt",
+                temp.resolve("book.txt"), false, null, ignored -> { }))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("лише через HTTPS");
+        assertThat(requests.get()).isZero();
     }
 
     private ConnectionScriptExecutor executor(ApplicationSettingsPort settings) {

@@ -3,19 +3,21 @@ package com.myhomelibcorp.infrastructure.security;
 import com.myhomelibcorp.shared.security.SecretStore;
 import com.myhomelibcorp.shared.security.SecretStoreException;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /** freedesktop Secret Service adapter via the standard secret-tool CLI. */
 final class LinuxSecretServiceStore implements SecretStore {
-    private static final List<String> ATTRS = List.of("application", "myhomelib", "key", "credential-master-key-v1");
+    private static final List<String> BASE_ATTRS = List.of("application", "myhomelib", "key");
 
     @Override
     public Optional<String> read(String key) {
-        var command = new java.util.ArrayList<String>();
+        var command = new ArrayList<String>();
         command.add("secret-tool");
         command.add("lookup");
-        command.addAll(ATTRS);
+        command.addAll(attributesFor(key));
         var result = CommandSecretStoreSupport.run(command, null);
         if (result.exitCode() == 0) return result.stdout().isBlank() ? Optional.empty() : Optional.of(result.stdout());
         if (CommandSecretStoreSupport.looksUnavailable(result)) {
@@ -26,23 +28,24 @@ final class LinuxSecretServiceStore implements SecretStore {
 
     @Override
     public void write(String key, String secret) {
-        var command = new java.util.ArrayList<String>();
+        Objects.requireNonNull(secret, "secret");
+        var command = new ArrayList<String>();
         command.add("secret-tool");
         command.add("store");
-        command.add("--label=MyHomeLib credential master key");
-        command.addAll(ATTRS);
+        command.add("--label=MyHomeLib application secret");
+        command.addAll(attributesFor(key));
         var result = CommandSecretStoreSupport.run(command, secret + System.lineSeparator());
         if (result.exitCode() != 0) {
-            throw new SecretStoreException("Linux Secret Service could not store the credential master key: " + result.stderr());
+            throw new SecretStoreException("Linux Secret Service could not store the requested secret: " + result.stderr());
         }
     }
 
     @Override
     public void delete(String key) {
-        var command = new java.util.ArrayList<String>();
+        var command = new ArrayList<String>();
         command.add("secret-tool");
         command.add("clear");
-        command.addAll(ATTRS);
+        command.addAll(attributesFor(key));
         var result = CommandSecretStoreSupport.run(command, null);
         if (result.exitCode() != 0 && CommandSecretStoreSupport.looksUnavailable(result)) {
             throw new SecretStoreException("Linux Secret Service is unavailable: " + result.stderr());
@@ -52,5 +55,14 @@ final class LinuxSecretServiceStore implements SecretStore {
     @Override
     public String backendId() {
         return "linux-secret-service";
+    }
+
+    /** The historical master-key slot already used the same key attribute, so it stays compatible. */
+    static List<String> attributesFor(String key) {
+        Objects.requireNonNull(key, "key");
+        if (key.isBlank()) throw new IllegalArgumentException("Secret key must not be blank");
+        ArrayList<String> attrs = new ArrayList<>(BASE_ATTRS);
+        attrs.add(key);
+        return List.copyOf(attrs);
     }
 }

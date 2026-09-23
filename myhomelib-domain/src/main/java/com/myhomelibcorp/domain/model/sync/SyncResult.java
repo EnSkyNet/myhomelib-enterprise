@@ -43,17 +43,10 @@ public class SyncResult {
         return added + updated + deleted + skipped;
     }
 
+    /** Diagnostic, UI-neutral summary. User-facing formatting belongs to the presentation layer. */
     public String getSummary() {
-        return String.format(
-                "Додано: %d, Оновлено: %d, Видалено: %d, Пропущено: %d, Помилок: %d, Час: %s",
-                added, updated, deleted, skipped, errors, formatDuration(getDuration())
-        );
-    }
-
-    private String formatDuration(Duration duration) {
-        long seconds = duration.getSeconds();
-        if (seconds < 60) return seconds + "с";
-        if (seconds < 3600) return (seconds / 60) + "хв " + (seconds % 60) + "с";
-        return (seconds / 3600) + "год " + ((seconds % 3600) / 60) + "хв";
+        return String.format(java.util.Locale.ROOT,
+                "added=%d, updated=%d, deleted=%d, skipped=%d, errors=%d, durationMs=%d",
+                added, updated, deleted, skipped, errors, getDuration().toMillis());
     }
 }

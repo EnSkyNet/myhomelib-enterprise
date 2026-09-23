@@ -7,9 +7,12 @@ import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.NavigationFacetRepository;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.query.book.BookQuery;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.domain.model.valueobject.LanguageCode;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Comparator;
@@ -17,6 +20,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CompletableFuture;
 
 @Service
 public class DefaultNavigationQueryService implements NavigationQueryService {
@@ -31,7 +36,9 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
     private final BookFilterStateService filterStateService;
     private final CatalogUpdateService catalogUpdateService;
     private final ExecutorPort executorPort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
+    /** Compatibility constructor for focused tests without lifecycle wiring. */
     public DefaultNavigationQueryService(
             AuthorRepository authorRepository,
             BookQueryRepository bookQueryRepository,
@@ -39,12 +46,26 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
             BookFilterStateService filterStateService,
             CatalogUpdateService catalogUpdateService,
             ExecutorPort executorPort) {
+        this(authorRepository, bookQueryRepository, navigationFacetRepository, filterStateService,
+                catalogUpdateService, executorPort, null);
+    }
+
+    @Autowired
+    public DefaultNavigationQueryService(
+            AuthorRepository authorRepository,
+            BookQueryRepository bookQueryRepository,
+            NavigationFacetRepository navigationFacetRepository,
+            BookFilterStateService filterStateService,
+            CatalogUpdateService catalogUpdateService,
+            ExecutorPort executorPort,
+            LibraryOperationCoordinator operationCoordinator) {
         this.authorRepository = authorRepository;
         this.bookQueryRepository = bookQueryRepository;
         this.navigationFacetRepository = navigationFacetRepository;
         this.filterStateService = filterStateService;
         this.catalogUpdateService = catalogUpdateService;
         this.executorPort = executorPort;
+        this.operationCoordinator = operationCoordinator;
     }
 
     @Override
@@ -53,7 +74,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
             return java.util.concurrent.CompletableFuture.failedFuture(
                     new IllegalArgumentException("Navigation mode cannot be null"));
         }
-        return executorPort.submit(() -> {
+        return submitQuery(() -> {
             BookFilterSpec filter = filterStateService.current();
             return switch (mode) {
                 case AUTHORS -> loadAuthors(initial, filter);
@@ -91,7 +112,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
     @Override
     public java.util.concurrent.CompletableFuture<PageResult<NavigationNodeDto>> loadAuthorsPage(
             Character initial, int limit, int offset) {
-        return executorPort.submit(() -> {
+        return submitQuery(() -> {
             BookFilterSpec filter = filterStateService.current();
             Character selected = initial;
             if (selected == null || selected == '*') {
@@ -115,7 +136,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
     @Override
     public java.util.concurrent.CompletableFuture<NavigationQueryService.AuthorPage> loadAuthorsAfter(
             Character initial, int limit, NavigationQueryService.AuthorCursor after) {
-        return executorPort.submit(() -> {
+        return submitQuery(() -> {
             BookFilterSpec filter = filterStateService.current();
             Character selected = initial;
             if (selected == null || selected == '*') {
@@ -146,39 +167,39 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
         String normalized = query == null ? "" : query.trim();
         if (normalized.isBlank()) return java.util.concurrent.CompletableFuture.completedFuture(List.of());
         int safeLimit = Math.max(1, Math.min(limit, 500));
-        var filter = filterStateService.current();
 
-        // The common sidebar path has no active book filter. Searching the normalized
-        // authors table directly avoids joining/aggregating hundreds of thousands of
-        // books for every keystroke. This is the same fast author lookup used by the
-        // main Search workspace.
-        if (filter == null || !filter.isActive()) {
-            return executorPort.submit(() -> authorRepository
-                    .searchByName(normalized, safeLimit)
+        return submitQuery(() -> {
+            var filter = filterStateService.current();
+            // The common sidebar path has no active book filter. Searching the normalized
+            // authors table directly avoids joining/aggregating hundreds of thousands of
+            // books for every keystroke. This is the same fast author lookup used by the
+            // main Search workspace.
+            if (filter == null || !filter.isActive()) {
+                return authorRepository.searchByName(normalized, safeLimit)
+                        .stream()
+                        .map(author -> NavigationNodeDto.of(
+                                NavigationMode.AUTHORS,
+                                author.getId().asString(),
+                                author.getFullName()))
+                        .filter(DefaultNavigationQueryService::hasLabel)
+                        .toList();
+            }
+
+            // With a global book filter active we must preserve navigation semantics. The
+            // repository uses EXISTS (not COUNT/GROUP BY) and therefore still avoids the
+            // previous full aggregation hot path.
+            return navigationFacetRepository.searchAuthors(normalized, filter, safeLimit)
                     .stream()
-                    .map(author -> NavigationNodeDto.of(
-                            NavigationMode.AUTHORS,
-                            author.getId().asString(),
-                            author.getFullName()))
+                    .map(facet -> new NavigationNodeDto(
+                            NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
                     .filter(DefaultNavigationQueryService::hasLabel)
-                    .toList());
-        }
-
-        // With a global book filter active we must preserve navigation semantics. The
-        // repository uses EXISTS (not COUNT/GROUP BY) and therefore still avoids the
-        // previous full aggregation hot path.
-        return executorPort.submit(() -> navigationFacetRepository
-                .searchAuthors(normalized, filter, safeLimit)
-                .stream()
-                .map(facet -> new NavigationNodeDto(
-                        NavigationMode.AUTHORS, facet.id(), facet.label(), facet.bookCount()))
-                .filter(DefaultNavigationQueryService::hasLabel)
-                .toList());
+                    .toList();
+        });
     }
 
     @Override
     public java.util.concurrent.CompletableFuture<java.util.Optional<Character>> findFirstAuthorInitial() {
-        return executorPort.submit(() -> navigationFacetRepository.findFirstAuthorInitial(filterStateService.current()));
+        return submitQuery(() -> navigationFacetRepository.findFirstAuthorInitial(filterStateService.current()));
     }
 
     @Override
@@ -186,7 +207,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
         if (authorId == null || authorId.isBlank()) {
             return java.util.concurrent.CompletableFuture.completedFuture(java.util.Optional.empty());
         }
-        return executorPort.submit(() -> authorRepository
+        return submitQuery(() -> authorRepository
                 .findById(com.myhomelibcorp.domain.model.valueobject.AuthorId.fromString(authorId))
                 .map(author -> {
                     String label = author.getFullName();
@@ -194,6 +215,28 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
                     char first = label.trim().charAt(0);
                     return Character.isLetter(first) ? Character.toUpperCase(first) : '#';
                 }));
+    }
+
+    private <T> CompletableFuture<T> submitQuery(Callable<T> task) {
+        if (operationCoordinator == null) return executorPort.submit(task);
+        final LibraryOperationCoordinator.Lease lease;
+        try {
+            lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        } catch (RuntimeException lifecycleBusy) {
+            return CompletableFuture.failedFuture(lifecycleBusy);
+        }
+        try {
+            CompletableFuture<T> future = executorPort.submit(task);
+            return future.whenComplete((value, failure) -> {
+                if (failure == null) lease.markCompleted("");
+                else lease.markFailed(failure);
+                lease.close();
+            });
+        } catch (RuntimeException | Error schedulingFailure) {
+            lease.markFailed(schedulingFailure);
+            lease.close();
+            return CompletableFuture.failedFuture(schedulingFailure);
+        }
     }
 
     private List<NavigationNodeDto> loadDownloadedAuthors(BookFilterSpec filter) {
@@ -312,7 +355,7 @@ public class DefaultNavigationQueryService implements NavigationQueryService {
         return List.of(new NavigationNodeDto(
                 NavigationMode.UPDATES,
                 "updates",
-                "Оновлення",
+                "updates",
                 count));
     }
 

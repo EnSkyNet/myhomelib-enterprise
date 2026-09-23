@@ -10,4 +10,11 @@ class LegacyOnlineBookLocationTest {
                 "Романович Роман", "Алхимик 1-9", "882513", "882513.fb2"))
                 .isEqualTo("Р/Романович Роман/882513 Алхимик 1-9.fb2.zip");
     }
+
+    @Test
+    void missingAuthorUsesStableLegacyStorageSentinel() {
+        assertThat(LegacyOnlineBookLocation.archivePath(
+                "", "", "42", "42.fb2"))
+                .isEqualTo("Б/Без автора/42 Без назви.fb2.zip");
+    }
 }

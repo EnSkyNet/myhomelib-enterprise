@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
 import com.myhomelibcorp.application.imports.diagnostics.ImportSeverity;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
 import com.myhomelibcorp.domain.service.LanguageResolver;
+import com.myhomelibcorp.infrastructure.importengine.InpxDateSupport;
 import com.myhomelibcorp.infrastructure.importengine.InpxReader;
 import com.myhomelibcorp.infrastructure.importengine.InpxRecord;
 import lombok.RequiredArgsConstructor;
@@ -80,14 +81,13 @@ public class InpxCatalogReader implements CatalogReader {
         }
 
         List<CatalogPerson> authors = parsePeople(raw.field("AUTHOR"));
-        if (authors.isEmpty()) authors = List.of(new CatalogPerson("", "", "Невідомий Автор", "", "", "", List.of()));
 
         List<String> genres = splitColon(raw.field("GENRE"));
         String series = raw.field("SERIES");
         Double sequence = parseDouble(raw.field("SERNO"));
         long size = parseLong(raw.field("SIZE"), 0L);
         boolean deleted = parseDeleted(raw.field("DEL"));
-        Integer year = parseYear(firstNonBlank(raw.field("YEAR"), raw.field("PUBYEAR"), raw.field("DATE")));
+        Integer year = parseYear(firstNonBlank(raw.field("YEAR"), raw.field("PUBYEAR")));
         String publisher = firstNonBlank(raw.field("PUBLISHER"), raw.field("PUBLISH"));
         String translators = firstNonBlank(raw.field("TRANSLATORS"), raw.field("TRANSLATOR"));
 
@@ -100,7 +100,7 @@ public class InpxCatalogReader implements CatalogReader {
 
         return new CatalogRecord(
                 sourceId,
-                firstNonBlank(raw.field("TITLE"), "Без назви"),
+                firstNonBlank(raw.field("TITLE"), file, libId, sourceId),
                 authors,
                 series,
                 sequence,
@@ -120,6 +120,7 @@ public class InpxCatalogReader implements CatalogReader {
                 raw.field("ANNOTATION"),
                 splitKeywords(raw.field("KEYWORDS")),
                 parseDouble(firstNonBlank(raw.field("LIBRATE"), raw.field("LIBRARYRATE"))),
+                InpxDateSupport.parseCatalogDate(raw.field("DATE")),
                 Map.of("inp", raw.inpName(), "archive", raw.archiveName(), "libId", libId),
                 List.of(artifact),
                 identities,

@@ -10,27 +10,27 @@
       prefWidth="940" prefHeight="700">
 
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="Стан бібліотеки" style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
-        <Label fx:id="overallStatusLabel" text="Стан ще не перевірено"
+        <Label text="ui.fxml.integrity_check.library_health" style="-fx-font-size: 22px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
+        <Label fx:id="overallStatusLabel" text="ui.fxml.integrity_check.health_has_not_been_checked_yet"
                style="-fx-font-size: 15px; -fx-font-weight: bold; -fx-text-fill: -mhl-muted-text;"/>
         <Region HBox.hgrow="ALWAYS"/>
         <ProgressIndicator fx:id="progressIndicator" visible="false" prefWidth="28" prefHeight="28"/>
-        <Button fx:id="checkButton" text="Оновити стан" onAction="#onCheckIntegrity"/>
-        <Button text="Безпечне обслуговування" onAction="#onSafeRepairInfo"/>
-        <Button text="Експорт" onAction="#onExportReport"/>
-        <Button text="Закрити" onAction="#closeDialog"/>
+        <Button fx:id="checkButton" text="ui.fxml.integrity_check.refresh_health" onAction="#onCheckIntegrity"/>
+        <Button text="ui.fxml.integrity_check.safe_maintenance" onAction="#onSafeRepairInfo"/>
+        <Button text="ui.fxml.integrity_check.export" onAction="#onExportReport"/>
+        <Button text="ui.fxml.integrity_check.close" onAction="#closeDialog"/>
     </HBox>
 
-    <Label fx:id="statusLabel" text="Готово до перевірки" style="-fx-text-fill: -mhl-muted-text;"/>
+    <Label fx:id="statusLabel" text="ui.fxml.integrity_check.ready_to_check" style="-fx-text-fill: -mhl-muted-text;"/>
 
     <VBox spacing="5" style="-fx-padding: 8; -fx-border-color: -mhl-border; -fx-border-radius: 4;">
         <HBox spacing="8" alignment="CENTER_LEFT">
-            <Label text="Повнотекстовий індекс" style="-fx-font-weight: bold;"/>
-            <Label fx:id="contentIndexValue" text="—" style="-fx-font-weight: bold;"/>
-            <Label fx:id="contentIndexDetailLabel" text="Стан завантажується…" HBox.hgrow="ALWAYS"/>
-            <Button text="Деталі" accessibleText="Деталі повнотекстового індексу" onAction="#onShowContentIndex"/>
-            <Button fx:id="contentIndexRebuildButton" text="Перебудувати вміст" accessibleText="Перебудувати повнотекстовий індекс" onAction="#onRebuildContentIndex"/>
-            <Button fx:id="contentIndexCancelButton" text="Скасувати" accessibleText="Скасувати перебудову повнотекстового індексу" onAction="#onCancelContentIndexRebuild"/>
+            <Label text="ui.fxml.integrity_check.full_text_index" style="-fx-font-weight: bold;"/>
+            <Label fx:id="contentIndexValue" text="ui.fxml.integrity_check.value" style="-fx-font-weight: bold;"/>
+            <Label fx:id="contentIndexDetailLabel" text="ui.fxml.integrity_check.loading_status" HBox.hgrow="ALWAYS"/>
+            <Button text="ui.fxml.integrity_check.details" accessibleText="ui.fxml.integrity_check.full_text_index_details" onAction="#onShowContentIndex"/>
+            <Button fx:id="contentIndexRebuildButton" text="ui.fxml.integrity_check.rebuild_contents" accessibleText="ui.fxml.integrity_check.rebuild_full_text_index" onAction="#onRebuildContentIndex"/>
+            <Button fx:id="contentIndexCancelButton" text="ui.fxml.integrity_check.cancel" accessibleText="ui.fxml.integrity_check.cancel_full_text_index_rebuild" onAction="#onCancelContentIndexRebuild"/>
         </HBox>
         <ProgressBar fx:id="contentIndexProgress" maxWidth="Infinity" progress="0" visible="false" managed="false"/>
     </VBox>
@@ -48,30 +48,30 @@
         </columnConstraints>
 
         <VBox GridPane.columnIndex="0" spacing="3" style="-fx-padding: 10; -fx-border-color: -mhl-border; -fx-border-radius: 4;">
-            <Label text="Локальні файли" style="-fx-text-fill: -mhl-muted-text;"/>
-            <Label fx:id="localArtifactsValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
+            <Label text="ui.fxml.integrity_check.local_files" style="-fx-text-fill: -mhl-muted-text;"/>
+            <Label fx:id="localArtifactsValue" text="ui.fxml.integrity_check.value" style="-fx-font-size: 20px; -fx-font-weight: bold;"/>
         </VBox>
-        <Button GridPane.columnIndex="1" accessibleText="Відсутні" onAction="#onShowMissing" maxWidth="Infinity" minHeight="62">
-            <graphic><VBox alignment="CENTER"><Label text="Відсутні"/><Label fx:id="missingValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        <Button GridPane.columnIndex="1" accessibleText="ui.fxml.integrity_check.missing" onAction="#onShowMissing" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.missing"/><Label fx:id="missingValue" text="ui.fxml.integrity_check.value" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
-        <Button GridPane.columnIndex="2" accessibleText="Пошкоджені" onAction="#onShowCorrupt" maxWidth="Infinity" minHeight="62">
-            <graphic><VBox alignment="CENTER"><Label text="Пошкоджені"/><Label fx:id="corruptValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        <Button GridPane.columnIndex="2" accessibleText="ui.fxml.integrity_check.corrupt" onAction="#onShowCorrupt" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.corrupt"/><Label fx:id="corruptValue" text="ui.fxml.integrity_check.value" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
-        <Button GridPane.columnIndex="3" accessibleText="Змінені" onAction="#onShowChanged" maxWidth="Infinity" minHeight="62">
-            <graphic><VBox alignment="CENTER"><Label text="Змінені"/><Label fx:id="changedValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        <Button GridPane.columnIndex="3" accessibleText="ui.fxml.integrity_check.changed" onAction="#onShowChanged" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.changed"/><Label fx:id="changedValue" text="ui.fxml.integrity_check.value" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
-        <Button GridPane.columnIndex="4" accessibleText="Дублікати" onAction="#onShowDuplicates" maxWidth="Infinity" minHeight="62">
-            <graphic><VBox alignment="CENTER"><Label text="Дублікати"/><Label fx:id="duplicatesValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        <Button GridPane.columnIndex="4" accessibleText="ui.fxml.integrity_check.duplicates" onAction="#onShowDuplicates" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.duplicates"/><Label fx:id="duplicatesValue" text="ui.fxml.integrity_check.value" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
-        <Button GridPane.columnIndex="5" accessibleText="Прогалини метаданих" onAction="#onShowMetadata" maxWidth="Infinity" minHeight="62">
-            <graphic><VBox alignment="CENTER"><Label text="Прогалини метаданих"/><Label fx:id="metadataValue" text="—" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
+        <Button GridPane.columnIndex="5" accessibleText="ui.fxml.integrity_check.metadata_gaps" onAction="#onShowMetadata" maxWidth="Infinity" minHeight="62">
+            <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.metadata_gaps"/><Label fx:id="metadataValue" text="ui.fxml.integrity_check.value" style="-fx-font-size: 20px; -fx-font-weight: bold;"/></VBox></graphic>
         </Button>
         <VBox GridPane.columnIndex="6" spacing="4">
-            <Button accessibleText="Пошуковий індекс" onAction="#onShowIndex" maxWidth="Infinity">
-                <graphic><VBox alignment="CENTER"><Label text="Пошуковий індекс"/><Label fx:id="indexValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
+            <Button accessibleText="ui.fxml.integrity_check.search_index" onAction="#onShowIndex" maxWidth="Infinity">
+                <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.search_index"/><Label fx:id="indexValue" text="ui.fxml.integrity_check.value" style="-fx-font-weight: bold;"/></VBox></graphic>
             </Button>
-            <Button accessibleText="Вік резервної копії" onAction="#onShowBackup" maxWidth="Infinity">
-                <graphic><VBox alignment="CENTER"><Label text="Вік резервної копії"/><Label fx:id="backupValue" text="—" style="-fx-font-weight: bold;"/></VBox></graphic>
+            <Button accessibleText="ui.fxml.integrity_check.backup_age" onAction="#onShowBackup" maxWidth="Infinity">
+                <graphic><VBox alignment="CENTER"><Label text="ui.fxml.integrity_check.backup_age"/><Label fx:id="backupValue" text="ui.fxml.integrity_check.value" style="-fx-font-weight: bold;"/></VBox></graphic>
             </Button>
         </VBox>
     </GridPane>
@@ -79,24 +79,24 @@
     <SplitPane dividerPositions="0.55" VBox.vgrow="ALWAYS">
         <items>
             <VBox spacing="6">
-                <Label text="Проблеми та рекомендовані дії" style="-fx-font-weight: bold;"/>
+                <Label text="ui.fxml.integrity_check.issues_and_recommended_actions" style="-fx-font-weight: bold;"/>
                 <TableView fx:id="issueTable" VBox.vgrow="ALWAYS">
                     <columns>
-                        <TableColumn fx:id="severityColumn" text="Рівень" prefWidth="85"/>
-                        <TableColumn fx:id="categoryColumn" text="Категорія" prefWidth="190"/>
-                        <TableColumn fx:id="countColumn" text="К-сть" prefWidth="65"/>
-                        <TableColumn fx:id="actionColumn" text="Дія" prefWidth="310"/>
+                        <TableColumn fx:id="severityColumn" text="ui.fxml.integrity_check.level" prefWidth="85"/>
+                        <TableColumn fx:id="categoryColumn" text="ui.fxml.integrity_check.category" prefWidth="190"/>
+                        <TableColumn fx:id="countColumn" text="ui.fxml.integrity_check.count" prefWidth="65"/>
+                        <TableColumn fx:id="actionColumn" text="ui.fxml.integrity_check.action" prefWidth="310"/>
                     </columns>
                 </TableView>
             </VBox>
             <VBox spacing="6">
-                <Label text="Деталі перевірки" style="-fx-font-weight: bold;"/>
+                <Label text="ui.fxml.integrity_check.check_details" style="-fx-font-weight: bold;"/>
                 <TextArea fx:id="detailArea" editable="false" wrapText="true" VBox.vgrow="ALWAYS"
                           style="-fx-font-family: 'Consolas', 'Monaco', monospace; -fx-font-size: 12px;"/>
             </VBox>
         </items>
     </SplitPane>
 
-    <Label text="Перевірка не виконує автоматичних небезпечних виправлень: вона лише читає файли, порівнює розмір і SHA-256 та зберігає власну базову контрольну інформацію й кеш."
+    <Label text="ui.fxml.integrity_check.the_check_does_not_perform_automatic_unsafe_ca0b059"
            wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
 </VBox>

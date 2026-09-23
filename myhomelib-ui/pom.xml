@@ -20,6 +20,11 @@
     </properties>
 
     <dependencies>
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-epub-optimizer</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
         <!-- Internal modules used directly by UI -->
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
@@ -36,6 +41,12 @@
         <dependency>
             <groupId>com.myhomelibcorp</groupId>
             <artifactId>myhomelib-shared</artifactId>
+            <version>${project.parent.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.myhomelibcorp</groupId>
+            <artifactId>myhomelib-library-organizer</artifactId>
             <version>${project.parent.version}</version>
         </dependency>
 
@@ -178,4 +189,21 @@
             </plugin>
         </plugins>
     </build>
+
+    <profiles>
+        <!-- When a real display (or Xvfb) is available, execute display-dependent JavaFX/FXML tests
+             instead of silently aborting them under the default headless unit-test configuration. -->
+        <profile>
+            <id>display-javafx-tests</id>
+            <activation>
+                <property>
+                    <name>env.DISPLAY</name>
+                </property>
+            </activation>
+            <properties>
+                <ui.testfx.headless>false</ui.testfx.headless>
+                <ui.java.awt.headless>false</ui.java.awt.headless>
+            </properties>
+        </profile>
+    </profiles>
 </project>

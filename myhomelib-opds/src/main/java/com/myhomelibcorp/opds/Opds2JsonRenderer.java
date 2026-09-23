@@ -3,51 +3,63 @@ package com.myhomelibcorp.opds;
 import com.myhomelibcorp.application.opds.OpdsBookDto;
 import com.myhomelibcorp.application.opds.OpdsFacetDto;
 import com.myhomelibcorp.application.opds.OpdsPage;
+import com.myhomelibcorp.web.WebTextCatalog;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 
 /** Minimal dependency-free OPDS 2.0 JSON renderer for the embedded sidecar. */
 final class Opds2JsonRenderer {
     static final String TYPE = "application/opds+json;charset=utf-8";
     private static final String TYPE_LINK = "application/opds+json";
+    private final WebTextCatalog text;
 
-    String root() {
+    Opds2JsonRenderer() { this(new WebTextCatalog()); }
+    Opds2JsonRenderer(WebTextCatalog text) { this.text = Objects.requireNonNull(text, "text"); }
+
+    String root() { return root(WebTextCatalog.DEFAULT_LANGUAGE); }
+    String root(String language) {
         List<NavigationItem> items = List.of(
-                new NavigationItem("Бібліотека", "/opds/v2/library", null),
-                new NavigationItem("Пошук", "/opds/v2/search?q=", null),
-                new NavigationItem("Колекції", "/opds/v2/collections", null),
-                new NavigationItem("Групи", "/opds/v2/groups", null),
-                new NavigationItem("Обране", "/opds/v2/favorites", null),
-                new NavigationItem("Продовжити читання", "/opds/v2/continue", null)
+                new NavigationItem(t(language, "web.opds.library"), "/opds/v2/library", null),
+                new NavigationItem(t(language, "web.opds.search"), "/opds/v2/search?q=", null),
+                new NavigationItem(t(language, "web.opds.collections"), "/opds/v2/collections", null),
+                new NavigationItem(t(language, "web.opds.groups"), "/opds/v2/groups", null),
+                new NavigationItem(t(language, "web.opds.favorites"), "/opds/v2/favorites", null),
+                new NavigationItem(t(language, "web.opds.continue"), "/opds/v2/continue", null)
         );
         return navigationDocument("MyHomeLib", "/opds/v2", items, List.of(), (long) items.size(), null, null);
     }
 
-    String collections(Optional<OpdsFacetDto> collection) {
+    String collections(Optional<OpdsFacetDto> collection) { return collections(WebTextCatalog.DEFAULT_LANGUAGE, collection); }
+    String collections(String language, Optional<OpdsFacetDto> collection) {
         List<NavigationItem> items = collection
                 .map(value -> List.of(new NavigationItem(
-                        value.label(),
+                        nonBlank(value.label(), t(language, "web.opds.unnamed")),
                         "/opds/v2/collections/" + JdkOpdsServer.encodePathSegment(value.id()),
                         value.bookCount())))
                 .orElseGet(List::of);
-        return navigationDocument("Колекції", "/opds/v2/collections", items, List.of(), (long) items.size(), null, null);
+        return navigationDocument(t(language, "web.opds.collections"), "/opds/v2/collections", items, List.of(), (long) items.size(), null, null);
     }
 
-    String groups(OpdsPage<OpdsFacetDto> page) {
+    String groups(OpdsPage<OpdsFacetDto> page) { return groups(WebTextCatalog.DEFAULT_LANGUAGE, page); }
+    String groups(String language, OpdsPage<OpdsFacetDto> page) {
         List<NavigationItem> items = page.items().stream()
                 .map(value -> new NavigationItem(
-                        value.label(),
+                        nonBlank(value.label(), t(language, "web.opds.unnamed")),
                         "/opds/v2/groups/" + JdkOpdsServer.encodePathSegment(value.id()),
                         value.bookCount()))
                 .toList();
-        return navigationDocument("Групи", "/opds/v2/groups", items,
+        return navigationDocument(t(language, "web.opds.groups"), "/opds/v2/groups", items,
                 paginationLinks("/opds/v2/groups", page), page.total(), page.limit(),
                 page.limit() <= 0 ? 1 : (page.offset() / page.limit()) + 1);
     }
 
     String publications(String title, String self, OpdsPage<OpdsBookDto> page) {
+        return publications(WebTextCatalog.DEFAULT_LANGUAGE, title, self, page);
+    }
+    String publications(String language, String title, String self, OpdsPage<OpdsBookDto> page) {
         StringBuilder json = new StringBuilder(512 + page.items().size() * 256);
         json.append('{');
         appendPageMetadata(json, title, page);
@@ -56,17 +68,18 @@ final class Opds2JsonRenderer {
         json.append(",\"publications\":[");
         for (int i = 0; i < page.items().size(); i++) {
             if (i > 0) json.append(',');
-            appendPublication(json, page.items().get(i));
+            appendPublication(json, language, page.items().get(i));
         }
         return json.append("]}").toString();
     }
 
-    String publication(OpdsBookDto book) {
+    String publication(OpdsBookDto book) { return publication(WebTextCatalog.DEFAULT_LANGUAGE, book); }
+    String publication(String language, OpdsBookDto book) {
         StringBuilder json = new StringBuilder(512);
         json.append('{').append("\"metadata\":{\"title\":\"MyHomeLib\"},");
         appendLinks(json, List.of(new Link("self", "/opds/v2/books/" + JdkOpdsServer.encodePathSegment(book.id()), TYPE_LINK)));
         json.append(",\"publications\":[");
-        appendPublication(json, book);
+        appendPublication(json, language, book);
         return json.append("]}").toString();
     }
 
@@ -107,11 +120,11 @@ final class Opds2JsonRenderer {
         json.append('}');
     }
 
-    private static void appendPublication(StringBuilder json, OpdsBookDto book) {
+    private void appendPublication(StringBuilder json, String language, OpdsBookDto book) {
         String bookPath = "/opds/v2/books/" + JdkOpdsServer.encodePathSegment(book.id());
         json.append('{').append("\"metadata\":{")
                 .append("\"identifier\":").append(quote("urn:myhomelib:book:" + safe(book.id())))
-                .append(",\"title\":").append(quote(nonBlank(book.title(), "Без назви")));
+                .append(",\"title\":").append(quote(nonBlank(book.title(), t(language, "web.opds.untitled"))));
         if (!blank(book.authors())) {
             json.append(",\"author\":[{\"name\":").append(quote(book.authors())).append("}]");
         }
@@ -135,17 +148,9 @@ final class Opds2JsonRenderer {
     private static List<Link> paginationLinks(String self, OpdsPage<?> page) {
         List<Link> links = new ArrayList<>();
         String separator = self.contains("?") ? "&" : "?";
-        if (page.offset() > 0) {
-            links.add(new Link("first", self + separator + "offset=0&limit=" + page.limit(), TYPE_LINK));
-        }
-        if (page.hasPrevious()) {
-            links.add(new Link("previous", self + separator + "offset=" + Math.max(0, page.offset() - page.limit())
-                    + "&limit=" + page.limit(), TYPE_LINK));
-        }
-        if (page.hasNext()) {
-            links.add(new Link("next", self + separator + "offset=" + (page.offset() + page.limit())
-                    + "&limit=" + page.limit(), TYPE_LINK));
-        }
+        if (page.offset() > 0) links.add(new Link("first", self + separator + "offset=0&limit=" + page.limit(), TYPE_LINK));
+        if (page.hasPrevious()) links.add(new Link("previous", self + separator + "offset=" + Math.max(0, page.offset() - page.limit()) + "&limit=" + page.limit(), TYPE_LINK));
+        if (page.hasNext()) links.add(new Link("next", self + separator + "offset=" + (page.offset() + page.limit()) + "&limit=" + page.limit(), TYPE_LINK));
         return List.copyOf(links);
     }
 
@@ -191,6 +196,7 @@ final class Opds2JsonRenderer {
         return out.append('"').toString();
     }
 
+    private String t(String language, String key, Object... args) { return text.text(language, key, args); }
     private static String nonBlank(String value, String fallback) { return blank(value) ? fallback : value; }
     private static boolean blank(String value) { return value == null || value.isBlank(); }
     private static String safe(String value) { return value == null ? "" : value; }

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.navigation;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.NavigationNodeDto;
@@ -408,10 +410,10 @@ public class NavigationPanelController {
         loadMoreAuthorsButton.setManaged(visible);
         loadMoreAuthorsButton.setDisable(loadingMoreAuthors);
         loadMoreAuthorsButton.setText(loadingMoreAuthors
-                ? "Завантаження…"
+                ? UiText.text("ui.fxml.book_workspace.loading")
                 : authorTotal.isPresent()
-                    ? "Завантажити ще (" + allNodes.size() + " / " + authorTotal.getAsLong() + ")"
-                    : "Завантажити ще (" + allNodes.size() + ")");
+                    ? UiText.text("ui.java.navigation_panel_controller.aae0c3c3c5") + allNodes.size() + " / " + authorTotal.getAsLong() + ")"
+                    : UiText.text("ui.java.navigation_panel_controller.aae0c3c3c5") + allNodes.size() + ")");
     }
 
     private void handleLoadFailure(long generation, NavigationMode mode, Throwable ex) {
@@ -523,13 +525,13 @@ public class NavigationPanelController {
     }
 
     private void updateNavigationTitle() {
-        if (navigationTitleLabel != null) navigationTitleLabel.setText(localizationService.tr("Навігація"));
+        if (navigationTitleLabel != null) navigationTitleLabel.setText(localizationService.text("ui.text.navigation"));
     }
 
     private void updateNavigationTitle(String query) {
         if (navigationTitleLabel == null) return;
         String suffix = query == null || query.isBlank() ? "" : ": " + query.trim();
-        navigationTitleLabel.setText(localizationService.tr("Автори — результати пошуку") + suffix);
+        navigationTitleLabel.setText(localizationService.text("ui.text.authors_search_results") + suffix);
     }
 
     private String displayLabel(NavigationNodeDto node) {
@@ -537,6 +539,7 @@ public class NavigationPanelController {
             case ALL_BOOKS -> modeLabel(NavigationMode.ALL_BOOKS);
             case ALREADY_READ -> modeLabel(NavigationMode.ALREADY_READ);
             case HISTORY -> modeLabel(NavigationMode.HISTORY);
+            case UPDATES -> modeLabel(NavigationMode.UPDATES);
             case LANGUAGES -> languageLabel(node.id());
             case GENRES -> localizationService.genreName(node.id(), node.label());
             case GROUPS -> groupLabel(node.label());
@@ -559,37 +562,37 @@ public class NavigationPanelController {
 
     private String modeLabel(NavigationMode mode) {
         return localizationService.tr(switch (mode) {
-            case AUTHORS -> "Автори";
-            case SERIES -> "Серії";
-            case GENRES -> "Жанри";
-            case YEARS -> "Роки";
-            case LANGUAGES -> "Мови";
-            case ARCHIVES -> "Архіви";
-            case KEYWORDS -> "Ключові слова";
-            case GROUPS -> "Групи";
-            case REVIEWS -> "Відгуки";
-            case UPDATES -> "Оновлення";
-            case DOWNLOADED -> "Завантажені книги";
-            case ALREADY_READ -> "Прочитані";
-            case HISTORY -> "Історія читання";
-            case ALL_BOOKS -> "Усі книги";
+            case AUTHORS -> UiText.text("ui.fxml.details.authors");
+            case SERIES -> UiText.text("ui.fxml.search_workspace.series_ee6d3f5");
+            case GENRES -> UiText.text("ui.bulkedit.field.genres");
+            case YEARS -> UiText.text("ui.java.navigation_panel_controller.d78759999d");
+            case LANGUAGES -> UiText.text("ui.java.navigation_panel_controller.7fd89b3757");
+            case ARCHIVES -> UiText.text("ui.import.filter.archives");
+            case KEYWORDS -> UiText.text("ui.fxml.details.keywords");
+            case GROUPS -> UiText.text("ui.fxml.details.groups");
+            case REVIEWS -> UiText.text("ui.java.navigation_panel_controller.5b633ba58d");
+            case UPDATES -> UiText.text("ui.fxml.updates_workspace.updates");
+            case DOWNLOADED -> UiText.text("ui.java.navigation_panel_controller.c3d3dc029b");
+            case ALREADY_READ -> UiText.text("ui.main.fxml.read");
+            case HISTORY -> UiText.text("ui.main.fxml.reading_history");
+            case ALL_BOOKS -> UiText.text("ui.annotations.all_books");
         });
     }
 
     private String groupLabel(String rawName) {
         if (rawName == null) return "";
         return switch (rawName.trim().toLowerCase(Locale.ROOT)) {
-            case "favorites" -> localizationService.tr("Обране");
-            case "to read" -> localizationService.tr("До читання");
+            case "favorites" -> localizationService.text("ui.text.favorites");
+            case "to read" -> localizationService.text("ui.text.to_read");
             default -> rawName;
         };
     }
 
     private String reviewLabel(String id) {
         return localizationService.tr(switch (id) {
-            case "rated" -> "Оцінені";
-            case "reviewed" -> "З відгуками";
-            case "rated-reviewed" -> "Оцінені з відгуками";
+            case "rated" -> UiText.text("ui.java.navigation_panel_controller.d5ccd0eb01");
+            case "reviewed" -> UiText.text("ui.java.navigation_panel_controller.5228db4abf");
+            case "rated-reviewed" -> UiText.text("ui.java.navigation_panel_controller.d03ee34079");
             default -> id;
         });
     }

@@ -8,28 +8,28 @@ package com.myhomelibcorp.domain.model.collection;
  * non-FB2 collections without changing existing databases.</p>
  */
 public enum CollectionType {
-    FB2_LOCAL(0, "Локальна FB2", false, true, false),
-    INPX_ARCHIVE(1, "Підключена INPX / зовнішня бібліотека", false, true, true),
-    REMOTE(2, "Online FB2 / INPX", true, true, true),
-    GENERIC_LOCAL(3, "Локальна (будь-які формати)", false, false, false),
-    GENERIC_REMOTE(4, "Online (будь-які формати)", true, false, true);
+    FB2_LOCAL(0, "ui.collection.type.fb2_local", false, true, false),
+    INPX_ARCHIVE(1, "ui.collection.type.inpx_archive", false, true, true),
+    REMOTE(2, "ui.collection.type.remote", true, true, true),
+    GENERIC_LOCAL(3, "ui.collection.type.generic_local", false, false, false),
+    GENERIC_REMOTE(4, "ui.collection.type.generic_remote", true, false, true);
 
     private final int code;
-    private final String displayName;
+    private final String localizationKey;
     private final boolean remote;
     private final boolean fb2Collection;
     private final boolean external;
 
-    CollectionType(int code, String displayName, boolean remote, boolean fb2Collection, boolean external) {
+    CollectionType(int code, String localizationKey, boolean remote, boolean fb2Collection, boolean external) {
         this.code = code;
-        this.displayName = displayName;
+        this.localizationKey = localizationKey;
         this.remote = remote;
         this.fb2Collection = fb2Collection;
         this.external = external;
     }
 
     public int getCode() { return code; }
-    public String getDisplayName() { return displayName; }
+    public String getLocalizationKey() { return localizationKey; }
     public boolean isRemote() { return remote; }
     public boolean isFb2Collection() { return fb2Collection; }
     public boolean isExternal() { return external; }
@@ -46,5 +46,5 @@ public enum CollectionType {
         return FB2_LOCAL;
     }
 
-    @Override public String toString() { return displayName; }
+    @Override public String toString() { return name(); }
 }

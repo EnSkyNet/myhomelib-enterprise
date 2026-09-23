@@ -12,9 +12,9 @@
 
     <padding><Insets bottom="4" left="10" right="10" top="4"/></padding>
 
-    <Label fx:id="statusLabel" text="Готово до роботи" HBox.hgrow="ALWAYS"/>
+    <Label fx:id="statusLabel" text="ui.fxml.statusbar.ready" HBox.hgrow="ALWAYS"/>
     <Region HBox.hgrow="ALWAYS"/>
-    <Label fx:id="operationsLabel" text="Операції: 0" onMouseClicked="#onOperationsClick" style="-fx-cursor: hand;"/>
-    <Label fx:id="statsLabel" text="Книг: 0 | Авторів: 0 | Серій: 0 | Індекс ✓ | База ✓ | ОЗП: 0 МБ"/>
+    <Label fx:id="operationsLabel" text="ui.fxml.statusbar.operations_0" onMouseClicked="#onOperationsClick" style="-fx-cursor: hand;"/>
+    <Label fx:id="statsLabel" text="ui.fxml.statusbar.books_0_authors_0_series_0_index_database_ram_0_mb"/>
     <ProgressBar fx:id="progressBar" visible="false" prefWidth="150"/>
 </HBox>

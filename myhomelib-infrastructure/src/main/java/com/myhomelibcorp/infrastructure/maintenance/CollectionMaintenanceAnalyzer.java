@@ -3,7 +3,9 @@ package com.myhomelibcorp.infrastructure.maintenance;
 import com.myhomelibcorp.application.collection.CollectionMaintenanceReport;
 import com.myhomelibcorp.application.collection.MaintenanceIssue;
 import com.myhomelibcorp.application.collection.MaintenanceIssueType;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.shared.util.AppPaths;
 import lombok.extern.slf4j.Slf4j;
@@ -11,6 +13,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
@@ -26,8 +29,8 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Stream;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 /**
  * Read-only, bounded-memory analysis for collection maintenance.
@@ -74,6 +77,8 @@ final class CollectionMaintenanceAnalyzer {
                     issueId(MaintenanceIssueType.DATABASE_INTEGRITY, "database"),
                     MaintenanceIssueType.DATABASE_INTEGRITY,
                     "database",
+                    "ui.collection.maintenance.issue.database_integrity",
+                    List.of(),
                     "SQLite quick_check: " + truncate(quickCheck, 200),
                     false,
                     false));
@@ -104,13 +109,15 @@ final class CollectionMaintenanceAnalyzer {
                         referencedPhysical.add(FileProcessor.pathKey(physical));
                     }
 
-                    if (!Files.isRegularFile(physical)) {
+                    if (!Files.isRegularFile(physical, LinkOption.NOFOLLOW_LINKS)) {
                         missingFiles++;
                         issues.sample(MaintenanceIssueType.MISSING_FILE, new MaintenanceIssue(
                                 issueId(MaintenanceIssueType.MISSING_FILE, book.id()),
                                 MaintenanceIssueType.MISSING_FILE,
                                 book.id(),
-                                "Відсутній локальний файл: " + physical + " — " + safe(book.title()),
+                                "ui.collection.maintenance.issue.missing_file",
+                                List.of(physical.toString(), safe(book.title())),
+                                "",
                                 true,
                                 false));
                         continue;
@@ -120,14 +127,19 @@ final class CollectionMaintenanceAnalyzer {
                         ArchiveValidation validation = archiveValidator.validate(physical, book.archiveEntry());
                         if (!validation.valid()) {
                             invalidArchiveReferences++;
-                            String description = validation.error() == null
-                                    ? "В архіві немає запису " + book.archiveEntry() + ": " + physical
-                                    : "Архів не читається: " + physical + " (" + validation.error() + ")";
+                            String messageKey = validation.error() == null
+                                    ? "ui.collection.maintenance.issue.archive_entry_missing"
+                                    : "ui.collection.maintenance.issue.archive_unreadable";
+                            List<String> arguments = validation.error() == null
+                                    ? List.of(safe(book.archiveEntry()), physical.toString())
+                                    : List.of(physical.toString());
                             issues.sample(MaintenanceIssueType.INVALID_ARCHIVE_REFERENCE, new MaintenanceIssue(
                                     issueId(MaintenanceIssueType.INVALID_ARCHIVE_REFERENCE, book.id()),
                                     MaintenanceIssueType.INVALID_ARCHIVE_REFERENCE,
                                     book.id(),
-                                    description,
+                                    messageKey,
+                                    arguments,
+                                    safe(validation.error()),
                                     true,
                                     false));
                         }
@@ -222,7 +234,9 @@ final class CollectionMaintenanceAnalyzer {
                         issueId(MaintenanceIssueType.ORPHANED_AUTHOR, rs.getString("id")),
                         MaintenanceIssueType.ORPHANED_AUTHOR,
                         rs.getString("id"),
-                        "Автор без книг: " + safe(rs.getString("label")),
+                        "ui.collection.maintenance.issue.orphan_author",
+                        List.of(safe(rs.getString("label"))),
+                        "",
                         true,
                         true)),
                 MAX_SAMPLES_PER_TYPE);
@@ -245,7 +259,9 @@ final class CollectionMaintenanceAnalyzer {
                         issueId(MaintenanceIssueType.ORPHANED_GENRE, rs.getString("code")),
                         MaintenanceIssueType.ORPHANED_GENRE,
                         rs.getString("code"),
-                        "Жанр без книг: " + safe(rs.getString("name")) + " [" + rs.getString("code") + "]",
+                        "ui.collection.maintenance.issue.orphan_genre",
+                        List.of(safe(rs.getString("name")), safe(rs.getString("code"))),
+                        "",
                         true,
                         true)),
                 MAX_SAMPLES_PER_TYPE);
@@ -301,7 +317,9 @@ final class CollectionMaintenanceAnalyzer {
                     issueId(MaintenanceIssueType.DUPLICATE_BOOK, row.id()),
                     MaintenanceIssueType.DUPLICATE_BOOK,
                     row.id(),
-                    "Точний дублікат storage+LibID: " + safe(row.title()) + " [" + safe(row.libId()) + "]",
+                    "ui.collection.maintenance.issue.duplicate_book",
+                    List.of(safe(row.title()), safe(row.libId())),
+                    "",
                     true,
                     true));
         }
@@ -372,33 +390,78 @@ final class CollectionMaintenanceAnalyzer {
         }
 
         private Path resolvePath(Path root, String folder, String fileName) {
+            Path candidate = null;
             if (notBlank(fileName)) {
                 Path fp = Paths.get(fileName);
-                if (fp.isAbsolute()) return fp.toAbsolutePath().normalize();
+                if (fp.isAbsolute()) candidate = fp.toAbsolutePath().normalize();
             }
-            if (notBlank(folder)) {
+            if (candidate == null && notBlank(folder)) {
                 Path folderPath = Paths.get(folder);
                 if (folderPath.isAbsolute()) {
-                    return notBlank(fileName)
+                    candidate = notBlank(fileName)
                             ? folderPath.resolve(fileName).toAbsolutePath().normalize()
                             : folderPath.toAbsolutePath().normalize();
                 }
             }
-            Path result = root;
-            if (result == null) result = Paths.get(".").toAbsolutePath().normalize();
-            if (notBlank(folder)) result = result.resolve(folder);
-            if (notBlank(fileName)) result = result.resolve(fileName);
-            return result.toAbsolutePath().normalize();
+            if (candidate == null) {
+                Path result = root;
+                if (result == null) result = Paths.get(".").toAbsolutePath().normalize();
+                if (notBlank(folder)) result = result.resolve(folder);
+                if (notBlank(fileName)) result = result.resolve(fileName);
+                candidate = result.toAbsolutePath().normalize();
+            }
+            return constrainToCollectionRoot(candidate, root);
+        }
+
+        private Path constrainToCollectionRoot(Path candidate, Path root) {
+            if (candidate == null || root == null) return candidate;
+            Path normalizedRoot = root.toAbsolutePath().normalize();
+            Path normalizedCandidate = candidate.toAbsolutePath().normalize();
+            if (!normalizedCandidate.startsWith(normalizedRoot)) {
+                log.warn("Maintenance ignored a catalog path outside the collection root: root={}, path={}",
+                        normalizedRoot, normalizedCandidate);
+                return null;
+            }
+            try {
+                if (Files.exists(normalizedCandidate, LinkOption.NOFOLLOW_LINKS)) {
+                    if (Files.isSymbolicLink(normalizedCandidate)) {
+                        log.warn("Maintenance ignored a symbolic-link book resource: {}", normalizedCandidate);
+                        return null;
+                    }
+                    Path canonicalRoot = normalizedRoot.toRealPath();
+                    Path canonicalCandidate = normalizedCandidate.toRealPath();
+                    if (!canonicalCandidate.startsWith(canonicalRoot)) {
+                        log.warn("Maintenance ignored a filesystem escape from the collection root: root={}, path={}",
+                                canonicalRoot, canonicalCandidate);
+                        return null;
+                    }
+                }
+            } catch (IOException | SecurityException unsafePath) {
+                log.warn("Maintenance could not safely resolve book path {}", normalizedCandidate, unsafePath);
+                return null;
+            }
+            return normalizedCandidate;
+        }
+
+        private Path orphanScanRoot() {
+            Path root = collection.getRootFolder();
+            if (root == null) return null;
+            try {
+                Path canonicalRoot = root.toAbsolutePath().normalize().toRealPath();
+                return Files.isDirectory(canonicalRoot, LinkOption.NOFOLLOW_LINKS) ? canonicalRoot : null;
+            } catch (IOException | SecurityException unsafeRoot) {
+                log.warn("Cannot safely resolve collection root {} for orphan scan", root, unsafeRoot);
+                return null;
+            }
         }
 
         private boolean canScanOrphanFiles() {
-            Path root = collection.getRootFolder();
-            return root != null && Files.isDirectory(root);
+            return orphanScanRoot() != null;
         }
 
         private OrphanScan scanOrphanFiles(DiskBackedPathIndex referenced, String collectionId) {
-            Path root = collection.getRootFolder();
-            if (root == null || !Files.isDirectory(root) || referenced == null) return new OrphanScan(0, 0);
+            Path root = orphanScanRoot();
+            if (root == null || referenced == null) return new OrphanScan(0, 0);
 
             Set<String> excluded = new HashSet<>();
             excluded.add(pathKey(databasePath(collection)));
@@ -407,7 +470,8 @@ final class CollectionMaintenanceAnalyzer {
             long scanned = 0;
             long orphan = 0;
             try (Stream<Path> stream = Files.walk(root)) {
-                Iterator<Path> iterator = stream.filter(Files::isRegularFile).filter(this::isPhysicalLibraryFile).iterator();
+                Iterator<Path> iterator = stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
+                        .filter(this::isPhysicalLibraryFile).iterator();
                 while (iterator.hasNext()) {
                     Path file = iterator.next();
                     scanned++;
@@ -418,7 +482,9 @@ final class CollectionMaintenanceAnalyzer {
                                 issueId(MaintenanceIssueType.ORPHAN_FILE, key),
                                 MaintenanceIssueType.ORPHAN_FILE,
                                 file.toAbsolutePath().normalize().toString(),
-                                "Файл не має посилання в каталозі: " + file,
+                                "ui.collection.maintenance.issue.orphan_file",
+                                List.of(file.toString()),
+                                "",
                                 false,
                                 true));
                     }
@@ -455,7 +521,9 @@ final class CollectionMaintenanceAnalyzer {
         private static String pathKey(Path path) {
             String key;
             try {
-                key = Files.exists(path) ? path.toRealPath().toString() : path.toAbsolutePath().normalize().toString();
+                key = Files.exists(path, LinkOption.NOFOLLOW_LINKS)
+                        ? path.toRealPath(LinkOption.NOFOLLOW_LINKS).toString()
+                        : path.toAbsolutePath().normalize().toString();
             } catch (IOException e) {
                 key = path.toAbsolutePath().normalize().toString();
             }
@@ -468,7 +536,7 @@ final class CollectionMaintenanceAnalyzer {
 
     private static final class ArchiveValidator implements AutoCloseable {
         private final boolean keepOpen;
-        private final LinkedHashMap<Path, ZipFile> openArchives = new LinkedHashMap<>(8, 0.75f, true);
+        private final LinkedHashMap<Path, SafeZipArchive> openArchives = new LinkedHashMap<>(8, 0.75f, true);
 
         private ArchiveValidator() {
             this(true);
@@ -491,37 +559,46 @@ final class CollectionMaintenanceAnalyzer {
 
         private ArchiveValidation validate(Path archive, String requestedEntry) {
             try {
-                ZipFile zip = zip(archive);
-                String normalized = normalizeEntry(requestedEntry);
-                ZipEntry direct = zip.getEntry(requestedEntry);
-                if (direct == null && !normalized.equals(requestedEntry)) direct = zip.getEntry(normalized);
-                if (direct != null && !direct.isDirectory()) return ArchiveValidation.validResult();
-
-                // Preserve compatibility with archives that use a leading slash or backslashes,
-                // but only pay the linear scan cost for a direct lookup miss.
-                var entries = zip.entries();
-                while (entries.hasMoreElements()) {
-                    ZipEntry entry = entries.nextElement();
-                    if (!entry.isDirectory() && normalizeEntry(entry.getName()).equals(normalized)) {
-                        return ArchiveValidation.validResult();
+                if (!keepOpen) {
+                    Path safeArchive = SafeFilePublication.requireSafeRegularFile(archive, "Maintenance archive");
+                    try (SafeZipArchive opened = SafeZipArchive.openDetected(safeArchive, "Maintenance archive")) {
+                        return validate(opened.zip(), requestedEntry);
                     }
                 }
-                return ArchiveValidation.missing();
+                return validate(zip(archive).zip(), requestedEntry);
             } catch (Exception e) {
                 return ArchiveValidation.error(safeMessage(e));
             }
         }
 
-        private ZipFile zip(Path archive) throws IOException {
-            if (!keepOpen) return new ZipFile(archive.toFile());
-            ZipFile existing = openArchives.get(archive);
+        private ArchiveValidation validate(ZipFile zip, String requestedEntry) throws IOException {
+            String normalized = normalizeEntry(requestedEntry);
+            ZipArchiveEntry direct = zip.getEntry(requestedEntry);
+            if (direct == null && !normalized.equals(requestedEntry)) direct = zip.getEntry(normalized);
+            if (direct != null && !direct.isDirectory()) return ArchiveValidation.validResult();
+
+            // Preserve compatibility with archives that use a leading slash or backslashes,
+            // but only pay the linear scan cost for a direct lookup miss.
+            var entries = zip.getEntries();
+            while (entries.hasMoreElements()) {
+                ZipArchiveEntry entry = entries.nextElement();
+                if (!entry.isDirectory() && normalizeEntry(entry.getName()).equals(normalized)) {
+                    return ArchiveValidation.validResult();
+                }
+            }
+            return ArchiveValidation.missing();
+        }
+
+        private SafeZipArchive zip(Path archive) throws IOException {
+            Path safeArchive = SafeFilePublication.requireSafeRegularFile(archive, "Maintenance archive");
+            SafeZipArchive existing = openArchives.get(safeArchive);
             if (existing != null) return existing;
 
-            ZipFile created = new ZipFile(archive.toFile());
-            openArchives.put(archive, created);
+            SafeZipArchive created = SafeZipArchive.openDetected(safeArchive, "Maintenance archive");
+            openArchives.put(safeArchive, created);
             if (openArchives.size() > MAX_OPEN_ARCHIVES) {
-                Iterator<Map.Entry<Path, ZipFile>> iterator = openArchives.entrySet().iterator();
-                Map.Entry<Path, ZipFile> eldest = iterator.next();
+                Iterator<Map.Entry<Path, SafeZipArchive>> iterator = openArchives.entrySet().iterator();
+                Map.Entry<Path, SafeZipArchive> eldest = iterator.next();
                 iterator.remove();
                 eldest.getValue().close();
             }
@@ -530,9 +607,9 @@ final class CollectionMaintenanceAnalyzer {
 
         @Override
         public void close() {
-            for (ZipFile zip : openArchives.values()) {
+            for (SafeZipArchive opened : openArchives.values()) {
                 try {
-                    zip.close();
+                    opened.close();
                 } catch (IOException ignored) { }
             }
             openArchives.clear();

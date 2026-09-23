@@ -1,6 +1,9 @@
 package com.myhomelibcorp.ui.controller;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.statistics.StatisticsService;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.ui.util.UiAsyncRequestGuard;
 import com.myhomelibcorp.ui.util.UiAsyncRequestToken;
 import com.myhomelibcorp.ui.util.UiExecutor;
@@ -52,24 +55,27 @@ public class StatisticsController implements WorkspaceLifecycle {
 
     private void loadStatistics(boolean refresh) {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(loadGeneration, appState);
-        setState("Завантаження…");
-        backgroundExecutor.submit(() -> {
+        setState(UiText.text("ui.fxml.book_workspace.loading"));
+        LibraryOperationType operationType = refresh
+                ? LibraryOperationType.EDIT
+                : LibraryOperationType.QUERY;
+        backgroundExecutor.submitCollectionScoped(operationType, () -> {
             if (refresh) statisticsService.refreshStatistics();
             return statisticsService.getStatistics();
         }).whenComplete((stats, error) -> UiExecutor.runOnUiThread(() -> {
             if (!UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)) return;
             if (error != null || stats == null) {
                 log.error("Помилка завантаження статистики", error);
-                setState("Недоступно");
+                setState(UiText.text("ui.java.statistics_controller.949ac1f255"));
                 return;
             }
             if (stats.isStale() && !refresh) {
-                setState("Оновлення…");
+                setState(UiText.text("ui.java.statistics_controller.693d8c7846"));
                 loadStatistics(true);
                 return;
             }
             if (stats.isStale()) {
-                setState("Застаріла");
+                setState(UiText.text("ui.java.statistics_controller.631035dcc4"));
                 return;
             }
             booksCount.setText(formatNumber(stats.getBooksCount()));

@@ -1,11 +1,17 @@
 package com.myhomelibcorp.ui.details;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+
+import com.myhomelibcorp.shared.util.FileNameSupport;
+import com.myhomelibcorp.ui.service.UiText;
+import com.myhomelibcorp.ui.service.BookDisplayText;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.application.dto.GroupDto;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.book.SelectPreferredBookArtifactUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -134,7 +140,8 @@ public class BookDetailsController {
         }
 
         showLoading(selected);
-        backgroundExecutor.submit(() -> analysisService.analyze(selected.getId()))
+        backgroundExecutor.submitCollectionScoped(
+                        LibraryOperationType.QUERY, () -> analysisService.analyze(selected.getId()))
                 .thenAccept(session -> UiExecutor.runOnUiThread(() -> {
                     BookDto stillSelected = appState.getBookDetails().getCurrentBook();
                     boolean stale = !UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)
@@ -156,7 +163,7 @@ public class BookDetailsController {
                         if (UiAsyncRequestGuard.isCurrent(requestToken, loadGeneration, appState)
                                 && stillSelected != null && selected.getId().equals(stillSelected.getId())) {
                             updateBasicUI(selected);
-                            showWarning("Не вдалося завантажити повні відомості");
+                            showWarning(UiText.text("ui.java.book_details_controller.bbd9f92b75"));
                         }
                     });
                     return null;
@@ -167,33 +174,33 @@ public class BookDetailsController {
         BookDto book = session.book();
         DocumentInspection document = session.inspection();
 
-        titleLabel.setText(value(book.getTitle(), "Без назви"));
+        titleLabel.setText(value(book.getTitle(), UiText.text("ui.java.book_details_controller.6424359615")));
         renderAuthorLinks(book.getAuthors(), book.getAuthorsText());
         renderSeriesLink(book.getSeries());
         renderGenreLinks(book.getGenreItems(), book.getGenresText());
 
-        languageLabel.setText("Мова: " + value(firstNonBlank(book.getLanguage(), document.language()), "—"));
-        sourceLanguageLabel.setText("Мова оригіналу: " + value(document.sourceLanguage(), "—"));
-        yearLabel.setText("Рік: " + year(book, document));
+        languageLabel.setText(UiText.text("ui.java.book_details_controller.05fc3de293") + value(firstNonBlank(book.getLanguage(), document.language()), "—"));
+        sourceLanguageLabel.setText(UiText.text("ui.java.book_details_controller.96a6cff96e") + value(document.sourceLanguage(), "—"));
+        yearLabel.setText(UiText.text("ui.java.book_details_controller.71400a276c") + year(book, document));
 
         String publisher = firstNonBlank(book.getPublisher(), document.publisher());
-        publisherLink.setText("Видавництво: " + value(publisher, "—"));
+        publisherLink.setText(UiText.text("ui.java.book_details_controller.1ee47fe5c7") + value(publisher, "—"));
         publisherLink.setDisable(publisher.isBlank());
         publisherLink.setOnAction(event -> {
             if (!publisher.isBlank()) navigationService.navigateToPublisher(publisher);
         });
 
-        isbnLabel.setText("ISBN: " + value(firstNonBlank(book.getIsbn(), document.isbn()), "—"));
-        translatorsLabel.setText("Перекладачі: " + value(book.getTranslators(), "—"));
-        formatLabel.setText("Формат: " + value(document.format(), detectFormat(book)));
-        fileSizeLabel.setText("Розмір файла: " + value(book.getFileSizeFormatted(), "—"));
+        isbnLabel.setText(UiText.text("ui.common.isbn_prefix") + value(firstNonBlank(book.getIsbn(), document.isbn()), "—"));
+        translatorsLabel.setText(UiText.text("ui.java.book_details_controller.1c85c0f644") + value(book.getTranslators(), "—"));
+        formatLabel.setText(UiText.text("ui.java.book_details_controller.e7c843a4f1") + value(document.format(), detectFormat(book)));
+        fileSizeLabel.setText(UiText.text("ui.java.book_details_controller.cc8ba91da2") + value(BookDisplayText.fileSize(book.getFileSize()), "—"));
         renderArtifacts(book);
         textStatsLabel.setText(formatTextStats(document));
-        localStatusLabel.setText("Статус: " + book.getLocalStatus());
-        ratingLabel.setText("Оцінка: " + value(book.getRateStars(), "—"));
-        progressLabel.setText("Прочитано: " + book.getProgressFormatted());
-        libraryRateLabel.setText("Рейтинг каталогу: " + (book.getLibraryRate() > 0 ? book.getLibraryRate() : "—"));
-        sourceUrlLabel.setText("Джерело: " + value(book.getSourceUrl(), "—"));
+        localStatusLabel.setText(UiText.text("ui.java.book_details_controller.156979c7cc") + BookDisplayText.localStatus(book));
+        ratingLabel.setText(UiText.text("ui.java.book_details_controller.d9a3dd1c0a") + value(book.getRateStars(), "—"));
+        progressLabel.setText(UiText.text("ui.java.book_details_controller.807433eeb3") + book.getProgressFormatted());
+        libraryRateLabel.setText(UiText.text("ui.java.book_details_controller.e3f76633e7") + (book.getLibraryRate() > 0 ? book.getLibraryRate() : "—"));
+        sourceUrlLabel.setText(UiText.text("ui.java.book_details_controller.90ba2d4947") + value(book.getSourceUrl(), "—"));
 
         String annotation = firstNonBlank(book.getAnnotation(), document.annotation());
         annotationLabel.setText(annotation);
@@ -204,30 +211,30 @@ public class BookDetailsController {
         renderReviewLinks(book);
         renderToc(document.tocPreview());
         renderImages(document.images());
-        showWarning(document.warning());
+        showInspectionWarning(document.warning());
     }
 
     private void updateBasicUI(BookDto book) {
-        titleLabel.setText(value(book.getTitle(), "Без назви"));
+        titleLabel.setText(value(book.getTitle(), UiText.text("ui.java.book_details_controller.6424359615")));
         renderAuthorLinks(book.getAuthors(), book.getAuthorsText());
         renderSeriesLink(book.getSeries());
         renderGenreLinks(book.getGenreItems(), book.getGenresText());
-        languageLabel.setText("Мова: " + value(book.getLanguage(), "—"));
-        sourceLanguageLabel.setText("Мова оригіналу: —");
-        yearLabel.setText("Рік: " + (book.getYear() != null && book.getYear() > 0 ? book.getYear() : "—"));
-        publisherLink.setText("Видавництво: " + value(book.getPublisher(), "—"));
-        isbnLabel.setText("ISBN: " + value(book.getIsbn(), "—"));
-        translatorsLabel.setText("Перекладачі: " + value(book.getTranslators(), "—"));
+        languageLabel.setText(UiText.text("ui.java.book_details_controller.05fc3de293") + value(book.getLanguage(), "—"));
+        sourceLanguageLabel.setText(UiText.text("ui.fxml.details.original_language"));
+        yearLabel.setText(UiText.text("ui.java.book_details_controller.71400a276c") + (book.getYear() != null && book.getYear() > 0 ? book.getYear() : "—"));
+        publisherLink.setText(UiText.text("ui.java.book_details_controller.1ee47fe5c7") + value(book.getPublisher(), "—"));
+        isbnLabel.setText(UiText.text("ui.common.isbn_prefix") + value(book.getIsbn(), "—"));
+        translatorsLabel.setText(UiText.text("ui.java.book_details_controller.1c85c0f644") + value(book.getTranslators(), "—"));
         annotationLabel.setText(value(book.getAnnotation(), ""));
         reviewArea.setText(value(book.getReview(), ""));
-        formatLabel.setText("Формат: " + detectFormat(book));
-        fileSizeLabel.setText("Розмір файла: " + value(book.getFileSizeFormatted(), "—"));
+        formatLabel.setText(UiText.text("ui.java.book_details_controller.e7c843a4f1") + detectFormat(book));
+        fileSizeLabel.setText(UiText.text("ui.java.book_details_controller.cc8ba91da2") + value(BookDisplayText.fileSize(book.getFileSize()), "—"));
         renderArtifacts(book);
-        localStatusLabel.setText("Статус: " + book.getLocalStatus());
-        ratingLabel.setText("Оцінка: " + value(book.getRateStars(), "—"));
-        progressLabel.setText("Прочитано: " + book.getProgressFormatted());
-        libraryRateLabel.setText("Рейтинг каталогу: " + (book.getLibraryRate() > 0 ? book.getLibraryRate() : "—"));
-        sourceUrlLabel.setText("Джерело: " + value(book.getSourceUrl(), "—"));
+        localStatusLabel.setText(UiText.text("ui.java.book_details_controller.156979c7cc") + BookDisplayText.localStatus(book));
+        ratingLabel.setText(UiText.text("ui.java.book_details_controller.d9a3dd1c0a") + value(book.getRateStars(), "—"));
+        progressLabel.setText(UiText.text("ui.java.book_details_controller.807433eeb3") + book.getProgressFormatted());
+        libraryRateLabel.setText(UiText.text("ui.java.book_details_controller.e3f76633e7") + (book.getLibraryRate() > 0 ? book.getLibraryRate() : "—"));
+        sourceUrlLabel.setText(UiText.text("ui.java.book_details_controller.90ba2d4947") + value(book.getSourceUrl(), "—"));
         renderKeywordLinks(book.getKeywords());
         tocPreviewBox.getChildren().setAll(new Label("—"));
         renderImages(List.of());
@@ -235,8 +242,8 @@ public class BookDetailsController {
 
     private void showLoading(BookDto book) {
         clearUI();
-        titleLabel.setText(value(book.getTitle(), "Без назви"));
-        documentWarningLabel.setText("Завантаження відомостей…");
+        titleLabel.setText(value(book.getTitle(), UiText.text("ui.java.book_details_controller.6424359615")));
+        documentWarningLabel.setText(UiText.text("ui.java.book_details_controller.cffb3bd684"));
         documentWarningLabel.setVisible(true);
         documentWarningLabel.setManaged(true);
     }
@@ -265,7 +272,7 @@ public class BookDetailsController {
         if (artifacts.isEmpty()) {
             artifactBadgesPane.getChildren().add(new Label("—"));
             artifactComboBox.setDisable(true);
-            artifactLocationLabel.setText("Джерело/розташування: —");
+            artifactLocationLabel.setText(UiText.text("ui.fxml.details.source_location"));
             updateArtifactActions(null);
             return;
         }
@@ -290,7 +297,7 @@ public class BookDetailsController {
         boolean preferred = valid && artifact.getId() != null && artifact.getId().equals(book.getPreferredArtifactId());
         setPreferredArtifactButton.setDisable(!valid || preferred);
         openArtifactButton.setDisable(!valid || !isArtifactOpenable(artifact));
-        artifactLocationLabel.setText(valid ? "Джерело/розташування: " + artifactLocation(artifact) : "Джерело/розташування: —");
+        artifactLocationLabel.setText(valid ? UiText.text("ui.java.book_details_controller.71adf0102e") + artifactLocation(artifact) : UiText.text("ui.fxml.details.source_location"));
     }
 
     private static boolean isArtifactOpenable(BookArtifactDto artifact) {
@@ -298,7 +305,8 @@ public class BookDetailsController {
     }
 
     private String artifactBadgeText(BookDto book, BookArtifactDto artifact) {
-        String format = value(artifact.getFormat(), "FILE").toUpperCase(Locale.ROOT);
+        String rawFormat = value(artifact.getFormat(), "");
+        String format = rawFormat.isBlank() ? UiText.text("common.file") : rawFormat.toUpperCase(Locale.ROOT);
         String preferred = artifact.getId() != null && artifact.getId().equals(book.getPreferredArtifactId()) ? " ★" : "";
         String unavailable = isArtifactOpenable(artifact) ? "" : " · " + localizedArtifactState(artifact);
         return format + preferred + unavailable;
@@ -318,8 +326,9 @@ public class BookDetailsController {
     }
 
     private static String artifactLocation(BookArtifactDto artifact) {
-        String source = value(artifact.getSourceId(), "локальне джерело");
-        String entry = firstNonBlank(artifact.getArchiveEntry(), artifact.getFileName());
+        String source = value(artifact.getSourceId(), UiText.text("ui.java.book_details_controller.b47aa52233"));
+        String entry = FileNameSupport.decodeHashUnicodeEscapes(
+                firstNonBlank(artifact.getArchiveEntry(), artifact.getFileName()));
         String base = firstNonBlank(artifact.getCollectionRoot(), artifact.getFolder());
         String location = base.isBlank() ? entry : (entry.isBlank() ? base : base + "/" + entry);
         return source + " · " + value(location, "—");
@@ -330,12 +339,22 @@ public class BookDetailsController {
         BookDto book = currentBook();
         BookArtifactDto artifact = artifactComboBox.getValue();
         if (book == null || artifact == null || artifact.getId() == null || artifact.getId().isBlank()) return;
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         setPreferredArtifactButton.setDisable(true);
-        backgroundExecutor.submit(() -> selectPreferredBookArtifactUseCase.execute(BookId.fromString(book.getId()), artifact.getId()))
-                .thenAccept(refreshed -> UiExecutor.runOnUiThread(() -> appState.getBookDetails().setCurrentBook(refreshed)))
+        backgroundExecutor.submitCollectionScoped(LibraryOperationType.EDIT,
+                        () -> selectPreferredBookArtifactUseCase.execute(BookId.fromString(book.getId()), artifact.getId()))
+                .thenAccept(refreshed -> UiExecutor.runOnUiThread(() -> {
+                    if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) {
+                        appState.getBookDetails().setCurrentBook(refreshed);
+                    }
+                }))
                 .exceptionally(ex -> {
                     log.warn("Не вдалося змінити preferred artifact {}: {}", artifact.getId(), ex.getMessage());
-                    UiExecutor.runOnUiThread(() -> setPreferredArtifactButton.setDisable(false));
+                    UiExecutor.runOnUiThread(() -> {
+                        if (java.util.Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId())) {
+                            setPreferredArtifactButton.setDisable(false);
+                        }
+                    });
                     return null;
                 });
     }
@@ -358,7 +377,9 @@ public class BookDetailsController {
                 authorsLinksPane.getChildren().add(link);
             }
         }
-        if (authorsLinksPane.getChildren().isEmpty()) authorsLinksPane.getChildren().add(new Label(value(fallback, "—")));
+        if (authorsLinksPane.getChildren().isEmpty()) {
+            authorsLinksPane.getChildren().add(new Label(value(fallback, UiText.text("common.author.unknown"))));
+        }
     }
 
     private void renderSeriesLink(String series) {
@@ -427,9 +448,9 @@ public class BookDetailsController {
         reviewLinksPane.getChildren().clear();
         boolean rated = book.getRate() > 0;
         boolean reviewed = book.getReview() != null && !book.getReview().isBlank();
-        if (rated) addReviewLink("Оцінені", ReviewNavigationFilter.RATED);
-        if (reviewed) addReviewLink("З відгуками", ReviewNavigationFilter.REVIEWED);
-        if (rated && reviewed) addReviewLink("Оцінені з відгуками", ReviewNavigationFilter.RATED_AND_REVIEWED);
+        if (rated) addReviewLink(UiText.text("ui.java.book_details_controller.d5ccd0eb01"), ReviewNavigationFilter.RATED);
+        if (reviewed) addReviewLink(UiText.text("ui.java.book_details_controller.5228db4abf"), ReviewNavigationFilter.REVIEWED);
+        if (rated && reviewed) addReviewLink(UiText.text("ui.java.book_details_controller.d03ee34079"), ReviewNavigationFilter.RATED_AND_REVIEWED);
         if (reviewLinksPane.getChildren().isEmpty()) reviewLinksPane.getChildren().add(new Label("—"));
     }
 
@@ -455,10 +476,20 @@ public class BookDetailsController {
 
     private void renderImages(List<DocumentImageInfo> images) {
         int count = images == null ? 0 : images.size();
-        imagesCountLabel.setText("Зображення: " + count);
+        imagesCountLabel.setText(UiText.text("ui.java.book_details_controller.cd8f2113f9") + count);
         showImagesButton.setDisable(count == 0 || currentSession == null);
         showImagesButton.setVisible(count > 0);
         showImagesButton.setManaged(count > 0);
+    }
+
+
+    private void showInspectionWarning(String technicalWarning) {
+        if (technicalWarning == null || technicalWarning.isBlank()) {
+            showWarning("");
+            return;
+        }
+        log.warn("Book inspection technical warning: {}", technicalWarning);
+        showWarning(UiText.text("ui.book_details.inspection_warning"));
     }
 
     private void showWarning(String warning) {
@@ -474,7 +505,8 @@ public class BookDetailsController {
         if (session == null || session.inspection().images().isEmpty()) return;
         List<DocumentImageInfo> images = session.inspection().images();
         Dialog<Void> dialog = new Dialog<>();
-        dialog.setTitle("Зображення — " + session.book().getTitle());
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(UiText.text("ui.java.book_details_controller.20fb4dd69a") + session.book().getTitle());
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CLOSE);
         Pagination pagination = new Pagination(images.size(), 0);
         pagination.setPageFactory(index -> createImagePage(session, images.get(index)));
@@ -490,20 +522,20 @@ public class BookDetailsController {
         pane.getChildren().add(progress);
 
         if (info.length() > MAX_GALLERY_IMAGE_BYTES) {
-            pane.getChildren().setAll(new Label("Зображення занадто велике для попереднього перегляду"));
+            pane.getChildren().setAll(new Label(UiText.text("ui.java.book_details_controller.926a7b386a")));
             return pane;
         }
 
         backgroundExecutor.submit(() -> readImage(session, info.id()))
                 .thenAccept(bytes -> UiExecutor.runOnUiThread(() -> {
                     if (bytes == null || bytes.length == 0) {
-                        pane.getChildren().setAll(new Label("Не вдалося прочитати зображення"));
+                        pane.getChildren().setAll(new Label(UiText.text("ui.java.book_details_controller.fe9d1629d9")));
                         return;
                     }
                     // Використовуємо правильний конструктор Image(InputStream, double, double, boolean, boolean)
                     Image image = new Image(new ByteArrayInputStream(bytes), 720, 530, true, true);
                     if (image.isError()) {
-                        pane.getChildren().setAll(new Label("Непідтримуваний формат зображення"));
+                        pane.getChildren().setAll(new Label(UiText.text("ui.java.book_details_controller.6389664a84")));
                     } else {
                         ImageView view = new ImageView(image);
                         view.setPreserveRatio(true);
@@ -513,7 +545,7 @@ public class BookDetailsController {
                     }
                 }))
                 .exceptionally(ex -> {
-                    UiExecutor.runOnUiThread(() -> pane.getChildren().setAll(new Label("Помилка попереднього перегляду")));
+                    UiExecutor.runOnUiThread(() -> pane.getChildren().setAll(new Label(UiText.text("ui.java.book_details_controller.1322c85709"))));
                     return null;
                 });
         return pane;
@@ -548,17 +580,17 @@ public class BookDetailsController {
     private String groupDisplayName(String name) {
         if (name == null) return "";
         return switch (name.trim().toLowerCase(Locale.ROOT)) {
-            case "favorites" -> localizationService.tr("Обране");
-            case "to read" -> localizationService.tr("До читання");
+            case "favorites" -> localizationService.text("ui.text.favorites");
+            case "to read" -> localizationService.text("ui.text.to_read");
             default -> name;
         };
     }
 
     private static String formatTextStats(DocumentInspection document) {
-        if (document == null || !document.parsed()) return "Текст: —";
+        if (document == null || !document.parsed()) return UiText.text("ui.fxml.details.text");
         String chars = document.characterCount() > 0 ? String.format(Locale.ROOT, "%,d", document.characterCount()) : "—";
         String words = document.wordCount() > 0 ? String.format(Locale.ROOT, "%,d", document.wordCount()) : "—";
-        return "Текст: " + chars + " символів · " + words + " слів · " + document.chapterCount() + " розділів";
+        return UiText.text("ui.java.book_details_controller.12828ab7d4") + chars + UiText.text("ui.java.book_details_controller.94985830fe") + words + UiText.text("ui.java.book_details_controller.43c0584623") + document.chapterCount() + UiText.text("ui.java.book_details_controller.bd30a55e75");
     }
 
     private static String year(BookDto book, DocumentInspection document) {
@@ -584,38 +616,38 @@ public class BookDetailsController {
     }
 
     private void clearUI() {
-        titleLabel.setText("Назва");
+        titleLabel.setText(UiText.text("ui.bulkedit.field.title"));
         authorsLinksPane.getChildren().setAll(new Label("—"));
         seriesLinksPane.getChildren().setAll(new Label("—"));
         genresLinksPane.getChildren().setAll(new Label("—"));
-        languageLabel.setText("Мова: —");
-        sourceLanguageLabel.setText("Мова оригіналу: —");
-        yearLabel.setText("Рік: —");
-        publisherLink.setText("Видавництво: —");
+        languageLabel.setText(UiText.text("ui.fxml.details.language"));
+        sourceLanguageLabel.setText(UiText.text("ui.fxml.details.original_language"));
+        yearLabel.setText(UiText.text("ui.fxml.details.year"));
+        publisherLink.setText(UiText.text("ui.fxml.details.publisher"));
         publisherLink.setDisable(true);
-        isbnLabel.setText("ISBN: —");
-        translatorsLabel.setText("Перекладачі: —");
-        formatLabel.setText("Формат: —");
-        fileSizeLabel.setText("Розмір файла: —");
+        isbnLabel.setText(UiText.text("ui.common.isbn_prefix") + "—");
+        translatorsLabel.setText(UiText.text("ui.fxml.details.translators"));
+        formatLabel.setText(UiText.text("ui.fxml.details.format"));
+        fileSizeLabel.setText(UiText.text("ui.fxml.details.file_size"));
         artifactBadgesPane.getChildren().setAll(new Label("—"));
         artifactComboBox.getItems().clear();
         artifactComboBox.setDisable(true);
-        artifactLocationLabel.setText("Джерело/розташування: —");
+        artifactLocationLabel.setText(UiText.text("ui.fxml.details.source_location"));
         setPreferredArtifactButton.setDisable(true);
         openArtifactButton.setDisable(true);
-        textStatsLabel.setText("Текст: —");
-        localStatusLabel.setText("Статус: —");
-        ratingLabel.setText("Оцінка: —");
-        progressLabel.setText("Прочитано: —");
-        libraryRateLabel.setText("Рейтинг каталогу: —");
-        sourceUrlLabel.setText("Джерело: —");
+        textStatsLabel.setText(UiText.text("ui.fxml.details.text"));
+        localStatusLabel.setText(UiText.text("ui.fxml.details.status"));
+        ratingLabel.setText(UiText.text("ui.fxml.details.rating"));
+        progressLabel.setText(UiText.text("ui.fxml.details.read"));
+        libraryRateLabel.setText(UiText.text("ui.fxml.details.catalog_rating"));
+        sourceUrlLabel.setText(UiText.text("ui.fxml.details.source_da86429"));
         annotationLabel.setText("");
         reviewArea.clear();
         keywordsLinksPane.getChildren().setAll(new Label("—"));
         groupLinksPane.getChildren().setAll(new Label("—"));
         reviewLinksPane.getChildren().setAll(new Label("—"));
         tocPreviewBox.getChildren().setAll(new Label("—"));
-        imagesCountLabel.setText("Зображення: 0");
+        imagesCountLabel.setText(UiText.text("ui.fxml.details.images_0"));
         showImagesButton.setDisable(true);
         showImagesButton.setVisible(false);
         showImagesButton.setManaged(false);

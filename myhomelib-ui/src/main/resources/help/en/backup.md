@@ -1,12 +1,12 @@
 # Backup and transfer user data
 
-MyHomeLib Enterprise creates a consistent SQLite snapshot with `VACUUM INTO`; it does not copy a live WAL database as an ordinary file. A normal backup may contain the database, search index, covers and `user-data.json`.
+MyHomeLib creates a consistent SQLite snapshot with the SQLite Online Backup API, so a live WAL database is not copied as an ordinary file and no full `VACUUM INTO` rewrite is required. A normal backup contains the database snapshot and, when user-data export is enabled, the portable `user-data.json` file. Derived search indexes and caches are rebuilt separately when needed.
 
-`user-data.json` is a portable versioned manifest containing ratings, progress and reviews, bookmarks, highlights/notes with text anchors, reading history/statistics, groups/favorites, saved searches, unified filters, global Reader settings and per-book Reader overrides. Book-scoped rows are matched by stable `LibID` first; the internal book ID is only a same-catalogue fallback.
+`user-data.json` is a portable versioned manifest containing ratings, progress and reviews, bookmarks, highlights/notes with text anchors, reading history/statistics, groups/favorites, saved searches, unified filters, global Reader settings and per-book Reader overrides. Book-scoped records are matched by stable `LibID` first; the internal book ID is only a fallback within the same collection.
 
 Restore has two modes:
 
-- **Full restore** — staged SQLite replacement, collection reopen and sequential Flyway migrations; compatible with older database-only backups.
-- **User data only** — keeps current catalogue metadata/database and applies `user-data.json` by `LibID`. This is the preferred mode after refreshing or re-importing an INPX catalogue.
+- **Full restore** — staged SQLite replacement, collection reopen and sequential Flyway migrations; compatible with legacy database-only backups.
+- **User data only** — keeps the current catalogue database and book metadata, then applies `user-data.json` by `LibID`. This is the recommended mode after an update or INPX re-import.
 
-Stage 22 uses manifest schema version 2 and sequentially migrates the previous v1 format. Destructive collection maintenance creates a separate safety backup. Never replace an active database file manually while the application is running.
+The portable data format has its own schema version and sequential migration support for older supported manifests. Destructive collection maintenance creates a separate safety backup. Never replace active database files manually while the application is running.

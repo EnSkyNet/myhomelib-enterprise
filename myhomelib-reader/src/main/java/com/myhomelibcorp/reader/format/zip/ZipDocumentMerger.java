@@ -40,7 +40,7 @@ final class ZipDocumentMerger {
                 BookMetadata metadata = document.metadata();
                 String title = metadata != null && metadata.title() != null && !metadata.title().isBlank()
                         ? metadata.title().trim()
-                        : "Книга " + bookNumber;
+                        : "#" + bookNumber;
                 toc.addEntry(new TocEntry(title, baseOffset, 0,
                         shiftedToc(document.toc() == null ? List.of() : document.toc().entries(), baseOffset, 1)));
 
@@ -75,12 +75,12 @@ final class ZipDocumentMerger {
             BookMetadata metadata = new BookMetadata(
                     archive == null ? "archive" : archive.id(),
                     archiveTitle,
-                    authors.isEmpty() ? List.of("Невідомий автор") : List.copyOf(authors),
+                    List.copyOf(authors),
                     language,
                     null,
                     null,
                     List.copyOf(genres),
-                    "Архів містить " + documents.size() + " книг.",
+                    "",
                     "",
                     "",
                     null,
@@ -212,7 +212,7 @@ final class ZipDocumentMerger {
     }
 
     private static String archiveTitle(String name) {
-        if (!nonBlank(name)) return "Архів книг";
+        if (!nonBlank(name)) return "";
         String value = name.trim();
         String lower = value.toLowerCase(Locale.ROOT);
         for (String suffix : List.of(".fb2.zip", ".fb2zip", ".zip")) {

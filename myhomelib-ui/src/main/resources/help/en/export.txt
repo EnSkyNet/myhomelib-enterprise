@@ -1,6 +1,7 @@
-Export
+# Export
 
-Export selected books as supported source formats or convert FB2 with configured external converters to EPUB, MOBI, LRF or PDF. Filename and subfolder templates are supported. The current catalog list can be exported to HTML, TXT or RTF. The whole collection can be exported as INPX.
+Selected books can be exported in an already available local format or, when a compatible converter is available, converted through the shared `BookConverter` capability matrix. Built-in converters and optional Calibre `ebook-convert` are used only when they can accept the book's actual source format. For a book stored in an archive, MyHomeLib extracts that book's `archiveEntry` without manually unpacking the whole container. Filename and subfolder templates are supported.
 
-Personal user data can be exported/imported separately from the catalog and is linked by LibID.
-Obsidian/Joplin: one Markdown file per book; safe re-export replaces only a MyHomeLib-managed file for the same book.
+The catalog list can be exported to HTML, TXT or RTF, and the current collection can be exported as INPX. Personal data — ratings, progress, reviews, groups, bookmarks, Reader positions and history — is exported separately from the catalog and linked by `LibID` so it can survive INPX refreshes.
+
+Annotation Manager also provides an Obsidian/Joplin Markdown export: one file per book, configurable folder/file/body templates, optional YAML frontmatter and links back to MyHomeLib. By default, re-export replaces only the MyHomeLib-managed file for the same book; unrelated notes are not overwritten and numbered duplicate files are not created automatically.

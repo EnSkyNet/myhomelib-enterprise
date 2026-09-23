@@ -9,6 +9,9 @@ import java.security.NoSuchAlgorithmException;
 import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.HexFormat;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 
@@ -32,21 +35,27 @@ public final class WebDavCredentialStore {
     /** Saves an imported/shared key so another device can decrypt the same remote bundles. */
     public void save(WebDavSyncSecrets secrets) {
         Objects.requireNonNull(secrets, "secrets");
-        secretStore.write(prefix + "username", secrets.username());
-        secretStore.write(prefix + "password", secrets.password());
-        secretStore.write(prefix + "sync-key", secrets.syncKeyBase64());
-        if (secrets.rotationInProgress()) {
-            secretStore.write(prefix + "sync-key-previous", secrets.previousSyncKeyBase64());
-        } else {
-            secretStore.delete(prefix + "sync-key-previous");
+        Map<String, Optional<String>> before = snapshot();
+        try {
+            secretStore.write(key("username"), secrets.username());
+            secretStore.write(key("password"), secrets.password());
+            secretStore.write(key("sync-key"), secrets.syncKeyBase64());
+            if (secrets.rotationInProgress()) {
+                secretStore.write(key("sync-key-previous"), secrets.previousSyncKeyBase64());
+            } else {
+                secretStore.delete(key("sync-key-previous"));
+            }
+        } catch (RuntimeException | Error failure) {
+            restore(before, failure);
+            throw failure;
         }
     }
 
     public Optional<WebDavSyncSecrets> load() {
-        Optional<String> username = secretStore.read(prefix + "username");
-        Optional<String> password = secretStore.read(prefix + "password");
-        Optional<String> syncKey = secretStore.read(prefix + "sync-key");
-        Optional<String> previous = secretStore.read(prefix + "sync-key-previous");
+        Optional<String> username = secretStore.read(key("username"));
+        Optional<String> password = secretStore.read(key("password"));
+        Optional<String> syncKey = secretStore.read(key("sync-key"));
+        Optional<String> previous = secretStore.read(key("sync-key-previous"));
         if (username.isEmpty() && password.isEmpty() && syncKey.isEmpty() && previous.isEmpty()) return Optional.empty();
         if (username.isEmpty() || password.isEmpty() || syncKey.isEmpty()) {
             throw new IllegalStateException("Incomplete WebDAV secrets in " + secretStore.backendId());
@@ -76,11 +85,41 @@ public final class WebDavCredentialStore {
         return completed;
     }
 
+    /** Deletes all credentials atomically from the caller's point of view; partial native failures are compensated. */
     public void delete() {
-        secretStore.delete(prefix + "username");
-        secretStore.delete(prefix + "password");
-        secretStore.delete(prefix + "sync-key");
-        secretStore.delete(prefix + "sync-key-previous");
+        Map<String, Optional<String>> before = snapshot();
+        try {
+            for (String key : keys()) secretStore.delete(key);
+        } catch (RuntimeException | Error failure) {
+            restore(before, failure);
+            throw failure;
+        }
+    }
+
+    private Map<String, Optional<String>> snapshot() {
+        LinkedHashMap<String, Optional<String>> values = new LinkedHashMap<>();
+        for (String key : keys()) values.put(key, secretStore.read(key));
+        return Map.copyOf(values);
+    }
+
+    private void restore(Map<String, Optional<String>> before, Throwable originalFailure) {
+        for (String key : keys()) {
+            try {
+                Optional<String> previous = before.getOrDefault(key, Optional.empty());
+                if (previous.isPresent()) secretStore.write(key, previous.orElseThrow());
+                else secretStore.delete(key);
+            } catch (RuntimeException | Error rollbackFailure) {
+                originalFailure.addSuppressed(rollbackFailure);
+            }
+        }
+    }
+
+    private List<String> keys() {
+        return List.of(key("username"), key("password"), key("sync-key"), key("sync-key-previous"));
+    }
+
+    private String key(String suffix) {
+        return prefix + suffix;
     }
 
     private static String randomKey() {

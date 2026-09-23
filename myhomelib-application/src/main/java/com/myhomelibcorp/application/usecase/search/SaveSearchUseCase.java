@@ -2,14 +2,22 @@ package com.myhomelibcorp.application.usecase.search;
 
 import com.myhomelibcorp.application.port.out.repository.SavedSearchRepository;
 import com.myhomelibcorp.domain.model.search.SavedSearch;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
-@RequiredArgsConstructor
 @Slf4j
 public class SaveSearchUseCase {
 
     private final SavedSearchRepository savedSearchRepository;
+    private final SavedSearchOperationExecutor operations;
+
+    public SaveSearchUseCase(SavedSearchRepository savedSearchRepository) {
+        this(savedSearchRepository, null);
+    }
+
+    public SaveSearchUseCase(SavedSearchRepository savedSearchRepository, SavedSearchOperationExecutor operations) {
+        this.savedSearchRepository = savedSearchRepository;
+        this.operations = operations;
+    }
 
     public SavedSearch execute(String name, String query, String filters) {
         if (name == null || name.isBlank()) {
@@ -19,6 +27,11 @@ public class SaveSearchUseCase {
             throw new IllegalArgumentException("Запит не може бути порожнім");
         }
 
+        if (operations == null) return executeLocked(name, query, filters);
+        return operations.mutate(() -> executeLocked(name, query, filters));
+    }
+
+    private SavedSearch executeLocked(String name, String query, String filters) {
         // Перевіряємо, чи вже існує пошук з такою назвою
         savedSearchRepository.findByName(name).ifPresent(existing -> {
             savedSearchRepository.deleteById(existing.getId());

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.navigation;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
@@ -170,7 +172,7 @@ public class WorkspaceManager {
     }
 
     public void showSeriesWorkspace(SeriesId seriesId) {
-        if (seriesId == null) throw new IllegalArgumentException("SeriesId не може бути null");
+        if (seriesId == null) throw new IllegalArgumentException(UiText.text("ui.java.workspace_manager.be45e21c39"));
         Pane workspace = loadBookTableWorkspace("series");
         setWorkspace(workspace);
         push("series", seriesId.asString());
@@ -178,7 +180,7 @@ public class WorkspaceManager {
     }
 
     public void showGenreWorkspace(GenreId genreId) {
-        if (genreId == null) throw new IllegalArgumentException("GenreId не може бути null");
+        if (genreId == null) throw new IllegalArgumentException(UiText.text("ui.java.workspace_manager.4cec3ceb00"));
         Pane workspace = loadBookTableWorkspace("genre");
         setWorkspace(workspace);
         push("genre", genreId.asString());

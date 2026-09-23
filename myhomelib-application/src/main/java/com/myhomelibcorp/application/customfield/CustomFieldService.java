@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.customfield;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.customfield.CustomFieldRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.IndexRebuilder;
@@ -13,6 +15,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 @Service
 public class CustomFieldService {
@@ -20,13 +23,16 @@ public class CustomFieldService {
     private final BookQueryRepository books;
     private final SearchIndexer indexer;
     private final IndexRebuilder rebuilder;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public CustomFieldService(CustomFieldRepository repository, BookQueryRepository books,
-                              SearchIndexer indexer, IndexRebuilder rebuilder) {
+                              SearchIndexer indexer, IndexRebuilder rebuilder,
+                              LibraryOperationCoordinator operationCoordinator) {
         this.repository = repository;
         this.books = books;
         this.indexer = indexer;
         this.rebuilder = rebuilder;
+        this.operationCoordinator = operationCoordinator;
     }
 
 
@@ -60,34 +66,62 @@ public class CustomFieldService {
     public Map<Long, CustomFieldValue> values(BookId bookId) { return repository.findValues(bookId); }
 
     public CustomFieldDefinition saveDefinition(CustomFieldDefinition definition) {
-        CustomFieldDefinition saved = repository.saveDefinition(definition);
-        rebuilder.rebuildIndex();
-        return saved;
+        return withEditLease(() -> {
+            CustomFieldDefinition saved = repository.saveDefinition(definition);
+            rebuilder.rebuildIndex();
+            return saved;
+        });
     }
 
     public void deleteDefinition(long id, CustomFieldDeletePolicy policy) {
-        repository.deleteDefinition(id, policy);
-        rebuilder.rebuildIndex();
+        withEditLease(() -> {
+            repository.deleteDefinition(id, policy);
+            rebuilder.rebuildIndex();
+            return null;
+        });
     }
 
     public void setValue(BookId bookId, long definitionId, String value) {
-        repository.setValue(bookId, definitionId, value);
-        books.findById(bookId).ifPresent(indexer::indexBook);
+        withEditLease(() -> {
+            repository.setValue(bookId, definitionId, value);
+            books.findById(bookId).ifPresent(indexer::indexBook);
+            return null;
+        });
     }
 
     public void saveValues(BookId bookId, Map<Long, String> values) {
         if (bookId == null) throw new IllegalArgumentException("bookId is required");
-        Map<Long, String> safe = values == null ? Map.of() : values;
-        for (CustomFieldDefinition definition : repository.findDefinitions()) {
-            String value = safe.get(definition.id());
-            if (value == null || value.isBlank()) repository.clearValue(bookId, definition.id());
-            else repository.setValue(bookId, definition.id(), value);
-        }
-        books.findById(bookId).ifPresent(indexer::indexBook);
+        withEditLease(() -> {
+            Map<Long, String> safe = values == null ? Map.of() : values;
+            for (CustomFieldDefinition definition : repository.findDefinitions()) {
+                String value = safe.get(definition.id());
+                if (value == null || value.isBlank()) repository.clearValue(bookId, definition.id());
+                else repository.setValue(bookId, definition.id(), value);
+            }
+            books.findById(bookId).ifPresent(indexer::indexBook);
+            return null;
+        });
     }
 
     public void clearValue(BookId bookId, long definitionId) {
-        repository.clearValue(bookId, definitionId);
-        books.findById(bookId).ifPresent(indexer::indexBook);
+        withEditLease(() -> {
+            repository.clearValue(bookId, definitionId);
+            books.findById(bookId).ifPresent(indexer::indexBook);
+            return null;
+        });
+    }
+
+    private <T> T withEditLease(Supplier<T> action) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
     }
 }

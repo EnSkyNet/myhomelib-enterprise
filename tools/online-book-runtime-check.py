@@ -10,7 +10,7 @@ assert 'LegacyOnlineBookLocation.archivePath' in no
 assert 'effectiveBaseUrl(collection)' in ad
 assert 'collectionWithEffectiveUrl' in ad
 assert '.fb2.zip' in ut
-assert 'URL/ConnectionScript онлайн-колекції' in co
+assert 'ui.java.book_download_coordinator.bd6ccfa947' in co
 assert 'loadAuthoritative(book).thenCompose' in co
 assert 'ensureLocalForOpenAuthoritative' in co
 # The caller DTO must be updated before the completion callback can launch/open it.

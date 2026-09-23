@@ -124,7 +124,7 @@ def structural_checks(root: Path) -> list[Check]:
 
     # Keep the human runbook command aligned with the real PowerShell entrypoint.
     # The script parameter is -Repo; a stale -Repository instruction blocks the Windows handoff.
-    for rel in ("docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md", "docs/release/EXTERNAL-TEST-PLAN-ITERATION-80.md"):
+    for rel in ("docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md", "docs/release/EXTERNAL-TEST-PLAN.md"):
         command_doc = read(root, rel)
         need('-Repo "OWNER/REPO"' in command_doc, f"{rel}: Windows acceptance command must use -Repo")
         need('-Repository "OWNER/REPO"' not in command_doc, f"{rel}: stale -Repository parameter must not be documented")
@@ -179,7 +179,7 @@ def structural_checks(root: Path) -> list[Check]:
             "MHL-010 / 017 / 018 / 019 connected acceptance",
         )),
         require_tokens(root, "docs/release/CURRENT-VALIDATION.md", (
-            "Iteration 83", "1,049", "25/25", "MHL-010", "MHL-019", "OPEN_EXTERNAL",
+            "2026-09-18", "17/17", "1189", "3352", "MHL-010", "MHL-019", "OPEN_EXTERNAL",
         )),
         require_tokens(root, "docs/release/EXTERNAL-ACCEPTANCE-RUNBOOK.md", (
             "MHL-010", "MHL-011", "MHL-012", "MHL-017", "MHL-018", "MHL-019",

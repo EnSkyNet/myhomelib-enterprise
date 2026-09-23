@@ -40,24 +40,15 @@ public class CoverLocatorImpl implements CoverLocator {
 
         log.debug("locateCoverFile: folder='{}', fileName='{}', collectionRoot='{}'", folder, fileName, root);
 
-        if (folder == null || folder.isBlank()) {
-            if (fileName == null || fileName.isBlank()) {
-                return Optional.empty();
-            }
-            Path path = Paths.get(fileName);
-            log.debug("Шлях (без папки): {}", path);
-            return Optional.of(path);
+        if ((folder == null || folder.isBlank()) && (fileName == null || fileName.isBlank())) {
+            return Optional.empty();
         }
 
-        if (bookResourcePort.isArchive(folder)) {
-            Path archivePath = bookResourcePort.buildFilePath(root, null, folder);
-            log.debug("Шлях до архіву: {}", archivePath);
-            return Optional.of(archivePath);
-        }
-
-        Path resolvedPath = bookResourcePort.buildFilePath(root, folder, fileName);
+        Path resolvedPath = bookResourcePort.isArchive(folder)
+                ? bookResourcePort.buildFilePath(root, null, folder)
+                : bookResourcePort.buildFilePath(root, folder, fileName);
         log.debug("locateCoverFile: resolved path: {}", resolvedPath);
-        return Optional.of(resolvedPath);
+        return Optional.ofNullable(resolvedPath);
     }
 
     @Override

@@ -81,7 +81,8 @@ class CalibreCliBookConverterTest {
 
         assertEquals(3, args.get().size(), "No shell/template argument splitting is allowed");
         assertEquals(Path.of("/fake/ebook-convert").toString(), args.get().get(0));
-        assertEquals(target.toAbsolutePath().normalize().toString(), args.get().get(2));
+        assertTrue(Path.of(args.get().get(2)).startsWith(cwd.get()));
+        assertTrue(args.get().get(2).endsWith("output.epub"));
         assertTrue(cwd.get().endsWith("cache/calibre"));
         assertEquals("converted", Files.readString(target));
         assertFalse(Files.exists(Path.of(args.get().get(1))), "Temporary source must be deleted");
@@ -156,6 +157,38 @@ class CalibreCliBookConverterTest {
         converter.convert(new BookConversionContext(book("book.fb2"), "fb2", "epub",
                 new ByteArrayInputStream("real-run".getBytes()), target, () -> false, 1024));
         assertEquals("real-run", Files.readString(target));
+    }
+
+    @Test
+    void realProcessIsKilledWhenLiveOutputExceedsConfiguredLimitOnPosix() throws Exception {
+        org.junit.jupiter.api.Assumptions.assumeFalse(System.getProperty("os.name", "").toLowerCase().contains("win"));
+        previousDataDir = System.getProperty("myhomelib.dataDir");
+        System.setProperty("myhomelib.dataDir", temp.resolve("limit-run-data").toString());
+
+        Path fakeCalibre = temp.resolve("ebook-convert-limit");
+        Files.writeString(fakeCalibre, "#!/bin/sh\nwhile :; do printf '0123456789abcdef0123456789abcdef' >> \"$2\"; sleep 0.01; done\n");
+        assertTrue(fakeCalibre.toFile().setExecutable(true, true) || Files.isExecutable(fakeCalibre));
+
+        MemorySettings settings = new MemorySettings();
+        settings.put(CalibreCliBookConverter.EXECUTABLE_SETTING, fakeCalibre.toString());
+        settings.put(CalibreCliBookConverter.TIMEOUT_SETTING, "30");
+        CalibreCliBookConverter converter = new CalibreCliBookConverter(settings, "epub", ".epub");
+        Path target = temp.resolve("oversized.epub");
+
+        IllegalStateException error = assertThrows(IllegalStateException.class, () -> converter.convert(
+                new BookConversionContext(book("book.fb2"), "fb2", "epub",
+                        new ByteArrayInputStream("source".getBytes()), target, () -> false, 128)));
+        assertTrue(error.getMessage().contains("limit"), error::getMessage);
+        assertFalse(Files.exists(target));
+    }
+
+    @Test
+    void includesStandardPlatformInstallLocations() {
+        assertEquals(List.of(Path.of("C:/Program Files/Calibre2/ebook-convert.exe")),
+                CalibreCliBookConverter.standardInstallCandidates("Windows 11", Map.of("ProgramFiles", "C:/Program Files")));
+        assertEquals(List.of(Path.of("/Applications/calibre.app/Contents/MacOS/ebook-convert")),
+                CalibreCliBookConverter.standardInstallCandidates("Mac OS X", Map.of()));
+        assertTrue(CalibreCliBookConverter.standardInstallCandidates("Linux", Map.of()).isEmpty());
     }
 
     @Test

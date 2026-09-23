@@ -1,9 +1,11 @@
 package com.myhomelibcorp.ui.presenter;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.cover.CoverExtractor;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
 import com.myhomelibcorp.ui.util.UiExecutor;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 import javafx.scene.image.Image;
 import javafx.scene.image.ImageView;
@@ -23,10 +25,11 @@ public class CoverPresenter {
 
     private final CoverExtractor coverExtractor;
     private final UiBackgroundExecutor backgroundExecutor;
+    private final ApplicationState applicationState;
 
     private ImageView coverImageView;
-    private final AtomicReference<String> currentLoadingBookId = new AtomicReference<>();
-    private String lastLoadedBookId = null;
+    private final AtomicReference<CoverRequestKey> currentLoadingRequest = new AtomicReference<>();
+    private CoverRequestKey lastLoadedRequest = null;
 
     public void bind(ImageView coverImageView) {
         this.coverImageView = coverImageView;
@@ -39,10 +42,12 @@ public class CoverPresenter {
         }
 
         String bookId = book.getId();
-        log.debug("Завантаження обкладинки для книги: id={}, title={}", bookId, book.getTitle());
+        CoverRequestKey requestKey = new CoverRequestKey(applicationState.getCurrentLibraryCollectionId(), bookId);
+        log.debug("Завантаження обкладинки для книги: collectionId={}, id={}, title={}",
+                requestKey.collectionId(), bookId, book.getTitle());
 
-        // Якщо це та ж книга і обкладинка вже завантажена — пропускаємо
-        if (bookId.equals(lastLoadedBookId) && book.getCover() != null) {
+        // Не змішуємо результати однакових bookId з різних колекцій.
+        if (requestKey.equals(lastLoadedRequest) && book.getCover() != null) {
             return;
         }
 
@@ -60,26 +65,30 @@ public class CoverPresenter {
         dto.setCollectionRoot(book.getCollectionRoot());
         dto.setProgress(book.getProgress());
 
-        currentLoadingBookId.set(bookId);
-        lastLoadedBookId = null;
+        currentLoadingRequest.set(requestKey);
+        lastLoadedRequest = null;
 
-        backgroundExecutor.submit(() -> {
+        backgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
             log.debug("Виклик coverExtractor.extractCover для bookId={}", bookId);
             return coverExtractor.extractCover(dto);
         }).thenAccept(imageData -> UiExecutor.runOnUiThread(() -> {
-            if (coverImageView != null && bookId.equals(currentLoadingBookId.get())) {
+            boolean sameRequest = requestKey.equals(currentLoadingRequest.get());
+            boolean sameCollection = java.util.Objects.equals(
+                    requestKey.collectionId(), applicationState.getCurrentLibraryCollectionId());
+            if (coverImageView != null && sameRequest && sameCollection) {
                 if (imageData != null && imageData.length > 0) {
                     Image fxImage = new Image(new ByteArrayInputStream(imageData));
                     coverImageView.setImage(fxImage);
                     book.setCover(fxImage);
-                    lastLoadedBookId = bookId;
+                    lastLoadedRequest = requestKey;
                     log.debug("Обкладинку встановлено для {}", book.getTitle());
                 } else {
                     log.debug("Обкладинка відсутня для {}", book.getTitle());
                     coverImageView.setImage(null);
                 }
             } else {
-                log.debug("Пропускаємо застарілий запит для bookId={}, поточний={}", bookId, currentLoadingBookId.get());
+                log.debug("Пропускаємо застарілий запит обкладинки: requested={}, current={}, activeCollectionId={}",
+                        requestKey, currentLoadingRequest.get(), applicationState.getCurrentLibraryCollectionId());
             }
         })).exceptionally(ex -> {
             log.error("Помилка завантаження обкладинки для {}", book.getTitle(), ex);
@@ -88,12 +97,15 @@ public class CoverPresenter {
     }
 
     public void clearCover() {
-        currentLoadingBookId.set(null);
-        lastLoadedBookId = null;
+        currentLoadingRequest.set(null);
+        lastLoadedRequest = null;
         UiExecutor.runOnUiThread(() -> {
             if (coverImageView != null) {
                 coverImageView.setImage(null);
             }
         });
+    }
+
+    private record CoverRequestKey(String collectionId, String bookId) {
     }
 }

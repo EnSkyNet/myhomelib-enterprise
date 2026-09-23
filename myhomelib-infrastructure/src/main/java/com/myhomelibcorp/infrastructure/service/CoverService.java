@@ -30,7 +30,7 @@ public class CoverService implements CoverExtractor {
             return null;
         }
 
-        String cacheKey = book.getId() != null ? book.getId() : book.getTitle() + "_" + book.getFileName();
+        String cacheKey = cacheKey(book);
         byte[] cached = coverCache.get(cacheKey);
         if (cached != null) {
             log.trace("Обкладинка з кешу: {}", cacheKey);
@@ -51,4 +51,22 @@ public class CoverService implements CoverExtractor {
         if (imageData != null && imageData.length > 0) coverCache.put(cacheKey, imageData);
         return imageData;
     }
+    /**
+     * The underlying cache is also collection-scoped by the currently active collection, but a
+     * background request can outlive the UI state that created its DTO. Include the captured storage
+     * identity as a second namespace so such a stale task cannot poison the next collection's cache.
+     */
+    private static String cacheKey(BookDto book) {
+        return part(book.getCollectionRoot()) + '\u001f'
+                + part(book.getId()) + '\u001f'
+                + part(book.getFolder()) + '\u001f'
+                + part(book.getFileName()) + '\u001f'
+                + part(book.getArchiveEntry()) + '\u001f'
+                + part(book.getPreferredArtifactId());
+    }
+
+    private static String part(String value) {
+        return value == null ? "" : value.trim();
+    }
+
 }

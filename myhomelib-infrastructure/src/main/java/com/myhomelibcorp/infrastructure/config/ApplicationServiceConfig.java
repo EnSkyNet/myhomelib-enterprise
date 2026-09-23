@@ -25,6 +25,7 @@ import com.myhomelibcorp.application.usecase.search.DeleteSavedSearchUseCase;
 import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
 import com.myhomelibcorp.application.usecase.search.SaveSearchUseCase;
 import com.myhomelibcorp.application.usecase.search.SaveSmartCollectionUseCase;
+import com.myhomelibcorp.application.usecase.search.SavedSearchOperationExecutor;
 import com.myhomelibcorp.application.usecase.search.LoadSmartCollectionDefinitionUseCase;
 import com.myhomelibcorp.application.usecase.search.BuildSmartCollectionSearchRequestUseCase;
 import com.myhomelibcorp.application.usecase.search.SetSavedSearchPinnedUseCase;
@@ -32,9 +33,11 @@ import com.myhomelibcorp.application.usecase.search.MarkSavedSearchUsedUseCase;
 import com.myhomelibcorp.application.usecase.sync.SyncFolderUseCase;
 import com.myhomelibcorp.application.usecase.author.UpdateAuthorDescriptionUseCase;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Configuration
 public class ApplicationServiceConfig {
@@ -66,12 +69,14 @@ public class ApplicationServiceConfig {
     public SwitchCollectionUseCase switchCollectionUseCase(
             CollectionRepository collectionRepository,
             CollectionLifecycleService collectionLifecycleService,
-            LibraryOperationCoordinator operationCoordinator
+            LibraryOperationCoordinator operationCoordinator,
+            com.myhomelibcorp.application.content.indexing.ContentIndexingQueueService contentIndexingQueue
     ) {
         return new SwitchCollectionUseCase(
                 collectionRepository,
                 collectionLifecycleService,
-                operationCoordinator
+                operationCoordinator,
+                contentIndexingQueue
         );
     }
 
@@ -82,7 +87,8 @@ public class ApplicationServiceConfig {
             com.myhomelibcorp.application.usecase.imports.ImportFileUseCase importFileUseCase,
             com.myhomelibcorp.application.port.out.catalog.CollectionInfoPort collectionInfoPort,
             LibraryOperationCoordinator operationCoordinator,
-            com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager storageManager
+            com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager storageManager,
+            com.myhomelibcorp.application.port.out.infrastructure.CollectionDatabaseOwnershipPort databaseOwnership
     ) {
         return new CreateCollectionUseCase(
                 collectionRepository,
@@ -90,20 +96,24 @@ public class ApplicationServiceConfig {
                 importFileUseCase,
                 collectionInfoPort,
                 operationCoordinator,
-                storageManager
+                storageManager,
+                databaseOwnership
         );
     }
 
     @Bean
     public UpdateCollectionPropertiesUseCase updateCollectionPropertiesUseCase(
             CollectionRepository repository,
-            CollectionLifecyclePort lifecyclePort) {
-        return new UpdateCollectionPropertiesUseCase(repository, lifecyclePort);
+            CollectionLifecyclePort lifecyclePort,
+            LibraryOperationCoordinator operationCoordinator) {
+        return new UpdateCollectionPropertiesUseCase(repository, lifecyclePort, operationCoordinator);
     }
 
     @Bean
-    public AttachHlc2CollectionUseCase attachHlc2CollectionUseCase(LegacyCollectionAttachPort port) {
-        return new AttachHlc2CollectionUseCase(port);
+    public AttachHlc2CollectionUseCase attachHlc2CollectionUseCase(
+            LegacyCollectionAttachPort port,
+            LibraryOperationCoordinator operationCoordinator) {
+        return new AttachHlc2CollectionUseCase(port, operationCoordinator);
     }
 
     @Bean
@@ -117,10 +127,11 @@ public class ApplicationServiceConfig {
             StatisticsRepository statisticsRepository,
             com.myhomelibcorp.application.port.out.backup.CollectionBackupPort collectionBackupPort,
             LibraryOperationCoordinator operationCoordinator,
+            com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService contentIndexScheduling,
             @Value("${app.import.change-tracking-limit:50000}") int changeTrackingLimit) {
         return new UpdateCollectionFromNetworkUseCase(
                 downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
-                collectionBackupPort, changeTrackingLimit, operationCoordinator);
+                collectionBackupPort, changeTrackingLimit, operationCoordinator, contentIndexScheduling);
     }
 
     @Bean
@@ -130,49 +141,61 @@ public class ApplicationServiceConfig {
     }
 
     @Bean
-    public UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase(AuthorRepository authors) {
-        return new UpdateAuthorDescriptionUseCase(authors);
+    public UpdateAuthorDescriptionUseCase updateAuthorDescriptionUseCase(
+            AuthorRepository authors,
+            LibraryOperationCoordinator operationCoordinator,
+            CollectionLifecyclePort lifecycle,
+            @Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate) {
+        return new UpdateAuthorDescriptionUseCase(authors, operationCoordinator, lifecycle, transactionTemplate);
     }
 
     @Bean
-    public SaveSearchUseCase saveSearchUseCase(SavedSearchRepository savedSearchRepository) {
-        return new SaveSearchUseCase(savedSearchRepository);
+    public SaveSearchUseCase saveSearchUseCase(SavedSearchRepository savedSearchRepository,
+                                                SavedSearchOperationExecutor savedSearchOperations) {
+        return new SaveSearchUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
-    public LoadSavedSearchesUseCase loadSavedSearchesUseCase(SavedSearchRepository savedSearchRepository) {
-        return new LoadSavedSearchesUseCase(savedSearchRepository);
+    public LoadSavedSearchesUseCase loadSavedSearchesUseCase(SavedSearchRepository savedSearchRepository,
+                                                              SavedSearchOperationExecutor savedSearchOperations) {
+        return new LoadSavedSearchesUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
-    public DeleteSavedSearchUseCase deleteSavedSearchUseCase(SavedSearchRepository savedSearchRepository) {
-        return new DeleteSavedSearchUseCase(savedSearchRepository);
+    public DeleteSavedSearchUseCase deleteSavedSearchUseCase(SavedSearchRepository savedSearchRepository,
+                                                              SavedSearchOperationExecutor savedSearchOperations) {
+        return new DeleteSavedSearchUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
-    public SaveSmartCollectionUseCase saveSmartCollectionUseCase(SavedSearchRepository savedSearchRepository) {
-        return new SaveSmartCollectionUseCase(savedSearchRepository);
+    public SaveSmartCollectionUseCase saveSmartCollectionUseCase(SavedSearchRepository savedSearchRepository,
+                                                                  SavedSearchOperationExecutor savedSearchOperations) {
+        return new SaveSmartCollectionUseCase(savedSearchRepository, savedSearchOperations);
     }
 
 
     @Bean
-    public LoadSmartCollectionDefinitionUseCase loadSmartCollectionDefinitionUseCase(SavedSearchRepository savedSearchRepository) {
-        return new LoadSmartCollectionDefinitionUseCase(savedSearchRepository);
+    public LoadSmartCollectionDefinitionUseCase loadSmartCollectionDefinitionUseCase(
+            SavedSearchRepository savedSearchRepository, SavedSearchOperationExecutor savedSearchOperations) {
+        return new LoadSmartCollectionDefinitionUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
-    public BuildSmartCollectionSearchRequestUseCase buildSmartCollectionSearchRequestUseCase(SavedSearchRepository savedSearchRepository) {
-        return new BuildSmartCollectionSearchRequestUseCase(savedSearchRepository);
+    public BuildSmartCollectionSearchRequestUseCase buildSmartCollectionSearchRequestUseCase(
+            SavedSearchRepository savedSearchRepository, SavedSearchOperationExecutor savedSearchOperations) {
+        return new BuildSmartCollectionSearchRequestUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
-    public SetSavedSearchPinnedUseCase setSavedSearchPinnedUseCase(SavedSearchRepository savedSearchRepository) {
-        return new SetSavedSearchPinnedUseCase(savedSearchRepository);
+    public SetSavedSearchPinnedUseCase setSavedSearchPinnedUseCase(SavedSearchRepository savedSearchRepository,
+                                                                    SavedSearchOperationExecutor savedSearchOperations) {
+        return new SetSavedSearchPinnedUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
-    public MarkSavedSearchUsedUseCase markSavedSearchUsedUseCase(SavedSearchRepository savedSearchRepository) {
-        return new MarkSavedSearchUsedUseCase(savedSearchRepository);
+    public MarkSavedSearchUsedUseCase markSavedSearchUsedUseCase(SavedSearchRepository savedSearchRepository,
+                                                                  SavedSearchOperationExecutor savedSearchOperations) {
+        return new MarkSavedSearchUsedUseCase(savedSearchRepository, savedSearchOperations);
     }
 
     @Bean
@@ -183,8 +206,10 @@ public class ApplicationServiceConfig {
             CollectionLifecycleService lifecycle,
             com.myhomelibcorp.application.imports.saver.BookSaver bookSaver,
             BookUserStateTransferPort userStateTransfer,
-            com.myhomelibcorp.application.search.SearchIndexSynchronizer searchIndexSynchronizer) {
+            com.myhomelibcorp.application.search.SearchIndexSynchronizer searchIndexSynchronizer,
+            com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService contentIndexScheduling) {
         return new CopyBooksBetweenCollectionsUseCase(
-                books, collections, resources, lifecycle, bookSaver, userStateTransfer, searchIndexSynchronizer);
+                books, collections, resources, lifecycle, bookSaver, userStateTransfer, searchIndexSynchronizer,
+                contentIndexScheduling);
     }
 }

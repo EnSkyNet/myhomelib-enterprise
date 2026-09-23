@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.metadata;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.metadata.merge.MetadataFieldComparison;
 import com.myhomelibcorp.application.metadata.merge.MetadataMergeField;
 import com.myhomelibcorp.application.metadata.merge.MetadataMergePreview;
@@ -29,13 +31,13 @@ public class MetadataMergePresenter {
 
     private static String label(MetadataMergeField field) {
         return switch (field) {
-            case TITLE -> "Назва";
-            case AUTHORS -> "Автори";
+            case TITLE -> UiText.text("ui.bulkedit.field.title");
+            case AUTHORS -> UiText.text("ui.fxml.details.authors");
             case ISBN -> "ISBN";
-            case YEAR -> "Рік";
-            case PUBLISHER -> "Видавець";
-            case LANGUAGE -> "Мова";
-            case ANNOTATION -> "Анотація";
+            case YEAR -> UiText.text("ui.bulkedit.field.year");
+            case PUBLISHER -> UiText.text("ui.smart_collection.field.publisher");
+            case LANGUAGE -> UiText.text("ui.bulkedit.field.language");
+            case ANNOTATION -> UiText.text("ui.bulkedit.field.annotation");
         };
     }
 

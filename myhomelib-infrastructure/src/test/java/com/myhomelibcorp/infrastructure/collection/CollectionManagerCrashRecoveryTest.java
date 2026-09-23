@@ -16,6 +16,7 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.io.IOException;
 import java.sql.DriverManager;
 import java.util.List;
 
@@ -96,6 +97,90 @@ class CollectionManagerCrashRecoveryTest {
 
 
     @Test
+    void refusesSymlinkedRestorePendingMarkerWithoutTouchingLiveDatabase() throws Exception {
+        Path target = temp.resolve("restore-symlink-marker.db");
+        createDatabase(target, "live-safe");
+        Path foreign = temp.resolve("foreign-marker.txt");
+        Files.writeString(foreign, "FOREIGN");
+        Path marker = RestoreRecoveryFiles.pending(target);
+        try {
+            Files.createSymbolicLink(marker, foreign);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        org.junit.jupiter.api.Assertions.assertThrows(IOException.class,
+                () -> CollectionCrashRecovery.recoverBeforeOpen(collection("restore-symlink", target), target));
+
+        assertThat(readState(target)).isEqualTo("live-safe");
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+        assertThat(Files.isSymbolicLink(marker)).isTrue();
+    }
+
+    @Test
+    void refusesSymlinkedCatalogRecoveryMarkerWithoutTouchingLiveDatabase() throws Exception {
+        Path target = temp.resolve("catalog-symlink-marker.db");
+        createDatabase(target, "live-safe");
+        Path marker = CatalogUpdateRecoveryFiles.marker("catalog-symlink");
+        Files.createDirectories(marker.getParent());
+        Path foreign = temp.resolve("foreign-catalog-marker.txt");
+        Files.writeString(foreign, "FOREIGN");
+        try {
+            Files.createSymbolicLink(marker, foreign);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        org.junit.jupiter.api.Assertions.assertThrows(IOException.class,
+                () -> CollectionCrashRecovery.recoverBeforeOpen(collection("catalog-symlink", target), target));
+
+        assertThat(readState(target)).isEqualTo("live-safe");
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+        assertThat(Files.isSymbolicLink(marker)).isTrue();
+    }
+
+
+    @Test
+    void refusesDatabaseUnderSymlinkedParentBeforeOpeningIt() throws Exception {
+        Path outside = Files.createDirectories(temp.resolve("outside-db-dir"));
+        Path linkedParent = temp.resolve("linked-db-dir");
+        try {
+            Files.createSymbolicLink(linkedParent, outside);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        Path targetThroughLink = linkedParent.resolve("library.db");
+        manager = newManager();
+
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> manager.switchToCollection(collection("symlink-parent", targetThroughLink)));
+
+        assertThat(outside.resolve("library.db")).doesNotExist();
+        assertThat(manager.hasActiveCollection()).isFalse();
+    }
+
+    @Test
+    void refusesSymlinkDatabaseLeafWithoutOpeningForeignDatabase() throws Exception {
+        Path foreign = temp.resolve("foreign.db");
+        createDatabase(foreign, "foreign");
+        Path link = temp.resolve("linked.db");
+        try {
+            Files.createSymbolicLink(link, foreign);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        manager = newManager();
+        org.junit.jupiter.api.Assertions.assertThrows(RuntimeException.class,
+                () -> manager.switchToCollection(collection("symlink-leaf", link)));
+
+        assertThat(readState(foreign)).isEqualTo("foreign");
+        assertThat(Files.isSymbolicLink(link)).isTrue();
+        assertThat(manager.hasActiveCollection()).isFalse();
+    }
+
+    @Test
     void reconcilesInterruptedLocalCopyDeletionBeforeCollectionDatabaseIsOpened() throws Exception {
         BookId bookId = BookId.generate();
         Path target = temp.resolve("local-copy-crash.db");
@@ -166,6 +251,15 @@ class CollectionManagerCrashRecoveryTest {
                 prepared.setInt(2, local ? 1 : 0);
                 prepared.executeUpdate();
             }
+        }
+    }
+
+
+    private static String readState(Path database) throws Exception {
+        try (var connection = DriverManager.getConnection("jdbc:sqlite:" + database.toAbsolutePath());
+             var statement = connection.createStatement();
+             var result = statement.executeQuery("SELECT value FROM recovery_state")) {
+            return result.next() ? result.getString(1) : null;
         }
     }
 

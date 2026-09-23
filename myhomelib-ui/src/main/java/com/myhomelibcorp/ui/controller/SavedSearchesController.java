@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.usecase.search.DeleteSavedSearchUseCase;
 import com.myhomelibcorp.application.usecase.search.LoadSavedSearchesUseCase;
 import com.myhomelibcorp.application.usecase.search.MarkSavedSearchUsedUseCase;
@@ -112,7 +113,7 @@ public class SavedSearchesController {
             dialogService.showInfo(i18n.text("common.success"), i18n.format("ui.saved_search.saved", name));
         } catch (Exception e) {
             log.error("Cannot save search", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.save_error", e.getMessage()));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.save_error", UiExceptionSupport.message(e)));
         }
     }
 
@@ -138,7 +139,7 @@ public class SavedSearchesController {
             stage.show();
         } catch (Exception e) {
             log.error("Cannot open smart collection dialog", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.smart_collection.open_error", e.getMessage()));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.smart_collection.open_error", UiExceptionSupport.message(e)));
         }
     }
 
@@ -151,7 +152,7 @@ public class SavedSearchesController {
             loadSearches();
         } catch (Exception e) {
             log.error("Cannot activate saved search", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.load_error", e.getMessage()));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.load_error", UiExceptionSupport.message(e)));
         }
     }
 
@@ -163,7 +164,7 @@ public class SavedSearchesController {
             loadSearches();
         } catch (Exception e) {
             log.error("Cannot change saved-search pin", e);
-            dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.pin_error", e.getMessage()));
+            dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.pin_error", UiExceptionSupport.message(e)));
         }
     }
 
@@ -180,7 +181,7 @@ public class SavedSearchesController {
                 loadSearches();
             } catch (Exception e) {
                 log.error("Cannot delete saved search", e);
-                dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.delete_error", e.getMessage()));
+                dialogService.showError(i18n.text("common.error"), i18n.format("ui.saved_search.delete_error", UiExceptionSupport.message(e)));
             }
         }
     }

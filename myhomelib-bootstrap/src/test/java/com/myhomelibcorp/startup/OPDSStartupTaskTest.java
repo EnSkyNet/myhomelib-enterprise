@@ -27,7 +27,7 @@ class OPDSStartupTaskTest {
         OpdsServerControl server = mock(OpdsServerControl.class);
         OpdsServerSettings enabled = new OpdsServerSettings("127.0.0.1", 8088, false, "", "", true);
         when(settings.load()).thenReturn(enabled);
-        when(server.start(enabled)).thenReturn(new OpdsServerStatus(false, "127.0.0.1", 8088, "", false, "port busy"));
+        when(server.start(enabled)).thenReturn(new OpdsServerStatus(false, "127.0.0.1", 8088, "", false, "ui.opds.status.start_failed", "port busy"));
         OPDSStartupTask task = new OPDSStartupTask(settings, server);
 
         assertThatThrownBy(() -> task.execute(new StartupContext(StartupTestFixtures.collection("c1"))))

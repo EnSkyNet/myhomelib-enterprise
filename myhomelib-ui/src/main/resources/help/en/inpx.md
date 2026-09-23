@@ -1,5 +1,5 @@
 # INPX and online libraries
 
-INPX import processes all .inp parts in the package and respects structure.info and archives.info. LibID is preserved so catalog refresh does not discard personal ratings, progress, reviews, groups and bookmarks.
+MyHomeLib processes every `.inp` part inside an INPX package and respects `structure.info` and `archives.info`. A book record keeps the physical archive/file together with its internal `archiveEntry`. Stable `LibID` is preserved during catalog refresh, so personal ratings, progress, reviews, groups and bookmarks should not be discarded by a normal re-import.
 
-Online collections can define a base URL or templates containing {archive}, {file} and {entry}. Missing archives/books are downloaded to the collection root. Downloads use .part files and can be cancelled; incomplete files are removed.
+An online collection can define a base URL or templates containing `{archive}`, `{file}` and `{entry}`. If the required book or archive is not local, MyHomeLib downloads the resource into the collection before opening it. Downloads use an intermediate `.part` file; cancellation or failure must not leave an incomplete file behind.

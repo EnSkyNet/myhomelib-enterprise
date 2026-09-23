@@ -18,6 +18,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class LocalPhraseTranslationProviderTest {
     @TempDir Path tempDir;
@@ -56,6 +57,28 @@ class LocalPhraseTranslationProviderTest {
                 .isInstanceOf(TextProviderException.class)
                 .satisfies(error -> assertThat(((TextProviderException) error).kind())
                         .isEqualTo(TextProviderErrorKind.NOT_FOUND));
+    }
+
+    @Test
+    void rejectsCustomTranslationFileReachedThroughSymlinkedParent() throws Exception {
+        Path outside = Files.createDirectories(tempDir.resolve("outside-translations"));
+        Path phrases = outside.resolve("translations.tsv");
+        Files.writeString(phrases, "uk\ten\tтест\ttest\n", StandardCharsets.UTF_8);
+        Path alias = tempDir.resolve("translation-alias");
+        try {
+            Files.createSymbolicLink(alias, outside);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException e) {
+            assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+        MapSettings settings = new MapSettings();
+        settings.put("translation.local.path", alias.resolve("translations.tsv").toString());
+        LocalPhraseTranslationProvider provider = new LocalPhraseTranslationProvider(settings);
+
+        assertThatThrownBy(() -> provider.translate(
+                TranslationQuery.autoDetect("тест", "en"),
+                TextProviderRequestContext.create(Duration.ofSeconds(1), new AtomicBoolean(false))))
+                .isInstanceOf(TextProviderException.class)
+                .hasMessageContaining("Local translations cannot be read");
     }
 
     private static final class MapSettings implements ApplicationSettingsPort {

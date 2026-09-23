@@ -11,7 +11,7 @@ public record CatalogUpdateAuthorGroup(
 ) {
     public CatalogUpdateAuthorGroup {
         authorId = authorId == null ? "" : authorId;
-        authorName = authorName == null || authorName.isBlank() ? "Без автора" : authorName;
+        authorName = authorName == null ? "" : authorName;
         newBooks = newBooks == null ? List.of() : List.copyOf(newBooks);
         updatedBooks = updatedBooks == null ? List.of() : List.copyOf(updatedBooks);
     }

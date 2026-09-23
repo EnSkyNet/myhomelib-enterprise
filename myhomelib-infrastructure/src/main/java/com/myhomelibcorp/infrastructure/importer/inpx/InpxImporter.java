@@ -12,6 +12,7 @@ import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
 import com.myhomelibcorp.domain.service.LanguageResolver;
+import com.myhomelibcorp.infrastructure.importengine.InpxDateSupport;
 import com.myhomelibcorp.infrastructure.importengine.InpxReader;
 import com.myhomelibcorp.infrastructure.importengine.InpxRecord;
 import com.myhomelibcorp.shared.exception.BusinessException;
@@ -22,7 +23,6 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
@@ -136,7 +136,7 @@ public class InpxImporter implements BookImporterPort {
         List<Author> authors = resolveAuthors(record.field("AUTHOR"));
         List<Genre> genres = resolveGenres(record.field("GENRE"));
 
-        String title = defaultIfBlank(record.field("TITLE"), "Без назви");
+        String title = firstNonBlank(record.field("TITLE"), record.field("FILE"), record.field("LIBID"));
         String series = record.field("SERIES");
         int sequenceNumber = parseSequence(record.field("SERNO"));
         long fileSize = parseNonNegativeLong(record.field("SIZE"));
@@ -164,7 +164,7 @@ public class InpxImporter implements BookImporterPort {
                 .sequenceNumber(sequenceNumber)
                 .metadata(metadata)
                 .file(bookFile)
-                .updateDate(LocalDateTime.now())
+                .updateDate(InpxDateSupport.parseCatalogDate(record.field("DATE")))
                 .build();
     }
 
@@ -181,7 +181,6 @@ public class InpxImporter implements BookImporterPort {
                 authors.add(resolveAuthor(firstName, middleName, lastName));
             }
         }
-        if (authors.isEmpty()) authors.add(resolveAuthor("", "", "Невідомий Автор"));
         return List.copyOf(authors);
     }
 
@@ -249,6 +248,13 @@ public class InpxImporter implements BookImporterPort {
 
     private static String defaultIfBlank(String value, String fallback) {
         return value == null || value.isBlank() ? fallback : value.trim();
+    }
+
+    private static String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) return value.trim();
+        }
+        return "unknown";
     }
 
     private static void closeRecords(Iterator<InpxRecord> records) {

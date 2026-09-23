@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.event;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.event.CollectionSourceUpdateAvailableEvent;
 import com.myhomelibcorp.ui.util.UiExecutor;
 import com.myhomelibcorp.ui.viewmodel.ApplicationState;
@@ -24,7 +26,7 @@ public class CollectionSourceUpdateEventHandler {
             String collection = current != null && event.collectionId().equals(current.getId())
                     ? current.getName() : event.collectionId();
             appState.getStatusBar().setStatusText(
-                    "Доступне оновлення колекції «" + collection + "»: " + event.sourceFile().getFileName());
+                    UiText.text("ui.java.collection_source_update_event_handler.20e83ffe1f") + collection + "»: " + event.sourceFile().getFileName());
         });
     }
 }

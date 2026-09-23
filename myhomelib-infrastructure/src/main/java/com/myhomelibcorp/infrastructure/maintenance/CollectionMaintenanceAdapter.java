@@ -3,6 +3,7 @@ package com.myhomelibcorp.infrastructure.maintenance;
 import com.myhomelibcorp.application.collection.CollectionMaintenanceReport;
 import com.myhomelibcorp.application.collection.MaintenanceApplyResult;
 import com.myhomelibcorp.application.collection.MaintenanceIssue;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.port.out.collection.CollectionMaintenancePort;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
@@ -15,6 +16,7 @@ import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
 import java.io.IOException;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
@@ -204,28 +206,49 @@ public class CollectionMaintenanceAdapter implements CollectionMaintenancePort {
     }
 
     private Path createBackup(Collection collection) {
+        Path workspace = null;
         try {
-            Files.createDirectories(AppPaths.backupsDir());
-            String prefix = "collection-" + sanitize(collection.getId()) + "-" + BACKUP_TS.format(Instant.now());
-            Path backup = AppPaths.backupsDir().resolve(prefix + ".db");
-            int suffix = 1;
-            while (Files.exists(backup)) {
-                backup = AppPaths.backupsDir().resolve(prefix + "-" + suffix++ + ".db");
-            }
+            Path backupRoot = SafeFilePublication.createDirectoriesNoLinks(
+                    AppPaths.backupsDir(), "Collection maintenance backup root");
+            workspace = SafeFilePublication.createPrivateWorkspace(
+                    backupRoot, ".mhl-maintenance-backup-", "Collection maintenance backup workspace");
+            Path staged = workspace.resolve("snapshot.db");
 
             JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
             jdbc.execute("PRAGMA wal_checkpoint(FULL)");
 
-            String backupPath = backup.toAbsolutePath().normalize().toString();
-            String quotedPath = backupPath.replace("'", "''");
+            String stagedPath = staged.toAbsolutePath().normalize().toString();
+            String quotedPath = stagedPath.replace("'", "''");
             jdbc.execute("VACUUM INTO '" + quotedPath + "'");
 
-            if (!Files.isRegularFile(backup) || Files.size(backup) == 0) {
+            Path safeStaged = SafeFilePublication.requireSafeRegularFile(
+                    staged, "Collection maintenance SQLite backup staging");
+            if (Files.size(safeStaged) == 0) {
                 throw new IOException("SQLite VACUUM INTO produced no backup");
             }
-            return backup;
+
+            String prefix = "collection-" + sanitize(collection.getId()) + "-" + BACKUP_TS.format(Instant.now());
+            for (int suffix = 0; suffix < 10_000; suffix++) {
+                String name = suffix == 0 ? prefix + ".db" : prefix + "-" + suffix + ".db";
+                Path backup = backupRoot.resolve(name);
+                try {
+                    return SafeFilePublication.moveNoReplace(
+                            safeStaged, backup, "Collection maintenance backup publication");
+                } catch (FileAlreadyExistsException occupied) {
+                    // A legitimate backup with this timestamp already exists; choose a fresh name.
+                }
+            }
+            throw new IOException("Cannot allocate a unique collection maintenance backup name");
         } catch (Exception e) {
             throw new IllegalStateException("Cannot create mandatory collection backup", e);
+        } finally {
+            if (workspace != null) {
+                try {
+                    SafeFilePublication.cleanupPrivateWorkspace(workspace);
+                } catch (IOException cleanupFailure) {
+                    log.warn("Cannot clean maintenance backup workspace {}: {}", workspace, cleanupFailure.getMessage());
+                }
+            }
         }
     }
 

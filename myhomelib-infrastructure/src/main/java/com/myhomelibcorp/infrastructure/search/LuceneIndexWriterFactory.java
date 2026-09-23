@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.search;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.index.IndexFormatTooNewException;
@@ -14,6 +15,7 @@ import org.apache.lucene.store.LockObtainFailedException;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
 /** Centralized, repeatable IndexWriter/SearcherManager configuration for startup and rollback reopen. */
@@ -90,18 +92,22 @@ final class LuceneIndexWriterFactory {
         try {
             directory.close();
             deleteDirectory(path);
-            Files.createDirectories(path);
-            log.warn("Recreated incompatible Lucene index at {}", path);
-            return FSDirectory.open(path);
+            Path safePath = SafeFilePublication.createDirectoriesNoLinks(path, "Lucene incompatible-index recreation");
+            log.warn("Recreated incompatible Lucene index at {}", safePath);
+            return FSDirectory.open(safePath);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot recreate incompatible Lucene index at " + path, e);
         }
     }
 
     private static void deleteDirectory(Path path) throws IOException {
-        if (!Files.exists(path)) return;
-        try (var stream = Files.walk(path)) {
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+        Path safeRoot = SafeFilePublication.requireSafeDirectoryPath(
+                path, "Lucene incompatible-index cleanup");
+        try (var stream = Files.walk(safeRoot)) {
             for (Path item : stream.sorted((a, b) -> b.compareTo(a)).toList()) {
+                // Files.walk does not follow links by default. A link nested in our index is safe
+                // to unlink, but the root and all of its parents were verified immediately above.
                 Files.deleteIfExists(item);
             }
         }

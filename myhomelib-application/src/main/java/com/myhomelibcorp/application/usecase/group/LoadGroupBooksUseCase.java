@@ -20,6 +20,7 @@ public class LoadGroupBooksUseCase {
 
     private final BookQueryRepository bookQueryRepository;
     private final BookListItemMapper bookListItemMapper;
+    private final GroupQueryExecutor queryExecutor;
 
     public PageResult<BookListItem> execute(Long groupId, int limit, int offset) {
         return executeInternal(groupId, limit, offset, null);
@@ -41,12 +42,14 @@ public class LoadGroupBooksUseCase {
                 .sortBy(SortBy.TITLE)
                 .direction(SortDirection.ASC)
                 .build();
-        PageResult<com.myhomelibcorp.domain.model.book.Book> page = knownTotal == null
-                ? bookQueryRepository.findPage(query)
-                : bookQueryRepository.findPage(query, knownTotal);
-        List<BookListItem> content = page.content().stream()
-                .map(bookListItemMapper::toListItem)
-                .toList();
-        return PageResult.of(content, page.totalElements(), page.currentPage(), page.size());
+        return queryExecutor.execute(() -> {
+            PageResult<com.myhomelibcorp.domain.model.book.Book> page = knownTotal == null
+                    ? bookQueryRepository.findPage(query)
+                    : bookQueryRepository.findPage(query, knownTotal);
+            List<BookListItem> content = page.content().stream()
+                    .map(bookListItemMapper::toListItem)
+                    .toList();
+            return PageResult.of(content, page.totalElements(), page.currentPage(), page.size());
+        });
     }
 }

@@ -21,8 +21,9 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Future;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.RejectedExecutionException;
@@ -34,11 +35,12 @@ import java.util.function.Function;
 /** JavaFX PDF renderer adapter with lazy background rasterization and bounded session cache. */
 public final class PdfReaderView extends BorderPane implements AutoCloseable {
     private final Function<String, String> text;
-    private final ExecutorService renderExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "pdf-reader-render");
-        t.setDaemon(true);
-        return t;
-    });
+    private final ThreadPoolExecutor renderExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), r -> {
+                Thread t = new Thread(r, "pdf-reader-render");
+                t.setDaemon(true);
+                return t;
+            });
     private final AtomicLong generation = new AtomicLong();
     private final AtomicLong singleRenderGeneration = new AtomicLong();
     private final java.util.Set<Future<?>> renderTasks = ConcurrentHashMap.newKeySet();
@@ -78,7 +80,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     private Runnable onBookmarks = () -> { };
     private Runnable onToc = () -> { };
     private Runnable onSearch = () -> { };
-    private Consumer<String> onError = ignored -> { };
+    private Consumer<Throwable> onError = ignored -> { };
     private volatile boolean closed;
 
     public PdfReaderView(Function<String, String> text) {
@@ -201,11 +203,11 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     }
 
     public Future<?> searchTextAsync(String query, int maxResults, Consumer<PdfSearchOutcome> onSuccess,
-                                     Consumer<String> onFailure) {
+                                     Consumer<Throwable> onFailure) {
         PdfDocumentSession current = session;
         if (current == null) return null;
         Consumer<PdfSearchOutcome> success = onSuccess == null ? ignored -> { } : onSuccess;
-        Consumer<String> failure = onFailure == null ? ignored -> { } : onFailure;
+        Consumer<Throwable> failure = onFailure == null ? ignored -> { } : onFailure;
         long token = generation.get();
         return submitTrackedDocumentTask(() -> {
             try {
@@ -218,7 +220,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
             } catch (Exception error) {
                 Platform.runLater(() -> {
                     if (session == current && token == generation.get()) {
-                        failure.accept(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+                        failure.accept(error);
                     }
                 });
             }
@@ -233,7 +235,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     public void setOnBookmarks(Runnable listener) { onBookmarks = listener == null ? () -> { } : listener; }
     public void setOnToc(Runnable listener) { onToc = listener == null ? () -> { } : listener; }
     public void setOnSearch(Runnable listener) { onSearch = listener == null ? () -> { } : listener; }
-    public void setOnError(Consumer<String> listener) { onError = listener == null ? ignored -> { } : listener; }
+    public void setOnError(Consumer<Throwable> listener) { onError = listener == null ? ignored -> { } : listener; }
 
     public void goToPage(int target) {
         if (session == null) return;
@@ -340,7 +342,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
                     if (session == current && configToken == generation.get()
                             && token == singleRenderGeneration.get()) {
                         progress.setVisible(false); progress.setManaged(false);
-                        onError.accept(error.getMessage() == null ? error.getClass().getSimpleName() : error.getMessage());
+                        onError.accept(error);
                     }
                 });
             }
@@ -428,6 +430,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     }
 
     private Future<?> submitTrackedRender(Runnable action) {
+        renderExecutor.purge();
         FutureTask<Void> task = new FutureTask<>(action, null) {
             @Override protected void done() { renderTasks.remove(this); }
         };
@@ -442,6 +445,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
     }
 
     private Future<?> submitTrackedDocumentTask(Runnable action) {
+        renderExecutor.purge();
         FutureTask<Void> task = new FutureTask<>(action, null) {
             @Override protected void done() { documentTasks.remove(this); }
         };
@@ -460,6 +464,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
             if (!task.isDone()) task.cancel(true);
         }
         documentTasks.removeIf(Future::isDone);
+        renderExecutor.purge();
     }
 
     private void cancelOutstandingRenders() {
@@ -467,12 +472,14 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
             if (!task.isDone()) task.cancel(true);
         }
         renderTasks.removeIf(Future::isDone);
+        renderExecutor.purge();
     }
 
     private void cancelSingleRender() {
         Future<?> task = singleRenderTask;
         singleRenderTask = null;
         if (task != null && !task.isDone()) task.cancel(true);
+        renderExecutor.purge();
     }
 
     public void closeDocument() {
@@ -498,7 +505,7 @@ public final class PdfReaderView extends BorderPane implements AutoCloseable {
                 try {
                     current.close();
                 } catch (IOException error) {
-                    if (!closed) Platform.runLater(() -> onError.accept(error.getMessage()));
+                    if (!closed) Platform.runLater(() -> onError.accept(error));
                 }
             });
         } catch (RejectedExecutionException executorClosed) {

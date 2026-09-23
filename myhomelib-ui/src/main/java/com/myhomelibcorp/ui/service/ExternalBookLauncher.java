@@ -11,6 +11,7 @@ import org.springframework.stereotype.Service;
 import java.awt.Desktop;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -32,7 +33,7 @@ public class ExternalBookLauncher {
     }
 
     public void open(BookDto dto) throws Exception {
-        if (dto == null) throw new IllegalArgumentException("Книгу не вибрано");
+        if (dto == null) throw new IllegalArgumentException(UiText.text("ui.java.external_book_launcher.1215889a21"));
         String source = nonBlank(dto.getArchiveEntry(), dto.getFileName());
         String ext = extension(source);
         MaterializedExternalBook materialized = materialize(dto, ext);
@@ -42,7 +43,7 @@ public class ExternalBookLauncher {
             String configured = settings.get("reader.external." + ext, "");
             String command = configured == null ? "" : configured.trim();
             if (command.isEmpty()) {
-                if (!Desktop.isDesktopSupported()) throw new IllegalStateException("Desktop API недоступний");
+                if (!Desktop.isDesktopSupported()) throw new IllegalStateException(UiText.text("ui.java.external_book_launcher.915aa31d98"));
                 Desktop.getDesktop().open(file.toFile());
                 if (lease != null) lease.keepUntilNextStartup();
                 return;
@@ -71,13 +72,13 @@ public class ExternalBookLauncher {
         if (dto.getArchiveEntry() == null || dto.getArchiveEntry().isBlank()) {
             Path located = resources.locateBookFile(
                     dto.getFileName(), dto.getFolder(), dto.getCollectionRoot(), dto.getArchiveEntry()).orElse(null);
-            if (located != null && Files.isRegularFile(located) && !resources.isArchive(located.toString())) {
+            if (located != null && Files.isRegularFile(located, LinkOption.NOFOLLOW_LINKS) && !resources.isArchive(located.toString())) {
                 return new MaterializedExternalBook(located.toAbsolutePath().normalize(), null);
             }
         }
         try (InputStream in = resources.readBookData(
                         dto.getFileName(), dto.getFolder(), dto.getCollectionRoot(), dto.getArchiveEntry())
-                .orElseThrow(() -> new IllegalStateException("Дані книги недоступні"))) {
+                .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.external_book_launcher.b323823f4e")))) {
             ExternalReaderMaterializationCache.Lease lease = materializationCache.materialize(in, ext);
             return new MaterializedExternalBook(lease.path(), lease);
         }

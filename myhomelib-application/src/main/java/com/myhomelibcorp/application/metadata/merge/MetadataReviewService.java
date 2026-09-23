@@ -3,10 +3,13 @@ package com.myhomelibcorp.application.metadata.merge;
 import com.myhomelibcorp.application.metadata.MetadataLookupService;
 import com.myhomelibcorp.application.metadata.MetadataLookupResult;
 import com.myhomelibcorp.application.metadata.MetadataQuery;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.Objects;
@@ -23,13 +26,23 @@ public class MetadataReviewService {
     private final MetadataLookupService lookup;
     private final MetadataMergePreviewService previews;
     private final ExecutorPort executor;
+    private final LibraryOperationCoordinator operations;
 
+    /** Compatibility constructor for focused tests without lifecycle wiring. */
     public MetadataReviewService(BookQueryRepository books, MetadataLookupService lookup,
                                  MetadataMergePreviewService previews, ExecutorPort executor) {
+        this(books, lookup, previews, executor, null);
+    }
+
+    @Autowired
+    public MetadataReviewService(BookQueryRepository books, MetadataLookupService lookup,
+                                 MetadataMergePreviewService previews, ExecutorPort executor,
+                                 LibraryOperationCoordinator operations) {
         this.books = Objects.requireNonNull(books, "books");
         this.lookup = Objects.requireNonNull(lookup, "lookup");
         this.previews = Objects.requireNonNull(previews, "previews");
         this.executor = Objects.requireNonNull(executor, "executor");
+        this.operations = operations;
     }
 
     public CompletableFuture<MetadataReviewLookupResult> lookup(BookId bookId) {
@@ -46,14 +59,35 @@ public class MetadataReviewService {
             BookId bookId, AtomicBoolean cancelled,
             Function<MetadataQuery, CompletableFuture<MetadataLookupResult>> search) {
         Objects.requireNonNull(bookId, "bookId");
+        final LibraryOperationCoordinator.Lease lifecycleLease;
+        try {
+            lifecycleLease = operations == null ? null
+                    : operations.acquireDetachedShared(LibraryOperationType.QUERY);
+        } catch (RuntimeException lifecycleBusy) {
+            return CompletableFuture.failedFuture(lifecycleBusy);
+        }
+
         CompletableFuture<Book> loaded;
         try {
             loaded = executor.submit(() -> {
-                if (cancelled.get()) throw new CancellationException("Metadata lookup cancelled");
-                return books.findById(bookId)
-                        .orElseThrow(() -> new IllegalStateException("Book not found: " + bookId));
+                try {
+                    if (cancelled.get()) throw new CancellationException("Metadata lookup cancelled");
+                    return books.findById(bookId)
+                            .orElseThrow(() -> new IllegalStateException("Book not found: " + bookId));
+                } catch (RuntimeException | Error failure) {
+                    if (lifecycleLease != null) lifecycleLease.markFailed(failure);
+                    throw failure;
+                } finally {
+                    // Provider lookup below only uses the immutable Book snapshot. Release the
+                    // collection barrier as soon as the queued catalogue read has finished.
+                    if (lifecycleLease != null) lifecycleLease.close();
+                }
             });
-        } catch (RuntimeException rejected) {
+        } catch (RuntimeException | Error rejected) {
+            if (lifecycleLease != null) {
+                lifecycleLease.markFailed(rejected);
+                lifecycleLease.close();
+            }
             return CompletableFuture.failedFuture(rejected);
         }
         return loaded.thenCompose(book -> search.apply(queryFor(book))

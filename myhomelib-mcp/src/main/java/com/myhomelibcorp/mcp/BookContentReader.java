@@ -2,6 +2,7 @@ package com.myhomelibcorp.mcp;
 
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 
 import com.github.junrar.Archive;
 import com.github.junrar.rarfile.FileHeader;
@@ -11,17 +12,18 @@ import org.apache.commons.compress.archivers.ArchiveStreamFactory;
 import org.apache.commons.compress.compressors.CompressorStreamFactory;
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry;
 import org.apache.commons.compress.archivers.sevenz.SevenZFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import javax.xml.stream.XMLInputFactory;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
+import java.nio.channels.FileChannel;
 import java.net.URLDecoder;
 import java.nio.file.*;
 import java.util.*;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
 
 /** Bounded, read-only extraction for MCP book text. */
 final class BookContentReader {
@@ -33,14 +35,14 @@ final class BookContentReader {
         if(!entry.isBlank()) {
             try(InputStream in=openArchiveEntry(container,entry)){ return parseByName(entry,in); }
         }
-        try(InputStream in=Files.newInputStream(container)){return parseByName(l.fileName(),in);}
+        try(InputStream in=Files.newInputStream(container, LinkOption.NOFOLLOW_LINKS)){return parseByName(l.fileName(),in);}
     }
 
     List<TocItem> toc(LibraryDb.BookLocation l)throws Exception{
         String name=!l.archiveEntry().isBlank()?l.archiveEntry():l.fileName();
         String lower=name.toLowerCase(Locale.ROOT);
         Path p=resolve(l);
-        try(InputStream in=l.archiveEntry().isBlank()?Files.newInputStream(p):openArchiveEntry(p,l.archiveEntry())){
+        try(InputStream in=l.archiveEntry().isBlank()?Files.newInputStream(p, LinkOption.NOFOLLOW_LINKS):openArchiveEntry(p,l.archiveEntry())){
             if(lower.endsWith(".fb2")||lower.endsWith(".fbd")) return fb2Toc(in);
             if(lower.endsWith(".epub")) return epubToc(in);
             return List.of();
@@ -59,8 +61,10 @@ final class BookContentReader {
         }
 
         if (rootValue.isBlank()) {
-            // Legacy records may contain an absolute folder and no collection_root.
-            return Path.of("").resolve(relative).normalize();
+            // Legacy records may contain an absolute folder and no collection_root. They still must
+            // resolve to a real regular file without traversing symlinks/reparse entries.
+            Path legacy = Path.of("").resolve(relative).toAbsolutePath().normalize();
+            return AtomicFileSupport.requireSafeRegularFile(legacy, "MCP legacy book path");
         }
 
         Path root = Path.of(rootValue).toAbsolutePath().normalize();
@@ -68,7 +72,10 @@ final class BookContentReader {
         if (!candidate.startsWith(root)) {
             throw new IOException("Book path escapes collection root: " + candidate);
         }
-        return candidate;
+        // A lexical startsWith check alone is not sufficient: an existing child directory can be
+        // replaced by a symlink/junction pointing outside the collection. The shared helper checks
+        // every existing component with NOFOLLOW_LINKS and rejects links/special entries.
+        return AtomicFileSupport.requireSafeRegularFile(candidate, "MCP book path");
     }
 
     private InputStream openArchiveEntry(Path archive,String requested)throws Exception{
@@ -77,9 +84,9 @@ final class BookContentReader {
         if(n.endsWith(".rar")||n.endsWith(".cbr")) return spoolRar(archive,requested);
         if(isStreamArchive(n)) return spoolStreamArchive(archive, requested);
 
-        ZipFile z = new ZipFile(archive.toFile());
+        ZipFile z = openZipNoFollow(archive, "MCP ZIP archive");
         try {
-            ZipEntry e = findZip(z, requested);
+            ZipArchiveEntry e = findZip(z, requested);
             if (e == null || e.isDirectory()) throw new FileNotFoundException(requested);
             InputStream delegate = openZipEntry(z, e);
             return new FilterInputStream(delegate) {
@@ -93,33 +100,32 @@ final class BookContentReader {
         }
     }
 
-    private ZipEntry findZip(ZipFile z,String n) throws IOException {
-        ZipEntry direct=z.getEntry(n);
+    private ZipArchiveEntry findZip(ZipFile z,String n) throws IOException {
+        ZipArchiveEntry direct=z.getEntry(n);
         if(direct!=null) return direct;
         String x=norm(n);
-        Enumeration<? extends ZipEntry> it=z.entries();
+        Enumeration<ZipArchiveEntry> it=z.getEntries();
         int count=0;
         while(it.hasMoreElements()){
             if(++count>ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
-            ZipEntry e=it.nextElement();
+            ZipArchiveEntry e=it.nextElement();
             if(norm(e.getName()).equalsIgnoreCase(x)) return e;
         }
         return null;
     }
 
-    private InputStream openZipEntry(ZipFile zip, ZipEntry entry) throws IOException {
+    private InputStream openZipEntry(ZipFile zip, ZipArchiveEntry entry) throws IOException {
         validateZipEntry(entry);
         return bounded(zip.getInputStream(entry), ArchiveSafetyLimits.MAX_ENTRY_BYTES);
     }
 
-    private void validateZipEntry(ZipEntry entry) throws IOException {
+    private void validateZipEntry(ZipArchiveEntry entry) throws IOException {
         long size = entry.getSize();
         long compressed = entry.getCompressedSize();
         if (ArchiveSafetyLimits.declaredEntryTooLarge(size)) {
             throw new IOException("Archive entry exceeds MCP safety limit");
         }
-        if (size > 0 && compressed > 0
-                && (double) size / (double) compressed > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
             throw new IOException("Archive entry compression ratio exceeds MCP safety limit");
         }
     }
@@ -147,15 +153,48 @@ final class BookContentReader {
             }
         };
     }
+    private ZipFile openZipNoFollow(Path source, String role) throws IOException {
+        Path safe = AtomicFileSupport.requireSafeRegularFile(source, role);
+        FileChannel channel = FileChannel.open(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        try {
+            return ZipFile.builder()
+                    .setSeekableByteChannel(channel)
+                    .setCharset(StandardCharsets.UTF_8)
+                    .get();
+        } catch (IOException | RuntimeException failure) {
+            try { channel.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
+    }
+
     private InputStream spool7z(Path p,String wanted)throws Exception{
         Path tmp=Files.createTempFile("mhl-mcp-",suffix(wanted));
-        try(SevenZFile z=SevenZFile.builder().setFile(p.toFile()).setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB).get()){
-            SevenZArchiveEntry e; while((e=z.getNextEntry())!=null){if(e.isDirectory()||!norm(e.getName()).equalsIgnoreCase(norm(wanted)))continue;copyBounded(new InputStream(){@Override public int read(byte[]b,int o,int l)throws IOException{return z.read(b,o,l);}@Override public int read()throws IOException{byte[]b=new byte[1];return z.read(b,0,1)==1?b[0]&255:-1;}},tmp);return deleting(tmp);}
+        Path safe=AtomicFileSupport.requireSafeRegularFile(p,"MCP 7z archive");
+        try(FileChannel channel=FileChannel.open(safe,StandardOpenOption.READ,LinkOption.NOFOLLOW_LINKS);
+            SevenZFile z=SevenZFile.builder().setSeekableByteChannel(channel).setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB).get()){
+            SevenZArchiveEntry e;
+            int entries=0;
+            while((e=z.getNextEntry())!=null){
+                if(++entries>ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
+                if(e.isDirectory()||!norm(e.getName()).equalsIgnoreCase(norm(wanted)))continue;
+                copyBounded(new InputStream(){@Override public int read(byte[]b,int o,int l)throws IOException{return z.read(b,o,l);}@Override public int read()throws IOException{byte[]b=new byte[1];return z.read(b,0,1)==1?b[0]&255:-1;}},tmp);
+                return deleting(tmp);
+            }
         }catch(Exception ex){Files.deleteIfExists(tmp);throw ex;} Files.deleteIfExists(tmp);throw new FileNotFoundException(wanted);
     }
     private InputStream spoolRar(Path p,String wanted)throws Exception{
-        Path tmp=Files.createTempFile("mhl-mcp-",suffix(wanted)); try(Archive a=new Archive(p.toFile())){
-            for(FileHeader h:a.getFileHeaders()) if(!h.isDirectory()&&norm(h.getFileName()).equalsIgnoreCase(norm(wanted))){try(InputStream in=a.getInputStream(h)){copyBounded(in,tmp);}return deleting(tmp);}
+        Path tmp=Files.createTempFile("mhl-mcp-",suffix(wanted));
+        Path safe=AtomicFileSupport.requireSafeRegularFile(p,"MCP RAR archive");
+        try(InputStream raw=Files.newInputStream(safe,StandardOpenOption.READ,LinkOption.NOFOLLOW_LINKS);
+            Archive a=new Archive(raw)){
+            int entries=0;
+            for(FileHeader h:a.getFileHeaders()) {
+                if(++entries>ArchiveSafetyLimits.MAX_ENTRY_COUNT) throw new IOException("Archive contains too many entries");
+                if(!h.isDirectory()&&norm(h.getFileName()).equalsIgnoreCase(norm(wanted))){
+                    try(InputStream in=a.getInputStream(h)){copyBounded(in,tmp);}
+                    return deleting(tmp);
+                }
+            }
         }catch(Exception ex){Files.deleteIfExists(tmp);throw ex;}Files.deleteIfExists(tmp);throw new FileNotFoundException(wanted);
     }
     private boolean isStreamArchive(String n) {
@@ -166,7 +205,7 @@ final class BookContentReader {
 
     private ArchiveInputStream<?> openStreamArchive(Path path) throws Exception {
         String n = path.getFileName().toString().toLowerCase(Locale.ROOT);
-        InputStream raw = new BufferedInputStream(Files.newInputStream(path), 64 * 1024);
+        InputStream raw = new BufferedInputStream(Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS), 64 * 1024);
         InputStream source = raw;
         try {
             if (n.endsWith(".tar.gz") || n.endsWith(".tgz"))
@@ -204,8 +243,18 @@ final class BookContentReader {
         throw new FileNotFoundException(wanted);
     }
 
-    private void copyBounded(InputStream in,Path p)throws IOException{try(OutputStream o=Files.newOutputStream(p)){byte[]b=new byte[65536];long total=0;for(int n;(n=in.read(b))>=0;){if(n==0)continue;total+=n;if(total>ArchiveSafetyLimits.MAX_ENTRY_BYTES)throw new IOException("Archive entry exceeds MCP safety limit");o.write(b,0,n);}}}
-    private InputStream deleting(Path p)throws IOException{InputStream in=Files.newInputStream(p);return new FilterInputStream(in){@Override public void close()throws IOException{try{super.close();}finally{Files.deleteIfExists(p);}}};}
+    private void copyBounded(InputStream in,Path p)throws IOException{
+        Path safe=AtomicFileSupport.requireSafeRegularFile(p,"MCP extraction staging file");
+        try(OutputStream o=Files.newOutputStream(safe,StandardOpenOption.TRUNCATE_EXISTING,StandardOpenOption.WRITE,LinkOption.NOFOLLOW_LINKS)){
+            byte[]b=new byte[65536];long total=0;
+            for(int n;(n=in.read(b))>=0;){if(n==0)continue;total+=n;if(total>ArchiveSafetyLimits.MAX_ENTRY_BYTES)throw new IOException("Archive entry exceeds MCP safety limit");o.write(b,0,n);}
+        }
+    }
+    private InputStream deleting(Path p)throws IOException{
+        Path safe=AtomicFileSupport.requireSafeRegularFile(p,"MCP extracted staging file");
+        InputStream in=Files.newInputStream(safe,LinkOption.NOFOLLOW_LINKS);
+        return new FilterInputStream(in){@Override public void close()throws IOException{try{super.close();}finally{Files.deleteIfExists(safe);}}};
+    }
 
     private String parseByName(String name,InputStream in)throws Exception{
         String n=name.toLowerCase(Locale.ROOT);
@@ -230,11 +279,11 @@ final class BookContentReader {
         try {
             copyBounded(in,tmp);
             StringBuilder out=new StringBuilder();
-            try(ZipFile zip=new ZipFile(tmp.toFile())) {
+            try(ZipFile zip=openZipNoFollow(tmp, "MCP EPUB staging file")) {
                 EpubPackage pkg=readEpubPackage(zip);
                 List<String> documents=pkg.spinePaths().isEmpty()?fallbackHtmlEntries(zip):pkg.spinePaths();
                 for(String path:documents){
-                    ZipEntry entry=findZip(zip,path);
+                    ZipArchiveEntry entry=findZip(zip,path);
                     if(entry==null||entry.isDirectory()) continue;
                     try(InputStream x=openZipEntry(zip,entry)){
                         String part=stripMarkup(readText(x));
@@ -253,17 +302,17 @@ final class BookContentReader {
         Path tmp=Files.createTempFile("mhl-mcp-epub-toc-",".epub");
         try {
             copyBounded(in,tmp);
-            try(ZipFile zip=new ZipFile(tmp.toFile())) {
+            try(ZipFile zip=openZipNoFollow(tmp, "MCP EPUB staging file")) {
                 EpubPackage pkg=readEpubPackage(zip);
                 if(pkg.navPath()!=null) {
-                    ZipEntry nav=findZip(zip,pkg.navPath());
+                    ZipArchiveEntry nav=findZip(zip,pkg.navPath());
                     if(nav!=null) try(InputStream x=openZipEntry(zip,nav)) {
                         List<TocItem> items=parseEpubNav(x);
                         if(!items.isEmpty()) return items;
                     }
                 }
                 if(pkg.ncxPath()!=null) {
-                    ZipEntry ncx=findZip(zip,pkg.ncxPath());
+                    ZipArchiveEntry ncx=findZip(zip,pkg.ncxPath());
                     if(ncx!=null) try(InputStream x=openZipEntry(zip,ncx)) {
                         List<TocItem> items=parseNcx(x);
                         if(!items.isEmpty()) return items;
@@ -279,7 +328,7 @@ final class BookContentReader {
     private EpubPackage readEpubPackage(ZipFile zip)throws Exception {
         String opfPath=locateOpf(zip);
         if(opfPath==null) return new EpubPackage(List.of(),null,null);
-        ZipEntry opf=findZip(zip,opfPath);
+        ZipArchiveEntry opf=findZip(zip,opfPath);
         if(opf==null) return new EpubPackage(List.of(),null,null);
 
         Map<String,ManifestItem> manifest=new LinkedHashMap<>();
@@ -334,7 +383,7 @@ final class BookContentReader {
     }
 
     private String locateOpf(ZipFile zip)throws Exception {
-        ZipEntry container=findZip(zip,"META-INF/container.xml");
+        ZipArchiveEntry container=findZip(zip,"META-INF/container.xml");
         if(container==null) return null;
         XMLInputFactory f=secureXmlFactory();
         try(InputStream in=openZipEntry(zip,container)) {
@@ -428,13 +477,13 @@ final class BookContentReader {
 
     private List<String> fallbackHtmlEntries(ZipFile zip) throws IOException {
         List<String> out = new ArrayList<>();
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements()) {
             if (++count > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                 throw new IOException("Archive contains too many entries");
             }
-            ZipEntry entry = entries.nextElement();
+            ZipArchiveEntry entry = entries.nextElement();
             if (entry.isDirectory()) continue;
             String name = entry.getName();
             String lower = name.toLowerCase(Locale.ROOT);

@@ -86,6 +86,82 @@ class LocalFolderSyncAdapterIntegrationTest {
                 .hasMessageContaining("Conflicting sync bundles for cursor device-a:1");
     }
 
+
+    @Test
+    void sameCursorAndChangeSetIdWithDifferentPayloadIsDetectedAsConflict() throws Exception {
+        LocalFolderSyncAdapter adapter = adapter();
+        ChangeSet first = set("same-id", "device-a", 1, "", "setting:x", SyncEntityType.SETTING, "x", "one");
+        ChangeSet forged = set("same-id", "device-a", 1, "", "setting:x", SyncEntityType.SETTING, "x", "two");
+        adapter.push(first);
+        byte[] forgedBytes = new SyncBundleJsonCodec(new ObjectMapper()).encode(forged);
+        Files.write(temp.resolve("forged" + LocalFolderSyncAdapter.FINAL_SUFFIX), forgedBytes);
+
+        assertThatThrownBy(() -> adapter.pull(Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Conflicting sync bundles for cursor device-a:1");
+    }
+
+    @Test
+    void pullRejectsSymlinkedFinalBundleWithoutReadingExternalFile() throws Exception {
+        LocalFolderSyncAdapter adapter = adapter();
+        ChangeSet set = set("set-link", "device-a", 1, "", "setting:x", SyncEntityType.SETTING, "x", "v");
+        byte[] bundle = new SyncBundleJsonCodec(new ObjectMapper()).encode(set);
+        Path outside = temp.getParent().resolve("outside-sync-bundle.json");
+        Files.write(outside, bundle);
+        Path link = temp.resolve("malicious" + LocalFolderSyncAdapter.FINAL_SUFFIX);
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+
+        assertThatThrownBy(() -> adapter.pull(Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Could not read local sync folder");
+        assertThat(Files.readAllBytes(outside)).isEqualTo(bundle);
+    }
+
+    @Test
+    void symlinkedSyncFolderIsRejectedWithoutWritingOutside() throws Exception {
+        Path outside = temp.resolve("outside-folder");
+        Files.createDirectory(outside);
+        Path link = temp.resolve("sync-link");
+        try {
+            Files.createSymbolicLink(link, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+        LocalFolderSyncAdapter adapter = new LocalFolderSyncAdapter(link, new SyncBundleJsonCodec(new ObjectMapper()));
+
+        assertThatThrownBy(() -> adapter.push(set("set", "device-a", 1, "", "setting:x",
+                SyncEntityType.SETTING, "x", "v")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Could not create sync folder");
+        try (var entries = Files.list(outside)) {
+            assertThat(entries.toList()).isEmpty();
+        }
+    }
+
+    @Test
+    void symlinkedLockFileIsRejectedWithoutTouchingExternalFile() throws Exception {
+        Files.createDirectories(temp);
+        Path outside = temp.resolve("outside-lock.txt");
+        Files.writeString(outside, "KEEP");
+        Path lock = temp.resolve(LocalFolderSyncAdapter.LOCK_FILE);
+        try {
+            Files.createSymbolicLink(lock, outside.getFileName());
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+        LocalFolderSyncAdapter adapter = adapter();
+
+        assertThatThrownBy(() -> adapter.push(set("set", "device-a", 1, "", "setting:x",
+                SyncEntityType.SETTING, "x", "v")))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("lock");
+        assertThat(Files.readString(outside)).isEqualTo("KEEP");
+    }
+
     private LocalFolderSyncAdapter adapter() {
         return new LocalFolderSyncAdapter(temp, new SyncBundleJsonCodec(new ObjectMapper()));
     }

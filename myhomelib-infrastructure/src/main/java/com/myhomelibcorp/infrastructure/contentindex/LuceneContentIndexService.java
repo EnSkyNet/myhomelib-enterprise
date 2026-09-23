@@ -9,6 +9,8 @@ import com.myhomelibcorp.application.content.index.ContentIndexPage;
 import com.myhomelibcorp.application.content.index.ContentIndexQuery;
 import com.myhomelibcorp.application.port.out.content.ContentIndexPort;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import org.apache.lucene.analysis.Analyzer;
 import org.apache.lucene.analysis.standard.StandardAnalyzer;
 import org.apache.lucene.document.Document;
@@ -35,10 +37,10 @@ import org.apache.lucene.store.FSDirectory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
-import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -87,8 +89,7 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         ReentrantReadWriteLock.WriteLock lock = lock(collectionId).writeLock();
         lock.lock();
         try {
-            Path path = indexPath(collectionId);
-            Files.createDirectories(path);
+            Path path = ensureSafeIndexDirectory(indexPath(collectionId), true);
             try (Directory directory = FSDirectory.open(path)) {
                 ensureCompatible(directory);
                 try (IndexWriter writer = writer(directory, IndexWriterConfig.OpenMode.CREATE_OR_APPEND)) {
@@ -125,8 +126,11 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         Path rebuild = parent.resolve(active.getFileName() + ".rebuild-" + UUID.randomUUID());
         Path backup = parent.resolve(active.getFileName() + ".backup-" + UUID.randomUUID());
         try {
-            Files.createDirectories(parent);
-            Files.createDirectories(rebuild);
+            SafeFilePublication.createDirectoriesNoLinks(parent, "Content index parent");
+            SafeFilePublication.createDirectoriesNoLinks(rebuild, "Content index rebuild directory");
+            if (Files.exists(active, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.requireSafeDirectoryPath(active, "Content index active directory");
+            }
             try (Directory directory = FSDirectory.open(rebuild);
                  IndexWriter writer = writer(directory, IndexWriterConfig.OpenMode.CREATE)) {
                 for (ContentIndexEntry entry : source) {
@@ -135,6 +139,7 @@ public final class LuceneContentIndexService implements ContentIndexPort {
                 commit(writer);
             }
             swapDirectories(active, rebuild, backup);
+            markFresh(id);
         } catch (IOException e) {
             throw new IllegalStateException("Cannot rebuild content index for " + id, e);
         } finally {
@@ -151,7 +156,11 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         lock.lock();
         try {
             Path path = indexPath(query.collectionId());
-            if (!Files.isDirectory(path)) return new ContentIndexPage(List.of(), 0, query.offset(), query.limit());
+            if (isMarkedStale(query.collectionId())) {
+                throw new IllegalStateException("Content index is stale and must be rebuilt");
+            }
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return new ContentIndexPage(List.of(), 0, query.offset(), query.limit());
+            ensureSafeIndexDirectory(path, false);
             try (Directory directory = FSDirectory.open(path)) {
                 ensureCompatible(directory);
                 if (!DirectoryReader.indexExists(directory)) {
@@ -197,23 +206,60 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         lock.lock();
         try {
             Path path = indexPath(id);
-            if (!Files.isDirectory(path)) return new ContentIndexHealth(id, SCHEMA_VERSION, 0, 0, true, "index absent");
+            boolean stale = isMarkedStale(id);
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                return new ContentIndexHealth(id, SCHEMA_VERSION, 0, 0, true,
+                        stale ? ContentIndexHealth.State.STALE : ContentIndexHealth.State.ABSENT, "");
+            }
+            ensureSafeIndexDirectory(path, false);
             try (Directory directory = FSDirectory.open(path)) {
                 if (!DirectoryReader.indexExists(directory)) {
-                    return new ContentIndexHealth(id, SCHEMA_VERSION, 0, directorySize(path), true, "index empty");
+                    return new ContentIndexHealth(id, SCHEMA_VERSION, 0, directorySize(path), true,
+                            stale ? ContentIndexHealth.State.STALE : ContentIndexHealth.State.EMPTY, "");
                 }
                 try (DirectoryReader reader = DirectoryReader.open(directory)) {
                     int actual = schemaVersion(reader.getIndexCommit());
                     boolean compatible = actual == SCHEMA_VERSION;
-                    return new ContentIndexHealth(id, actual, reader.numDocs(), directorySize(path), compatible,
-                            compatible ? "ok" : "schema mismatch; rebuild required");
+                    ContentIndexHealth.State state = !compatible
+                            ? ContentIndexHealth.State.SCHEMA_MISMATCH
+                            : (stale ? ContentIndexHealth.State.STALE : ContentIndexHealth.State.READY);
+                    return new ContentIndexHealth(id, actual, reader.numDocs(), directorySize(path), compatible, state, "");
                 }
             }
         } catch (IOException e) {
-            return new ContentIndexHealth(id, -1, 0, 0, false, e.getMessage());
+            return new ContentIndexHealth(id, -1, 0, 0, false, ContentIndexHealth.State.ERROR, e.getMessage());
         } finally {
             lock.unlock();
         }
+    }
+
+    @Override
+    public void markStale(String collectionId) {
+        String id = required(collectionId, "collectionId");
+        try {
+            AtomicFileSupport.writeStringReplacing(AppPaths.collectionContentIndexStateFile(id),
+                    "STALE\n", StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot mark content index stale for " + id, e);
+        }
+    }
+
+    @Override
+    public void markFresh(String collectionId) {
+        String id = required(collectionId, "collectionId");
+        Path marker = AppPaths.collectionContentIndexStateFile(id);
+        try {
+            if (!Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return;
+            SafeFilePublication.requireSafeRegularFile(marker, "Content index stale marker");
+            Files.delete(marker);
+        } catch (IOException e) {
+            throw new IllegalStateException("Cannot clear content index stale marker for " + id, e);
+        }
+    }
+
+    private static boolean isMarkedStale(String collectionId) {
+        Path marker = AppPaths.collectionContentIndexStateFile(collectionId);
+        return Files.exists(marker, LinkOption.NOFOLLOW_LINKS);
     }
 
     private void deleteByTerm(String collectionId, Term term) {
@@ -222,7 +268,8 @@ public final class LuceneContentIndexService implements ContentIndexPort {
         lock.lock();
         try {
             Path path = indexPath(id);
-            if (!Files.isDirectory(path)) return;
+            if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+            ensureSafeIndexDirectory(path, false);
             try (Directory directory = FSDirectory.open(path)) {
                 ensureCompatible(directory);
                 if (!DirectoryReader.indexExists(directory)) return;
@@ -355,41 +402,59 @@ public final class LuceneContentIndexService implements ContentIndexPort {
     }
 
     private static void swapDirectories(Path active, Path rebuild, Path backup) throws IOException {
-        boolean hadActive = Files.exists(active);
-        if (hadActive) move(active, backup);
+        boolean hadActive = Files.exists(active, LinkOption.NOFOLLOW_LINKS);
+        if (hadActive) moveDirectoryNoReplace(active, backup, "Content index backup");
         try {
-            move(rebuild, active);
+            moveDirectoryNoReplace(rebuild, active, "Content index activation");
             deleteTreeQuietly(backup);
         } catch (IOException failure) {
-            if (hadActive && Files.exists(backup) && !Files.exists(active)) {
-                try { move(backup, active); } catch (IOException rollback) { failure.addSuppressed(rollback); }
+            if (hadActive && Files.exists(backup, LinkOption.NOFOLLOW_LINKS)
+                    && !Files.exists(active, LinkOption.NOFOLLOW_LINKS)) {
+                try { moveDirectoryNoReplace(backup, active, "Content index rollback"); }
+                catch (IOException rollback) { failure.addSuppressed(rollback); }
             }
             throw failure;
         }
     }
 
-    private static void move(Path source, Path target) throws IOException {
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE);
-        } catch (AtomicMoveNotSupportedException unsupported) {
-            Files.move(source, target);
+    private static Path ensureSafeIndexDirectory(Path path, boolean create) throws IOException {
+        if (create) return SafeFilePublication.createDirectoriesNoLinks(path, "Content index directory");
+        return SafeFilePublication.requireSafeDirectoryPath(path, "Content index directory");
+    }
+
+    private static void moveDirectoryNoReplace(Path source, Path target, String role) throws IOException {
+        Path safeSource = SafeFilePublication.requireSafeDirectoryPath(source, role + " source");
+        Path parent = target.toAbsolutePath().normalize().getParent();
+        if (parent == null) throw new IOException(role + " target has no parent: " + target);
+        SafeFilePublication.createDirectoriesNoLinks(parent, role + " parent");
+        if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            throw new java.nio.file.FileAlreadyExistsException(target.toString());
         }
+        Files.move(safeSource, target);
+        SafeFilePublication.requireSafeDirectoryPath(target, role + " target");
     }
 
     private static long directorySize(Path path) throws IOException {
-        if (!Files.exists(path)) return 0L;
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return 0L;
+        SafeFilePublication.requireSafeDirectoryPath(path, "Content index size directory");
         try (var stream = Files.walk(path)) {
-            return stream.filter(Files::isRegularFile).mapToLong(item -> {
+            return stream.filter(item -> Files.isRegularFile(item, LinkOption.NOFOLLOW_LINKS)).mapToLong(item -> {
                 try { return Files.size(item); } catch (IOException ignored) { return 0L; }
             }).sum();
         }
     }
 
     private static void deleteTreeQuietly(Path path) {
-        if (path == null || !Files.exists(path)) return;
-        try (var stream = Files.walk(path)) {
-            for (Path item : stream.sorted((a, b) -> b.compareTo(a)).toList()) Files.deleteIfExists(item);
-        } catch (IOException ignored) { }
+        if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            SafeFilePublication.requireSafeDirectoryPath(path, "Content index cleanup directory");
+            try (var stream = Files.walk(path)) {
+                for (Path item : stream.sorted((a, b) -> b.compareTo(a)).toList()) {
+                    if (Files.isSymbolicLink(item)) return;
+                    Files.deleteIfExists(item);
+                }
+            }
+        } catch (IOException ignored) { /* preserve unexpected replacement as evidence */ }
     }
 
     private static String required(String value, String field) {

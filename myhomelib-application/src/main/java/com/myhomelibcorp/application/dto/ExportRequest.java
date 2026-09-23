@@ -10,6 +10,8 @@ import java.util.List;
 @Value
 @Builder
 public class ExportRequest {
+    /** Stable identity of the collection whose books are being exported. */
+    String collectionId;
     List<BookId> bookIds;
     Path destinationFolder;
     ExportFormat format;
@@ -55,12 +57,25 @@ public class ExportRequest {
     }
 
     public enum ExportFormat {
-        FB2,      // Звичайний FB2
-        FB2_ZIP,  // FB2 в архіві zip
-        TXT,      // Текстовий файл
-        PDF,      // PDF
-        EPUB,     // EPUB
-        MOBI,     // MOBI
-        LRF       // Sony Reader LRF
+        FB2,
+        FB2_ZIP,
+        TXT,
+        PDF,
+        EPUB,
+        MOBI,
+        AZW3,
+        DOCX,
+        HTMLZ,
+        KEPUB,
+        LIT,
+        LRF,
+        PDB,
+        PMLZ,
+        RB,
+        RTF,
+        SNB,
+        TCR,
+        TXTZ,
+        ZIP
     }
 }

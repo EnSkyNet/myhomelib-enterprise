@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.reader;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.reader.AudiobookTrackGrouping;
 import com.myhomelibcorp.application.annotation.AnnotationService;
 import com.myhomelibcorp.application.dictionary.DictionaryEntry;
@@ -22,6 +24,7 @@ import com.myhomelibcorp.application.tts.TtsSentence;
 import com.myhomelibcorp.application.tts.TtsVoice;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.reader.ReaderSettingsState;
@@ -394,8 +397,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             positionChanged = true;
             if (positionAutosaver != null) positionAutosaver.mark(pos);
         });
-        pdfReaderView.setOnError(message -> dialogService.showError(
-                i18n.text("common.error"), i18n.format("ui.reader.pdf.render_failed", message == null ? "" : message)));
+        pdfReaderView.setOnError(error -> {
+            log.warn("PDF Reader operation failed", error);
+            dialogService.showError(i18n.text("common.error"),
+                    i18n.format("ui.reader.pdf.render_failed", UiExceptionSupport.message(error)));
+        });
 
         comicReaderView = new ComicReaderView(i18n::text);
         comicReaderView.setVisible(false);
@@ -407,8 +413,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             positionChanged = true;
             if (positionAutosaver != null) positionAutosaver.mark(pos);
         });
-        comicReaderView.setOnError(message -> dialogService.showError(
-                i18n.text("common.error"), i18n.format("ui.reader.comic.render_failed", message == null ? "" : message)));
+        comicReaderView.setOnError(error -> {
+            log.warn("Comic Reader operation failed", error);
+            dialogService.showError(i18n.text("common.error"),
+                    i18n.format("ui.reader.comic.render_failed", UiExceptionSupport.message(error)));
+        });
 
         audioReaderView = new AudioReaderView(i18n::text);
         audioReaderView.setVisible(false);
@@ -420,8 +429,11 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             positionChanged = true;
             if (audioPositionAutosaver != null) audioPositionAutosaver.mark(pos, audioReaderView.progressPercent());
         });
-        audioReaderView.setOnError(message -> dialogService.showError(
-                i18n.text("common.error"), i18n.format("ui.reader.audio.playback_failed", message == null ? "" : message)));
+        audioReaderView.setOnError(error -> {
+            log.warn("Audio Reader operation failed", error);
+            dialogService.showError(i18n.text("common.error"),
+                    i18n.format("ui.reader.audio.playback_failed", UiExceptionSupport.message(error)));
+        });
 
         loadingIndicator = new ProgressIndicator();
         loadingIndicator.setMaxSize(64, 64);
@@ -469,9 +481,10 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
         try {
             ReaderEngine engine = readerView.getEngine();
-            openTask = uiBackgroundExecutor.submitCancellable(() -> {
+            openTask = uiBackgroundExecutor.submitCollectionScopedCancellable(
+                    LibraryOperationType.READER_STATE, () -> {
                 try {
-                    PreparedOpen prepared = prepareOpen(bookId, engine, pdfPassword);
+                    PreparedOpen prepared = prepareOpen(requestToken.collectionId(), bookId, engine, pdfPassword);
                     if (Thread.currentThread().isInterrupted()) {
                         prepared.closeAbandoned();
                         return null;
@@ -508,7 +521,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         });
     }
 
-    private PreparedOpen prepareOpen(BookId bookId, ReaderEngine engine, String pdfPassword) throws Exception {
+    private PreparedOpen prepareOpen(String collectionId, BookId bookId, ReaderEngine engine, String pdfPassword) throws Exception {
         if (Thread.currentThread().isInterrupted()) throw new InterruptedIOException("Reader open cancelled");
 
         long openStarted = System.nanoTime();
@@ -550,8 +563,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             BookSource source = new FileBookSource(materialized.readerPath(), book.getId().asString());
             boolean audio = isAudioExtension(source.extension());
             try {
-                if (audio) savedAudioPosition = persistenceService.loadAudioPosition(book.getId().asString());
-                else savedPosition = persistenceService.loadPosition(book.getId().asString());
+                if (audio) savedAudioPosition = persistenceService.loadAudioPosition(collectionId, book.getId().asString());
+                else savedPosition = persistenceService.loadPosition(collectionId, book.getId().asString());
             } catch (RuntimeException persistenceError) {
                 log.warn("Не вдалося завантажити позицію читання для {}", book.getId(), persistenceError);
                 persistenceWarning = i18n.text("ui.reader.warning.position_load_failed");
@@ -633,9 +646,9 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 jumpToContentSearchTarget();
             }
             long totalTextLength = currentDocumentLength();
-            if (currentAudio) audioPositionAutosaver.start(currentBookId.asString());
-            else positionAutosaver.start(currentBookId.asString(), totalTextLength);
-            readingSessionService.start(currentBookId.asString(), currentProgressPercent());
+            if (currentAudio) audioPositionAutosaver.start(currentBookCollectionId, currentBookId.asString());
+            else positionAutosaver.start(currentBookCollectionId, currentBookId.asString(), totalTextLength);
+            readingSessionService.start(currentBookCollectionId, currentBookId.asString(), currentProgressPercent());
             setLoading(false);
             if (!currentPdf && !currentComic && !currentAudio) refreshAnnotationsAsync();
             if (prepared.persistenceWarning() != null) {
@@ -643,20 +656,24 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             }
 
             BookId openedId = currentBookId;
-            uiBackgroundExecutor.execute(() -> {
-                if (isDisposed || !UiAsyncRequestGuard.isCurrent(requestToken, openGeneration, appState)) return;
-                try {
-                    sessionService.saveLastOpenedBookId(openedId.asString());
-                } catch (RuntimeException error) {
-                    log.warn("Не вдалося зберегти останню відкриту книгу: {}", rootMessage(error));
-                }
-                try {
-                    readingHistoryService.recordOpened(openedId);
-                } catch (RuntimeException error) {
-                    // Reading history is auxiliary state and must never terminate the Reader background task.
-                    log.warn("Не вдалося оновити історію читання: {}", rootMessage(error));
-                }
-            });
+            try {
+                uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE, () -> {
+                    if (isDisposed || !UiAsyncRequestGuard.isCurrent(requestToken, openGeneration, appState)) return;
+                    try {
+                        sessionService.saveLastOpenedBookId(openedId.asString());
+                    } catch (RuntimeException error) {
+                        log.warn("Не вдалося зберегти останню відкриту книгу: {}", rootMessage(error));
+                    }
+                    try {
+                        readingHistoryService.recordOpened(openedId);
+                    } catch (RuntimeException error) {
+                        // Reading history is auxiliary state and must never terminate the Reader background task.
+                        log.warn("Не вдалося оновити історію читання: {}", rootMessage(error));
+                    }
+                });
+            } catch (RuntimeException lifecycleBusy) {
+                log.debug("Reader auxiliary state skipped because library lifecycle changed: {}", rootMessage(lifecycleBusy));
+            }
             ReaderOpenTiming timing = prepared.timing();
             log.info("reader_open_timing resolve_ms={} materialize_ms={} parse_ms={} render_ready_ms={} total_ms={} format={} size_bytes={}",
                     millis(timing.resolveNanos()), millis(timing.materializeNanos()), millis(timing.parseNanos()),
@@ -708,6 +725,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private Optional<String> requestPdfPassword() {
         Dialog<String> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.pdf.password.title"));
         dialog.setHeaderText(i18n.text("ui.reader.pdf.password.header"));
         PasswordField password = new PasswordField();
@@ -893,9 +911,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable root = unwrap(error);
-        return root.getMessage() == null || root.getMessage().isBlank()
-                ? root.getClass().getSimpleName() : root.getMessage();
+        return UiExceptionSupport.message(error);
     }
 
     private record MaterializedReaderSource(Path readerPath, Path temporaryPath) { }
@@ -960,14 +976,14 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             if (currentAudio && audioOpen) {
                 AudioPosition pos = audioReaderView.currentPosition();
                 if (audioPositionAutosaver != null) { audioPositionAutosaver.mark(pos, audioReaderView.progressPercent()); saved = audioPositionAutosaver.flush(); }
-                else saved = persistenceService.saveAudioPosition(currentBookId.asString(), pos, audioReaderView.progressPercent());
+                else saved = persistenceService.saveAudioPosition(currentBookCollectionId, currentBookId.asString(), pos, audioReaderView.progressPercent());
             } else {
                 ReaderPosition pos = currentPdf && pdfOpen ? pdfReaderView.currentPosition()
                         : currentComic && comicOpen ? comicReaderView.currentPosition()
                         : readerView.getCurrentPosition();
                 if (pos == null) return;
                 if (positionAutosaver != null) { positionAutosaver.mark(pos); saved = positionAutosaver.flush(); }
-                else saved = persistenceService.savePosition(currentBookId.asString(), pos, currentDocumentLength());
+                else saved = persistenceService.savePosition(currentBookCollectionId, currentBookId.asString(), pos, currentDocumentLength());
             }
             if (!saved) appState.getStatusBar().setStatusText(i18n.text("ui.reader.warning.position_save_retry"));
         } catch (Exception e) {
@@ -1001,7 +1017,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void finishReadingSession() {
         if (currentBookId == null) return;
-        readingSessionService.finish(currentBookId.asString(), currentProgressPercent());
+        readingSessionService.finish(currentBookCollectionId, currentBookId.asString(), currentProgressPercent());
     }
 
     private long currentDocumentLength() {
@@ -1110,6 +1126,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         int suggestedIndex = Math.max(0, voices.indexOf(suggested));
         String suggestedLabel = voiceLabels.get(suggestedIndex);
         ChoiceDialog<String> voiceDialog = new ChoiceDialog<>(suggestedLabel, voiceLabels);
+        DialogLocalization.prepare(voiceDialog);
         voiceDialog.setTitle(i18n.text("ui.reader.tts.title"));
         voiceDialog.setHeaderText(i18n.text("ui.reader.tts.voice_header"));
         voiceDialog.setContentText(i18n.text("ui.reader.tts.voice_label"));
@@ -1120,6 +1137,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         TtsVoice selectedVoice = voices.get(selectedVoiceIndex);
 
         TextInputDialog rateDialog = new TextInputDialog(String.format(Locale.ROOT, "%.2f", selectedTtsRate));
+        DialogLocalization.prepare(rateDialog);
         rateDialog.setTitle(i18n.text("ui.reader.tts.title"));
         rateDialog.setHeaderText(i18n.text("ui.reader.tts.speed_header"));
         rateDialog.setContentText(i18n.text("ui.reader.tts.speed_label"));
@@ -1227,7 +1245,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         List<DictionaryProviderChoice> choices = providers.stream().map(DictionaryProviderChoice::new).toList();
         Optional<DictionaryProviderChoice> selected = dialogService.showChoiceDialog(
                 choices, choices.getFirst(), i18n.text("ui.reader.dictionary.title"),
-                i18n.text("ui.reader.dictionary.provider.header"), i18n.text("ui.reader.dictionary.provider"));
+                i18n.text("ui.reader.dictionary.provider.header"), i18n.text("ui.reader.dictionary.provider"),
+                choice -> choice.descriptor().displayName());
         if (selected.isEmpty()) return;
 
         AtomicBoolean cancellation = replaceCancellation(dictionaryCancellation);
@@ -1309,7 +1328,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         List<TranslationProviderChoice> providerChoices = providers.stream().map(TranslationProviderChoice::new).toList();
         Optional<TranslationProviderChoice> selectedProvider = dialogService.showChoiceDialog(
                 providerChoices, providerChoices.getFirst(), i18n.text("ui.reader.translation.title"),
-                i18n.text("ui.reader.translation.provider.header"), i18n.text("ui.reader.translation.provider"));
+                i18n.text("ui.reader.translation.provider.header"), i18n.text("ui.reader.translation.provider"),
+                choice -> choice.descriptor().displayName());
         if (selectedProvider.isEmpty()) return;
 
         TranslationProviderDescriptor provider = selectedProvider.get().descriptor();
@@ -1325,7 +1345,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 .findFirst().orElse(languages.getFirst());
         Optional<TranslationLanguageChoice> target = dialogService.showChoiceDialog(
                 languages, defaultLanguage, i18n.text("ui.reader.translation.title"),
-                i18n.text("ui.reader.translation.language.header"), i18n.text("ui.reader.translation.target_language"));
+                i18n.text("ui.reader.translation.language.header"), i18n.text("ui.reader.translation.target_language"),
+                TranslationLanguageChoice::label);
         if (target.isEmpty()) return;
 
         if (provider.remote() && !dialogService.showConfirmation(
@@ -1404,6 +1425,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
 
     private void showReadOnlyTextDialog(String title, String header, String content) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        DialogLocalization.prepare(alert);
         alert.setTitle(title);
         alert.setHeaderText(header);
         TextArea area = new TextArea(content == null ? "" : content);
@@ -1558,6 +1580,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 .map(issue -> new AnnotationIssueChoice(issue, annotationIssueLabel(issue)))
                 .toList();
         ChoiceDialog<AnnotationIssueChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.annotation.issues.title"));
         dialog.setHeaderText(i18n.format("ui.reader.annotation.issues.header", choices.size()));
         dialog.setContentText(i18n.text("ui.reader.annotation.issues.select"));
@@ -1787,7 +1810,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         String bookId = currentBookId.asString();
         String artifactId = currentReaderArtifactId;
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
-        uiBackgroundExecutor.submit(() -> ReaderAnnotationPresenter.presentation(
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.QUERY,
+                () -> ReaderAnnotationPresenter.presentation(
                         annotationService.listBookAnnotationViews(bookId), artifactId, document))
                 .thenAccept(presentation -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
@@ -1855,6 +1879,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         if (!pdfOpen && !comicOpen && !audioOpen && !textOpen) return;
 
         TextInputDialog dialog = new TextInputDialog("");
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.bookmark.add.title"));
         dialog.setHeaderText(i18n.text("ui.reader.bookmark.add.header"));
         dialog.setContentText(i18n.text("common.name.label"));
@@ -1865,18 +1890,26 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 ? i18n.text("ui.reader.bookmark.default_title") : result.get().trim();
         long totalLength = currentDocumentLength();
         String bookId = currentBookId.asString();
+        String collectionId = currentBookCollectionId;
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
 
         java.util.concurrent.CompletableFuture<Bookmark> saveFuture;
-        if (audioOpen) {
-            AudioPosition audioPosition = audioReaderView.currentPosition();
-            double percent = audioReaderView.progressPercent();
-            saveFuture = uiBackgroundExecutor.submit(() -> persistenceService.saveAudioBookmark(bookId, audioPosition, percent, title, ""));
-        } else {
-            ReaderPosition pos = pdfOpen ? pdfReaderView.currentPosition()
-                    : comicOpen ? comicReaderView.currentPosition() : readerView.getCurrentPosition();
-            if (pos == null) return;
-            saveFuture = uiBackgroundExecutor.submit(() -> persistenceService.saveBookmark(bookId, pos, totalLength, title, ""));
+        try {
+            if (audioOpen) {
+                AudioPosition audioPosition = audioReaderView.currentPosition();
+                double percent = audioReaderView.progressPercent();
+                saveFuture = uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE,
+                        () -> persistenceService.saveAudioBookmark(collectionId, bookId, audioPosition, percent, title, ""));
+            } else {
+                ReaderPosition pos = pdfOpen ? pdfReaderView.currentPosition()
+                        : comicOpen ? comicReaderView.currentPosition() : readerView.getCurrentPosition();
+                if (pos == null) return;
+                saveFuture = uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE,
+                        () -> persistenceService.saveBookmark(collectionId, bookId, pos, totalLength, title, ""));
+            }
+        } catch (RuntimeException lifecycleBusy) {
+            log.debug("Bookmark save skipped because library lifecycle changed: {}", rootMessage(lifecycleBusy));
+            return;
         }
         saveFuture.thenAccept(bookmark -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
@@ -1909,7 +1942,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
         appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
-        uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE,
+                () -> persistenceService.loadBookmarks(bookId))
                 .thenAccept(bookmarks -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
                     showBookmarksDialog(bookmarks, requestToken, bookId);
@@ -1937,7 +1971,8 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
         if (selectBookmarksTab) showReaderSidebar(bookmarkSidebarTab);
         if (reportStatus) appState.getStatusBar().setStatusText(i18n.text("ui.reader.bookmarks.loading"));
-        uiBackgroundExecutor.submit(() -> persistenceService.loadBookmarks(bookId))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE,
+                () -> persistenceService.loadBookmarks(bookId))
                 .thenAccept(bookmarks -> Platform.runLater(() -> {
                     if (!sameOpenBook(requestToken, bookId)) return;
                     currentSidebarBookmarks = bookmarks == null ? List.of() : List.copyOf(bookmarks);
@@ -1981,11 +2016,19 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 i18n.text("ui.reader.bookmark.action_prompt"),
                 new BookmarkChoice(bookmark, i18n.text("ui.reader.bookmark.default_title")).toString())) return;
         String bookId = currentBookId.asString();
+        String collectionId = currentBookCollectionId;
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.snapshot(openGeneration, appState);
-        uiBackgroundExecutor.submit(() -> {
-            persistenceService.deleteBookmark(bookmark.getId());
-            return persistenceService.loadBookmarks(bookId);
-        }).thenAccept(bookmarks -> Platform.runLater(() -> {
+        java.util.concurrent.CompletableFuture<List<Bookmark>> deleteFuture;
+        try {
+            deleteFuture = uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE, () -> {
+                persistenceService.deleteBookmark(collectionId, bookId, bookmark.getId());
+                return persistenceService.loadBookmarks(bookId);
+            });
+        } catch (RuntimeException lifecycleBusy) {
+            log.debug("Bookmark delete skipped because library lifecycle changed: {}", rootMessage(lifecycleBusy));
+            return;
+        }
+        deleteFuture.thenAccept(bookmarks -> Platform.runLater(() -> {
             if (!sameOpenBook(requestToken, bookId)) return;
             currentSidebarBookmarks = bookmarks == null ? List.of() : List.copyOf(bookmarks);
             bookmarkSidebarList.setItems(javafx.collections.FXCollections.observableArrayList(currentSidebarBookmarks));
@@ -2010,6 +2053,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
         List<BookmarkChoice> choices = bookmarks.stream().map(bookmark -> new BookmarkChoice(bookmark, i18n.text("ui.reader.bookmark.default_title"))).toList();
         ChoiceDialog<BookmarkChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.bookmarks.title"));
         dialog.setHeaderText(i18n.text("ui.reader.bookmarks.select_header"));
         dialog.setContentText(i18n.text("ui.reader.bookmarks.label"));
@@ -2020,6 +2064,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         ButtonType goTo = new ButtonType(i18n.text("ui.reader.bookmark.go_to"));
         ButtonType delete = new ButtonType(i18n.text("common.delete"));
         Alert action = new Alert(Alert.AlertType.CONFIRMATION);
+        DialogLocalization.prepare(action);
         action.setTitle(i18n.text("ui.reader.bookmark.title"));
         action.setHeaderText(selected.get().toString());
         action.setContentText(i18n.text("ui.reader.bookmark.action_prompt"));
@@ -2036,10 +2081,17 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             }
             positionChanged = true;
         } else if (actionResult.filter(delete::equals).isPresent()) {
-            uiBackgroundExecutor.submit(() -> {
-                persistenceService.deleteBookmark(bookmark.getId());
-                return true;
-            }).thenAccept(ignored -> Platform.runLater(() -> {
+            java.util.concurrent.CompletableFuture<Boolean> deleteFuture;
+            try {
+                deleteFuture = uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.READER_STATE, () -> {
+                    persistenceService.deleteBookmark(requestToken.collectionId(), bookId, bookmark.getId());
+                    return true;
+                });
+            } catch (RuntimeException lifecycleBusy) {
+                log.debug("Bookmark delete skipped because library lifecycle changed: {}", rootMessage(lifecycleBusy));
+                return;
+            }
+            deleteFuture.thenAccept(ignored -> Platform.runLater(() -> {
                 if (sameOpenBook(requestToken, bookId)) dialogService.showInfo(i18n.text("ui.reader.bookmarks.title"), i18n.text("ui.reader.bookmark.deleted"));
             })).exceptionally(error -> {
                 log.error("Не вдалося видалити закладку", error);
@@ -2145,6 +2197,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
             return;
         }
         ChoiceDialog<AudioChapterChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.toc.title"));
         dialog.setHeaderText(i18n.text("ui.reader.audio.chapter_select"));
         dialog.setContentText(i18n.text("ui.reader.audio.chapter"));
@@ -2167,6 +2220,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
         List<PdfOutlineChoice> choices = entries.stream().map(PdfOutlineChoice::new).toList();
         ChoiceDialog<PdfOutlineChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.toc.title"));
         dialog.setHeaderText(i18n.text("ui.reader.pdf.toc.select_header"));
         dialog.setContentText(i18n.text("ui.reader.pdf.toc.label"));
@@ -2179,6 +2233,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
     private void showPdfSearch() {
         if (isDisposed || pdfReaderView == null || !pdfReaderView.isOpen() || currentBookId == null) return;
         TextInputDialog dialog = new TextInputDialog("");
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.search.title"));
         dialog.setHeaderText(i18n.text("ui.reader.search.enter_text"));
         dialog.setContentText(i18n.text("ui.reader.pdf.search.query"));
@@ -2195,9 +2250,9 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
                 showPdfSearchOutcome(outcome);
             }, error -> {
                 if (!sameOpenBook(requestToken, bookId)) return;
-                log.warn("PDF text search failed: {}", error);
+                log.warn("PDF text search failed", error);
                 dialogService.showError(i18n.text("ui.reader.search.title"),
-                        i18n.format("ui.reader.search.error_detail", error == null ? "" : error));
+                        i18n.format("ui.reader.search.error_detail", UiExceptionSupport.message(error)));
             });
         } catch (RejectedExecutionException busy) {
             dialogService.showWarning(i18n.text("ui.reader.search.title"), i18n.text("ui.reader.search.queue_busy"));
@@ -2215,6 +2270,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         }
         List<PdfSearchChoice> choices = outcome.results().stream().map(PdfSearchChoice::new).toList();
         ChoiceDialog<PdfSearchChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.search.title"));
         dialog.setHeaderText(i18n.format("ui.reader.search.matches_found", choices.size()));
         dialog.setContentText(i18n.text("ui.reader.pdf.search.result"));
@@ -2282,7 +2338,7 @@ public class NewReaderWorkspaceController implements WorkspaceLifecycle {
         if (error != null) {
             if (error instanceof CancellationException) return;
             if (readerSidebarSearchStatus != null) readerSidebarSearchStatus.setText(
-                    error.getMessage() == null ? i18n.text("ui.reader.search.error") : error.getMessage());
+                    UiExceptionSupport.message(error));
             if (readerSidebarSearchResults != null) readerSidebarSearchResults.getItems().clear();
             return;
         }

@@ -1,3 +1,5 @@
-# Поддръжка на колекцията
+# Maintenance на колекцията
 
-AutoUpdater следи конкретния source INPX/ZIP с debounce и fingerprint. Cleaner/Repair винаги следва **Analyze → Preview/Dry run → Apply → Report** и създава backup преди database repair. Orphan файловете не се изтриват автоматично.
+Автоматичното обновяване следи зададения INPX/ZIP source и използва stabilization delay и state fingerprint, така че масови промени на файлове да не създават лавина от еднакви събития.
+
+Cleanup/repair винаги следва **Анализ → Dry-run preview → Прилагане → Отчет**. Преди ремонт на базата се създава backup. Orphan файлове не се изтриват автоматично.

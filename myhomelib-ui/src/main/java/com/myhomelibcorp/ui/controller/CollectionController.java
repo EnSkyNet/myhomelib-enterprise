@@ -1,5 +1,8 @@
 package com.myhomelibcorp.ui.controller;
 
+
+import com.myhomelibcorp.ui.service.UiText;
+import com.myhomelibcorp.ui.collection.CollectionUiCommitGuard;
 import com.myhomelibcorp.application.service.CollectionManagementService;
 import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
@@ -26,6 +29,7 @@ public class CollectionController {
     private final StatisticsService statisticsService;
     private final ApplicationEventPublisher eventPublisher;
     private final CollectionManagementService collectionManagementService;
+    private final CollectionUiCommitGuard collectionUiCommitGuard;
 
     /**
      * Переключення на колекцію з асинхронною перебудовою індексу.
@@ -40,17 +44,20 @@ public class CollectionController {
 
         // Lifecycle owns the reuse-vs-rebuild policy for the collection-specific index.
         Collection activated = switchCollectionUseCase.execute(collection, true);
-        appState.setCurrentLibraryCollection(activated);
-        // Collection switching must not synchronously scan a 500k+ catalog. Show the persisted
-        // snapshot immediately; exact statistics are refreshed only on explicit/background paths.
-        appState.getStatusBar().setStatistics(statisticsService.getStatistics());
-        appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName()
-                + ". Пошуковий індекс перевірено; оновлення виконується у фоні лише за потреби.");
-        appState.getStatusBar().setProgressVisible(false);
-
-        eventPublisher.publishEvent(new CollectionChangedEvent(activated));
-        if (onComplete != null) {
-            onComplete.run();
+        boolean committed = collectionUiCommitGuard.runIfStillActive(activated.getId(), () -> {
+            appState.setCurrentLibraryCollection(activated);
+            // Collection switching must not synchronously scan a 500k+ catalog. Show the persisted
+            // snapshot immediately; exact statistics are refreshed only on explicit/background paths.
+            appState.getStatusBar().setStatistics(statisticsService.getStatistics());
+            appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_controller.c3d5ffb6d9") + activated.getName()
+                    + UiText.text("ui.java.collection_controller.e4b0881f6a"));
+            appState.getStatusBar().setProgressVisible(false);
+            eventPublisher.publishEvent(new CollectionChangedEvent(activated));
+            if (onComplete != null) onComplete.run();
+        });
+        if (!committed) {
+            log.debug("Switch result for collection {} was superseded before UI commit", activated.getId());
+            appState.getStatusBar().setProgressVisible(false);
         }
     }
 

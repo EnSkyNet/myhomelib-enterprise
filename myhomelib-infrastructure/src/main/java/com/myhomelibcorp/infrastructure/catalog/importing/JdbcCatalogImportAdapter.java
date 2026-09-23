@@ -6,6 +6,8 @@ import com.myhomelibcorp.application.catalog.importing.CatalogDatasetInfo;
 import com.myhomelibcorp.application.catalog.importing.CatalogReader;
 import com.myhomelibcorp.application.catalog.importing.CatalogRecord;
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.context.ImportSourceFingerprintVerifier;
+import com.myhomelibcorp.application.imports.context.StaleImportSourceException;
 import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeAccumulator;
 import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
@@ -23,6 +25,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import javax.sql.DataSource;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -61,7 +64,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
 
     @Override
     public boolean supports(Path source) {
-        if (source == null || !Files.isRegularFile(source)) return false;
+        if (source == null || !Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)) return false;
         for (CatalogReader reader : readers) {
             try {
                 if (reader.supports(source)) return true;
@@ -86,7 +89,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
         String sourceKey = manifestStore.sourceKey(context, source);
         String sourceId = CatalogSourceIdentity.stableId(sourceKey);
         long started = System.currentTimeMillis();
-        CatalogImportManifestStore.SourceStat sourceStat = manifestStore.stat(source);
+        CatalogImportManifestStore.SourceStat sourceStat = statSource(source, context);
         long size = sourceStat.sizeBytes();
         long mtime = sourceStat.mtimeMillis();
 
@@ -101,10 +104,18 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
                     ImportChangeSet.empty(true), List.of());
         }
 
-        // Strong checksum is intentionally deferred until metadata changes or compatibility is uncertain.
-        String fingerprint = manifestStore.fingerprint(source, context.getCancelFlag());
+        // Watcher-triggered imports have already computed a stable SHA-256 before queueing. Reuse
+        // that value here and verify it again immediately before transaction commit. Manual imports
+        // compute the strong checksum once after the cheap manifest stat fast-path misses.
+        String expectedWatcherFingerprint = safeExpectedFingerprint(context);
+        String fingerprint = !expectedWatcherFingerprint.isBlank()
+                ? expectedWatcherFingerprint
+                : manifestStore.fingerprint(source, context.getCancelFlag());
         if (isCancelled(context.getCancelFlag())) return ImportResult.cancelled(System.currentTimeMillis() - started);
         if (compatibleManifest && fingerprint.equals(manifest.fingerprint())) {
+            assertSourceStatUnchanged(source, sourceStat, context);
+            if (!expectedWatcherFingerprint.isBlank()) ImportSourceFingerprintVerifier.verifyExpected(context);
+            assertSourceStatUnchanged(source, sourceStat, context);
             manifestStore.touch(jdbc, sourceKey, source, sourceStat, fingerprint, manifest.recordCount(),
                     manifest.datasetSchema(), sourceFormat, manifest.datasetNormalizationModel());
             return new ImportResult(0, Math.max(0, manifest.recordCount()), 0, 0,
@@ -124,7 +135,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
             ImportResult result = tx.execute(transactionStatus -> {
                 try {
                     return importTransactional(jdbc, session, context, source, sourceKey, sourceId,
-                            fingerprint, size, mtime, datasetInfo, sourceFormat, started);
+                            fingerprint, sourceStat, datasetInfo, sourceFormat, started);
                 } catch (CancelledImportException e) {
                     transactionStatus.setRollbackOnly();
                     return ImportResult.cancelled(System.currentTimeMillis() - started);
@@ -146,8 +157,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
             String sourceKey,
             String sourceId,
             String sourceFingerprint,
-            long sourceSize,
-            long sourceMtime,
+            CatalogImportManifestStore.SourceStat sourceStat,
             CatalogDatasetInfo datasetInfo,
             String sourceFormat,
             long started) {
@@ -184,6 +194,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
             }
             batch.add(record);
             if (batch.size() >= batchSize) {
+                assertSourceStatUnchanged(source, sourceStat, context);
                 batchWriter.persistBatch(jdbc, batch, sourceId, sourceKey, context, fullSnapshot, changes);
                 imported += batch.size();
                 batch.clear();
@@ -191,6 +202,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
             }
         }
         if (!batch.isEmpty()) {
+            assertSourceStatUnchanged(source, sourceStat, context);
             batchWriter.persistBatch(jdbc, batch, sourceId, sourceKey, context, fullSnapshot, changes);
             imported += batch.size();
             batch.clear();
@@ -208,8 +220,7 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
                     """, sourceId);
         }
 
-        manifestStore.touch(jdbc, sourceKey, source,
-                new CatalogImportManifestStore.SourceStat(sourceSize, sourceMtime), sourceFingerprint,
+        manifestStore.touch(jdbc, sourceKey, source, sourceStat, sourceFingerprint,
                 processed, datasetSchema, sourceFormat, datasetMetadata(datasetInfo, "normalization.model"));
         jdbc.update("""
                 UPDATE catalog_sources
@@ -217,6 +228,13 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
                        dataset_schema = COALESCE(NULLIF(?, ''), dataset_schema)
                  WHERE source_key = ?
                 """, sourceFingerprint, datasetSchema, sourceKey);
+
+        // This is intentionally the last source check inside the transaction body. A changed watcher
+        // file must roll back every batch and manifest write instead of committing records parsed
+        // from bytes that no longer match the durable READY fingerprint.
+        assertSourceStatUnchanged(source, sourceStat, context);
+        if (!safeExpectedFingerprint(context).isBlank()) ImportSourceFingerprintVerifier.verifyExpected(context);
+        assertSourceStatUnchanged(source, sourceStat, context);
 
         ImportChangeSet changeSet = fullSnapshot
                 ? ImportChangeSet.empty(false)
@@ -232,6 +250,31 @@ public class JdbcCatalogImportAdapter implements CatalogImportPort {
         return readers.stream().filter(r -> {
             try { return r.supports(source); } catch (RuntimeException e) { return false; }
         }).findFirst().orElseThrow(() -> new IllegalArgumentException("Unsupported catalog format: " + source));
+    }
+
+    private void assertSourceStatUnchanged(Path source, CatalogImportManifestStore.SourceStat expected, ImportContext context) {
+        CatalogImportManifestStore.SourceStat actual = statSource(source, context);
+        if (expected.sameFileRevision(actual)) return;
+        if (!safeExpectedFingerprint(context).isBlank()) {
+            throw new StaleImportSourceException("Incoming catalog changed during import");
+        }
+        throw new IllegalStateException("Catalog source changed during import: " + source);
+    }
+
+    private CatalogImportManifestStore.SourceStat statSource(Path source, ImportContext context) {
+        try {
+            return manifestStore.stat(source);
+        } catch (RuntimeException failure) {
+            if (!safeExpectedFingerprint(context).isBlank()) {
+                throw new StaleImportSourceException("Incoming catalog is no longer a safe stable file", failure);
+            }
+            throw failure;
+        }
+    }
+
+    private static String safeExpectedFingerprint(ImportContext context) {
+        String value = context == null ? null : context.getExpectedSourceSha256();
+        return value == null ? "" : value.trim();
     }
 
     private static void report(DoubleConsumer progress, Consumer<String> status, long processed, Long declared) {

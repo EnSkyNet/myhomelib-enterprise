@@ -58,7 +58,8 @@ public final class ArchiveImportSupport {
     public static String fileName(String entryName) {
         if (entryName == null || entryName.isBlank()) return "book.bin";
         String result = FileNameSupport.baseName(entryName);
-        return result.isBlank() ? "book.bin" : result;
+        if (result.isBlank()) return "book.bin";
+        return FileNameSupport.decodeHashUnicodeEscapes(result);
     }
 
     /** ASCII probe path used only for importer selection by extension. */

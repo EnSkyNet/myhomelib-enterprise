@@ -4,13 +4,15 @@ import com.myhomelibcorp.application.duplicate.ArtifactScanCandidate;
 import com.myhomelibcorp.application.duplicate.ExactDuplicateGroup;
 import com.myhomelibcorp.application.duplicate.ExactDuplicateScanResult;
 import com.myhomelibcorp.application.duplicate.ExactDuplicateScanSession;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.duplicate.ExactDuplicateScanStore;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
@@ -29,7 +31,6 @@ import java.util.function.Consumer;
  * restart resumes the same snapshot instead of silently skipping newly sorted rows.
  */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class ExactDuplicateScanner {
     private static final int BATCH_SIZE = 128;
@@ -38,18 +39,50 @@ public class ExactDuplicateScanner {
     private final ExactDuplicateScanStore store;
     private final BookResourcePort resources;
     private final ExecutorPort executor;
+    private final LibraryOperationCoordinator operationCoordinator;
     private final AtomicBoolean cancelRequested = new AtomicBoolean(false);
     private final AtomicBoolean running = new AtomicBoolean(false);
+
+    /** Compatibility constructor for focused non-Spring tests. */
+    public ExactDuplicateScanner(ExactDuplicateScanStore store, BookResourcePort resources, ExecutorPort executor) {
+        this(store, resources, executor, new LibraryOperationCoordinator());
+    }
+
+    @Autowired
+    public ExactDuplicateScanner(ExactDuplicateScanStore store, BookResourcePort resources, ExecutorPort executor,
+                                 LibraryOperationCoordinator operationCoordinator) {
+        this.store = store;
+        this.resources = resources;
+        this.executor = executor;
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public CompletableFuture<ExactDuplicateScanResult> scanAsync(Consumer<OperationProgress> telemetry) {
         if (!running.compareAndSet(false, true)) {
             return CompletableFuture.failedFuture(new IllegalStateException("Exact duplicate scan is already running"));
         }
         cancelRequested.set(false);
+        LibraryOperationCoordinator.Lease lease = null;
         try {
+            // Acquire before enqueue: otherwise a queued scan could start against a different collection.
+            lease = operationCoordinator.acquireDetached(LibraryOperationType.INTEGRITY_AUDIT);
+            LibraryOperationCoordinator.Lease stableLease = lease;
             return executor.submit(() -> scan(telemetry))
-                    .whenComplete((ignored, failure) -> running.set(false));
+                    .whenComplete((result, failure) -> {
+                        try {
+                            if (failure != null) stableLease.markFailed(failure);
+                            else if (result != null && result.cancelled()) stableLease.markCancelled("Exact duplicate scan cancelled");
+                            else stableLease.markCompleted("");
+                        } finally {
+                            running.set(false);
+                            stableLease.close();
+                        }
+                    });
         } catch (RuntimeException failure) {
+            if (lease != null) {
+                lease.markFailed(failure);
+                lease.close();
+            }
             running.set(false);
             throw failure;
         }

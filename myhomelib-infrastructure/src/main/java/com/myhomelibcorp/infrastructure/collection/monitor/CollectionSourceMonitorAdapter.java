@@ -3,6 +3,8 @@ package com.myhomelibcorp.infrastructure.collection.monitor;
 import com.myhomelibcorp.application.collection.CollectionSourceState;
 import com.myhomelibcorp.application.event.CollectionSourceUpdateAvailableEvent;
 import com.myhomelibcorp.application.port.out.collection.CollectionSourceMonitorPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.shared.event.DomainEventPublisher;
 import com.myhomelibcorp.shared.util.Sha256Support;
 import jakarta.annotation.PostConstruct;
@@ -21,7 +23,6 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.zip.ZipFile;
 
 import static java.nio.file.StandardWatchEventKinds.*;
 
@@ -186,13 +187,14 @@ public class CollectionSourceMonitorAdapter implements CollectionSourceMonitorPo
         CollectionSourceState state = findState(collectionId).orElse(null);
         if (state == null || !state.enabled() || state.sourceFile() == null) return;
         Path parent = state.sourceFile().getParent();
-        if (parent == null || !Files.isDirectory(parent)) {
+        if (parent == null) {
             updateStatus(collectionId, "SOURCE_DIRECTORY_MISSING");
             return;
         }
         try {
+            Path safeParent = SafeFilePublication.requireSafeDirectoryPath(parent, "collection source watch directory");
             WatchService watchService = FileSystems.getDefault().newWatchService();
-            parent.register(watchService, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE);
+            safeParent.register(watchService, ENTRY_CREATE, ENTRY_MODIFY, ENTRY_DELETE);
             WatchRegistration registration = new WatchRegistration(collectionId, state.sourceFile(), watchService);
             watchers.put(collectionId, registration);
             Thread thread = new Thread(() -> watchLoop(registration), "collection-source-watch-" + collectionId);
@@ -260,20 +262,43 @@ public class CollectionSourceMonitorAdapter implements CollectionSourceMonitorPo
     private FingerprintResult inspect(Path source) {
         try {
             if (source == null) return new FingerprintResult(null, "NOT_CONFIGURED");
-            if (!Files.isRegularFile(source)) return new FingerprintResult(null, "SOURCE_MISSING");
-            if (!Files.isReadable(source)) return new FingerprintResult(null, "SOURCE_NOT_READABLE");
-            String lower = source.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+            Path safeSource;
+            try {
+                safeSource = SafeFilePublication.requireSafeRegularFile(source, "collection source monitor file");
+            } catch (IOException unsafeSource) {
+                return new FingerprintResult(null, "SOURCE_MISSING_OR_UNSAFE: " + safeMessage(unsafeSource));
+            }
+            if (!Files.isReadable(safeSource)) return new FingerprintResult(null, "SOURCE_NOT_READABLE");
+            String lower = safeSource.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
             if (lower.endsWith(".zip") || lower.endsWith(".inpx")) {
-                try (ZipFile zip = new ZipFile(source.toFile())) {
-                    if (!zip.entries().hasMoreElements()) return new FingerprintResult(null, "SOURCE_ARCHIVE_EMPTY");
+                try (SafeZipArchive opened = SafeZipArchive.open(
+                        safeSource, java.nio.charset.StandardCharsets.UTF_8, "collection source archive")) {
+                    if (!opened.zip().getEntries().hasMoreElements()) {
+                        return new FingerprintResult(null, "SOURCE_ARCHIVE_EMPTY");
+                    }
                 } catch (Exception e) {
                     return new FingerprintResult(null, "SOURCE_ARCHIVE_INVALID: " + safeMessage(e));
                 }
             }
-            return new FingerprintResult(Sha256Support.file(source), "READY");
+            return new FingerprintResult(hashNoFollow(safeSource), "READY");
         } catch (Exception e) {
             return new FingerprintResult(null, "SOURCE_ERROR: " + safeMessage(e));
         }
+    }
+
+    private static String hashNoFollow(Path source) throws IOException {
+        var digest = Sha256Support.newDigest();
+        try (var channel = java.nio.channels.FileChannel.open(
+                source, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+            var buffer = java.nio.ByteBuffer.allocate(256 * 1024);
+            while (channel.read(buffer) >= 0) {
+                if (buffer.position() == 0) continue;
+                buffer.flip();
+                digest.update(buffer);
+                buffer.clear();
+            }
+        }
+        return Sha256Support.finish(digest);
     }
 
     private void requireCollection(String collectionId) {

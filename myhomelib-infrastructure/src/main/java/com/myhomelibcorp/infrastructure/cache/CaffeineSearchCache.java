@@ -3,7 +3,9 @@ package com.myhomelibcorp.infrastructure.cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.application.port.out.cache.SearchCache;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -13,9 +15,16 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class CaffeineSearchCache implements SearchCache {
 
+    private final CollectionManager collectionManager;
     private final com.github.benmanes.caffeine.cache.Cache<String, List<BookId>> cache;
 
     public CaffeineSearchCache() {
+        this(null);
+    }
+
+    @Autowired
+    public CaffeineSearchCache(CollectionManager collectionManager) {
+        this.collectionManager = collectionManager;
         this.cache = Caffeine.newBuilder()
                 // Bound by cached result cardinality, not query count: otherwise
                 // 1000 queries x 1000 BookIds can retain ~1M IDs in heap.
@@ -29,19 +38,24 @@ public class CaffeineSearchCache implements SearchCache {
 
     @Override
     public List<BookId> get(String query) {
-        return cache.getIfPresent(query);
+        if (query == null) return null;
+        return cache.getIfPresent(key(query));
     }
 
     @Override
     public void put(String query, List<BookId> ids) {
         if (query != null && ids != null && !ids.isEmpty()) {
-            cache.put(query, ids);
+            cache.put(key(query), ids);
         }
     }
 
     @Override
     public void evict(String query) {
-        cache.invalidate(query);
+        if (query != null) cache.invalidate(key(query));
+    }
+
+    private String key(String query) {
+        return CollectionScopedCacheKey.of(collectionManager, query);
     }
 
     @Override

@@ -1,5 +1,5 @@
-# Online Updates
+# Online updates
 
-Updates are grouped as `Author → New books / Updated books → books`. Catalog revisions come from online INPX synchronization.
+**Updates** shows `Author → New books / Updated books → books`. Counters are based on the catalogue revision received from network INPX updates.
 
-An updated downloaded book is acknowledged only after the replacement file has been downloaded and written successfully.
+A new version of a downloaded book replaces the local file only after a successful download. An update is acknowledged only after the replacement is written successfully; a network failure does not hide the available update.

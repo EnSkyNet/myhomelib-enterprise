@@ -25,21 +25,21 @@ public class CollectionAttachUiService {
     /** Collects user choices on the FX thread, then performs migration/SQLite I/O off the UI thread. */
     public void attach(Window owner, Consumer<LegacyCollectionAttachPort.AttachResult> onComplete) {
         FileChooser fc = new FileChooser();
-        fc.setTitle("Підключити колекцію MyHomeLib");
+        fc.setTitle(UiText.text("ui.java.collection_attach_ui_service.09fbdd11a8"));
         fc.getExtensionFilters().addAll(
-                new FileChooser.ExtensionFilter("Колекції MyHomeLib", "*.hlc2", "*.db", "*.sqlite"),
-                new FileChooser.ExtensionFilter("Усі файли", "*.*"));
+                new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_attach_ui_service.8bcc8b7872"), "*.hlc2", "*.db", "*.sqlite"),
+                new FileChooser.ExtensionFilter(UiText.text("ui.java.collection_attach_ui_service.3efc61c5fd"), "*.*"));
         File source = fc.showOpenDialog(owner);
         if (source == null) return;
 
         String base = source.getName();
         int dot = base.lastIndexOf('.');
         if (dot > 0) base = base.substring(0, dot);
-        Optional<String> name = dialogs.showTextInput("Підключення колекції", "Назва колекції", "Назва:", base);
+        Optional<String> name = dialogs.showTextInput(UiText.text("ui.main.collection.attach_title"), UiText.text("ui.java.collection_attach_ui_service.4073bfd8ec"), UiText.text("common.name.label"), base);
         if (name.isEmpty() || name.get().isBlank()) return;
 
         DirectoryChooser dc = new DirectoryChooser();
-        dc.setTitle("Коренева папка з книгами (Скасувати = папка біля .hlc2)");
+        dc.setTitle(UiText.text("ui.java.collection_attach_ui_service.c7b4c70a12"));
         File parent = source.getParentFile();
         if (parent != null && parent.isDirectory()) dc.setInitialDirectory(parent);
         File root = dc.showDialog(owner);
@@ -50,14 +50,14 @@ public class CollectionAttachUiService {
         executor.submit(() -> useCase.execute(sourcePath, collectionName, rootPath))
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     if (error != null) {
-                        dialogs.showError("Помилка підключення", UiExceptionMessages.root(error));
+                        dialogs.showError(UiText.text("ui.java.collection_attach_ui_service.a44d45c327"), UiExceptionMessages.root(error));
                         return;
                     }
                     String mode = result.migratedLegacy()
-                            ? "Оригінальну .hlc2 безпечно перенесено в сучасну sidecar-БД."
-                            : "Сучасну SQLite-колекцію підключено напряму.";
-                    dialogs.showInfo("Колекцію підключено", mode + "\nКниг: " + result.books()
-                            + "\nАвторів: " + result.authors() + "\nЖанрів: " + result.genres());
+                            ? UiText.text("ui.java.collection_attach_ui_service.033da8b408")
+                            : UiText.text("ui.java.collection_attach_ui_service.4c4ae5bcab");
+                    dialogs.showInfo(UiText.text("ui.java.collection_attach_ui_service.d497f347a6"), mode + UiText.text("ui.java.collection_attach_ui_service.e50977557a") + result.books()
+                            + UiText.text("ui.java.collection_attach_ui_service.74e75bdb57") + result.authors() + UiText.text("ui.java.collection_attach_ui_service.99730559bb") + result.genres());
                     if (onComplete != null) onComplete.accept(result);
                 }));
     }

@@ -56,6 +56,7 @@ public class ImportDirectoryUseCase {
     }
 
     private ImportResult executeLocked(ImportContext context) {
+        importFileUseCase.assertExpectedCollection(context);
         // ЄДИНИЙ виклик ініціалізації на весь імпорт каталогу
         databaseInitializerPort.initializeCurrentCollection();
 
@@ -98,6 +99,7 @@ public class ImportDirectoryUseCase {
                         ImportContext fileContext = ImportContext.builder()
                                 .file(file)
                                 .rootDirectory(directory)
+                                .expectedCollectionId(context.getExpectedCollectionId())
                                 .updateExisting(context.isUpdateExisting())
                                 .indexAfterSave(false)
                                 .publishFinishedEvent(false)
@@ -196,7 +198,8 @@ public class ImportDirectoryUseCase {
                         finalResult.skipped(), finalResult.duplicates(), 0, finalResult.errors()));
 
         if (context.isPublishFinishedEvent()) {
-            eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(directory, finalResult));
+            eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(
+                    directory, finalResult, context.getExpectedCollectionId()));
         }
         return finalResult;
     }

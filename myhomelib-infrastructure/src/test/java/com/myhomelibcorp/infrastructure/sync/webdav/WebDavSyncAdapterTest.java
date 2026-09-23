@@ -103,6 +103,45 @@ class WebDavSyncAdapterTest {
     }
 
     @Test
+    void rejectsEncodedDotSegmentBeforeSendingCredentialsToListedTarget() {
+        FakeWebDavHttpClient remote = new FakeWebDavHttpClient();
+        remote.extraHref = "/sync/%2e%2e/steal.mhl-sync.enc";
+        WebDavSyncAdapter adapter = adapter(remote);
+
+        assertThatThrownBy(() -> adapter.pull(Map.of()))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("dot-segment");
+        assertThat(remote.getRequests).isEmpty();
+    }
+
+    @Test
+    void rejectsNestedDepthOneHrefBeforeGet() {
+        FakeWebDavHttpClient remote = new FakeWebDavHttpClient();
+        remote.extraHref = "/sync/nested/steal.mhl-sync.enc";
+        WebDavSyncAdapter adapter = adapter(remote);
+
+        assertThatThrownBy(() -> adapter.pull(Map.of()))
+                .isInstanceOf(SecurityException.class)
+                .hasMessageContaining("nested path");
+        assertThat(remote.getRequests).isEmpty();
+    }
+
+    @Test
+    void sameCursorAndChangeSetIdWithDifferentPayloadIsConflict() {
+        FakeWebDavHttpClient remote = new FakeWebDavHttpClient();
+        WebDavSyncAdapter adapter = adapter(remote);
+        ChangeSet first = changeSet("same-id", "device-a", 1, "one payload");
+        ChangeSet forged = changeSet("same-id", "device-a", 1, "different payload");
+        adapter.push(first);
+        byte[] forgedBytes = new AesGcmSyncPayloadEnvelope(SECRETS.syncKeyRing()).protect(codec().encode(forged));
+        remote.files.put(ENDPOINT.resolve("forged" + WebDavSyncAdapter.FINAL_SUFFIX), forgedBytes);
+
+        assertThatThrownBy(() -> adapter.pull(Map.of()))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Conflicting WebDAV sync bundles for cursor device-a:1");
+    }
+
+    @Test
     void rejectsPlainHttpForNonLoopbackEndpoint() {
         assertThatThrownBy(() -> new WebDavSyncAdapter(URI.create("http://dav.example/sync/"),
                 new FakeWebDavHttpClient(), codec(), () -> SECRETS, 1, Duration.ZERO))
@@ -133,10 +172,12 @@ class WebDavSyncAdapterTest {
         private int putAttempts;
         private String extraHref;
         private String lastAuthorization = "";
+        private final List<URI> getRequests = new ArrayList<>();
 
         @Override
         public Response exchange(String method, URI uri, Map<String, String> headers, byte[] body) throws IOException {
             requestedHosts.add(uri.getHost());
+            if ("GET".equals(method)) getRequests.add(uri);
             lastAuthorization = headers.getOrDefault("Authorization", "");
             if (!lastAuthorization.startsWith("Basic ")) return response(401, new byte[0]);
             return switch (method) {

@@ -1,3 +1,5 @@
 # Collection maintenance
 
-AutoUpdater watches the configured source INPX/ZIP with debounce and fingerprint checks. Cleaner/Repair follows **Analyze → Preview/Dry run → Apply → Report** and creates a backup before database repair. Orphan files are report-only by default.
+Automatic update watches the configured INPX/ZIP source and uses a stabilization delay plus a state fingerprint, so bulk file changes do not create a storm of duplicate events.
+
+Cleanup/repair always follows **Analyze → Dry-run preview → Apply → Report**. A backup is created before database repair. Orphan files are not deleted automatically.

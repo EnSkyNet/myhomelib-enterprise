@@ -1,5 +1,8 @@
 package com.myhomelibcorp.ui.table;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
 import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.filter.BookQuickFilterField;
@@ -94,7 +97,7 @@ public class BookTableController implements WorkspaceLifecycle {
         selectCol.setId("select");
         masterSelectionCheckBox = new CheckBox();
         masterSelectionCheckBox.setAllowIndeterminate(true);
-        masterSelectionCheckBox.setTooltip(new Tooltip("Виділити всі видимі книги"));
+        masterSelectionCheckBox.setTooltip(new Tooltip(UiText.text("ui.java.book_table_controller.ebbf58ec3d")));
         masterSelectionCheckBox.setOnAction(event -> {
             if (updatingMasterSelection) return;
             BookSelectionService.SelectionState before = bookSelectionService.state(bookTableView.getItems());
@@ -163,6 +166,15 @@ public class BookTableController implements WorkspaceLifecycle {
             }
         });
         authorColumn.setCellValueFactory(cellData -> cellData.getValue().authorsTextProperty());
+        authorColumn.setCellFactory(col -> new TableCell<>() {
+            @Override protected void updateItem(String item, boolean empty) {
+                super.updateItem(item, empty);
+                if (empty) { setText(null); return; }
+                BookViewModel row = getTableRow() == null ? null : getTableRow().getItem();
+                if (row != null && row.isGroupHeader()) { setText(item); return; }
+                setText(item == null || item.isBlank() ? i18n.text("common.author.unknown") : item);
+            }
+        });
         seriesColumn.setCellValueFactory(cellData -> cellData.getValue().seriesProperty());
         genresColumn.setCellValueFactory(cellData -> cellData.getValue().genresTextProperty());
         fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
@@ -283,7 +295,7 @@ public class BookTableController implements WorkspaceLifecycle {
             currentBookLabel.setText(currentTitle);
             currentBookLabel.setTooltip("—".equals(currentTitle) ? null : new Tooltip(currentTitle));
         }
-        if (batchSelectionLabel != null) batchSelectionLabel.setText("Пакетно вибрано: " + batchCount);
+        if (batchSelectionLabel != null) batchSelectionLabel.setText(UiText.text("ui.java.book_table_controller.491bcebf87") + batchCount);
         updateMasterSelectionState();
     }
 
@@ -297,7 +309,7 @@ public class BookTableController implements WorkspaceLifecycle {
             masterSelectionCheckBox.setIndeterminate(state == BookSelectionService.SelectionState.PARTIAL);
             masterSelectionCheckBox.setSelected(state == BookSelectionService.SelectionState.ALL);
             masterSelectionCheckBox.setTooltip(new Tooltip(state == BookSelectionService.SelectionState.ALL
-                    ? "Зняти вибір з усіх видимих книг" : "Виділити всі видимі книги"));
+                    ? UiText.text("ui.java.book_table_controller.c347ae7e76") : UiText.text("ui.java.book_table_controller.ebbf58ec3d")));
         } finally {
             updatingMasterSelection = false;
         }
@@ -461,14 +473,14 @@ public class BookTableController implements WorkspaceLifecycle {
     private String quickFieldLabel(BookQuickFilterField field) {
         if (field == null) return "";
         return i18n.tr(switch (field) {
-            case ANY -> "Усі поля";
-            case TITLE -> "Назва";
-            case AUTHOR -> "Автор";
-            case SERIES -> "Серія";
-            case GENRE -> "Жанр";
-            case KEYWORD -> "Ключові слова";
-            case PUBLISHER -> "Видавництво";
-            case FILE -> "Файл";
+            case ANY -> UiText.text("ui.java.book_table_controller.4850ef3bd6");
+            case TITLE -> UiText.text("ui.bulkedit.field.title");
+            case AUTHOR -> UiText.text("ui.annotations.digest_author");
+            case SERIES -> UiText.text("ui.bulkedit.field.series");
+            case GENRE -> UiText.text("ui.fxml.search_workspace.genre");
+            case KEYWORD -> UiText.text("ui.fxml.details.keywords");
+            case PUBLISHER -> UiText.text("ui.bulkedit.field.publisher");
+            case FILE -> UiText.text("ui.main.fxml.file");
         });
     }
 
@@ -477,11 +489,11 @@ public class BookTableController implements WorkspaceLifecycle {
         BookFilterSpec spec = filterStateService.current();
         long total = appState.getBookTable().getTotalElements();
         if (spec.isActive()) {
-            filterIndicatorLabel.setText(i18n.tr("Фільтр активний") + " (" + spec.activeCriteriaCount() + ") · " + total);
+            filterIndicatorLabel.setText(i18n.text("ui.text.filter_active") + " (" + spec.activeCriteriaCount() + ") · " + total);
             filterIndicatorLabel.setVisible(true);
             filterIndicatorLabel.setManaged(true);
         } else {
-            filterIndicatorLabel.setText(i18n.tr("Фільтр вимкнено") + " · " + total);
+            filterIndicatorLabel.setText(i18n.text("ui.text.filter_off") + " · " + total);
             filterIndicatorLabel.setVisible(true);
             filterIndicatorLabel.setManaged(true);
         }
@@ -492,14 +504,15 @@ public class BookTableController implements WorkspaceLifecycle {
         int totalPages = vm.getTotalPages();
         prevPageButton.setDisable(currentPage <= 0);
         nextPageButton.setDisable(currentPage >= totalPages - 1);
-        pageInfoLabel.setText(String.format(i18n.tr("Сторінка %d з %d"), currentPage + 1, Math.max(1, totalPages)));
+        pageInfoLabel.setText(String.format(i18n.text("ui.text.page_of"), currentPage + 1, Math.max(1, totalPages)));
     }
 
     @FXML
     public void showColumnChooser() {
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle(i18n.tr("Колонки таблиці"));
-        dialog.setHeaderText(i18n.tr("Виберіть колонки для відображення"));
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(i18n.text("ui.text.table_columns"));
+        dialog.setHeaderText(i18n.text("ui.text.choose_columns_to_display"));
         VBox box = new VBox(8); box.setPadding(new javafx.geometry.Insets(12));
         for (TableColumn<BookViewModel, ?> c : profileColumns.values()) {
             CheckBox cb = new CheckBox(c.getText()); cb.setSelected(c.isVisible());

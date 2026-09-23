@@ -15,7 +15,7 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.concurrent.atomic.AtomicLong;
+import java.util.UUID;
 
 /**
  * ResourceRepository з малим RAM footprint.
@@ -31,8 +31,6 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
     private final long memoryBudgetBytes;
     private final int inMemoryItemLimitBytes;
     private final Map<String, Entry> entries = new LinkedHashMap<>();
-    private final AtomicLong fileCounter = new AtomicLong();
-
     private long inMemoryBytes;
     private long totalBytes;
     private Path tempDirectory;
@@ -62,8 +60,11 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
             inMemoryBytes += bytes.length;
         } else {
             try {
-                Path file = createTempFile();
-                Files.write(file, bytes);
+                TempOutput temp = createTempOutput();
+                Path file = temp.path();
+                try (OutputStream out = temp.output()) {
+                    out.write(bytes);
+                }
                 entries.put(id, new Entry(info, null, file));
             } catch (IOException e) {
                 throw new UncheckedIOException(
@@ -116,8 +117,9 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
                     memory.write(buffer, 0, read);
                 } else {
                     if (fileOut == null) {
-                        file = createTempFile();
-                        fileOut = Files.newOutputStream(file);
+                        TempOutput temp = createTempOutput();
+                        file = temp.path();
+                        fileOut = temp.output();
                         memory.writeTo(fileOut);
                         memory.reset();
                     }
@@ -189,7 +191,7 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
         }
         if (entry.file != null) {
             try {
-                return Optional.of(Files.newInputStream(entry.file));
+                return Optional.of(Files.newInputStream(entry.file, java.nio.file.LinkOption.NOFOLLOW_LINKS));
             } catch (IOException e) {
                 throw new UncheckedIOException("Не вдалося відкрити ресурс Reader: " + id, e);
             }
@@ -244,14 +246,26 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
         return size <= inMemoryItemLimitBytes && inMemoryBytes + size <= memoryBudgetBytes;
     }
 
-    private Path createTempFile() throws IOException {
+    private TempOutput createTempOutput() throws IOException {
         if (tempDirectory == null) {
             // Lifecycle is owned by this repository. Avoid the JVM shutdown-deletion registry: the JDK keeps every
             // registered path in a process-wide set until JVM shutdown, which grows without bound
             // in long Reader sessions even after files are explicitly deleted.
-            tempDirectory = Files.createTempDirectory("myhomelib-reader-");
+            tempDirectory = Files.createTempDirectory("myhomelib-reader-").toAbsolutePath().normalize();
         }
-        return tempDirectory.resolve("resource-" + fileCounter.incrementAndGet() + ".bin");
+        for (int attempt = 0; attempt < 8; attempt++) {
+            Path file = tempDirectory.resolve("resource-" + UUID.randomUUID() + ".bin");
+            try {
+                OutputStream out = Files.newOutputStream(file,
+                        java.nio.file.StandardOpenOption.CREATE_NEW,
+                        java.nio.file.StandardOpenOption.WRITE,
+                        java.nio.file.LinkOption.NOFOLLOW_LINKS);
+                return new TempOutput(file, out);
+            } catch (java.nio.file.FileAlreadyExistsException collision) {
+                // UUID collision or a racing entry: choose a fresh unpredictable name and never replace it.
+            }
+        }
+        throw new IOException("Не вдалося безпечно створити тимчасовий файл Reader");
     }
 
     private void removeInternal(String id) {
@@ -274,6 +288,9 @@ public final class HybridResourceRepository implements ResourceRepository, AutoC
         if (closed) {
             throw new IllegalStateException("Resource repository is closed");
         }
+    }
+
+    private record TempOutput(Path path, OutputStream output) {
     }
 
     private record Entry(ResourceInfo info, byte[] memory, Path file) {

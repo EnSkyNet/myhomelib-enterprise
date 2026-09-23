@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.viewmodel;
 
+
+import com.myhomelibcorp.ui.service.BookDisplayText;
 import javafx.beans.property.*;
 import javafx.scene.image.Image;
 
@@ -220,11 +222,7 @@ public class BookViewModel {
 
     private void updateFileSizeFormatted() {
         long size = fileSize.get();
-        if (size <= 0) { fileSizeFormatted.set(""); return; }
-        if (size < 1024) fileSizeFormatted.set(size + " B");
-        else if (size < 1024 * 1024) fileSizeFormatted.set(String.format("%.1f КБ", size / 1024.0));
-        else if (size < 1024 * 1024 * 1024) fileSizeFormatted.set(String.format("%.1f МБ", size / (1024.0 * 1024.0)));
-        else fileSizeFormatted.set(String.format("%.1f ГБ", size / (1024.0 * 1024.0 * 1024.0)));
+        fileSizeFormatted.set(BookDisplayText.fileSize(size));
     }
 
     private void updateRateStars() {
@@ -247,9 +245,7 @@ public class BookViewModel {
     }
 
     private void updateLocalStatus() {
-        if (local.get()) localStatus.set("Завантажено");
-        else if (missingSince.get() != null) localStatus.set("Файл відсутній");
-        else localStatus.set("Не завантажено");
+        localStatus.set(BookDisplayText.localStatus(local.get(), missingSince.get() != null));
     }
 
     @Override

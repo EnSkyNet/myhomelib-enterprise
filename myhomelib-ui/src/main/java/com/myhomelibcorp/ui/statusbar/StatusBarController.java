@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.statusbar;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.LibraryStatistics;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
@@ -53,7 +55,7 @@ public class StatusBarController {
         progressBar.visibleProperty().bind(vm.progressVisibleProperty());
         progressBar.managedProperty().bind(vm.progressVisibleProperty());
         operationsLabel.setTooltip(new javafx.scene.control.Tooltip(
-                "Відкрити журнал поточних і завершених фонових операцій"));
+                UiText.text("ui.java.status_bar_controller.d20805cfcf")));
         operationCenter.addListener(snapshot -> UiExecutor.runOnUiThread(() -> {
             operationSnapshot = snapshot == null ? List.of() : snapshot;
             updateOperationsLabel(operationSnapshot);
@@ -74,7 +76,7 @@ public class StatusBarController {
         // Even the O(1) cache read can briefly wait on SQLITE_BUSY while another
         // startup operation owns the DB. Never perform that retry path on FX.
         String collectionId = currentCollectionId();
-        executor.submit(() -> statisticsService.getStatistics())
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, statisticsService::getStatistics)
                 .thenAccept(stats -> UiExecutor.runOnUiThread(() -> {
                     if (!Objects.equals(collectionId, currentCollectionId())) return;
                     vm.setStatistics(stats);
@@ -99,8 +101,8 @@ public class StatusBarController {
 
         UiExecutor.runOnUiThread(() -> {
             String text = stats.isStale()
-                    ? String.format("Статистика: оновлюється… | ОЗП: %d МБ", usedMB)
-                    : String.format("Книг: %d | Авторів: %d | Серій: %d | ОЗП: %d МБ",
+                    ? String.format(UiText.text("ui.java.status_bar_controller.5302076f54"), usedMB)
+                    : String.format(UiText.text("ui.java.status_bar_controller.5cf1f15ba2"),
                     stats.getBooksCount(),
                     stats.getAuthorsCount(),
                     stats.getSeriesCount(),
@@ -119,8 +121,8 @@ public class StatusBarController {
         int total = snapshot == null ? 0 : snapshot.size();
         int completed = Math.max(0, total - active);
         operationsLabel.setText(active > 0
-                ? "Операції: " + active + " актив. · " + completed + " заверш."
-                : "Операції: " + completed + " заверш.");
+                ? UiText.text("ui.java.status_bar_controller.e18226d4fe") + active + UiText.text("ui.java.status_bar_controller.153aadde85") + completed + UiText.text("ui.java.status_bar_controller.49f5f4f88a")
+                : UiText.text("ui.java.status_bar_controller.e18226d4fe") + completed + UiText.text("ui.java.status_bar_controller.49f5f4f88a"));
     }
 
     private void refreshBackgroundStatus(StatusBarViewModel vm) {

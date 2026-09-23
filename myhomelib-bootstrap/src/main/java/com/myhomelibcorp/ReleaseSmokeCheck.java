@@ -2,6 +2,8 @@ package com.myhomelibcorp;
 
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
 /**
@@ -34,6 +36,25 @@ final class ReleaseSmokeCheck {
                     throw new IllegalStateException("Empty packaged resource: " + resource);
                 }
             }
+        }
+
+        // A Java 21 JVM may report UTF-8 as its default charset while UnixPath still uses
+        // an ASCII native/JNU charset inherited from LANG=C. Exercise an actual Cyrillic
+        // filesystem path so the packaged smoke detects that release-only failure mode.
+        Path smokeRoot = Files.createTempDirectory("myhomelib-release-smoke-");
+        Path unicodeDir = smokeRoot.resolve("Перевірка");
+        Path unicodeFile = unicodeDir.resolve("книга.txt");
+        try {
+            Files.createDirectories(unicodeDir);
+            Files.writeString(unicodeFile, "Український текст", StandardCharsets.UTF_8);
+            String roundTrip = Files.readString(unicodeFile, StandardCharsets.UTF_8);
+            if (!"Український текст".equals(roundTrip)) {
+                throw new IllegalStateException("Unicode filesystem round-trip failed");
+            }
+        } finally {
+            Files.deleteIfExists(unicodeFile);
+            Files.deleteIfExists(unicodeDir);
+            Files.deleteIfExists(smokeRoot);
         }
         System.out.println(SUCCESS_MARKER);
     }

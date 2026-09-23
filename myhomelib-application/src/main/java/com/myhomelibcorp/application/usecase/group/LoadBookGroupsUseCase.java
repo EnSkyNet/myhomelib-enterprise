@@ -11,11 +11,12 @@ import java.util.List;
 @RequiredArgsConstructor
 public class LoadBookGroupsUseCase {
     private final GroupRepository groupRepository;
+    private final GroupQueryExecutor queryExecutor;
 
     public List<GroupDto> execute(String bookId) {
         if (bookId == null || bookId.isBlank()) return List.of();
-        return groupRepository.findByBookId(bookId).stream()
+        return queryExecutor.execute(() -> groupRepository.findByBookId(bookId).stream()
                 .map(group -> new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete()))
-                .toList();
+                .toList());
     }
 }

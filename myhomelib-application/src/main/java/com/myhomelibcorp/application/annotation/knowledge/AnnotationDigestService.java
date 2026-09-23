@@ -1,11 +1,13 @@
 package com.myhomelibcorp.application.annotation.knowledge;
 
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportPage;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportRow;
 import com.myhomelibcorp.application.annotation.export.AnnotationExportSelection;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationExportQueryPort;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedWriter;
@@ -13,6 +15,8 @@ import java.io.IOException;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 
 /**
@@ -20,11 +24,23 @@ import java.nio.file.Path;
  * The export is streamed and therefore remains bounded for large libraries.
  */
 @Service
-@RequiredArgsConstructor
 public class AnnotationDigestService {
     private static final int PAGE_SIZE = 300;
 
     private final AnnotationExportQueryPort queryPort;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for isolated tests/non-Spring embedding. */
+    public AnnotationDigestService(AnnotationExportQueryPort queryPort) {
+        this(queryPort, null);
+    }
+
+    @Autowired
+    public AnnotationDigestService(AnnotationExportQueryPort queryPort,
+                                   LibraryOperationCoordinator operationCoordinator) {
+        this.queryPort = java.util.Objects.requireNonNull(queryPort, "queryPort");
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public long export(AnnotationExportSelection selection, Path destination) throws IOException, InterruptedException {
         return export(selection, destination, AnnotationDigestLabels.defaults());
@@ -32,19 +48,40 @@ public class AnnotationDigestService {
 
     public long export(AnnotationExportSelection selection, Path destination, AnnotationDigestLabels labels)
             throws IOException, InterruptedException {
+        if (operationCoordinator == null) return exportLocked(selection, destination, labels);
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EXPORT);
+        try {
+            long result = exportLocked(selection, destination, labels);
+            lease.markCompleted("");
+            return result;
+        } catch (IOException | InterruptedException | RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } catch (Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private long exportLocked(AnnotationExportSelection selection, Path destination, AnnotationDigestLabels labels)
+            throws IOException, InterruptedException {
         if (selection == null) throw new IllegalArgumentException("selection is required");
         if (destination == null) throw new IllegalArgumentException("destination is required");
         if (labels == null) labels = AnnotationDigestLabels.defaults();
         Path absolute = destination.toAbsolutePath();
         Path parent = absolute.getParent();
-        if (parent != null) Files.createDirectories(parent);
-        Path directory = parent != null ? parent : Path.of(".").toAbsolutePath();
+        Path directory = parent != null ? parent : Path.of(".").toAbsolutePath().normalize();
+        SafeFilePublication.createDirectoriesNoLinks(directory, "Annotation digest directory");
+        String originalTargetHash = SafeFilePublication.snapshotExistingTarget(absolute, "Annotation digest destination");
         Path temp = Files.createTempFile(directory, "." + absolute.getFileName() + ".", ".part");
         boolean committed = false;
         try {
             long written = writeDigest(selection, temp, labels);
             checkCancelled();
-            AtomicFileSupport.moveReplacing(temp, absolute);
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    temp, absolute, originalTargetHash, "Annotation digest export");
             committed = true;
             return written;
         } finally {
@@ -58,7 +95,8 @@ public class AnnotationDigestService {
         int offset = 0;
         String currentBook = null;
         String currentChapter = null;
-        try (BufferedWriter writer = Files.newBufferedWriter(destination, StandardCharsets.UTF_8)) {
+        try (BufferedWriter writer = Files.newBufferedWriter(destination, StandardCharsets.UTF_8,
+                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
             writer.write("# " + mdInline(labels.title()) + "\n\n");
             while (true) {
                 checkCancelled();

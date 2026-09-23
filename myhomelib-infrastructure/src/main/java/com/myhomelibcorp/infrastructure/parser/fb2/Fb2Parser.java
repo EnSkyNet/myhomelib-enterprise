@@ -2,7 +2,6 @@ package com.myhomelibcorp.infrastructure.parser.fb2;
 
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.genre.Genre;
-import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.infrastructure.parser.author.LocalAuthorNameParser;
 import lombok.extern.slf4j.Slf4j;
 
@@ -61,13 +60,13 @@ public class Fb2Parser {
      * Парсить FB2 файл за один прохід.
      */
     public ParseResult parse(InputStream inputStream) throws Exception {
-        String title = "Без назви";
+        String title = "";
         List<Author> authors = new ArrayList<>();
         List<Genre> genres = new ArrayList<>();
         StringBuilder annotation = new StringBuilder();
         String series = "";
         int sequenceNumber = 0;
-        String language = "ru";
+        String language = "und";
 
         XMLStreamReader reader = xmlFactory.createXMLStreamReader(inputStream);
 
@@ -159,11 +158,6 @@ public class Fb2Parser {
         }
 
         reader.close();
-
-        if (authors.isEmpty()) {
-            log.warn("Автори не знайдені, додаємо 'Невідомий Автор'");
-            authors.add(new Author(AuthorId.generate(), "", "", "Невідомий Автор"));
-        }
 
         return new ParseResult(
                 title,

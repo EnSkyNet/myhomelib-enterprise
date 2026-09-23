@@ -173,6 +173,29 @@ class ConvertBookUseCaseTest {
         assertDirectoryHasNoFiles(output);
     }
 
+
+    @Test
+    void registrationFailureDoesNotDeleteTargetReplacedByAnotherWriter() throws Exception {
+        Fixture f = new Fixture(new CopyConverter("registration-race", Set.of("fb2"), "epub", ".epub"));
+        Path output = temp.resolve("registration-race");
+        doAnswer(invocation -> {
+            BookArtifact artifact = invocation.getArgument(1);
+            Path published = Path.of(artifact.getFile().getFullPath());
+            Files.writeString(published, "EXTERNAL-CHANGE", StandardCharsets.UTF_8);
+            throw new IllegalStateException("db unavailable");
+        }).when(f.mutations).upsertArtifact(eq(f.id), any(BookArtifact.class), eq(false));
+
+        assertThatThrownBy(() -> f.useCase.execute(new ConvertBookUseCase.Request(
+                f.id, "epub", output, false, 1024, 4096, () -> false)))
+                .isInstanceOf(IllegalStateException.class).hasMessageContaining("db unavailable");
+
+        try (var files = Files.list(output)) {
+            var remaining = files.filter(Files::isRegularFile).toList();
+            assertThat(remaining).hasSize(1);
+            assertThat(Files.readString(remaining.get(0))).isEqualTo("EXTERNAL-CHANGE");
+        }
+    }
+
     @Test
     void choosesCompatibleAlternativeArtifactWhenPreferredFormatCannotBeConverted() throws Exception {
         BookId id = BookId.generate();

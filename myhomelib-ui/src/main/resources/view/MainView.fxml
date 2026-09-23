@@ -12,161 +12,162 @@
     <top>
         <VBox>
             <MenuBar>
-                <Menu text="Файл">
-                    <MenuItem text="Імпортувати книгу / архів..." onAction="#handleImportFb2"/>
-                    <MenuItem text="Імпортувати каталог..." onAction="#handleImportDirectory"/>
-                    <MenuItem fx:id="exportMenuItem" text="Експортувати книги / на пристрій..." onAction="#handleExport"/>
+                <Menu text="ui.main.fxml.file">
+                    <MenuItem text="ui.main.fxml.import_book_archive" onAction="#handleImportFb2"/>
+                    <MenuItem text="ui.main.fxml.import_catalog" onAction="#handleImportDirectory"/>
+                    <MenuItem fx:id="exportMenuItem" text="ui.main.fxml.export_books_to_device" onAction="#handleExport"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Імпорт користувацьких даних..." onAction="#handleImportUserData"/>
-                    <MenuItem text="Експорт користувацьких даних..." onAction="#handleExportUserData"/>
+                    <MenuItem text="ui.main.fxml.import_user_data" onAction="#handleImportUserData"/>
+                    <MenuItem text="ui.main.fxml.export_user_data" onAction="#handleExportUserData"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Резервна копія..." onAction="#handleBackup"/>
-                    <MenuItem text="Відновити з копії..." onAction="#handleRestore"/>
+                    <MenuItem text="ui.main.fxml.backup" onAction="#handleBackup"/>
+                    <MenuItem text="ui.main.fxml.restore_backup" onAction="#handleRestore"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Вийти" onAction="#handleExit"/>
+                    <MenuItem text="ui.main.fxml.exit" onAction="#handleExit"/>
                 </Menu>
 
-                <Menu text="Бібліотека">
-                    <MenuItem text="Головна" onAction="#handleHome"/>
-                    <MenuItem text="Книги" onAction="#onAllBooks"/>
-                    <MenuItem text="Автори" onAction="#onAuthors"/>
-                    <MenuItem text="Серії" onAction="#onSeries"/>
-                    <MenuItem text="Жанри" onAction="#onGenres"/>
-                    <MenuItem text="Групи" onAction="#onGroups"/>
+                <Menu text="ui.main.fxml.library">
+                    <MenuItem text="ui.main.fxml.home" onAction="#handleHome"/>
+                    <MenuItem text="ui.main.fxml.books" onAction="#onAllBooks"/>
+                    <MenuItem text="ui.main.fxml.authors" onAction="#onAuthors"/>
+                    <MenuItem text="ui.main.fxml.series" onAction="#onSeries"/>
+                    <MenuItem text="ui.main.fxml.genres" onAction="#onGenres"/>
+                    <MenuItem text="ui.main.fxml.groups" onAction="#onGroups"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Нові книги" onAction="#onNewBooks"/>
-                    <MenuItem text="Стеження за авторами" onAction="#onFollowedAuthors"/>
-                    <MenuItem fx:id="updatesMenuItem" text="Оновлення каталогу" onAction="#onUpdates"/>
-                    <MenuItem text="Прочитані" onAction="#onAlreadyRead"/>
-                    <MenuItem text="Історія читання" onAction="#onHistory"/>
+                    <MenuItem text="ui.main.fxml.new_books" onAction="#onNewBooks"/>
+                    <MenuItem text="ui.main.fxml.author_tracking" onAction="#onFollowedAuthors"/>
+                    <MenuItem fx:id="updatesMenuItem" text="ui.main.fxml.catalog_updates" onAction="#onUpdates"/>
+                    <MenuItem text="ui.main.fxml.read" onAction="#onAlreadyRead"/>
+                    <MenuItem text="ui.main.fxml.reading_history" onAction="#onHistory"/>
                     <SeparatorMenuItem/>
-                    <Menu text="Групи — дії">
-                        <MenuItem text="Додати групу..." onAction="#handleAddGroup"/>
-                        <MenuItem text="Редагувати групу..." onAction="#handleEditGroup"/>
-                        <MenuItem text="Видалити групу" onAction="#handleDeleteGroup"/>
-                        <MenuItem text="Очистити групу" onAction="#handleClearGroup"/>
+                    <Menu text="ui.main.fxml.groups_actions">
+                        <MenuItem text="ui.main.fxml.add_group" onAction="#handleAddGroup"/>
+                        <MenuItem text="ui.main.fxml.edit_group" onAction="#handleEditGroup"/>
+                        <MenuItem text="ui.main.fxml.delete_group" onAction="#handleDeleteGroup"/>
+                        <MenuItem text="ui.main.fxml.clear_group" onAction="#handleClearGroup"/>
                     </Menu>
-                    <MenuItem text="Очистити історію читання" onAction="#onClearHistory"/>
+                    <MenuItem text="ui.main.fxml.clear_reading_history" onAction="#onClearHistory"/>
                 </Menu>
 
-                <Menu text="Колекція">
-                    <MenuItem fx:id="collectionsMenuItem" text="Керування колекціями..." onAction="#onCollections"/>
-                    <MenuItem text="Створити колекцію..." onAction="#handleNewCollection"/>
-                    <MenuItem text="Майстер створення колекції..." onAction="#handleCollectionWizard"/>
-                    <MenuItem text="Підключити наявну колекцію .hlc2 / SQLite..." onAction="#handleAttachCollection"/>
-                    <MenuItem text="Властивості колекції..." onAction="#handleCollectionProperties"/>
+                <Menu text="ui.main.fxml.collection">
+                    <MenuItem fx:id="collectionsMenuItem" text="ui.main.fxml.manage_collections" onAction="#onCollections"/>
+                    <MenuItem text="ui.main.fxml.create_collection" onAction="#handleNewCollection"/>
+                    <MenuItem text="ui.main.fxml.collection_wizard" onAction="#handleCollectionWizard"/>
+                    <MenuItem text="ui.main.fxml.attach_existing_hlc2_sqlite_collection" onAction="#handleAttachCollection"/>
+                    <MenuItem text="ui.main.fxml.collection_properties" onAction="#handleCollectionProperties"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Оновити з INPX..." onAction="#handleUpdateCollectionManual"/>
-                    <MenuItem text="Оновити з мережі..." onAction="#handleUpdateCollectionNetwork"/>
-                    <MenuItem text="Скасувати оновлення" onAction="#handleCancelCollectionUpdate"/>
+                    <MenuItem text="ui.main.fxml.update_from_inpx" onAction="#handleUpdateCollectionManual"/>
+                    <MenuItem text="ui.main.fxml.update_from_network" onAction="#handleUpdateCollectionNetwork"/>
+                    <MenuItem text="ui.main.fxml.undo_update" onAction="#handleCancelCollectionUpdate"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Копіювати вибрані книги в іншу колекцію..." onAction="#handleCopyToCollection"/>
-                    <MenuItem text="Скинути навігацію" onAction="#handleResetNavigation"/>
+                    <MenuItem text="ui.main.fxml.copy_selected_books_to_another_collection" onAction="#handleCopyToCollection"/>
+                    <MenuItem text="ui.main.fxml.reset_navigation" onAction="#handleResetNavigation"/>
                 </Menu>
 
-                <Menu text="Книга">
-                    <MenuItem fx:id="openInternalMenuItem" text="Відкрити у читалці" onAction="#handleOpenNewReader"/>
-                    <MenuItem fx:id="openExternalMenuItem" text="Відкрити у зовнішній читалці" onAction="#handleOpenExternalReader"/>
-                    <MenuItem text="Конвертувати книгу..." onAction="#handleConvertBook"/>
+                <Menu text="ui.main.fxml.book">
+                    <MenuItem fx:id="openInternalMenuItem" text="ui.main.fxml.open_in_reader" onAction="#handleOpenNewReader"/>
+                    <MenuItem fx:id="openExternalMenuItem" text="ui.main.fxml.open_in_external_reader" onAction="#handleOpenExternalReader"/>
+                    <MenuItem text="ui.main.fxml.convert_book" onAction="#handleConvertBook"/>
                     <MenuItem text="ui.reader.close" onAction="#handleCloseReader"/>
-                    <MenuItem text="Завантажити" onAction="#handleDownloadBook"/>
-                    <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
-                    <MenuItem text="Скасувати завантаження" onAction="#handleCancelDownload"/>
+                    <MenuItem text="ui.main.fxml.download" onAction="#handleDownloadBook"/>
+                    <MenuItem text="ui.main.fxml.remove_local_copy" onAction="#handleRemoveLocalCopy"/>
+                    <MenuItem text="ui.main.fxml.cancel_download" onAction="#handleCancelDownload"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Редагувати метадані..." onAction="#handleEditMetadata"/>
+                    <MenuItem text="ui.main.fxml.edit_metadata" onAction="#handleEditMetadata"/>
                     <MenuItem text="ui.metadata.batch_action" onAction="#handleBatchMetadata"/>
                     <MenuItem text="ui.bulkedit.menu_action" onAction="#handleLocalBatchMetadata"/>
                     <MenuItem text="ui.history.undo_last_action" onAction="#handleUndoLastLibraryOperation"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Користувацькі поля книги..." onAction="#handleEditCustomFieldValues"/>
-                    <MenuItem text="Керування користувацькими полями..." onAction="#handleManageCustomFields"/>
-                    <MenuItem text="Видалити запис(и) з каталогу" onAction="#handleDeleteBook"/>
+                    <MenuItem text="ui.main.fxml.book_custom_fields" onAction="#handleEditCustomFieldValues"/>
+                    <MenuItem text="ui.main.fxml.manage_custom_fields" onAction="#handleManageCustomFields"/>
+                    <MenuItem text="ui.main.fxml.delete_record_s_from_catalog" onAction="#handleDeleteBook"/>
                 </Menu>
 
 
-                <Menu fx:id="viewMenu" text="Вигляд">
-                    <MenuItem fx:id="refreshMenuItem" text="Оновити" onAction="#handleRefresh"/>
+                <Menu fx:id="viewMenu" text="ui.main.fxml.view">
+                    <MenuItem fx:id="refreshMenuItem" text="ui.main.fxml.refresh" onAction="#handleRefresh"/>
                     <SeparatorMenuItem/>
-                    <CheckMenuItem fx:id="leftSidebarMenuItem" text="Ліва панель" selected="true" onAction="#handleToggleLeftSidebar"/>
-                    <CheckMenuItem fx:id="rightSidebarMenuItem" text="Права панель" selected="true" onAction="#handleToggleRightSidebar"/>
-                    <MenuItem text="Показати колонки..." onAction="#handleShowColumns"/>
+                    <CheckMenuItem fx:id="leftSidebarMenuItem" text="ui.main.fxml.left_sidebar" selected="true" onAction="#handleToggleLeftSidebar"/>
+                    <CheckMenuItem fx:id="rightSidebarMenuItem" text="ui.main.fxml.right_sidebar" selected="true" onAction="#handleToggleRightSidebar"/>
+                    <MenuItem text="ui.main.fxml.choose_columns" onAction="#handleShowColumns"/>
                     <SeparatorMenuItem/>
-                    <Menu fx:id="recentBooksMenu" text="Недавні книги"/>
-                    <Menu fx:id="languageMenu" text="Мова"/>
+                    <Menu fx:id="recentBooksMenu" text="ui.main.fxml.recent_books"/>
+                    <Menu fx:id="languageMenu" text="ui.main.fxml.language"/>
                 </Menu>
 
-                <Menu text="Інструменти">
-                    <MenuItem fx:id="importInpxMenuItem" text="Імпорт INPX..." onAction="#handleImportInpx"/>
-                    <MenuItem text="Синхронізувати папку..." onAction="#handleSyncFolder"/>
+                <Menu text="ui.main.fxml.tools">
+                    <MenuItem fx:id="importInpxMenuItem" text="ui.main.fxml.import_inpx" onAction="#handleImportInpx"/>
+                    <MenuItem text="ui.main.fxml.synchronize_folder" onAction="#handleSyncFolder"/>
+                    <MenuItem text="ui.main.fxml.organize_library" onAction="#handleOrganizeLibrary"/>
                     <SeparatorMenuItem/>
-                    <Menu text="Експорт поточного списку">
-                        <MenuItem text="HTML..." onAction="#handleExportListHtml"/>
-                        <MenuItem text="TXT..." onAction="#handleExportListTxt"/>
-                        <MenuItem text="RTF..." onAction="#handleExportListRtf"/>
+                    <Menu text="ui.main.fxml.export_current_list">
+                        <MenuItem text="ui.main.fxml.html" onAction="#handleExportListHtml"/>
+                        <MenuItem text="ui.main.fxml.txt" onAction="#handleExportListTxt"/>
+                        <MenuItem text="ui.main.fxml.rtf" onAction="#handleExportListRtf"/>
                     </Menu>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Дублікати книг і файлів..." onAction="#handleDuplicates"/>
-                    <MenuItem text="Стан бібліотеки..." onAction="#handleCheckIntegrity"/>
-                    <MenuItem text="Статистика" onAction="#handleStatistics"/>
+                    <MenuItem text="ui.main.fxml.duplicate_books_and_files" onAction="#handleDuplicates"/>
+                    <MenuItem text="ui.main.fxml.library_health" onAction="#handleCheckIntegrity"/>
+                    <MenuItem text="ui.main.fxml.statistics" onAction="#handleStatistics"/>
                     <MenuItem text="ui.annotations.menu" onAction="#onAnnotations"/>
-                    <MenuItem text="Операції" onAction="#onOperations"/>
-                    <MenuItem text="Перебудувати індекс..." onAction="#handleRebuildIndex"/>
-                    <MenuItem text="Оптимізувати базу даних" onAction="#handleVacuum"/>
+                    <MenuItem text="ui.main.fxml.operations" onAction="#onOperations"/>
+                    <MenuItem text="ui.main.fxml.rebuild_index" onAction="#handleRebuildIndex"/>
+                    <MenuItem text="ui.main.fxml.optimize_database" onAction="#handleVacuum"/>
                     <SeparatorMenuItem/>
-                    <MenuItem fx:id="bookActionsMenuItem" text="Дії з книгою / скрипти..." onAction="#handleBookActions"/>
-                    <MenuItem fx:id="customizeActionsMenuItem" text="Команди та гарячі клавіші..." onAction="#handleCustomizeActions"/>
-                    <MenuItem fx:id="opdsMenuItem" text="Сервер OPDS..." onAction="#handleOpds"/>
+                    <MenuItem fx:id="bookActionsMenuItem" text="ui.main.fxml.book_actions_scripts" onAction="#handleBookActions"/>
+                    <MenuItem fx:id="customizeActionsMenuItem" text="ui.main.fxml.commands_and_shortcuts" onAction="#handleCustomizeActions"/>
+                    <MenuItem fx:id="opdsMenuItem" text="ui.main.fxml.opds_server" onAction="#handleOpds"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Синхронізація, плагіни та ШІ..." onAction="#handleIntegrations"/>
-                    <Menu text="ШІ для вибраної книги">
-                        <MenuItem text="Підсумувати книгу..." onAction="#handleAiSummarizeBook"/>
-                        <MenuItem text="Поставити запитання до книги..." onAction="#handleAiAskBook"/>
+                    <MenuItem text="ui.main.fxml.sync_plugins_and_ai" onAction="#handleIntegrations"/>
+                    <Menu text="ui.main.fxml.ai_for_selected_book">
+                        <MenuItem text="ui.main.fxml.summarize_book" onAction="#handleAiSummarizeBook"/>
+                        <MenuItem text="ui.main.fxml.ask_a_question_about_the_book" onAction="#handleAiAskBook"/>
                     </Menu>
                 </Menu>
 
-                <Menu text="Налаштування">
-                    <MenuItem fx:id="settingsMenuItem" text="Налаштування..." onAction="#handleSettings"/>
+                <Menu text="ui.main.fxml.settings">
+                    <MenuItem fx:id="settingsMenuItem" text="ui.main.fxml.settings_2" onAction="#handleSettings"/>
                 </Menu>
 
-                <Menu text="Допомога">
-                    <MenuItem fx:id="helpMenuItem" text="Довідка (F1)" onAction="#handleHelp"/>
-                    <MenuItem text="INPX / онлайн" onAction="#handleInpxHelp"/>
+                <Menu text="ui.main.fxml.help">
+                    <MenuItem fx:id="helpMenuItem" text="ui.main.fxml.help_f1" onAction="#handleHelp"/>
+                    <MenuItem text="ui.main.fxml.inpx_online" onAction="#handleInpxHelp"/>
                     <SeparatorMenuItem/>
-                    <MenuItem text="Про програму" onAction="#handleAbout"/>
+                    <MenuItem text="ui.main.fxml.about" onAction="#handleAbout"/>
                 </Menu>
             </MenuBar>
 
             <HBox fx:id="mainToolbar" styleClass="main-toolbar-wrap" spacing="4.0" alignment="CENTER_LEFT">
-                <Button fx:id="backButton" text="←" accessibleText="Назад" onAction="#handleBack" disable="true"/>
-                <Button fx:id="forwardButton" text="→" accessibleText="Вперед" onAction="#handleForward" disable="true"/>
-                <Button text="🏠" accessibleText="Головна" onAction="#handleHome"/>
+                <Button fx:id="backButton" text="ui.fxml.mainview.value" accessibleText="ui.main.fxml.back" onAction="#handleBack" disable="true"/>
+                <Button fx:id="forwardButton" text="ui.fxml.mainview.value_e5a32a6" accessibleText="ui.main.fxml.forward" onAction="#handleForward" disable="true"/>
+                <Button text="ui.fxml.mainview.value_369f112" accessibleText="ui.main.fxml.home" onAction="#handleHome"/>
                 <Separator orientation="VERTICAL"/>
                 <Label fx:id="activeScopeLabel" text="ui.main.scope.none" styleClass="scope-chip" maxWidth="180.0"/>
-                <TextField fx:id="searchField" promptText="🔍 Пошук..." prefWidth="240" minWidth="120" maxWidth="360" HBox.hgrow="ALWAYS"/>
-                <Button text="🔍" accessibleText="Пошук" onAction="#handleSearch"/>
-                <Button text="✕" accessibleText="Очистити пошук" onAction="#handleClearSearch"/>
-                <Button text="⟳" accessibleText="Оновити" onAction="#handleRefresh"/>
+                <TextField fx:id="searchField" promptText="ui.main.fxml.search" prefWidth="240" minWidth="120" maxWidth="360" HBox.hgrow="ALWAYS"/>
+                <Button text="ui.fxml.mainview.value_672cbdf" accessibleText="ui.main.fxml.search_2" onAction="#handleSearch"/>
+                <Button text="ui.fxml.mainview.value_b25f730" accessibleText="ui.main.fxml.clear_search" onAction="#handleClearSearch"/>
+                <Button text="ui.fxml.mainview.value_0da1992" accessibleText="ui.main.fxml.refresh" onAction="#handleRefresh"/>
                 <Separator orientation="VERTICAL"/>
-                <Button text="📖 Читати" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-                <MenuButton text="⋮" accessibleText="ui.main.more_actions">
+                <Button text="ui.main.fxml.read_2" onAction="#handleOpenNewReader" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
+                <MenuButton text="ui.fxml.mainview.value_8515dcc" accessibleText="ui.main.more_actions">
                     <items>
-                        <MenuItem text="Імпортувати книгу / архів..." onAction="#handleImportFb2"/>
-                        <MenuItem text="Імпортувати каталог..." onAction="#handleImportDirectory"/>
-                        <MenuItem text="Додати книгу..." onAction="#handleAddBook"/>
+                        <MenuItem text="ui.main.fxml.import_book_archive" onAction="#handleImportFb2"/>
+                        <MenuItem text="ui.main.fxml.import_catalog" onAction="#handleImportDirectory"/>
+                        <MenuItem text="ui.main.fxml.add_book" onAction="#handleAddBook"/>
                         <SeparatorMenuItem/>
-                        <MenuItem text="Експортувати книги / на пристрій..." onAction="#handleExport"/>
-                        <MenuItem text="Експорт INPX..." onAction="#handleExportInpx"/>
+                        <MenuItem text="ui.main.fxml.export_books_to_device" onAction="#handleExport"/>
+                        <MenuItem text="ui.main.fxml.export_inpx" onAction="#handleExportInpx"/>
                         <SeparatorMenuItem/>
-                        <MenuItem text="Резервна копія..." onAction="#handleBackup"/>
-                        <MenuItem text="Відновити з копії..." onAction="#handleRestore"/>
+                        <MenuItem text="ui.main.fxml.backup" onAction="#handleBackup"/>
+                        <MenuItem text="ui.main.fxml.restore_backup" onAction="#handleRestore"/>
                         <SeparatorMenuItem/>
-                        <MenuItem text="Завантажити" onAction="#handleDownloadBook"/>
-                        <MenuItem text="Видалити локальну копію" onAction="#handleRemoveLocalCopy"/>
-                        <MenuItem text="Скасувати завантаження" onAction="#handleCancelDownload"/>
+                        <MenuItem text="ui.main.fxml.download" onAction="#handleDownloadBook"/>
+                        <MenuItem text="ui.main.fxml.remove_local_copy" onAction="#handleRemoveLocalCopy"/>
+                        <MenuItem text="ui.main.fxml.cancel_download" onAction="#handleCancelDownload"/>
                         <SeparatorMenuItem/>
-                        <MenuItem text="Перемкнути вигляд бібліотеки" onAction="#handleToggleView"/>
-                        <MenuItem text="Змінити тему програми" onAction="#handleCycleApplicationTheme"/>
-                        <MenuItem text="Налаштування..." onAction="#handleSettings"/>
+                        <MenuItem text="ui.main.fxml.toggle_library_view" onAction="#handleToggleView"/>
+                        <MenuItem text="ui.main.fxml.change_application_theme" onAction="#handleCycleApplicationTheme"/>
+                        <MenuItem text="ui.main.fxml.settings_2" onAction="#handleSettings"/>
                     </items>
                 </MenuButton>
             </HBox>

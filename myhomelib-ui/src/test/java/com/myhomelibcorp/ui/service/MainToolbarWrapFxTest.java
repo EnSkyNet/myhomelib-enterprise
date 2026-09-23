@@ -4,7 +4,9 @@ import javafx.application.Platform;
 import javafx.fxml.FXMLLoader;
 import javafx.scene.Parent;
 import javafx.scene.Scene;
+import javafx.scene.control.Labeled;
 import javafx.scene.control.TextField;
+import javafx.scene.control.TextInputControl;
 import javafx.scene.layout.HBox;
 import javafx.stage.Stage;
 import org.junit.jupiter.api.Assumptions;
@@ -12,7 +14,9 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import java.awt.GraphicsEnvironment;
+import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -45,29 +49,35 @@ class MainToolbarWrapFxTest {
         Platform.runLater(() -> {
             Stage stage = null;
             try {
-                FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
-                loader.setControllerFactory(type -> mock(type));
-                Parent root = loader.load();
-                stage = new Stage();
-                Scene scene = new Scene(root, 800, 700);
-                scene.getStylesheets().add(getClass().getResource("/css/app-theme-base.css").toExternalForm());
-                stage.setScene(scene);
-                stage.setWidth(800);
-                stage.setHeight(700);
-                stage.show();
-                root.applyCss();
-                root.layout();
+                for (String language : List.of("uk", "en", "bg")) {
+                    FXMLLoader loader = new FXMLLoader(getClass().getResource("/view/MainView.fxml"));
+                    loader.setControllerFactory(type -> mock(type));
+                    Parent root = loader.load();
+                    applyBundledTranslations(root, language);
+                    stage = new Stage();
+                    Scene scene = new Scene(root, 800, 700);
+                    scene.getStylesheets().add(getClass().getResource("/css/app-theme-base.css").toExternalForm());
+                    stage.setScene(scene);
+                    stage.setWidth(800);
+                    stage.setHeight(700);
+                    stage.show();
+                    root.applyCss();
+                    root.layout();
 
-                HBox toolbar = (HBox) root.lookup("#mainToolbar");
-                TextField search = (TextField) root.lookup("#searchField");
-                assertThat(toolbar).isNotNull();
-                assertThat(search).isNotNull();
-                assertThat(toolbar.getHeight()).isLessThan(55.0);
-                assertThat(search.getWidth()).isGreaterThanOrEqualTo(search.getMinWidth());
-                assertThat(search.getWidth()).isLessThanOrEqualTo(search.getMaxWidth());
-                assertThat(toolbar.getChildren()).allSatisfy(node ->
-                        assertThat(Math.abs(node.getBoundsInParent().getCenterY() - toolbar.getHeight() / 2.0))
-                                .isLessThan(22.0));
+                    HBox toolbar = (HBox) root.lookup("#mainToolbar");
+                    TextField search = (TextField) root.lookup("#searchField");
+                    assertThat(toolbar).as("toolbar for %s", language).isNotNull();
+                    assertThat(search).as("search for %s", language).isNotNull();
+                    assertThat(toolbar.getHeight()).as("toolbar height for %s", language).isLessThan(55.0);
+                    assertThat(search.getWidth()).isGreaterThanOrEqualTo(search.getMinWidth());
+                    assertThat(search.getWidth()).isLessThanOrEqualTo(search.getMaxWidth());
+                    assertThat(toolbar.getChildren()).allSatisfy(node ->
+                            assertThat(Math.abs(node.getBoundsInParent().getCenterY() - toolbar.getHeight() / 2.0))
+                                    .as("vertical alignment for %s: %s", language, node)
+                                    .isLessThan(22.0));
+                    stage.close();
+                    stage = null;
+                }
             } catch (Throwable error) {
                 failure.set(error);
             } finally {
@@ -77,6 +87,29 @@ class MainToolbarWrapFxTest {
         });
         assertThat(done.await(15, TimeUnit.SECONDS)).isTrue();
         if (failure.get() != null) throw new AssertionError(failure.get());
+    }
+
+    private static void applyBundledTranslations(Parent root, String language) throws Exception {
+        try (var input = MainToolbarWrapFxTest.class.getResourceAsStream("/lang/default/" + language + ".json")) {
+            assertThat(input).isNotNull();
+            var json = new com.fasterxml.jackson.databind.ObjectMapper().readTree(input);
+            @SuppressWarnings("unchecked")
+            Map<String, String> translations = new com.fasterxml.jackson.databind.ObjectMapper()
+                    .convertValue(json.get("translations"), Map.class);
+            translateNode(root, translations);
+        }
+    }
+
+    private static void translateNode(javafx.scene.Node node, Map<String, String> translations) {
+        if (node instanceof Labeled labeled) {
+            labeled.setText(translations.getOrDefault(labeled.getText(), labeled.getText()));
+        }
+        if (node instanceof TextInputControl input) {
+            input.setPromptText(translations.getOrDefault(input.getPromptText(), input.getPromptText()));
+        }
+        if (node instanceof Parent parent) {
+            parent.getChildrenUnmodifiable().forEach(child -> translateNode(child, translations));
+        }
     }
 
     /** Avoid poisoning the JavaFX singleton when CI exposes a stale/unreachable DISPLAY. */

@@ -68,7 +68,7 @@ public final class MobiParser implements BookParser {
                 ? container.charset
                 : safeCharset(effective.preferredEncoding(), container.charset);
         String html = new String(textBytes, charset).replace("\u0000", "");
-        ParsedText parsed = parseMarkup(html, fallbackTitle(source.name()), effective.buildToc());
+        ParsedText parsed = parseMarkup(html, fallbackTitle(source), effective.buildToc());
         if (parsed.text.length() == 0) throw new IOException("MOBI/AZW не містить читабельного тексту");
 
         BookMetadata base = metadata(source, container);
@@ -278,9 +278,8 @@ public final class MobiParser implements BookParser {
     private static BookMetadata metadata(BookSource source, Container c) {
         String title = firstText(c.exth, 503, c.charset);
         if (!meaningful(title)) title = c.fullName;
-        if (!meaningful(title)) title = fallbackTitle(source.name());
+        if (!meaningful(title)) title = fallbackTitle(source);
         List<String> authors = allText(c.exth, 100, c.charset);
-        if (authors.isEmpty()) authors = List.of("Невідомий автор");
         String publisher = firstText(c.exth, 101, c.charset);
         String annotation = stripHtml(firstText(c.exth, 103, c.charset));
         String isbn = firstText(c.exth, 104, c.charset);
@@ -316,10 +315,16 @@ public final class MobiParser implements BookParser {
 
     private static boolean meaningful(String value) { return value != null && !value.isBlank(); }
 
-    private static String fallbackTitle(String name) {
-        if (name == null || name.isBlank()) return "Без назви";
-        int dot = name.lastIndexOf('.');
-        return (dot > 0 ? name.substring(0, dot) : name).strip();
+    private static String fallbackTitle(BookSource source) {
+        if (source == null) return "";
+        String name = source.name();
+        if (name != null && !name.isBlank()) {
+            int dot = name.lastIndexOf('.');
+            String title = (dot > 0 ? name.substring(0, dot) : name).strip();
+            if (!title.isBlank()) return title;
+        }
+        String id = source.id();
+        return id == null ? "" : id.strip();
     }
 
     private static Charset safeCharset(String name, Charset fallback) {

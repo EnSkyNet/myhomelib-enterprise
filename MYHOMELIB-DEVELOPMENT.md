@@ -3,6 +3,9 @@
 **Version:** 8.0.0  
 **Java:** 21
 
+
+**Current audited baseline (2026-09-18):** `clean verify -Pproduction` = **17/17 modules BUILD SUCCESS**, **400 suites / 1189 tests / 0 failures / 0 errors / 12 skipped** on the final local code state. Exact Linux JavaFX line: **21.0.12**.
+
 ## Build commands
 
 Fast platform scripts:
@@ -27,7 +30,7 @@ Full release build/test gate from the formal source archive:
 mvn clean verify -Pproduction
 ```
 
-The formal source archive intentionally contains no Maven runtime or Maven Wrapper payload. Install Maven 3.9.6+ separately. The root build/run/package scripts use the repository wrapper when one exists, otherwise they fall back to `mvn` from `PATH`; dependencies still require network/cache access or the prepared offline repository.
+The audited **DEVELOPER-SOURCE** handoff contains `mvnw`/`mvnw.cmd`, the wrapper payload and bundled Maven 3.9.6, but intentionally omits the large `.mvn/repository` dependency cache. The separately generated **formal source-release archive** remains Maven-payload-free by policy and requires Maven 3.9.6+ externally. The root build/run/package scripts prefer the repository wrapper when present and otherwise fall back to `mvn` from `PATH`; dependencies still require network/cache access or the prepared offline repository.
 
 For repeatable isolated validation without the install lifecycle, run `python tools/offline_acceptance.py --maven-repo <repo>`; add `--full` to append the full reactor test suite. This path uses `test-compile`/`test` and therefore does not require `maven-install-plugin`.
 
@@ -158,13 +161,13 @@ Active project documentation is limited to:
 - `MYHOMELIB-DEVELOPMENT.md`;
 - `MYHOMELIB-RELEASE.md`.
 
-Historical summaries live in `docs/history/`; original legacy notes live in `docs/history/source-notes/`. Runtime help/localization Markdown is not part of this documentation consolidation.
+The canonical project history is `docs/history/HISTORY.md`; exact historical records and legacy source notes live under `docs/history/records/` and `docs/history/source-notes/`. `docs/README.md` is the documentation map. Runtime help/localization Markdown is not part of this documentation consolidation.
 
-## Refactoring guardrails (2026-09-02)
+## Refactoring guardrails
 
 For new work, preserve the completed stabilization rules: do not run repository/file/index maintenance on the JavaFX Application Thread; acquire the collection-operation coordinator for mutating/maintenance flows; expose long operations through `OperationProgress`/Operation Center; never translate database/index failures into normal empty results; keep interactive search/navigation bounded; and preserve semantic Reader position when layout changes. `docs/history/records/REFACTORING_COMPLETION.md` records the current source-level baseline and release boundary.
 
-## Stage 05 real Online Update phase probes
+## Real Online Update phase probes
 
 Real P3 measurements are opt-in and must use user-supplied production-sized data; DB, INPX, Lucene index, JFR and logs are never committed or packaged in a code-only checkpoint.
 
@@ -178,7 +181,7 @@ For `RealSelectiveLucenePerformanceProbeTest`, pass `-Dmhl.real.seed.db=<pre-cha
 
 P3 acceptance must report Download, SHA/preflight, SQLite checkpoint/validation, INPX import, selective/full Lucene, statistics, total duration and peak memory separately. Linux/container results are reproducibility evidence only; the release acceptance numbers still have to be repeated on the target Windows machine.
 
-### Stage 05 P3 comparison probes
+### Comparison probes
 
 The P3 Linux comparison is split into opt-in probes so no benchmark corpus, database or Lucene index is committed:
 
@@ -210,7 +213,7 @@ The small-delta runs preserve 562,307 books, 126,317 authors, 675,502 `book_auth
 
 Regression gates: `UiSubscriptionsLifecycleTest`, `FxmlLoaderFactoryLifecycleTest`, `AsyncWorkspaceControllerContractTest`, `UiAsyncRequestGuardTest`.
 
-## Iteration 11 regression rules
+## Catalog-edit regression rules
 
 - Classic book metadata edit belongs to `EditBookUseCase`; do not reintroduce direct repository/Lucene writes in JavaFX services.
 - Book author/genre lists are read-only to callers. Use aggregate/repository population methods rather than mutating getter results.
@@ -229,7 +232,7 @@ The critical gate rejects user-facing Cyrillic string literals and legacy `Local
 
 
 
-## Iteration 15 startup regression rules
+## Startup regression rules
 
 - Keep desktop backend startup behind `StartupOrchestrator`; `MyHomeLibApp` should only submit the orchestrator and marshal completion back to JavaFX.
 - The guarded order is `RecoveryStartupTask`, `MigrationStartupTask`, `SearchStartupTask`, `BackupStartupTask`, `OPDSStartupTask`.
@@ -250,11 +253,11 @@ The critical gate rejects user-facing Cyrillic string literals and legacy `Local
 - `app.health.backup-stale-hours` is a configurable warning threshold (default 168 hours), not a performance or retention SLA.
 - The Smart Collections benchmark records measurements; do not turn one host's numbers into a product latency promise.
 
-## Iteration 35 — annotation foundation
+## Annotation foundation development rules
 
-MHL-201/MHL-202 add the backend foundation for highlights/notes: immutable renderer-neutral anchors, exact quote/context relocation, application repository/service contracts, Flyway V57 persistence, and portable user-data schema v4. MHL-203 Reader UI remains the next consumer and must use `AnnotationService` rather than SQLite directly.
+MHL-201/MHL-202 add the backend foundation for highlights/notes: immutable renderer-neutral anchors, exact quote/context relocation, application repository/service contracts, Flyway V57 persistence, and portable user-data schema v4. The implemented MHL-203 Reader UI consumes this boundary through `AnnotationService` rather than SQLite directly.
 
-## Iteration 36 — MHL-203 Reader highlight/note creation
+## Reader highlight/note creation
 
 - Reader selection is represented by source-text offsets plus chapter/paragraph metadata and bounded quote context (`ReaderSelection`).
 - Existing Shift+drag selection now has draggable endpoint handles; Shift+Left/Right extends a selection from the current source-text position.
@@ -264,21 +267,21 @@ MHL-201/MHL-202 add the backend foundation for highlights/notes: immutable rende
 - Persisted anchors are resolved after reopen through exact offsets first and quote/context relocation only when needed. Full document text is materialized lazily on the background path.
 - Artifact binding is conservative: the opened legacy file projection is matched to a concrete `BookArtifact`; no uncertain artifact id is assigned or silently switched.
 
-## Iteration 37 — MHL-204 Annotation Manager
+## Annotation Manager development rules
 
-MHL-204 adds a global annotation workspace over a dedicated application query contract. `SqliteAnnotationManagerQueryAdapter` performs bounded search/filter/count/facet queries, while the JavaFX controller stays asynchronous and application-only. Delete/undo uses a complete application snapshot, and `WorkspaceManager.showAnnotationInReader` supplies a one-shot annotation id so Reader can resolve the persisted anchor before jumping. Filtered CSV export is intentionally a simple manager capability; MHL-205 remains responsible for configurable Markdown/JSON/HTML exporters.
+MHL-204 adds a global annotation workspace over a dedicated application query contract. `SqliteAnnotationManagerQueryAdapter` performs bounded search/filter/count/facet queries, while the JavaFX controller stays asynchronous and application-only. Delete/undo uses a complete application snapshot, and `WorkspaceManager.showAnnotationInReader` supplies a one-shot annotation id so Reader can resolve the persisted anchor before jumping. Filtered CSV export remains the simple manager capability; MHL-205 owns the configurable Markdown/JSON/HTML exporters described below.
 
-## Iteration 38 — MHL-205 rich annotation export
+## Rich annotation export development rules
 
 Rich annotation export is split across the existing clean boundary. `myhomelib-application` owns export request/selection/templates, the stable flattened export projection and streaming serialization; its `AnnotationExportQueryPort` asks storage for bounded deterministic pages. `SqliteAnnotationExportQueryAdapter` implements selection and metadata/tag projection with parameterized SQLite queries. `AnnotationManagerWorkspaceController` only gathers format/scope/template choices and submits the application service through `UiBackgroundExecutor`. Final files are created by writing a sibling temporary file and publishing only after successful completion, so cancellation/error leaves an existing destination untouched.
 
-## Iteration 38 — MHL-206 PDF Reader v1
+## PDF Reader development rules
 
 PDF rendering is implemented as a separate renderer adapter rather than extending the FB2/EPUB text layout engine. `PdfDocumentSession` owns Apache PDFBox 3.0.8 document lifecycle, page metadata, rasterization and a bounded LRU cache; source bytes are copied in bounded chunks to a session-owned temporary file and PDFBox stream scratch data is file-backed. `PdfReaderView` owns only JavaFX presentation and schedules render jobs on a single daemon executor; callbacks are accepted only when both the session and generation token still match. `NewReaderWorkspaceController.prepareOpen` opens the PDF session on the existing background open path, while apply/open/save/close reuse the normal Reader lifecycle and persistence services. The v1 position maps the zero-based PDF page to `ReaderPosition.textOffset`, allowing existing save/restore infrastructure to remain unchanged.
 
 Iteration 40 supplies PDFBox/JBIG2 to the build only through the external offline dependency repository and keeps the formal source package Maven/dependency-binary free. MHL-207 outline/search/bookmark work stays behind the Reader boundary, uses bounded/cancellable document tasks, does not add OCR, and does not introduce alternate annotation persistence or UI-to-PDFBox/SQLite bypasses.
 
-## Iteration 39 — Reader DictionaryProvider / TranslationProvider rules
+## Reader DictionaryProvider / TranslationProvider rules
 
 - `myhomelib-reader` may expose text-selection callbacks but must not depend on application provider contracts, Spring, JDBC or concrete provider adapters.
 - Dictionary/translation orchestration belongs to `myhomelib-application`; provider adapters belong to `myhomelib-infrastructure`; JavaFX depends only on application services and neutral Reader APIs.
@@ -292,7 +295,7 @@ Iteration 40 supplies PDFBox/JBIG2 to the build only through the external offlin
 - Remote settings are namespaced under `translation.deepl.*`, `translation.google.*` and `translation.custom.*`; all remote providers remain opt-in.
 
 
-## Iteration 41 — shared undo closure and transaction debt
+## Shared undo and transaction rules
 
 Iteration 41 re-validates MHL-112 on the current reactor and adds application acceptance for shared undo dispatch/race refusal. The V53 operation journal remains unchanged. Annotation SQLite repository/query/export adapters now share `CollectionTransactionExecutor`, removing the historical exact clone while preserving current-collection transaction semantics and rollback. `tools/offline_acceptance.py` provides the supported no-`install` offline validation path.
 

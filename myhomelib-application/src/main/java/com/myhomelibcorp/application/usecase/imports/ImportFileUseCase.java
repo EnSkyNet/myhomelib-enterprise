@@ -1,6 +1,8 @@
 package com.myhomelibcorp.application.usecase.imports;
 
+import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.context.ImportSourceFingerprintVerifier;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.progress.OperationProgress;
@@ -18,15 +20,18 @@ import com.myhomelibcorp.application.port.out.event.EventPublisher;
 import com.myhomelibcorp.application.port.out.importer.FastImportService;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
 import com.myhomelibcorp.application.port.out.infrastructure.BulkImportOptimizer;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -40,7 +45,6 @@ import java.util.stream.Stream;
 import java.util.Locale;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class ImportFileUseCase {
 
@@ -54,6 +58,50 @@ public class ImportFileUseCase {
     private final CatalogImportPort catalogImportPort;
     private final BookQueryRepository bookQueryRepository;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecyclePort;
+    private final ContentIndexAutoSchedulingService contentIndexScheduling;
+
+    @Autowired
+    public ImportFileUseCase(ImporterRegistry importerRegistry,
+                             BookSaver bookSaver,
+                             ImportErrorHandler errorHandler,
+                             EventPublisher eventPublisher,
+                             BulkImportOptimizer bulkImportOptimizer,
+                             FastImportService fastImportService,
+                             SearchIndexer searchIndexer,
+                             CatalogImportPort catalogImportPort,
+                             BookQueryRepository bookQueryRepository,
+                             LibraryOperationCoordinator operationCoordinator,
+                             CollectionLifecyclePort collectionLifecyclePort,
+                             ContentIndexAutoSchedulingService contentIndexScheduling) {
+        this.importerRegistry = importerRegistry;
+        this.bookSaver = bookSaver;
+        this.errorHandler = errorHandler;
+        this.eventPublisher = eventPublisher;
+        this.bulkImportOptimizer = bulkImportOptimizer;
+        this.fastImportService = fastImportService;
+        this.searchIndexer = searchIndexer;
+        this.catalogImportPort = catalogImportPort;
+        this.bookQueryRepository = bookQueryRepository;
+        this.operationCoordinator = operationCoordinator;
+        this.collectionLifecyclePort = collectionLifecyclePort;
+        this.contentIndexScheduling = contentIndexScheduling;
+    }
+
+    /** Compatibility constructor for isolated tests/callers without background full-text wiring. */
+    public ImportFileUseCase(ImporterRegistry importerRegistry,
+                             BookSaver bookSaver,
+                             ImportErrorHandler errorHandler,
+                             EventPublisher eventPublisher,
+                             BulkImportOptimizer bulkImportOptimizer,
+                             FastImportService fastImportService,
+                             SearchIndexer searchIndexer,
+                             CatalogImportPort catalogImportPort,
+                             BookQueryRepository bookQueryRepository,
+                             LibraryOperationCoordinator operationCoordinator) {
+        this(importerRegistry, bookSaver, errorHandler, eventPublisher, bulkImportOptimizer, fastImportService,
+                searchIndexer, catalogImportPort, bookQueryRepository, operationCoordinator, null, null);
+    }
 
     @Value("${app.import.batch-size:1000}")
     private int defaultBatchSize;
@@ -69,7 +117,10 @@ public class ImportFileUseCase {
         }
 
         try (var ignored = operationCoordinator.acquire(LibraryOperationType.IMPORT)) {
-            String fileName = context.getFile().getFileName().toString().toLowerCase(Locale.ROOT);
+            assertExpectedCollection(context);
+            assertExpectedSourceFingerprint(context);
+            Path safeSource = requireSafeImportSource(context.getFile());
+            String fileName = safeSource.getFileName().toString().toLowerCase(Locale.ROOT);
             if (fileName.endsWith(".inpx") || fileName.endsWith(".inp")) {
                 return executeInpx(context);
             }
@@ -79,6 +130,54 @@ public class ImportFileUseCase {
 
             return executeLegacy(context);
         }
+    }
+
+    private static Path requireSafeImportSource(Path source) {
+        Path normalized = source.toAbsolutePath().normalize();
+        try {
+            if (java.nio.file.Files.exists(normalized, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+                return SafeFilePublication.requireSafeRegularFile(normalized, "import source");
+            }
+            // Preserve the historical importer contract for a missing leaf (individual importers
+            // report that condition), while still rejecting a missing path reached through a
+            // symlink/reparse parent.
+            Path parent = normalized.getParent();
+            if (parent != null) SafeFilePublication.requireSafeDirectoryPath(parent, "import source parent");
+            return normalized;
+        } catch (IOException unsafeSource) {
+            throw new IllegalArgumentException("Import source is unavailable or unsafe: " + source, unsafeSource);
+        }
+    }
+
+    /** Fails before any import mutation if a queued task no longer targets the active collection. */
+    public void assertExpectedCollection(ImportContext context) {
+        if (context == null) return;
+        String expected = context.getExpectedCollectionId();
+        if (expected == null) return;
+        if (expected.isBlank()) {
+            throw new StaleImportCollectionException("Import target collection is unavailable");
+        }
+        if (collectionLifecyclePort == null) {
+            throw new StaleImportCollectionException("Cannot verify import collection identity");
+        }
+        var current = collectionLifecyclePort.getCurrentCollection();
+        String actual = current == null ? null : current.getId();
+        if (!expected.equals(actual)) {
+            throw new StaleImportCollectionException("Import target collection changed before execution");
+        }
+    }
+
+    /** Signals a queued import whose originally captured collection is no longer active. */
+    public static final class StaleImportCollectionException extends IllegalStateException {
+        public StaleImportCollectionException(String message) { super(message); }
+    }
+
+    /**
+     * Watcher-triggered imports carry the SHA-256 observed after the stability window.
+     * Validate it before entering any parser/persistence path.
+     */
+    public void assertExpectedSourceFingerprint(ImportContext context) {
+        ImportSourceFingerprintVerifier.verifyExpected(context);
     }
 
     // ==================== ВНУТРІШНІ МЕТОДИ ====================
@@ -104,6 +203,7 @@ public class ImportFileUseCase {
                 telemetry);
 
         if (result.status() == ImportStatus.CANCELLED) {
+            scheduleContentIndex(context, result);
             publishFinished(context, result);
             return result;
         }
@@ -134,6 +234,7 @@ public class ImportFileUseCase {
                     .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
                             result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
         }
+        scheduleContentIndex(context, result);
         publishFinished(context, result);
         return result;
     }
@@ -153,6 +254,7 @@ public class ImportFileUseCase {
         ImportResult result = catalogImportPort.importCatalog(context);
         if (result.status() == ImportStatus.CANCELLED) {
             emitOperation(telemetry, OperationProgress.stage(operationId, OperationStage.CANCELLED, false));
+            scheduleContentIndex(context, result);
             publishFinished(context, result);
             return result;
         }
@@ -178,6 +280,7 @@ public class ImportFileUseCase {
                     .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
                             result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
         }
+        scheduleContentIndex(context, result);
         publishFinished(context, result);
         return result;
     }
@@ -276,6 +379,7 @@ public class ImportFileUseCase {
                     }
 
                     if (batch.size() >= batchSize) {
+                        assertExpectedSourceFingerprint(context);
                         saveLegacyBatch(batch, policy, stats, changes);
                         batch.clear();
                     }
@@ -283,6 +387,7 @@ public class ImportFileUseCase {
             }
 
             if (!batch.isEmpty()) {
+                assertExpectedSourceFingerprint(context);
                 saveLegacyBatch(batch, policy, stats, changes);
                 batch.clear();
             }
@@ -344,6 +449,7 @@ public class ImportFileUseCase {
                     .withCounts(result.changes().insertedCount(), result.changes().updatedCount(), result.changes().deletedCount(),
                             result.skipped(), result.duplicates(), result.issues().size(), result.errors()));
         }
+        scheduleContentIndex(context, result);
         publishFinished(context, result);
         return result;
     }
@@ -363,9 +469,30 @@ public class ImportFileUseCase {
 
     // ==================== ДОПОМІЖНІ МЕТОДИ ====================
 
+    private void scheduleContentIndex(ImportContext context, ImportResult result) {
+        if (contentIndexScheduling == null || context == null || !context.isIndexAfterSave()
+                || result == null || result.changes() == null) return;
+        long changes = result.changes().insertedCount() + result.changes().updatedCount() + result.changes().deletedCount();
+        if (changes <= 0) return;
+        try {
+            var scheduled = contentIndexScheduling.scheduleCurrentCollection(result.changes());
+            if (scheduled.rebuildRequired()) {
+                log.info("Full-text content index marked stale after import: {}", scheduled.detail());
+            } else if (scheduled.queuedTasks() > 0) {
+                log.info("Queued {} background full-text indexing tasks after import", scheduled.queuedTasks());
+            }
+        } catch (RuntimeException failure) {
+            // Catalogue import is authoritative and already committed. Keep the derived content index stale
+            // and surface the scheduling problem in logs instead of rolling back valid catalogue data.
+            contentIndexScheduling.markCurrentCollectionStale();
+            log.error("Failed to schedule full-text content indexing after committed import", failure);
+        }
+    }
+
     private void publishFinished(ImportContext context, ImportResult result) {
         if (context != null && context.isPublishFinishedEvent()) {
-            eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(context.getFile(), result));
+            eventPublisher.publish(new com.myhomelibcorp.application.event.ImportFinishedEvent(
+                    context.getFile(), result, context.getExpectedCollectionId()));
         }
     }
 

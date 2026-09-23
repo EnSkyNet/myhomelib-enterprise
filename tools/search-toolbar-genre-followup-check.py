@@ -54,7 +54,7 @@ require('sourceLabel.equalsIgnoreCase(requestedCode)' in read('myhomelib-ui/src/
 
 require('<HBox fx:id="mainToolbar"' in main_fxml and 'styleClass="main-toolbar-wrap"' in main_fxml,
         'main toolbar is not a single-row adaptive HBox')
-require('HBox.hgrow="ALWAYS"' in main_fxml and '<MenuButton text="⋮"' in main_fxml,
+require('HBox.hgrow="ALWAYS"' in main_fxml and '<MenuButton text="ui.fxml.mainview.value_8515dcc"' in main_fxml,
         'main toolbar search growth/overflow contract missing')
 require('fx:id="selectionToolbar"' in main_fxml and 'onAction="#handleDownloadBook"' in main_fxml,
         'contextual selection download action missing')

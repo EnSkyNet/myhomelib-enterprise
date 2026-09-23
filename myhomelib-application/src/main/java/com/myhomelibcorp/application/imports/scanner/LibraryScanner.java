@@ -1,13 +1,16 @@
 package com.myhomelibcorp.application.imports.scanner;
 
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.stream.Stream;
 
 @Component
@@ -32,8 +35,11 @@ public class LibraryScanner {
                                              boolean includeSubfolders,
                                              int maxDepth,
                                              long maxFileSize) throws IOException {
-        if (!Files.isDirectory(directory)) {
-            throw new IllegalArgumentException("Шлях не є каталогом: " + directory);
+        Path safeRoot;
+        try {
+            safeRoot = SafeFilePublication.requireSafeDirectoryPath(directory, "Library scan root");
+        } catch (IOException unsafeRoot) {
+            throw new IllegalArgumentException("Небезпечний або недоступний каталог: " + directory, unsafeRoot);
         }
         int depth = includeSubfolders
                 ? Math.max(1, maxDepth <= 0 ? Integer.MAX_VALUE : maxDepth)
@@ -41,10 +47,10 @@ public class LibraryScanner {
         long sizeLimit = maxFileSize <= 0 ? Long.MAX_VALUE : maxFileSize;
 
         log.info("Потокове сканування каталогу: {} (depth={}, maxFileSize={})",
-                directory, depth == Integer.MAX_VALUE ? "unbounded" : depth, sizeLimit);
+                safeRoot, depth == Integer.MAX_VALUE ? "unbounded" : depth, sizeLimit);
 
-        return Files.walk(directory, depth)
-                .filter(Files::isRegularFile)
+        return Files.walk(safeRoot, depth)
+                .filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                 .filter(path -> withinSize(path, sizeLimit))
                 .filter(this::supported);
     }
@@ -60,7 +66,8 @@ public class LibraryScanner {
 
     private boolean withinSize(Path path, long maxFileSize) {
         try {
-            return Files.size(path) <= maxFileSize;
+            BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return attributes.isRegularFile() && attributes.size() <= maxFileSize;
         } catch (IOException e) {
             log.warn("Не вдалося прочитати розмір файлу {}: {}", path, e.getMessage());
             return false;

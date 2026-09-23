@@ -10,8 +10,11 @@ class RuntimeEncodingGuardTest {
     @Test
     void currentJava21RuntimeUsesUtf8DefaultCharset() {
         RuntimeEncodingGuard.Status status = RuntimeEncodingGuard.inspect();
+        // Java 21 guarantees an UTF-8 default charset (JEP 400), but native.encoding remains
+        // environment/locale dependent on Unix. The guard semantics themselves are covered by
+        // the platform-specific tests below, so this ambient-runtime check must not require the
+        // test runner to have an UTF-8 POSIX locale.
         assertThat(status.defaultCharset()).isEqualToIgnoringCase(StandardCharsets.UTF_8.name());
-        assertThat(status.safeForUnicode()).isTrue();
     }
 
     @Test

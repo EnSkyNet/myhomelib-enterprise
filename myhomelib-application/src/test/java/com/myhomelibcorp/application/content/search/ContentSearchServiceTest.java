@@ -3,9 +3,12 @@ package com.myhomelibcorp.application.content.search;
 import com.myhomelibcorp.application.content.index.*;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.content.ContentIndexPort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import org.junit.jupiter.api.Test;
 
@@ -13,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class ContentSearchServiceTest {
@@ -30,7 +34,9 @@ class ContentSearchServiceTest {
                 return new ContentIndexPage(List.of(new ContentIndexHit(id, "a1", "c1", "Розділ",
                         100, 260, 145, "…потрібна фраза…", 2.5f)), 1, query.offset(), query.limit());
             }
-            @Override public ContentIndexHealth health(String collectionId) { return null; }
+            @Override public ContentIndexHealth health(String collectionId) {
+                return new ContentIndexHealth(collectionId, 1, 1, 1, true, ContentIndexHealth.State.READY, "");
+            }
         };
         BookQueryRepository books = mock(BookQueryRepository.class);
         BookMapper mapper = mock(BookMapper.class);
@@ -61,4 +67,21 @@ class ContentSearchServiceTest {
         assertThat(service.search("c1", "  ", 0, 20).items()).isEmpty();
         verifyNoInteractions(index);
     }
+    @Test
+    void rejectsContentSearchForCollectionDifferentFromActiveOneBeforeTouchingIndexOrSql() {
+        ContentIndexPort index = mock(ContentIndexPort.class);
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
+        when(lifecycle.getCurrentCollection()).thenReturn(new Collection(
+                "active", "Active", null, null, 0, null, null, null, null));
+
+        ContentSearchService service = new ContentSearchService(
+                index, books, mock(BookMapper.class), lifecycle, new LibraryOperationCoordinator());
+
+        assertThatThrownBy(() -> service.search("other", "needle", 0, 20))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("not active");
+        verifyNoInteractions(index, books);
+    }
+
 }

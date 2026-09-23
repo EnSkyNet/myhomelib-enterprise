@@ -1,0 +1,1 @@
+Продовжуй MyHomeLib з deep-audit handoff. Спочатку прочитай docs/handoff-2026-09-20/DEEP-AUDIT-VERIFICATION-2026-09-20.md та STATUS-UA.md. Core build/regression/real-fixtures уже green; не повторюй попередній статичний audit без причини. Наступна робота — лише external-tool/Windows acceptance або новий узгоджений scope.

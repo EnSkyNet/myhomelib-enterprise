@@ -1,5 +1,8 @@
 package com.myhomelibcorp.ui.action;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.action.BookActionProfile;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.usecase.book.RunBookActionUseCase;
@@ -12,6 +15,7 @@ import javafx.scene.control.ContextMenu;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -19,6 +23,7 @@ import java.util.List;
 /** JavaFX adapter for profile-driven book actions. */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public class BookActionUiService {
     private final BookActionProfileService profileService;
     private final RunBookActionUseCase runBookActionUseCase;
@@ -33,7 +38,7 @@ public class BookActionUiService {
                 .toList();
         if (profiles.isEmpty()) return null;
         ContextMenu context = new ContextMenu();
-        Menu actions = new Menu("Дії з книгою");
+        Menu actions = new Menu(UiText.text("ui.java.book_action_ui_service.ce75e3d4fd"));
         for (BookActionProfile profile : profiles) {
             MenuItem item = new MenuItem(profile.name());
             item.setOnAction(e -> run(book, profile));
@@ -44,18 +49,23 @@ public class BookActionUiService {
     }
 
     private void run(BookViewModel book, BookActionProfile profile) {
-        appState.getStatusBar().setStatusText("Запуск дії: " + profile.name());
+        appState.getStatusBar().setStatusText(UiText.text("ui.java.book_action_ui_service.93e438617f") + profile.name());
         runBookActionUseCase.execute(BookId.fromString(book.getId()), profile.id())
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (error != null) {
-                        appState.getStatusBar().setStatusText("Помилка дії з книгою");
-                        dialogs.showError("Дія з книгою", error.getMessage());
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.book_action_ui_service.53fff1acbb"));
+                        dialogs.showError(UiText.text("ui.java.book_action_ui_service.91d8d4f2be"), UiExceptionSupport.message(error));
                     } else if (result == null || !result.success()) {
-                        appState.getStatusBar().setStatusText("Дія завершилась з помилкою");
-                        String message = result == null ? "Невідома помилка" : String.join("\n", result.errors());
-                        dialogs.showError("Дія з книгою", message);
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.book_action_ui_service.42c9ca3858"));
+                        if (result != null && !result.errors().isEmpty()) {
+                            log.error("Book action {} failed: {}", profile.id(), String.join(" | ", result.errors()));
+                        }
+                        String message = result == null
+                                ? UiText.text("ui.java.book_action_ui_service.ff60a5d911")
+                                : UiText.text("common.error.operation_failed") + "\n" + UiText.text("common.error.details_in_log");
+                        dialogs.showError(UiText.text("ui.java.book_action_ui_service.91d8d4f2be"), message);
                     } else {
-                        appState.getStatusBar().setStatusText("Дію запущено: " + profile.name());
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.book_action_ui_service.9086237da0") + profile.name());
                     }
                 }));
     }

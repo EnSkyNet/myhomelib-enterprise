@@ -8,18 +8,18 @@
       fx:controller="com.myhomelibcorp.ui.collection.CollectionWorkspaceController"
       spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;">
 
-    <Label text="⭐ Колекції" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <Label text="ui.fxml.collection_workspace.collections" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
 
     <SplitPane dividerPositions="0.3" VBox.vgrow="ALWAYS">
         <items>
             <!-- Ліва панель: список колекцій -->
             <VBox spacing="5" style="-fx-padding: 5;">
                 <HBox spacing="5">
-                    <Button text="+ Порожня" onAction="#onCreateCollection"/>
-                    <Button fx:id="activateButton" text="▶ Активувати" onAction="#onActivateCollection" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-                    <Button fx:id="renameButton" text="✏️" accessibleText="Перейменувати колекцію" onAction="#onRenameCollection" prefWidth="30"/>
-                    <Button fx:id="deleteButton" text="🗑" accessibleText="Видалити колекцію" onAction="#onDeleteCollection" prefWidth="30"/>
-                    <Button text="🔄" accessibleText="Оновити колекції" onAction="#onRefresh" prefWidth="30"/>
+                    <Button text="ui.fxml.collection_workspace.empty" onAction="#onCreateCollection"/>
+                    <Button fx:id="activateButton" text="ui.fxml.collection_workspace.activate" onAction="#onActivateCollection" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
+                    <Button fx:id="renameButton" text="ui.fxml.collection_workspace.value" accessibleText="ui.fxml.collection_workspace.rename_collection" onAction="#onRenameCollection" prefWidth="30"/>
+                    <Button fx:id="deleteButton" text="ui.fxml.collection_workspace.value_eeaa9e0" accessibleText="ui.fxml.collection_workspace.delete_collection" onAction="#onDeleteCollection" prefWidth="30"/>
+                    <Button text="ui.fxml.collection_workspace.value_592a38e" accessibleText="ui.fxml.collection_workspace.refresh_collections" onAction="#onRefresh" prefWidth="30"/>
                     <Region HBox.hgrow="ALWAYS"/>
                 </HBox>
                 <ListView fx:id="collectionsListView" VBox.vgrow="ALWAYS"/>
@@ -27,58 +27,58 @@
 
             <!-- Права панель: деталі колекції -->
             <VBox fx:id="collectionDetailsBox" spacing="10" style="-fx-padding: 10;">
-                <Label fx:id="collectionNameLabel" text="Колекція" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
-                <Label fx:id="runtimeStateLabel" text="Стан: ● Готова" wrapText="true"/>
-                <Label fx:id="activeCollectionLabel" text="Активна колекція: ні"/>
-                <Label fx:id="rootFolderLabel" text="Папка: —" wrapText="true"/>
-                <Label fx:id="dbFileLabel" text="БД: —" wrapText="true"/>
-                <Label fx:id="collectionTypeLabel" text="Тип: —"/>
-                <TitledPane text="Автоматичне оновлення локального INPX/ZIP" expanded="false">
+                <Label fx:id="collectionNameLabel" text="ui.fxml.collection_workspace.collection" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <Label fx:id="runtimeStateLabel" text="ui.fxml.collection_workspace.state_ready" wrapText="true"/>
+                <Label fx:id="activeCollectionLabel" text="ui.fxml.collection_workspace.active_collection_no"/>
+                <Label fx:id="rootFolderLabel" text="ui.fxml.collection_workspace.folder" wrapText="true"/>
+                <Label fx:id="dbFileLabel" text="ui.fxml.collection_workspace.database" wrapText="true"/>
+                <Label fx:id="collectionTypeLabel" text="ui.fxml.collection_workspace.type"/>
+                <TitledPane text="ui.fxml.collection_workspace.automatic_local_inpx_zip_update" expanded="false">
                     <content>
                         <VBox spacing="7" style="-fx-padding: 8;">
-                            <Label text="Спостерігач стежить лише за вказаним файлом-джерелом; зміни обробляються після короткої затримки стабілізації." wrapText="true"/>
+                            <Label text="ui.fxml.collection_workspace.the_watcher_monitors_only_the_specified_sour_3ea6ea1" wrapText="true"/>
                             <HBox spacing="6">
-                                <TextField fx:id="sourceFileField" promptText="Шлях до .inpx або .zip" HBox.hgrow="ALWAYS"/>
-                                <Button text="Огляд..." onAction="#onBrowseSource"/>
+                                <TextField fx:id="sourceFileField" promptText="ui.fxml.collection_workspace.path_to_inpx_or_zip" HBox.hgrow="ALWAYS"/>
+                                <Button text="ui.fxml.collection_workspace.browse" onAction="#onBrowseSource"/>
                             </HBox>
                             <HBox spacing="8" alignment="CENTER_LEFT">
-                                <CheckBox fx:id="autoUpdateEnabledCheckBox" text="Автоматично відстежувати зміни"/>
-                                <Button text="Зберегти" onAction="#onSaveSourceMonitor"/>
-                                <Button fx:id="sourceCheckButton" text="Перевірити зараз" onAction="#onCheckSourceNow"/>
+                                <CheckBox fx:id="autoUpdateEnabledCheckBox" text="ui.fxml.collection_workspace.automatically_watch_for_changes"/>
+                                <Button text="ui.fxml.collection_workspace.save" onAction="#onSaveSourceMonitor"/>
+                                <Button fx:id="sourceCheckButton" text="ui.fxml.collection_workspace.check_now" onAction="#onCheckSourceNow"/>
                             </HBox>
-                            <Label fx:id="sourceStatusLabel" text="Джерело автооновлення не налаштовано" wrapText="true"/>
+                            <Label fx:id="sourceStatusLabel" text="ui.fxml.collection_workspace.auto_update_source_is_not_configured" wrapText="true"/>
                         </VBox>
                     </content>
                 </TitledPane>
 
-                <TitledPane text="Папка надходження — автоматичний імпорт" expanded="false">
+                <TitledPane text="ui.fxml.collection_workspace.incoming_folder_automatic_import" expanded="false">
                     <content>
                         <VBox spacing="7" style="-fx-padding: 8;">
-                            <Label text="Файл імпортується лише після затримки та перевірки стабільності. Черга зберігається між перезапусками; імпорт виконується лише тоді, коли ця колекція активна." wrapText="true"/>
+                            <Label text="ui.fxml.collection_workspace.a_file_is_imported_only_after_a_delay_and_st_8ef95b8" wrapText="true"/>
                             <HBox spacing="6">
-                                <TextField fx:id="incomingFolderField" promptText="Папка з новими книгами/архівами" HBox.hgrow="ALWAYS"/>
-                                <Button text="Огляд..." onAction="#onBrowseIncomingFolder"/>
+                                <TextField fx:id="incomingFolderField" promptText="ui.fxml.collection_workspace.folder_with_new_books_archives" HBox.hgrow="ALWAYS"/>
+                                <Button text="ui.fxml.collection_workspace.browse" onAction="#onBrowseIncomingFolder"/>
                             </HBox>
                             <HBox spacing="8" alignment="CENTER_LEFT">
-                                <CheckBox fx:id="incomingFolderEnabledCheckBox" text="Автоматично імпортувати стабільні файли"/>
-                                <Button text="Зберегти" onAction="#onSaveIncomingFolder"/>
-                                <Button fx:id="incomingFolderScanButton" text="Сканувати зараз" onAction="#onScanIncomingFolder"/>
+                                <CheckBox fx:id="incomingFolderEnabledCheckBox" text="ui.fxml.collection_workspace.automatically_import_stable_files"/>
+                                <Button text="ui.fxml.collection_workspace.save" onAction="#onSaveIncomingFolder"/>
+                                <Button fx:id="incomingFolderScanButton" text="ui.fxml.collection_workspace.scan_now" onAction="#onScanIncomingFolder"/>
                             </HBox>
-                            <Label fx:id="incomingFolderStatusLabel" text="Папку надходження не налаштовано" wrapText="true"/>
+                            <Label fx:id="incomingFolderStatusLabel" text="ui.fxml.collection_workspace.incoming_folder_is_not_configured" wrapText="true"/>
                         </VBox>
                     </content>
                 </TitledPane>
 
-                <TitledPane text="Обслуговування / очищення / відновлення" expanded="false">
+                <TitledPane text="ui.fxml.collection_workspace.maintenance_cleanup_repair" expanded="false">
                     <content>
                         <VBox spacing="7" style="-fx-padding: 8;">
-                            <Label text="Безпечний порядок дій: Аналіз → Попередній перегляд → Пробний запуск → Застосування. Фізичні файли без записів у каталозі автоматично не видаляються." wrapText="true"/>
+                            <Label text="ui.fxml.collection_workspace.safe_workflow_analyze_preview_dry_run_apply_37fc402" wrapText="true"/>
                             <HBox spacing="6">
-                                <Button fx:id="maintenanceAnalyzeButton" text="Аналіз" onAction="#onAnalyzeMaintenance"/>
-                                <Button fx:id="maintenanceDryRunButton" text="Пробний запуск" onAction="#onDryRunMaintenance" disable="true"/>
-                                <Button fx:id="maintenanceApplyButton" text="Застосувати виправлення..." onAction="#onApplyMaintenance" disable="true"/>
+                                <Button fx:id="maintenanceAnalyzeButton" text="ui.fxml.collection_workspace.analyze" onAction="#onAnalyzeMaintenance"/>
+                                <Button fx:id="maintenanceDryRunButton" text="ui.fxml.collection_workspace.dry_run" onAction="#onDryRunMaintenance" disable="true"/>
+                                <Button fx:id="maintenanceApplyButton" text="ui.fxml.collection_workspace.apply_fixes" onAction="#onApplyMaintenance" disable="true"/>
                             </HBox>
-                            <Label fx:id="maintenanceStatusLabel" text="Аналіз ще не запускався" wrapText="true"/>
+                            <Label fx:id="maintenanceStatusLabel" text="ui.fxml.collection_workspace.analysis_has_not_been_run_yet" wrapText="true"/>
                             <TextArea fx:id="maintenanceReportArea" editable="false" wrapText="false" prefRowCount="8"/>
                         </VBox>
                     </content>

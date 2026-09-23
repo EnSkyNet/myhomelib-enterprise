@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
@@ -12,15 +13,14 @@ import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.shared.util.FileNameSupport;
+import com.myhomelibcorp.shared.util.SafeFileNameSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.io.InputStream;
-import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -43,15 +43,29 @@ public class CopyBooksBetweenCollectionsUseCase {
     private final BookSaver bookSaver;
     private final BookUserStateTransferPort userStateTransfer;
     private final SearchIndexSynchronizer searchIndexSynchronizer;
+    private final ContentIndexAutoSchedulingService contentIndexScheduling;
 
     public record Result(int copied, int failed, List<String> errors) { }
 
     public Result execute(List<BookId> ids, String targetCollectionId) {
+        Collection current = lifecycle.getCurrentCollection();
+        String expectedSourceCollectionId = current == null ? null : current.getId();
+        return execute(ids, targetCollectionId, expectedSourceCollectionId);
+    }
+
+    /**
+     * Executes a copy only while the same source collection that initiated the UI request remains active.
+     * The caller must hold the exclusive COPY lifecycle barrier before enqueueing asynchronous work.
+     */
+    public Result execute(List<BookId> ids, String targetCollectionId, String expectedSourceCollectionId) {
         List<BookId> requested = normalize(ids);
         if (requested.isEmpty()) return new Result(0, 0, List.of());
 
         Collection source = lifecycle.getCurrentCollection();
         if (source == null) throw new IllegalStateException("Активну колекцію не вибрано");
+        if (expectedSourceCollectionId == null || !expectedSourceCollectionId.equals(source.getId())) {
+            throw new IllegalStateException("Вихідна колекція змінилася до початку копіювання");
+        }
         Collection target = collections.findById(targetCollectionId)
                 .orElseThrow(() -> new IllegalArgumentException("Цільову колекцію не знайдено"));
         if (source.getId().equals(target.getId())) throw new IllegalArgumentException("Виберіть іншу колекцію");
@@ -65,14 +79,17 @@ public class CopyBooksBetweenCollectionsUseCase {
         for (BookId id : requested) if (!sourceBooks.containsKey(id)) errors.add(id + ": книгу не знайдено");
 
         int copied = 0;
+        Throwable primaryFailure = null;
         try {
             boolean reusableTargetIndex = lifecycle.initializeCollection(target, false);
             if (!reusableTargetIndex) {
-                // Selective updates are only valid on top of a complete target index. Rebuild once
-                // when the target index is absent/dirty; clean targets remain incremental.
-                lifecycle.rebuildSearchIndex();
+                // COPY owns the lifecycle barrier from before the worker was queued. Rebuild through
+                // the synchronizer directly so we do not try to acquire a second INDEX root lease.
+                if (!searchIndexSynchronizer.rebuildSafelyNow()) {
+                    throw new IllegalStateException("Не вдалося підготувати пошуковий індекс цільової колекції");
+                }
             }
-            Files.createDirectories(targetRoot.resolve(MANAGED_FOLDER));
+            SafeFilePublication.createDirectoriesNoLinks(targetRoot.resolve(MANAGED_FOLDER), "Copied-books managed folder");
 
             Set<BookId> alreadyPresent = new LinkedHashSet<>();
             for (Book existing : books.findByIds(new ArrayList<>(sourceBooks.keySet()))) {
@@ -80,14 +97,14 @@ public class CopyBooksBetweenCollectionsUseCase {
             }
 
             List<Book> saveBatch = new ArrayList<>(SAVE_BATCH);
-            Map<BookId, Path> copiedPaths = new LinkedHashMap<>();
+            Map<BookId, CopiedFile> copiedPaths = new LinkedHashMap<>();
             for (Book sourceBook : sourceBooks.values()) {
                 if (alreadyPresent.contains(sourceBook.getId())) continue;
                 try {
-                    Path destination = copyPhysicalBook(sourceBook, targetRoot);
-                    Book targetBook = copyMetadataToTarget(sourceBook, targetRoot, destination);
+                    CopiedFile copiedFile = copyPhysicalBook(sourceBook, targetRoot);
+                    Book targetBook = copyMetadataToTarget(sourceBook, targetRoot, copiedFile);
                     saveBatch.add(targetBook);
-                    copiedPaths.put(targetBook.getId(), destination);
+                    copiedPaths.put(targetBook.getId(), copiedFile);
 
                     if (saveBatch.size() >= SAVE_BATCH) {
                         copied += flushBatch(source, target, saveBatch, copiedPaths, errors);
@@ -98,14 +115,29 @@ public class CopyBooksBetweenCollectionsUseCase {
             }
             if (!saveBatch.isEmpty()) copied += flushBatch(source, target, saveBatch, copiedPaths, errors);
 
-        } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося скопіювати книги: " + safeMessage(e), e);
+        } catch (RuntimeException | Error failure) {
+            primaryFailure = failure;
+            throw failure;
+        } catch (Exception failure) {
+            IllegalStateException wrapped = new IllegalStateException(
+                    "Не вдалося скопіювати книги: " + safeMessage(failure), failure);
+            primaryFailure = wrapped;
+            throw wrapped;
         } finally {
             try {
-                // Per-collection Lucene is reused when its freshness marker still matches source DB.
+                // Returning to the source collection is part of COPY's lifecycle contract, not a
+                // best-effort UI convenience. A successful target commit must never be reported as
+                // a successful COPY while the application remains attached to the target collection.
                 lifecycle.initializeCollection(source, true);
-            } catch (Exception e) {
-                log.error("Не вдалося повернутися до вихідної колекції", e);
+            } catch (RuntimeException | Error restoreFailure) {
+                if (primaryFailure != null) {
+                    primaryFailure.addSuppressed(restoreFailure);
+                } else {
+                    throw new IllegalStateException(
+                            "Копіювання завершилося, але не вдалося повернутися до вихідної колекції; "
+                                    + "цільові зміни могли вже бути зафіксовані",
+                            restoreFailure);
+                }
             }
         }
         return new Result(copied, errors.size(), List.copyOf(errors));
@@ -126,18 +158,18 @@ public class CopyBooksBetweenCollectionsUseCase {
     private int flushBatch(Collection source,
                            Collection target,
                            List<Book> batch,
-                           Map<BookId, Path> copiedPaths,
+                           Map<BookId, CopiedFile> copiedPaths,
                            List<String> errors) {
         if (batch.isEmpty()) return 0;
         List<Book> attempted = List.copyOf(batch);
-        Map<BookId, Path> attemptedPaths = new LinkedHashMap<>(copiedPaths);
+        Map<BookId, CopiedFile> attemptedPaths = new LinkedHashMap<>(copiedPaths);
         try {
             return persistBatch(source, target, attempted, attemptedPaths);
-        } catch (PostCommitSearchSyncException failure) {
+        } catch (PostCommitDerivedIndexSyncException failure) {
             // DB rows + user state are already committed. Deleting their files here would create
-            // broken catalog rows. Keep the physical books and fail loudly; the stale Lucene marker
-            // will force a rebuild on the next target activation.
-            log.error("Lucene sync failed after committed copy batch; copied files are retained", failure);
+            // broken catalog rows. Keep the physical books and fail loudly; derived indexes are
+            // either marked stale or will be validated/rebuilt on the next target activation.
+            log.error("Derived-index sync failed after committed copy batch; copied files are retained", failure);
             throw failure;
         } catch (Exception failure) {
             cleanupCopiedFiles(attemptedPaths.values());
@@ -151,7 +183,7 @@ public class CopyBooksBetweenCollectionsUseCase {
         }
     }
 
-    private int persistBatch(Collection source, Collection target, List<Book> batch, Map<BookId, Path> copiedPaths) {
+    private int persistBatch(Collection source, Collection target, List<Book> batch, Map<BookId, CopiedFile> copiedPaths) {
         // The target book row and user state share one SQLite transaction. Lucene is derived state
         // and is synchronized only after that transaction has successfully committed.
         List<Book> saved = bookSaver.saveBatchReturningSaved(
@@ -163,13 +195,23 @@ public class CopyBooksBetweenCollectionsUseCase {
         Set<BookId> savedIds = saved.stream().map(Book::getId).collect(java.util.stream.Collectors.toSet());
         for (Book book : batch) {
             if (savedIds.contains(book.getId())) continue;
-            Path unused = copiedPaths.get(book.getId());
+            CopiedFile unused = copiedPaths.get(book.getId());
             if (unused != null) cleanupCopiedFiles(List.of(unused));
         }
         if (!saved.isEmpty()) {
             List<BookId> ids = saved.stream().map(Book::getId).toList();
+            // The full-text task processor is bound to the active collection DataSource. The target
+            // collection becomes inactive again when this use case returns, so do not queue exact
+            // tasks here; persistently mark its content index stale instead. This prevents a
+            // previously READY target index from silently omitting the newly copied books.
+            try {
+                contentIndexScheduling.markStale(target.getId());
+            } catch (RuntimeException failure) {
+                throw new PostCommitDerivedIndexSyncException(
+                        "Target DB commit succeeded, but the full-text index could not be marked stale", failure);
+            }
             if (!searchIndexSynchronizer.synchronizeSafelyNow(ids)) {
-                throw new PostCommitSearchSyncException(
+                throw new PostCommitDerivedIndexSyncException(
                         "Target DB commit succeeded, but Lucene synchronization failed for " + ids.size() + " books");
             }
         }
@@ -177,48 +219,66 @@ public class CopyBooksBetweenCollectionsUseCase {
     }
 
 
-    private static void cleanupCopiedFiles(Iterable<Path> paths) {
-        if (paths == null) return;
-        for (Path path : paths) {
-            if (path == null) continue;
+    private static void cleanupCopiedFiles(Iterable<CopiedFile> files) {
+        if (files == null) return;
+        for (CopiedFile copied : files) {
+            if (copied == null || copied.path() == null) continue;
             try {
-                Files.deleteIfExists(path);
+                if (!SafeFilePublication.removeIfOwned(copied.path(), copied.sha256(), "Copied-book rollback")) {
+                    log.warn("Не вдалося підтверджено прибрати незбережений файл {}", copied.path());
+                }
             } catch (Exception cleanupFailure) {
-                log.warn("Не вдалося прибрати незбережений файл {}", path, cleanupFailure);
+                log.warn("Не вдалося безпечно прибрати незбережений файл {}; файл збережено як recovery evidence",
+                        copied.path(), cleanupFailure);
             }
         }
     }
 
-    private Path copyPhysicalBook(Book book, Path targetRoot) throws Exception {
+    private CopiedFile copyPhysicalBook(Book book, Path targetRoot) throws Exception {
         String sourceName = book.getArchiveEntry();
         if (sourceName == null || sourceName.isBlank()) sourceName = book.getFileName();
         String ext = FileNameSupport.extension(sourceName);
-        String extension = ext.isBlank() ? ".book" : "." + ext;
+        String safeExtension = SafeFileNameSupport.sanitizeComponent(ext, 24);
+        String extension = safeExtension.isBlank() ? ".book" : "." + safeExtension;
         String id = book.getId().asString();
         String title = safeFileName(book.getTitle());
-        String fileName = id + "-" + title + extension;
+        String fileName = SafeFileNameSupport.sanitizeComponent(id + "-" + title + extension, 240);
+        if (fileName.isBlank()) fileName = id + ".book";
         Path destination = targetRoot.resolve(MANAGED_FOLDER).resolve(fileName).toAbsolutePath().normalize();
-        Path temp = destination.resolveSibling(destination.getFileName() + ".part");
-
-        Files.createDirectories(destination.getParent());
-        try (InputStream input = resources.readBookData(book)
-                .orElseThrow(() -> new IllegalStateException("Файл книги недоступний"))) {
-            Files.copy(input, temp, StandardCopyOption.REPLACE_EXISTING);
-        } catch (Exception e) {
-            Files.deleteIfExists(temp);
-            throw e;
+        Path parent = SafeFilePublication.createDirectoriesNoLinks(destination.getParent(), "Copied-book destination");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(parent, ".mhl-copy-", "Copied-book staging workspace");
+        Path staged = workspace.resolve("book" + extension);
+        try {
+            try (InputStream input = resources.readBookData(book)
+                    .orElseThrow(() -> new IllegalStateException("Файл книги недоступний"))) {
+                SafeFilePublication.copyFresh(input, staged, "Copied-book staged file");
+            }
+            SafeFilePublication.FileSnapshot stagedSnapshot =
+                    SafeFilePublication.snapshot(staged, "Copied-book staged file");
+            SafeFilePublication.moveNoReplace(staged, destination, "Copied-book publication");
+            SafeFilePublication.FileSnapshot publishedSnapshot =
+                    SafeFilePublication.snapshot(destination, "Copied-book published file");
+            if (!stagedSnapshot.sha256().equalsIgnoreCase(publishedSnapshot.sha256())
+                    || stagedSnapshot.size() != publishedSnapshot.size()) {
+                throw new java.io.IOException("Copied-book publication fingerprint mismatch: " + destination);
+            }
+            return new CopiedFile(destination, publishedSnapshot.sha256(), publishedSnapshot.size());
+        } finally {
+            try {
+                SafeFilePublication.cleanupPrivateWorkspace(workspace);
+            } catch (Exception cleanupFailure) {
+                log.warn("Не вдалося прибрати staging workspace {}; збережено для recovery", workspace, cleanupFailure);
+            }
         }
-        AtomicFileSupport.moveReplacing(temp, destination);
-        return destination;
     }
 
-    private static Book copyMetadataToTarget(Book source, Path targetRoot, Path destination) throws Exception {
-        long size = Files.size(destination);
+    private static Book copyMetadataToTarget(Book source, Path targetRoot, CopiedFile copiedFile) {
+        Path destination = copiedFile.path();
         BookFile file = new BookFile(
                 destination.getFileName().toString(),
                 MANAGED_FOLDER,
                 "",
-                size,
+                copiedFile.size(),
                 targetRoot.toAbsolutePath().normalize().toString());
         return Book.builder()
                 .id(source.getId())
@@ -245,17 +305,15 @@ public class CopyBooksBetweenCollectionsUseCase {
     }
 
     private static String safeFileName(String value) {
-        if (value == null || value.isBlank()) return "book";
-        String cleaned = value.replaceAll("[<>:\"/\\\\|?*]", "_")
-                .replaceAll("\\s+", " ").trim();
-        if (cleaned.length() > 120) cleaned = cleaned.substring(0, 120).trim();
+        String cleaned = SafeFileNameSupport.sanitizeComponent(value, 120);
         return cleaned.isBlank() ? "book" : cleaned;
     }
 
-    private static final class PostCommitSearchSyncException extends RuntimeException {
-        private PostCommitSearchSyncException(String message) {
-            super(message);
-        }
+
+    private record CopiedFile(Path path, String sha256, long size) { }
+    private static final class PostCommitDerivedIndexSyncException extends IllegalStateException {
+        private PostCommitDerivedIndexSyncException(String message) { super(message); }
+        private PostCommitDerivedIndexSyncException(String message, Throwable cause) { super(message, cause); }
     }
 
     private static String safeMessage(Throwable error) {

@@ -7,12 +7,16 @@ public record ContentIndexHealth(
         long documentCount,
         long sizeBytes,
         boolean compatible,
-        String message
+        State state,
+        String technicalDetail
 ) {
+    public enum State { ABSENT, EMPTY, READY, STALE, SCHEMA_MISMATCH, ERROR }
+
     public ContentIndexHealth {
         collectionId = collectionId == null ? "" : collectionId.trim();
         documentCount = Math.max(0L, documentCount);
         sizeBytes = Math.max(0L, sizeBytes);
-        message = message == null ? "" : message.trim();
+        state = state == null ? State.ERROR : state;
+        technicalDetail = technicalDetail == null ? "" : technicalDetail.trim();
     }
 }

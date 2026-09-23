@@ -1,17 +1,19 @@
 package com.myhomelibcorp.ui.controller;
 
+
+import com.myhomelibcorp.ui.service.UiText;
+import com.myhomelibcorp.ui.collection.CollectionUiCommitGuard;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
-import com.myhomelibcorp.application.mapper.CollectionDtoMapper;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
+import com.myhomelibcorp.application.service.PostImportMaintenanceService;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
-import com.myhomelibcorp.application.statistics.StatisticsService;
 import com.myhomelibcorp.application.usecase.collection.CreateCollectionUseCase;
+import com.myhomelibcorp.application.usecase.collection.LoadCollectionsUseCase;
 import com.myhomelibcorp.application.usecase.collection.SwitchCollectionUseCase;
-import com.myhomelibcorp.application.usecase.series.SyncSeriesUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.ui.imports.ImportFileChooserFilters;
@@ -46,17 +48,18 @@ public class CollectionWizardController {
 
     private final LocalizationService localizationService;
     private final CreateCollectionUseCase createCollectionUseCase;
+    private final LoadCollectionsUseCase loadCollectionsUseCase;
     private final CollectionValidatorPort collectionValidator;
     private final DialogService dialogService;
     private final FileChooserService fileChooserService;
     private final SwitchCollectionUseCase switchCollectionUseCase;
-    private final StatisticsService statisticsService;
-    private final SyncSeriesUseCase syncSeriesUseCase;
+    private final PostImportMaintenanceService collectionMaintenanceService;
     private final ApplicationEventPublisher eventPublisher;
     private final ApplicationState appState;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
     private final ApplicationSettingsPort applicationSettings;
+    private final CollectionUiCommitGuard collectionUiCommitGuard;
 
     private final CollectionWizardViewModel model = new CollectionWizardViewModel();
 
@@ -106,13 +109,13 @@ public class CollectionWizardController {
         typeComboBox.setConverter(new javafx.util.StringConverter<CollectionType>() {
             @Override
             public String toString(CollectionType type) {
-                return type == null ? "" : type.getDisplayName();
+                return type == null ? "" : localizationService.text(type.getLocalizationKey());
             }
             @Override
             public CollectionType fromString(String string) {
                 if (string == null || string.isBlank()) return CollectionType.FB2_LOCAL;
                 for (CollectionType type : CollectionType.values()) {
-                    if (type.getDisplayName().equalsIgnoreCase(string.trim()) || type.name().equalsIgnoreCase(string.trim())) return type;
+                    if (localizationService.text(type.getLocalizationKey()).equalsIgnoreCase(string.trim()) || type.name().equalsIgnoreCase(string.trim())) return type;
                 }
                 return CollectionType.FB2_LOCAL;
             }
@@ -183,7 +186,7 @@ public class CollectionWizardController {
             if (model.isStepValid(current)) {
                 updateStep(current + 1);
             } else {
-                showError("Заповніть всі обов'язкові поля");
+                showError(UiText.text("ui.java.collection_wizard_controller.05405f50fd"));
             }
         }
     }
@@ -199,7 +202,7 @@ public class CollectionWizardController {
     @FXML
     private void onFinish() {
         if (!model.isValid()) {
-            showError("Будь ласка, заповніть всі обов'язкові поля");
+            showError(UiText.text("ui.java.collection_wizard_controller.4956926f1c"));
             return;
         }
 
@@ -212,10 +215,10 @@ public class CollectionWizardController {
         }
 
         finishButton.setDisable(true);
-        finishButton.setText("Створення...");
-        appState.getStatusBar().setStatusText("Створення колекції...");
+        finishButton.setText(UiText.text("ui.java.collection_wizard_controller.d0bbf3b822"));
+        appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_wizard_controller.b6abfa8e3a"));
         String operationId = operationCenter.start(
-                "Створення колекції — " + request.getName(), "", OperationStage.CREATING_COLLECTION, false);
+                UiText.text("ui.java.collection_wizard_controller.9dce38545e") + request.getName(), "", OperationStage.CREATING_COLLECTION, false);
 
         executor.submit(() -> {
                     log.info("Початок створення колекції: {}", request.getName());
@@ -225,10 +228,9 @@ public class CollectionWizardController {
 
                     // DataSource/migrations/index/statistics/series are all non-UI work.
                     Collection activated = switchCollectionUseCase.execute(collection, request.isCreateIndex());
-                    operationCenter.accept("Створення колекції — " + request.getName(), activated.getId(),
+                    operationCenter.accept(UiText.text("ui.java.collection_wizard_controller.9dce38545e") + request.getName(), activated.getId(),
                             OperationProgress.stage(operationId, OperationStage.REFRESHING_STATISTICS, false));
-                    statisticsService.refreshStatistics();
-                    syncSeriesUseCase.execute();
+                    collectionMaintenanceService.refreshCollectionDerivedState(activated.getId());
                     return activated;
                 })
                 .whenComplete((activated, error) -> UiExecutor.runOnUiThread(() -> {
@@ -236,37 +238,42 @@ public class CollectionWizardController {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
                         log.error("Помилка створення колекції", cause);
-                        showError("Помилка створення: " + cause.getMessage());
+                        showError(UiText.text("ui.java.collection_wizard_controller.318933ff83") + UiExceptionSupport.message(cause));
                         finishButton.setDisable(false);
-                        finishButton.setText("✅ Створити");
-                        appState.getStatusBar().setStatusText("Помилка створення колекції");
+                        finishButton.setText(UiText.text("ui.fxml.collection_wizard.create"));
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_wizard_controller.ab1972de78"));
                         return;
                     }
 
                     try {
-                        CollectionDto dto = CollectionDtoMapper.toDto(activated, true, true);
-                        if (collectionList != null) {
-                            collectionList.add(dto);
-                            log.info("Колекцію додано до списку UI: {}", dto.getName());
-                        }
-                        appState.setCurrentLibraryCollection(activated);
+                        boolean committed = collectionUiCommitGuard.runIfStillActive(activated.getId(), () -> {
+                            appState.setCurrentLibraryCollection(activated);
+                            if (collectionList != null) {
+                                collectionList.setAll(loadCollectionsUseCase.execute());
+                                log.info("Список колекцій перечитано після активації: {}", activated.getName());
+                            }
+                            eventPublisher.publishEvent(new NavigationRefreshEvent());
+                            appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_wizard_controller.581a96f07f")
+                                    + activated.getName() + UiText.text("ui.java.collection_wizard_controller.eccde05e49"));
+                        });
                         if (!catalogUpdateUrl.isBlank() && activated.getId() != null && !activated.getId().isBlank()) {
                             applicationSettings.put("collection." + activated.getId() + ".inpxUrl", catalogUpdateUrl);
                         }
-                        eventPublisher.publishEvent(new NavigationRefreshEvent());
-                        operationCenter.complete(operationId, "Колекція готова: " + activated.getName());
-                        appState.getStatusBar().setStatusText("Колекцію '" + activated.getName() + "' створено");
-                        dialogService.showInfo("Успішно", "Колекцію '" + activated.getName() + "' створено!");
+                        if (!committed) {
+                            log.debug("Created collection {} was superseded before wizard UI commit", activated.getId());
+                        }
+                        operationCenter.complete(operationId, UiText.text("ui.java.collection_wizard_controller.1e198f406d") + activated.getName());
+                        dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.collection_wizard_controller.581a96f07f") + activated.getName() + UiText.text("ui.java.collection_wizard_controller.293e1ea2f2"));
                         finishButton.setDisable(false);
-                        finishButton.setText("✅ Створити");
+                        finishButton.setText(UiText.text("ui.fxml.collection_wizard.create"));
                         if (onComplete != null) onComplete.run();
                         closeDialog();
                     } catch (RuntimeException uiError) {
                         log.error("Помилка оновлення UI після створення колекції", uiError);
-                        dialogService.showError("Помилка",
-                                "Колекцію створено, але не вдалося оновити UI: " + uiError.getMessage());
+                        dialogService.showError(UiText.text("common.error"),
+                                UiText.text("ui.java.collection_wizard_controller.f4e5ab9b5f") + UiExceptionSupport.message(uiError));
                         finishButton.setDisable(false);
-                        finishButton.setText("✅ Створити");
+                        finishButton.setText(UiText.text("ui.fxml.collection_wizard.create"));
                     }
                 }));
     }
@@ -278,7 +285,7 @@ public class CollectionWizardController {
 
     @FXML
     private void onSelectRootFolder() {
-        File dir = fileChooserService.chooseDirectory(stage, "Виберіть кореневу папку");
+        File dir = fileChooserService.chooseDirectory(stage, UiText.text("ui.java.collection_wizard_controller.a113f08b84"));
         if (dir != null) {
             model.setRootFolder(dir.toPath());
         }
@@ -287,7 +294,7 @@ public class CollectionWizardController {
     @FXML
     private void onSelectDbPath() {
         File file = fileChooserService.chooseFileToSave(stage,
-                "Виберіть місце для бази даних",
+                UiText.text("ui.java.collection_wizard_controller.81637f1df0"),
                 model.getName() + ".db");
         if (file != null) {
             model.setDbFile(file.toPath());
@@ -297,7 +304,7 @@ public class CollectionWizardController {
     @FXML
     private void onSelectSourcePath() {
         File file = fileChooserService.chooseFile(stage,
-                "Виберіть файл джерела",
+                UiText.text("ui.java.collection_wizard_controller.e3075ac8a6"),
                 ImportFileChooserFilters.standardGroups(localizationService));
         if (file != null) {
             model.setSourcePath(file.getAbsolutePath());
@@ -397,14 +404,14 @@ public class CollectionWizardController {
 
     private void updateConfirmation() {
         confirmName.setText(model.getName() != null ? model.getName() : "");
-        confirmType.setText(model.getType() != null ? model.getType().getDisplayName() : "");
+        confirmType.setText(model.getType() != null ? localizationService.text(model.getType().getLocalizationKey()) : "");
         confirmRootFolder.setText(model.getRootFolder() != null ? model.getRootFolder().toString() : "");
         confirmDbFile.setText(model.getDbFile() != null ? model.getDbFile().toString() : "");
         confirmSourcePath.setText(model.getSourcePath() != null ? model.getSourcePath() : "");
         if (confirmCatalogUpdateUrl != null) {
             confirmCatalogUpdateUrl.setText(model.getCatalogUpdateUrl() != null ? model.getCatalogUpdateUrl() : "");
         }
-        confirmImportOnCreate.setText(model.isImportOnCreate() ? "Так" : "Ні");
-        confirmCreateIndex.setText(model.isCreateIndex() ? "Так" : "Ні");
+        confirmImportOnCreate.setText(model.isImportOnCreate() ? UiText.text("ui.smart_collection.operator.is_true") : UiText.text("ui.smart_collection.operator.is_false"));
+        confirmCreateIndex.setText(model.isCreateIndex() ? UiText.text("ui.smart_collection.operator.is_true") : UiText.text("ui.smart_collection.operator.is_false"));
     }
 }

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.catalog.CatalogUpdateService;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import javafx.application.Platform;
 import javafx.scene.control.MenuItem;
 import lombok.RequiredArgsConstructor;
@@ -30,7 +31,8 @@ public class CatalogUpdateBadgeService {
             updatesMenuItem.setText(localizationService.text("ui.main.catalog_updates"));
             return;
         }
-        uiBackgroundExecutor.submit(catalogUpdateService::pendingUpdateCount)
+        uiBackgroundExecutor.submitCollectionScoped(
+                        LibraryOperationType.QUERY, catalogUpdateService::pendingUpdateCount)
                 .whenComplete((count, error) -> Platform.runLater(() -> applyResult(
                         updatesMenuItem, requestGeneration, requestedId, currentCollectionId, count, error)));
     }

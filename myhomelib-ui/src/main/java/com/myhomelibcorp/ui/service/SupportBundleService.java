@@ -1,8 +1,8 @@
 package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import org.springframework.stereotype.Component;
 
 import java.io.BufferedOutputStream;
@@ -14,8 +14,8 @@ import java.io.OutputStream;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -53,39 +53,48 @@ public class SupportBundleService {
         SupportBundleOptions actual = options == null ? SupportBundleOptions.defaults() : options;
         SupportBundleSanitizer sanitizer = new SupportBundleSanitizer();
         Path target = output.toAbsolutePath().normalize();
-        if (target.getParent() != null) Files.createDirectories(target.getParent());
-        Path tmp = target.resolveSibling(target.getFileName() + ".part");
-        Files.deleteIfExists(tmp);
-        try (OutputStream raw = Files.newOutputStream(tmp, StandardOpenOption.CREATE_NEW);
-             ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(raw), StandardCharsets.UTF_8)) {
-            putText(zip, "environment.txt", sanitizer.sanitize(environment()));
-            putText(zip, "settings-redacted.txt", sanitizer.sanitize(redactedSettings(sanitizer)));
-            if (actual.includeThreadDump()) putText(zip, "threads.txt", sanitizer.sanitize(threadDump()));
-            if (actual.includeReleaseDocuments()) addValidationFiles(zip, sanitizer);
-            if (actual.includeLogs()) addLogs(zip, sanitizer);
+        Path parent = target.getParent();
+        if (parent == null) throw new IOException("Support bundle target has no parent: " + target);
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(target, "support bundle target");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                parent, ".support-bundle-work-", "support bundle workspace");
+        Path tmp = workspace.resolve("support-bundle.zip");
+        try {
+            try (OutputStream raw = SafeFilePublication.openFreshOutputStream(tmp, "staged support bundle");
+                 ZipOutputStream zip = new ZipOutputStream(new BufferedOutputStream(raw), StandardCharsets.UTF_8)) {
+                putText(zip, "environment.txt", sanitizer.sanitize(environment()));
+                putText(zip, "settings-redacted.txt", sanitizer.sanitize(redactedSettings(sanitizer)));
+                if (actual.includeThreadDump()) putText(zip, "threads.txt", sanitizer.sanitize(threadDump()));
+                if (actual.includeReleaseDocuments()) addValidationFiles(zip, sanitizer);
+                if (actual.includeLogs()) addLogs(zip, sanitizer);
+            }
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    tmp, target, expectedTargetHash, "support bundle publication");
+            return target;
         } catch (Exception e) {
-            Files.deleteIfExists(tmp);
             if (e instanceof IOException io) throw io;
             throw new IOException("Cannot create support bundle", e);
+        } finally {
+            try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+            catch (Exception ignored) { }
         }
-        return AtomicFileSupport.moveReplacing(tmp, target);
     }
 
     /** Returns only sanitized names/sizes; file contents are not copied into the preview. */
     public SupportBundlePreview preview(SupportBundleOptions options) {
         SupportBundleOptions actual = options == null ? SupportBundleOptions.defaults() : options;
         List<SupportBundlePreview.Item> items = new ArrayList<>();
-        items.add(new SupportBundlePreview.Item("environment.txt", -1, true, "шляхи псевдонімізовано"));
-        items.add(new SupportBundlePreview.Item("settings-redacted.txt", -1, true, "секрети та приватні значення очищено"));
-        items.add(new SupportBundlePreview.Item("threads.txt", -1, actual.includeThreadDump(), "санітизований thread dump"));
+        items.add(new SupportBundlePreview.Item("environment.txt", -1, true, UiText.text("ui.java.support_bundle_service.e0851c8d03")));
+        items.add(new SupportBundlePreview.Item("settings-redacted.txt", -1, true, UiText.text("ui.java.support_bundle_service.04a4fbb9c8")));
+        items.add(new SupportBundlePreview.Item("threads.txt", -1, actual.includeThreadDump(), UiText.text("ui.java.support_bundle_service.967412f09e")));
 
         for (String name : RELEASE_FILES) {
             Path file = AppPaths.launchDir().resolve(name);
             long size = safeSize(file);
-            boolean eligible = Files.isRegularFile(file) && size >= 0 && size <= MAX_RELEASE_FILE;
+            boolean eligible = isSafeRegularFile(file) && size >= 0 && size <= MAX_RELEASE_FILE;
             items.add(new SupportBundlePreview.Item(releaseEntryName(name), size,
                     actual.includeReleaseDocuments() && eligible,
-                    eligible ? "санітизований текст" : "файл відсутній або перевищує 2 MiB"));
+                    eligible ? UiText.text("ui.java.support_bundle_service.b4244ed067") : UiText.text("ui.java.support_bundle_service.e6ddd515c2")));
         }
 
         long accepted = 0;
@@ -95,12 +104,12 @@ public class SupportBundleService {
             boolean withinTotal = individuallyEligible && accepted + size <= MAX_TOTAL_LOGS;
             boolean include = actual.includeLogs() && withinTotal;
             String note;
-            if (!actual.includeLogs()) note = "логи вимкнено";
-            else if (!individuallyEligible) note = "пропущено: 0 B або >10 MiB";
-            else if (!withinTotal) note = "пропущено: загальний ліміт 30 MiB";
+            if (!actual.includeLogs()) note = UiText.text("ui.java.support_bundle_service.a2fc884d45");
+            else if (!individuallyEligible) note = UiText.text("ui.java.support_bundle_service.654608d1ff");
+            else if (!withinTotal) note = UiText.text("ui.java.support_bundle_service.cada0354bf");
             else {
                 accepted += size;
-                note = "line-by-line redaction";
+                note = UiText.text("ui.support_bundle.line_by_line_redaction");
             }
             items.add(new SupportBundlePreview.Item("logs/" + file.getFileName(), size, include, note));
         }
@@ -195,7 +204,7 @@ public class SupportBundleService {
         for (String name : RELEASE_FILES) {
             Path file = AppPaths.launchDir().resolve(name);
             long size = safeSize(file);
-            if (Files.isRegularFile(file) && size >= 0 && size <= MAX_RELEASE_FILE) {
+            if (isSafeRegularFile(file) && size >= 0 && size <= MAX_RELEASE_FILE) {
                 putSanitizedFile(zip, releaseEntryName(name), file, size, sanitizer, MAX_RELEASE_FILE);
             }
         }
@@ -218,10 +227,14 @@ public class SupportBundleService {
 
     private List<Path> logFiles() {
         Path dir = AppPaths.logsDir();
-        if (!Files.isDirectory(dir)) return List.of();
+        try {
+            SafeFilePublication.createDirectoriesNoLinks(dir, "support bundle log directory");
+        } catch (IOException unsafe) {
+            return List.of();
+        }
         List<Path> files = new ArrayList<>();
         try (var stream = Files.list(dir)) {
-            stream.filter(Files::isRegularFile)
+            stream.filter(this::isSafeRegularFile)
                     .sorted((a, b) -> Long.compare(lastModified(b), lastModified(a)))
                     .forEach(files::add);
         } catch (IOException ignored) {
@@ -235,8 +248,17 @@ public class SupportBundleService {
     }
 
     private long safeSize(Path path) {
-        try { return Files.isRegularFile(path) ? Files.size(path) : -1; }
+        try { return isSafeRegularFile(path) ? Files.size(path) : -1; }
         catch (IOException e) { return -1; }
+    }
+
+    private boolean isSafeRegularFile(Path path) {
+        try {
+            SafeFilePublication.requireSafeRegularFile(path, "support bundle input");
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private void putText(ZipOutputStream zip, String name, String value) throws IOException {
@@ -254,19 +276,21 @@ public class SupportBundleService {
                                   SupportBundleSanitizer sanitizer,
                                   long maxSourceBytes) throws IOException {
         if (expectedSize < 0 || expectedSize > maxSourceBytes) throw new IOException("Diagnostic input exceeds limit: " + file);
+        Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "support bundle input");
         ZipEntry entry = new ZipEntry(name.replace('\\', '/'));
         zip.putNextEntry(entry);
         var decoder = StandardCharsets.UTF_8.newDecoder()
                 .onMalformedInput(CodingErrorAction.REPLACE)
                 .onUnmappableCharacter(CodingErrorAction.REPLACE);
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(Files.newInputStream(file), decoder))) {
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(
+                Files.newInputStream(safeFile, LinkOption.NOFOLLOW_LINKS), decoder))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 byte[] sanitized = (sanitizer.sanitizeLine(line) + "\n").getBytes(StandardCharsets.UTF_8);
                 zip.write(sanitized);
             }
         }
-        long finalSize = Files.size(file);
+        long finalSize = Files.size(SafeFilePublication.requireSafeRegularFile(file, "support bundle input after read"));
         if (finalSize != expectedSize) throw new IOException("Diagnostic input changed while bundling: " + file);
         zip.closeEntry();
     }

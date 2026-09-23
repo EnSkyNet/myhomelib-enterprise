@@ -1,22 +1,40 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.content.indexing.ContentIndexingQueueService;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 import java.util.Optional;
 
-@RequiredArgsConstructor
 @Slf4j
 public class SwitchCollectionUseCase {
 
+    private static final long CONTENT_INDEX_SWITCH_QUIESCE_MILLIS = 5_000L;
     private final CollectionRepository collectionRepository;
     private final CollectionLifecycleService collectionLifecycleService;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final ContentIndexingQueueService contentIndexingQueue;
+
+    public SwitchCollectionUseCase(CollectionRepository collectionRepository,
+                                   CollectionLifecycleService collectionLifecycleService,
+                                   LibraryOperationCoordinator operationCoordinator,
+                                   ContentIndexingQueueService contentIndexingQueue) {
+        this.collectionRepository = collectionRepository;
+        this.collectionLifecycleService = collectionLifecycleService;
+        this.operationCoordinator = operationCoordinator;
+        this.contentIndexingQueue = contentIndexingQueue;
+    }
+
+    /** Compatibility constructor for isolated tests without background full-text indexing. */
+    public SwitchCollectionUseCase(CollectionRepository collectionRepository,
+                                   CollectionLifecycleService collectionLifecycleService,
+                                   LibraryOperationCoordinator operationCoordinator) {
+        this(collectionRepository, collectionLifecycleService, operationCoordinator, null);
+    }
 
     public Collection execute(String collectionId) {
         if (collectionId == null || collectionId.isBlank()) {
@@ -86,7 +104,22 @@ public class SwitchCollectionUseCase {
             return new SwitchResult(target, true);
         }
 
+        // Content-index workers resolve current book/artifact state through the dynamic collection
+        // DataSource. Never let work from the old collection cross a DataSource switch. Exact
+        // incremental work is deliberately sacrificed to a durable full-rebuild requirement: this
+        // is slower than resuming it later, but it is fail-safe and cannot index the wrong DB.
+        if (current != null && contentIndexingQueue != null && current.getId() != null
+                && contentIndexingQueue.hasOutstandingForCollection(current.getId())) {
+            contentIndexingQueue.requireRebuild(current.getId());
+            if (!contentIndexingQueue.supersedeCollection(current.getId(), CONTENT_INDEX_SWITCH_QUIESCE_MILLIS)) {
+                throw new IllegalStateException("Cannot switch collection while full-text indexing is still active");
+            }
+        }
+
         boolean reusableSearchIndex = collectionLifecycleService.initializeCollection(target, rebuildIndex);
+        if (contentIndexingQueue != null && target.getId() != null && !target.getId().isBlank()) {
+            contentIndexingQueue.restore(target.getId());
+        }
         return new SwitchResult(target, reusableSearchIndex);
     }
 

@@ -1,8 +1,12 @@
 package com.myhomelibcorp.application.usecase.export;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.dto.InpxExportRequest;
 import com.myhomelibcorp.application.catalog.collectioninfo.CollectionInfoCodec;
 import com.myhomelibcorp.application.catalog.collectioninfo.CollectionSourceProperties;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.domain.model.book.Book;
 import lombok.RequiredArgsConstructor;
@@ -14,10 +18,13 @@ import java.io.IOException;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Iterator;
+import java.util.List;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
@@ -36,31 +43,60 @@ public class ExportToInpxUseCase {
             "AUTHOR;GENRE;TITLE;SERIES;SERNO;FILE;SIZE;LIBID;DEL;EXT;DATE;INSNO;FOLDER;LANG;KEYWORDS;";
 
     private final BookQueryRepository bookQueryRepository;
+    private final CollectionLifecyclePort collectionLifecyclePort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
-    public record ExportResult(int exported, int failed, String error) {
+    /** Stable UI-facing result. Display text is resolved only in the UI language catalog. */
+    public record ExportResult(int exported, int failed, String errorKey, List<String> errorArguments, String technicalDetail) {
+        public ExportResult {
+            errorArguments = errorArguments == null ? List.of() : List.copyOf(errorArguments);
+            technicalDetail = technicalDetail == null ? "" : technicalDetail;
+        }
+
         public static ExportResult success(int count) {
-            return new ExportResult(count, 0, null);
+            return new ExportResult(count, 0, null, List.of(), "");
         }
 
         public static ExportResult partial(int exported, int failed) {
-            return new ExportResult(exported, failed,
-                    "Експортовано " + exported + " книг; не вдалося експортувати " + failed + ".");
+            return new ExportResult(exported, failed, "ui.export.inpx.partial",
+                    List.of(String.valueOf(exported), String.valueOf(failed)), "");
         }
 
-        public static ExportResult failure(String error) {
-            return new ExportResult(0, 1, error);
+        public static ExportResult failure(String key) {
+            return new ExportResult(0, 1, key, List.of(), "");
+        }
+
+        public static ExportResult failure(String key, Throwable error) {
+            String technical = error == null ? "" : (error.getMessage() == null || error.getMessage().isBlank()
+                    ? error.getClass().getName() : error.getMessage());
+            return new ExportResult(0, 1, key, List.of(), technical);
         }
     }
 
     private record ExportCounts(int exported, int failed) { }
 
     public ExportResult execute(InpxExportRequest request) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EXPORT);
+        try {
+            ExportResult result = executeLocked(request);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private ExportResult executeLocked(InpxExportRequest request) {
         if (request == null) {
-            return ExportResult.failure("Параметри експорту не задано");
+            return ExportResult.failure("ui.export.inpx.error.no_request");
         }
         if (request.getOutputFile() == null) {
-            return ExportResult.failure("Не задано вихідний INPX-файл");
+            return ExportResult.failure("ui.export.inpx.error.no_output");
         }
+        requireActiveCollection(request.getCollectionId());
 
         log.info("Початок експорту в INPX: {}", request.getOutputFile());
 
@@ -68,35 +104,48 @@ public class ExportToInpxUseCase {
             Iterator<Book> iterator = books.iterator();
             if (!iterator.hasNext()) {
                 log.warn("Немає книг для експорту");
-                return ExportResult.failure("Немає книг для експорту");
+                return ExportResult.failure("ui.export.inpx.error.no_books");
             }
 
-            Path outputFile = request.getOutputFile();
-            Path parent = outputFile.toAbsolutePath().normalize().getParent();
-            if (parent != null) {
-                Files.createDirectories(parent);
+            Path outputFile = request.getOutputFile().toAbsolutePath().normalize();
+            Path parent = outputFile.getParent();
+            if (parent == null) {
+                return ExportResult.failure("ui.export.inpx.error.generic",
+                        new IOException("INPX output has no parent directory"));
             }
+            SafeFilePublication.createDirectoriesNoLinks(parent, "INPX export directory");
+            String originalTargetHash = SafeFilePublication.snapshotExistingTarget(outputFile, "INPX export destination");
 
             ExportCounts counts;
-            try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(outputFile))) {
-                zos.putNextEntry(new ZipEntry("books.inp"));
-                counts = exportBooks(iterator, zos);
-                zos.closeEntry();
+            Path staging = Files.createTempFile(parent, ".mhl-inpx-", ".part");
+            boolean published = false;
+            try {
+                try (ZipOutputStream zos = new ZipOutputStream(Files.newOutputStream(staging,
+                        StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS))) {
+                    zos.putNextEntry(new ZipEntry("books.inp"));
+                    counts = exportBooks(iterator, zos);
+                    zos.closeEntry();
 
-                zos.putNextEntry(new ZipEntry("version.info"));
-                String version = request.getCollectionVersion() != null && !request.getCollectionVersion().isBlank()
-                        ? request.getCollectionVersion().trim()
-                        : LocalDateTime.now().format(VERSION_FORMATTER);
-                zos.write(version.getBytes(StandardCharsets.UTF_8));
-                zos.closeEntry();
+                    zos.putNextEntry(new ZipEntry("version.info"));
+                    String version = request.getCollectionVersion() != null && !request.getCollectionVersion().isBlank()
+                            ? request.getCollectionVersion().trim()
+                            : LocalDateTime.now().format(VERSION_FORMATTER);
+                    zos.write(version.getBytes(StandardCharsets.UTF_8));
+                    zos.closeEntry();
 
-                zos.putNextEntry(new ZipEntry("structure.info"));
-                zos.write(STRUCTURE.getBytes(StandardCharsets.UTF_8));
-                zos.closeEntry();
+                    zos.putNextEntry(new ZipEntry("structure.info"));
+                    zos.write(STRUCTURE.getBytes(StandardCharsets.UTF_8));
+                    zos.closeEntry();
 
-                zos.putNextEntry(new ZipEntry("collection.info"));
-                zos.write(buildCollectionInfo(request).getBytes(StandardCharsets.UTF_8));
-                zos.closeEntry();
+                    zos.putNextEntry(new ZipEntry("collection.info"));
+                    zos.write(buildCollectionInfo(request).getBytes(StandardCharsets.UTF_8));
+                    zos.closeEntry();
+                }
+                SafeFilePublication.publishReplacingIfUnchanged(
+                        staging, outputFile, originalTargetHash, "INPX export");
+                published = true;
+            } finally {
+                if (!published) Files.deleteIfExists(staging);
             }
 
             log.info("Експорт в INPX завершено: {}, успішно={}, помилок={}",
@@ -106,10 +155,17 @@ public class ExportToInpxUseCase {
                     : ExportResult.partial(counts.exported(), counts.failed());
         } catch (Exception e) {
             log.error("Помилка експорту в INPX", e);
-            String message = e.getMessage() == null || e.getMessage().isBlank()
-                    ? e.getClass().getSimpleName()
-                    : e.getMessage();
-            return ExportResult.failure(message);
+            return ExportResult.failure("ui.export.inpx.error.generic", e);
+        }
+    }
+
+    private void requireActiveCollection(String expectedCollectionId) {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+            throw new IllegalArgumentException("INPX export request is missing collectionId");
+        }
+        var active = collectionLifecyclePort.getCurrentCollection();
+        if (active == null || active.getId() == null || !expectedCollectionId.equals(active.getId())) {
+            throw new IllegalStateException("Active collection changed before INPX export started");
         }
     }
 
@@ -160,9 +216,11 @@ public class ExportToInpxUseCase {
                 : "";
         sb.append(ext).append(FIELD_DELIMITER);
 
+        // Preserve absence of source metadata. Inventing today's date would make exports
+        // nondeterministic and would incorrectly turn "unknown" into a real catalog date.
         String date = book.getUpdateDate() != null
                 ? book.getUpdateDate().format(DATE_FORMATTER)
-                : LocalDateTime.now().format(DATE_FORMATTER);
+                : "";
         sb.append(date).append(FIELD_DELIMITER);
 
         sb.append(0).append(FIELD_DELIMITER);
@@ -174,7 +232,8 @@ public class ExportToInpxUseCase {
 
     private String buildAuthors(Book book) {
         if (book.getAuthors().isEmpty()) {
-            return "Невідомий Автор";
+            // INPX supports an empty AUTHOR field. Do not persist a localized sentinel as data.
+            return "";
         }
 
         StringBuilder sb = new StringBuilder();

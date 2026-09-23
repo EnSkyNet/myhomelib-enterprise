@@ -86,7 +86,7 @@ public final class WebDavSyncAdapter implements SyncTransportPort {
             ChangeSet set = fetchBundle(uri, secrets);
             String key = set.sourceDeviceId() + ":" + set.sequence();
             ChangeSet previous = unique.putIfAbsent(key, set);
-            if (previous != null && !previous.changeSetId().equals(set.changeSetId())) {
+            if (previous != null && !previous.equals(set)) {
                 throw new IllegalStateException("Conflicting WebDAV sync bundles for cursor " + key);
             }
             if (set.sequence() > cursor.getOrDefault(set.sourceDeviceId(), 0L)) result.add(set);
@@ -191,12 +191,41 @@ public final class WebDavSyncAdapter implements SyncTransportPort {
     }
 
     private URI resolveListedHref(String href) {
-        URI resolved = folderUri.resolve(href).normalize();
+        if (href == null || href.isBlank()) throw new SecurityException("WebDAV response contains an empty href");
+        final URI listed;
+        try {
+            listed = URI.create(href);
+        } catch (IllegalArgumentException invalid) {
+            throw new SecurityException("WebDAV response contains an invalid href", invalid);
+        }
+        if (listed.getRawQuery() != null || listed.getRawFragment() != null) {
+            throw new SecurityException("WebDAV response href must not contain query or fragment components");
+        }
+        rejectDotSegments(listed.getPath());
+
+        URI resolved = folderUri.resolve(listed);
         if (!sameOrigin(folderUri, resolved)) throw new SecurityException("WebDAV response references another origin");
-        if (!resolved.getPath().startsWith(folderUri.getPath())) {
+        rejectDotSegments(resolved.getPath());
+
+        String folderPath = folderUri.getPath();
+        String resolvedPath = resolved.getPath();
+        if (folderPath == null || resolvedPath == null || !resolvedPath.startsWith(folderPath)) {
             throw new SecurityException("WebDAV response escaped the configured sync folder");
         }
-        return resolved;
+        String relative = resolvedPath.substring(folderPath.length());
+        if (!relative.isEmpty() && relative.indexOf('/') >= 0) {
+            throw new SecurityException("WebDAV Depth:1 response referenced a nested path");
+        }
+        return resolved.normalize();
+    }
+
+    private static void rejectDotSegments(String decodedPath) {
+        if (decodedPath == null) throw new SecurityException("WebDAV response href has no path");
+        for (String segment : decodedPath.split("/", -1)) {
+            if (".".equals(segment) || "..".equals(segment)) {
+                throw new SecurityException("WebDAV response href contains a dot-segment traversal");
+            }
+        }
     }
 
     private URI child(String name) {

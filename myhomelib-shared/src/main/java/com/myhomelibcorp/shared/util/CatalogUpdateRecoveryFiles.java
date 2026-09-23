@@ -3,7 +3,9 @@ package com.myhomelibcorp.shared.util;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 
 /**
@@ -26,30 +28,52 @@ public final class CatalogUpdateRecoveryFiles {
     }
 
     public static boolean isPending(String collectionId) {
-        return Files.isRegularFile(marker(collectionId));
-    }
-
-    public static void markPending(String collectionId, String operationId) throws IOException {
         Path marker = marker(collectionId);
-        Files.createDirectories(marker.toAbsolutePath().getParent());
-        Path tmp = marker.resolveSibling(marker.getFileName() + ".tmp");
-        String body = "operation=" + safe(operationId) + System.lineSeparator()
-                + "startedAt=" + Instant.now() + System.lineSeparator();
         try {
-            Files.writeString(tmp, body, StandardCharsets.UTF_8);
-            AtomicFileSupport.moveReplacing(tmp, marker);
-        } finally {
-            Files.deleteIfExists(tmp);
+            validateParent(marker, "catalog-update recovery marker parent");
+            if (!Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return false;
+            AtomicFileSupport.requireSafeRegularFile(marker, "catalog-update recovery marker");
+            return true;
+        } catch (IOException unsafe) {
+            throw new IllegalStateException("Unsafe catalog-update recovery marker path: " + marker, unsafe);
         }
     }
 
+    public static void markPending(String collectionId, String operationId) throws IOException {
+        Path marker = marker(collectionId).toAbsolutePath().normalize();
+        validateParent(marker, "catalog-update recovery marker parent");
+        if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) {
+            AtomicFileSupport.requireSafeRegularFile(marker, "catalog-update recovery marker");
+            throw new IOException("Catalog update pending marker already exists: " + marker);
+        }
+        String body = "operation=" + safe(operationId) + System.lineSeparator()
+                + "startedAt=" + Instant.now() + System.lineSeparator();
+        Files.writeString(marker, body, StandardCharsets.UTF_8,
+                StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+        AtomicFileSupport.requireSafeRegularFile(marker, "catalog-update recovery marker");
+    }
+
     public static void clear(String collectionId) throws IOException {
-        Files.deleteIfExists(marker(collectionId));
-        Files.deleteIfExists(checkpoint(collectionId));
+        safeDelete(marker(collectionId), "catalog-update recovery marker cleanup");
+        safeDelete(checkpoint(collectionId), "catalog-update recovery checkpoint cleanup");
     }
 
     public static void deleteMarkerOnly(String collectionId) throws IOException {
-        Files.deleteIfExists(marker(collectionId));
+        safeDelete(marker(collectionId), "catalog-update recovery marker cleanup");
+    }
+
+    private static void safeDelete(Path path, String role) throws IOException {
+        Path absolute = path.toAbsolutePath().normalize();
+        validateParent(absolute, role + " parent");
+        if (!Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) return;
+        Path safe = AtomicFileSupport.requireSafeRegularFile(absolute, role);
+        Files.delete(safe);
+    }
+
+    private static void validateParent(Path path, String role) throws IOException {
+        Path parent = path.toAbsolutePath().normalize().getParent();
+        if (parent == null) throw new IOException(role + " has no parent directory: " + path);
+        AtomicFileSupport.createDirectoriesNoLinks(parent, role);
     }
 
     private static String safe(String value) {

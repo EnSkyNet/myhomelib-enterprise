@@ -20,7 +20,7 @@ public class BookCacheEvictor {
     public void onBookDeleted(BookDeletedEvent event) {
         if (event.getBookId() != null) {
             log.debug("Очищення кешу для видаленої книги: {}", event.getBookId());
-            bookCache.evict(event.getBookId());
+            bookCache.evictAllScopes(event.getBookId());
         } else {
             log.warn("BookDeletedEvent отримано без BookId");
         }

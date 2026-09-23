@@ -52,10 +52,10 @@ checks={
  ['getContinueReadingShelf()', 'createContinueReadingRow(item)', 'open.setOnAction', 'navigationService.navigateToBook']),
 'Integrity legacy repair action replaced by safe maintenance': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java',
- ['onSafeRepairInfo()', 'Перевірка файлів є лише діагностичною', 'Обслуговування колекції', 'Пробний запуск']),
+ ['onSafeRepairInfo()', 'ui.java.integrity_check_controller.2cd320f090', 'ui.java.integrity_check_controller.a454642308', 'ui.java.integrity_check_controller.1d218a9434']),
 'Online open confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java',
- ['ensureLocalForOpen(', 'Книга фізично відсутня на комп’ютері', 'showConfirmation(']),
+ ['ensureLocalForOpen(', 'ui.java.book_download_coordinator.0e3394ae8f', 'showConfirmation(']),
 'Open flows use confirmation': (
  ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/MainBookCommandCoordinator.java',
  ['ensureLocalForOpen(selected)']),
@@ -116,7 +116,7 @@ checks={
  ['sections.size() + 1','addTocIfNeeded']),
 'Table file size': (
  ROOT/'myhomelib-ui/src/main/resources/view/author-workspace.fxml',
- ['fx:id="fileSizeColumn"','text="Розмір"']),
+ ['fx:id="fileSizeColumn"','text="ui.fxml.author_workspace.size"']),
 'Downloaded-author update tracking': (
  ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/catalog/CatalogUpdateService.java',
  ['UPDATED_DOWNLOADED_BOOK', 'NEW_BY_FOLLOWED_AUTHOR']),

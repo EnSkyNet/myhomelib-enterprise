@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.collection;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 /** Immutable state shown by the Collection workspace. */
 public record CollectionRuntimeStatus(
         CollectionRuntimeState state,
@@ -18,18 +20,20 @@ public record CollectionRuntimeStatus(
 
     public String shortText() {
         return switch (state) {
-            case CREATING -> progressText("◌ Створення");
-            case READY -> "● Готова";
-            case IMPORTING -> progressText("⟳ Імпорт");
-            case INDEXING -> progressText("⟳ Індексація");
-            case UPDATING -> progressText("⟳ Оновлення");
-            case ERROR -> "⚠ Помилка";
-            case DELETING -> progressText("◌ Видалення");
+            case CREATING -> progressText(UiText.text("ui.java.collection_runtime_status.4fc4c0a0e5"));
+            case READY -> UiText.text("ui.java.collection_runtime_status.888f564abe");
+            case IMPORTING -> progressText(UiText.text("ui.java.collection_runtime_status.fdb002f02e"));
+            case INDEXING -> progressText(UiText.text("ui.java.collection_runtime_status.d2e13fedf7"));
+            case UPDATING -> progressText(UiText.text("ui.java.collection_runtime_status.7b4147fe39"));
+            case ERROR -> UiText.text("ui.java.collection_runtime_status.d189aeea0d");
+            case DELETING -> progressText(UiText.text("ui.java.collection_runtime_status.222bddd632"));
         };
     }
 
     public String detailsText() {
-        if (state == CollectionRuntimeState.ERROR && !detail.isBlank()) return shortText() + " — " + detail;
+        if (state == CollectionRuntimeState.ERROR && !detail.isBlank()) {
+            return shortText() + " — " + UiText.text("common.error.details_in_log");
+        }
         return shortText();
     }
 

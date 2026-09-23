@@ -1,5 +1,6 @@
 package com.myhomelibcorp.reader.core.resource;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 
 import java.io.InputStream;
@@ -31,6 +32,38 @@ class HybridResourceRepositoryTransparencyTest {
         assertThatThrownBy(() -> repository.open("image"))
                 .isInstanceOf(UncheckedIOException.class);
         repository.close();
+    }
+
+
+    @Test
+    void refusesSymlinkReplacementOfTempBackedResource() throws Exception {
+        HybridResourceRepository repository = new HybridResourceRepository(0, 0);
+        repository.add("image", "image/png", new byte[]{1, 2, 3, 4});
+
+        Field directoryField = HybridResourceRepository.class.getDeclaredField("tempDirectory");
+        directoryField.setAccessible(true);
+        Path directory = (Path) directoryField.get(repository);
+        Path backingFile;
+        try (var files = Files.list(directory)) {
+            backingFile = files.findFirst().orElseThrow();
+        }
+        Path outside = Files.write(tempDirSibling(directory), new byte[]{9, 9, 9});
+        Files.delete(backingFile);
+        try {
+            Files.createSymbolicLink(backingFile, outside);
+        } catch (UnsupportedOperationException | SecurityException | java.io.IOException unsupported) {
+            repository.close();
+            Assumptions.abort("Symbolic links are unavailable in this test environment");
+        }
+
+        assertThatThrownBy(() -> repository.open("image"))
+                .isInstanceOf(UncheckedIOException.class);
+        repository.close();
+        Files.deleteIfExists(outside);
+    }
+
+    private static Path tempDirSibling(Path directory) {
+        return directory.getParent().resolve("reader-outside-" + java.util.UUID.randomUUID() + ".bin");
     }
 
     @Test

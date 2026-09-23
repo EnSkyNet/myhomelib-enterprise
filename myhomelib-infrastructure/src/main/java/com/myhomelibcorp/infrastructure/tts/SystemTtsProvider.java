@@ -77,10 +77,14 @@ public class SystemTtsProvider implements TtsProvider {
             }
             long timeoutMs = COMMAND_TIMEOUT.toMillis();
             if (!process.waitFor(timeoutMs, TimeUnit.MILLISECONDS)) {
-                process.destroyForcibly();
+                ProcessExecutionSupport.terminate(process);
                 throw new IOException("System TTS timed out");
             }
             if (process.exitValue() != 0) throw new IOException("System TTS exited with code " + process.exitValue());
+        } catch (InterruptedException interrupted) {
+            ProcessExecutionSupport.terminate(process);
+            Thread.currentThread().interrupt();
+            throw interrupted;
         } finally {
             current.compareAndSet(process, null);
         }
@@ -89,7 +93,7 @@ public class SystemTtsProvider implements TtsProvider {
     @Override
     public void cancelCurrent() {
         Process process = current.getAndSet(null);
-        if (process != null && process.isAlive()) process.destroyForcibly();
+        if (process != null && process.isAlive()) ProcessExecutionSupport.terminate(process);
     }
 
     private List<String> speechCommand(String voiceId, double rate) {

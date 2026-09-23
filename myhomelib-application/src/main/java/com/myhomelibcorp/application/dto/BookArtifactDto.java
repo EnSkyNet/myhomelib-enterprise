@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.dto;
 
+import com.myhomelibcorp.shared.util.FileNameSupport;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -37,6 +38,7 @@ public class BookArtifactDto {
     public String getDisplayName() {
         String label = format == null || format.isBlank() ? "FILE" : format.toUpperCase(java.util.Locale.ROOT);
         String source = archiveEntry != null && !archiveEntry.isBlank() ? archiveEntry : fileName;
+        source = FileNameSupport.decodeHashUnicodeEscapes(source);
         return source == null || source.isBlank() ? label : label + " — " + source;
     }
 }

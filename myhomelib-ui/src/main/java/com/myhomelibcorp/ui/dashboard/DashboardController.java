@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.dashboard;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.ContinueReadingItemDto;
 import com.myhomelibcorp.application.dto.DashboardData;
@@ -102,10 +104,10 @@ public class DashboardController implements WorkspaceLifecycle {
     private void renderStatistics(com.myhomelibcorp.application.dto.LibraryStatistics stats) {
         if (stats == null) return;
         if (stats.isStale()) {
-            booksCount.setText("Оновлюється…");
-            authorsCount.setText("Оновлюється…");
-            seriesCount.setText("Оновлюється…");
-            genresCount.setText("Оновлюється…");
+            booksCount.setText(UiText.text("ui.java.dashboard_controller.c784c3ca07"));
+            authorsCount.setText(UiText.text("ui.java.dashboard_controller.c784c3ca07"));
+            seriesCount.setText(UiText.text("ui.java.dashboard_controller.c784c3ca07"));
+            genresCount.setText(UiText.text("ui.java.dashboard_controller.c784c3ca07"));
             return;
         }
         booksCount.setText(String.valueOf(stats.getBooksCount()));
@@ -122,14 +124,14 @@ public class DashboardController implements WorkspaceLifecycle {
     }
 
     private VBox createContinueReadingRow(ContinueReadingItemDto item) {
-        Label title = new Label("📖 " + item.title());
+        Label title = new Label("📖 " + (item.title().isBlank() ? UiText.text("common.title.untitled") : item.title()));
         title.setWrapText(true);
         Label meta = new Label(String.format(java.util.Locale.ROOT, "%.1f%% · %s · %s",
                 item.percent(), item.lastDevice(), formatTime(item.updatedAt())));
         meta.setStyle("-fx-opacity: 0.75;");
         ProgressBar progress = new ProgressBar(item.percent() / 100.0);
         progress.setMaxWidth(Double.MAX_VALUE);
-        Button open = new Button("Читати");
+        Button open = new Button(UiText.text("ui.fxml.author_workspace.read"));
         open.setOnAction(e -> navigationService.navigateToBook(BookId.fromString(item.bookId())));
         HBox header = new HBox(10, title, open);
         HBox.setHgrow(title, javafx.scene.layout.Priority.ALWAYS);

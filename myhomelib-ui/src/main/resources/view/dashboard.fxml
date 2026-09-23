@@ -9,38 +9,38 @@
       spacing="12" style="-fx-padding: 20; -fx-background-color: -mhl-background;">
 
     <!-- Заголовок -->
-    <Label text="📚 Ласкаво просимо" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
+    <Label text="ui.fxml.dashboard.welcome" style="-fx-font-size: 20px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <!-- Блок "Продовжити читання" -->
     <VBox fx:id="continueReadingBox" spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
-        <Label text="📖 Продовжити читання" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <Label text="ui.fxml.dashboard.continue_reading" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <VBox fx:id="continueReadingItemsBox" spacing="8"/>
     </VBox>
 
     <!-- Блок "Останні відкриті" -->
     <VBox spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
-        <Label text="⏳ Останні відкриті" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <Label text="ui.fxml.dashboard.recently_opened" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <VBox fx:id="recentBooksBox" spacing="4"/>
     </VBox>
 
     <!-- Блок "Нові книги" -->
     <VBox spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
-        <Label text="🆕 Нові книги" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <Label text="ui.fxml.dashboard.new_books" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <VBox fx:id="newBooksBox" spacing="4"/>
     </VBox>
 
     <!-- Блок "Статистика" -->
     <VBox spacing="8" style="-fx-background-color: -mhl-panel; -fx-padding: 15; -fx-border-color: -mhl-border; -fx-border-radius: 8; -fx-background-radius: 8;">
-        <Label text="📊 Статистика" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+        <Label text="ui.fxml.dashboard.statistics" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
         <GridPane hgap="20" vgap="5">
-            <Label text="Книг:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
-            <Label fx:id="booksCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
-            <Label text="Авторів:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
-            <Label fx:id="authorsCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
-            <Label text="Серій:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
-            <Label fx:id="seriesCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
-            <Label text="Жанрів:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
-            <Label fx:id="genresCount" text="0" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
+            <Label text="ui.fxml.dashboard.books" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+            <Label fx:id="booksCount" text="ui.fxml.dashboard.0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+            <Label text="ui.fxml.dashboard.authors" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+            <Label fx:id="authorsCount" text="ui.fxml.dashboard.0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+            <Label text="ui.fxml.dashboard.series" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+            <Label fx:id="seriesCount" text="ui.fxml.dashboard.0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+            <Label text="ui.fxml.dashboard.genres" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+            <Label fx:id="genresCount" text="ui.fxml.dashboard.0" GridPane.columnIndex="1" GridPane.rowIndex="3"/>
         </GridPane>
     </VBox>
 </VBox>

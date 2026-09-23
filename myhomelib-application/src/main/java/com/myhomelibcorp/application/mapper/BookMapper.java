@@ -10,7 +10,6 @@ import com.myhomelibcorp.domain.service.LanguageResolver;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -45,7 +44,9 @@ public interface BookMapper {
 
     default List<com.myhomelibcorp.application.dto.AuthorDto> toAuthorDtos(Book book) {
         if (book == null || book.getAuthors() == null) return List.of();
-        return book.getAuthors().stream().map(author -> com.myhomelibcorp.application.dto.AuthorDto.builder()
+        return book.getAuthors().stream()
+                .filter(author -> author != null && !Book.isLegacyUnknownAuthorPlaceholder(author.getFullName()))
+                .map(author -> com.myhomelibcorp.application.dto.AuthorDto.builder()
                 .id(author.getId() != null ? author.getId().asString() : null)
                 .firstName(author.getFirstName())
                 .middleName(author.getMiddleName())
@@ -167,8 +168,8 @@ public interface BookMapper {
                 .file(file)
                 .artifacts(artifacts)
                 .preferredArtifactId(dto.getPreferredArtifactId())
-                .updateDate(dto.getUpdateDate() != null ? dto.getUpdateDate() : LocalDateTime.now())
-                .createdAt(dto.getCreatedAt() != null ? dto.getCreatedAt() : LocalDateTime.now())
+                .updateDate(dto.getUpdateDate())
+                .createdAt(dto.getCreatedAt())
                 .deleted(dto.isDeleted())
                 .local(dto.isLocal())
                 .missingSince(dto.getMissingSince())

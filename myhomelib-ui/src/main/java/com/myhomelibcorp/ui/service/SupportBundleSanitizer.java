@@ -13,6 +13,10 @@ import java.util.regex.Pattern;
 final class SupportBundleSanitizer {
     private static final Pattern URL = Pattern.compile("(?i)\\b(?:https?|ftp)://[^\\s\\\"'<>]+");
     private static final Pattern EMAIL = Pattern.compile("(?i)(?<![\\w.+-])[\\w.+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}(?![\\w.-])");
+    private static final Pattern AUTHORIZATION_CREDENTIAL = Pattern.compile(
+            "(?i)\\b(authorization|proxy-authorization)\\s*[:=]\\s*(?:Bearer|Basic)\\s+[^\\s,;|]+");
+    private static final Pattern STANDALONE_AUTH_CREDENTIAL = Pattern.compile(
+            "(?i)(?<![A-Za-z0-9_-])(Bearer|Basic)\\s+[^\\s,;|]+");
     private static final Pattern SECRET_ASSIGNMENT = Pattern.compile(
             "(?i)\\b(password|passwd|secret|token|api[_-]?key|credential|authorization|auth|encryption\\.key)\\s*[:=]\\s*(?:\\\"[^\\\"]*\\\"|'[^']*'|[^\\s,;|]+)");
     private static final Pattern PRIVATE_FIELD = Pattern.compile(
@@ -57,6 +61,8 @@ final class SupportBundleSanitizer {
         }
         result = URL.matcher(result).replaceAll("<URL_REDACTED>");
         result = EMAIL.matcher(result).replaceAll("<EMAIL_REDACTED>");
+        result = AUTHORIZATION_CREDENTIAL.matcher(result).replaceAll(m -> m.group(1) + "=<REDACTED>");
+        result = STANDALONE_AUTH_CREDENTIAL.matcher(result).replaceAll(m -> m.group(1) + " <REDACTED>");
         result = SECRET_ASSIGNMENT.matcher(result).replaceAll(m -> m.group(1) + "=<REDACTED>");
         result = PRIVATE_FIELD.matcher(result).replaceAll(m -> m.group(1) + "=<REDACTED>");
         result = WINDOWS_USER_PATH.matcher(result).replaceAll("<PATH_REDACTED>");

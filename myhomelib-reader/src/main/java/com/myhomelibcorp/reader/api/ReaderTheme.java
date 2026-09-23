@@ -23,7 +23,7 @@ public record ReaderTheme(
 
     public static ReaderTheme sepia() {
         return new ReaderTheme(
-                "sepia", "Селія",
+                "sepia", "Сепія",
                 "#f5ecd9", "#331f0a", "#6b5a4a",
                 "#2196F3", "#D4C5A9",
                 "#e8dcc8", "#8b7355", "#e8dcc8"

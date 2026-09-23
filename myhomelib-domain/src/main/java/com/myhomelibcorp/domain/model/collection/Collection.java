@@ -93,6 +93,6 @@ public class Collection {
 
     @Override
     public String toString() {
-        return name != null && !name.isBlank() ? name : "Без назви";
+        return name != null && !name.isBlank() ? name : (id == null ? "" : id);
     }
 }

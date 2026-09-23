@@ -13,12 +13,32 @@ import java.util.List;
  */
 public interface IntegrationBackend {
 
-    record Result(boolean success, String message) {
-        public Result {
-            message = message == null ? "" : message;
+    /** Stable user-facing message descriptor. The bootstrap/infrastructure layer returns only
+     * localization keys and arguments; technical details are retained for diagnostics and must
+     * never be rendered directly by the UI. */
+    record UserMessage(String key, List<Object> arguments, String technicalDetail) {
+        public UserMessage {
+            key = key == null ? "common.error.operation_failed" : key;
+            arguments = arguments == null ? List.of() : List.copyOf(arguments);
+            technicalDetail = technicalDetail == null ? "" : technicalDetail;
         }
-        public static Result ok(String message) { return new Result(true, message); }
-        public static Result fail(String message) { return new Result(false, message); }
+        public static UserMessage of(String key, Object... arguments) {
+            return new UserMessage(key, arguments == null ? List.of() : List.of(arguments), "");
+        }
+        public static UserMessage technical(String key, String technicalDetail, Object... arguments) {
+            return new UserMessage(key, arguments == null ? List.of() : List.of(arguments), technicalDetail);
+        }
+    }
+
+    record Result(boolean success, UserMessage userMessage) {
+        public Result {
+            userMessage = userMessage == null ? UserMessage.of("common.error.operation_failed") : userMessage;
+        }
+        public static Result ok(String key, Object... arguments) { return new Result(true, UserMessage.of(key, arguments)); }
+        public static Result fail(String key, Object... arguments) { return new Result(false, UserMessage.of(key, arguments)); }
+        public static Result failTechnical(String key, String technicalDetail, Object... arguments) {
+            return new Result(false, UserMessage.technical(key, technicalDetail, arguments));
+        }
     }
 
     record WebDavConfiguration(
@@ -43,13 +63,13 @@ public interface IntegrationBackend {
 
     record WebDavSyncAttempt(
             SyncState state,
-            String message,
+            UserMessage userMessage,
             String conflictToken,
             List<SyncConflictReviewItem> conflicts
     ) {
         public WebDavSyncAttempt {
             state = state == null ? SyncState.FAILED : state;
-            message = message == null ? "" : message;
+            userMessage = userMessage == null ? UserMessage.of("common.error.operation_failed") : userMessage;
             conflictToken = conflictToken == null ? "" : conflictToken;
             conflicts = conflicts == null ? List.of() : List.copyOf(conflicts);
         }

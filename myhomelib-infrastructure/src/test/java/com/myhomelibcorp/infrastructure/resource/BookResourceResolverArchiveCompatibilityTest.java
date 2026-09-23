@@ -105,6 +105,43 @@ class BookResourceResolverArchiveCompatibilityTest {
     }
 
     @Test
+    void exactUnicodeArchiveEntryWinsOverLegacyEscapedEquivalent() throws Exception {
+        Path archive = tempDir.resolve("unicode-collision.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            put(zip, "books/#U0412#U043e#U0437#U0432#U0440#U0430#U0449#U0435#U043d#U0438#U0435_1.fb2", "legacy");
+            put(zip, "books/Возвращение_1.fb2", "exact");
+        }
+
+        BookResourceResolver resolver = new BookResourceResolver(new ZipArchiveReader());
+        Optional<InputStream> opened = resolver.readBookData(
+                "unicode-collision.zip", "", tempDir.toString(), "books/Возвращение_1.fb2");
+
+        assertThat(opened).isPresent();
+        try (InputStream in = opened.orElseThrow()) {
+            assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8)).isEqualTo("exact");
+        }
+    }
+
+    @Test
+    void exactLegacyEscapedArchiveEntryWinsOverDecodedEquivalent() throws Exception {
+        Path archive = tempDir.resolve("legacy-collision.zip");
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(archive))) {
+            put(zip, "books/Возвращение_1.fb2", "unicode");
+            put(zip, "books/#U0412#U043e#U0437#U0432#U0440#U0430#U0449#U0435#U043d#U0438#U0435_1.fb2", "exact-legacy");
+        }
+
+        BookResourceResolver resolver = new BookResourceResolver(new ZipArchiveReader());
+        String requested = "books/#U0412#U043e#U0437#U0432#U0440#U0430#U0449#U0435#U043d#U0438#U0435_1.fb2";
+        Optional<InputStream> opened = resolver.readBookData(
+                "legacy-collision.zip", "", tempDir.toString(), requested);
+
+        assertThat(opened).isPresent();
+        try (InputStream in = opened.orElseThrow()) {
+            assertThat(new String(in.readAllBytes(), StandardCharsets.UTF_8)).isEqualTo("exact-legacy");
+        }
+    }
+
+    @Test
     void materializeArchiveBookEntryResolvesExactPriorityOnceThenStreamsActualMember() throws Exception {
         Path archive = tempDir.resolve("bundle.7z");
         Files.writeString(archive, "placeholder");

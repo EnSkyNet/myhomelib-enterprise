@@ -22,7 +22,7 @@ final class CommandSecretStoreSupport {
         for (String part : path.split(java.io.File.pathSeparator)) {
             try {
                 Path candidate = Path.of(part).resolve(executable);
-                if (Files.isRegularFile(candidate) && Files.isExecutable(candidate)) return true;
+                if (Files.isRegularFile(candidate, java.nio.file.LinkOption.NOFOLLOW_LINKS) && Files.isExecutable(candidate)) return true;
             } catch (RuntimeException ignored) {
                 // Ignore malformed PATH entries.
             }

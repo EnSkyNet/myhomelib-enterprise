@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.metadata.MetadataProviderException;
 import com.myhomelibcorp.application.metadata.MetadataProviderErrorKind;
 import com.myhomelibcorp.application.metadata.MetadataRequestContext;
 import com.myhomelibcorp.domain.model.valueobject.Isbn;
+import com.myhomelibcorp.shared.util.BoundedHttpBodyHandlers;
 
 import java.net.URI;
 import java.net.URLEncoder;
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicLong;
 
 /** Shared stateless mechanics for remote metadata adapters; no vendor-specific policy belongs here. */
 final class MetadataProviderSupport {
+    private static final int MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
     private MetadataProviderSupport() {}
 
     /** nanoTime has an arbitrary signed origin; only differences represent durations. */
@@ -53,7 +55,8 @@ final class MetadataProviderSupport {
         context.throwIfStopped();
         CompletableFuture<HttpResponse<String>> future;
         try {
-            future = client.sendAsync(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+            future = client.sendAsync(request,
+                    BoundedHttpBodyHandlers.ofString(MAX_RESPONSE_BYTES, StandardCharsets.UTF_8));
         } catch (RuntimeException unavailable) {
             throw new MetadataProviderException(MetadataProviderErrorKind.UNAVAILABLE,
                     providerName + " request could not be started", unavailable);

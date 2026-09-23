@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.usecase.collection.CopyBooksBetweenCollectionsUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -10,10 +11,12 @@ import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.scene.control.ChoiceDialog;
 import javafx.stage.Window;
 import org.springframework.stereotype.Service;
+import lombok.extern.slf4j.Slf4j;
 
 import java.util.List;
 
 @Service
+@Slf4j
 public class CollectionCopyUiService {
     private final CollectionRepository collections;
     private final CopyBooksBetweenCollectionsUseCase copy;
@@ -39,46 +42,65 @@ public class CollectionCopyUiService {
     public void copySelected(Window owner, Runnable onComplete) {
         List<BookId> ids = selection.snapshot();
         if (ids.isEmpty()) {
-            dialogs.showWarning("Немає книг", "Позначте книги прапорцями для копіювання.");
+            dialogs.showWarning(UiText.text("ui.java.collection_copy_ui_service.63589c6c88"), UiText.text("ui.java.collection_copy_ui_service.4272be63cc"));
             return;
         }
         Collection current = state.getCurrentLibraryCollection();
+        String expectedSourceCollectionId = current == null ? null : current.getId();
+        if (expectedSourceCollectionId == null || expectedSourceCollectionId.isBlank()) {
+            dialogs.showWarning(UiText.text("ui.java.collection_copy_ui_service.63589c6c88"), UiText.text("ui.java.collection_copy_ui_service.4272be63cc"));
+            return;
+        }
         executor.submit(() -> collections.findAll().stream()
                         .filter(c -> current == null || !c.getId().equals(current.getId()))
                         .toList())
                 .whenComplete((targets, loadError) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrentCollection(expectedSourceCollectionId)) return;
                     if (loadError != null) {
-                        dialogs.showError("Помилка копіювання", UiExceptionMessages.root(loadError));
+                        dialogs.showError(UiText.text("ui.java.collection_copy_ui_service.6d3f995012"), UiExceptionMessages.root(loadError));
                         return;
                     }
                     if (targets == null || targets.isEmpty()) {
-                        dialogs.showWarning("Немає цільової колекції", "Створіть ще одну колекцію.");
+                        dialogs.showWarning(UiText.text("ui.java.collection_copy_ui_service.b6f5c23853"), UiText.text("ui.java.collection_copy_ui_service.a37a8bed58"));
                         return;
                     }
                     ChoiceDialog<Collection> dialog = new ChoiceDialog<>(targets.get(0), targets);
-                    dialog.setTitle("Копіювати між колекціями");
-                    dialog.setHeaderText("Цільова колекція");
-                    dialog.setContentText("Колекція:");
+                    DialogLocalization.prepare(dialog);
+                    dialog.setTitle(UiText.text("ui.java.collection_copy_ui_service.f8194b3869"));
+                    dialog.setHeaderText(UiText.text("ui.java.collection_copy_ui_service.7fb086838b"));
+                    dialog.setContentText(UiText.text("ui.java.collection_copy_ui_service.38033d49c1"));
                     if (owner != null) dialog.initOwner(owner);
                     Collection target = dialog.showAndWait().orElse(null);
-                    if (target != null) copyToTarget(ids, target, onComplete);
+                    if (target != null && isCurrentCollection(expectedSourceCollectionId)) {
+                        copyToTarget(ids, target, expectedSourceCollectionId, onComplete);
+                    }
                 }));
     }
 
-    private void copyToTarget(List<BookId> ids, Collection target, Runnable onComplete) {
-        executor.submit(() -> copy.execute(ids, target.getId()))
+    private void copyToTarget(List<BookId> ids, Collection target, String expectedSourceCollectionId, Runnable onComplete) {
+        if (!isCurrentCollection(expectedSourceCollectionId)) return;
+        executor.submitCollectionScoped(LibraryOperationType.COPY,
+                        () -> copy.execute(ids, target.getId(), expectedSourceCollectionId))
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrentCollection(expectedSourceCollectionId)) return;
                     if (error != null) {
-                        dialogs.showError("Помилка копіювання", UiExceptionMessages.root(error));
+                        dialogs.showError(UiText.text("ui.java.collection_copy_ui_service.6d3f995012"), UiExceptionMessages.root(error));
                         return;
                     }
-                    String message = "Скопійовано: " + result.copied() + "; помилок: " + result.failed();
+                    String message = UiText.text("ui.java.collection_copy_ui_service.5d3f1ade33") + result.copied() + UiText.text("ui.java.collection_copy_ui_service.c3b31299ce") + result.failed();
                     if (!result.errors().isEmpty()) {
-                        message += "\n\n" + String.join("\n", result.errors().stream().limit(10).toList());
+                        log.error("Copy between collections completed with {} failure(s): {}",
+                                result.failed(), String.join(" | ", result.errors().stream().limit(10).toList()));
+                        message += "\n\n" + UiText.text("common.error.details_in_log");
                     }
-                    dialogs.showInfo("Копіювання завершено", message);
+                    dialogs.showInfo(UiText.text("ui.java.collection_copy_ui_service.98045facc9"), message);
                     if (onComplete != null) onComplete.run();
                 }));
+    }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return expectedCollectionId != null
+                && expectedCollectionId.equals(state.getCurrentLibraryCollectionId());
     }
 
 }

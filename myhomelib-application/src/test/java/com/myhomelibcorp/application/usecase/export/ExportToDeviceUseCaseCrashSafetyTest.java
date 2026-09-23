@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.usecase.conversion.ConvertBookUseCase;
 import com.myhomelibcorp.application.action.BookActionExecutionService;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
+import com.myhomelibcorp.application.conversion.BookConversionContext;
 import com.myhomelibcorp.application.export.ExportHistoryService;
 import com.myhomelibcorp.application.export.ExportCompletionService;
 import com.myhomelibcorp.application.port.out.exporter.BookConverter;
@@ -40,10 +41,10 @@ class ExportToDeviceUseCaseCrashSafetyTest {
         Files.createDirectories(target.getParent());
         Files.writeString(target, "OLD", StandardCharsets.UTF_8);
         doAnswer(invocation -> {
-            Path staged = invocation.getArgument(2);
-            Files.writeString(staged, "PARTIAL", StandardCharsets.UTF_8);
+            BookConversionContext context = invocation.getArgument(0);
+            Files.writeString(context.targetFile(), "PARTIAL", StandardCharsets.UTF_8);
             throw new IllegalStateException("converter crashed");
-        }).when(f.converter).convert(eq(f.book), any(), any(Path.class));
+        }).when(f.converter).convert(any(BookConversionContext.class));
 
         ExportToDeviceUseCase.ExportResult result = f.useCase.execute(f.request(), new AtomicBoolean(false), p -> { });
 
@@ -55,6 +56,74 @@ class ExportToDeviceUseCaseCrashSafetyTest {
         }
     }
 
+
+    @Test
+    void racingTargetCreatedAfterConversionIsNotOverwritten() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path target = f.target();
+        doAnswer(invocation -> {
+            BookConversionContext context = invocation.getArgument(0);
+            Files.createDirectories(target.getParent());
+            Files.writeString(context.targetFile(), "NEW-CONTENT", StandardCharsets.UTF_8);
+            Files.writeString(target, "RACING-TARGET", StandardCharsets.UTF_8);
+            return null;
+        }).when(f.converter).convert(any(BookConversionContext.class));
+
+        ExportToDeviceUseCase.ExportResult result = f.useCase.execute(
+                f.request(), new AtomicBoolean(false), p -> { });
+
+        assertEquals(0, result.exported());
+        assertEquals(1, result.failed());
+        assertEquals("RACING-TARGET", Files.readString(target));
+        try (var stream = Files.list(target.getParent())) {
+            assertTrue(stream.noneMatch(path -> path.getFileName().toString().startsWith(".mhl-export-work-")));
+        }
+    }
+
+    @Test
+    void changedOverwriteTargetIsPreservedInsteadOfBeingDetached() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path target = f.target();
+        Files.createDirectories(target.getParent());
+        Files.writeString(target, "OLD", StandardCharsets.UTF_8);
+        doAnswer(invocation -> {
+            BookConversionContext context = invocation.getArgument(0);
+            Files.writeString(context.targetFile(), "NEW-CONTENT", StandardCharsets.UTF_8);
+            Files.writeString(target, "EXTERNAL-CHANGE", StandardCharsets.UTF_8);
+            return null;
+        }).when(f.converter).convert(any(BookConversionContext.class));
+
+        ExportToDeviceUseCase.ExportResult result = f.useCase.execute(
+                f.request(), new AtomicBoolean(false), p -> { });
+
+        assertEquals(0, result.exported());
+        assertEquals(1, result.failed());
+        assertEquals("EXTERNAL-CHANGE", Files.readString(target));
+    }
+
+
+    @Test
+    void symbolicLinkDestinationIsRejectedWithoutTouchingLinkedDirectory() throws Exception {
+        Fixture f = new Fixture(temp);
+        Path realDestination = temp.resolve("real-export");
+        Files.createDirectories(realDestination);
+        Path linkedDestination = temp.resolve("linked-export");
+        try {
+            Files.createSymbolicLink(linkedDestination, realDestination);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not available in this test environment");
+        }
+
+        ExportToDeviceUseCase.ExportResult result = f.useCase.execute(
+                f.request(linkedDestination), new AtomicBoolean(false), p -> { });
+
+        assertEquals(0, result.exported());
+        assertEquals(1, result.failed());
+        try (var stream = Files.list(realDestination)) {
+            assertTrue(stream.findAny().isEmpty());
+        }
+    }
+
     @Test
     void successfulConverterAtomicallyReplacesExistingTarget() throws Exception {
         Fixture f = new Fixture(temp);
@@ -62,10 +131,10 @@ class ExportToDeviceUseCaseCrashSafetyTest {
         Files.createDirectories(target.getParent());
         Files.writeString(target, "OLD", StandardCharsets.UTF_8);
         doAnswer(invocation -> {
-            Path staged = invocation.getArgument(2);
-            Files.writeString(staged, "NEW-CONTENT", StandardCharsets.UTF_8);
+            BookConversionContext context = invocation.getArgument(0);
+            Files.writeString(context.targetFile(), "NEW-CONTENT", StandardCharsets.UTF_8);
             return null;
-        }).when(f.converter).convert(eq(f.book), any(), any(Path.class));
+        }).when(f.converter).convert(any(BookConversionContext.class));
 
         ExportToDeviceUseCase.ExportResult result = f.useCase.execute(f.request(), new AtomicBoolean(false), p -> { });
 
@@ -104,17 +173,23 @@ class ExportToDeviceUseCaseCrashSafetyTest {
                     new ByteArrayInputStream("SOURCE".getBytes(StandardCharsets.UTF_8))));
             when(converter.isAvailable()).thenReturn(true);
             when(converter.supports(book)).thenReturn(true);
+            when(converter.supports(book, "fb2")).thenReturn(true);
             when(converter.getTargetExtension()).thenReturn(".fb2");
             when(converter.getFormatName()).thenReturn("FB2");
             when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
             useCase = new ExportToDeviceUseCase(books, List.of(converter), resources, settings,
-                    actions, actionExecution, history, mock(ExportCompletionService.class), mock(ConvertBookUseCase.class));
+                    actions, actionExecution, history, mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
         }
 
         ExportRequest request() {
+            return request(destination);
+        }
+
+        ExportRequest request(Path destinationFolder) {
             return ExportRequest.builder()
+                .collectionId("c1")
                     .bookIds(List.of(id))
-                    .destinationFolder(destination)
+                    .destinationFolder(destinationFolder)
                     .format(ExportRequest.ExportFormat.FB2)
                     .collisionPolicy(ExportRequest.CollisionPolicy.OVERWRITE)
                     .customFileNameTemplate("book")
@@ -125,5 +200,14 @@ class ExportToDeviceUseCaseCrashSafetyTest {
         Path target() {
             return destination.resolve("safe").resolve("book.fb2");
         }
+    }
+
+    private static com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort activeLifecycle() {
+        var lifecycle = org.mockito.Mockito.mock(
+                com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort.class);
+        org.mockito.Mockito.when(lifecycle.getCurrentCollection()).thenReturn(
+                new com.myhomelibcorp.domain.model.collection.Collection(
+                        "c1", "Test", null, null, 0, null, null, null, null));
+        return lifecycle;
     }
 }

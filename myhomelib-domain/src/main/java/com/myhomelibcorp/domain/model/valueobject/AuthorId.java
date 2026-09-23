@@ -1,5 +1,6 @@
 package com.myhomelibcorp.domain.model.valueobject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -17,7 +18,7 @@ public record AuthorId(UUID value) {
     }
 
     public static AuthorId fromLong(long id) {
-        return new AuthorId(UUID.nameUUIDFromBytes(Long.toString(id).getBytes()));
+        return new AuthorId(UUID.nameUUIDFromBytes(Long.toString(id).getBytes(StandardCharsets.UTF_8)));
     }
 
     public String asString() {

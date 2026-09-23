@@ -56,7 +56,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
                 """.formatted(getAuthorFullNameExpression());
 
         List<OpdsFacetDto> items = jdbc().query(sql, (rs, row) -> {
-            String label = nonBlank(rs.getString("label"), "Без імені");
+            String label = nonBlank(rs.getString("label"), "");
             return new OpdsFacetDto(
                     rs.getString("id"),
                     label,
@@ -90,7 +90,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
                 """;
 
         List<OpdsFacetDto> items = jdbc().query(sql, (rs, row) -> {
-            String label = nonBlank(rs.getString("label"), "Без назви");
+            String label = nonBlank(rs.getString("label"), "");
             return new OpdsFacetDto(
                     rs.getString("id"),
                     label,
@@ -163,7 +163,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
                 """.formatted(getAuthorFullNameExpression(), where);
 
         List<OpdsBookDto> items = jdbc().query(sql, (rs, row) -> {
-            String title = nonBlank(rs.getString("title"), "Без назви");
+            String title = nonBlank(rs.getString("title"), "");
             String series = rs.getString("series");
             return new OpdsBookDto(
                     rs.getString("id"),
@@ -202,7 +202,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
                 """.formatted(getAuthorFullNameExpression());
 
         List<OpdsBookDto> items = jdbc().query(sql, (rs, row) -> {
-            String title = nonBlank(rs.getString("title"), "Без назви");
+            String title = nonBlank(rs.getString("title"), "");
             String series = rs.getString("series");
             return new OpdsBookDto(
                     rs.getString("id"),
@@ -243,7 +243,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
         long total = scalar("SELECT COUNT(*) FROM groups");
         String sql = """
                 SELECT CAST(g.id AS TEXT) AS id,
-                       COALESCE(NULLIF(TRIM(g.name), ''), 'Без назви') AS label,
+                       COALESCE(TRIM(g.name), '') AS label,
                        COUNT(b.id) AS book_count
                 FROM groups g
                 LEFT JOIN book_groups bg ON bg.group_id = g.id
@@ -254,7 +254,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
                 """;
         List<OpdsFacetDto> items = jdbc().query(sql, (rs, row) -> new OpdsFacetDto(
                 rs.getString("id"),
-                nonBlank(rs.getString("label"), "Без назви"),
+                nonBlank(rs.getString("label"), ""),
                 rs.getLong("book_count")
         ), safeLimit, safeOffset);
         return new OpdsPage<>(items, total, safeOffset, safeLimit);
@@ -332,7 +332,7 @@ public class SqliteOpdsCatalogQueryAdapter implements OpdsCatalogQueryPort {
     }
 
     private static OpdsBookDto mapBook(java.sql.ResultSet rs) throws java.sql.SQLException {
-        String title = nonBlank(rs.getString("title"), "Без назви");
+        String title = nonBlank(rs.getString("title"), "");
         String series = rs.getString("series");
         return new OpdsBookDto(
                 rs.getString("id"),

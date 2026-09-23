@@ -1,3 +1,5 @@
 # Команди, hotkeys и действия с книга
 
-Action Registry управлява command ID, shortcut, visibility и context predicate. Конфликтите се проверяват преди запис. Book actions са именувани ordered ProcessBuilder профили; preview показва argv без изпълнение.
+Action Registry централизира command ID, shortcuts, visibility и условията за достъпност. Конфликтите между shortcuts се проверяват преди настройките да бъдат записани.
+
+Действията с книга могат да се групират в именувани профили с подреден набор от команди. Те се стартират чрез `ProcessBuilder` без command shell. Preview показва масива от аргументи (`argv`) и не изпълнява нищо.

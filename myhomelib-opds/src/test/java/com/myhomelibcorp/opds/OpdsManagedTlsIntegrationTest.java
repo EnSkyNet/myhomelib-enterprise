@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.port.out.opds.OpdsCatalogQueryPort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -76,6 +77,30 @@ class OpdsManagedTlsIntegrationTest {
                 HttpResponse.BodyHandlers.ofString());
         assertThat(response.statusCode()).isEqualTo(200);
         assertThat(response.body()).contains("MyHomeLib");
+    }
+
+
+    @Test
+    void serverRejectsSymlinkedTlsKeystoreWithoutFollowingIt() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.toString());
+        JdkOpdsCertificateManager certificateManager = new JdkOpdsCertificateManager();
+        var managed = certificateManager.generateSelfSigned("127.0.0.1");
+        Path realStore = Path.of(managed.tls().keyStorePath());
+        Path link = tempDir.resolve("linked-opds.p12");
+        try {
+            Files.createSymbolicLink(link, realStore);
+        } catch (UnsupportedOperationException | SecurityException | java.io.IOException unsupported) {
+            Assumptions.abort("Symbolic links are unavailable in this test environment");
+        }
+
+        OpdsTlsSettings linkedTls = new OpdsTlsSettings(true, link.toString(),
+                managed.tls().keyStoreType(), managed.tls().keyStorePassword());
+        server = new JdkOpdsServer(new OpdsCatalogService(emptyCatalog()), null);
+        OpdsServerStatus status = server.start(new OpdsServerSettings(
+                "127.0.0.1", freePort(), false, "", "", false, linkedTls, OpdsSecurityLimits.defaults()));
+
+        assertThat(status.running()).isFalse();
+        assertThat(status.technicalDetail()).contains("unsafe");
     }
 
     private static SSLContext trusting(OpdsTlsSettings tls) throws Exception {

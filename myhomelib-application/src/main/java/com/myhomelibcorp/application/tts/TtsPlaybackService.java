@@ -9,11 +9,14 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicReference;
 
 @Service
 public class TtsPlaybackService {
     private final List<TtsProvider> providers;
     private final ExecutorPort executor;
+    private final Object startLock = new Object();
+    private final AtomicReference<Playback> activePlayback = new AtomicReference<>();
 
     public TtsPlaybackService(List<TtsProvider> providers, ExecutorPort executor) {
         this.providers = providers == null ? List.of() : providers.stream().filter(Objects::nonNull).toList();
@@ -35,9 +38,24 @@ public class TtsPlaybackService {
         if (provider == null) throw new IllegalStateException("System TTS is unavailable");
         List<TtsSentence> sentences = split(request);
         if (sentences.isEmpty()) throw new IllegalArgumentException("No readable text");
-        Playback playback = new Playback(provider, request, sentences, listener == null ? new TtsPlaybackListener() { } : listener);
-        executor.execute(playback::run);
-        return playback;
+
+        TtsPlaybackListener effectiveListener = listener == null ? new TtsPlaybackListener() { } : listener;
+        synchronized (startLock) {
+            Playback playback = new Playback(provider, request, sentences, effectiveListener, () -> { });
+            // Install the new owner before stopping the old one. The old playback's terminal
+            // callback must therefore never clear the newly installed owner.
+            Playback previous = activePlayback.getAndSet(playback);
+            playback.setTerminalCallback(() -> activePlayback.compareAndSet(playback, null));
+            if (previous != null) previous.stop();
+            try {
+                executor.execute(playback::run);
+                return playback;
+            } catch (RuntimeException schedulingFailure) {
+                activePlayback.compareAndSet(playback, null);
+                playback.stop();
+                throw schedulingFailure;
+            }
+        }
     }
 
     private TtsProvider selectProvider() {
@@ -70,75 +88,142 @@ public class TtsPlaybackService {
         private final List<TtsSentence> sentences;
         private final TtsPlaybackListener listener;
         private volatile TtsPlaybackState state = TtsPlaybackState.PLAYING;
+        private volatile Runnable terminalCallback = () -> { };
         private boolean repeatCurrentAfterPause;
         private int index;
 
-        private Playback(TtsProvider provider, TtsPlaybackRequest request, List<TtsSentence> sentences, TtsPlaybackListener listener) {
-            this.provider = provider; this.request = request; this.sentences = sentences; this.listener = listener;
+        private Playback(TtsProvider provider, TtsPlaybackRequest request, List<TtsSentence> sentences,
+                         TtsPlaybackListener listener, Runnable terminalCallback) {
+            this.provider = provider;
+            this.request = request;
+            this.sentences = sentences;
+            this.listener = listener;
+            this.terminalCallback = terminalCallback == null ? () -> { } : terminalCallback;
         }
+
+        private void setTerminalCallback(Runnable terminalCallback) {
+            this.terminalCallback = terminalCallback == null ? () -> { } : terminalCallback;
+        }
+
         @Override public TtsPlaybackState state() { return state; }
+
         @Override public void pause() {
             synchronized (lock) {
                 if (state != TtsPlaybackState.PLAYING) return;
                 state = TtsPlaybackState.PAUSED;
                 repeatCurrentAfterPause = true;
-                provider.cancelCurrent();
-                listener.onStateChanged(state);
+                try { provider.cancelCurrent(); } catch (RuntimeException ignored) { }
+                notifyState(TtsPlaybackState.PAUSED);
                 lock.notifyAll();
             }
         }
+
         @Override public void resume() {
             synchronized (lock) {
                 if (state != TtsPlaybackState.PAUSED) return;
-                state = TtsPlaybackState.PLAYING; listener.onStateChanged(state); lock.notifyAll();
+                state = TtsPlaybackState.PLAYING;
+                notifyState(TtsPlaybackState.PLAYING);
+                lock.notifyAll();
             }
         }
+
         @Override public void stop() {
+            boolean changed;
             synchronized (lock) {
-                if (terminal(state)) return;
-                state = TtsPlaybackState.STOPPED; provider.cancelCurrent(); listener.onStateChanged(state); lock.notifyAll();
+                changed = !terminal(state);
+                if (!changed) return;
+                state = TtsPlaybackState.STOPPED;
+                repeatCurrentAfterPause = false;
+                try { provider.cancelCurrent(); } catch (RuntimeException ignored) { }
+                lock.notifyAll();
             }
+            notifyState(TtsPlaybackState.STOPPED);
+            notifyTerminal();
         }
+
         private void run() {
-            listener.onStateChanged(TtsPlaybackState.PLAYING);
-            while (index < sentences.size()) {
+            try {
                 synchronized (lock) {
-                    while (state == TtsPlaybackState.PAUSED) {
-                        try { lock.wait(); } catch (InterruptedException interrupted) { Thread.currentThread().interrupt(); stop(); return; }
-                    }
                     if (state == TtsPlaybackState.STOPPED) return;
                 }
-                TtsSentence sentence = sentences.get(index);
-                listener.onSentenceStarted(sentence);
-                try {
-                    provider.speak(sentence.text(), request.voiceId(), request.rate());
-                } catch (Exception failure) {
+                notifyState(TtsPlaybackState.PLAYING);
+                while (true) {
+                    TtsSentence sentence;
+                    synchronized (lock) {
+                        while (state == TtsPlaybackState.PAUSED) {
+                            try {
+                                lock.wait();
+                            } catch (InterruptedException interrupted) {
+                                Thread.currentThread().interrupt();
+                                stop();
+                                return;
+                            }
+                        }
+                        if (state == TtsPlaybackState.STOPPED) return;
+                        if (index >= sentences.size()) {
+                            state = TtsPlaybackState.COMPLETED;
+                            break;
+                        }
+                        sentence = sentences.get(index);
+                    }
+
+                    notifySentence(sentence);
+                    try {
+                        provider.speak(sentence.text(), request.voiceId(), request.rate());
+                    } catch (Exception failure) {
+                        synchronized (lock) {
+                            if (state == TtsPlaybackState.STOPPED) return;
+                            if (state == TtsPlaybackState.PAUSED || repeatCurrentAfterPause) {
+                                repeatCurrentAfterPause = false;
+                                continue;
+                            }
+                            state = TtsPlaybackState.FAILED;
+                        }
+                        notifyState(TtsPlaybackState.FAILED);
+                        notifyFailure(failure);
+                        return;
+                    }
+
                     synchronized (lock) {
                         if (state == TtsPlaybackState.STOPPED) return;
                         if (state == TtsPlaybackState.PAUSED || repeatCurrentAfterPause) {
                             repeatCurrentAfterPause = false;
                             continue;
                         }
-                        state = TtsPlaybackState.FAILED;
+                        index++;
+                        if (index >= sentences.size()) {
+                            state = TtsPlaybackState.COMPLETED;
+                            break;
+                        }
                     }
-                    listener.onStateChanged(TtsPlaybackState.FAILED);
-                    listener.onFailed(failure);
-                    return;
                 }
-                synchronized (lock) {
-                    if (state == TtsPlaybackState.STOPPED) return;
-                    if (state == TtsPlaybackState.PAUSED || repeatCurrentAfterPause) {
-                        repeatCurrentAfterPause = false;
-                        continue; // repeat interrupted sentence after resume, even if resume raced ahead
-                    }
-                    index++;
-                }
+                notifyState(TtsPlaybackState.COMPLETED);
+            } finally {
+                if (terminal(state)) notifyTerminal();
             }
-            state = TtsPlaybackState.COMPLETED;
-            listener.onStateChanged(state);
         }
+
+        private void notifyState(TtsPlaybackState value) {
+            try { listener.onStateChanged(value); } catch (RuntimeException ignored) { }
+        }
+
+        private void notifySentence(TtsSentence sentence) {
+            try { listener.onSentenceStarted(sentence); } catch (RuntimeException ignored) { }
+        }
+
+        private void notifyFailure(Throwable failure) {
+            try { listener.onFailed(failure); } catch (RuntimeException ignored) { }
+        }
+
+        private void notifyTerminal() {
+            try { terminalCallback.run(); } catch (RuntimeException ignored) { }
+        }
+
         private static boolean terminal(TtsPlaybackState state) {
-            return state == TtsPlaybackState.STOPPED || state == TtsPlaybackState.COMPLETED || state == TtsPlaybackState.FAILED;
+            return state == TtsPlaybackState.STOPPED
+                    || state == TtsPlaybackState.COMPLETED
+                    || state == TtsPlaybackState.FAILED;
         }
     }
+
 }

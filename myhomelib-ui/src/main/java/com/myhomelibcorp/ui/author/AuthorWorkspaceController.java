@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.author;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.application.catalog.CatalogUpdateService;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.dto.AuthorBookStatistics;
 import com.myhomelibcorp.application.dto.AuthorDto;
 import com.myhomelibcorp.application.dto.BookDto;
@@ -406,7 +408,7 @@ public class AuthorWorkspaceController {
     private void loadAuthorData(AuthorId authorId) {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(metadataGeneration, appState);
         setBusy(true);
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
             AuthorDto author = loadAuthorByIdUseCase.execute(authorId)
                     .orElseThrow(() -> new IllegalStateException("Author not found: " + authorId));
             AuthorBookStatistics statistics = loadAuthorBookStatisticsUseCase.execute(authorId);
@@ -453,7 +455,7 @@ public class AuthorWorkspaceController {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(booksGeneration, appState);
         setBusy(true);
 
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
             List<BookListItem> items = loadBooksByAuthorUseCase.executeAll(authorId, filter, sort, direction);
             Set<String> physicallyLocal = new LinkedHashSet<>();
             for (BookListItem item : items) {
@@ -628,7 +630,7 @@ public class AuthorWorkspaceController {
         if (authorId == null || followAuthorButton == null) return;
         boolean target = !currentAuthorFollowed;
         followAuthorButton.setDisable(true);
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             catalogUpdateService.setAuthorFollowed(authorId, target);
             return target;
         }).thenAccept(followed -> UiExecutor.runOnUiThread(() -> {
@@ -687,6 +689,7 @@ public class AuthorWorkspaceController {
 
     public void showColumnChooser() {
         Dialog<ButtonType> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.author.columns.title"));
         dialog.setHeaderText(i18n.text("ui.author.columns.header"));
         VBox box = new VBox(8);
@@ -761,16 +764,18 @@ public class AuthorWorkspaceController {
     @FXML
     private void onEditAuthorDescription() {
         if (currentAuthorId == null || currentAuthor == null) return;
+        String expectedCollectionId = currentCollectionId();
         TextArea area = new TextArea(currentAuthor.getAnnotation() == null ? "" : currentAuthor.getAnnotation());
         area.setWrapText(true);
         area.setPrefRowCount(14);
         Dialog<ButtonType> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.author.description.title"));
         dialog.setHeaderText(currentAuthor.getFullName());
         dialog.getDialogPane().setContent(area);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.OK, ButtonType.CANCEL);
         if (dialog.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
-            updateAuthorDescriptionUseCase.execute(currentAuthorId, area.getText());
+            updateAuthorDescriptionUseCase.execute(currentAuthorId, area.getText(), expectedCollectionId);
             currentAuthor.setAnnotation(area.getText());
             bioLabel.setText(area.getText());
         }
@@ -779,4 +784,9 @@ public class AuthorWorkspaceController {
     private record AuthorWorkspaceMetadata(
             AuthorDto author, AuthorBookStatistics statistics, boolean followed, long newBookCount) { }
     private record LoadedBooks(List<BookListItem> items, Set<String> physicallyLocalIds) { }
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
+    }
+
 }

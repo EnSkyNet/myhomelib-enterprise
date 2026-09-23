@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 
 import javax.xml.stream.XMLInputFactory;
 import com.myhomelibcorp.shared.xml.SecureXmlInputFactory;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import javax.xml.stream.XMLStreamConstants;
 import javax.xml.stream.XMLStreamReader;
 import java.io.InputStream;
@@ -25,6 +26,8 @@ public class TxtBookConverter implements BookConverter {
     private static final String DEFAULT_ENCODING = "UTF-8";
     private final XMLInputFactory xmlFactory = SecureXmlInputFactory.create(false, false);
 
+
+    @Override public int priority() { return 1000; }
 
     @Override
     public Set<BookConversionCapability> capabilities() {
@@ -60,12 +63,12 @@ public class TxtBookConverter implements BookConverter {
         if (sourceName == null || sourceName.isBlank()) sourceName = book.getFileName();
         sourceName = sourceName == null ? "" : sourceName.toLowerCase(Locale.ROOT);
         if (sourceName.endsWith(".txt") || sourceName.endsWith(".text")) {
-            Files.copy(sourceStream, targetFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+            SafeFilePublication.copyFresh(sourceStream, targetFile, "TXT direct-copy output");
             return;
         }
         log.debug("Конвертація FB2 -> TXT: {}", book.getTitle());
 
-        try (OutputStream outputStream = Files.newOutputStream(targetFile)) {
+        try (OutputStream outputStream = SafeFilePublication.openFreshOutputStream(targetFile, "TXT conversion output")) {
             XMLStreamReader reader = xmlFactory.createXMLStreamReader(sourceStream, DEFAULT_ENCODING);
             StringBuilder text = new StringBuilder();
 

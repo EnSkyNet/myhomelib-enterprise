@@ -1,5 +1,9 @@
 package com.myhomelibcorp.ui.opds;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.opds.OpdsAccessTokenInfo;
 import com.myhomelibcorp.application.opds.OpdsAccessTokenService;
 import com.myhomelibcorp.application.opds.OpdsCertificateInfo;
@@ -24,6 +28,8 @@ import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import javafx.stage.Window;
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.net.InetAddress;
@@ -41,6 +47,7 @@ import java.util.function.Supplier;
 @Component
 @RequiredArgsConstructor
 public class OpdsUiService {
+    private static final Logger log = LoggerFactory.getLogger(OpdsUiService.class);
     private static final DateTimeFormatter CERT_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
             .withZone(ZoneId.systemDefault());
     private static final DateTimeFormatter TOKEN_DATE = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
@@ -59,6 +66,7 @@ public class OpdsUiService {
         AtomicReference<OpdsCertificateInfo> certificateState = new AtomicReference<>();
 
         Dialog<Void> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.opds.title"));
         if (owner != null) dialog.initOwner(owner);
 
@@ -76,7 +84,7 @@ public class OpdsUiService {
         CheckBox autostart = new CheckBox(i18n.text("ui.opds.autostart"));
         autostart.setSelected(saved.autostart());
 
-        CheckBox tlsEnabled = new CheckBox("HTTPS / TLS");
+        CheckBox tlsEnabled = new CheckBox(UiText.text("ui.opds.https_tls"));
         tlsEnabled.setSelected(saved.tls().enabled());
         TextField keyStorePath = new TextField(saved.tls().keyStorePath());
         keyStorePath.setEditable(false);
@@ -261,6 +269,7 @@ public class OpdsUiService {
             Alert confirm = new Alert(Alert.AlertType.CONFIRMATION,
                     i18n.format("ui.opds.tokens.revoke.confirm", tokenDisplayName(selected)),
                     ButtonType.OK, ButtonType.CANCEL);
+            DialogLocalization.prepare(confirm);
             confirm.setTitle(i18n.text("ui.opds.tokens.revoke.title"));
             if (owner != null) confirm.initOwner(owner);
             if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK && accessTokens.revoke(selected.id())) {
@@ -343,6 +352,7 @@ public class OpdsUiService {
 
     private void showTokenOnce(Window owner, String rawToken) {
         Dialog<Void> tokenDialog = new Dialog<>();
+        DialogLocalization.prepare(tokenDialog);
         tokenDialog.setTitle(i18n.text("ui.opds.tokens.created.title"));
         if (owner != null) tokenDialog.initOwner(owner);
         Label warning = new Label(i18n.text("ui.opds.tokens.created.once"));
@@ -408,7 +418,7 @@ public class OpdsUiService {
         backgroundExecutor.submit(task::get).whenComplete((managed, error) -> Platform.runLater(() -> {
             clearBusy.run();
             if (error != null) {
-                status.setText("TLS: " + safeMessage(unwrap(error)));
+                status.setText(UiText.text("ui.opds.tls_prefix") + safeMessage(unwrap(error)));
                 return;
             }
             tlsState.set(managed.tls());
@@ -448,7 +458,12 @@ public class OpdsUiService {
                         : i18n.text("ui.opds.exposure.running_lan_blocked"));
             }
         } else {
-            status.setText(server.message());
+            if (!server.technicalDetail().isBlank()) {
+                log.warn("OPDS status detail: {}", server.technicalDetail());
+            }
+            String stoppedMessage = i18n.text(server.messageKey());
+            if (!server.technicalDetail().isBlank()) stoppedMessage += " " + i18n.text("common.error.details_in_log");
+            status.setText(stoppedMessage);
             exposure.setText(isLoopback(bind.getText()) ? i18n.text("ui.opds.exposure.local_only") :
                     i18n.text("ui.opds.exposure.network_warning"));
         }
@@ -466,8 +481,6 @@ public class OpdsUiService {
     }
 
     private String safeMessage(Throwable error) {
-        if (error == null) return i18n.text("common.error.unknown");
-        String message = error.getMessage();
-        return message == null || message.isBlank() ? error.getClass().getSimpleName() : message;
+        return UiExceptionSupport.message(error);
     }
 }

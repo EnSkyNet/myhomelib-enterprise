@@ -1,11 +1,9 @@
 # OPDS
 
-OPDS is a separate module, bound to `127.0.0.1` by default, with paged authors/series/genres/search feeds, book entries, downloads and health.
+OPDS runs as a separate module and binds to `127.0.0.1` by default. It exposes paged author, series, genre, search and book feeds, local book downloads, OPDS 2.0 views for collections/groups/favorites/continue-reading and a `/health` probe while retaining OPDS 1.x compatibility.
 
-Loopback may use HTTP. Any bind beyond loopback is allowed to start only with TLS/HTTPS; plaintext LAN exposure is rejected by the server.
+Loopback may use HTTP. Any bind beyond loopback starts only with TLS/HTTPS; plaintext LAN exposure is rejected. The **OPDS server** dialog can create a managed self-signed certificate or import an X.509 PEM certificate together with an unencrypted PKCS#8 PEM private key. The UI shows subject, validity and SHA-256 fingerprint. Regenerating the certificate changes that fingerprint, so client trust must be configured again.
 
-The **OPDS server** dialog can enable HTTPS, create a managed self-signed certificate, or import an X.509 certificate PEM together with an unencrypted PKCS#8 private-key PEM. The UI displays the subject, validity interval and SHA-256 fingerprint. Regenerating the certificate changes the fingerprint, so client trust must be configured again.
+A self-signed certificate is not trusted automatically: compare its SHA-256 fingerprint with MyHomeLib before trusting it on a phone or reader. The managed PKCS12 is stored in the application configuration directory and its password is persisted only inside the encrypted `mhlenc:v1` envelope. `myhomelib.opds.tls.keyStorePassword` and `MYHOMELIB_OPDS_TLS_KEYSTORE_PASSWORD` remain fallback options for manually managed keystores.
 
-A self-signed certificate is not trusted automatically. Before trusting it on a phone or reader, compare its SHA-256 fingerprint with the value shown by MyHomeLib. The managed PKCS12 lives in the application configuration directory; its password is persisted only inside the encrypted `mhlenc:v1` envelope. `myhomelib.opds.tls.keyStorePassword` and `MYHOMELIB_OPDS_TLS_KEYSTORE_PASSWORD` remain fallback options for manually managed keystores.
-
-Basic Auth includes per-client failure throttling. The server also bounds listen backlog and concurrently executing requests. `/health` is public on loopback by default; when exposed to LAN it requires Basic Auth, or returns 403 if Basic Auth is disabled.
+You can enable Basic Auth or create/revoke scoped Bearer tokens with separate catalog-read and download permissions. Basic Auth has failed-attempt throttling; the server also bounds backlog and concurrent request handling. `/health` is public on loopback by default, but on LAN exposure it requires Basic Auth or returns HTTP 403 when Basic Auth is disabled.

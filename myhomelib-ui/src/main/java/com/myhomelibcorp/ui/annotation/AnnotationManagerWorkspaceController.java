@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.annotation;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.application.annotation.AnnotationBatchUndoToken;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFacets;
 import com.myhomelibcorp.application.annotation.AnnotationManagerFilter;
@@ -19,14 +20,17 @@ import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownExpor
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownExportTemplates;
 import com.myhomelibcorp.application.annotation.knowledge.KnowledgeMarkdownReExportPolicy;
 import com.myhomelibcorp.application.annotation.AnnotationService;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.ui.navigation.WorkspaceLifecycle;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.FileChooserService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.ui.service.UiBackgroundExecutor;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.util.UiSubscriptions;
+import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import javafx.application.Platform;
 import javafx.beans.property.ReadOnlyStringWrapper;
 import javafx.collections.FXCollections;
@@ -54,6 +58,7 @@ import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -76,6 +81,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private final DialogService dialogs;
     private final FileChooserService fileChooserService;
     private final LocalizationService i18n;
+    private final ApplicationState appState;
 
     @FXML private BorderPane root;
     @FXML private TextField searchField;
@@ -108,6 +114,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     @FXML private Button nextButton;
 
     private final AtomicLong loadGeneration = new AtomicLong();
+    private final UiSubscriptions subscriptions = new UiSubscriptions();
     private volatile boolean disposed;
     private int offset;
     private AnnotationManagerPage currentPage = new AnnotationManagerPage(List.of(), 0, 0, PAGE_SIZE);
@@ -133,6 +140,18 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 undoDelete();
                 event.consume();
             }
+        });
+        subscriptions.listen(appState.currentLibraryCollectionProperty(), (obs, previous, current) -> {
+            String previousId = previous == null ? null : previous.getId();
+            String currentId = current == null ? null : current.getId();
+            if (Objects.equals(previousId, currentId)) return;
+            loadGeneration.incrementAndGet();
+            undoStack.clear();
+            offset = 0;
+            currentPage = new AnnotationManagerPage(List.of(), 0, 0, PAGE_SIZE);
+            table.setItems(FXCollections.observableArrayList());
+            updateActions();
+            if (current != null && !disposed) loadFacetsAndPage();
         });
         loadFacetsAndPage();
     }
@@ -221,7 +240,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 Set.copyOf(selected.tags()), knownTags()).orElse(null);
         if (edited == null) return;
         setBusy(true, i18n.text("ui.annotations.saving"));
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
             annotationManagerService.update(selected.id(), edited.note(), edited.color(), edited.tags());
             return null;
         }).whenComplete((ignored, error) -> Platform.runLater(() -> {
@@ -246,7 +265,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 i18n.text("ui.annotations.delete_confirm"), confirmation)) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
         setBusy(true, i18n.text("ui.annotations.deleting"));
-        executor.submit(() -> annotationManagerService.deleteForUndo(ids))
+        executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.deleteForUndo(ids))
                 .whenComplete((token, error) -> Platform.runLater(() -> {
                     if (disposed) return;
                     if (error != null) {
@@ -265,7 +284,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         AnnotationBatchUndoToken token = undoStack.peekFirst();
         if (token == null) return;
         setBusy(true, i18n.text("ui.annotations.restoring"));
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
             annotationManagerService.restoreDeleted(token);
             return null;
         }).whenComplete((ignored, error) -> Platform.runLater(() -> {
@@ -286,6 +305,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (selected.isEmpty()) return;
         ColorPicker picker = new ColorPicker(parseColor(selected.getFirst().color()));
         Dialog<String> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.annotations.batch_color"));
         dialog.getDialogPane().getButtonTypes().setAll(
                 new ButtonType(i18n.text("common.save"), ButtonBar.ButtonData.OK_DONE), ButtonType.CANCEL);
@@ -296,7 +316,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (color == null) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
         setBusy(true, i18n.text("ui.annotations.saving"));
-        executor.submit(() -> annotationManagerService.updateColor(ids, color))
+        executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.updateColor(ids, color))
                 .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
     }
 
@@ -311,7 +331,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (tags.isEmpty()) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
         setBusy(true, i18n.text("ui.annotations.saving"));
-        executor.submit(() -> annotationManagerService.addTags(ids, tags))
+        executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.addTags(ids, tags))
                 .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
     }
 
@@ -326,7 +346,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (tags.isEmpty()) return;
         List<String> ids = selected.stream().map(AnnotationManagerItem::id).toList();
         setBusy(true, i18n.text("ui.annotations.saving"));
-        executor.submit(() -> annotationManagerService.removeTags(ids, tags))
+        executor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationManagerService.removeTags(ids, tags))
                 .whenComplete((count, error) -> Platform.runLater(() -> finishBatchEdit(error, count, "ui.annotations.batch_updated")));
     }
 
@@ -341,7 +361,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (!selected.isEmpty()) {
             Path destination = file.toPath();
             setBusy(true, i18n.text("ui.annotations.exporting"));
-            executor.submit(() -> exportSelectedDigest(selected, destination))
+            executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportSelectedDigest(selected, destination))
                     .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(destination, count, error)));
             return;
         }
@@ -361,7 +381,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
                 i18n.text("ui.reader.annotation.editor.note"),
                 i18n.text("ui.reader.annotation.editor.tags"),
                 i18n.text("ui.annotations.digest_open"));
-        executor.submit(() -> annotationDigestService.export(selection, destination, labels))
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> annotationDigestService.export(selection, destination, labels))
                 .whenComplete((count, error) -> Platform.runLater(() -> finishDigestExport(destination, count, error)));
     }
 
@@ -385,7 +405,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (file == null) return;
         Path destination = file.toPath();
         setBusy(true, i18n.text("ui.annotations.exporting"));
-        executor.submit(() -> exportSelectedRows(selected, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportSelectedRows(selected, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
             if (disposed) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
@@ -406,7 +426,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         if (filter == null) return;
         Path destination = file.toPath();
         setBusy(true, i18n.text("ui.annotations.exporting"));
-        executor.submit(() -> exportCsv(filter, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportCsv(filter, destination)).whenComplete((count, error) -> Platform.runLater(() -> {
             if (disposed) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
@@ -465,7 +485,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         AnnotationExportRequest request = new AnnotationExportRequest(
                 values.format(), selection, file.toPath(), values.templates());
         setBusy(true, i18n.text("ui.annotations.exporting"));
-        executor.submit(() -> annotationExportService.export(request)).whenComplete((result, error) -> Platform.runLater(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> annotationExportService.export(request)).whenComplete((result, error) -> Platform.runLater(() -> {
             if (disposed) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
@@ -489,7 +509,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         KnowledgeMarkdownExportRequest request = new KnowledgeMarkdownExportRequest(
                 selection, directory.toPath(), values.templates(), values.frontmatter(), values.backlinks(), values.policy());
         setBusy(true, i18n.text("ui.annotations.exporting"));
-        executor.submit(() -> knowledgeMarkdownExportService.export(request)).whenComplete((result, error) -> Platform.runLater(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> knowledgeMarkdownExportService.export(request)).whenComplete((result, error) -> Platform.runLater(() -> {
             if (disposed) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.export_failed") + ": " + UiExceptionSupport.message(error));
@@ -514,6 +534,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
 
     private KnowledgeExportValues showKnowledgeExportDialog() {
         Dialog<KnowledgeExportValues> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.annotations.knowledge_export"));
         ButtonType export = new ButtonType(i18n.text("ui.annotations.export_action"), ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().setAll(export, ButtonType.CANCEL);
@@ -585,6 +606,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
 
     private RichExportValues showRichExportDialog() {
         Dialog<RichExportValues> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.annotations.export_rich"));
         ButtonType export = new ButtonType(i18n.text("ui.annotations.export_action"), ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().setAll(export, ButtonType.CANCEL);
@@ -673,7 +695,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     private void loadFacetsAndPage() {
         long generation = loadGeneration.incrementAndGet();
         setBusy(true, i18n.text("ui.annotations.loading"));
-        executor.submit(annotationManagerService::facets).whenComplete((facets, error) -> Platform.runLater(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, annotationManagerService::facets).whenComplete((facets, error) -> Platform.runLater(() -> {
             if (disposed || generation != loadGeneration.get()) return;
             if (error != null) {
                 setBusy(false, i18n.text("ui.annotations.load_failed") + ": " + UiExceptionSupport.message(error));
@@ -696,7 +718,8 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
         }
         setBusy(true, i18n.text("ui.annotations.loading"));
         int requestedOffset = offset;
-        executor.submit(() -> annotationManagerService.query(filter, requestedOffset, PAGE_SIZE))
+        executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                        () -> annotationManagerService.query(filter, requestedOffset, PAGE_SIZE))
                 .whenComplete((page, error) -> Platform.runLater(() -> {
                     if (disposed || generation != loadGeneration.get()) return;
                     if (error != null) {
@@ -782,6 +805,12 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
 
     private void pushUndo(AnnotationBatchUndoToken token) {
         if (token == null) return;
+        String activeCollectionId = appState.getCurrentLibraryCollectionId();
+        boolean belongsToActiveCollection = token.annotations().stream()
+                .allMatch(item -> item.collectionId() != null
+                        && !item.collectionId().isBlank()
+                        && Objects.equals(item.collectionId(), activeCollectionId));
+        if (!belongsToActiveCollection) return;
         undoStack.addFirst(token);
         while (undoStack.size() > MAX_UNDO_OPERATIONS) undoStack.removeLast();
     }
@@ -873,20 +902,24 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     }
 
     private <T> T writeAtomically(Path destination, AtomicExportWriter<T> writer) throws Exception {
-        Path absolute = destination.toAbsolutePath();
+        Path absolute = destination.toAbsolutePath().normalize();
         Path parent = absolute.getParent();
-        if (parent != null) Files.createDirectories(parent);
-        Path directory = parent != null ? parent : Path.of(".").toAbsolutePath();
-        Path temp = Files.createTempFile(directory, "." + absolute.getFileName() + ".", ".part");
-        boolean committed = false;
+        if (parent == null) throw new java.io.IOException("Annotation export target has no parent: " + absolute);
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                absolute, "annotation workspace export target");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                parent, ".annotation-export-work-", "annotation workspace export");
+        Path temp = workspace.resolve("payload.part");
         try {
             T result = writer.write(temp);
             checkExportCancelled();
-            AtomicFileSupport.moveReplacing(temp, absolute);
-            committed = true;
+            SafeFilePublication.requireSafeRegularFile(temp, "annotation workspace staged export");
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    temp, absolute, expectedTargetHash, "annotation workspace export publication");
             return result;
         } finally {
-            if (!committed) Files.deleteIfExists(temp);
+            try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+            catch (Exception ignored) { }
         }
     }
 
@@ -974,6 +1007,7 @@ public class AnnotationManagerWorkspaceController implements WorkspaceLifecycle 
     public void dispose() {
         disposed = true;
         loadGeneration.incrementAndGet();
+        subscriptions.close();
         table.setItems(FXCollections.observableArrayList());
         undoStack.clear();
     }

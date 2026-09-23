@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.download;
 
 import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
 import com.myhomelibcorp.application.port.out.download.RemoteDownloadProgress;
+import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
@@ -21,6 +22,7 @@ import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.Properties;
 import java.util.HexFormat;
+import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -119,6 +121,43 @@ class HttpRemoteCatalogDownloadAdapterTest {
         assertThat(part).doesNotExist();
     }
 
+
+    @Test
+    void refusesRegularFileReplacementBetweenCatalogResumeSnapshotAndAppend() throws Exception {
+        byte[] archive = validInpx("20260921");
+        int prefix = Math.min(32, archive.length / 2);
+        AtomicInteger requests = new AtomicInteger();
+        java.util.concurrent.atomic.AtomicReference<Path> partRef = new java.util.concurrent.atomic.AtomicReference<>();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            Path part = partRef.get();
+            assertThat(part).isNotNull();
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isEqualTo("bytes=" + prefix + "-");
+            Files.deleteIfExists(part);
+            Files.writeString(part, "FOREIGN-CATALOG", StandardCharsets.UTF_8);
+            byte[] tail = Arrays.copyOfRange(archive, prefix, archive.length);
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            exchange.getResponseHeaders().add("Content-Range", "bytes " + prefix + "-" + (archive.length - 1) + "/" + archive.length);
+            exchange.getResponseHeaders().add("ETag", "\"catalog-race\"");
+            respond(exchange, 206, tail);
+        });
+
+        String url = baseUrl() + "catalog.inpx";
+        Path part = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx.part");
+        partRef.set(part);
+        Files.createDirectories(part.getParent());
+        Files.write(part, Arrays.copyOf(archive, prefix));
+        writeResumeMetadata(part.resolveSibling(part.getFileName() + ".meta"), url, "\"catalog-race\"");
+
+        Collection collection = new Collection("c1", "Online", temp, null, 1, null, null, url, "");
+        assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter().downloadUpdates(
+                        collection, url, "", new AtomicBoolean(false), ignored -> {}))
+                .isInstanceOf(IOException.class);
+
+        assertThat(requests.get()).isGreaterThanOrEqualTo(1);
+        assertThat(Files.readString(part)).isEqualTo("FOREIGN-CATALOG");
+    }
+
     @Test
     void stalePartialWithoutValidatorIsDiscardedInsteadOfBlindlyAppended() throws Exception {
         byte[] archive = validInpx("20260828");
@@ -144,6 +183,38 @@ class HttpRemoteCatalogDownloadAdapterTest {
         assertThat(part.resolveSibling(part.getFileName() + ".meta")).doesNotExist();
     }
 
+
+    @Test
+    void refusesSymlinkedCatalogPartialWithoutWritingForeignFile() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        byte[] archive = validInpx("20260920");
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, archive);
+        });
+
+        String url = baseUrl() + "catalog.inpx";
+        Path part = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx.part");
+        Files.createDirectories(part.getParent());
+        Path foreign = temp.resolve("foreign-catalog.bin");
+        Files.writeString(foreign, "FOREIGN", StandardCharsets.UTF_8);
+        try {
+            Files.createSymbolicLink(part, foreign);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        Collection collection = new Collection("c1", "Online", temp, null, 1, null, null, url, "");
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new HttpRemoteCatalogDownloadAdapter().downloadUpdates(
+                        collection, url, "", new AtomicBoolean(false), ignored -> {}))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("symbolic link");
+
+        assertThat(requests.get()).isZero();
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+        assertThat(Files.isSymbolicLink(part)).isTrue();
+    }
+
     @Test
     void blocksCatalogCredentialsOnHttpBeforeNetworkRequest() throws Exception {
         AtomicInteger requests = new AtomicInteger();
@@ -160,6 +231,55 @@ class HttpRemoteCatalogDownloadAdapterTest {
                 .isInstanceOf(SecurityException.class)
                 .hasMessageContaining("HTTPS");
         assertThat(requests.get()).isZero();
+    }
+
+    @Test
+    void rejectsCatalogWhenDeclaredContentLengthExceedsConfiguredHardLimitWithoutRetry() throws Exception {
+        byte[] body = new byte[2048];
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            respond(exchange, 200, body);
+        });
+        String url = baseUrl() + "catalog.inpx";
+        HttpRemoteCatalogDownloadAdapter adapter = new HttpRemoteCatalogDownloadAdapter(settings(Map.of(
+                "online.maxDownloadBytes", "1024",
+                "online.minFreeSpaceBytes", "0")));
+
+        assertThatThrownBy(() -> adapter.download(null, url, new AtomicBoolean(false), ignored -> {}))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("перевищує дозволений ліміт");
+
+        assertThat(requests.get()).isEqualTo(1);
+        Path part = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx.part");
+        assertThat(part).doesNotExist();
+        assertThat(part.resolveSibling(part.getFileName() + ".meta")).doesNotExist();
+    }
+
+    @Test
+    void rejectsChunkedCatalogAfterStreamCrossesHardLimitWithoutRetry() throws Exception {
+        byte[] body = new byte[2048];
+        AtomicInteger requests = new AtomicInteger();
+        server = start(exchange -> {
+            requests.incrementAndGet();
+            exchange.getResponseHeaders().add("Content-Type", "application/zip");
+            exchange.sendResponseHeaders(200, 0); // chunked: no Content-Length
+            exchange.getResponseBody().write(body);
+        });
+        String url = baseUrl() + "catalog.inpx";
+        HttpRemoteCatalogDownloadAdapter adapter = new HttpRemoteCatalogDownloadAdapter(settings(Map.of(
+                "online.maxDownloadBytes", "1024",
+                "online.minFreeSpaceBytes", "0")));
+
+        assertThatThrownBy(() -> adapter.download(null, url, new AtomicBoolean(false), ignored -> {}))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("перевищує дозволений ліміт");
+
+        assertThat(requests.get()).isEqualTo(1);
+        Path part = temp.resolve("cache/catalog-updates/catalog-" + shortHash(url) + ".inpx.part");
+        assertThat(part).doesNotExist();
+        assertThat(part.resolveSibling(part.getFileName() + ".meta")).doesNotExist();
     }
 
     @Test
@@ -204,6 +324,16 @@ class HttpRemoteCatalogDownloadAdapterTest {
                 null, url, new AtomicBoolean(false), ignored -> {}))
                 .isInstanceOf(IOException.class)
                 .hasMessageContaining("HTML");
+    }
+
+
+    private static ApplicationSettingsPort settings(Map<String, String> values) {
+        return new ApplicationSettingsPort() {
+            @Override public String get(String key, String defaultValue) { return values.getOrDefault(key, defaultValue); }
+            @Override public void put(String key, String value) { }
+            @Override public void remove(String key) { }
+            @Override public Map<String, String> findByPrefix(String prefix) { return Map.of(); }
+        };
     }
 
     private HttpServer start(Handler handler) throws IOException {

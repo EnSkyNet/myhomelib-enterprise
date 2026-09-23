@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
@@ -98,7 +99,7 @@ public class MainBookCommandCoordinator {
     public void cancelDownload() {
         BookDto selected = currentBook();
         if (selected == null || !bookDownloadCoordinator.cancel(selected)) {
-            dialogService.showInfo("Завантаження", "Для вибраної книги активного завантаження немає.");
+            dialogService.showInfo(UiText.text("ui.import.stage.downloading"), UiText.text("ui.java.main_book_command_coordinator.66bb1e3972"));
         }
     }
 
@@ -110,7 +111,7 @@ public class MainBookCommandCoordinator {
             try {
                 externalBookLauncher.open(selected);
             } catch (Exception ex) {
-                Platform.runLater(() -> dialogService.showError("Зовнішня читалка", ex.getMessage()));
+                Platform.runLater(() -> dialogService.showError(UiText.text("ui.java.main_book_command_coordinator.c2232feff0"), UiExceptionSupport.message(ex)));
             }
         });
     }
@@ -121,7 +122,7 @@ public class MainBookCommandCoordinator {
 
     private BookDto requireBook() {
         BookDto selected = currentBook();
-        if (selected == null) dialogService.showWarning("Немає книги", "Спочатку виберіть книгу.");
+        if (selected == null) dialogService.showWarning(UiText.text("ui.java.main_book_command_coordinator.5c79bfb614"), UiText.text("ui.java.main_book_command_coordinator.433c9e6d1d"));
         return selected;
     }
 

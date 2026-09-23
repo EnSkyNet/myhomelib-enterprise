@@ -8,50 +8,50 @@
       fx:controller="com.myhomelibcorp.ui.imports.ImportWorkspaceController"
       spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;">
 
-    <Label text="📂 Імпорт бібліотеки" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <Label text="ui.fxml.import_workspace.library_import" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
 
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="Папка:"/>
-        <TextField fx:id="directoryField" promptText="Виберіть папку з книгами" HBox.hgrow="ALWAYS"/>
-        <Button text="Обрати..." onAction="#onChooseDirectory"/>
+        <Label text="ui.fxml.import_workspace.folder"/>
+        <TextField fx:id="directoryField" promptText="ui.fxml.import_workspace.choose_a_folder_with_books" HBox.hgrow="ALWAYS"/>
+        <Button text="ui.fxml.import_workspace.choose" onAction="#onChooseDirectory"/>
     </HBox>
 
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="Файл:"/>
-        <TextField fx:id="fileField" promptText="Виберіть файл (FB2, INPX...)" HBox.hgrow="ALWAYS"/>
-        <Button text="Обрати..." onAction="#onChooseFile"/>
+        <Label text="ui.fxml.import_workspace.file"/>
+        <TextField fx:id="fileField" promptText="ui.fxml.import_workspace.choose_a_file_fb2_inpx" HBox.hgrow="ALWAYS"/>
+        <Button text="ui.fxml.import_workspace.choose" onAction="#onChooseFile"/>
     </HBox>
 
     <Separator/>
 
     <HBox spacing="10">
-        <Button text="Імпортувати папку" onAction="#onImportDirectory" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-        <Button text="Імпортувати файл" onAction="#onImportFile" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-        <Button fx:id="cancelButton" text="Скасувати" onAction="#onCancel" disable="true"/>
+        <Button text="ui.fxml.import_workspace.import_folder" onAction="#onImportDirectory" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
+        <Button text="ui.fxml.import_workspace.import_file" onAction="#onImportFile" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
+        <Button fx:id="cancelButton" text="ui.fxml.import_workspace.cancel" onAction="#onCancel" disable="true"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Налаштування" onAction="#onSettings"/>
+        <Button text="ui.fxml.import_workspace.settings" onAction="#onSettings"/>
     </HBox>
 
     <Separator/>
 
     <VBox spacing="5">
-        <Label text="Статус:" style="-fx-font-weight: bold;"/>
-        <Label fx:id="statusLabel" text="Готово до імпорту"/>
+        <Label text="ui.fxml.import_workspace.status" style="-fx-font-weight: bold;"/>
+        <Label fx:id="statusLabel" text="ui.fxml.import_workspace.ready_to_import"/>
         <ProgressBar fx:id="progressBar" prefWidth="400.0" progress="0.0"/>
-        <Label fx:id="progressLabel" text="0%"/>
+        <Label fx:id="progressLabel" text="ui.fxml.import_workspace.0"/>
     </VBox>
 
     <Separator/>
 
     <VBox spacing="5" style="-fx-background-color: -mhl-panel; -fx-padding: 10; -fx-border-color: -mhl-border; -fx-border-radius: 5;">
-        <Label text="📊 Статистика імпорту" style="-fx-font-weight: bold;"/>
+        <Label text="ui.fxml.import_workspace.import_statistics" style="-fx-font-weight: bold;"/>
         <GridPane hgap="10.0" vgap="5.0">
-            <Label text="Знайдено файлів:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
-            <Label fx:id="foundFilesLabel" text="0" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
-            <Label text="Імпортовано книг:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
-            <Label fx:id="importedBooksLabel" text="0" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
-            <Label text="Помилок:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
-            <Label fx:id="errorsLabel" text="0" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
+            <Label text="ui.fxml.import_workspace.files_found" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+            <Label fx:id="foundFilesLabel" text="ui.fxml.import_workspace.0_c1ce420" GridPane.columnIndex="1" GridPane.rowIndex="0"/>
+            <Label text="ui.fxml.import_workspace.books_imported" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+            <Label fx:id="importedBooksLabel" text="ui.fxml.import_workspace.0_c1ce420" GridPane.columnIndex="1" GridPane.rowIndex="1"/>
+            <Label text="ui.fxml.import_workspace.errors" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+            <Label fx:id="errorsLabel" text="ui.fxml.import_workspace.0_c1ce420" GridPane.columnIndex="1" GridPane.rowIndex="2"/>
         </GridPane>
     </VBox>
 </VBox>

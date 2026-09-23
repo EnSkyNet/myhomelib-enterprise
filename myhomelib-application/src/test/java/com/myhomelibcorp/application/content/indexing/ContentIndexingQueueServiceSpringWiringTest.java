@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.content.indexing;
 
+import com.myhomelibcorp.application.port.out.content.ContentIndexPort;
 import com.myhomelibcorp.application.port.out.contentindexing.ContentIndexQueueCheckpointPort;
 import com.myhomelibcorp.application.port.out.contentindexing.ContentIndexingTaskProcessor;
 import com.myhomelibcorp.application.port.out.contentindexing.PowerStatePort;
@@ -24,6 +25,7 @@ class ContentIndexingQueueServiceSpringWiringTest {
             context.registerBean(IndexingPerformanceSettingsService.class,
                     () -> new IndexingPerformanceSettingsService(context.getBean(ApplicationSettingsPort.class)));
             context.registerBean(PowerStatePort.class, () -> () -> false);
+            context.registerBean(ContentIndexPort.class, () -> mock(ContentIndexPort.class));
             context.register(ContentIndexingQueueService.class);
 
             context.refresh();

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.usecase.collection;
 
 import com.myhomelibcorp.shared.util.ThrowableMessages;
+import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
 import com.myhomelibcorp.application.catalog.CatalogSourceIdentity;
 import com.myhomelibcorp.application.catalog.CatalogSourceProfile;
 import com.myhomelibcorp.application.catalog.CatalogSourceState;
@@ -25,14 +26,17 @@ import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.CatalogUpdateRecoveryFiles;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
+import lombok.extern.slf4j.Slf4j;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.net.URI;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -46,6 +50,7 @@ import java.util.function.Consumer;
 import java.util.UUID;
 
 /** Reliable state machine for updating the active collection from a remote catalog source. */
+@Slf4j
 public class UpdateCollectionFromNetworkUseCase {
     private final RemoteCatalogDownloadPort downloader;
     private final ImportFileUseCase importer;
@@ -57,6 +62,7 @@ public class UpdateCollectionFromNetworkUseCase {
     private final CollectionBackupPort collectionBackupPort;
     private final int changeTrackingLimit;
     private final LibraryOperationCoordinator operationCoordinator;
+    private final ContentIndexAutoSchedulingService contentIndexScheduling;
 
     public UpdateCollectionFromNetworkUseCase(
             RemoteCatalogDownloadPort downloader,
@@ -66,7 +72,7 @@ public class UpdateCollectionFromNetworkUseCase {
             SearchIndexer searchIndexer,
             BookQueryRepository bookQueryRepository) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
-                ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT, new LibraryOperationCoordinator());
+                ImportChangeAccumulator.DEFAULT_TRACKED_ID_LIMIT, new LibraryOperationCoordinator(), null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -78,7 +84,7 @@ public class UpdateCollectionFromNetworkUseCase {
             BookQueryRepository bookQueryRepository,
             int changeTrackingLimit) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
-                changeTrackingLimit, new LibraryOperationCoordinator());
+                changeTrackingLimit, new LibraryOperationCoordinator(), null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -91,7 +97,7 @@ public class UpdateCollectionFromNetworkUseCase {
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator) {
         this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, null, null,
-                changeTrackingLimit, operationCoordinator);
+                changeTrackingLimit, operationCoordinator, null);
     }
 
     public UpdateCollectionFromNetworkUseCase(
@@ -105,6 +111,22 @@ public class UpdateCollectionFromNetworkUseCase {
             CollectionBackupPort collectionBackupPort,
             int changeTrackingLimit,
             LibraryOperationCoordinator operationCoordinator) {
+        this(downloader, importer, lifecycle, sourceState, searchIndexer, bookQueryRepository, statisticsRepository,
+                collectionBackupPort, changeTrackingLimit, operationCoordinator, null);
+    }
+
+    public UpdateCollectionFromNetworkUseCase(
+            RemoteCatalogDownloadPort downloader,
+            ImportFileUseCase importer,
+            CollectionLifecycleService lifecycle,
+            CatalogSourceStatePort sourceState,
+            SearchIndexer searchIndexer,
+            BookQueryRepository bookQueryRepository,
+            StatisticsRepository statisticsRepository,
+            CollectionBackupPort collectionBackupPort,
+            int changeTrackingLimit,
+            LibraryOperationCoordinator operationCoordinator,
+            ContentIndexAutoSchedulingService contentIndexScheduling) {
         this.downloader = downloader;
         this.importer = importer;
         this.lifecycle = lifecycle;
@@ -115,6 +137,7 @@ public class UpdateCollectionFromNetworkUseCase {
         this.collectionBackupPort = collectionBackupPort;
         this.changeTrackingLimit = ImportChangeAccumulator.normalizeLimit(changeTrackingLimit);
         this.operationCoordinator = java.util.Objects.requireNonNull(operationCoordinator, "operationCoordinator");
+        this.contentIndexScheduling = contentIndexScheduling;
     }
 
     public ImportResult execute(Collection collection, String source, AtomicBoolean cancel, DoubleConsumer progress) {
@@ -216,8 +239,10 @@ public class UpdateCollectionFromNetworkUseCase {
                 checkpoint = updateCheckpointPath(active, operationId);
                 emit(telemetry, OperationProgress.stage(operationId, OperationStage.CREATING_CHECKPOINT, false)
                         .withCurrentItem("SQLite checkpoint"));
-                collectionBackupPort.createDatabaseSnapshot(active, checkpoint);
-                collectionBackupPort.validateDatabaseFile(checkpoint);
+                // createDatabaseSnapshot publishes only a successfully validated staged copy.
+                // Do not run a second full quick_check here: on multi-GB catalogues that doubles
+                // checkpoint latency without adding another safety boundary.
+                collectionBackupPort.createRecoveryCheckpoint(active, checkpoint);
                 // The durable marker is the crash boundary: from this point a JVM/OS termination
                 // will cause the next collection open to restore this validated pre-update DB.
                 CatalogUpdateRecoveryFiles.markPending(active.getId(), operationId);
@@ -248,6 +273,7 @@ public class UpdateCollectionFromNetworkUseCase {
                 ImportResult current = importer.execute(ImportContext.builder()
                         .file(pkg.file())
                         .rootDirectory(root)
+                        .expectedCollectionId(active.getId())
                         .updateExisting(true)
                         .indexAfterSave(false)
                         .publishFinishedEvent(false)
@@ -317,6 +343,20 @@ public class UpdateCollectionFromNetworkUseCase {
                 }
                 sink.accept(0.93);
                 checkCancelled(flag);
+
+                if (contentIndexScheduling != null) {
+                    try {
+                        var scheduled = contentIndexScheduling.schedule(collection.getId(), indexChanges);
+                        if (scheduled.rebuildRequired()) {
+                            log.info("Full-text content index marked stale after network update: {}", scheduled.detail());
+                        } else if (scheduled.queuedTasks() > 0) {
+                            log.info("Queued {} background full-text indexing tasks after network update", scheduled.queuedTasks());
+                        }
+                    } catch (RuntimeException failure) {
+                        contentIndexScheduling.markStale(collection.getId());
+                        log.error("Failed to schedule full-text content indexing after committed network update", failure);
+                    }
+                }
 
                 if (statisticsRepository != null) {
                     currentStage.set(OperationStage.REFRESHING_STATISTICS);
@@ -406,14 +446,28 @@ public class UpdateCollectionFromNetworkUseCase {
                     rollback.attempted(), rollback.succeeded());
         } finally {
             for (Path path : downloaded) {
-                if (path != null && path.startsWith(AppPaths.cacheDir())) {
-                    try { Files.deleteIfExists(path); } catch (Exception ignored) { }
+                try {
+                    cleanupDownloadedCacheFile(path);
+                } catch (Exception cleanupFailure) {
+                    log.warn("Не вдалося безпечно очистити завантажений cache-файл {}: {}",
+                            path, cleanupFailure.toString());
                 }
             }
             if (checkpoint != null && !keepCheckpoint) {
                 try { CatalogUpdateRecoveryFiles.clear(active.getId()); } catch (Exception ignored) { }
             }
         }
+    }
+
+
+    static void cleanupDownloadedCacheFile(Path downloadedFile) throws java.io.IOException {
+        if (downloadedFile == null) return;
+        Path cacheRoot = AppPaths.cacheDir().toAbsolutePath().normalize();
+        Path candidate = downloadedFile.toAbsolutePath().normalize();
+        if (candidate.equals(cacheRoot) || !candidate.startsWith(cacheRoot)) return;
+        if (!Files.exists(candidate, LinkOption.NOFOLLOW_LINKS)) return;
+        Path safe = SafeFilePublication.requireSafeRegularFile(candidate, "downloaded catalog cache file");
+        Files.delete(safe);
     }
 
 
@@ -448,7 +502,7 @@ public class UpdateCollectionFromNetworkUseCase {
         }
 
         Path checkpoint = CatalogUpdateRecoveryFiles.checkpoint(collectionId);
-        if (!Files.isRegularFile(checkpoint)) {
+        if (!Files.isRegularFile(checkpoint, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalStateException("Recovery marker існує, але SQLite checkpoint відсутній: " + checkpoint);
         }
 

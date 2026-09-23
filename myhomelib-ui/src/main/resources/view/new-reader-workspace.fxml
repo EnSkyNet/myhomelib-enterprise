@@ -19,7 +19,7 @@
             <HBox spacing="8" alignment="CENTER_LEFT">
                 <Label text="ui.reader.sidebar.title" styleClass="workspace-title"/>
                 <Region HBox.hgrow="ALWAYS"/>
-                <Button text="×" accessibleText="ui.reader.sidebar.close" onAction="#closeAnnotationSidebar"/>
+                <Button text="ui.fxml.new_reader_workspace.value" accessibleText="ui.reader.sidebar.close" onAction="#closeAnnotationSidebar"/>
             </HBox>
             <TabPane fx:id="readerSidebarTabs" tabClosingPolicy="UNAVAILABLE" VBox.vgrow="ALWAYS">
                 <tabs>

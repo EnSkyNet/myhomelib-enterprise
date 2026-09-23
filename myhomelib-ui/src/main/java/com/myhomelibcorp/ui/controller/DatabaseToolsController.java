@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.service.DatabaseToolsService;
 import com.myhomelibcorp.application.progress.OperationStage;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -44,7 +46,7 @@ public class DatabaseToolsController {
             i18n.apply(root);
 
             Stage stage = new Stage();
-            stage.setTitle("Стан бібліотеки");
+            stage.setTitle(UiText.text("ui.fxml.integrity_check.library_health"));
             stage.setScene(new Scene(root, 960, 740));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
@@ -52,7 +54,7 @@ public class DatabaseToolsController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття діалогу перевірки цілісності", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.acb44428f0") + UiExceptionSupport.message(e));
         }
     }
 
@@ -60,24 +62,24 @@ public class DatabaseToolsController {
     public void handleVacuum() {
         Collection collection = appState.getCurrentLibraryCollection();
         if (collection == null) {
-            dialogService.showWarning("Немає колекції", "Спочатку виберіть колекцію.");
+            dialogService.showWarning(UiText.text("ui.java.database_tools_controller.2032bb9afc"), UiText.text("ui.java.database_tools_controller.6686ed3c16"));
             return;
         }
 
         if (!dialogService.showConfirmation(
-                "Оптимізація бази даних",
-                "Виконати VACUUM для колекції \"" + collection.getName() + "\"?",
-                "Це може зайняти деякий час. База даних буде оптимізована.")) {
+                UiText.text("ui.java.database_tools_controller.bd69af2a4d"),
+                UiText.text("ui.java.database_tools_controller.33ed04b762") + collection.getName() + "\"?",
+                UiText.text("ui.java.database_tools_controller.68958c4a0d"))) {
             return;
         }
 
-        appState.getStatusBar().setStatusText("Оптимізація бази даних...");
+        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.e253627eba"));
         appState.getStatusBar().setProgressVisible(true);
 
         String operationId = operationCenter.start(
-                "VACUUM — " + collection.getName(), collection.getId(), OperationStage.OPTIMIZING_DATABASE, false);
+                UiText.text("ui.database.operation.vacuum") + collection.getName(), collection.getId(), OperationStage.OPTIMIZING_DATABASE, false);
         executor.submit(() -> {
-                    databaseToolsService.vacuumCurrent();
+                    databaseToolsService.vacuumCurrent(collection.getId());
                     return null;
                 })
                 .whenComplete((ignored, error) -> UiExecutor.runOnUiThread(() -> {
@@ -86,12 +88,12 @@ public class DatabaseToolsController {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
                         log.error("Помилка оптимізації бази даних", cause);
-                        appState.getStatusBar().setStatusText("Помилка оптимізації");
-                        dialogService.showError("Помилка", "Не вдалося оптимізувати: " + cause.getMessage());
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.54aea21f05"));
+                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.16eb4308b4") + UiExceptionSupport.message(cause));
                     } else {
-                        operationCenter.complete(operationId, "VACUUM завершено");
-                        appState.getStatusBar().setStatusText("База даних оптимізована");
-                        dialogService.showInfo("Успішно", "База даних оптимізована.");
+                        operationCenter.complete(operationId, UiText.text("ui.java.database_tools_controller.27c663f71f"));
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.23711c3223"));
+                        dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.database_tools_controller.fdafb24283"));
                     }
                 }));
     }
@@ -99,18 +101,19 @@ public class DatabaseToolsController {
     @FXML
     public void handleRebuildIndex() {
         if (!dialogService.showConfirmation(
-                "Перебудова індексу",
-                "Ви впевнені, що хочете перебудувати пошуковий індекс?",
-                "Це може зайняти деякий час для великих бібліотек.")) {
+                UiText.text("ui.java.database_tools_controller.8cd525554e"),
+                UiText.text("ui.java.database_tools_controller.0d465679d3"),
+                UiText.text("ui.java.database_tools_controller.5a498bad62"))) {
             return;
         }
 
-        appState.getStatusBar().setStatusText("Перебудова індексу (фоновий режим)...");
+        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.b5f8b6c453"));
         appState.getStatusBar().setProgressVisible(true);
 
         Collection collection = appState.getCurrentLibraryCollection();
+        String expectedCollectionId = collection == null ? "" : collection.getId();
         String operationId = operationCenter.start(
-                "Перебудова пошукового індексу", collection == null ? "" : collection.getId(),
+                UiText.text("ui.java.database_tools_controller.5a1503fdd4"), expectedCollectionId,
                 OperationStage.UPDATING_SEARCH_INDEX, false);
         databaseToolsService.rebuildIndexAsync()
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
@@ -118,14 +121,27 @@ public class DatabaseToolsController {
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
-                        appState.getStatusBar().setStatusText("Помилка перебудови індексу");
-                        dialogService.showError("Помилка", "Не вдалося перебудувати індекс: " + cause.getMessage());
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.c86922def7"));
+                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.4856ebd467") + UiExceptionSupport.message(cause));
                     } else {
-                        int count = databaseToolsService.getIndexedDocumentCount();
-                        operationCenter.complete(operationId, "Проіндексовано " + count + " книг");
-                        appState.getStatusBar().setStatusText("Індекс перебудовано. Проіндексовано " + count + " книг.");
-                        dialogService.showInfo("Успішно",
-                                "Пошуковий індекс перебудовано.\nПроіндексовано " + count + " книг.");
+                        Integer count = null;
+                        try {
+                            count = databaseToolsService.getIndexedDocumentCount(expectedCollectionId);
+                        } catch (RuntimeException staleResult) {
+                            log.info("Index rebuild completed, but its count is no longer displayable for collection {}: {}",
+                                    expectedCollectionId, staleResult.getMessage());
+                        }
+                        if (count == null) {
+                            String completed = UiText.text("ui.database.index_rebuilt");
+                            operationCenter.complete(operationId, completed);
+                            appState.getStatusBar().setStatusText(completed);
+                            dialogService.showInfo(UiText.text("common.success"), completed);
+                        } else {
+                            operationCenter.complete(operationId, UiText.text("ui.java.database_tools_controller.e6d0d15525") + count + UiText.text("ui.java.database_tools_controller.faf0c7e42c"));
+                            appState.getStatusBar().setStatusText(UiText.text("ui.java.database_tools_controller.439b61118b") + count + UiText.text("ui.java.database_tools_controller.af17e2b02c"));
+                            dialogService.showInfo(UiText.text("common.success"),
+                                    UiText.text("ui.java.database_tools_controller.e62401de7e") + count + UiText.text("ui.java.database_tools_controller.af17e2b02c"));
+                        }
                     }
                 }));
     }
@@ -142,7 +158,7 @@ public class DatabaseToolsController {
             BackupController controller = loader.getController();
 
             Stage stage = new Stage();
-            stage.setTitle("Резервне копіювання");
+            stage.setTitle(UiText.text("ui.backup.confirm.start.title"));
             stage.setScene(new Scene(root, 620, 520));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
@@ -152,7 +168,7 @@ public class DatabaseToolsController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття діалогу резервного копіювання", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.acb44428f0") + UiExceptionSupport.message(e));
         }
     }
 
@@ -168,7 +184,7 @@ public class DatabaseToolsController {
             RestoreController controller = loader.getController();
 
             Stage stage = new Stage();
-            stage.setTitle("Відновлення з резервної копії");
+            stage.setTitle(UiText.text("ui.java.database_tools_controller.1cc5a302ca"));
             stage.setScene(new Scene(root, 620, 450));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
@@ -178,7 +194,7 @@ public class DatabaseToolsController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття діалогу відновлення", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.acb44428f0") + UiExceptionSupport.message(e));
         }
     }
 
@@ -193,7 +209,7 @@ public class DatabaseToolsController {
             StatisticsController controller = loader.getController();
 
             Stage stage = new Stage();
-            stage.setTitle("Статистика колекції");
+            stage.setTitle(UiText.text("ui.java.database_tools_controller.75ac49c498"));
             stage.setScene(new Scene(root, 600, 400));
             stage.initModality(Modality.WINDOW_MODAL);
             stage.initOwner(owner);
@@ -202,7 +218,7 @@ public class DatabaseToolsController {
 
         } catch (Exception e) {
             log.error("Помилка відкриття статистики", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити статистику: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.database_tools_controller.7db23c2ef2") + UiExceptionSupport.message(e));
         }
     }
 }

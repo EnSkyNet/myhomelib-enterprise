@@ -1,8 +1,10 @@
 package com.myhomelibcorp.ui.reader;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.annotation.AnnotationAnchorData;
 import com.myhomelibcorp.application.annotation.AnnotationManagerType;
 import com.myhomelibcorp.application.annotation.AnnotationService;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.reader.api.ReaderAnnotationActivation;
 import com.myhomelibcorp.reader.api.ReaderAnnotationOverlay;
 import com.myhomelibcorp.reader.api.ReaderDocument;
@@ -48,7 +50,7 @@ public class ReaderAnnotationCoordinator {
     public void createHighlight(Context context, ReaderSelection selection) {
         if (!usable(context) || selection == null || selection.text() == null || selection.text().isBlank()) return;
         AnnotationAnchorData anchor = ReaderAnnotationPresenter.anchor(context.bookId(), context.artifactId(), selection);
-        uiBackgroundExecutor.submit(() -> annotationService.createHighlight(
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.createHighlight(
                         anchor, AnnotationService.DEFAULT_COLOR, Set.of()))
                 .thenAccept(saved -> complete(context, true, "ui.reader.annotation.highlight_saved"))
                 .exceptionally(error -> fail(context, error));
@@ -65,7 +67,7 @@ public class ReaderAnnotationCoordinator {
         }
 
         AnnotationAnchorData anchor = ReaderAnnotationPresenter.anchor(context.bookId(), context.artifactId(), selection);
-        uiBackgroundExecutor.submit(() -> annotationService.createNote(
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.createNote(
                         anchor, edited.color(), edited.note(), edited.tags()))
                 .thenAccept(saved -> complete(context, true, "ui.reader.annotation.note_saved"))
                 .exceptionally(error -> fail(context, error));
@@ -96,7 +98,7 @@ public class ReaderAnnotationCoordinator {
             return;
         }
 
-        uiBackgroundExecutor.submit(() -> annotationService.update(
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.update(
                         annotation.id(), edited.note(), edited.color(), edited.tags()))
                 .thenAccept(saved -> complete(context, false, "ui.reader.annotation.updated"))
                 .exceptionally(error -> fail(context, error));
@@ -112,7 +114,7 @@ public class ReaderAnnotationCoordinator {
             return;
         }
 
-        uiBackgroundExecutor.submit(() -> {
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> {
             annotationService.delete(annotation.id());
             return null;
         }).thenAccept(ignored -> complete(context, false, "ui.reader.annotation.deleted"))
@@ -165,7 +167,7 @@ public class ReaderAnnotationCoordinator {
     }
 
     private void persistAnchor(Context context, String annotationId, AnnotationAnchorData anchor) {
-        uiBackgroundExecutor.submit(() -> annotationService.reanchor(annotationId, anchor))
+        uiBackgroundExecutor.submitCollectionScoped(LibraryOperationType.ANNOTATION, () -> annotationService.reanchor(annotationId, anchor))
                 .thenAccept(saved -> complete(context, false, "ui.reader.annotation.reanchored"))
                 .exceptionally(error -> fail(context, error));
     }
@@ -254,9 +256,7 @@ public class ReaderAnnotationCoordinator {
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable root = rootCause(error);
-        String message = root.getMessage();
-        return message == null || message.isBlank() ? root.getClass().getSimpleName() : message;
+        return UiExceptionSupport.message(error);
     }
 
     public record Context(

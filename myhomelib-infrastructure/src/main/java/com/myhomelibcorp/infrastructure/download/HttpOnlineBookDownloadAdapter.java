@@ -4,6 +4,7 @@ import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
 import com.myhomelibcorp.application.port.out.download.OnlineBookDownloadPort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.download.scenario.ConnectionScriptExecutor;
 import com.myhomelibcorp.infrastructure.download.scenario.DownloadScenarioCommand;
@@ -11,7 +12,6 @@ import com.myhomelibcorp.infrastructure.download.scenario.DownloadScenarioParser
 import com.myhomelibcorp.infrastructure.download.source.DownloadMode;
 import com.myhomelibcorp.infrastructure.download.source.DownloadSourceResolver;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.shared.util.Sha256Support;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -28,8 +28,8 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
@@ -104,16 +104,21 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         Path root = collection.getRootFolder() != null
                 ? collection.getRootFolder().toAbsolutePath().normalize()
                 : Path.of(System.getProperty("user.home"), ".myhomelibcorp", "downloads", collection.getId()).toAbsolutePath().normalize();
-        Files.createDirectories(root);
+        root = SafeFilePublication.createDirectoriesNoLinks(root, "Online book download root");
 
         boolean archived = book.getArchiveEntry() != null && !book.getArchiveEntry().isBlank();
         String relative = archived ? normalizeArchiveReference(book) : normalizeLooseReference(book);
         if (relative.isBlank()) throw new IllegalArgumentException("У книги відсутній шлях для завантаження");
         Path target = safeResolve(root, relative).toAbsolutePath().normalize();
 
-        if (!forceRefresh && Files.isRegularFile(target) && Files.size(target) > 0) {
-            String resolvedArchiveEntry = payloadValidator.validate(target, target, book, archived);
-            return buildResult(book, root, relative, target, archived, resolvedArchiveEntry);
+        if (!forceRefresh && Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+            Path safeCachedTarget = SafeFilePublication.requireSafeRegularFile(
+                    target, "Online book cached target");
+            if (Files.size(safeCachedTarget) > 0) {
+                String resolvedArchiveEntry = payloadValidator.validate(
+                        safeCachedTarget, safeCachedTarget, book, archived);
+                return buildResult(book, root, relative, safeCachedTarget, archived, resolvedArchiveEntry);
+            }
         }
 
         // Перевіряємо, чи інший запит уже завантажує цей самий файл
@@ -175,12 +180,31 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                                   AtomicBoolean cancel,
                                   DoubleConsumer progress) throws Exception {
         log.info("DIRECT DOWNLOAD START: bookId={}, target={}", book.getId(), target);
-        Files.createDirectories(target.getParent());
+        SafeFilePublication.createDirectoriesNoLinks(target.getParent(), "Online book download directory");
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(target, "Online book download target");
         Path part = target.resolveSibling(target.getFileName() + ".part");
         Path partMeta = target.resolveSibling(target.getFileName() + ".part.meta");
 
         URI uri = buildUri(baseUrl, relative, book);
         log.info("DIRECT DOWNLOAD URL: {}", SensitiveDataSanitizer.sanitizeUri(uri));
+        // Cancellation before the network operation must not mutate resumable state.
+        checkCancelled(cancel);
+
+        OwnedDownloadFile.Snapshot partSnapshot = OwnedDownloadFile.snapshot(part, "Online book partial download");
+        HttpResumeSupport.ResumeMetadata resume = partSnapshot.size() > 0 ? HttpResumeSupport.read(partMeta, uri) : null;
+        if (partSnapshot.size() > 0 && (resume == null || resume.validator().isBlank())) {
+            preserveStaleDownloadState(part, "Untrusted online-book partial download");
+            preserveStaleDownloadState(partMeta, "Untrusted online-book resume metadata");
+            partSnapshot = OwnedDownloadFile.Snapshot.absent();
+            resume = null;
+        } else if (partSnapshot.exists() && partSnapshot.size() == 0L) {
+            preserveStaleDownloadState(part, "Zero-length online-book partial download");
+            partSnapshot = OwnedDownloadFile.Snapshot.absent();
+        }
+        if (!partSnapshot.exists() && Files.exists(partMeta, LinkOption.NOFOLLOW_LINKS)) {
+            preserveStaleDownloadState(partMeta, "Orphaned online-book resume metadata");
+            resume = null;
+        }
 
         int retries = clamp(settings.getInt("online.retryCount", 3), 0, 6);
         int attempts = retries + 1;
@@ -189,14 +213,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         for (int attempt = 1; attempt <= attempts; attempt++) {
             checkCancelled(cancel);
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
-                long existing = Files.isRegularFile(part) ? Files.size(part) : 0L;
-                HttpResumeSupport.ResumeMetadata resume = existing > 0 ? HttpResumeSupport.read(partMeta, uri) : null;
-                if (existing > 0 && (resume == null || resume.validator().isBlank())) {
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
-                    existing = 0L;
-                    resume = null;
-                }
+                long existing = partSnapshot.size();
                 HttpResponse<InputStream> response = client.send(
                         buildRequest(uri, collection, existing, resume), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
@@ -208,8 +225,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
                 if (status == 416 && existing > 0) {
                     try (InputStream responseBody = response.body()) { }
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedPartial(part, partSnapshot, "HTTP 416 partial cleanup");
+                    removeOwnedResumeMeta(partMeta, resume, "HTTP 416 resume-metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     if (attempt < attempts) continue;
                     throw new IOException("Сервер відхилив відновлення часткового завантаження (HTTP 416): "
                             + SensitiveDataSanitizer.sanitizeUri(uri));
@@ -228,8 +247,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
                 if (status == 206 && existing <= 0) {
                     try (InputStream responseBody = response.body()) { }
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedResumeMeta(partMeta, resume, "Unexpected HTTP 206 metadata cleanup");
                     throw new NonRetryableHttpException("Сервер повернув часткову відповідь HTTP 206 без Range request: "
                             + SensitiveDataSanitizer.sanitizeUri(uri));
                 }
@@ -239,35 +257,45 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                         HttpResumeSupport.validateContentRange(response, existing, uri);
                     } catch (IOException invalidRange) {
                         try (InputStream responseBody = response.body()) { }
-                        Files.deleteIfExists(part);
-                        Files.deleteIfExists(partMeta);
+                        removeOwnedPartial(part, partSnapshot, "Invalid Content-Range partial cleanup");
+                        removeOwnedResumeMeta(partMeta, resume, "Invalid Content-Range metadata cleanup");
+                        partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                        resume = null;
                         throw invalidRange;
                     }
                 } else if (existing > 0) {
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedPartial(part, partSnapshot, "Restarted download partial cleanup");
+                    removeOwnedResumeMeta(partMeta, resume, "Restarted download metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     existing = 0L;
                 }
+
                 long responseLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
                 long maxDownloadBytes = maxDownloadBytes();
                 long minFreeSpaceBytes = minFreeSpaceBytes();
                 if (existing > maxDownloadBytes
                         || (responseLength >= 0 && responseLength > maxDownloadBytes - existing)) {
                     try (InputStream responseBody = response.body()) { }
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedPartial(part, partSnapshot, "Oversized partial cleanup");
+                    removeOwnedResumeMeta(partMeta, resume, "Oversized metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     throw new NonRetryableHttpException(downloadLimitMessage(maxDownloadBytes));
                 }
+
                 ensureDownloadSpace(target.getParent(), minFreeSpaceBytes,
                         responseLength > 0 ? responseLength : 0L);
-                HttpResumeSupport.write(partMeta, uri, response);
+                resume = HttpResumeSupport.write(partMeta, uri, response,
+                        resume == null ? null : resume.ownershipHash());
                 long total = responseLength > 0 ? existing + responseLength : -1L;
                 long done = existing;
-                StandardOpenOption[] outputOptions = resumed
-                        ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND}
-                        : new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE};
-                try (InputStream in = response.body();
-                     OutputStream out = Files.newOutputStream(part, outputOptions)) {
+
+                OwnedDownloadFile.Session session = OwnedDownloadFile.open(
+                        part, partSnapshot, resumed, "Online book partial download");
+                Exception bodyFailure = null;
+                try (InputStream in = response.body()) {
+                    OutputStream out = session.outputStream();
                     int bufferKb = clamp(settings.getInt("online.downloadBufferKb", 256), 32, 1024);
                     byte[] buffer = new byte[bufferKb * 1024];
                     OnlineProgressThrottle progressThrottle = new OnlineProgressThrottle(done);
@@ -288,24 +316,47 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                             progress.accept(Math.min(1.0, (double) done / total));
                         }
                     }
-                } catch (Exception e) {
-                    throw e;
+                    out.flush();
+                } catch (Exception failure) {
+                    bodyFailure = failure;
                 }
+                try {
+                    partSnapshot = session.finish();
+                } catch (IOException ownershipFailure) {
+                    if (bodyFailure != null) ownershipFailure.addSuppressed(bodyFailure);
+                    throw new NonRetryableHttpException(
+                            "Частковий файл завантаження був підмінений під час запису: " + part.getFileName(),
+                            ownershipFailure);
+                } finally {
+                    try { session.close(); } catch (IOException ignoredClose) { }
+                }
+                if (bodyFailure != null) throw bodyFailure;
 
                 checkCancelled(cancel);
                 String resolvedArchiveEntry;
                 try {
                     resolvedArchiveEntry = payloadValidator.validate(part, target, book, archived);
+                    SafeFilePublication.requireOwnedPath(part, partSnapshot.sha256(), "Validated online-book partial");
                     log.info("PAYLOAD VALIDATED: bookId={}, bytes={}, archived={}, resolvedArchiveEntry={}",
-                            book.getId(), Files.size(part), archived, resolvedArchiveEntry);
+                            book.getId(), partSnapshot.size(), archived, resolvedArchiveEntry);
                 } catch (IOException semanticFailure) {
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedPartial(part, partSnapshot, "Invalid payload partial cleanup");
+                    removeOwnedResumeMeta(partMeta, resume, "Invalid payload metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     throw new NonRetryableHttpException(semanticFailure.getMessage());
                 }
 
-                AtomicFileSupport.moveReplacing(part, target);
-                Files.deleteIfExists(partMeta);
+                try {
+                    SafeFilePublication.publishReplacingIfUnchanged(
+                            part, target, expectedTargetHash, "Online book download");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                } catch (IOException publicationFailure) {
+                    throw new NonRetryableHttpException("Файл призначення змінився під час завантаження: "
+                            + target.getFileName(), publicationFailure);
+                }
+                removeOwnedResumeMeta(partMeta, resume, "Online-book resume metadata cleanup");
+                resume = null;
                 progress.accept(1.0);
 
                 log.info("STORAGE COMMIT: target={}, replace=atomic-with-safe-fallback", target);
@@ -314,8 +365,10 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
             } catch (DownloadCancelledException e) {
                 throw e;
             } catch (NonRetryableHttpException e) {
-                Files.deleteIfExists(part);
-                Files.deleteIfExists(partMeta);
+                try { removeOwnedPartial(part, partSnapshot, "Non-retryable partial cleanup"); }
+                catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
+                try { removeOwnedResumeMeta(partMeta, resume, "Non-retryable metadata cleanup"); }
+                catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                 throw e;
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -334,6 +387,21 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
         throw OnlineRetryPolicy.safeNetworkFailure("Не вдалося завантажити книгу", uri, last);
     }
 
+    private static void removeOwnedPartial(
+            Path part, OwnedDownloadFile.Snapshot snapshot, String role) throws IOException {
+        if (snapshot != null && snapshot.exists()) {
+            OwnedDownloadFile.removeIfOwned(part, snapshot, role);
+        }
+    }
+
+    private static void removeOwnedResumeMeta(
+            Path partMeta, HttpResumeSupport.ResumeMetadata resume, String role) throws IOException {
+        if (resume != null && resume.ownershipHash() != null && !resume.ownershipHash().isBlank()
+                && Files.exists(partMeta, LinkOption.NOFOLLOW_LINKS)) {
+            SafeFilePublication.removeIfOwned(partMeta, resume.ownershipHash(), role);
+        }
+    }
+
     /**
      * Завантаження через ConnectionScript.
      */
@@ -341,6 +409,8 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
                                              Path root, boolean archived, AtomicBoolean cancel,
                                              DoubleConsumer progress) throws Exception {
         log.info("SCRIPT DOWNLOAD START: bookId={}, target={}", book.getId(), target);
+        SafeFilePublication.createDirectoriesNoLinks(target.getParent(), "ConnectionScript download directory");
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(target, "ConnectionScript download target");
         ConnectionScriptExecutor executor = new ConnectionScriptExecutor(settings, payloadValidator, requestLimiter);
         String baseUrl = effectiveBaseUrl(collection);
         Collection scriptCollection = baseUrl == null || baseUrl.isBlank()
@@ -355,11 +425,25 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
         // ConnectionScriptExecutor validates the final response (CHECK or mandatory implicit check).
         // Commit exactly those validated bytes; do not rescan the same archive after the atomic move.
-        AtomicFileSupport.moveReplacing(result.payload(), target);
+        SafeFilePublication.publishReplacingIfUnchanged(
+                result.payload(), target, expectedTargetHash, "ConnectionScript download");
         progress.accept(1.0);
         log.info("STORAGE COMMIT: target={}, replace=atomic-with-safe-fallback, mode=CONNECTION_SCRIPT", target);
         log.info("SCRIPT DOWNLOAD COMPLETE: file={}, size={}", target, Files.size(target));
         return resolvedArchiveEntry;
+    }
+
+    private static long safePartialSize(Path part) throws IOException {
+        if (!Files.exists(part, LinkOption.NOFOLLOW_LINKS)) return 0L;
+        Path safe = SafeFilePublication.requireSafeRegularFile(part, "Online book partial download");
+        return Files.size(safe);
+    }
+
+    private static void preserveStaleDownloadState(Path path, String role) throws IOException {
+        if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+        String hash = SafeFilePublication.sha256(path, role);
+        Path evidence = SafeFilePublication.detachIfOwned(path, hash, role);
+        log.warn("Preserved stale download state as evidence: {}", evidence);
     }
 
     /**
@@ -701,6 +785,7 @@ public class HttpOnlineBookDownloadAdapter implements OnlineBookDownloadPort {
 
     private static class NonRetryableHttpException extends IOException {
         NonRetryableHttpException(String message) { super(message); }
+        NonRetryableHttpException(String message, Throwable cause) { super(message, cause); }
     }
 
     public static class DownloadCancelledException extends IOException {

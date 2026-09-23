@@ -21,7 +21,7 @@ class NewReaderAudiobookPersistenceTest {
         BookmarkRepository bookmarks = mock(BookmarkRepository.class);
         LocalizationService i18n = mock(LocalizationService.class);
         when(progress.findByBookId("book-1")).thenReturn(Optional.empty());
-        NewReaderPersistenceService service = new NewReaderPersistenceService(progress, bookmarks, i18n);
+        NewReaderPersistenceService service = newPersistence(progress, bookmarks, i18n);
 
         assertThat(service.saveAudioPosition("book-1", new AudioPosition(12_345L, 2, 4), 67.5)).isTrue();
         ArgumentCaptor<ReadingProgressDto> captor = ArgumentCaptor.forClass(ReadingProgressDto.class);
@@ -35,7 +35,7 @@ class NewReaderAudiobookPersistenceTest {
         ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
         BookmarkRepository bookmarks = mock(BookmarkRepository.class);
         LocalizationService i18n = mock(LocalizationService.class);
-        NewReaderPersistenceService service = new NewReaderPersistenceService(progress, bookmarks, i18n);
+        NewReaderPersistenceService service = newPersistence(progress, bookmarks, i18n);
 
         when(progress.findByBookId("audio")).thenReturn(Optional.of(ReadingProgressDto.builder().bookId("audio").anchorId("audio:99:1:3").build()));
         when(progress.findByBookId("text")).thenReturn(Optional.of(ReadingProgressDto.builder().bookId("text").anchorId("0:99:1:3").build()));
@@ -48,10 +48,21 @@ class NewReaderAudiobookPersistenceTest {
         BookmarkRepository bookmarks = mock(BookmarkRepository.class);
         LocalizationService i18n = mock(LocalizationService.class);
         when(bookmarks.save(any(Bookmark.class))).thenAnswer(invocation -> invocation.getArgument(0));
-        NewReaderPersistenceService service = new NewReaderPersistenceService(progress, bookmarks, i18n);
+        NewReaderPersistenceService service = newPersistence(progress, bookmarks, i18n);
 
         Bookmark saved = service.saveAudioBookmark("book-1", new AudioPosition(5000, 1, 2), 40.0, "Spot", "");
         assertThat(saved.getParagraphId()).isEqualTo("audio:5000:1:2");
         assertThat(service.audioBookmarkToPosition(saved)).contains(new AudioPosition(5000, 1, 2));
+    }
+
+    private static NewReaderPersistenceService newPersistence(
+            ReadingProgressRepository progress, BookmarkRepository bookmarks, LocalizationService i18n) {
+        var lifecycle = org.mockito.Mockito.mock(
+                com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort.class);
+        org.mockito.Mockito.when(lifecycle.getCurrentCollection()).thenReturn(
+                new com.myhomelibcorp.domain.model.collection.Collection(
+                        "c1", "Test", null, null, 0, null, null, null, null));
+        return new NewReaderPersistenceService(progress, bookmarks, i18n, lifecycle,
+                new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
     }
 }

@@ -9,35 +9,35 @@
       spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
       prefWidth="620" prefHeight="450">
 
-    <Label text="📂 Відновлення з резервної копії"
+    <Label text="ui.fxml.restore_dialog.restore_from_backup"
            style="-fx-font-size: 18px; -fx-font-weight: bold; -fx-text-fill: -mhl-text;"/>
 
     <Separator/>
 
     <!-- Шлях до резервної копії -->
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Label text="📁 Папка з копією:" prefWidth="120" style="-fx-font-weight: bold;"/>
-        <TextField fx:id="backupPathField" HBox.hgrow="ALWAYS" promptText="Виберіть папку з резервною копією..."/>
-        <Button fx:id="selectPathButton" text="📂 Вибрати" onAction="#onSelectPath"
+        <Label text="ui.fxml.restore_dialog.backup_folder" prefWidth="120" style="-fx-font-weight: bold;"/>
+        <TextField fx:id="backupPathField" HBox.hgrow="ALWAYS" promptText="ui.fxml.restore_dialog.select_the_backup_folder"/>
+        <Button fx:id="selectPathButton" text="ui.fxml.restore_dialog.choose" onAction="#onSelectPath"
                 style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 
     <Separator/>
 
     <!-- Опції відновлення -->
-    <Label text="📋 Що відновлювати:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+    <Label text="ui.fxml.restore_dialog.what_to_restore" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
     <VBox spacing="5" style="-fx-padding: 10; -fx-background-color: -mhl-panel; -fx-border-color: -mhl-border; -fx-border-radius: 5;">
-        <CheckBox fx:id="restoreDatabaseCheckBox" text="📊 База даних каталогу (повне відновлення)" selected="true"/>
-        <CheckBox fx:id="restoreMetadataCheckBox" text="👤 Версійні користувацькі дані (LibID)" selected="true"/>
-        <Label text="Зніміть «База даних каталогу», щоб перенести лише оцінки, прогрес читання, відгуки, закладки, групи, історію, фільтри та налаштування читалки на свіжий каталог за LibID. Після відновлення пошуковий індекс перебудовується, а кеш обкладинок формується на вимогу." wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
+        <CheckBox fx:id="restoreDatabaseCheckBox" text="ui.fxml.restore_dialog.catalog_database_full_restore" selected="true"/>
+        <CheckBox fx:id="restoreMetadataCheckBox" text="ui.fxml.restore_dialog.versioned_user_data_libid" selected="true"/>
+        <Label text="ui.fxml.restore_dialog.clear_catalog_database_to_transfer_only_rati_563fde1" wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
     </VBox>
 
     <Separator/>
 
     <!-- Прогрес -->
     <VBox spacing="5">
-        <Label fx:id="statusLabel" text="Виберіть папку з резервною копією" style="-fx-text-fill: -mhl-muted-text;"/>
+        <Label fx:id="statusLabel" text="ui.fxml.restore_dialog.select_the_backup_folder_697a0c0" style="-fx-text-fill: -mhl-muted-text;"/>
         <ProgressBar fx:id="progressBar" prefWidth="580" visible="false"/>
     </VBox>
 
@@ -47,9 +47,9 @@
 
     <!-- Кнопки -->
     <HBox spacing="10" alignment="CENTER_RIGHT">
-        <Button fx:id="restoreButton" text="📂 Відновити" onAction="#onRestore" disable="true"
+        <Button fx:id="restoreButton" text="ui.fxml.restore_dialog.restore" onAction="#onRestore" disable="true"
                 style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold; -fx-padding: 8 25;"/>
-        <Button fx:id="closeButton" text="✕ Закрити" onAction="#onClose"
+        <Button fx:id="closeButton" text="ui.fxml.restore_dialog.close" onAction="#onClose"
                 style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 

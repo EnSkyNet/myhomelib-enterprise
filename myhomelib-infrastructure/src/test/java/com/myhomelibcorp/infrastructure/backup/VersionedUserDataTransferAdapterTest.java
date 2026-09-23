@@ -265,6 +265,117 @@ class VersionedUserDataTransferAdapterTest {
     }
 
     @Test
+    void exportDoesNotOverwriteDestinationChangedDuringGeneration() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-export-race").toString());
+        Db source = db(tempDir.resolve("source-export-race.db"));
+        createSchema(source.jdbc());
+        Path target = tempDir.resolve("portable-export-race.json");
+        Files.writeString(target, "ORIGINAL");
+
+        MutatingFindSettings settings = new MutatingFindSettings(() -> {
+            try {
+                Files.writeString(target, "FOREIGN REPLACEMENT");
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(source), settings, mapper);
+
+        assertThatThrownBy(() -> adapter.exportTo(target))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("portable user data");
+        assertThat(Files.readString(target)).isEqualTo("FOREIGN REPLACEMENT");
+    }
+
+    @Test
+    void restoreRejectsSymlinkSourceBeforeDatabaseMutation() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-import-symlink").toString());
+        Db target = db(tempDir.resolve("target-import-symlink.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','SYM',3,0,NULL)");
+
+        Path real = tempDir.resolve("real-import.json");
+        Files.writeString(real, portableWithBookState(
+                "{\"libId\":\"SYM\",\"sourceBookId\":\"new\",\"rate\":9,\"progress\":0,\"review\":\"bad\"}"));
+        Path link = tempDir.resolve("linked-import.json");
+        Files.createSymbolicLink(link, real.getFileName());
+
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), new MapSettings(), mapper);
+        assertThatThrownBy(() -> adapter.restoreFrom(link))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("symbolic link");
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(3);
+    }
+
+    @Test
+    void restoreUsesStablePrivateSnapshotWhenOriginalManifestChangesMidRestore() throws Exception {
+        Path dataDir = tempDir.resolve("appdata-stable-import");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        Files.createDirectories(dataDir.resolve("config"));
+        Db target = db(tempDir.resolve("target-stable-import.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','SNAP',1,0,NULL)");
+
+        Path manifest = tempDir.resolve("stable-import.json");
+        String json = portableWithBookState(
+                "{\"libId\":\"SNAP\",\"sourceBookId\":\"new\",\"rate\":8,\"progress\":0,\"review\":\"snapshot\"}")
+                .replace("\"global\":null", "\"global\":{\"fontFamily\":\"SnapshotFont\"}");
+        Files.writeString(manifest, json);
+
+        MutatingReplaceSettings settings = new MutatingReplaceSettings(() -> {
+            try {
+                Files.writeString(manifest, "{ BROKEN AFTER SNAPSHOT");
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), settings, mapper);
+
+        adapter.restoreFrom(manifest);
+
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(8);
+        assertThat(Files.readString(dataDir.resolve("config/reader-preferences.json"))).contains("SnapshotFont");
+        assertThat(Files.readString(manifest)).startsWith("{ BROKEN");
+    }
+
+    @Test
+    void concurrentReaderPreferencesReplacementIsPreservedAndDatabaseRollsBack() throws Exception {
+        Path dataDir = tempDir.resolve("appdata-reader-race");
+        System.setProperty("myhomelib.dataDir", dataDir.toString());
+        Files.createDirectories(dataDir.resolve("config"));
+        Path readerFile = dataDir.resolve("config/reader-preferences.json");
+        Files.writeString(readerFile, "{\"fontFamily\":\"Old\"}");
+
+        Db target = db(tempDir.resolve("target-reader-race.db"));
+        createSchema(target.jdbc());
+        target.jdbc().update("INSERT INTO books(id,lib_id,rate,progress,review) VALUES('new','RR',2,0,NULL)");
+        Path manifest = tempDir.resolve("reader-race.json");
+        String json = portableWithBookState(
+                "{\"libId\":\"RR\",\"sourceBookId\":\"new\",\"rate\":9,\"progress\":0,\"review\":\"new\"}")
+                .replace("\"global\":null", "\"global\":{\"fontFamily\":\"Imported\"}");
+        Files.writeString(manifest, json);
+
+        MutatingReplaceSettings settings = new MutatingReplaceSettings(() -> {
+            try {
+                Files.writeString(readerFile, "{\"fontFamily\":\"FOREIGN\"}");
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
+        });
+        VersionedUserDataTransferAdapter adapter =
+                new VersionedUserDataTransferAdapter(manager(target), settings, mapper);
+
+        assertThatThrownBy(() -> adapter.restoreFrom(manifest))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("changed before detach");
+        assertThat(target.jdbc().queryForObject("SELECT rate FROM books WHERE id='new'", Integer.class)).isEqualTo(2);
+        assertThat(Files.readString(readerFile)).contains("FOREIGN");
+    }
+
+    @Test
     void sequentiallyMigratesPreviousV1Manifest() throws Exception {
         System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-v1").toString());
         Db target = db(tempDir.resolve("target-v1.db"));
@@ -374,6 +485,42 @@ class VersionedUserDataTransferAdapterTest {
             if (failNextReplace) {
                 failNextReplace = false;
                 throw new IllegalStateException("simulated settings persistence failure");
+            }
+        }
+    }
+
+    private static final class MutatingFindSettings extends MapSettings {
+        private final Runnable mutation;
+        private boolean mutated;
+
+        private MutatingFindSettings(Runnable mutation) {
+            this.mutation = mutation;
+        }
+
+        @Override
+        public Map<String, String> findByPrefix(String prefix) {
+            if (!mutated) {
+                mutated = true;
+                mutation.run();
+            }
+            return super.findByPrefix(prefix);
+        }
+    }
+
+    private static final class MutatingReplaceSettings extends MapSettings {
+        private final Runnable mutation;
+        private boolean mutated;
+
+        private MutatingReplaceSettings(Runnable mutation) {
+            this.mutation = mutation;
+        }
+
+        @Override
+        public void replaceByPrefix(String prefix, Map<String, String> values) {
+            super.replaceByPrefix(prefix, values);
+            if (!mutated) {
+                mutated = true;
+                mutation.run();
             }
         }
     }

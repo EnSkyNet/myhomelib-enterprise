@@ -1,5 +1,9 @@
 package com.myhomelibcorp.ui.presenter;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+import com.myhomelibcorp.ui.collection.CollectionUiCommitGuard;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.service.CollectionManagementService;
@@ -33,17 +37,18 @@ public class CollectionPresenter {
     private final CollectionManagementService collectionManagementService;
     private final SwitchCollectionUseCase switchCollectionUseCase;
     private final ApplicationState appState;
+    private final CollectionUiCommitGuard collectionUiCommitGuard;
 
     public void showCreateCollectionDialog(ObservableList<CollectionDto> collectionList, Stage owner) {
-        Optional<String> nameResult = dialogService.showTextInput("Створити колекцію",
-                "Введіть назву нової колекції", "Назва:", "");
+        Optional<String> nameResult = dialogService.showTextInput(UiText.text("ui.java.collection_presenter.365d3d5a7f"),
+                UiText.text("ui.java.collection_presenter.1dc64220a2"), UiText.text("common.name.label"), "");
         if (nameResult.isEmpty() || nameResult.get().isBlank()) {
             return;
         }
         String name = nameResult.get();
 
         File dbFile = fileChooserService.chooseFileToSave(owner,
-                "Виберіть місце для бази даних колекції",
+                UiText.text("ui.java.collection_presenter.bcf5fcd230"),
                 name + ".db");
         String dbFilePath = dbFile != null ? dbFile.getAbsolutePath() : null;
 
@@ -64,18 +69,18 @@ public class CollectionPresenter {
 
             Collection collection = createCollectionUseCase.execute(request);
 
-            appState.getStatusBar().setStatusText("Колекцію '" + name + "' створено");
+            appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_presenter.581a96f07f") + name + UiText.text("ui.java.collection_presenter.eccde05e49"));
 
             Collection activated = switchCollectionUseCase.execute(collection);
-            appState.setCurrentLibraryCollection(activated);
-            if (collectionList != null) {
-                loadCollections(collectionList);
-            }
-
-            appState.getStatusBar().setStatusText("Переключено на колекцію: " + activated.getName());
+            boolean committed = collectionUiCommitGuard.runIfStillActive(activated.getId(), () -> {
+                appState.setCurrentLibraryCollection(activated);
+                if (collectionList != null) loadCollections(collectionList);
+                appState.getStatusBar().setStatusText(UiText.text("ui.java.collection_presenter.c3d5ffb6d9") + activated.getName());
+            });
+            if (!committed && collectionList != null) loadCollections(collectionList);
 
         } catch (Exception e) {
-            dialogService.showError("Помилка", e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiExceptionSupport.message(e));
             log.error("Помилка створення колекції", e);
         }
     }
@@ -88,7 +93,7 @@ public class CollectionPresenter {
             collectionList.setAll(collections);
         } catch (Exception e) {
             log.error("Помилка завантаження колекцій", e);
-            dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_presenter.6462ec753f") + UiExceptionSupport.message(e));
         }
     }
 
@@ -102,10 +107,6 @@ public class CollectionPresenter {
 
     public long getDatabaseSize() {
         return collectionManagementService.getDatabaseSize();
-    }
-
-    public void closeCurrentCollection() {
-        collectionManagementService.closeCurrentCollection();
     }
 
     public Collection getCurrentCollection() {

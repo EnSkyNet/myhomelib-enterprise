@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.activity.BookActivityService;
 import com.myhomelibcorp.application.activity.BookActivitySummary;
 import com.myhomelibcorp.application.filter.BookFilterSpec;
@@ -76,7 +78,7 @@ public class BookLoaderService {
         BookPageCursor submittedCursor = titleCursorEligible ? cursor : null;
         BookPageDirection submittedPageDirection = titleCursorEligible ? pageDirection : null;
 
-        executor.submit(() -> {
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
             PageResult<BookDto> result;
             if (submittedCursor != null && submittedPageDirection != null) {
                 result = loadBooksUseCase.executeTitleCursor(
@@ -134,13 +136,13 @@ public class BookLoaderService {
             vm.setSelectedBook(null);
             appState.getBookDetails().setCurrentBook(null);
             appState.getStatusBar().setStatusText(
-                    String.format("Показано %d з %d книг", vms.size(), result.totalElements())
+                    String.format(UiText.text("ui.java.book_loader_service.9cb50d4b3e"), vms.size(), result.totalElements())
             );
         })).exceptionally(ex -> {
             UiExecutor.runOnUiThread(() -> {
                 if (!isCurrent(requestId, collectionId)) return;
                 vm.setLoading(false);
-                appState.getStatusBar().setStatusText("Помилка завантаження: " + ex.getMessage());
+                appState.getStatusBar().setStatusText(UiText.text("ui.java.book_loader_service.a19816ac29") + UiExceptionSupport.message(ex));
             });
             log.error("Failed to load books", ex);
             return null;

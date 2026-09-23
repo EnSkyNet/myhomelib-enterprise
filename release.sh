@@ -12,6 +12,7 @@ PY
 export MHL_SKIP_BUILD=1
 ./package-portable.sh
 ./smoke-desktop.sh
+./tools/smoke-runtime-tools.sh
 ./smoke-portable.sh
 # The app-image is an intermediate packaging directory. The versioned portable
 # archive already contains it, so remove the raw image before checksums/publication.

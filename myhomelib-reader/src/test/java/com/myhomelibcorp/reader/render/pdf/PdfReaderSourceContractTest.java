@@ -11,7 +11,7 @@ class PdfReaderSourceContractTest {
     @Test
     void rendererKeepsHeavyWorkOffFxThreadAndGuardsStaleResults() throws Exception {
         String source = Files.readString(Path.of("src/main/java/com/myhomelibcorp/reader/render/pdf/PdfReaderView.java"));
-        assertThat(source).contains("Executors.newSingleThreadExecutor", "submitTrackedRender", "Platform.runLater",
+        assertThat(source).contains("ThreadPoolExecutor", "renderExecutor.purge()", "submitTrackedRender", "Platform.runLater",
                 "AtomicLong generation", "AtomicLong singleRenderGeneration", "ConcurrentHashMap.newKeySet",
                 "configToken != generation.get()", "task.cancel(true)", "cancelOutstandingRenders", "session != current");
     }

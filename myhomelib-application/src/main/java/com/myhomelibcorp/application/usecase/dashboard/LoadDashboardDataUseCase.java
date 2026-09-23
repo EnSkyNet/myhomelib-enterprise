@@ -6,6 +6,8 @@ import com.myhomelibcorp.application.dto.DashboardData;
 import com.myhomelibcorp.application.dto.LibraryStatistics;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
@@ -35,50 +37,73 @@ public class LoadDashboardDataUseCase {
     private final ExecutorPort executorPort;
     private final SessionService sessionService;
     private final ContinueReadingService continueReadingService;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public CompletableFuture<DashboardData> execute() {
-        CompletableFuture<LibraryStatistics> statsFuture = executorPort.submit(
-                statisticsRepository::getStatistics);
+        final LibraryOperationCoordinator.Lease lease;
+        try {
+            // The lease is acquired before any worker is queued so all dashboard projections
+            // observe one stable active collection for the whole fan-out.
+            lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        } catch (RuntimeException lifecycleBusy) {
+            return CompletableFuture.failedFuture(lifecycleBusy);
+        }
 
-        CompletableFuture<List<BookDto>> recentFuture = executorPort.submit(() ->
-                bookQueryRepository.findRecent(10).stream()
-                        .map(bookMapper::toDto)
-                        .collect(Collectors.toList()));
+        try {
+            CompletableFuture<LibraryStatistics> statsFuture = executorPort.submit(
+                    statisticsRepository::getStatistics);
 
-        CompletableFuture<List<BookDto>> addedFuture = executorPort.submit(() ->
-                bookQueryRepository.findRecentlyAdded(10).stream()
-                        .map(bookMapper::toDto)
-                        .collect(Collectors.toList()));
+            CompletableFuture<List<BookDto>> recentFuture = executorPort.submit(() ->
+                    bookQueryRepository.findRecent(10).stream()
+                            .map(bookMapper::toDto)
+                            .collect(Collectors.toList()));
 
-        CompletableFuture<List<AuthorDto>> favAuthorsFuture = executorPort.submit(() ->
-                authorRepository.findFavorites(10).stream()
-                        .map(authorMapper::toDto)
-                        .collect(Collectors.toList()));
+            CompletableFuture<List<BookDto>> addedFuture = executorPort.submit(() ->
+                    bookQueryRepository.findRecentlyAdded(10).stream()
+                            .map(bookMapper::toDto)
+                            .collect(Collectors.toList()));
 
-        CompletableFuture<BookDto> continueFuture = executorPort.submit(() -> {
-            String lastBookId = sessionService.getLastOpenedBookId();
-            if (lastBookId == null || lastBookId.isEmpty()) {
-                log.debug("Немає збереженої останньої книги");
-                return null;
-            }
-            Book book = bookQueryRepository.findById(BookId.fromString(lastBookId)).orElse(null);
-            if (book == null) {
-                log.warn("Останню книгу {} не знайдено в БД", lastBookId);
-                return null;
-            }
-            return bookMapper.toDto(book);
-        });
+            CompletableFuture<List<AuthorDto>> favAuthorsFuture = executorPort.submit(() ->
+                    authorRepository.findFavorites(10).stream()
+                            .map(authorMapper::toDto)
+                            .collect(Collectors.toList()));
 
-        var continueShelfFuture = executorPort.submit(() -> continueReadingService.recent(10));
+            CompletableFuture<BookDto> continueFuture = executorPort.submit(() -> {
+                String lastBookId = sessionService.getLastOpenedBookId();
+                if (lastBookId == null || lastBookId.isEmpty()) {
+                    log.debug("Немає збереженої останньої книги");
+                    return null;
+                }
+                Book book = bookQueryRepository.findById(BookId.fromString(lastBookId)).orElse(null);
+                if (book == null) {
+                    log.warn("Останню книгу {} не знайдено в БД", lastBookId);
+                    return null;
+                }
+                return bookMapper.toDto(book);
+            });
 
-        return CompletableFuture.allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture, continueShelfFuture)
-                .thenApply(v -> DashboardData.builder()
-                        .statistics(statsFuture.join())
-                        .recentBooks(recentFuture.join())
-                        .recentAdded(addedFuture.join())
-                        .favoriteAuthors(favAuthorsFuture.join())
-                        .continueReading(continueFuture.join())
-                        .continueReadingShelf(continueShelfFuture.join())
-                        .build());
+            var continueShelfFuture = executorPort.submit(() -> continueReadingService.recent(10));
+
+            CompletableFuture<DashboardData> result = CompletableFuture
+                    .allOf(statsFuture, recentFuture, addedFuture, favAuthorsFuture, continueFuture, continueShelfFuture)
+                    .thenApply(v -> DashboardData.builder()
+                            .statistics(statsFuture.join())
+                            .recentBooks(recentFuture.join())
+                            .recentAdded(addedFuture.join())
+                            .favoriteAuthors(favAuthorsFuture.join())
+                            .continueReading(continueFuture.join())
+                            .continueReadingShelf(continueShelfFuture.join())
+                            .build());
+            return result.whenComplete((value, failure) -> {
+                if (failure == null) lease.markCompleted("");
+                else lease.markFailed(failure);
+                lease.close();
+            });
+        } catch (RuntimeException | Error schedulingFailure) {
+            lease.markFailed(schedulingFailure);
+            lease.close();
+            return CompletableFuture.failedFuture(schedulingFailure);
+        }
     }
+
 }

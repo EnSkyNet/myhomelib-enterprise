@@ -25,10 +25,10 @@ public class SyncFolderUseCase {
         if (directory == null) {
             throw new IllegalArgumentException("Directory cannot be null");
         }
-        if (!java.nio.file.Files.exists(directory)) {
+        if (!java.nio.file.Files.exists(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("Directory does not exist: " + directory);
         }
-        if (!java.nio.file.Files.isDirectory(directory)) {
+        if (!java.nio.file.Files.isDirectory(directory, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             throw new IllegalArgumentException("Path is not a directory: " + directory);
         }
 
@@ -36,7 +36,7 @@ public class SyncFolderUseCase {
         var lease = operationCoordinator.acquire(LibraryOperationType.SYNC);
         try {
             SyncResult result = folderSyncPort.syncFolder(directory, options);
-            lease.markCompleted(result == null ? "Синхронізацію завершено" : result.getSummary());
+            lease.markCompleted("");
             return result;
         } catch (RuntimeException failure) {
             lease.markFailed(failure);
@@ -57,12 +57,12 @@ public class SyncFolderUseCase {
                             Throwable cause = failure instanceof java.util.concurrent.CompletionException
                                     && failure.getCause() != null ? failure.getCause() : failure;
                             if (cause instanceof java.util.concurrent.CancellationException) {
-                                lease.markCancelled("Синхронізацію скасовано");
+                                lease.markCancelled("");
                             } else {
                                 lease.markFailed(cause);
                             }
                         } else {
-                            lease.markCompleted(result == null ? "Синхронізацію завершено" : result.getSummary());
+                            lease.markCompleted("");
                         }
                         lease.close();
                     });

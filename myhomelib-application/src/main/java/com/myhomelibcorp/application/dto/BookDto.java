@@ -108,14 +108,6 @@ public class BookDto {
                 .build();
     }
 
-    public String getFileSizeFormatted() {
-        if (fileSize <= 0) return "";
-        if (fileSize < 1024) return fileSize + " B";
-        if (fileSize < 1024 * 1024) return String.format("%.1f КБ", fileSize / 1024.0);
-        if (fileSize < 1024 * 1024 * 1024) return String.format("%.1f МБ", fileSize / (1024.0 * 1024.0));
-        return String.format("%.1f ГБ", fileSize / (1024.0 * 1024.0 * 1024.0));
-    }
-
     public String getRateStars() {
         if (rate <= 0) return "";
         return "⭐".repeat(Math.min(rate, 5));
@@ -135,8 +127,5 @@ public class BookDto {
         return createdAt.format(DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm"));
     }
 
-    public String getLocalStatus() {
-        if (local) return "Локальна";
-        return missingSince != null ? "Файл відсутній" : "Хмарна";
-    }
+
 }

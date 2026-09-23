@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -29,7 +30,7 @@ public final class LocalMetadataExtractionService {
     public List<Extraction> extract(Path source) throws IOException {
         Objects.requireNonNull(source, "source");
         Path file = source.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(file)) throw new IOException("Файл не знайдено: " + file);
+        if (!Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) throw new IOException("Файл не знайдено: " + file);
         List<Extraction> results = new ArrayList<>();
         for (LocalMetadataExtractor extractor : extensions.localMetadataExtractors()) {
             boolean supported;

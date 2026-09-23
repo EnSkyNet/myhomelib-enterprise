@@ -11,6 +11,7 @@ import com.myhomelibcorp.infrastructure.persistence.mapper.AuthorRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.BookListRowMapper;
 import com.myhomelibcorp.infrastructure.persistence.mapper.GenreRowMapper;
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookArtifactHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookAuthorHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookGenreHelper;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.BookQueryBuilder;
@@ -45,6 +46,7 @@ public class DatabaseTest {
             SqliteBookQueryRepository.class,
             BookRowMapper.class,
             BookListRowMapper.class,
+            BookArtifactHelper.class,
             BookAuthorHelper.class,
             BookGenreHelper.class,
             BookQueryBuilder.class,

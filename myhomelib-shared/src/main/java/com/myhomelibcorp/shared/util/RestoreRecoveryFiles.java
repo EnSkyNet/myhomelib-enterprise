@@ -3,7 +3,9 @@ package com.myhomelibcorp.shared.util;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.Instant;
 
 /**
@@ -32,27 +34,48 @@ public final class RestoreRecoveryFiles {
     }
 
     public static boolean isPending(Path targetDatabase) {
-        return Files.isRegularFile(pending(targetDatabase));
-    }
-
-    public static void markPending(Path targetDatabase) throws IOException {
         Path marker = pending(targetDatabase);
-        Path parent = marker.toAbsolutePath().getParent();
-        if (parent != null) Files.createDirectories(parent);
-        Path tmp = marker.resolveSibling(marker.getFileName() + ".tmp");
         try {
-            Files.writeString(tmp,
-                    "startedAt=" + Instant.now() + System.lineSeparator(),
-                    StandardCharsets.UTF_8);
-            AtomicFileSupport.moveReplacing(tmp, marker);
-        } finally {
-            Files.deleteIfExists(tmp);
+            validateParent(marker, "restore recovery marker parent");
+            if (!Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return false;
+            AtomicFileSupport.requireSafeRegularFile(marker, "restore recovery marker");
+            return true;
+        } catch (IOException unsafe) {
+            throw new IllegalStateException("Unsafe restore recovery marker path: " + marker, unsafe);
         }
     }
 
+    public static void markPending(Path targetDatabase) throws IOException {
+        Path marker = pending(targetDatabase).toAbsolutePath().normalize();
+        validateParent(marker, "restore recovery marker parent");
+        if (Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) {
+            AtomicFileSupport.requireSafeRegularFile(marker, "restore recovery marker");
+            throw new IOException("Restore pending marker already exists: " + marker);
+        }
+        Files.writeString(marker,
+                "startedAt=" + Instant.now() + System.lineSeparator(),
+                StandardCharsets.UTF_8, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
+        AtomicFileSupport.requireSafeRegularFile(marker, "restore recovery marker");
+    }
+
     public static void clearPending(Path targetDatabase) throws IOException {
-        Files.deleteIfExists(pending(targetDatabase));
-        Files.deleteIfExists(pending(targetDatabase).resolveSibling(pending(targetDatabase).getFileName() + ".tmp"));
+        Path marker = pending(targetDatabase);
+        safeDelete(marker, "restore recovery marker cleanup");
+        safeDelete(marker.resolveSibling(marker.getFileName() + ".tmp"), "restore recovery temp-marker cleanup");
+    }
+
+    private static void safeDelete(Path path, String role) throws IOException {
+        Path absolute = path.toAbsolutePath().normalize();
+        validateParent(absolute, role + " parent");
+        if (!Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) return;
+        Path safe = AtomicFileSupport.requireSafeRegularFile(absolute, role);
+        Files.delete(safe);
+    }
+
+    private static void validateParent(Path path, String role) throws IOException {
+        Path parent = path.toAbsolutePath().normalize().getParent();
+        if (parent == null) throw new IOException(role + " has no parent directory: " + path);
+        AtomicFileSupport.createDirectoriesNoLinks(parent, role);
     }
 
     private static Path sibling(Path target, String suffix) {

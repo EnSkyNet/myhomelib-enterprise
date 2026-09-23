@@ -18,6 +18,10 @@ import java.util.Set;
  */
 public interface BookConverter {
     default String id() { return getClass().getName(); }
+
+    /** Higher values are selected first. Ties are resolved deterministically by {@link #id()}. */
+    default int priority() { return 0; }
+
     default boolean isAvailable() { return true; }
     boolean supports(Book book);
 

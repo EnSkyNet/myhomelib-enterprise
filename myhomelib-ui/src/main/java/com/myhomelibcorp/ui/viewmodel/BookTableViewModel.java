@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.viewmodel;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.query.common.SortBy;
 import com.myhomelibcorp.application.query.common.SortDirection;
 import com.myhomelibcorp.ui.table.BookTableController;
@@ -167,9 +169,9 @@ public class BookTableViewModel {
         int size = books.size();
         long total = totalElements.get();
         if (size == 0) {
-            statusMessage.set("Немає книг для відображення");
+            statusMessage.set(UiText.text("ui.java.book_table_view_model.fea8b369a6"));
         } else {
-            statusMessage.set(String.format("Показано %d з %d книг", size, total));
+            statusMessage.set(String.format(UiText.text("ui.java.book_table_view_model.9cb50d4b3e"), size, total));
         }
     }
 

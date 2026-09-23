@@ -25,9 +25,10 @@ public class OPDSStartupTask implements StartupTask {
 
         OpdsServerStatus status = serverControl.start(settings);
         if (!status.running()) {
-            throw new IllegalStateException(status.message() == null || status.message().isBlank()
-                    ? "OPDS autostart failed"
-                    : status.message());
+            String detail = status.technicalDetail();
+            throw new IllegalStateException(detail == null || detail.isBlank()
+                    ? status.messageKey()
+                    : detail);
         }
         return StartupTaskResult.success("OPDS started at " + status.baseUrl());
     }

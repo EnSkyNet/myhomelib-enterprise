@@ -129,4 +129,23 @@ class OperationCenterServiceTest {
 
         assertThat(service.snapshot()).extracting(OperationCenterEntry::operationId).containsExactly(active);
     }
+    @Test
+    void infersKindsFromStableStageInsteadOfLocalizedTitle() {
+        OperationCenterService service = new OperationCenterService();
+
+        service.accept("Import books", "c1", OperationProgress.stage("opaque-import-id", OperationStage.IMPORTING, true));
+        service.accept("Exact duplicates", "c1", OperationProgress.stage("opaque-scan-id", OperationStage.SCANNING_DUPLICATES, true));
+
+        assertThat(service.snapshot()).anySatisfy(entry -> {
+            if (entry.operationId().equals("opaque-import-id")) {
+                assertThat(entry.kind()).isEqualTo(OperationKind.CATALOG_IMPORT);
+            }
+        });
+        assertThat(service.snapshot()).anySatisfy(entry -> {
+            if (entry.operationId().equals("opaque-scan-id")) {
+                assertThat(entry.kind()).isEqualTo(OperationKind.INTEGRITY_CHECK);
+            }
+        });
+    }
+
 }

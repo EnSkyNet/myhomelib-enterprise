@@ -50,7 +50,7 @@ public class MetadataBatchService {
         }
         LibraryOperationCoordinator.Lease lease;
         try {
-            lease = operations.acquireDetached(LibraryOperationType.UPDATE);
+            lease = operations.acquireDetachedShared(LibraryOperationType.QUERY);
         } catch (RuntimeException conflict) {
             return CompletableFuture.failedFuture(conflict);
         }

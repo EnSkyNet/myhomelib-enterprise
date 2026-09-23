@@ -2,6 +2,7 @@ package com.myhomelibcorp.startup;
 
 import com.myhomelibcorp.shared.util.AppPaths;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -39,4 +40,31 @@ class BackupStartupTaskTest {
         assertThat(published).exists();
         assertThat(new BackupStartupTask().failurePolicy()).isEqualTo(StartupFailurePolicy.BEST_EFFORT);
     }
+    @Test
+    void doesNotTraverseSymlinkedBackupSubdirectoryDuringCleanup() throws Exception {
+        previousDataDir = System.getProperty("myhomelib.dataDir");
+        System.setProperty("myhomelib.dataDir", temp.resolve("data").toString());
+        Path backups = AppPaths.backupsDir();
+        Files.createDirectories(backups);
+        Path outside = Files.createDirectories(temp.resolve("outside-backup"));
+        Path foreignTemp = outside.resolve("foreign.db.snapshot.tmp");
+        Files.writeString(foreignTemp, "FOREIGN");
+        Path linked = backups.resolve("linked-backup");
+        Assumptions.assumeTrue(canCreateSymlink(linked, outside));
+
+        new BackupStartupTask().execute(new StartupContext(StartupTestFixtures.collection("c1")));
+
+        assertThat(foreignTemp).exists();
+        assertThat(Files.isSymbolicLink(linked)).isTrue();
+    }
+
+    private static boolean canCreateSymlink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
 }

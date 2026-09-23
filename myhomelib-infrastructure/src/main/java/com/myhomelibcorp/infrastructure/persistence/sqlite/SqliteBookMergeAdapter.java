@@ -124,8 +124,8 @@ public class SqliteBookMergeAdapter implements BookMergePort {
             syncLegacyStorageProjection(survivor);
 
             recomputeAuthorSort(survivor);
-            jdbc().update("UPDATE books SET deleted = 1, update_date = CURRENT_TIMESTAMP WHERE id = ?", merged);
-            jdbc().update("UPDATE books SET deleted = 0, update_date = CURRENT_TIMESTAMP WHERE id = ?", survivor);
+            jdbc().update("UPDATE books SET deleted = 1 WHERE id = ?", merged);
+            jdbc().update("UPDATE books SET deleted = 0 WHERE id = ?", survivor);
 
             return new BookMergeMutationResult(mergeId, plan.survivorBookId(), plan.mergedBookId(), changedAt, false);
         });

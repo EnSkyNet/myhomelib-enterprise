@@ -16,7 +16,8 @@ public record BookConversionContext(
         InputStream sourceStream,
         Path targetFile,
         BooleanSupplier cancelled,
-        long maxOutputBytes
+        long maxOutputBytes,
+        boolean postProcessEpub
 ) {
     public BookConversionContext {
         Objects.requireNonNull(book, "book");
@@ -26,6 +27,13 @@ public record BookConversionContext(
         Objects.requireNonNull(targetFile, "targetFile");
         cancelled = cancelled == null ? () -> false : cancelled;
         if (maxOutputBytes <= 0) throw new IllegalArgumentException("maxOutputBytes must be positive");
+    }
+
+
+    /** Backwards-compatible default: normal conversion jobs post-process canonical EPUB output. */
+    public BookConversionContext(Book book, String sourceFormat, String targetFormat, InputStream sourceStream,
+                                 Path targetFile, BooleanSupplier cancelled, long maxOutputBytes) {
+        this(book, sourceFormat, targetFormat, sourceStream, targetFile, cancelled, maxOutputBytes, true);
     }
 
     public void checkCancelled() {

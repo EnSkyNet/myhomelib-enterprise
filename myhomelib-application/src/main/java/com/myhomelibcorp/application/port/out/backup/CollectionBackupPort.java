@@ -18,8 +18,17 @@ public interface CollectionBackupPort {
     /** Latest known on-disk backup for the supplied collection, when discoverable. */
     Optional<Instant> latestBackupTime(Collection collection);
 
-    /** Creates a transactionally consistent SQLite database snapshot. */
+    /** Creates a transactionally consistent SQLite database snapshot with thorough validation. */
     void createDatabaseSnapshot(Collection collection, Path targetFile) throws IOException;
+
+    /**
+     * Creates the short-lived pre-update recovery checkpoint. Implementations may use a lighter
+     * post-copy validation than a user backup because the SQLite online-backup operation itself
+     * guarantees a consistent destination. The default preserves compatibility for other adapters.
+     */
+    default void createRecoveryCheckpoint(Collection collection, Path targetFile) throws IOException {
+        createDatabaseSnapshot(collection, targetFile);
+    }
 
     /** Opens the supplied SQLite file independently and requires PRAGMA quick_check = ok. */
     void validateDatabaseFile(Path databaseFile) throws IOException;

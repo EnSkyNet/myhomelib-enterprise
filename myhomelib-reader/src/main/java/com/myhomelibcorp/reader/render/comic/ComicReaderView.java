@@ -30,8 +30,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.atomic.AtomicLong;
@@ -42,11 +43,12 @@ import java.util.function.Function;
 /** JavaFX CBZ/CBR reader with lazy pages, spread mode, manga RTL and thumbnails. */
 public final class ComicReaderView extends BorderPane implements AutoCloseable {
     private final Function<String, String> text;
-    private final ExecutorService renderExecutor = Executors.newSingleThreadExecutor(r -> {
-        Thread thread = new Thread(r, "comic-reader-render");
-        thread.setDaemon(true);
-        return thread;
-    });
+    private final ThreadPoolExecutor renderExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS, new LinkedBlockingQueue<>(), r -> {
+                Thread thread = new Thread(r, "comic-reader-render");
+                thread.setDaemon(true);
+                return thread;
+            });
     private final AtomicLong generation = new AtomicLong();
     private final AtomicLong singleRenderGeneration = new AtomicLong();
     private final java.util.Set<Future<?>> renderTasks = ConcurrentHashMap.newKeySet();
@@ -87,7 +89,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     private Runnable onBack = () -> { };
     private Runnable onAddBookmark = () -> { };
     private Runnable onBookmarks = () -> { };
-    private Consumer<String> onError = ignored -> { };
+    private Consumer<Throwable> onError = ignored -> { };
     private volatile boolean closed;
 
     public ComicReaderView(Function<String, String> text) {
@@ -235,7 +237,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     public void setOnBack(Runnable callback) { onBack = callback == null ? () -> { } : callback; }
     public void setOnAddBookmark(Runnable callback) { onAddBookmark = callback == null ? () -> { } : callback; }
     public void setOnBookmarks(Runnable callback) { onBookmarks = callback == null ? () -> { } : callback; }
-    public void setOnError(Consumer<String> callback) { onError = callback == null ? ignored -> { } : callback; }
+    public void setOnError(Consumer<Throwable> callback) { onError = callback == null ? ignored -> { } : callback; }
 
     private void goRelative(int direction) {
         int count = pageCount();
@@ -369,7 +371,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
                     if (session == current && configToken == generation.get() && token == singleRenderGeneration.get()) {
                         progress.setVisible(false);
                         progress.setManaged(false);
-                        onError.accept(message(error));
+                        onError.accept(error);
                     }
                 });
             }
@@ -546,6 +548,7 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
     }
 
     private Future<?> submitTrackedRender(Runnable action) {
+        renderExecutor.purge();
         AtomicReference<Future<?>> handle = new AtomicReference<>();
         try {
             Future<?> submitted = renderExecutor.submit(() -> {
@@ -570,12 +573,14 @@ public final class ComicReaderView extends BorderPane implements AutoCloseable {
             if (!task.isDone()) task.cancel(true);
         }
         renderTasks.removeIf(Future::isDone);
+        renderExecutor.purge();
     }
 
     private void cancelSingleRender() {
         Future<?> task = singleRenderTask;
         singleRenderTask = null;
         if (task != null && !task.isDone()) task.cancel(true);
+        renderExecutor.purge();
     }
 
     public void closeDocument() {

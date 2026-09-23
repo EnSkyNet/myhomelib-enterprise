@@ -1,6 +1,11 @@
 package com.myhomelibcorp.ui.group;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.GroupDto;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.usecase.group.*;
 import com.myhomelibcorp.domain.model.group.Group;
@@ -89,6 +94,13 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
         fileSizeColumn.setCellValueFactory(cellData -> cellData.getValue().fileSizeFormattedProperty());
         booksTableView.setItems(books);
         groupsListView.setItems(groupList);
+        groupsListView.setCellFactory(list -> new javafx.scene.control.ListCell<>() {
+            @Override
+            protected void updateItem(GroupDto item, boolean empty) {
+                super.updateItem(item, empty);
+                setText(empty || item == null ? null : item.getName());
+            }
+        });
 
         groupsListView.getSelectionModel().selectedItemProperty().addListener((obs, old, selected) -> {
             currentPage = 0;
@@ -141,11 +153,11 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
 
     private void showContextMenu(GroupDto group, double x, double y) {
         ContextMenu menu = new ContextMenu();
-        MenuItem selectItem = new MenuItem("Вибрати");
+        MenuItem selectItem = new MenuItem(UiText.text("ui.java.group_workspace_controller.9bee10d20c"));
         selectItem.setOnAction(e -> groupsListView.getSelectionModel().select(group));
-        MenuItem renameItem = new MenuItem("Перейменувати");
+        MenuItem renameItem = new MenuItem(UiText.text("ui.java.group_workspace_controller.b4b0846a77"));
         renameItem.setOnAction(e -> renameGroup(group));
-        MenuItem deleteItem = new MenuItem("Видалити");
+        MenuItem deleteItem = new MenuItem(UiText.text("common.delete"));
         deleteItem.setOnAction(e -> deleteGroup(group));
         menu.getItems().addAll(selectItem, renameItem, deleteItem);
         menu.show(groupsListView, x, y);
@@ -153,8 +165,8 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
 
     public void loadGroups() {
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(groupListGeneration, appState);
-        setGroupsState("Завантаження…", true, true);
-        executor.submit(loadGroupsUseCase::execute).whenComplete((groups, error) ->
+        setGroupsState(UiText.text("ui.fxml.book_workspace.loading"), true, true);
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, loadGroupsUseCase::execute).whenComplete((groups, error) ->
                 UiExecutor.runOnUiThread(() -> {
                     if (!UiAsyncRequestGuard.isCurrent(requestToken, groupListGeneration, appState)) return;
                     if (error != null) {
@@ -163,7 +175,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
                         books.clear();
                         currentGroup = null;
                         groupDetailsBox.setVisible(false);
-                        setGroupsState("Не вдалося завантажити групи. Натисніть «Оновити», щоб повторити.", true, false);
+                        setGroupsState(UiText.text("ui.java.group_workspace_controller.f8e3a3637c"), true, false);
                         return;
                     }
                     List<GroupDto> safeGroups = groups == null ? List.of() : groups;
@@ -172,7 +184,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
                         currentGroup = null;
                         books.clear();
                         groupDetailsBox.setVisible(false);
-                        setGroupsState("Груп немає", true, false);
+                        setGroupsState(UiText.text("ui.java.group_workspace_controller.6b88e66ffc"), true, false);
                         return;
                     }
                     setGroupsState(null, false, false);
@@ -209,7 +221,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
         int offset = requestedPage * PAGE_SIZE;
         setPagingBusy(true);
         OptionalLong knownTotal = currentGroupTotal;
-        executor.submit(() -> knownTotal.isPresent()
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> knownTotal.isPresent()
                         ? loadGroupBooksUseCase.execute(group.getId(), PAGE_SIZE, offset, knownTotal.getAsLong())
                         : loadGroupBooksUseCase.execute(group.getId(), PAGE_SIZE, offset))
                 .thenAccept(page -> UiExecutor.runOnUiThread(() -> {
@@ -231,7 +243,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
                     currentGroupTotal = OptionalLong.of(page.totalElements());
                     books.setAll(page.content().stream().map(bookViewModelMapper::toViewModel).toList());
                     groupNameLabel.setText(group.getName());
-                    booksCountLabel.setText(page.totalElements() + " книг");
+                    booksCountLabel.setText(page.totalElements() + UiText.text("ui.java.group_workspace_controller.faf0c7e42c"));
                     updatePageControls(page);
                     setPagingBusy(false);
                 })).exceptionally(ex -> {
@@ -246,7 +258,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
     private void updatePageControls(PageResult<?> page) {
         int shownPage = page.totalElements() == 0 ? 0 : page.currentPage() + 1;
         int totalPages = page.totalElements() == 0 ? 0 : Math.max(1, page.totalPages());
-        pageLabel.setText("Сторінка " + shownPage + " / " + totalPages);
+        pageLabel.setText(UiText.text("ui.java.group_workspace_controller.5b014a3bea") + shownPage + " / " + totalPages);
         previousPageButton.setDisable(!page.hasPrevious());
         nextPageButton.setDisable(!page.hasNext());
     }
@@ -274,70 +286,74 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
     private void onAddBookToGroup() {
         BookViewModel selectedBook = appState.getBookTable().getSelectedBook();
         if (selectedBook == null) {
-            dialogService.showWarning("Немає книги", "Будь ласка, виберіть книгу в головній таблиці.");
+            dialogService.showWarning(UiText.text("ui.java.group_workspace_controller.5c79bfb614"), UiText.text("ui.java.group_workspace_controller.f353a3c1d9"));
             return;
         }
         if (currentGroup == null) {
-            dialogService.showWarning("Немає групи", "Будь ласка, виберіть групу зліва.");
+            dialogService.showWarning(UiText.text("ui.java.group_workspace_controller.36d06fcc7d"), UiText.text("ui.java.group_workspace_controller.a1c52962e8"));
             return;
         }
+        String expectedCollectionId = currentCollectionId();
         if (isBookInGroupUseCase.execute(currentGroup.getId(), selectedBook.getId())) {
-            dialogService.showWarning("Вже є", "Ця книга вже в групі \"" + currentGroup.getName() + "\".");
+            dialogService.showWarning(UiText.text("ui.java.group_workspace_controller.ab2db029cf"), UiText.text("ui.java.group_workspace_controller.81f9f72d59") + currentGroup.getName() + "\".");
             return;
         }
         try {
-            addBookToGroupUseCase.execute(currentGroup.getId(), selectedBook.getId());
+            addBookToGroupUseCase.execute(currentGroup.getId(), selectedBook.getId(), expectedCollectionId);
             currentGroupTotal = OptionalLong.empty();
             loadGroupBooks(currentGroup);
-            dialogService.showInfo("Успішно", "Книгу додано до групи \"" + currentGroup.getName() + "\".");
+            dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.group_workspace_controller.279310e5a2") + currentGroup.getName() + "\".");
         } catch (Exception e) {
             log.error("Помилка додавання книги до групи", e);
-            dialogService.showError("Помилка", "Не вдалося додати книгу: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.c44c9a561c") + UiExceptionSupport.message(e));
         }
     }
 
     @FXML
     private void onRemoveBookFromGroup() {
         if (currentGroup == null) {
-            dialogService.showError("Помилка", "Виберіть групу");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.8fe77eec46"));
             return;
         }
         BookViewModel selected = booksTableView.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            dialogService.showError("Помилка", "Виберіть книгу в таблиці");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.9d88dc3684"));
             return;
         }
+        String expectedCollectionId = currentCollectionId();
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Підтвердження");
-        confirm.setHeaderText("Видалити книгу з групи \"" + currentGroup.getName() + "\"?");
+        DialogLocalization.prepare(confirm);
+        confirm.setTitle(UiText.text("common.confirmation"));
+        confirm.setHeaderText(UiText.text("ui.java.group_workspace_controller.8e26f3c163") + currentGroup.getName() + "\"?");
         confirm.setContentText(selected.getTitle());
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
-                removeBookFromGroupUseCase.execute(currentGroup.getId(), selected.getId());
+                removeBookFromGroupUseCase.execute(currentGroup.getId(), selected.getId(), expectedCollectionId);
                 currentGroupTotal = OptionalLong.empty();
                 loadGroupBooks(currentGroup);
-                dialogService.showInfo("Успішно", "Книгу видалено з групи");
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.group_workspace_controller.c2d4c189d6"));
             } catch (Exception e) {
                 log.error("Помилка видалення книги з групи", e);
-                dialogService.showError("Помилка", "Не вдалося видалити: " + e.getMessage());
+                dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.7481af0840") + UiExceptionSupport.message(e));
             }
         }
     }
 
     @FXML
     private void onCreateGroup() {
-        Optional<String> result = dialogService.showTextInput("Створити групу", "Введіть назву нової групи", "Назва:", "");
+        String expectedCollectionId = currentCollectionId();
+        Optional<String> result = dialogService.showTextInput(UiText.text("ui.fxml.groups_workspace.create_group"), UiText.text("ui.java.group_workspace_controller.ba16e73b9c"), UiText.text("common.name.label"), "");
         result.ifPresent(name -> {
             if (name.isBlank()) return;
             try {
-                Group group = createGroupUseCase.execute(name);
+                Group group = createGroupUseCase.execute(name, expectedCollectionId);
                 GroupDto dto = new GroupDto(group.getId().asLong(), group.getName(), group.isAllowDelete());
                 groupList.add(dto);
                 groupsListView.getSelectionModel().select(dto);
-                dialogService.showInfo("Успішно", "Групу \"" + name + "\" створено");
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.group_workspace_controller.fc9846c1a8") + name + UiText.text("ui.java.group_workspace_controller.0a0b576c6d"));
             } catch (Exception e) {
                 log.error("Помилка створення групи", e);
-                dialogService.showError("Помилка", "Не вдалося створити групу: " + e.getMessage());
+                dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.832684ccce") + UiExceptionSupport.message(e));
             }
         });
     }
@@ -346,7 +362,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
     private void onRenameGroup() {
         GroupDto selected = groupsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            dialogService.showError("Помилка", "Виберіть групу");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.8fe77eec46"));
             return;
         }
         renameGroup(selected);
@@ -354,23 +370,24 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
 
     private void renameGroup(GroupDto group) {
         if (!group.isAllowDelete()) {
-            dialogService.showError("Помилка", "Системну групу не можна перейменовувати");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.cb59810c30"));
             return;
         }
-        Optional<String> result = dialogService.showTextInput("Перейменувати групу",
-                "Введіть нову назву для \"" + group.getName() + "\"", "Нова назва:", group.getName());
+        String expectedCollectionId = currentCollectionId();
+        Optional<String> result = dialogService.showTextInput(UiText.text("ui.fxml.groups_workspace.rename_group"),
+                UiText.text("ui.java.group_workspace_controller.0ff4d98614") + group.getName() + "\"", UiText.text("ui.java.group_workspace_controller.db3f487087"), group.getName());
         result.ifPresent(newName -> {
             if (newName.isBlank() || newName.equals(group.getName())) return;
             try {
-                Group renamed = renameGroupUseCase.execute(group.getId(), newName);
+                Group renamed = renameGroupUseCase.execute(group.getId(), newName, expectedCollectionId);
                 GroupDto updated = new GroupDto(renamed.getId().asLong(), renamed.getName(), renamed.isAllowDelete());
                 int index = groupList.indexOf(group);
                 if (index >= 0) groupList.set(index, updated);
                 groupsListView.getSelectionModel().select(updated);
-                dialogService.showInfo("Успішно", "Групу перейменовано на \"" + newName + "\"");
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.group_workspace_controller.011e487308") + newName + "\"");
             } catch (Exception e) {
                 log.error("Помилка перейменування групи", e);
-                dialogService.showError("Помилка", "Не вдалося перейменувати: " + e.getMessage());
+                dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.d207d46772") + UiExceptionSupport.message(e));
             }
         });
     }
@@ -379,7 +396,7 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
     private void onDeleteGroup() {
         GroupDto selected = groupsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            dialogService.showError("Помилка", "Виберіть групу");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.8fe77eec46"));
             return;
         }
         deleteGroup(selected);
@@ -387,22 +404,24 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
 
     private void deleteGroup(GroupDto group) {
         if (!group.isAllowDelete()) {
-            dialogService.showError("Помилка", "Системну групу не можна видалити");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.0ba9c100d8"));
             return;
         }
+        String expectedCollectionId = currentCollectionId();
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Підтвердження");
-        confirm.setHeaderText("Видалити групу \"" + group.getName() + "\"?");
-        confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
+        DialogLocalization.prepare(confirm);
+        confirm.setTitle(UiText.text("common.confirmation"));
+        confirm.setHeaderText(UiText.text("ui.java.group_workspace_controller.e5db9db9a1") + group.getName() + "\"?");
+        confirm.setContentText(UiText.text("ui.java.group_workspace_controller.c23e524406"));
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             try {
-                deleteGroupUseCase.execute(group.getId());
+                deleteGroupUseCase.execute(group.getId(), expectedCollectionId);
                 groupList.remove(group);
                 groupDetailsBox.setVisible(false);
-                dialogService.showInfo("Успішно", "Групу видалено");
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.group_workspace_controller.307b3464aa"));
             } catch (Exception e) {
                 log.error("Помилка видалення групи", e);
-                dialogService.showError("Помилка", "Не вдалося видалити: " + e.getMessage());
+                dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.group_workspace_controller.7481af0840") + UiExceptionSupport.message(e));
             }
         }
     }
@@ -420,6 +439,11 @@ public class GroupWorkspaceController implements WorkspaceLifecycle {
         if (group == null) return;
         requestedGroupId = group.getId().asLong();
         selectRequestedGroup();
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     @Override

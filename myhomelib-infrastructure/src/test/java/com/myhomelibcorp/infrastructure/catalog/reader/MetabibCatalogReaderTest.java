@@ -17,6 +17,7 @@ import java.util.zip.ZipOutputStream;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class MetabibCatalogReaderTest {
     @TempDir Path temp;
@@ -72,6 +73,24 @@ class MetabibCatalogReaderTest {
         assertThat(reader.supports(zip)).isFalse();
     }
 
+
+    @Test
+    void rejectsZipDatasetWithSuspiciousCompressionRatioBeforeParsing() throws Exception {
+        Path zip = temp.resolve("bomb.zip");
+        byte[] highlyCompressible = new byte[512 * 1024];
+        java.util.Arrays.fill(highlyCompressible, (byte) 'A');
+        try (ZipOutputStream out = new ZipOutputStream(Files.newOutputStream(zip))) {
+            out.putNextEntry(new ZipEntry("dataset/books.jsonl"));
+            out.write(highlyCompressible);
+            out.closeEntry();
+        }
+
+        assertThat(reader.supports(zip)).isFalse();
+        assertThatThrownBy(() -> reader.open(zip))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("suspicious compression ratio");
+    }
+
     @Test
     void rejectsWrongDatasetHeaderBeforeRecordsAreImported() throws Exception {
         Path jsonl = temp.resolve("wrong.jsonl");
@@ -79,6 +98,25 @@ class MetabibCatalogReaderTest {
         assertThatThrownBy(() -> reader.open(jsonl))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unsupported metabib dataset schema");
+    }
+
+    @Test
+    void rejectsDatasetReachedThroughSymlinkedParent() throws Exception {
+        Path real = Files.createDirectories(temp.resolve("real"));
+        Path jsonl = real.resolve("books.jsonl");
+        Files.writeString(jsonl, dataset(), StandardCharsets.UTF_8);
+        Path alias = temp.resolve("alias");
+        try {
+            Files.createSymbolicLink(alias, real);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unavailable) {
+            assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+
+        Path viaAlias = alias.resolve("books.jsonl");
+        assertThat(reader.supports(viaAlias)).isFalse();
+        assertThatThrownBy(() -> reader.open(viaAlias))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("symbolic link");
     }
 
     private static String dataset() {

@@ -98,6 +98,36 @@ class SqliteNavigationFacetRepositoryStage8Test {
     }
 
     @Test
+    void seriesFacetRepairsMissingDerivedRowsAndPreservesCounts() {
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        jdbc.update("DELETE FROM series");
+
+        var facets = repository.findSeries(BookFilterSpec.empty());
+
+        assertThat(facets).hasSize(1);
+        assertThat(facets.getFirst().label()).isEqualTo("Chronicles");
+        assertThat(facets.getFirst().bookCount()).isEqualTo(1L);
+        assertThat(facets.getFirst().id())
+                .matches("[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}");
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM series", Integer.class)).isEqualTo(1);
+    }
+
+    @Test
+    void seriesFacetNormalizesCaseAndWhitespaceAndCountsEveryActiveBookOnce() {
+        JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
+        jdbc.update("INSERT INTO books(id,title,file_name,local,deleted,series,format) " +
+                "VALUES ('x3','Variant A','v-a.fb2',0,0,' chronicles ','FB2')," +
+                "('x4','Variant B','v-b.fb2',0,0,'CHRONICLES','FB2')");
+
+        var facets = repository.findSeries(BookFilterSpec.empty());
+
+        assertThat(facets).hasSize(1);
+        assertThat(facets.getFirst().id()).isEqualTo("s1");
+        assertThat(facets.getFirst().label()).isEqualTo("Chronicles");
+        assertThat(facets.getFirst().bookCount()).isEqualTo(3L);
+    }
+
+    @Test
     void formatAndQuickFilterChangeFacetCountsAtSqlLevel() {
         BookFilterSpec filter = new BookFilterSpec(BookFilterMode.AND, null, null, null, BookFormat.EPUB,
                 null, null, null, null, false, BookQuickFilterField.TITLE, "eta");

@@ -1,6 +1,9 @@
 package com.myhomelibcorp.ui.collection;
 
-import com.myhomelibcorp.shared.util.ThrowableMessages;
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.CollectionDto;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.progress.OperationProgress;
@@ -45,6 +48,7 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     private final DialogService dialogService;
     private final UiBackgroundExecutor executor;
     private final OperationCenterService operationCenter;
+    private final CollectionUiCommitGuard collectionUiCommitGuard;
 
     @FXML private ListView<CollectionDto> collectionsListView;
     @FXML private Label collectionNameLabel;
@@ -108,8 +112,8 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
         // ===== КОНТЕКСТНЕ МЕНЮ =====
         ContextMenu contextMenu = new ContextMenu();
 
-        // Пункт "Активувати"
-        MenuItem activateItem = new MenuItem("▶ Активувати");
+        // Пункт UiText.text("ui.java.collection_workspace_controller.6f12385e9a")
+        MenuItem activateItem = new MenuItem(UiText.text("ui.fxml.collection_workspace.activate"));
         activateItem.setOnAction(e -> {
             CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
             if (selected != null && !selected.isActive()) {
@@ -117,8 +121,8 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
             }
         });
 
-        // Пункт "Перейменувати"
-        MenuItem renameItem = new MenuItem("✏️ Перейменувати");
+        // Пункт UiText.text("ui.java.collection_workspace_controller.b4b0846a77")
+        MenuItem renameItem = new MenuItem(UiText.text("ui.java.collection_workspace_controller.15474d976a"));
         renameItem.setOnAction(e -> {
             CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
             if (selected != null && selected.isAllowRename()) {
@@ -126,8 +130,8 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
             }
         });
 
-        // Пункт "Видалити"
-        MenuItem deleteItem = new MenuItem("🗑 Видалити");
+        // Пункт UiText.text("common.delete")
+        MenuItem deleteItem = new MenuItem(UiText.text("ui.java.collection_workspace_controller.0d682b84b8"));
         deleteItem.setOnAction(e -> {
             CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
             if (selected != null && selected.isAllowDelete() && !selected.isActive()) {
@@ -135,19 +139,19 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
             }
         });
 
-        // Пункт "Оновити"
-        MenuItem refreshItem = new MenuItem("🔄 Оновити");
+        // Пункт UiText.text("ui.annotations.refresh")
+        MenuItem refreshItem = new MenuItem(UiText.text("ui.fxml.statistics.refresh"));
         refreshItem.setOnAction(e -> loadCollections());
 
-        // Пункт "Копіювати ID"
-        MenuItem copyIdItem = new MenuItem("📋 Копіювати ID");
+        // Пункт UiText.text("ui.java.collection_workspace_controller.190be426f9")
+        MenuItem copyIdItem = new MenuItem(UiText.text("ui.java.collection_workspace_controller.e20adf4990"));
         copyIdItem.setOnAction(e -> {
             CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
             if (selected != null) {
                 javafx.scene.input.ClipboardContent content = new javafx.scene.input.ClipboardContent();
                 content.putString(selected.getId());
                 javafx.scene.input.Clipboard.getSystemClipboard().setContent(content);
-                dialogService.showInfo("Копійовано", "ID колекції скопійовано в буфер обміну.");
+                dialogService.showInfo(UiText.text("ui.java.collection_workspace_controller.87b1e3f42d"), UiText.text("ui.java.collection_workspace_controller.d5bce995d7"));
             }
         });
 
@@ -228,10 +232,10 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
         if (activateButton != null) {
             if (collection == null || collection.isActive()) {
                 activateButton.setDisable(true);
-                activateButton.setText("✅ Активна");
+                activateButton.setText(UiText.text("ui.java.collection_workspace_controller.1e3b975a65"));
             } else {
                 activateButton.setDisable(false);
-                activateButton.setText("▶ Активувати");
+                activateButton.setText(UiText.text("ui.fxml.collection_workspace.activate"));
             }
         }
     }
@@ -245,29 +249,35 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
 
     private void activateCollection(CollectionDto collectionDto) {
         if (collectionDto == null) {
-            dialogService.showWarning("Активація", "Виберіть колекцію для активації.");
+            dialogService.showWarning(UiText.text("ui.java.collection_workspace_controller.3f18914622"), UiText.text("ui.java.collection_workspace_controller.49d94639d0"));
             return;
         }
         if (collectionDto.isActive()) {
-            dialogService.showInfo("Інформація", "Колекція \"" + collectionDto.getName() + "\" вже активна.");
+            dialogService.showInfo(UiText.text("ui.java.collection_workspace_controller.455cfc2d2f"), UiText.text("ui.java.collection_workspace_controller.f2d5f8e855") + collectionDto.getName() + UiText.text("ui.java.collection_workspace_controller.dc86a73057"));
             return;
         }
         if (busy) return;
 
         log.info("Активація колекції: {}", collectionDto.getName());
-        setBusy(true, "Активація колекції: " + collectionDto.getName());
+        setBusy(true, UiText.text("ui.java.collection_workspace_controller.fcc111b24a") + collectionDto.getName());
         executor.submit(() -> switchCollectionUseCase.execute(collectionDto.getId()))
                 .thenAccept(collection -> UiExecutor.runOnUiThread(() -> {
-                    appState.setCurrentLibraryCollection(collection);
-                    setBusy(false, "Активовано колекцію: " + collectionDto.getName());
+                    boolean committed = collectionUiCommitGuard.runIfStillActive(collection.getId(),
+                            () -> appState.setCurrentLibraryCollection(collection));
+                    if (!committed) {
+                        setBusy(false, UiText.text("ui.java.collection_workspace_controller.d4da4c002a"));
+                        loadCollections();
+                        return;
+                    }
+                    setBusy(false, UiText.text("ui.java.collection_workspace_controller.4d1606f89f") + collectionDto.getName());
                     loadCollections(collection.getId());
-                    dialogService.showInfo("Успішно", "Колекцію \"" + collectionDto.getName() + "\" активовано.");
+                    dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.collection_workspace_controller.3575cb9ad1") + collectionDto.getName() + UiText.text("ui.java.collection_workspace_controller.357606f014"));
                 }))
                 .exceptionally(error -> {
                     log.error("Помилка активації колекції", error);
                     UiExecutor.runOnUiThread(() -> {
-                        setBusy(false, "Помилка активації колекції");
-                        dialogService.showError("Помилка", "Не вдалося активувати колекцію: " + ThrowableMessages.rootMessage(error));
+                        setBusy(false, UiText.text("ui.java.collection_workspace_controller.d4da4c002a"));
+                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.ac50c37794") + UiExceptionSupport.message(error));
                     });
                     return null;
                 });
@@ -288,7 +298,7 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
                     log.error("Помилка завантаження колекцій", error);
                     UiExecutor.runOnUiThread(() -> {
                         if (requestId != loadGeneration.get()) return;
-                        dialogService.showError("Помилка", "Не вдалося завантажити колекції: " + ThrowableMessages.rootMessage(error));
+                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.6462ec753f") + UiExceptionSupport.message(error));
                     });
                     return null;
                 });
@@ -317,19 +327,23 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
         if (collection == null) return;
         CollectionRuntimeStatus runtime = CollectionRuntimeStateResolver.resolve(collection.getId(), operationSnapshot);
         if (collectionNameLabel != null) collectionNameLabel.setText(collection.getName());
-        if (runtimeStateLabel != null) runtimeStateLabel.setText("Стан: " + runtime.detailsText());
+        if (runtime.state() == CollectionRuntimeState.ERROR && runtime.detail() != null && !runtime.detail().isBlank()) {
+            log.warn("Collection {} runtime technical detail: {}", collection.getId(), runtime.detail());
+        }
+        if (runtimeStateLabel != null) runtimeStateLabel.setText(UiText.text("ui.java.collection_workspace_controller.384f693f20") + runtime.detailsText());
         if (activeCollectionLabel != null) {
-            activeCollectionLabel.setText(collection.isActive() ? "Активна колекція: так" : "Активна колекція: ні");
+            activeCollectionLabel.setText(collection.isActive() ? UiText.text("ui.java.collection_workspace_controller.b01be21a1e") : UiText.text("ui.fxml.collection_workspace.active_collection_no"));
         }
         if (rootFolderLabel != null) {
-            rootFolderLabel.setText("Папка: " + displayValue(collection.getRootFolder()));
+            rootFolderLabel.setText(UiText.text("ui.java.collection_workspace_controller.5c7051dc85") + displayValue(collection.getRootFolder()));
         }
         if (dbFileLabel != null) {
-            dbFileLabel.setText("БД: " + displayValue(collection.getDbFile()));
+            dbFileLabel.setText(UiText.text("ui.java.collection_workspace_controller.7e0da525ec") + displayValue(collection.getDbFile()));
         }
         if (collectionTypeLabel != null) {
-            collectionTypeLabel.setText("Тип: " + com.myhomelibcorp.domain.model.collection.CollectionType
-                    .fromCode(collection.getType()).getDisplayName());
+            var type = com.myhomelibcorp.domain.model.collection.CollectionType.fromCode(collection.getType());
+            collectionTypeLabel.setText(UiText.text("ui.java.collection_workspace_controller.9a32dc9dce")
+                    + UiText.text(type.getLocalizationKey()));
         }
         if (renameButton != null) renameButton.setDisable(!collection.isAllowRename());
         if (deleteButton != null) deleteButton.setDisable(!collection.isAllowDelete());
@@ -343,9 +357,9 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     @FXML
     private void onCreateCollection() {
         Optional<String> result = dialogService.showTextInput(
-                "Створити колекцію",
-                "Введіть назву нової колекції",
-                "Назва:",
+                UiText.text("ui.java.collection_workspace_controller.365d3d5a7f"),
+                UiText.text("ui.java.collection_workspace_controller.1dc64220a2"),
+                UiText.text("common.name.label"),
                 "");
         result.ifPresent(name -> {
             if (name.isBlank() || busy) return;
@@ -355,27 +369,33 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
                     .createIndex(false)
                     .build();
             String operationId = operationCenter.start(
-                    "Створення колекції — " + name, "", OperationKind.COLLECTION_CREATE,
+                    UiText.text("ui.java.collection_workspace_controller.9dce38545e") + name, "", OperationKind.COLLECTION_CREATE,
                     OperationStage.CREATING_COLLECTION, false);
-            setBusy(true, "Створення колекції: " + name);
+            setBusy(true, UiText.text("ui.java.collection_workspace_controller.6178107aa9") + name);
             executor.submit(() -> {
                 var created = createCollectionUseCase.execute(request);
-                operationCenter.accept("Створення колекції — " + name, created.getId(), OperationKind.COLLECTION_CREATE,
+                operationCenter.accept(UiText.text("ui.java.collection_workspace_controller.9dce38545e") + name, created.getId(), OperationKind.COLLECTION_CREATE,
                         OperationProgress.stage(operationId, OperationStage.FINALIZING, false));
                 return switchCollectionUseCase.execute(created.getId());
             }).thenAccept(active -> UiExecutor.runOnUiThread(() -> {
-                operationCenter.complete(operationId, "Колекція готова: " + active.getName());
-                appState.setCurrentLibraryCollection(active);
-                setBusy(false, "Колекцію створено: " + name);
+                operationCenter.complete(operationId, UiText.text("ui.java.collection_workspace_controller.1e198f406d") + active.getName());
+                boolean committed = collectionUiCommitGuard.runIfStillActive(active.getId(),
+                        () -> appState.setCurrentLibraryCollection(active));
+                if (!committed) {
+                    setBusy(false, UiText.text("ui.java.collection_workspace_controller.d4da4c002a"));
+                    loadCollections();
+                    return;
+                }
+                setBusy(false, UiText.text("ui.java.collection_workspace_controller.e3751d7234") + name);
                 loadCollections(active.getId());
-                dialogService.showInfo("Успішно", "Порожню колекцію \"" + name + "\" створено та активовано.");
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.collection_workspace_controller.f0a78c800d") + name + UiText.text("ui.java.collection_workspace_controller.03cc09f511"));
                 log.info("Порожню колекцію створено й активовано: id={}, name={}", active.getId(), active.getName());
             })).exceptionally(error -> {
                 operationCenter.fail(operationId, error);
                 log.error("Помилка створення колекції", error);
                 UiExecutor.runOnUiThread(() -> {
-                    setBusy(false, "Помилка створення колекції");
-                    dialogService.showError("Помилка", "Не вдалося створити колекцію: " + ThrowableMessages.rootMessage(error));
+                    setBusy(false, UiText.text("ui.java.collection_workspace_controller.ab1972de78"));
+                    dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.b76f02b6d4") + UiExceptionSupport.message(error));
                 });
                 return null;
             });
@@ -386,34 +406,37 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     private void onRenameCollection() {
         CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            dialogService.showError("Помилка", "Виберіть колекцію");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.6ed32c10b7"));
             return;
         }
         if (!selected.isAllowRename()) {
-            dialogService.showError("Помилка", "Цю колекцію не можна перейменовувати");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.d5d3e15d5e"));
             return;
         }
         Optional<String> result = dialogService.showTextInput(
-                "Перейменувати колекцію",
-                "Введіть нову назву для \"" + selected.getName() + "\"",
-                "Нова назва:",
+                UiText.text("ui.fxml.collection_workspace.rename_collection"),
+                UiText.text("ui.java.collection_workspace_controller.0ff4d98614") + selected.getName() + "\"",
+                UiText.text("ui.java.collection_workspace_controller.db3f487087"),
                 selected.getName());
         result.ifPresent(newName -> {
             if (!newName.isBlank() && !newName.equals(selected.getName())) {
                 if (busy) return;
-                setBusy(true, "Перейменування колекції…");
+                setBusy(true, UiText.text("ui.java.collection_workspace_controller.0ab48ee16c"));
                 executor.submit(() -> renameCollectionUseCase.execute(selected.getId(), newName))
                         .thenAccept(renamed -> UiExecutor.runOnUiThread(() -> {
-                            if (selected.isActive()) appState.setCurrentLibraryCollection(renamed);
-                            setBusy(false, "Колекцію перейменовано");
+                            if (selected.isActive()) {
+                                collectionUiCommitGuard.runIfStillActive(renamed.getId(),
+                                        () -> appState.setCurrentLibraryCollection(renamed));
+                            }
+                            setBusy(false, UiText.text("ui.java.collection_workspace_controller.82308d6991"));
                             loadCollections(renamed.getId());
-                            dialogService.showInfo("Успішно", "Колекцію перейменовано на \"" + newName + "\"");
+                            dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.collection_workspace_controller.1751051254") + newName + "\"");
                         }))
                         .exceptionally(error -> {
                             log.error("Помилка перейменування колекції", error);
                             UiExecutor.runOnUiThread(() -> {
-                                setBusy(false, "Помилка перейменування колекції");
-                                dialogService.showError("Помилка", "Не вдалося перейменувати: " + ThrowableMessages.rootMessage(error));
+                                setBusy(false, UiText.text("ui.java.collection_workspace_controller.2d4ee1600f"));
+                                dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.d207d46772") + UiExceptionSupport.message(error));
                             });
                             return null;
                         });
@@ -425,41 +448,42 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     private void onDeleteCollection() {
         CollectionDto selected = collectionsListView.getSelectionModel().getSelectedItem();
         if (selected == null) {
-            dialogService.showError("Помилка", "Виберіть колекцію");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.6ed32c10b7"));
             return;
         }
         if (!selected.isAllowDelete()) {
-            dialogService.showError("Помилка", "Системну колекцію не можна видалити");
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.05f7e2f690"));
             return;
         }
         if (selected.isActive()) {
-            dialogService.showWarning("Увага", "Неможливо видалити активну колекцію. Спочатку активуйте іншу.");
+            dialogService.showWarning(UiText.text("common.warning"), UiText.text("ui.java.collection_workspace_controller.fc5a43f192"));
             return;
         }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Підтвердження");
-        confirm.setHeaderText("Видалити колекцію \"" + selected.getName() + "\"?");
-        confirm.setContentText("Книги не будуть видалені, лише зв'язки.");
+        DialogLocalization.prepare(confirm);
+        confirm.setTitle(UiText.text("common.confirmation"));
+        confirm.setHeaderText(UiText.text("ui.java.collection_workspace_controller.2cc2b8d292") + selected.getName() + "\"?");
+        confirm.setContentText(UiText.text("ui.java.collection_workspace_controller.c23e524406"));
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) == ButtonType.OK) {
             if (busy) return;
             String operationId = operationCenter.start(
-                    "Видалення колекції — " + selected.getName(), selected.getId(), OperationKind.COLLECTION_DELETE,
+                    UiText.text("ui.java.collection_workspace_controller.a8fd607a8e") + selected.getName(), selected.getId(), OperationKind.COLLECTION_DELETE,
                     OperationStage.DELETING_COLLECTION, false);
-            setBusy(true, "Видалення колекції: " + selected.getName());
+            setBusy(true, UiText.text("ui.java.collection_workspace_controller.4e53396d9f") + selected.getName());
             executor.submit(() -> {
                 deleteCollectionUseCase.execute(selected.getId());
                 return selected.getId();
             }).thenAccept(deletedId -> UiExecutor.runOnUiThread(() -> {
-                operationCenter.complete(operationId, "Колекцію видалено");
-                setBusy(false, "Колекцію видалено");
+                operationCenter.complete(operationId, UiText.text("ui.java.collection_workspace_controller.da28e22019"));
+                setBusy(false, UiText.text("ui.java.collection_workspace_controller.da28e22019"));
                 loadCollections();
-                dialogService.showInfo("Успішно", "Колекцію видалено");
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.collection_workspace_controller.da28e22019"));
             })).exceptionally(error -> {
                 operationCenter.fail(operationId, error);
                 log.error("Помилка видалення колекції", error);
                 UiExecutor.runOnUiThread(() -> {
-                    setBusy(false, "Помилка видалення колекції");
-                    dialogService.showError("Помилка", "Не вдалося видалити: " + ThrowableMessages.rootMessage(error));
+                    setBusy(false, UiText.text("ui.java.collection_workspace_controller.b10d7c9dec"));
+                    dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.collection_workspace_controller.7481af0840") + UiExceptionSupport.message(error));
                 });
                 return null;
             });
@@ -508,7 +532,7 @@ public class CollectionWorkspaceController implements WorkspaceLifecycle {
     @FXML
     private void onRefresh() {
         loadCollections();
-        dialogService.showInfo("Оновлення", "Колекції перезавантажено.");
+        dialogService.showInfo(UiText.text("ui.fxml.updates_workspace.updates"), UiText.text("ui.java.collection_workspace_controller.2a11af6f33"));
     }
 
     private void setBusy(boolean busy, String status) {

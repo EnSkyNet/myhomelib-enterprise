@@ -22,7 +22,7 @@ public class SqliteContinueReadingRepository implements ContinueReadingRepositor
         JdbcTemplate jdbc = collectionManager.getCurrentJdbcTemplate();
         String sql = """
                 SELECT b.id AS book_id,
-                       COALESCE(NULLIF(TRIM(b.title), ''), 'Без назви') AS title,
+                       COALESCE(TRIM(b.title), '') AS title,
                        COALESCE((
                            SELECT group_concat(TRIM(COALESCE(a.last_name,'') || ' ' || COALESCE(a.first_name,'') || ' ' || COALESCE(a.middle_name,'')), ', ')
                              FROM book_authors ba

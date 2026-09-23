@@ -4,6 +4,7 @@ import com.github.junrar.Archive;
 import com.github.junrar.rarfile.FileHeader;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
@@ -15,7 +16,9 @@ import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.List;
@@ -42,12 +45,20 @@ public class RarImporter implements BookImporterPort {
     @Override
     public Stream<Book> importBooks(Path file) {
         try {
-            Archive archive = new Archive(file.toFile());
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "RAR import source");
+            InputStream raw = Files.newInputStream(safeFile, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+            Archive archive;
+            try {
+                archive = new Archive(raw);
+            } catch (Exception failure) {
+                try { raw.close(); } catch (Exception closeFailure) { failure.addSuppressed(closeFailure); }
+                throw failure;
+            }
             if (archive.isPasswordProtected()) {
                 archive.close();
                 throw new IllegalArgumentException("RAR archive is password-protected: " + file);
             }
-            RarIterator iterator = new RarIterator(file, archive, archive.getFileHeaders());
+            RarIterator iterator = new RarIterator(safeFile, archive, archive.getFileHeaders());
             return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
                     .onClose(iterator::close);
         } catch (Exception e) {
@@ -57,7 +68,10 @@ public class RarImporter implements BookImporterPort {
 
     @Override
     public long countBooks(Path file) {
-        try (Archive archive = new Archive(file.toFile())) {
+        try {
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "RAR import source");
+            try (InputStream raw = Files.newInputStream(safeFile, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+                 Archive archive = new Archive(raw)) {
             if (archive.isPasswordProtected()) return -1;
             long count = 0;
             int entries = 0;
@@ -66,6 +80,7 @@ public class RarImporter implements BookImporterPort {
                 if (!header.isDirectory() && ArchiveImportSupport.isSupportedBookEntry(header.getFileName(), importerRegistry)) count++;
             }
             return count;
+            }
         } catch (Exception e) {
             return -1;
         }
@@ -125,7 +140,7 @@ public class RarImporter implements BookImporterPort {
                         long size = Files.size(temp);
                         totalDecompressedBytes += size;
                         if (totalDecompressedBytes > ArchiveSafetyLimits.MAX_TOTAL_DECOMPRESSED_BYTES) {
-                            throw new java.io.IOException("RAR exceeds cumulative decompression safety limit");
+                            throw new FatalArchiveLimitException("RAR exceeds cumulative decompression safety limit");
                         }
                         try (Stream<Book> books = importer.importBooks(temp)) {
                             books.filter(java.util.Objects::nonNull)
@@ -135,6 +150,10 @@ public class RarImporter implements BookImporterPort {
                     } finally {
                         Files.deleteIfExists(temp);
                     }
+                } catch (FatalArchiveLimitException fatal) {
+                    log.warn("RAR safety limit reached for {}: {}", archivePath, fatal.getMessage());
+                    close();
+                    return;
                 } catch (Exception e) {
                     log.warn("Пропущено RAR entry {}: {}", name, e.getMessage());
                 }
@@ -145,6 +164,12 @@ public class RarImporter implements BookImporterPort {
             if (finished) return;
             finished = true;
             try { archive.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    private static final class FatalArchiveLimitException extends java.io.IOException {
+        private FatalArchiveLimitException(String message) {
+            super(message);
         }
     }
 }

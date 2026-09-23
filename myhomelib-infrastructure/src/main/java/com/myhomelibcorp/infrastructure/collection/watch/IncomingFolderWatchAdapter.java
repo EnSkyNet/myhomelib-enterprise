@@ -9,6 +9,7 @@ import com.myhomelibcorp.shared.event.DomainEventPublisher;
 import com.myhomelibcorp.shared.format.SupportedFormat;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
 import com.myhomelibcorp.shared.util.Sha256Support;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
@@ -111,7 +112,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         boolean sameFolder = previous.map(IncomingFolderWatchState::folder)
                 .map(path -> path.toAbsolutePath().normalize().equals(normalized)).orElse(false);
         if (!sameFolder) jdbc.update("DELETE FROM incoming_folder_file WHERE collection_id=?", collectionId);
-        String status = Files.isDirectory(normalized) ? "CONFIGURED" : "FOLDER_MISSING";
+        String status = isSafeIncomingDirectory(normalized) ? "CONFIGURED" : "FOLDER_MISSING";
         jdbc.update("""
                 INSERT INTO incoming_folder_watch(collection_id, folder_path, enabled, debounce_seconds,
                                                   stability_seconds, last_status, updated_at)
@@ -137,13 +138,14 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         IncomingFolderWatchState state = findState(collectionId)
                 .orElseThrow(() -> new IllegalArgumentException("Incoming folder is not configured: " + collectionId));
         Path folder = state.folder();
-        if (folder == null || !Files.isDirectory(folder)) {
+        if (folder == null || !isSafeIncomingDirectory(folder)) {
             updateWatchStatus(collectionId, "FOLDER_MISSING", true);
             return findState(collectionId).orElseThrow();
         }
         int scheduled = 0;
         try (var stream = Files.list(folder)) {
-            for (Path file : stream.filter(Files::isRegularFile).filter(IncomingFolderWatchAdapter::isIncomingSupported).toList()) {
+            for (Path file : stream.filter(IncomingFolderWatchAdapter::isSafeIncomingRegularFile)
+                    .filter(IncomingFolderWatchAdapter::isIncomingSupported).toList()) {
                 scheduleCandidate(collectionId, file, 0);
                 scheduled++;
             }
@@ -181,6 +183,16 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
     }
 
     @Override
+    public void releaseClaim(String collectionId, Path file, String fingerprint) {
+        if (file == null || fingerprint == null || fingerprint.isBlank()) return;
+        jdbc.update("""
+                UPDATE incoming_folder_file
+                   SET status='READY', last_error=NULL, updated_at=?
+                 WHERE collection_id=? AND file_path=? AND fingerprint=? AND status='PROCESSING'
+                """, now(), collectionId, normalize(file), fingerprint);
+    }
+
+    @Override
     public void markImported(String collectionId, Path file, String fingerprint,
                              long imported, long duplicates, long errors) {
         int changed = jdbc.update("""
@@ -207,7 +219,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         stopMonitoring(collectionId);
         IncomingFolderWatchState state = findState(collectionId).orElse(null);
         if (state == null || !state.enabled() || state.folder() == null) return;
-        if (!Files.isDirectory(state.folder())) {
+        if (!isSafeIncomingDirectory(state.folder())) {
             updateWatchStatus(collectionId, "FOLDER_MISSING", false);
             return;
         }
@@ -297,14 +309,17 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         IncomingFolderWatchState state = findState(collectionId).orElse(null);
         if (state == null || file == null) return;
         Path normalized = file.toAbsolutePath().normalize();
-        if (!Files.isRegularFile(normalized)) {
+        Path configuredFolder = state.folder() == null ? null : state.folder().toAbsolutePath().normalize();
+        if (configuredFolder == null || !isSafeIncomingDirectory(configuredFolder)
+                || normalized.getParent() == null || !normalized.getParent().equals(configuredFolder)
+                || !isSafeIncomingRegularFile(normalized)) {
             markMissing(collectionId, normalized);
             return;
         }
         if (!isIncomingSupported(normalized)) return;
         BasicFileAttributes attrs;
         try {
-            attrs = Files.readAttributes(normalized, BasicFileAttributes.class);
+            attrs = Files.readAttributes(normalized, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         } catch (IOException failure) {
             upsertWaiting(collectionId, normalized, 0, 0, now(), "ATTRIBUTE_ERROR: " + safeMessage(failure));
             return;
@@ -329,7 +344,7 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
         }
         String fingerprint;
         try {
-            fingerprint = Sha256Support.file(normalized);
+            fingerprint = sha256NoFollow(normalized);
         } catch (Exception failure) {
             jdbc.update("""
                     UPDATE incoming_folder_file SET status='FAILED', last_error=?, updated_at=?
@@ -425,6 +440,41 @@ public class IncomingFolderWatchAdapter implements IncomingFolderWatchPort {
                 .filter(SupportedFormat::importSupported)
                 .map(format -> format.family() != SupportedFormat.Family.CATALOG)
                 .orElse(false);
+    }
+
+    private static boolean isSafeIncomingDirectory(Path directory) {
+        if (directory == null) return false;
+        try {
+            SafeFilePublication.requireSafeDirectoryPath(
+                    directory.toAbsolutePath().normalize(), "Incoming folder");
+            return true;
+        } catch (IOException | SecurityException unsafe) {
+            return false;
+        }
+    }
+
+    private static boolean isSafeIncomingRegularFile(Path file) {
+        if (file == null) return false;
+        try {
+            SafeFilePublication.requireSafeRegularFile(
+                    file.toAbsolutePath().normalize(), "Incoming folder file");
+            return true;
+        } catch (IOException | SecurityException unsafe) {
+            return false;
+        }
+    }
+
+    private static String sha256NoFollow(Path file) throws IOException {
+        if (!isSafeIncomingRegularFile(file)) throw new IOException("Incoming file is not a safe regular file: " + file);
+        var digest = Sha256Support.newDigest();
+        byte[] buffer = new byte[256 * 1024];
+        try (var in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
+            for (int n; (n = in.read(buffer)) >= 0; ) {
+                if (n > 0) digest.update(buffer, 0, n);
+            }
+        }
+        if (!isSafeIncomingRegularFile(file)) throw new IOException("Incoming file changed during hashing: " + file);
+        return Sha256Support.finish(digest);
     }
 
     private static int clamp(int seconds) { return Math.max(MIN_SECONDS, Math.min(MAX_SECONDS, seconds)); }

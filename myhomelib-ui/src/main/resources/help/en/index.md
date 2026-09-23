@@ -1,12 +1,20 @@
 # MyHomeLib 8.0.0 — Help
 
-MyHomeLib manages multiple local and online ebook collections. It imports FB2/FBD, EPUB, TXT and generic documents, scans ZIP/7z/RAR/TAR/CPIO archives, imports INPX catalogs, downloads books on demand, searches catalog metadata, stores groups/ratings/progress/reviews and includes a lightweight built-in Reader.
+F1 opens this help. MyHomeLib manages multiple local and online collections, imports common ebook/document formats and archives, supports INPX, search, groups, ratings, progress, reviews, built-in readers, external readers, conversion and device export.
 
-Main topics: Collections, INPX/online libraries, Import, Search, Reader, Archives, Export/device, Settings, Portable mode, .hlc2 migration and MCP.
+Main sections:
+• Collections — creation, INPX, online addresses, switching and backup.
+• Import — individual files, directories, INPX and archives.
+• Search — normal and advanced; `%text%`, `="exact phrase"`, `OR`, field clauses and comparisons.
+• Reader — FB2/FBD, EPUB, TXT/Markdown, PDF, CBZ/CBR, MP3/M4B and supported DRM-free MOBI/PRC/AZW/AZW3; TOC, search, bookmarks, notes and position persistence depend on the format.
+• Online access — download a missing book/archive and cancel an active download.
+• Export — original files, FB2.ZIP, book lists and conversion. Optional Calibre `ebook-convert` adds EPUB, MOBI, AZW3, PDF, FB2, TXT, DOCX, HTMLZ, KEPUB, LIT, LRF, PDB, PMLZ, RB, RTF, SNB, TCR, TXTZ and ZIP targets; actual availability depends on the source format and available converter.
+• Portable mode — create an empty `myhomelib2.ini` beside the application; data, configuration and indexes will be stored beside the program.
+• MCP — a separate read-only server; see `MCP_README.md` in the release root.
 
 ## Feature availability
 
-• **Desktop UI:** collections, import, local folder synchronization, search and Smart Collections, book management, Reader, export, backup/restore, maintenance, and OPDS management.
-• **Web / OPDS:** separate server access channels. Their presence does not imply a dedicated desktop button for every server-side capability.
-• **MCP:** a separate read-only server intended for an external MCP client.
-• **Extension foundation:** cross-device WebDAV user-data sync, sync-conflict review, Plugin SPI, and the AI extension point have implementation foundations in the codebase, but are not completed standard desktop user workflows in MyHomeLib 8.0.0. Do not confuse WebDAV sync with **Sync Folder**, which synchronizes a local file directory.
+• **Desktop UI:** collections, import, local folder synchronization, search and Smart Collections, book workflows, Reader, export, backup/restore, maintenance and OPDS management.
+• **Sync, plugins and AI:** the built-in Integration Center configures WebDAV user-data synchronization, conflict review/resolution, plugin installation and lifecycle, and AI providers. Network/secret operations require explicit configuration and user consent. Do not confuse WebDAV sync with **Synchronize folder**, which works with a local file directory.
+• **Web / OPDS:** separate server access channels. Their presence does not imply a dedicated desktop button for every server capability.
+• **MCP:** a separate read-only server for an external MCP client.

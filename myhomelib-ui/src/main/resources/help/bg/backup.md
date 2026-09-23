@@ -1,12 +1,12 @@
 # Резервно копие и пренасяне на потребителски данни
 
-MyHomeLib Enterprise създава съгласуван SQLite snapshot чрез `VACUUM INTO`; активна WAL база не се копира като обикновен файл. Нормалният backup може да съдържа базата, search index, covers и `user-data.json`.
+MyHomeLib създава съгласуван SQLite snapshot чрез SQLite Online Backup API, така че активна WAL база не се копира като обикновен файл и не е нужно пълно пренареждане с `VACUUM INTO`. Нормалният backup съдържа snapshot на базата и, когато е включен export на потребителски данни, преносимия файл `user-data.json`. Производните search indexes и cache се преизграждат отделно при нужда.
 
-`user-data.json` е преносим versioned manifest с ratings, progress/reviews, bookmarks, highlights/notes с текстови anchors, reading history/statistics, groups/favorites, saved searches, unified filters, глобални Reader settings и per-book Reader overrides. Данните за книга се свързват първо по стабилен `LibID`; вътрешният book ID е само fallback за същия каталог.
+`user-data.json` е преносим versioned manifest с ratings, progress и reviews, bookmarks, highlights/notes с текстови anchors, reading history/statistics, groups/favorites, saved searches, unified filters, глобални Reader settings и per-book Reader overrides. Записите за книги се свързват първо по стабилен `LibID`; вътрешният book ID е само fallback в рамките на същата колекция.
 
 Restore има два режима:
 
 - **Пълно възстановяване** — staged замяна на SQLite, повторно отваряне на колекцията и последователни Flyway migrations; съвместимо със стари database-only backup-и.
-- **Само потребителски данни** — текущата каталогова база и metadata не се заменят; `user-data.json` се прилага по `LibID`. Това е препоръчителният режим след refresh/re-import на INPX.
+- **Само потребителски данни** — запазва текущата каталогова база и metadata на книгите и прилага `user-data.json` по `LibID`. Това е препоръчителният режим след update или re-import на INPX.
 
-Stage 22 използва schema version 2 и последователно мигрира предишния v1 manifest. Destructive collection maintenance създава отделен safety backup. Не заменяйте ръчно активната база по време на работа.
+Преносимият формат има собствена schema version и последователна migration поддръжка за по-стари поддържани manifest-и. Destructive collection maintenance създава отделен safety backup. Не заменяйте ръчно файловете на активната база по време на работа.

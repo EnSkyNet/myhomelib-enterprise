@@ -2,6 +2,7 @@ package com.myhomelibcorp.opds;
 
 import com.myhomelibcorp.application.opds.OpdsCertificateManager;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -94,6 +95,39 @@ class JdkOpdsCertificateManagerTest {
                 .hasMessageContaining("Cannot import OPDS TLS certificate/key");
     }
 
+    @Test
+    void rejectsSymlinkedPemInputWithoutFollowingIt() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.toString());
+        JdkOpdsCertificateManager manager = new JdkOpdsCertificateManager();
+        OpdsCertificateManager.ManagedCertificate generated = manager.generateSelfSigned("localhost");
+        Material material = exportPem(generated, tempDir.resolve("leaf.crt"), tempDir.resolve("leaf.key"));
+        Path certLink = tempDir.resolve("leaf-link.crt");
+        Assumptions.assumeTrue(canCreateSymlink(certLink, material.cert()));
+
+        assertThatThrownBy(() -> manager.importPem(certLink, material.key()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("unsafe");
+    }
+
+    @Test
+    void rejectsSymlinkedManagedDirectoryWithoutWritingOutsideIt() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.toString());
+        Path config = tempDir.resolve("config");
+        Files.createDirectories(config);
+        Path outside = tempDir.resolve("outside-opds");
+        Files.createDirectories(outside);
+        Path managed = config.resolve("opds");
+        Assumptions.assumeTrue(canCreateSymlink(managed, outside));
+
+        JdkOpdsCertificateManager manager = new JdkOpdsCertificateManager();
+        assertThatThrownBy(() -> manager.generateSelfSigned("localhost"))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Cannot generate OPDS TLS certificate");
+        try (var children = Files.list(outside)) {
+            assertThat(children.toList()).isEmpty();
+        }
+    }
+
     private static Material exportPem(OpdsCertificateManager.ManagedCertificate generated, Path certPath, Path keyPath) throws Exception {
         char[] password = generated.tls().keyStorePassword().toCharArray();
         KeyStore store = KeyStore.getInstance(generated.tls().keyStoreType());
@@ -113,6 +147,15 @@ class JdkOpdsCertificateManagerTest {
     private static String pem(String type, byte[] bytes) {
         String body = Base64.getMimeEncoder(64, "\n".getBytes(StandardCharsets.US_ASCII)).encodeToString(bytes);
         return "-----BEGIN " + type + "-----\n" + body + "\n-----END " + type + "-----\n";
+    }
+
+    private static boolean canCreateSymlink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private record Material(Path cert, Path key) { }

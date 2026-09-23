@@ -1,8 +1,12 @@
 package com.myhomelibcorp.ui.controller;
 
+
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.health.LibraryHealthIssue;
 import com.myhomelibcorp.application.health.LibraryHealthIssueType;
 import com.myhomelibcorp.application.health.LibraryHealthReport;
+import com.myhomelibcorp.application.health.LibraryHealthSeverity;
 import com.myhomelibcorp.application.health.LibraryHealthService;
 import com.myhomelibcorp.application.content.index.ContentIndexHealth;
 import com.myhomelibcorp.application.content.maintenance.ContentIndexMaintenanceService;
@@ -32,7 +36,6 @@ import org.springframework.stereotype.Component;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -87,50 +90,47 @@ public class IntegrityCheckController {
     @FXML
     public void initialize() {
         progressIndicator.setVisible(false);
-        statusLabel.setText("Готово до перевірки");
-        overallStatusLabel.setText("Стан ще не перевірено");
+        statusLabel.setText(UiText.text("ui.fxml.integrity_check.ready_to_check"));
+        overallStatusLabel.setText(UiText.text("ui.fxml.integrity_check.health_has_not_been_checked_yet"));
         configureIssueTable();
         if (contentIndexProgress != null) { contentIndexProgress.setProgress(0); contentIndexProgress.setVisible(false); contentIndexProgress.setManaged(false); }
         if (contentIndexCancelButton != null) { contentIndexCancelButton.setDisable(true); }
         refreshContentIndexHealth();
-        detailArea.setText("Натисніть «Оновити стан», щоб перевірити цілісність і хеші та зібрати показники бібліотеки.");
+        detailArea.setText(UiText.text("ui.java.integrity_check_controller.24e7f16eba"));
     }
 
     private void configureIssueTable() {
-        severityColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(switch (cell.getValue().severity()) {
-            case ERROR -> "Помилка";
-            case WARNING -> "Увага";
-            case INFO -> "Інформація";
-        }));
-        categoryColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().title()));
+        severityColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(issueSeverity(cell.getValue().severity())));
+        categoryColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(issueTitle(cell.getValue())));
         countColumn.setCellValueFactory(cell -> new ReadOnlyObjectWrapper<>(cell.getValue().count()));
-        actionColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(cell.getValue().action()));
+        actionColumn.setCellValueFactory(cell -> new ReadOnlyStringWrapper(issueAction(cell.getValue())));
         issueTable.getSelectionModel().selectedItemProperty().addListener((obs, oldValue, issue) -> {
             if (issue != null) displayIssueDetail(issue);
         });
-        issueTable.setPlaceholder(new Label("Проблем не виявлено"));
+        issueTable.setPlaceholder(new Label(UiText.text("ui.java.integrity_check_controller.0fc7d16e90")));
     }
 
     @FXML
     public void onCheckIntegrity() {
         checkButton.setDisable(true);
         progressIndicator.setVisible(true);
-        statusLabel.setText("Перевірка локальних файлів, бази SQLite та пошукового індексу...");
-        detailArea.setText("Виконується інкрементальна перевірка. Для незмінених файлів використовуються попередні контрольні хеш-значення.");
+        statusLabel.setText(UiText.text("ui.java.integrity_check_controller.e8776af5b7"));
+        detailArea.setText(UiText.text("ui.java.integrity_check_controller.2de4c5ad60"));
 
         var collection = appState.getCurrentLibraryCollection();
         String operationId = operationCenter.start(
-                "Перевірка стану бібліотеки", collection == null ? "" : collection.getId(),
+                UiText.text("ui.java.integrity_check_controller.6add810547"), collection == null ? "" : collection.getId(),
                 OperationStage.INTEGRITY_CHECKS, false);
-        executor.submit(healthService::refresh)
+        String expectedCollectionId = collection == null ? "" : collection.getId();
+        executor.submit(() -> healthService.refresh(expectedCollectionId))
                 .whenComplete((report, error) -> UiExecutor.runOnUiThread(() -> {
                     checkButton.setDisable(false);
                     progressIndicator.setVisible(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
-                        statusLabel.setText("Помилка перевірки: " + cause.getMessage());
-                        dialogService.showError("Стан бібліотеки", "Не вдалося оновити стан: " + cause.getMessage());
+                        statusLabel.setText(UiText.text("ui.java.integrity_check_controller.8af7f555ee") + UiExceptionSupport.message(cause));
+                        dialogService.showError(UiText.text("ui.fxml.integrity_check.library_health"), UiText.text("ui.java.integrity_check_controller.a94dc0c508") + UiExceptionSupport.message(cause));
                         log.error("Library Health refresh failed", cause);
                         return;
                     }
@@ -138,10 +138,10 @@ public class IntegrityCheckController {
                     lastReport = report;
                     lastReportText = formatExport(report);
                     operationCenter.complete(operationId, report.healthy()
-                            ? "Проблем не виявлено"
-                            : "Проблем: " + formatNumber(report.totalProblemCount()));
+                            ? UiText.text("ui.java.integrity_check_controller.0fc7d16e90")
+                            : UiText.text("ui.java.integrity_check_controller.a355f59c6a") + formatNumber(report.totalProblemCount()));
                     displayReport(report);
-                    statusLabel.setText("Оновлено: " + DATE_TIME.format(report.generatedAt()));
+                    statusLabel.setText(UiText.text("ui.java.integrity_check_controller.239ef7a7ef") + DATE_TIME.format(report.generatedAt()));
                 }));
     }
 
@@ -152,25 +152,25 @@ public class IntegrityCheckController {
         changedValue.setText(formatNumber(report.changedArtifacts()));
         duplicatesValue.setText(formatNumber(report.duplicateBooks()));
         metadataValue.setText(formatNumber(report.metadataGaps()));
-        indexValue.setText(report.searchIndexFresh() ? "Актуальний" : "Потребує перебудови");
+        indexValue.setText(report.searchIndexFresh() ? UiText.text("ui.java.integrity_check_controller.3a3b727384") : UiText.text("ui.java.integrity_check_controller.233c4ce3cf"));
         backupValue.setText(report.latestBackupAt() == null
-                ? "Не знайдено"
+                ? UiText.text("ui.java.integrity_check_controller.940999bb7d")
                 : formatAge(report.backupAgeHours()));
 
         if (report.healthy()) {
-            overallStatusLabel.setText("Стан бібліотеки: основні перевірки пройдено");
+            overallStatusLabel.setText(UiText.text("ui.java.integrity_check_controller.8f35fe630f"));
             overallStatusLabel.setStyle("-fx-text-fill: -mhl-success; -fx-font-weight: bold; -fx-font-size: 15px;");
         } else {
-            overallStatusLabel.setText("Стан бібліотеки: проблем — " + formatNumber(report.totalProblemCount()));
+            overallStatusLabel.setText(UiText.text("ui.java.integrity_check_controller.1d23bcd31e") + formatNumber(report.totalProblemCount()));
             overallStatusLabel.setStyle("-fx-text-fill: -mhl-warning; -fx-font-weight: bold; -fx-font-size: 15px;");
         }
 
         issueTable.setItems(FXCollections.observableArrayList(report.issues()));
         if (report.issues().isEmpty()) {
-            detailArea.setText("Проблем не виявлено.\n\n"
-                    + "Перевірка файлів: перевірено " + formatNumber(report.auditInspected())
-                    + ", повторно використано без обчислення хешу: " + formatNumber(report.auditReused())
-                    + ", прочитано: " + formatBytes(report.auditBytesRead()) + ".");
+            detailArea.setText(UiText.text("ui.java.integrity_check_controller.af60344509")
+                    + UiText.text("ui.java.integrity_check_controller.f9093ad4f2") + formatNumber(report.auditInspected())
+                    + UiText.text("ui.java.integrity_check_controller.fe967cf0aa") + formatNumber(report.auditReused())
+                    + UiText.text("ui.java.integrity_check_controller.56e687535b") + formatBytes(report.auditBytesRead()) + ".");
         } else {
             issueTable.getSelectionModel().selectFirst();
         }
@@ -179,19 +179,20 @@ public class IntegrityCheckController {
     private void displayIssueDetail(LibraryHealthIssue issue) {
         if (lastReport == null) return;
         StringBuilder text = new StringBuilder();
-        text.append(issue.title()).append("\n")
-                .append("Кількість: ").append(formatNumber(issue.count())).append("\n\n")
-                .append(issue.detail()).append("\n\n")
-                .append("Рекомендована дія: ").append(issue.action());
+        text.append(issueTitle(issue)).append("\n")
+                .append(UiText.text("ui.java.integrity_check_controller.9770b04d87")).append(formatNumber(issue.count())).append("\n\n")
+                .append(issueDetail(issue)).append("\n\n")
+                .append(UiText.text("ui.java.integrity_check_controller.524519e47c")).append(issueAction(issue));
 
         List<ArtifactIntegrityFinding> matches = artifactFindings(issue.type());
         if (!matches.isEmpty()) {
-            text.append("\n\nФайли (деталі перевірки, максимум у поточному звіті):\n");
+            text.append(UiText.text("ui.java.integrity_check_controller.29008ba6f7"));
             for (ArtifactIntegrityFinding finding : matches) {
                 text.append("• ").append(finding.bookTitle().isBlank() ? finding.bookId() : finding.bookTitle())
-                        .append(" [").append(finding.status()).append("]\n  ")
+                        .append(" [").append(findingStatus(finding.status())).append("]\n  ")
                         .append(finding.path());
-                if (!finding.detail().isBlank()) text.append("\n  ").append(finding.detail());
+                String findingDetail = findingDetail(finding);
+                if (!findingDetail.isBlank()) text.append("\n  ").append(findingDetail);
                 text.append('\n');
             }
         }
@@ -222,17 +223,17 @@ public class IntegrityCheckController {
     public void onRebuildContentIndex() {
         String id = currentCollectionId();
         if (id.isBlank()) {
-            dialogService.showWarning("Повнотекстовий індекс", "Активну бібліотеку не вибрано.");
+            dialogService.showWarning(UiText.text("ui.fxml.integrity_check.full_text_index"), UiText.text("ui.java.integrity_check_controller.580c801604"));
             return;
         }
-        if (!dialogService.showConfirmation("Перебудова повнотекстового індексу",
-                "Перебудувати окремий індекс вмісту книг?",
-                "Активний індекс залишиться доступним до успішного завершення атомарної перебудови.")) return;
+        if (!dialogService.showConfirmation(UiText.text("ui.java.integrity_check_controller.a225550297"),
+                UiText.text("ui.java.integrity_check_controller.08dc0c3c01"),
+                UiText.text("ui.java.integrity_check_controller.a9995e6b95"))) return;
 
         contentIndexCancel.set(false);
         setContentRebuildRunning(true);
         updateContentProgress(new ContentIndexRebuildProgress(0, 0, "", "starting"));
-        String operationTitle = "Перебудова повнотекстового індексу";
+        String operationTitle = UiText.text("ui.java.integrity_check_controller.a225550297");
         String operationId = operationCenter.start(operationTitle, id, OperationKind.INDEX_REBUILD,
                 OperationStage.UPDATING_SEARCH_INDEX, true);
         contentIndexRebuildTask = executor.submit(() -> contentIndexMaintenance.rebuild(
@@ -248,36 +249,41 @@ public class IntegrityCheckController {
                     if (error != null) {
                         operationCenter.fail(operationId, UiExceptionSupport.unwrapAsync(error));
                     } else if (result == null) {
-                        operationCenter.fail(operationId, "Перебудова завершилась без результату");
+                        operationCenter.fail(operationId, UiText.text("ui.java.integrity_check_controller.fdae6ff7bb"));
                     } else if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
-                        operationCenter.complete(operationId, "Книг: " + result.processedBooks()
-                                + " · проіндексовано файлів: " + result.indexedArtifacts());
+                        operationCenter.complete(operationId, UiText.text("ui.java.integrity_check_controller.16b100ce7b") + result.processedBooks()
+                                + UiText.text("ui.java.integrity_check_controller.6b1ae281cd") + result.indexedArtifacts());
                     } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
-                        operationCenter.cancel(operationId, "Перебудову повнотекстового індексу скасовано");
+                        operationCenter.cancel(operationId, UiText.text("ui.java.integrity_check_controller.eb9d9b891e"));
                     } else {
-                        operationCenter.fail(operationId, result.message());
+                        if (!result.technicalDetail().isBlank()) {
+                            log.error("Content-index rebuild failed: {}", result.technicalDetail());
+                        }
+                        operationCenter.fail(operationId, UiText.text("common.error.operation_failed"));
                     }
                     UiExecutor.runOnUiThread(() -> {
                         setContentRebuildRunning(false);
                         if (error != null) {
                             Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                            dialogService.showError("Повнотекстовий індекс", "Помилка перебудови: " + cause.getMessage());
+                            dialogService.showError(UiText.text("ui.fxml.integrity_check.full_text_index"), UiText.text("ui.java.integrity_check_controller.d503cc2bf1") + UiExceptionSupport.message(cause));
                             refreshContentIndexHealth();
                             return;
                         }
                         if (result == null) return;
                         displayContentIndexHealth(result.health());
                         if (result.status() == ContentIndexRebuildResult.Status.COMPLETED) {
-                            detailArea.setText("Повнотекстовий індекс успішно перебудовано.\n"
-                                    + "Книг оброблено: " + formatNumber(result.processedBooks()) + "\n"
-                                    + "Проіндексовано файлів: " + formatNumber(result.indexedArtifacts()) + "\n\n"
+                            detailArea.setText(UiText.text("ui.java.integrity_check_controller.dbe578013c")
+                                    + UiText.text("ui.java.integrity_check_controller.455cd40c95") + formatNumber(result.processedBooks()) + "\n"
+                                    + UiText.text("ui.java.integrity_check_controller.c191914616") + formatNumber(result.indexedArtifacts()) + "\n\n"
                                     + formatContentIndexHealth(result.health()));
                         } else if (result.status() == ContentIndexRebuildResult.Status.CANCELLED) {
-                            detailArea.setText("Перебудову скасовано. Попередній активний індекс вмісту збережено.\n\n"
+                            detailArea.setText(UiText.text("ui.java.integrity_check_controller.138034c7f1")
                                     + formatContentIndexHealth(result.health()));
                         } else {
-                            detailArea.setText("Перебудова завершилась помилкою; попередній активний індекс вмісту збережено.\n"
-                                    + result.message() + "\n\n" + formatContentIndexHealth(result.health()));
+                            detailArea.setText(UiText.text("ui.java.integrity_check_controller.69efb4ac0a")
+                                    + UiText.text("common.error.operation_failed") + "\n"
+                                    + UiText.text("common.error.details_in_log") + "\n\n"
+                                    + formatContentIndexHealth(result.health()));
                         }
                     });
                 });
@@ -287,22 +293,22 @@ public class IntegrityCheckController {
     public void onCancelContentIndexRebuild() {
         contentIndexCancel.set(true);
         if (contentIndexCancelButton != null) contentIndexCancelButton.setDisable(true);
-        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText("Скасування…");
+        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(UiText.text("ui.java.integrity_check_controller.d553b63991"));
     }
 
     private void refreshContentIndexHealth() {
         String id = currentCollectionId();
         if (id.isBlank()) {
             if (contentIndexValue != null) contentIndexValue.setText("—");
-            if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText("Немає активної бібліотеки");
+            if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(UiText.text("ui.java.integrity_check_controller.8477ba2961"));
             return;
         }
         executor.submit(() -> contentIndexMaintenance.health(id))
                 .thenAccept(health -> UiExecutor.runOnUiThread(() -> displayContentIndexHealth(health)))
                 .exceptionally(error -> {
                     UiExecutor.runOnUiThread(() -> {
-                        if (contentIndexValue != null) contentIndexValue.setText("Помилка");
-                        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(UiExceptionSupport.unwrapAsync(error).getMessage());
+                        if (contentIndexValue != null) contentIndexValue.setText(UiText.text("common.error"));
+                        if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(UiExceptionSupport.message(error));
                     });
                     return null;
                 });
@@ -310,21 +316,41 @@ public class IntegrityCheckController {
 
     private void displayContentIndexHealth(ContentIndexHealth health) {
         if (health == null) return;
-        if (contentIndexValue != null) contentIndexValue.setText(health.compatible() ? "OK" : "Перебудувати");
+        if (contentIndexValue != null) contentIndexValue.setText(
+                health.state() == ContentIndexHealth.State.READY
+                        ? "OK"
+                        : UiText.text("ui.java.integrity_check_controller.217f5b5d3c"));
         if (contentIndexDetailLabel != null) contentIndexDetailLabel.setText(
-                "v" + health.schemaVersion() + " · документів: " + formatNumber(health.documentCount()) + " · " + formatBytes(health.sizeBytes()));
+                "v" + health.schemaVersion() + UiText.text("ui.java.integrity_check_controller.653fb39e1b") + formatNumber(health.documentCount()) + " · " + formatBytes(health.sizeBytes()));
     }
 
     private String formatContentIndexHealth(ContentIndexHealth health) {
-        if (health == null) return "Повнотекстовий індекс: стан недоступний";
-        return "Повнотекстовий індекс вмісту\n"
-                + "Колекція: " + health.collectionId() + "\n"
-                + "Версія схеми: " + health.schemaVersion() + "\n"
-                + "Документів: " + formatNumber(health.documentCount()) + "\n"
-                + "Розмір: " + formatBytes(health.sizeBytes()) + "\n"
-                + "Сумісний: " + (health.compatible() ? "ТАК" : "НІ") + "\n"
-                + "Стан: " + health.message() + "\n\n"
-                + "Індекс метаданих перебудовується окремо через «Інструменти бази даних» → «Перебудувати індекс».";
+        if (health == null) return UiText.text("ui.java.integrity_check_controller.7a32e9c7f4");
+        return UiText.text("ui.java.integrity_check_controller.2fd8ee5431")
+                + UiText.text("ui.java.integrity_check_controller.ce86b580b9") + health.collectionId() + "\n"
+                + UiText.text("ui.java.integrity_check_controller.e2998e14d1") + health.schemaVersion() + "\n"
+                + UiText.text("ui.java.integrity_check_controller.9c6f189d5e") + formatNumber(health.documentCount()) + "\n"
+                + UiText.text("ui.java.integrity_check_controller.173f73a83f") + formatBytes(health.sizeBytes()) + "\n"
+                + UiText.text("ui.java.integrity_check_controller.bfda372c9d") + (health.compatible() ? UiText.text("ui.java.integrity_check_controller.a7b474c9aa") : UiText.text("ui.java.integrity_check_controller.d2e18402de")) + "\n"
+                + UiText.text("ui.java.integrity_check_controller.384f693f20") + contentIndexStateText(health) + "\n\n"
+                + UiText.text("ui.java.integrity_check_controller.64b1151103");
+    }
+
+    private String contentIndexStateText(ContentIndexHealth health) {
+        if (health == null) return UiText.text("common.result.unknown");
+        if (!health.technicalDetail().isBlank()) {
+            log.warn("Content-index health detail for {}: {}", health.collectionId(), health.technicalDetail());
+        }
+        String key = switch (health.state()) {
+            case ABSENT -> "ui.integrity.content_index.state.absent";
+            case EMPTY -> "ui.integrity.content_index.state.empty";
+            case READY -> "ui.integrity.content_index.state.ready";
+            case STALE -> "ui.integrity.content_index.state.stale";
+            case SCHEMA_MISMATCH -> "ui.integrity.content_index.state.schema_mismatch";
+            case ERROR -> "ui.integrity.content_index.state.error";
+        };
+        String value = UiText.text(key);
+        return health.technicalDetail().isBlank() ? value : value + " " + UiText.text("common.error.details_in_log");
     }
 
     private void updateContentProgress(ContentIndexRebuildProgress progress) {
@@ -341,12 +367,12 @@ public class IntegrityCheckController {
     }
 
     private static String contentIndexPhaseText(String phase) {
-        if (phase == null || phase.isBlank()) return "Обробка";
+        if (phase == null || phase.isBlank()) return UiText.text("ui.import.stage.processing");
         return switch (phase.toLowerCase(java.util.Locale.ROOT)) {
-            case "starting" -> "Підготовка";
-            case "extracting" -> "Видобування тексту";
-            case "extracted" -> "Текст опрацьовано";
-            case "complete" -> "Завершено";
+            case "starting" -> UiText.text("ui.java.integrity_check_controller.3f65fd1c44");
+            case "extracting" -> UiText.text("ui.java.integrity_check_controller.5ad513428b");
+            case "extracted" -> UiText.text("ui.java.integrity_check_controller.7b06b00769");
+            case "complete" -> UiText.text("ui.import.stage.completed");
             default -> phase;
         };
     }
@@ -384,90 +410,150 @@ public class IntegrityCheckController {
 
     private String noIssueMessage(LibraryHealthIssueType type) {
         return switch (type) {
-            case MISSING_ARTIFACTS -> "Відсутніх локальних файлів не виявлено.";
-            case CORRUPT_ARTIFACTS -> "Пошкоджених або нечитабельних локальних файлів не виявлено.";
-            case CHANGED_ARTIFACTS -> "Локальних файлів зі зміненим вмістом не виявлено.";
-            case DUPLICATES -> "Фізичних дублікатів не виявлено.";
-            case METADATA_GAPS -> "Критичних прогалин метаданих не виявлено.";
-            case STALE_SEARCH_INDEX -> "Пошуковий індекс актуальний.\n" + lastReport.searchIndexDetail();
+            case MISSING_ARTIFACTS -> UiText.text("ui.java.integrity_check_controller.103f95bec8");
+            case CORRUPT_ARTIFACTS -> UiText.text("ui.java.integrity_check_controller.53eb692df9");
+            case CHANGED_ARTIFACTS -> UiText.text("ui.java.integrity_check_controller.edef519a76");
+            case DUPLICATES -> UiText.text("ui.java.integrity_check_controller.a7bc2a72f0");
+            case METADATA_GAPS -> UiText.text("ui.java.integrity_check_controller.c2b6be4f7c");
+            case STALE_SEARCH_INDEX -> UiText.text("ui.java.integrity_check_controller.ad1d840b80") + lastReport.searchIndexDetail();
             case BACKUP_AGE -> lastReport.latestBackupAt() == null
-                    ? "Резервну копію не знайдено."
-                    : "Остання резервна копія: " + DATE_TIME.format(lastReport.latestBackupAt())
+                    ? UiText.text("ui.java.integrity_check_controller.31e54999d8")
+                    : UiText.text("ui.java.integrity_check_controller.24211df359") + DATE_TIME.format(lastReport.latestBackupAt())
                     + " (" + formatAge(lastReport.backupAgeHours()) + ").";
-            case DATABASE_INTEGRITY -> "Перевірка цілісності SQLite: без помилок.";
+            case DATABASE_INTEGRITY -> UiText.text("ui.java.integrity_check_controller.8d021f3c6a");
         };
     }
 
     @FXML
     public void onSafeRepairInfo() {
-        dialogService.showInfo("Безпечне обслуговування",
-                "Перевірка файлів є лише діагностичною і не змінює файли чи базові хеш-значення у book_artifacts. "
-                        + "Для виправлень використовуйте «Обслуговування колекції»: «Аналіз» → «Пробний запуск» → «Застосувати»; "
-                        + "для застарілого індексу — окрему команду перебудови.");
+        dialogService.showInfo(UiText.text("ui.fxml.integrity_check.safe_maintenance"),
+                UiText.text("ui.java.integrity_check_controller.2cd320f090")
+                        + UiText.text("ui.java.integrity_check_controller.a454642308")
+                        + UiText.text("ui.java.integrity_check_controller.1d218a9434"));
     }
 
     @FXML
     public void onExportReport() {
         if (lastReportText == null || lastReportText.isBlank()) {
-            dialogService.showWarning("Експорт", "Спочатку оновіть стан бібліотеки.");
+            dialogService.showWarning(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.integrity_check_controller.821faba7dc"));
             return;
         }
         FileChooser chooser = new FileChooser();
-        chooser.setTitle("Експорт звіту про стан бібліотеки");
+        chooser.setTitle(UiText.text("ui.java.integrity_check_controller.48c91023ee"));
         chooser.setInitialFileName("myhomelib-library-health.txt");
-        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("Текстовий звіт", "*.txt"));
+        chooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(UiText.text("ui.java.integrity_check_controller.ca4976f2f4"), "*.txt"));
         File target = chooser.showSaveDialog(detailArea.getScene() == null ? null : detailArea.getScene().getWindow());
         if (target == null) return;
         try {
-            Files.writeString(target.toPath(), lastReportText, StandardCharsets.UTF_8);
-            dialogService.showInfo("Експорт", "Звіт збережено: " + target.getAbsolutePath());
+            AtomicFileSupport.writeStringReplacing(target.toPath(), lastReportText, StandardCharsets.UTF_8);
+            dialogService.showInfo(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.integrity_check_controller.8cb6c2a260") + target.getAbsolutePath());
         } catch (IOException error) {
             log.error("Cannot export Library Health report", error);
-            dialogService.showError("Експорт", "Не вдалося зберегти звіт: " + error.getMessage());
+            dialogService.showError(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.integrity_check_controller.59039a4669") + UiExceptionSupport.message(error));
         }
     }
 
     private String formatExport(LibraryHealthReport report) {
         StringBuilder out = new StringBuilder();
-        out.append("MyHomeLib — звіт про стан бібліотеки\n")
-                .append("Створено: ").append(DATE_TIME.format(report.generatedAt())).append("\n\n")
-                .append("Локальних файлів: ").append(report.localArtifacts()).append('\n')
-                .append("Відсутніх: ").append(report.missingArtifacts()).append('\n')
-                .append("Пошкоджених/нечитабельних: ").append(report.corruptArtifacts()).append('\n')
-                .append("Змінених: ").append(report.changedArtifacts()).append('\n')
-                .append("Дублікатів: ").append(report.duplicateBooks()).append('\n')
-                .append("Прогалин метаданих: ").append(report.metadataGaps()).append('\n')
-                .append("База SQLite: ").append(report.databaseHealthy() ? "без помилок" : "помилка").append('\n')
-                .append("Пошуковий індекс: ").append(report.searchIndexFresh() ? "актуальний" : "застарілий")
-                .append(" (").append(report.searchIndexDetail()).append(")\n")
-                .append("Резервна копія: ").append(report.latestBackupAt() == null ? "не знайдено" : DATE_TIME.format(report.latestBackupAt()))
-                .append("; вік, год=").append(report.backupAgeHours()).append('\n')
-                .append("Перевірка файлів: перевірено=").append(report.auditInspected())
-                .append(", повторно використано=").append(report.auditReused())
-                .append(", прочитано байтів=").append(report.auditBytesRead()).append("\n\n");
+        out.append(UiText.text("ui.java.integrity_check_controller.0f094e575b"))
+                .append(UiText.text("ui.java.integrity_check_controller.64c021dd17")).append(DATE_TIME.format(report.generatedAt())).append("\n\n")
+                .append(UiText.text("ui.java.integrity_check_controller.0c7569b71b")).append(report.localArtifacts()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.b0802e4ec0")).append(report.missingArtifacts()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.4a474d1e85")).append(report.corruptArtifacts()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.26ea56e3d8")).append(report.changedArtifacts()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.2fd3f35fcc")).append(report.duplicateBooks()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.bc4f0d8676")).append(report.metadataGaps()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.49b40f5748")).append(report.databaseHealthy() ? UiText.text("ui.java.integrity_check_controller.72f2b391c6") : UiText.text("ui.java.integrity_check_controller.5d7bd00d31")).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.99c2e391d0")).append(report.searchIndexFresh() ? UiText.text("ui.java.integrity_check_controller.3dbf105653") : UiText.text("ui.java.integrity_check_controller.f4d671573a"))
+                .append(" (").append(UiText.format("ui.integrity.search_counts", report.catalogBooks(), report.indexedDocuments())).append(")\n")
+                .append(UiText.text("ui.java.integrity_check_controller.e75733236d")).append(report.latestBackupAt() == null ? UiText.text("ui.java.integrity_check_controller.c0f724ad68") : DATE_TIME.format(report.latestBackupAt()))
+                .append(UiText.text("ui.java.integrity_check_controller.ff1b19ccdd")).append(report.backupAgeHours()).append('\n')
+                .append(UiText.text("ui.java.integrity_check_controller.ca711c3dab")).append(report.auditInspected())
+                .append(UiText.text("ui.java.integrity_check_controller.0a64074314")).append(report.auditReused())
+                .append(UiText.text("ui.java.integrity_check_controller.7b45ab72db")).append(report.auditBytesRead()).append("\n\n");
 
-        out.append("Проблеми\n--------\n");
-        if (report.issues().isEmpty()) out.append("немає\n");
+        out.append(UiText.text("ui.java.integrity_check_controller.e8fc6b2124"));
+        if (report.issues().isEmpty()) out.append(UiText.text("ui.java.integrity_check_controller.3b4c9c4502"));
         for (LibraryHealthIssue issue : report.issues()) {
-            out.append(issue.severity()).append(" | ").append(issue.type()).append(" | кількість=")
-                    .append(issue.count()).append(" | ").append(issue.title()).append('\n')
-                    .append("  ").append(issue.detail()).append('\n')
-                    .append("  дія: ").append(issue.action()).append('\n');
+            out.append(issueSeverity(issue.severity())).append(" | ").append(issueTitle(issue)).append(UiText.text("ui.java.integrity_check_controller.4ff1fd2fa5"))
+                    .append(issue.count()).append('\n')
+                    .append("  ").append(issueDetail(issue)).append('\n')
+                    .append(UiText.text("ui.java.integrity_check_controller.87e6f934e1")).append(issueAction(issue)).append('\n');
         }
 
         if (!report.artifactFindings().isEmpty()) {
-            out.append("\nЗнайдені проблеми файлів\n------------------------\n");
+            out.append(UiText.text("ui.java.integrity_check_controller.28c3515a59"));
             for (ArtifactIntegrityFinding finding : report.artifactFindings()) {
-                out.append(finding.status()).append(" | ").append(finding.artifactId())
-                        .append(" | книга=").append(finding.bookId()).append(" | ").append(finding.path()).append('\n');
-                if (!finding.detail().isBlank()) out.append("  ").append(finding.detail()).append('\n');
+                out.append(findingStatus(finding.status())).append(" | ").append(finding.artifactId())
+                        .append(UiText.text("ui.java.integrity_check_controller.3d7f5de62c")).append(finding.bookId()).append(" | ").append(finding.path()).append('\n');
+                String findingDetail = findingDetail(finding);
+                if (!findingDetail.isBlank()) out.append("  ").append(findingDetail).append('\n');
                 if (!finding.baselineSha256().isBlank() || !finding.observedSha256().isBlank()) {
-                    out.append("  базовий SHA-256=").append(finding.baselineSha256())
-                            .append(" поточний SHA-256=").append(finding.observedSha256()).append('\n');
+                    out.append(UiText.text("ui.java.integrity_check_controller.9b9bfb620c")).append(finding.baselineSha256())
+                            .append(UiText.text("ui.java.integrity_check_controller.18f714e296")).append(finding.observedSha256()).append('\n');
                 }
             }
         }
         return out.toString();
+    }
+
+    private String issueSeverity(LibraryHealthSeverity severity) {
+        return switch (severity) {
+            case ERROR -> UiText.text("common.error");
+            case WARNING -> UiText.text("common.warning");
+            case INFO -> UiText.text("ui.java.integrity_check_controller.455cfc2d2f");
+        };
+    }
+
+    private String issueTitle(LibraryHealthIssue issue) {
+        return UiText.text("ui.integrity.issue." + issue.type().name().toLowerCase(Locale.ROOT) + ".title");
+    }
+
+    private String issueAction(LibraryHealthIssue issue) {
+        return UiText.text("ui.integrity.issue." + issue.type().name().toLowerCase(Locale.ROOT) + ".action");
+    }
+
+    private String issueDetail(LibraryHealthIssue issue) {
+        String base = UiText.text("ui.integrity.issue." + issue.type().name().toLowerCase(Locale.ROOT) + ".detail");
+        return switch (issue.type()) {
+            case DATABASE_INTEGRITY -> {
+                if (!issue.detail().isBlank()) {
+                    log.warn("Database integrity technical detail: {}", issue.detail());
+                    yield base + "\n" + UiText.text("common.error.details_in_log");
+                }
+                yield base;
+            }
+            case STALE_SEARCH_INDEX -> lastReport == null
+                    ? base : base + "\n" + UiText.format("ui.integrity.search_counts", lastReport.catalogBooks(), lastReport.indexedDocuments());
+            case BACKUP_AGE -> lastReport != null && lastReport.latestBackupAt() != null
+                    ? base + " " + lastReport.backupAgeHours() + " " + UiText.text("ui.integrity.hours")
+                    : UiText.text("ui.integrity.issue.backup_age.detail_missing");
+            default -> base;
+        };
+    }
+
+    private String findingStatus(com.myhomelibcorp.application.integrity.ArtifactIntegrityStatus status) {
+        return UiText.text("ui.integrity.finding.status." + status.name().toLowerCase(Locale.ROOT));
+    }
+
+    private String findingDetail(ArtifactIntegrityFinding finding) {
+        return switch (finding.status()) {
+            case OK -> "";
+            case MISSING -> UiText.text("ui.integrity.finding.detail.missing");
+            case HASH_CHANGED -> UiText.text("ui.integrity.finding.detail.hash_changed");
+            case SIZE_CHANGED -> UiText.text("ui.integrity.finding.detail.size_changed")
+                    + finding.baselineSizeBytes() + " → " + finding.observedSizeBytes() + " " + UiText.text("ui.integrity.bytes");
+            case UNREADABLE -> findingDetailWithTechnicalLog(finding,
+                    UiText.text("ui.integrity.finding.detail.unreadable"));
+            case CORRUPT_ARCHIVE -> findingDetailWithTechnicalLog(finding,
+                    UiText.text("ui.integrity.finding.detail.corrupt_archive"));
+        };
+    }
+
+    private String findingDetailWithTechnicalLog(ArtifactIntegrityFinding finding, String base) {
+        if (finding.detail().isBlank()) return base;
+        log.warn("Artifact integrity technical detail for {}: {}", finding.artifactId(), finding.detail());
+        return base + "\n" + UiText.text("common.error.details_in_log");
     }
 
     private static String formatNumber(long number) {
@@ -478,7 +564,7 @@ public class IntegrityCheckController {
         if (hours < 0) return "—";
         long days = hours / 24;
         long remainder = hours % 24;
-        return days > 0 ? days + " д " + remainder + " год" : hours + " год";
+        return days > 0 ? days + UiText.text("ui.java.integrity_check_controller.cc96a502e1") + remainder + UiText.text("ui.java.integrity_check_controller.1bcf62b666") : hours + UiText.text("ui.java.integrity_check_controller.1bcf62b666");
     }
 
     private static String formatBytes(long bytes) {

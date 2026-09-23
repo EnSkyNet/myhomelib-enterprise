@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.resource;
 
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.archive.ArchiveEntryNameSupport;
@@ -16,7 +17,6 @@ import java.nio.file.Files;
 import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -62,7 +62,7 @@ public class BookResourceResolver implements BookResourcePort {
         // реально присутній в архіві. Сам факт існування shared ZIP недостатній.
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             Path archivePath = findArchivePath(fileName, folder, collectionRoot);
-            if (archivePath != null && Files.isRegularFile(archivePath)) {
+            if (archivePath != null) {
                 Optional<String> resolvedEntry = resolveArchiveEntry(archivePath, archiveEntry, fileName);
                 if (resolvedEntry.isPresent()) {
                     if (ArchiveEntryNameSupport.sameLogicalPath(resolvedEntry.get(), archiveEntry)) {
@@ -80,8 +80,8 @@ public class BookResourceResolver implements BookResourcePort {
 
         // 2. Якщо fileName є архівом
         if (fileName != null && isArchive(fileName)) {
-            Path archivePath = buildFilePath(collectionRoot, folder, fileName);
-            if (archivePath != null && Files.isRegularFile(archivePath)) {
+            Path archivePath = safeRegularPath(buildFilePath(collectionRoot, folder, fileName), "Book archive");
+            if (archivePath != null) {
                 log.debug("Знайдено архів (fileName): {}", archivePath);
                 return Optional.of(archivePath);
             }
@@ -89,16 +89,16 @@ public class BookResourceResolver implements BookResourcePort {
 
         // 3. Якщо folder є архівом
         if (folder != null && isArchive(folder)) {
-            Path archivePath = buildFilePath(collectionRoot, null, folder);
-            if (archivePath != null && Files.isRegularFile(archivePath)) {
+            Path archivePath = safeRegularPath(buildFilePath(collectionRoot, null, folder), "Book archive");
+            if (archivePath != null) {
                 log.debug("Знайдено архів (folder): {}", archivePath);
                 return Optional.of(archivePath);
             }
         }
 
         // 4. Звичайний файл
-        Path filePath = buildFilePath(collectionRoot, folder, fileName);
-        if (filePath != null && Files.isRegularFile(filePath) && !isArchive(filePath.toString())) {
+        Path filePath = safeRegularPath(buildFilePath(collectionRoot, folder, fileName), "Book file");
+        if (filePath != null && !isArchive(filePath.toString())) {
             log.debug("Знайдено файл: {}", filePath);
             return Optional.of(filePath);
         }
@@ -113,8 +113,7 @@ public class BookResourceResolver implements BookResourcePort {
         String archiveEntry = book.getArchiveEntry();
         if (archiveEntry != null && !archiveEntry.isBlank()) {
             Path archivePath = findArchivePath(book.getFileName(), book.getFolder(), book.getCollectionRoot());
-            return archivePath != null && Files.isRegularFile(archivePath)
-                    ? Optional.of(archivePath) : Optional.empty();
+            return archivePath == null ? Optional.empty() : Optional.of(archivePath);
         }
         return locateBookFile(book);
     }
@@ -124,12 +123,13 @@ public class BookResourceResolver implements BookResourcePort {
                                                         BooleanSupplier cancelled) throws IOException {
         if (book == null || archivePath == null || target == null) return Optional.empty();
         String requestedEntry = book.getArchiveEntry();
-        if (requestedEntry == null || requestedEntry.isBlank() || !Files.isRegularFile(archivePath)) {
+        Path safeArchive = safeRegularPath(archivePath, "Book archive");
+        if (requestedEntry == null || requestedEntry.isBlank() || safeArchive == null) {
             return Optional.empty();
         }
         String actualEntry;
         try {
-            actualEntry = resolveArchiveEntry(archivePath, requestedEntry, book.getFileName()).orElse(null);
+            actualEntry = resolveArchiveEntry(safeArchive, requestedEntry, book.getFileName()).orElse(null);
         } catch (UncheckedIOException e) {
             throw e.getCause();
         } catch (RuntimeException e) {
@@ -138,9 +138,9 @@ public class BookResourceResolver implements BookResourcePort {
         if (actualEntry == null) return Optional.empty();
         if (!ArchiveEntryNameSupport.sameLogicalPath(actualEntry, requestedEntry)) {
             log.info("Матеріалізація сумісного archive entry: '{}' -> '{}' у {}",
-                    requestedEntry, actualEntry, archivePath);
+                    requestedEntry, actualEntry, safeArchive);
         }
-        if (!archiveReader.materializeEntry(archivePath, actualEntry, target, maxBytes, cancelled)) {
+        if (!archiveReader.materializeEntry(safeArchive, actualEntry, target, maxBytes, cancelled)) {
             return Optional.empty();
         }
         return Optional.of(actualEntry);
@@ -149,19 +149,22 @@ public class BookResourceResolver implements BookResourcePort {
     private Path findArchivePath(String fileName, String folder, String collectionRoot) {
         // Спроба 1: folder як архів
         if (folder != null && !folder.isBlank() && isArchive(folder)) {
-            return buildFilePath(collectionRoot, null, folder);
+            Path safe = safeRegularPath(buildFilePath(collectionRoot, null, folder), "Book archive");
+            if (safe != null) return safe;
         }
 
         // Спроба 2: fileName як архів
         if (fileName != null && !fileName.isBlank() && isArchive(fileName)) {
-            return buildFilePath(collectionRoot, folder, fileName);
+            Path safe = safeRegularPath(buildFilePath(collectionRoot, folder, fileName), "Book archive");
+            if (safe != null) return safe;
         }
 
         // Спроба 3: folder + fileName як архів
         if (folder != null && !folder.isBlank() && fileName != null && !fileName.isBlank()) {
             Path combined = buildFilePath(collectionRoot, folder, fileName);
-            if (combined != null && Files.isRegularFile(combined) && isArchive(combined.toString())) {
-                return combined;
+            if (combined != null && isArchive(combined.toString())) {
+                Path safe = safeRegularPath(combined, "Book archive");
+                if (safe != null) return safe;
             }
         }
 
@@ -190,7 +193,7 @@ public class BookResourceResolver implements BookResourcePort {
             // 1. Якщо є archiveEntry - читаємо з архіву
             if (archiveEntry != null && !archiveEntry.isBlank()) {
                 Path archivePath = findArchivePath(fileName, folder, collectionRoot);
-                if (archivePath != null && Files.isRegularFile(archivePath)) {
+                if (archivePath != null) {
                     String actualEntry = resolveArchiveEntry(archivePath, archiveEntry, fileName).orElse(null);
                     if (actualEntry != null) {
                         if (!ArchiveEntryNameSupport.sameLogicalPath(actualEntry, archiveEntry)) {
@@ -207,17 +210,17 @@ public class BookResourceResolver implements BookResourcePort {
 
             // 2. Якщо fileName або folder є архівом
             Path archivePath = findArchivePath(fileName, folder, collectionRoot);
-            if (archivePath != null && Files.isRegularFile(archivePath)) {
+            if (archivePath != null) {
                 log.debug("Пошук підтримуваного документа в архіві: {}", archivePath);
                 return archiveReader.findFirstEntry(archivePath,
                         e -> { String n = e.toLowerCase(java.util.Locale.ROOT); return n.endsWith(".fb2") || n.endsWith(".fbd") || n.endsWith(".epub") || n.endsWith(".txt") || n.endsWith(".text"); });
             }
 
             // 3. Звичайний файл
-            Path filePath = buildFilePath(collectionRoot, folder, fileName);
-            if (filePath != null && Files.isRegularFile(filePath)) {
+            Path filePath = safeRegularPath(buildFilePath(collectionRoot, folder, fileName), "Book file");
+            if (filePath != null) {
                 log.debug("Читання файлу: {}", filePath);
-                return Optional.of(Files.newInputStream(filePath));
+                return Optional.of(Files.newInputStream(filePath, LinkOption.NOFOLLOW_LINKS));
             }
 
             log.debug("Файл книги не знайдено: fileName='{}', folder='{}'", fileName, folder);
@@ -238,10 +241,17 @@ public class BookResourceResolver implements BookResourcePort {
         List<String> entries = archiveReader.listEntries(archivePath);
         if (entries.isEmpty()) return Optional.empty();
 
+        // Physical/raw identity wins. Legacy #Uhhhh decoding is only a compatibility fallback:
+        // two distinct archive members can otherwise collapse to the same logical Unicode path.
+        String normalizedRequested = ArchiveEntryNameSupport.normalizePath(requestedEntry);
         Optional<String> exact = entries.stream()
-                .filter(entry -> ArchiveEntryNameSupport.sameLogicalPath(entry, requestedEntry))
+                .filter(entry -> ArchiveEntryNameSupport.normalizePath(entry).equalsIgnoreCase(normalizedRequested))
                 .findFirst();
         if (exact.isPresent()) return exact;
+
+        Optional<String> legacyEquivalent = uniqueEntry(entries,
+                entry -> ArchiveEntryNameSupport.sameLogicalPath(entry, requestedEntry));
+        if (legacyEquivalent.isPresent()) return legacyEquivalent;
 
         String requested = ArchiveEntryNameSupport.baseName(requestedEntry);
         String file = ArchiveEntryNameSupport.baseName(fileName);
@@ -280,17 +290,30 @@ public class BookResourceResolver implements BookResourcePort {
 
     @Override
     public List<String> listArchiveEntries(Path archivePath) {
-        return archiveReader.listEntries(archivePath);
+        Path safe = safeRegularPath(archivePath, "Book archive");
+        return safe == null ? List.of() : archiveReader.listEntries(safe);
     }
 
     @Override
     public Optional<InputStream> readArchiveEntry(Path archivePath, String entryName) {
-        return archiveReader.readEntry(archivePath, entryName);
+        Path safe = safeRegularPath(archivePath, "Book archive");
+        return safe == null ? Optional.empty() : archiveReader.readEntry(safe, entryName);
     }
 
     @Override
     public Optional<InputStream> findFirstArchiveEntry(Path archivePath, Predicate<String> filter) {
-        return archiveReader.findFirstEntry(archivePath, filter);
+        Path safe = safeRegularPath(archivePath, "Book archive");
+        return safe == null ? Optional.empty() : archiveReader.findFirstEntry(safe, filter);
+    }
+
+    private Path safeRegularPath(Path path, String role) {
+        if (path == null) return null;
+        try {
+            return SafeFilePublication.requireSafeRegularFile(path, role);
+        } catch (IOException unsafe) {
+            log.debug("Ignoring unsafe {} path {}: {}", role, path, unsafe.getMessage());
+            return null;
+        }
     }
 
     @Override
@@ -302,8 +325,10 @@ public class BookResourceResolver implements BookResourcePort {
         if (normalizedRoot.getParent() == null) {
             throw new SecurityException("Filesystem root cannot be used as a managed deletion root: " + normalizedRoot);
         }
-        if (!Files.exists(normalizedRoot)) {
-            throw new SecurityException("Managed root does not exist: " + normalizedRoot);
+        try {
+            SafeFilePublication.requireSafeDirectoryPath(normalizedRoot, "Managed deletion root");
+        } catch (IOException unsafeRoot) {
+            throw new SecurityException("Managed root is not a safe directory: " + normalizedRoot, unsafeRoot);
         }
 
         Path normalizedPath = path.toAbsolutePath().normalize();
@@ -329,19 +354,30 @@ public class BookResourceResolver implements BookResourcePort {
             throw new IllegalArgumentException("Affected book ids are required for crash-safe deletion");
         }
 
+        String contentSha256 = SafeFilePublication.sha256(canonicalFile, "book resource staged deletion");
         Path recovery = recoverySibling(canonicalFile);
         // Persist intent before touching the visible book path. If the process terminates after
         // this point, startup recovery reconciles the marker with the committed books.local flags.
-        Path marker = LocalCopyDeletionRecoveryStore.prepare(canonicalFile, recovery, canonicalRoot, collectionId, affectedBookIds);
+        LocalCopyDeletionRecoveryStore.PreparedMarker marker = LocalCopyDeletionRecoveryStore.prepare(
+                canonicalFile, recovery, canonicalRoot, collectionId, affectedBookIds, contentSha256);
         boolean removed = false;
         try {
             createRecoveryCopy(canonicalFile, recovery);
-            removed = Files.deleteIfExists(canonicalFile);
+            String recoveryHash = SafeFilePublication.sha256(recovery, "book deletion recovery copy");
+            if (!contentSha256.equalsIgnoreCase(recoveryHash)) {
+                throw new IOException("Recovery copy differs from the book being staged for deletion: " + canonicalFile);
+            }
+            SafeFilePublication.removeIfOwned(canonicalFile, contentSha256, "book resource staged deletion");
+            removed = true;
             if (!removed) throw new IOException("Book resource disappeared before staged deletion: " + canonicalFile);
-            return new FileStagedDeletion(canonicalFile, recovery, marker);
+            return new FileStagedDeletion(canonicalFile, recovery, marker, contentSha256);
         } catch (IOException | RuntimeException error) {
             if (!removed) {
-                try { Files.deleteIfExists(recovery); }
+                try {
+                    if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+                        SafeFilePublication.removeIfOwned(recovery, contentSha256, "failed book deletion recovery cleanup");
+                    }
+                }
                 catch (IOException cleanup) { error.addSuppressed(cleanup); }
                 try { LocalCopyDeletionRecoveryStore.clear(marker); }
                 catch (IOException cleanup) { error.addSuppressed(cleanup); }
@@ -356,12 +392,16 @@ public class BookResourceResolver implements BookResourcePort {
     }
 
     private static void createRecoveryCopy(Path original, Path recovery) throws IOException {
+        SafeFilePublication.prepareTarget(recovery, "book deletion recovery target");
+        if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+            throw new java.nio.file.FileAlreadyExistsException(recovery.toString());
+        }
         try {
             Files.createLink(recovery, original);
             return;
         } catch (UnsupportedOperationException | IOException hardLinkFailure) {
-            try {
-                Files.copy(original, recovery, StandardCopyOption.COPY_ATTRIBUTES);
+            try (InputStream in = Files.newInputStream(original, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.copyFresh(in, recovery, "book deletion recovery copy");
             } catch (IOException copyFailure) {
                 copyFailure.addSuppressed(hardLinkFailure);
                 throw copyFailure;
@@ -372,13 +412,17 @@ public class BookResourceResolver implements BookResourcePort {
     private static final class FileStagedDeletion implements StagedDeletion {
         private final Path original;
         private final Path recovery;
-        private final Path marker;
+        private final LocalCopyDeletionRecoveryStore.PreparedMarker marker;
+        private final String contentSha256;
         private boolean finished;
 
-        private FileStagedDeletion(Path original, Path recovery, Path marker) {
+        private FileStagedDeletion(Path original, Path recovery,
+                                   LocalCopyDeletionRecoveryStore.PreparedMarker marker,
+                                   String contentSha256) {
             this.original = original;
             this.recovery = recovery;
             this.marker = marker;
+            this.contentSha256 = contentSha256;
         }
 
         @Override
@@ -390,7 +434,9 @@ public class BookResourceResolver implements BookResourcePort {
         @Override
         public synchronized void commit() throws IOException {
             if (finished) return;
-            Files.deleteIfExists(recovery);
+            if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.removeIfOwned(recovery, contentSha256, "committed book deletion recovery cleanup");
+            }
             LocalCopyDeletionRecoveryStore.clear(marker);
             finished = true;
         }
@@ -399,7 +445,13 @@ public class BookResourceResolver implements BookResourcePort {
         public synchronized void rollback() throws IOException {
             if (finished) return;
             if (Files.exists(original, LinkOption.NOFOLLOW_LINKS)) {
-                Files.deleteIfExists(recovery);
+                String visibleHash = SafeFilePublication.sha256(original, "book deletion rollback visible target");
+                if (!contentSha256.equalsIgnoreCase(visibleHash)) {
+                    throw new IOException("Book deletion rollback target changed; recovery evidence kept: " + original);
+                }
+                if (Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
+                    SafeFilePublication.removeIfOwned(recovery, contentSha256, "book deletion rollback duplicate cleanup");
+                }
                 LocalCopyDeletionRecoveryStore.clear(marker);
                 finished = true;
                 return;
@@ -407,10 +459,14 @@ public class BookResourceResolver implements BookResourcePort {
             if (!Files.exists(recovery, LinkOption.NOFOLLOW_LINKS)) {
                 throw new IOException("Recovery copy is missing for staged deletion: " + original);
             }
-            try {
-                Files.move(recovery, original, StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-                Files.move(recovery, original);
+            String recoveryHash = SafeFilePublication.sha256(recovery, "book deletion rollback recovery bytes");
+            if (!contentSha256.equalsIgnoreCase(recoveryHash)) {
+                throw new IOException("Book deletion rollback recovery bytes changed: " + recovery);
+            }
+            SafeFilePublication.moveNoReplace(recovery, original, "book deletion rollback restore");
+            String restoredHash = SafeFilePublication.sha256(original, "book deletion rollback restored bytes");
+            if (!contentSha256.equalsIgnoreCase(restoredHash)) {
+                throw new IOException("Book deletion rollback restored bytes differ: " + original);
             }
             LocalCopyDeletionRecoveryStore.clear(marker);
             finished = true;
@@ -421,44 +477,78 @@ public class BookResourceResolver implements BookResourcePort {
 
     @Override
     public Path buildFilePath(String root, String folder, String fileName) {
+        Path candidate;
         if (fileName != null && !fileName.isBlank()) {
             Path fileNamePath = Paths.get(fileName);
             if (fileNamePath.isAbsolute()) {
-                return fileNamePath;
+                candidate = fileNamePath;
+                return constrainToCollectionRoot(candidate, root);
             }
         }
 
         if (folder != null && !folder.isBlank()) {
             Path folderPath = Paths.get(folder);
             if (folderPath.isAbsolute()) {
-                if (fileName != null && !fileName.isBlank()) {
-                    return folderPath.resolve(fileName);
-                }
-                return folderPath;
+                candidate = fileName != null && !fileName.isBlank()
+                        ? folderPath.resolve(fileName) : folderPath;
+                return constrainToCollectionRoot(candidate, root);
             }
         }
 
         if (root != null && !root.isBlank() && folder != null && !folder.isBlank()) {
             Path rootPath = Paths.get(root);
             Path folderPath = Paths.get(folder);
-            if (fileName != null && !fileName.isBlank()) {
-                return rootPath.resolve(folderPath).resolve(fileName);
-            }
-            return rootPath.resolve(folderPath);
+            candidate = fileName != null && !fileName.isBlank()
+                    ? rootPath.resolve(folderPath).resolve(fileName) : rootPath.resolve(folderPath);
+            return constrainToCollectionRoot(candidate, root);
         }
 
         if (root != null && !root.isBlank() && fileName != null && !fileName.isBlank()) {
-            return Paths.get(root).resolve(fileName);
+            candidate = Paths.get(root).resolve(fileName);
+            return constrainToCollectionRoot(candidate, root);
         }
 
         if (fileName != null && !fileName.isBlank()) {
-            return Paths.get(fileName);
+            return Paths.get(fileName).normalize();
         }
 
         if (folder != null && !folder.isBlank()) {
-            return Paths.get(folder);
+            return Paths.get(folder).normalize();
         }
 
-        return Paths.get(".");
+        return Paths.get(".").normalize();
+    }
+
+    /**
+     * Catalog metadata is not a filesystem authority. Whenever a collection root is known,
+     * a stored file/folder path may point only inside that root. Absolute paths are retained
+     * for compatibility with locally imported archives, but only when they resolve inside the
+     * same collection root. Existing symlink/reparse escapes are rejected as well.
+     */
+    private Path constrainToCollectionRoot(Path candidate, String root) {
+        if (candidate == null) return null;
+        Path normalizedCandidate = candidate.toAbsolutePath().normalize();
+        if (root == null || root.isBlank()) return normalizedCandidate;
+
+        Path normalizedRoot = Paths.get(root).toAbsolutePath().normalize();
+        if (!normalizedCandidate.startsWith(normalizedRoot)) {
+            log.warn("Відхилено шлях ресурсу поза коренем колекції: root={}, path={}", normalizedRoot, normalizedCandidate);
+            return null;
+        }
+
+        // Lexical containment is insufficient when any component below (or above) the collection
+        // root is a symlink/junction. Existing book resources are required to be ordinary files
+        // reachable only through ordinary directories. This also prevents a catalog path from
+        // being reinterpreted through a symlinked parent immediately before reader/export work.
+        try {
+            if (Files.exists(normalizedCandidate, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.requireSafeRegularFile(normalizedCandidate, "book resource");
+                SafeFilePublication.requireSafeDirectoryPath(normalizedRoot, "collection root");
+            }
+        } catch (IOException | SecurityException unsafePath) {
+            log.warn("Не вдалося безпечно перевірити шлях ресурсу книги: {}", normalizedCandidate, unsafePath);
+            return null;
+        }
+        return normalizedCandidate;
     }
 }

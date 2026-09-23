@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.controller;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.domain.model.group.Group;
 import com.myhomelibcorp.application.usecase.group.ClearGroupUseCase;
 import com.myhomelibcorp.ui.service.DialogService;
@@ -41,9 +43,15 @@ public class GroupController {
 
     public void handleClearGroup(Runnable onComplete) {
         Group current = appState.getCurrentGroup();
-        if (current == null) { dialogService.showWarning("Немає групи", "Спочатку виберіть групу."); return; }
-        if (!dialogService.showConfirmation("Очистити групу?", current.getName(), "Книги залишаться у каталозі, буде видалено лише членство у групі.")) return;
-        clearGroupUseCase.execute(current.getId().asLong());
+        String expectedCollectionId = currentCollectionId();
+        if (current == null) { dialogService.showWarning(UiText.text("ui.java.group_controller.36d06fcc7d"), UiText.text("ui.java.group_controller.9f8ef2459e")); return; }
+        if (!dialogService.showConfirmation(UiText.text("ui.java.group_controller.74addb39d6"), current.getName(), UiText.text("ui.java.group_controller.637dcd5942"))) return;
+        clearGroupUseCase.execute(current.getId().asLong(), expectedCollectionId);
         if (onComplete != null) onComplete.run();
     }
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
+    }
+
 }

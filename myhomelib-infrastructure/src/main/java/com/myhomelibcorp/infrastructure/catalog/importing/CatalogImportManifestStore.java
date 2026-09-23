@@ -4,8 +4,13 @@ import com.myhomelibcorp.application.imports.context.ImportContext;
 import com.myhomelibcorp.shared.util.Sha256Support;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.nio.ByteBuffer;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -34,7 +39,15 @@ final class CatalogImportManifestStore {
 
     SourceStat stat(Path source) {
         try {
-            return new SourceStat(Files.size(source), Files.getLastModifiedTime(source).toMillis());
+            BasicFileAttributes attrs = Files.readAttributes(
+                    source, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            if (!attrs.isRegularFile() || attrs.isSymbolicLink()) {
+                throw new IllegalStateException("Catalog source is not a safe regular file: " + source);
+            }
+            Object key = attrs.fileKey();
+            return new SourceStat(attrs.size(), attrs.lastModifiedTime().toMillis(), key == null ? "" : key.toString());
+        } catch (RuntimeException e) {
+            throw e;
         } catch (Exception e) {
             throw new IllegalStateException("Cannot stat " + source, e);
         }
@@ -42,7 +55,18 @@ final class CatalogImportManifestStore {
 
     String fingerprint(Path source, AtomicBoolean cancel) {
         try {
-            return Sha256Support.file(source, () -> cancel != null && cancel.get()).orElse("");
+            var digest = Sha256Support.newDigest();
+            ByteBuffer buffer = ByteBuffer.allocate(256 * 1024);
+            try (FileChannel channel = FileChannel.open(source, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+                while (channel.read(buffer) >= 0) {
+                    if (cancel != null && cancel.get()) return "";
+                    if (buffer.position() == 0) continue;
+                    buffer.flip();
+                    digest.update(buffer);
+                    buffer.clear();
+                }
+            }
+            return Sha256Support.finish(digest);
         } catch (Exception e) {
             throw new IllegalStateException("Cannot fingerprint catalog " + source, e);
         }
@@ -140,7 +164,15 @@ final class CatalogImportManifestStore {
         return value == null || value.isBlank() ? null : value.trim();
     }
 
-    record SourceStat(long sizeBytes, long mtimeMillis) { }
+    record SourceStat(long sizeBytes, long mtimeMillis, String fileKey) {
+        SourceStat(long sizeBytes, long mtimeMillis) { this(sizeBytes, mtimeMillis, ""); }
+
+        boolean sameFileRevision(SourceStat other) {
+            if (other == null || sizeBytes != other.sizeBytes || mtimeMillis != other.mtimeMillis) return false;
+            return fileKey == null || fileKey.isBlank() || other.fileKey == null || other.fileKey.isBlank()
+                    || fileKey.equals(other.fileKey);
+        }
+    }
 
     record Manifest(String sourcePath, long sizeBytes, long mtimeMillis, String fingerprint,
                     String parserVersion, long recordCount, String datasetSchema, String manifestSchema,

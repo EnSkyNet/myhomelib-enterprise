@@ -9,8 +9,8 @@
       spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-background;"
       prefWidth="710" prefHeight="640">
 
-    <Label text="📤 Експорт книг" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
-    <Label fx:id="selectedBooksLabel" text="0 книг вибрано" style="-fx-font-weight: bold; -fx-text-fill: -mhl-accent;"/>
+    <Label text="ui.export.dialog.heading" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <Label fx:id="selectedBooksLabel" text="ui.export.selection.none" style="-fx-font-weight: bold; -fx-text-fill: -mhl-accent;"/>
 
     <Separator/>
 
@@ -20,46 +20,50 @@
             <ColumnConstraints hgrow="ALWAYS"/>
         </columnConstraints>
 
-        <Label text="Профіль:" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.profile.label" GridPane.columnIndex="0" GridPane.rowIndex="0" style="-fx-font-weight: bold;"/>
         <HBox GridPane.columnIndex="1" GridPane.rowIndex="0" spacing="6">
             <ComboBox fx:id="profileComboBox" prefWidth="245" HBox.hgrow="ALWAYS"/>
-            <Button text="Зберегти як..." onAction="#onSaveProfileAs"/>
-            <Button fx:id="updateProfileButton" text="Оновити" onAction="#onUpdateProfile"/>
-            <Button fx:id="deleteProfileButton" text="Видалити" onAction="#onDeleteProfile"/>
+            <Button text="ui.export.profile.save_as" onAction="#onSaveProfileAs"/>
+            <Button fx:id="updateProfileButton" text="ui.export.profile.update" onAction="#onUpdateProfile"/>
+            <Button fx:id="deleteProfileButton" text="ui.export.profile.delete" onAction="#onDeleteProfile"/>
         </HBox>
 
-        <Label text="Пристрій:" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.device.label" GridPane.columnIndex="0" GridPane.rowIndex="1" style="-fx-font-weight: bold;"/>
         <ComboBox fx:id="deviceProfileComboBox" GridPane.columnIndex="1" GridPane.rowIndex="1" prefWidth="300"/>
 
-        <Label text="Формат:" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
-        <ComboBox fx:id="formatComboBox" GridPane.columnIndex="1" GridPane.rowIndex="2" prefWidth="230"/>
+        <Label text="ui.export.format.label" GridPane.columnIndex="0" GridPane.rowIndex="2" style="-fx-font-weight: bold;"/>
+        <VBox GridPane.columnIndex="1" GridPane.rowIndex="2" spacing="4">
+            <ComboBox fx:id="formatComboBox" prefWidth="230"/>
+            <Label fx:id="calibreStatusLabel" text="ui.export.calibre.unavailable" wrapText="true"
+                   style="-fx-text-fill: -mhl-warning; -fx-font-size: 11px;"/>
+        </VBox>
 
-        <Label text="Корінь пристрою / папка:" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.destination.label" GridPane.columnIndex="0" GridPane.rowIndex="3" style="-fx-font-weight: bold;"/>
         <HBox GridPane.columnIndex="1" GridPane.rowIndex="3" spacing="5">
-            <TextField fx:id="destinationField" promptText="Виберіть папку..." HBox.hgrow="ALWAYS"/>
-            <Button text="Обрати..." onAction="#onChooseDestination"/>
+            <TextField fx:id="destinationField" promptText="ui.fxml.export_dialog.choose_a_folder" HBox.hgrow="ALWAYS"/>
+            <Button text="ui.export.destination.choose" onAction="#onChooseDestination"/>
         </HBox>
 
-        <Label text="Шаблон імені:" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.filename_template.label" GridPane.columnIndex="0" GridPane.rowIndex="4" style="-fx-font-weight: bold;"/>
         <TextField fx:id="fileNameTemplateField" GridPane.columnIndex="1" GridPane.rowIndex="4">
             <promptText><![CDATA[%n2 - %t]]></promptText>
         </TextField>
 
-        <Label text="Шаблон підпапки:" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.subfolder_template.label" GridPane.columnIndex="0" GridPane.rowIndex="5" style="-fx-font-weight: bold;"/>
         <TextField fx:id="subfolderTemplateField" GridPane.columnIndex="1" GridPane.rowIndex="5">
             <promptText><![CDATA[%a/%s]]></promptText>
         </TextField>
 
-        <Label text="Якщо файл існує:" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.collision.label" GridPane.columnIndex="0" GridPane.rowIndex="6" style="-fx-font-weight: bold;"/>
         <ComboBox fx:id="collisionPolicyComboBox" GridPane.columnIndex="1" GridPane.rowIndex="6" prefWidth="300"/>
 
-        <Label text="Дія після експорту:" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.post_action.label" GridPane.columnIndex="0" GridPane.rowIndex="7" style="-fx-font-weight: bold;"/>
         <ComboBox fx:id="postActionComboBox" GridPane.columnIndex="1" GridPane.rowIndex="7" prefWidth="300"/>
 
-        <Label text="Опції:" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
+        <Label text="ui.export.options.label" GridPane.columnIndex="0" GridPane.rowIndex="8" style="-fx-font-weight: bold;"/>
         <VBox GridPane.columnIndex="1" GridPane.rowIndex="8" spacing="5">
-            <CheckBox fx:id="extractOnlyCheckBox" text="Витягти запис з архіву без конвертації"/>
-            <Label text="Шаблони: %a автор, %t назва, %s серія, %n № серії, %n2 № серії двома цифрами, %y рік, %lang мова, %pub видавець, %id ID"
+            <CheckBox fx:id="extractOnlyCheckBox" text="ui.export.extract_only"/>
+            <Label text="ui.export.templates.help"
                    wrapText="true" style="-fx-text-fill: -mhl-muted-text; -fx-font-size: 11px;"/>
         </VBox>
     </GridPane>
@@ -67,11 +71,11 @@
     <Separator/>
 
     <HBox spacing="10" alignment="CENTER_LEFT">
-        <Button text="Історія експорту..." onAction="#onShowHistory"/>
+        <Button text="ui.export.history.button" onAction="#onShowHistory"/>
         <Pane HBox.hgrow="ALWAYS"/>
-        <Button fx:id="exportButton" text="Експортувати" onAction="#onExport"
+        <Button fx:id="exportButton" text="ui.export.action.export" onAction="#onExport"
                 style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent; -fx-font-weight: bold;"/>
-        <Button fx:id="cancelButton" text="Закрити" onAction="#onCancel"
+        <Button fx:id="cancelButton" text="ui.export.action.close" onAction="#onCancel"
                 style="-fx-background-color: -mhl-muted-text; -fx-text-fill: -mhl-on-accent;"/>
     </HBox>
 </VBox>

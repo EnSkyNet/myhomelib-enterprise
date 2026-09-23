@@ -8,7 +8,7 @@ public record WebReaderDocument(
         String title,
         String format,
         boolean supported,
-        String message,
+        String messageKey,
         List<WebReaderChapter> chapters,
         int selectedChapter,
         int resumeChapter,
@@ -18,7 +18,7 @@ public record WebReaderDocument(
         bookId = bookId == null ? "" : bookId;
         title = title == null ? "" : title;
         format = format == null ? "" : format;
-        message = message == null ? "" : message;
+        messageKey = messageKey == null ? "" : messageKey;
         chapters = chapters == null ? List.of() : List.copyOf(chapters);
         if (selectedChapter < 0) selectedChapter = 0;
         if (resumeChapter < 0) resumeChapter = 0;

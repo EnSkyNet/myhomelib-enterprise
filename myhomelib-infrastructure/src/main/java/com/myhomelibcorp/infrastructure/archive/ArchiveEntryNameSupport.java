@@ -1,5 +1,7 @@
 package com.myhomelibcorp.infrastructure.archive;
 
+import com.myhomelibcorp.shared.util.FileNameSupport;
+
 import java.util.Locale;
 
 /** Shared, side-effect-free matching rules for logical files stored inside archives. */
@@ -14,7 +16,9 @@ public final class ArchiveEntryNameSupport {
     }
 
     public static boolean sameLogicalPath(String left, String right) {
-        return normalizePath(left).equalsIgnoreCase(normalizePath(right));
+        String normalizedLeft = FileNameSupport.decodeHashUnicodeEscapes(normalizePath(left));
+        String normalizedRight = FileNameSupport.decodeHashUnicodeEscapes(normalizePath(right));
+        return normalizedLeft.equalsIgnoreCase(normalizedRight);
     }
 
     public static boolean isFb2(String value) {

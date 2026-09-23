@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -187,9 +188,17 @@ public final class MyHomeLibMcpServer implements AutoCloseable {
     private static Path resolveDb(String[] args)throws Exception{
         Map<String,String> a=new HashMap<>();for(int i=0;i<args.length;i++){if(args[i].startsWith("--")){String k=args[i].substring(2);String v=(i+1<args.length&&!args[i+1].startsWith("--"))?args[++i]:"true";a.put(k,v);}}
         String direct=first(a.get("db"),System.getenv("MYHOMELIB_DB"));if(direct!=null)return Path.of(direct);
-        Path launch=Path.of(System.getProperty("user.dir",".")).toAbsolutePath();boolean portable=Files.isRegularFile(launch.resolve("myhomelib2.ini"));Path data=a.containsKey("data-dir")?Path.of(a.get("data-dir")):(portable?launch.resolve("data"):Path.of(System.getProperty("user.home"),".myhomelibcorp"));
-        Path meta=a.containsKey("meta")?Path.of(a.get("meta")):data.resolve("meta.db");if(!Files.isRegularFile(meta))throw new IllegalArgumentException("Use --db <collection.db>; metadata DB not found: "+meta);
-        List<Candidate> cs=new ArrayList<>();try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+meta.toAbsolutePath());PreparedStatement ps=c.prepareStatement("SELECT id,name,db_file FROM collections ORDER BY name");ResultSet rs=ps.executeQuery()){while(rs.next())cs.add(new Candidate(rs.getString(1),rs.getString(2),rs.getString(3)));}
+        Path launch=Path.of(System.getProperty("user.dir",".")).toAbsolutePath();boolean portable=Files.isRegularFile(launch.resolve("myhomelib2.ini"),LinkOption.NOFOLLOW_LINKS);Path data=a.containsKey("data-dir")?Path.of(a.get("data-dir")):(portable?launch.resolve("data"):Path.of(System.getProperty("user.home"),".myhomelibcorp"));
+        Path meta=a.containsKey("meta")?Path.of(a.get("meta")):data.resolve("meta.db");
+        Path safeMeta;
+        try { safeMeta=AtomicFileSupport.requireSafeRegularFile(meta,"MCP metadata database"); }
+        catch(IOException unsafe){ throw new IllegalArgumentException("Use --db <collection.db>; metadata DB is not a safe regular file: "+meta,unsafe); }
+        List<Candidate> cs=new ArrayList<>();
+        String metaUri=safeMeta.toUri().toASCIIString();
+        try(Connection c=DriverManager.getConnection("jdbc:sqlite:"+metaUri+"?mode=ro")){
+            try(Statement readOnly=c.createStatement()){readOnly.execute("PRAGMA query_only=ON");readOnly.execute("PRAGMA busy_timeout=5000");}
+            try(PreparedStatement ps=c.prepareStatement("SELECT id,name,db_file FROM collections ORDER BY name");ResultSet rs=ps.executeQuery()){while(rs.next())cs.add(new Candidate(rs.getString(1),rs.getString(2),rs.getString(3)));}
+        }
         String wanted=a.get("collection");if(wanted!=null)for(Candidate x:cs)if(wanted.equalsIgnoreCase(x.id)||wanted.equalsIgnoreCase(x.name))return Path.of(x.db);
         if(cs.size()==1)return Path.of(cs.get(0).db);throw new IllegalArgumentException("Multiple collections found; use --collection <name|id> or --db <file>. Available: "+cs.stream().map(x->x.name).toList());
     }

@@ -83,7 +83,7 @@ public class BackupController {
         }
 
         Path backupDir = Paths.get(backupPath);
-        if (Files.exists(backupDir)) {
+        if (Files.exists(backupDir, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             if (!dialogService.showConfirmation(
                     i18n.text("ui.backup.confirm.exists.title"),
                     i18n.format("ui.backup.confirm.exists.header", backupPath),
@@ -128,15 +128,16 @@ public class BackupController {
 
         addLog(i18n.text("ui.backup.log.start"));
         addLog(i18n.format("ui.backup.path", backupDir));
-        executor.submit(() -> backupRestoreService.backup(options))
+        String expectedCollectionId = collection == null ? null : collection.getId();
+        executor.submit(() -> backupRestoreService.backup(options, expectedCollectionId))
                 .whenComplete((result, error) -> UiExecutor.runOnUiThread(() -> {
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         operationCenter.fail(operationId, cause);
                         log.error("Помилка резервного копіювання", cause);
-                        statusLabel.setText(i18n.format("common.error.with_message", cause.getMessage()));
-                        addLog("\n" + i18n.format("ui.backup.log.error", cause.getMessage()));
-                        dialogService.showError(i18n.text("common.error"), i18n.format("ui.backup.error.failed", cause.getMessage()));
+                        statusLabel.setText(i18n.format("common.error.with_message", UiExceptionSupport.message(cause)));
+                        addLog("\n" + i18n.format("ui.backup.log.error", UiExceptionSupport.message(cause)));
+                        dialogService.showError(i18n.text("common.error"), i18n.format("ui.backup.error.failed", UiExceptionSupport.message(cause)));
                     } else if (result != null && result.isSuccess()) {
                         operationCenter.complete(operationId, i18n.format("ui.backup.items_copied", result.itemsCopied()));
                         statusLabel.setText(i18n.text("ui.backup.status.success"));
@@ -147,10 +148,13 @@ public class BackupController {
                         dialogService.showInfo(i18n.text("common.success"),
                                 i18n.format("ui.backup.success.details", backupDir, result.itemsCopied()));
                     } else {
-                        String message = result == null ? i18n.text("common.result.unknown") : result.error();
-                        operationCenter.fail(operationId, new IllegalStateException(message));
+                        String technical = result == null ? "" : result.error();
+                        if (!technical.isBlank()) log.error("Backup reported failure: {}", technical);
+                        String message = result == null ? i18n.text("common.result.unknown") : i18n.text("common.error.operation_failed");
+                        operationCenter.fail(operationId, new IllegalStateException(technical.isBlank() ? message : technical));
                         statusLabel.setText(i18n.format("common.error.with_message", message));
                         addLog("\n" + i18n.format("ui.backup.log.error", message));
+                        addLog(i18n.text("common.error.details_in_log"));
                         dialogService.showError(i18n.text("common.error"), i18n.format("ui.backup.error.failed", message));
                     }
                     resetUI();

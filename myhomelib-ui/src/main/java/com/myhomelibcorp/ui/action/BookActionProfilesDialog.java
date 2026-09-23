@@ -1,5 +1,9 @@
 package com.myhomelibcorp.ui.action;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.action.BookActionCommand;
 import com.myhomelibcorp.application.action.BookActionExecutionService;
 import com.myhomelibcorp.application.action.BookActionPreview;
@@ -35,8 +39,9 @@ public class BookActionProfilesDialog {
 
     public void show(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("Дії з книгою / скрипти");
-        dialog.setHeaderText("Профілі запускаються напряму, без командної оболонки cmd.exe/sh. Перегляд команди нічого не виконує.");
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(UiText.text("ui.java.book_action_profiles_dialog.801a9ad241"));
+        dialog.setHeaderText(UiText.text("ui.java.book_action_profiles_dialog.8e05e39e0c"));
         if (owner != null) dialog.initOwner(owner);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
 
@@ -52,37 +57,37 @@ public class BookActionProfilesDialog {
         });
 
         TextField name = new TextField();
-        CheckBox enabled = new CheckBox("Показувати в контекстному меню");
+        CheckBox enabled = new CheckBox(UiText.text("ui.java.book_action_profiles_dialog.a9a6a186b6"));
         ListView<BookActionCommand> commands = new ListView<>();
         commands.setCellFactory(v -> new ListCell<>() {
             @Override protected void updateItem(BookActionCommand item, boolean empty) {
                 super.updateItem(item, empty);
                 if (empty || item == null) { setText(null); return; }
                 setText(item.executable() + (item.arguments().isBlank() ? "" : "  " + item.arguments())
-                        + (item.waitForExit() ? "  [очікувати]" : ""));
+                        + (item.waitForExit() ? UiText.text("ui.java.book_action_profiles_dialog.ec401d2a4f") : ""));
             }
         });
 
         Button addProfile = new Button("+");
         Button removeProfile = new Button("−");
         HBox profileButtons = new HBox(6, addProfile, removeProfile);
-        VBox left = new VBox(6, new Label("Профілі"), profileList, profileButtons);
+        VBox left = new VBox(6, new Label(UiText.text("ui.java.book_action_profiles_dialog.3a9117f73f")), profileList, profileButtons);
         VBox.setVgrow(profileList, Priority.ALWAYS);
 
-        Button addCommand = new Button("Додати");
-        Button editCommand = new Button("Редагувати");
-        Button removeCommand = new Button("Видалити");
+        Button addCommand = new Button(UiText.text("ui.java.book_action_profiles_dialog.71835a2a7b"));
+        Button editCommand = new Button(UiText.text("ui.annotations.edit"));
+        Button removeCommand = new Button(UiText.text("common.delete"));
         Button upCommand = new Button("↑");
         Button downCommand = new Button("↓");
-        Button preview = new Button("Перегляд команди");
+        Button preview = new Button(UiText.text("ui.java.book_action_profiles_dialog.6859608a62"));
         HBox commandButtons = new HBox(6, addCommand, editCommand, removeCommand, upCommand, downCommand, preview);
         commandButtons.setAlignment(Pos.CENTER_LEFT);
 
-        Label placeholders = new Label("Підстановки: %FILE% %DIR% %FILENAME% %TITLE% %AUTHOR% %SERIES% %LANG% %YEAR% %ISBN% %PUBLISHER% %EXT% %BOOKID% %COLLECTION% %TMP%");
+        Label placeholders = new Label(UiText.text("ui.java.book_action_profiles_dialog.483628a806"));
         placeholders.setWrapText(true);
         VBox right = new VBox(8,
-                new Label("Назва"), name, enabled,
-                new Separator(), new Label("Команди (виконуються у заданому порядку)"), commands, commandButtons,
+                new Label(UiText.text("ui.bulkedit.field.title")), name, enabled,
+                new Separator(), new Label(UiText.text("ui.java.book_action_profiles_dialog.70e5012ce4")), commands, commandButtons,
                 new Separator(), placeholders);
         VBox.setVgrow(commands, Priority.ALWAYS);
 
@@ -125,7 +130,7 @@ public class BookActionProfilesDialog {
         });
 
         addProfile.setOnAction(e -> {
-            BookActionProfile created = profileService.newProfile("Нова дія");
+            BookActionProfile created = profileService.newProfile(UiText.text("ui.java.book_action_profiles_dialog.42c82a3391"));
             MutableProfile mutable = new MutableProfile(created);
             profiles.add(mutable); profileList.getSelectionModel().select(mutable);
         });
@@ -164,7 +169,7 @@ public class BookActionProfilesDialog {
                 List<BookActionProfile> records = profiles.stream().map(MutableProfile::toRecord).toList();
                 profileService.replaceAll(records);
             } catch (RuntimeException ex) {
-                dialogs.showWarning("Дії з книгою", ex.getMessage());
+                dialogs.showWarning(UiText.text("ui.java.book_action_profiles_dialog.ce75e3d4fd"), UiExceptionSupport.message(ex));
                 event.consume();
             }
         });
@@ -173,37 +178,38 @@ public class BookActionProfilesDialog {
 
     private java.util.Optional<BookActionCommand> editCommand(Window owner, BookActionCommand current) {
         Dialog<BookActionCommand> dialog = new Dialog<>();
-        dialog.setTitle(current == null ? "Нова команда" : "Редагувати команду");
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(current == null ? UiText.text("ui.java.book_action_profiles_dialog.a616bb8079") : UiText.text("ui.java.book_action_profiles_dialog.3d7bdde4e7"));
         if (owner != null) dialog.initOwner(owner);
         dialog.getDialogPane().getButtonTypes().addAll(ButtonType.CANCEL, ButtonType.OK);
         TextField executable = new TextField(current == null ? "" : current.executable());
         TextField arguments = new TextField(current == null ? "" : current.arguments());
         TextField working = new TextField(current == null ? "%DIR%" : current.workingDirectory());
-        CheckBox wait = new CheckBox("Чекати завершення перед наступною командою");
+        CheckBox wait = new CheckBox(UiText.text("ui.java.book_action_profiles_dialog.35ab66f76d"));
         wait.setSelected(current != null && current.waitForExit());
         Button chooseExe = new Button("...");
         chooseExe.setOnAction(e -> {
-            FileChooser chooser = new FileChooser(); chooser.setTitle("Виберіть виконуваний файл");
+            FileChooser chooser = new FileChooser(); chooser.setTitle(UiText.text("ui.java.book_action_profiles_dialog.2a2405437c"));
             File file = chooser.showOpenDialog(owner); if (file != null) executable.setText(file.getAbsolutePath());
         });
         Button chooseDir = new Button("...");
         chooseDir.setOnAction(e -> {
-            DirectoryChooser chooser = new DirectoryChooser(); chooser.setTitle("Робоча папка");
+            DirectoryChooser chooser = new DirectoryChooser(); chooser.setTitle(UiText.text("ui.java.book_action_profiles_dialog.c97684da7c"));
             File dir = chooser.showDialog(owner); if (dir != null) working.setText(dir.getAbsolutePath());
         });
         GridPane grid = new GridPane(); grid.setHgap(8); grid.setVgap(8); grid.setPadding(new Insets(8));
-        grid.add(new Label("Виконуваний файл"),0,0); grid.add(executable,1,0); grid.add(chooseExe,2,0);
-        grid.add(new Label("Аргументи"),0,1); grid.add(arguments,1,1,2,1);
-        grid.add(new Label("Робоча папка"),0,2); grid.add(working,1,2); grid.add(chooseDir,2,2);
+        grid.add(new Label(UiText.text("ui.java.book_action_profiles_dialog.d91bea5e26")),0,0); grid.add(executable,1,0); grid.add(chooseExe,2,0);
+        grid.add(new Label(UiText.text("ui.java.book_action_profiles_dialog.7842d0ae44")),0,1); grid.add(arguments,1,1,2,1);
+        grid.add(new Label(UiText.text("ui.java.book_action_profiles_dialog.c97684da7c")),0,2); grid.add(working,1,2); grid.add(chooseDir,2,2);
         grid.add(wait,1,3,2,1);
         ColumnConstraints value = new ColumnConstraints(); value.setHgrow(Priority.ALWAYS); grid.getColumnConstraints().addAll(new ColumnConstraints(), value, new ColumnConstraints());
         dialog.getDialogPane().setContent(grid); dialog.getDialogPane().setPrefWidth(760);
         dialog.getDialogPane().lookupButton(ButtonType.OK).addEventFilter(javafx.event.ActionEvent.ACTION, event -> {
             try {
-                if (executable.getText() == null || executable.getText().isBlank()) throw new IllegalArgumentException("Виконуваний файл не задано");
+                if (executable.getText() == null || executable.getText().isBlank()) throw new IllegalArgumentException(UiText.text("ui.java.book_action_profiles_dialog.62873130e6"));
                 CommandTemplate.parse(arguments.getText());
             } catch (RuntimeException ex) {
-                dialogs.showWarning("Команда", ex.getMessage()); event.consume();
+                dialogs.showWarning(UiText.text("ui.java.book_action_profiles_dialog.0fe2342c2e"), UiExceptionSupport.message(ex)); event.consume();
             }
         });
         dialog.setResultConverter(button -> button == ButtonType.OK
@@ -221,24 +227,25 @@ public class BookActionProfilesDialog {
 
     private void showPreview(BookActionProfile profile) {
         Map<String,String> sample = new LinkedHashMap<>();
-        Path sampleFile = Path.of(System.getProperty("user.home", "."), "Books", "Example Book.fb2").toAbsolutePath();
+        Path sampleFile = Path.of(System.getProperty("user.home", "."), UiText.text("ui.actions.preview.sample_folder"), UiText.text("ui.actions.preview.sample_filename")).toAbsolutePath();
         sample.put("%FILE%", sampleFile.toString()); sample.put("%FILENAME%", sampleFile.getFileName().toString());
         sample.put("%DIR%", sampleFile.getParent().toString()); sample.put("%DEST%", sampleFile.getParent().toString());
         sample.put("%DESTFILE%", sampleFile.toString()); sample.put("%TMP%", System.getProperty("java.io.tmpdir", ""));
-        sample.put("%TITLE%", "Example Book"); sample.put("%AUTHOR%", "Example Author"); sample.put("%SERIES%", "Example Series");
+        sample.put("%TITLE%", UiText.text("ui.actions.preview.sample_title")); sample.put("%AUTHOR%", UiText.text("ui.actions.preview.sample_author")); sample.put("%SERIES%", UiText.text("ui.actions.preview.sample_series"));
         sample.put("%LANG%", "uk"); sample.put("%YEAR%", "2026"); sample.put("%ISBN%", "978-0-00-000000-0");
-        sample.put("%PUBLISHER%", "Example Publisher"); sample.put("%EXT%", "fb2"); sample.put("%BOOKID%", "example-id");
+        sample.put("%PUBLISHER%", UiText.text("ui.actions.preview.sample_publisher")); sample.put("%EXT%", "fb2"); sample.put("%BOOKID%", "example-id");
         sample.put("%COLLECTION%", sampleFile.getParent().toString());
         BookActionPreview preview = executionService.preview(profile, sample);
-        StringBuilder text = new StringBuilder("Це лише preview. Жоден процес не запускається.\n\n");
+        StringBuilder text = new StringBuilder(UiText.text("ui.java.book_action_profiles_dialog.f7b3900681"));
         int i = 1;
         for (BookActionPreview.PreviewCommand command : preview.commands()) {
-            text.append(i++).append(". argv tokens:\n");
+            text.append(i++).append(UiText.text("ui.actions.preview.argv_tokens"));
             for (String arg : command.argv()) text.append("   [").append(arg).append("]\n");
-            text.append("   cwd: ").append(command.workingDirectory().isBlank() ? "<default>" : command.workingDirectory()).append('\n');
-            text.append("   wait: ").append(command.waitForExit()).append("\n\n");
+            text.append(UiText.text("ui.actions.preview.cwd")).append(command.workingDirectory().isBlank() ? UiText.text("ui.actions.preview.default") : command.workingDirectory()).append('\n');
+            text.append(UiText.text("ui.actions.preview.wait")).append(command.waitForExit() ? UiText.text("ui.common.yes") : UiText.text("ui.common.no")).append("\n\n");
         }
-        Alert alert = new Alert(Alert.AlertType.INFORMATION); alert.setTitle("Перегляд команди"); alert.setHeaderText(profile.name());
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        DialogLocalization.prepare(alert); alert.setTitle(UiText.text("ui.java.book_action_profiles_dialog.6859608a62")); alert.setHeaderText(profile.name());
         TextArea area = new TextArea(text.toString()); area.setEditable(false); area.setWrapText(false); area.setPrefSize(760, 420);
         alert.getDialogPane().setContent(area); alert.showAndWait();
     }

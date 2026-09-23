@@ -19,7 +19,6 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -243,7 +242,6 @@ public class BatchMetadataEditUseCase {
                 .sequenceNumber(target.sequenceNumber())
                 .genres(resolvedGenres)
                 .metadata(metadata)
-                .updateDate(LocalDateTime.now())
                 .build();
     }
 

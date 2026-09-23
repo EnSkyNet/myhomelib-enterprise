@@ -1,5 +1,9 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.action.BookActionProfile;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
@@ -13,6 +17,7 @@ import com.myhomelibcorp.application.export.ExportHistoryService;
 import com.myhomelibcorp.application.export.ExportLastStateService;
 import com.myhomelibcorp.application.export.ExportProfile;
 import com.myhomelibcorp.application.export.ExportProfileService;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.export.ExportToDeviceUseCase;
 import com.myhomelibcorp.application.usecase.export.ExportToInpxUseCase;
@@ -88,6 +93,7 @@ public class ExportController {
     @FXML private ComboBox<ActionChoice> postActionComboBox;
     @FXML private CheckBox extractOnlyCheckBox;
     @FXML private Label selectedBooksLabel;
+    @FXML private Label calibreStatusLabel;
     @FXML private Button exportButton;
     @FXML private Button cancelButton;
     @FXML private Button updateProfileButton;
@@ -106,6 +112,12 @@ public class ExportController {
         formatComboBox.getItems().setAll(java.util.Arrays.stream(ExportRequest.ExportFormat.values())
                 .filter(supported::contains).toList());
         if (!formatComboBox.getItems().isEmpty()) formatComboBox.setValue(formatComboBox.getItems().getFirst());
+        boolean calibreTargetsAvailable = supported.stream().anyMatch(format -> switch (format) {
+            case AZW3, DOCX, HTMLZ, KEPUB, LIT, PDB, PMLZ, RB, RTF, SNB, TCR, TXTZ, ZIP -> true;
+            default -> false;
+        });
+        calibreStatusLabel.setVisible(!calibreTargetsAvailable);
+        calibreStatusLabel.setManaged(!calibreTargetsAvailable);
 
         collisionPolicyComboBox.getItems().setAll(
                 ExportRequest.CollisionPolicy.RENAME,
@@ -117,10 +129,10 @@ public class ExportController {
             @Override public String toString(ExportRequest.CollisionPolicy p) {
                 if (p == null) return "";
                 return switch (p) {
-                    case RENAME -> "Перейменувати новий файл";
-                    case OVERWRITE -> "Перезаписати існуючий";
-                    case SKIP -> "Пропустити існуючий";
-                    case ASK -> "Запитувати для кожного конфлікту";
+                    case RENAME -> i18n.text("ui.export.collision.rename");
+                    case OVERWRITE -> i18n.text("ui.export.collision.overwrite");
+                    case SKIP -> i18n.text("ui.export.collision.skip");
+                    case ASK -> i18n.text("ui.export.collision.ask");
                 };
             }
             @Override public ExportRequest.CollisionPolicy fromString(String value) {
@@ -135,7 +147,7 @@ public class ExportController {
 
         deviceProfileComboBox.getItems().setAll(deviceProfileService.loadProfiles());
         deviceProfileComboBox.setConverter(new StringConverter<>() {
-            @Override public String toString(DeviceTargetProfile p) { return p == null ? "" : p.displayName(); }
+            @Override public String toString(DeviceTargetProfile p) { return deviceProfileName(p); }
             @Override public DeviceTargetProfile fromString(String value) { return deviceProfileComboBox.getValue(); }
         });
         deviceProfileComboBox.setValue(deviceProfileService.genericFolder());
@@ -144,7 +156,7 @@ public class ExportController {
         });
 
         profileComboBox.setConverter(new StringConverter<>() {
-            @Override public String toString(ExportProfile p) { return p == null ? "" : p.name(); }
+            @Override public String toString(ExportProfile p) { return exportProfileName(p); }
             @Override public ExportProfile fromString(String value) {
                 if (value == null) return profileComboBox.getValue();
                 return profileComboBox.getItems().stream()
@@ -162,15 +174,32 @@ public class ExportController {
         loadProfiles(lastState.profileId());
         restoreLastExportState(lastState);
 
-        selectedBooksLabel.setText("0 книг вибрано");
+        selectedBooksLabel.setText(i18n.text("ui.export.selection.none"));
         exportButton.setDisable(true);
         updateProfileButtons();
+    }
+
+    private String exportProfileName(ExportProfile profile) {
+        if (profile == null) return "";
+        return "default-export".equals(profile.id()) ? i18n.text("ui.export.profile.default") : profile.name();
+    }
+
+    private String deviceProfileName(DeviceTargetProfile profile) {
+        if (profile == null) return "";
+        return switch (profile.id()) {
+            case DeviceProfileService.GENERIC_FOLDER_ID -> i18n.text("ui.export.device.generic_folder");
+            case DeviceProfileService.KINDLE_ID -> i18n.text("ui.export.device.kindle_usb");
+            case DeviceProfileService.KOBO_ID -> i18n.text("ui.export.device.kobo");
+            case DeviceProfileService.POCKETBOOK_ID -> i18n.text("ui.export.device.pocketbook");
+            case DeviceProfileService.ANDROID_ID -> i18n.text("ui.export.device.android_storage");
+            default -> profile.displayName();
+        };
     }
 
     public void setSelectedBooks(List<BookViewModel> selectedBooks) {
         if (selectedBooks == null || selectedBooks.isEmpty()) {
             selectedBookIds = List.of();
-            selectedBooksLabel.setText("0 книг вибрано");
+            selectedBooksLabel.setText(i18n.text("ui.export.selection.none"));
             exportButton.setDisable(true);
             return;
         }
@@ -182,11 +211,12 @@ public class ExportController {
         ExportRequest.ExportFormat preferred = formatComboBox.getValue();
         formatComboBox.getItems().setAll(java.util.Arrays.stream(ExportRequest.ExportFormat.values())
                 .filter(common::contains).toList());
-        selectedBooksLabel.setText(validBooks.size() + " книг вибрано");
+        selectedBooksLabel.setText(i18n.format("ui.export.selection.count", validBooks.size()));
         if (validBooks.isEmpty() || common.isEmpty()) {
             formatComboBox.setValue(null);
             exportButton.setDisable(true);
-            if (!validBooks.isEmpty()) selectedBooksLabel.setText(validBooks.size() + " книг — немає спільного формату експорту");
+            if (!validBooks.isEmpty()) selectedBooksLabel.setText(
+                    i18n.format("ui.export.selection.no_common_format", validBooks.size()));
         } else {
             ExportProfile profile = profileComboBox.getValue();
             DeviceTargetProfile device = deviceProfileComboBox.getValue();
@@ -229,25 +259,25 @@ public class ExportController {
     public void handleExport(Window owner, Runnable onSuccessfulExport) {
         List<BookId> selectedIds = bookSelectionService.snapshot();
         if (selectedIds.isEmpty()) {
-            dialogService.showWarning("Немає вибраних книг",
-                    "Відмітьте книги checkbox. Поточний рядок не підміняє пакетний вибір.");
+            dialogService.showWarning(UiText.text("ui.java.export_controller.ac1e0c3aad"),
+                    UiText.text("ui.java.export_controller.ea4e147415"));
             return;
         }
-        executor.submit(() -> selectedIds.stream()
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> selectedIds.stream()
                         .map(loadBookByIdUseCase::execute)
                         .flatMap(java.util.Optional::stream)
                         .toList())
                 .thenAccept(books -> Platform.runLater(() -> {
                     List<BookViewModel> rows = books.stream().map(bookViewModelMapper::toViewModel).toList();
                     if (rows.isEmpty()) {
-                        dialogService.showWarning("Експорт", "Вибрані книги не знайдено в активній колекції.");
+                        dialogService.showWarning(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.export_controller.adab3b50f7"));
                         return;
                     }
                     showExportDialog(owner, rows, onSuccessfulExport);
                 }))
                 .exceptionally(error -> {
-                    Platform.runLater(() -> dialogService.showError("Експорт",
-                            "Не вдалося підготувати вибрані книги: " + error.getMessage()));
+                    Platform.runLater(() -> dialogService.showError(UiText.text("ui.fxml.integrity_check.export"),
+                            UiText.text("ui.java.export_controller.b689e81f73") + UiExceptionSupport.message(error)));
                     return null;
                 });
     }
@@ -258,7 +288,7 @@ public class ExportController {
 
     public void showExportDialog(Window owner, List<BookViewModel> selectedBooks, Runnable onSuccessfulExport) {
         if (selectedBooks == null || selectedBooks.isEmpty()) {
-            dialogService.showWarning("Немає вибраних книг", "Виберіть хоча б одну книгу.");
+            dialogService.showWarning(UiText.text("ui.java.export_controller.ac1e0c3aad"), UiText.text("ui.java.export_controller.c948809806"));
             return;
         }
         try {
@@ -270,7 +300,7 @@ public class ExportController {
             controller.setSelectedBooks(selectedBooks);
             controller.successfulExportCallback = onSuccessfulExport == null ? () -> { } : onSuccessfulExport;
             Stage dialogStage = new Stage();
-            dialogStage.setTitle("Експорт книг (" + selectedBooks.size() + " книг)");
+            dialogStage.setTitle(UiText.text("ui.java.export_controller.6ab833c96b") + selectedBooks.size() + UiText.text("ui.java.export_controller.de7370facb"));
             dialogStage.setScene(new Scene(root, 700, 620));
             dialogStage.initModality(Modality.WINDOW_MODAL);
             if (owner != null) dialogStage.initOwner(owner);
@@ -282,7 +312,7 @@ public class ExportController {
             }
         } catch (Exception e) {
             log.error("Помилка відкриття діалогу експорту", e);
-            dialogService.showError("Помилка", "Не вдалося відкрити діалог: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.export_controller.acb44428f0") + UiExceptionSupport.message(e));
         }
     }
 
@@ -294,19 +324,20 @@ public class ExportController {
         if (!selectedIds.isEmpty()) {
             bookIds = selectedIds;
         } else {
-            if (!dialogService.showConfirmation("Експорт всіх книг", "Жодну книгу не позначено прапорцем", "Експортувати всі книги колекції?")) return;
+            if (!dialogService.showConfirmation(UiText.text("ui.java.export_controller.87f3140a76"), UiText.text("ui.java.export_controller.3d485a12d9"), UiText.text("ui.java.export_controller.5ee33b842a"))) return;
             bookIds = null;
         }
 
         FileChooser fileChooser = new FileChooser();
-        fileChooser.setTitle("Зберегти INPX файл");
-        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter("INPX файли", "*.inpx"));
+        fileChooser.setTitle(UiText.text("ui.java.export_controller.6f276c407f"));
+        fileChooser.getExtensionFilters().add(new FileChooser.ExtensionFilter(UiText.text("ui.import.filter.inpx_files"), "*.inpx"));
         File file = fileChooser.showSaveDialog(mainPane.getScene().getWindow());
         if (file == null) return;
 
         var currentCollection = appState.getCurrentLibraryCollection();
-        String collectionName = currentCollection != null ? currentCollection.getName() : "Колекція MyHomeLib";
+        String collectionName = currentCollection != null ? currentCollection.getName() : UiText.text("ui.java.export_controller.b61bfa3aaa");
         InpxExportRequest request = InpxExportRequest.builder()
+                .collectionId(appState.getCurrentLibraryCollectionId())
                 .bookIds(bookIds).outputFile(file.toPath()).collectionName(collectionName)
                 .collectionVersion(LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd")))
                 .collectionType(currentCollection == null ? 0 : currentCollection.getType())
@@ -315,18 +346,25 @@ public class ExportController {
                 .connectionScript(currentCollection == null ? null : currentCollection.getConnectionScript())
                 .build();
 
-        dialogService.showInfo("Експорт", "Початок експорту в INPX...");
-        executor.submit(() -> exportToInpxUseCase.execute(request))
+        dialogService.showInfo(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.export_controller.6af29821ae"));
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportToInpxUseCase.execute(request))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (error != null) {
                         Throwable cause = com.myhomelibcorp.ui.util.UiExceptionSupport.unwrapAsync(error);
                         log.error("Помилка експорту в INPX", cause);
-                        dialogService.showError("Помилка", "Не вдалося експортувати: "
-                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.export_controller.e39d902e86")
+                                + UiExceptionSupport.message(cause));
                     } else if (result.failed() == 0) {
-                        dialogService.showInfo("Успішно", "Експортовано " + result.exported() + " книг в INPX.");
+                        dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.export_controller.bb195594af") + result.exported() + UiText.text("ui.java.export_controller.cbea6aba80"));
                     } else {
-                        dialogService.showError("Помилка", "Не вдалося експортувати: " + result.error());
+                        String message = result.errorKey() == null
+                                ? i18n.text("common.error.operation_failed")
+                                : i18n.format(result.errorKey(), result.errorArguments().toArray());
+                        if (!result.technicalDetail().isBlank()) {
+                            log.error("INPX export failed: {}", result.technicalDetail());
+                        }
+                        dialogService.showError(UiText.text("common.error"),
+                                UiText.text("ui.java.export_controller.e39d902e86") + message);
                     }
                     if (onComplete != null) onComplete.run();
                 }));
@@ -335,10 +373,11 @@ public class ExportController {
     // ==================== STAGE 16 PROFILES / HISTORY ====================
 
     @FXML private void onSaveProfileAs() {
-        if (formatComboBox.getValue() == null) { dialogService.showWarning("Профіль", "Спочатку виберіть сумісний формат."); return; }
-        TextInputDialog dialog = new TextInputDialog(profileComboBox.getValue() == null ? "Новий профіль" : profileComboBox.getValue().name());
-        dialog.setTitle("Зберегти профіль експорту");
-        dialog.setHeaderText("Назва нового профілю");
+        if (formatComboBox.getValue() == null) { dialogService.showWarning(UiText.text("ui.java.export_controller.4a34db696f"), UiText.text("ui.java.export_controller.7077fbd48d")); return; }
+        TextInputDialog dialog = new TextInputDialog(profileComboBox.getValue() == null ? UiText.text("ui.java.export_controller.327a0c3af7") : profileComboBox.getValue().name());
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(UiText.text("ui.java.export_controller.82ceb61bf4"));
+        dialog.setHeaderText(UiText.text("ui.java.export_controller.81a8a05f9c"));
         if (stage != null) dialog.initOwner(stage);
         dialog.showAndWait().map(String::trim).filter(s -> !s.isBlank()).ifPresent(name -> {
             ExportProfile created = exportProfileService.newProfile(name);
@@ -351,7 +390,7 @@ public class ExportController {
     @FXML private void onUpdateProfile() {
         ExportProfile current = profileComboBox.getValue();
         if (current == null) return;
-        if (formatComboBox.getValue() == null) { dialogService.showWarning("Профіль", "Спочатку виберіть сумісний формат."); return; }
+        if (formatComboBox.getValue() == null) { dialogService.showWarning(UiText.text("ui.java.export_controller.4a34db696f"), UiText.text("ui.java.export_controller.7077fbd48d")); return; }
         ExportProfile saved = snapshotProfile(current.id(), current.name());
         exportProfileService.save(saved);
         loadProfiles(saved.id());
@@ -360,7 +399,7 @@ public class ExportController {
     @FXML private void onDeleteProfile() {
         ExportProfile current = profileComboBox.getValue();
         if (current == null) return;
-        if (!dialogService.showConfirmation("Видалити профіль", current.name(), "Видалити цей профіль експорту?")) return;
+        if (!dialogService.showConfirmation(UiText.text("ui.java.export_controller.ed8e7a60ce"), current.name(), UiText.text("ui.java.export_controller.7be143e5b9"))) return;
         exportProfileService.delete(current.id());
         loadProfiles(null);
     }
@@ -369,21 +408,22 @@ public class ExportController {
         List<ExportHistoryEntry> history = exportHistoryService.loadRecent(30);
         StringBuilder text = new StringBuilder();
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss").withZone(ZoneId.systemDefault());
-        if (history.isEmpty()) text.append("Історія експорту порожня.");
+        if (history.isEmpty()) text.append(UiText.text("ui.java.export_controller.19d689292f"));
         for (ExportHistoryEntry e : history) {
             text.append(fmt.format(e.completedAt())).append("  ")
-                    .append(e.profileName().isBlank() ? "Ad hoc" : e.profileName()).append("  ")
+                    .append(e.profileName().isBlank() ? UiText.text("ui.export.history.ad_hoc") : e.profileName()).append("  ")
                     .append(e.format() == null ? "?" : e.format()).append('\n')
-                    .append("  requested=").append(e.requested())
-                    .append(" exported=").append(e.exported())
-                    .append(" skipped=").append(e.skipped())
-                    .append(" failed=").append(e.failed())
-                    .append(e.cancelled() ? " CANCELLED" : "")
-                    .append("  time=").append(formatDuration(e.durationMs())).append('\n')
+                    .append(UiText.text("ui.export.history.requested")).append(e.requested())
+                    .append(UiText.text("ui.export.history.exported")).append(e.exported())
+                    .append(UiText.text("ui.export.history.skipped")).append(e.skipped())
+                    .append(UiText.text("ui.export.history.failed")).append(e.failed())
+                    .append(e.cancelled() ? UiText.text("ui.export.history.cancelled") : "")
+                    .append(UiText.text("ui.export.history.time")).append(formatDuration(e.durationMs())).append('\n')
                     .append("  ").append(e.destination()).append("\n\n");
         }
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
-        alert.setTitle("Історія експорту"); alert.setHeaderText("Останні " + history.size() + " запусків");
+        DialogLocalization.prepare(alert);
+        alert.setTitle(UiText.text("ui.java.export_controller.f9f7911d44")); alert.setHeaderText(UiText.text("ui.java.export_controller.2b0164f7a9") + history.size() + UiText.text("ui.java.export_controller.2f1865f728"));
         if (stage != null) alert.initOwner(stage);
         TextArea area = new TextArea(text.toString()); area.setEditable(false); area.setWrapText(false); area.setPrefSize(760, 440);
         alert.getDialogPane().setContent(area); alert.showAndWait();
@@ -478,7 +518,7 @@ public class ExportController {
 
     private void loadPostActions(String selectId) {
         List<ActionChoice> choices = new java.util.ArrayList<>();
-        choices.add(new ActionChoice("", "Без дії після експорту"));
+        choices.add(new ActionChoice("", UiText.text("ui.java.export_controller.5a0f8f9876")));
         for (BookActionProfile p : bookActionProfileService.loadProfiles()) {
             if (p.enabled() && !p.commands().isEmpty()) choices.add(new ActionChoice(p.id(), p.name()));
         }
@@ -508,7 +548,7 @@ public class ExportController {
 
     @FXML private void onChooseDestination() {
         DirectoryChooser chooser = new DirectoryChooser();
-        chooser.setTitle("Виберіть папку для експорту");
+        chooser.setTitle(UiText.text("ui.java.export_controller.2b65ac60f3"));
         File dir = chooser.showDialog(stage);
         if (dir != null) {
             destinationField.setText(dir.getAbsolutePath());
@@ -522,27 +562,28 @@ public class ExportController {
 
     @FXML private void onExport() {
         if (selectedBookIds == null || selectedBookIds.isEmpty()) {
-            dialogService.showWarning("Немає книг", "Виберіть книги для експорту."); return;
+            dialogService.showWarning(UiText.text("ui.java.export_controller.63589c6c88"), UiText.text("ui.java.export_controller.bd09eb5f8f")); return;
         }
         String destPath = text(destinationField.getText());
-        if (destPath.isBlank()) { dialogService.showWarning("Немає папки", "Виберіть папку для експорту."); return; }
+        if (destPath.isBlank()) { dialogService.showWarning(UiText.text("ui.java.export_controller.177f54f007"), UiText.text("ui.java.export_controller.7fc8d302af")); return; }
         if (formatComboBox.getValue() == null) {
-            dialogService.showWarning("Немає сумісного формату", "Вибрані книги мають різні вихідні формати. Експортуйте їх окремими групами."); return;
+            dialogService.showWarning(UiText.text("ui.java.export_controller.cffa2d08e9"), UiText.text("ui.java.export_controller.f91522aa19")); return;
         }
         Path mountRoot;
         try { mountRoot = Path.of(destPath).toAbsolutePath().normalize(); }
-        catch (RuntimeException e) { dialogService.showWarning("Некоректна папка", e.getMessage()); return; }
+        catch (RuntimeException e) { dialogService.showWarning(UiText.text("ui.java.export_controller.3bfa1270a0"), UiExceptionSupport.message(e)); return; }
         if (!mountRoot.toFile().exists()
-                && !dialogService.showConfirmation("Створити папку?", "Папка не існує.", "Створити \"" + destPath + "\"?")) return;
+                && !dialogService.showConfirmation(UiText.text("ui.java.export_controller.104530734e"), UiText.text("ui.java.export_controller.7fa7530f99"), UiText.text("ui.java.export_controller.855fd3a591") + destPath + "\"?")) return;
 
         DeviceTargetProfile device = deviceProfileComboBox.getValue();
         if (device == null) device = deviceProfileService.genericFolder();
         Path destination;
         try { destination = device.resolveDestination(mountRoot); }
-        catch (RuntimeException e) { dialogService.showWarning("Профіль пристрою", e.getMessage()); return; }
+        catch (RuntimeException e) { dialogService.showWarning(UiText.text("ui.java.export_controller.5b73f19382"), UiExceptionSupport.message(e)); return; }
 
         ExportProfile selectedProfile = profileComboBox.getValue();
         ExportRequest request = ExportRequest.builder()
+                .collectionId(appState.getCurrentLibraryCollectionId())
                 .bookIds(selectedBookIds).destinationFolder(destination).format(formatComboBox.getValue())
                 .preferredFormats(deviceProfileService.orderedFormats(device, formatComboBox.getValue()))
                 .collisionPolicy(collisionPolicyComboBox.getValue())
@@ -551,7 +592,7 @@ public class ExportController {
                 .customFileNameTemplate(text(fileNameTemplateField.getText()))
                 .subfolderTemplate(text(subfolderTemplateField.getText()))
                 .profileId(selectedProfile == null ? "" : selectedProfile.id())
-                .profileName(selectedProfile == null ? "Ad hoc" : selectedProfile.name())
+                .profileName(selectedProfile == null ? "" : selectedProfile.name())
                 .postActionProfileId(selectedPostActionId())
                 .completionPolicy(ExportRequest.CompletionPolicy.EJECT_SAFE)
                 .build();
@@ -561,20 +602,20 @@ public class ExportController {
         // Remote books are downloaded automatically before export. The user should not
         // have to run a separate download command or see a "not local" error first.
         setExportRunning(true);
-        exportButton.setText("Підготовка книг…");
+        exportButton.setText(UiText.text("ui.java.export_controller.f28ce2cee1"));
         bookDownloadCoordinator.prepareForExport(selectedBookIds, stage).whenComplete((downloadResult, downloadError) ->
                 Platform.runLater(() -> {
                     if (downloadError != null) {
                         setExportRunning(false);
-                        dialogService.showError("Експорт", "Не вдалося підготувати книги: " + downloadError.getMessage());
+                        dialogService.showError(UiText.text("ui.fxml.integrity_check.export"), UiText.text("ui.java.export_controller.8d664ad092") + UiExceptionSupport.message(downloadError));
                         return;
                     }
                     if (downloadResult != null && downloadResult.failed() > 0) {
                         setExportRunning(false);
-                        dialogService.showWarning("Експорт",
-                                "Не всі книги вдалося завантажити. Завантажено: " + downloadResult.downloaded()
-                                        + ", уже локальні: " + downloadResult.alreadyLocal()
-                                        + ", помилок: " + downloadResult.failed() + ".");
+                        dialogService.showWarning(UiText.text("ui.fxml.integrity_check.export"),
+                                UiText.text("ui.java.export_controller.22f7a7c8cf") + downloadResult.downloaded()
+                                        + UiText.text("ui.java.export_controller.47a7bc80cd") + downloadResult.alreadyLocal()
+                                        + UiText.text("ui.java.export_controller.bd8a471be4") + downloadResult.failed() + ".");
                         return;
                     }
                     startExportWorker(request);
@@ -585,25 +626,25 @@ public class ExportController {
         exportCancelFlag.set(false);
         appState.getStatusBar().setProgressVisible(true);
         appState.getStatusBar().setProgress(0);
-        appState.getStatusBar().setStatusText("Експорт: 0/" + selectedBookIds.size());
+        appState.getStatusBar().setStatusText(UiText.text("ui.java.export_controller.6b383c5932") + selectedBookIds.size());
 
-        executor.submit(() -> exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->
+        executor.submitCollectionScoped(LibraryOperationType.EXPORT, () -> exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->
                         Platform.runLater(() -> {
                             double value = progress.total() <= 0 ? 0 : (double) progress.processed() / progress.total();
-                            selectedBooksLabel.setText(String.format("Експорт: %d/%d — %s", progress.processed(), progress.total(), progress.title()));
-                            exportButton.setText(String.format("Експортую... %d/%d", progress.processed(), progress.total()));
+                            selectedBooksLabel.setText(String.format(UiText.text("ui.java.export_controller.6463ca5281"), progress.processed(), progress.total(), progress.title()));
+                            exportButton.setText(String.format(UiText.text("ui.java.export_controller.44bb0d11ff"), progress.processed(), progress.total()));
                             appState.getStatusBar().setProgress(value);
-                            appState.getStatusBar().setStatusText(String.format("Експорт: %d/%d — %s", progress.processed(), progress.total(), progress.title()));
+                            appState.getStatusBar().setStatusText(String.format(UiText.text("ui.java.export_controller.6463ca5281"), progress.processed(), progress.total(), progress.title()));
                         }), this::resolveCollision))
                 .whenComplete((result, error) -> Platform.runLater(() -> {
                     if (error != null) {
                         log.error("Помилка експорту", error);
                         setExportRunning(false);
                         appState.getStatusBar().setProgressVisible(false);
-                        appState.getStatusBar().setStatusText("Помилка експорту");
+                        appState.getStatusBar().setStatusText(UiText.text("ui.java.export_controller.68c7ce9fff"));
                         Throwable cause = com.myhomelibcorp.ui.util.UiExceptionSupport.unwrapAsync(error);
-                        dialogService.showError("Помилка", "Не вдалося виконати експорт: "
-                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.export_controller.8e358ef3af")
+                                + UiExceptionSupport.message(cause));
                         return;
                     }
                     finishExport(result, request);
@@ -624,14 +665,15 @@ public class ExportController {
 
     private ExportCollisionDecision showCollisionDialog(ExportCollisionContext context) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION);
-        alert.setTitle("Файл вже існує");
+        DialogLocalization.prepare(alert);
+        alert.setTitle(UiText.text("ui.java.export_controller.b905ec44f2"));
         alert.setHeaderText(context.title());
-        alert.setContentText(context.existingFile() + "\n\nОберіть дію:");
+        alert.setContentText(context.existingFile() + UiText.text("ui.java.export_controller.dde3c2d474"));
 
-        ButtonType rename = new ButtonType("Автоматично перейменувати");
-        ButtonType overwrite = new ButtonType("Перезаписати");
-        ButtonType skip = new ButtonType("Пропустити");
-        ButtonType cancel = new ButtonType("Скасувати весь експорт", ButtonBar.ButtonData.CANCEL_CLOSE);
+        ButtonType rename = new ButtonType(UiText.text("ui.java.export_controller.7f902971a1"));
+        ButtonType overwrite = new ButtonType(UiText.text("ui.java.export_controller.6a722c8d68"));
+        ButtonType skip = new ButtonType(UiText.text("ui.java.export_controller.eaa2b8afb9"));
+        ButtonType cancel = new ButtonType(UiText.text("ui.java.export_controller.50488da6fc"), ButtonBar.ButtonData.CANCEL_CLOSE);
 
         alert.getButtonTypes().setAll(rename, overwrite, skip, cancel);
 
@@ -645,14 +687,14 @@ public class ExportController {
     private void finishExport(ExportToDeviceUseCase.ExportResult result, ExportRequest request) {
         setExportRunning(false);
         appState.getStatusBar().setProgressVisible(false);
-        selectedBooksLabel.setText(selectedBookIds.size() + " книг вибрано");
-        String summary = String.format("Експортовано: %d, пропущено: %d, помилок: %d, час: %s.",
+        selectedBooksLabel.setText(selectedBookIds.size() + UiText.text("ui.java.export_controller.968c44e2b7"));
+        String summary = String.format(UiText.text("ui.java.export_controller.a4455feed8"),
                 result.exported(), result.skipped(), result.failed(), formatDuration(result.durationMs()));
-        appState.getStatusBar().setStatusText(result.cancelled() ? "Експорт скасовано — " + summary : "Експорт завершено — " + summary);
+        appState.getStatusBar().setStatusText(result.cancelled() ? UiText.text("ui.java.export_controller.19f9f2c733") + summary : UiText.text("ui.java.export_controller.03fd922ff2") + summary);
 
         if (result.cancelled()) {
-            dialogService.showInfo("Експорт скасовано", summary);
-        } else if (result.failed() == 0 && result.errors().isEmpty()) {
+            dialogService.showInfo(UiText.text("ui.java.export_controller.cef3fcb32e"), summary);
+        } else if (result.failed() == 0 && result.issues().isEmpty()) {
             // A completed batch is a UI transaction: exported checkboxes are consumed and the
             // active workspace must re-read physical-local state (remote books may have been
             // downloaded as part of export preparation). Failed/cancelled exports deliberately
@@ -664,7 +706,7 @@ public class ExportController {
                 log.warn("Експорт завершено, але не вдалося оновити workspace", refreshFailure);
             }
             if (request != null && request.effectiveCompletionPolicy() == ExportRequest.CompletionPolicy.EJECT_SAFE) {
-                summary += " Запис на носій завершено; перед фізичним від’єднанням скористайтеся безпечним вилученням ОС.";
+                summary += UiText.text("ui.java.export_controller.a7c94edeb8");
                 appState.getStatusBar().setStatusText(summary);
             }
             selectedBooksLabel.setText(summary);
@@ -672,10 +714,17 @@ public class ExportController {
             closeDelay.setOnFinished(event -> closeDialog());
             closeDelay.play();
         } else if (result.failed() == 0) {
-            dialogService.showWarning("Експорт завершено з попередженнями", summary + "\n\n" + String.join("\n", result.errors()));
+            dialogService.showWarning(UiText.text("ui.java.export_controller.da5e8bba3e"), summary + "\n\n" + renderExportIssues(result));
         } else {
-            dialogService.showError("Помилка", summary + "\n\n" + String.join("\n", result.errors()));
+            dialogService.showError(UiText.text("common.error"), summary + "\n\n" + renderExportIssues(result));
         }
+    }
+
+    private String renderExportIssues(ExportToDeviceUseCase.ExportResult result) {
+        if (result == null || result.issues().isEmpty()) return "";
+        return result.issues().stream()
+                .map(issue -> UiText.format(issue.key(), issue.arguments().toArray()))
+                .collect(java.util.stream.Collectors.joining("\n"));
     }
 
     private void setExportRunning(boolean running) {
@@ -686,14 +735,14 @@ public class ExportController {
         destinationField.setDisable(running); fileNameTemplateField.setDisable(running); subfolderTemplateField.setDisable(running);
         postActionComboBox.setDisable(running); extractOnlyCheckBox.setDisable(running);
         cancelButton.setDisable(false);
-        cancelButton.setText(running ? "Скасувати експорт" : "Закрити");
-        exportButton.setText(running ? "Експортую... (" + selectedBookIds.size() + " книг)" : "Експортувати");
+        cancelButton.setText(running ? UiText.text("ui.java.export_controller.cfb5f1d251") : UiText.text("common.close"));
+        exportButton.setText(running ? UiText.text("ui.java.export_controller.039ccdd668") + selectedBookIds.size() + UiText.text("ui.java.export_controller.de7370facb") : UiText.text("ui.annotations.export_action"));
         updateProfileButtons();
     }
 
     @FXML private void onCancel() {
         if (exportRunning) {
-            exportCancelFlag.set(true); cancelButton.setDisable(true); cancelButton.setText("Скасовую..."); return;
+            exportCancelFlag.set(true); cancelButton.setDisable(true); cancelButton.setText(UiText.text("ui.java.export_controller.4f50e46aac")); return;
         }
         closeDialog();
     }

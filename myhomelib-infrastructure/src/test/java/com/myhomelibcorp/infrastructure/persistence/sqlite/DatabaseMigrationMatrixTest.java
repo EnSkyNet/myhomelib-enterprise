@@ -15,7 +15,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /** Release-acceptance matrix: representative historical schemas must reach the current schema without data loss. */
 class DatabaseMigrationMatrixTest {
 
-    private static final List<Integer> SOURCE_VERSIONS = List.of(1, 10, 20, 30, 40, 44, 52, 53, 57, 58, 59);
+    private static final List<Integer> SOURCE_VERSIONS = List.of(1, 10, 20, 30, 40, 44, 52, 53, 57, 58, 59, 60, 61);
 
     @TempDir
     Path tempDir;
@@ -45,7 +45,7 @@ class DatabaseMigrationMatrixTest {
                     .load();
             flyway.migrate();
 
-            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("60");
+            assertThat(flyway.info().current().getVersion().getVersion()).isEqualTo("62");
             assertThat(jdbc.queryForObject("SELECT title FROM books WHERE id='book-matrix'", String.class))
                     .isEqualTo("Migration Matrix Book V" + sourceVersion);
             assertThat(jdbc.queryForObject("SELECT keywords FROM books WHERE id='book-matrix'", String.class))
@@ -53,6 +53,9 @@ class DatabaseMigrationMatrixTest {
             assertThat(jdbc.queryForObject("SELECT rate FROM books WHERE id='book-matrix'", Integer.class)).isEqualTo(4);
             assertThat(jdbc.queryForObject("SELECT progress FROM books WHERE id='book-matrix'", Integer.class)).isEqualTo(33);
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_authors WHERE book_id='book-matrix' AND author_id='author-matrix'", Integer.class)).isEqualTo(1);
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM authors WHERE id='author-sentinel'", Integer.class)).isZero();
+            assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_authors WHERE book_id='book-matrix' AND author_id='author-sentinel'", Integer.class)).isZero();
+            assertThat(jdbc.queryForObject("SELECT author_sort FROM books WHERE id='book-matrix'", String.class)).isEqualTo("dornichev dmytro");
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_genres WHERE book_id='book-matrix' AND genre_code='sf'", Integer.class)).isEqualTo(1);
             assertThat(jdbc.queryForObject("SELECT value FROM settings WHERE key='matrix.user.setting'", String.class)).isEqualTo("preserved");
             assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM book_groups bg JOIN groups g ON g.id=bg.group_id WHERE bg.book_id='book-matrix' AND g.name='Matrix Group'", Integer.class)).isEqualTo(1);
@@ -65,17 +68,25 @@ class DatabaseMigrationMatrixTest {
             assertIndex(jdbc, "idx_books_active_language_title");
             assertIndex(jdbc, "idx_books_active_id");
             assertIndex(jdbc, "idx_keyword_books_book_id");
+            assertIndex(jdbc, "ux_series_name_normalized");
+            assertIndex(jdbc, "idx_books_active_series_normalized");
         }
     }
 
     private static void seedV1CompatibleData(JdbcTemplate jdbc, int sourceVersion) {
         jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name) VALUES ('author-matrix','Dmytro','','Dornichev')");
+        jdbc.update("INSERT INTO authors(id, first_name, middle_name, last_name) VALUES ('author-sentinel','','','Без автора')");
         jdbc.update("INSERT INTO genres(code,name,parent_code,fb2_code) VALUES ('sf','Science Fiction',NULL,'sf')");
         jdbc.update("""
                 INSERT INTO books(id,title,series,sequence_number,file_name,folder,archive_entry,language,file_size,keywords,annotation,rate,progress,update_date,isbn,deleted,local)
                 VALUES ('book-matrix', ?, 'Matrix Series', 1, 'matrix.fb2', '', '', 'uk', 1234, 'Alpha; Beta', 'annotation', 4, 33, '2026-09-04', '', 0, 1)
                 """, "Migration Matrix Book V" + sourceVersion);
+        boolean hasAuthorSort = jdbc.queryForList("PRAGMA table_info(books)").stream()
+                .map(row -> row.get("name")).filter(java.util.Objects::nonNull).map(Object::toString)
+                .anyMatch("author_sort"::equalsIgnoreCase);
+        if (hasAuthorSort) jdbc.update("UPDATE books SET author_sort='невідомий автор' WHERE id='book-matrix'");
         jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('book-matrix','author-matrix')");
+        jdbc.update("INSERT INTO book_authors(book_id,author_id) VALUES ('book-matrix','author-sentinel')");
         jdbc.update("INSERT INTO book_genres(book_id,genre_code) VALUES ('book-matrix','sf')");
         jdbc.update("INSERT OR REPLACE INTO settings(key,value) VALUES ('matrix.user.setting','preserved')");
         jdbc.update("INSERT OR IGNORE INTO groups(name,allow_delete) VALUES ('Matrix Group',1)");

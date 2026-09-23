@@ -16,6 +16,8 @@ if ($env:MHL_SKIP_BUILD -ne "1") {
     if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
 
+& .\tools\prepare-runtime-tools.ps1
+
 $jar = "myhomelib-bootstrap\target\myhomelib-bootstrap-$BuildVersion.jar"
 if (-not (Test-Path $jar -PathType Leaf)) { throw "Missing $jar" }
 $stage = "myhomelib-bootstrap\target\jpackage-input"
@@ -23,6 +25,13 @@ $dest = "dist"
 Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force $stage, $dest | Out-Null
 Copy-Item $jar $stage
+
+$toolsStage = Join-Path $stage "tools"
+New-Item -ItemType Directory -Force (Join-Path $toolsStage "validators"), (Join-Path $toolsStage "converters\libmobi") | Out-Null
+Copy-Item -Recurse -Force "tools\validators\epubcheck" (Join-Path $toolsStage "validators\epubcheck")
+Copy-Item -Force "tools\converters\libmobi\mobitool.exe" (Join-Path $toolsStage "converters\libmobi\mobitool.exe")
+Copy-Item -Force "tools\converters\libmobi\build-src\COPYING" (Join-Path $toolsStage "converters\libmobi\COPYING")
+
 if ($Type -eq "app-image") {
     Remove-Item -Recurse -Force "$dest\MyHomeLib" -ErrorAction SilentlyContinue
 }
@@ -36,7 +45,8 @@ $args = @(
     "--input", $stage,
     "--main-jar", (Split-Path $jar -Leaf),
     "--dest", $dest,
-    "--java-options", "-Dfile.encoding=UTF-8"
+    "--java-options", "-Dfile.encoding=UTF-8",
+    "--jlink-options", "--strip-debug --no-man-pages --no-header-files"
 )
 
 if ($Type -in @("exe", "msi")) {

@@ -18,7 +18,7 @@ class MainToolbarLayoutContractTest {
             assertThat(fxml).contains("<HBox fx:id=\"mainToolbar\"");
             assertThat(fxml).contains("styleClass=\"main-toolbar-wrap\"");
             assertThat(fxml).contains("HBox.hgrow=\"ALWAYS\"");
-            assertThat(fxml).contains("<MenuButton text=\"⋮\"");
+            assertThat(fxml).contains("<MenuButton text=\"ui.fxml.mainview.value_8515dcc\"");
             assertThat(fxml).contains("onAction=\"#handleCycleApplicationTheme\"");
             assertThat(fxml).doesNotContain("<FlowPane fx:id=\"mainToolbar\"");
             assertThat(fxml).doesNotContain("fx:id=\"themeButton\"");

@@ -3,6 +3,7 @@ package com.myhomelibcorp.application.sync.conflict;
 import com.myhomelibcorp.domain.model.sync.SyncRecord;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -15,8 +16,8 @@ public final class SyncConflictReviewService {
                 .filter(SyncConflictResolution::requiresManualReview)
                 .map(r -> new SyncConflictReviewItem(
                         r.local().logicalKey(),
-                        r.local().entityType().name(),
-                        r.reason(),
+                        SyncConflictReviewItem.Text.of(entityTypeKey(r.local())),
+                        SyncConflictReviewItem.Text.of("ui.sync.conflict.reason.manual"),
                         snapshot(r.local()),
                         snapshot(r.remote())))
                 .toList();
@@ -39,11 +40,19 @@ public final class SyncConflictReviewService {
         }).toList();
     }
 
-    private static String snapshot(SyncRecord record) {
-        return "device=" + record.deviceId()
-                + "; version=" + record.version()
-                + "; updatedAt=" + record.updatedAt()
-                + "; tombstone=" + record.tombstone()
-                + "; payload=" + record.payload();
+    private static String entityTypeKey(SyncRecord record) {
+        return "ui.sync.entity." + record.entityType().name().toLowerCase(Locale.ROOT);
+    }
+
+    private static SyncConflictReviewItem.Text snapshot(SyncRecord record) {
+        String key = record.tombstone()
+                ? "ui.sync.conflict.snapshot.record.deleted"
+                : "ui.sync.conflict.snapshot.record.active";
+        return SyncConflictReviewItem.Text.of(
+                key,
+                record.deviceId(),
+                record.version(),
+                record.updatedAt(),
+                record.payload());
     }
 }

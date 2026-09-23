@@ -5,6 +5,7 @@ import org.springframework.stereotype.Component;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
 @Component
@@ -15,7 +16,7 @@ public class PdfCoverParser {
     /** Best-effort extraction of the first DCT/JPEG page image without rendering PDF. */
     public byte[] parse(Path path) throws IOException {
         byte[] data;
-        try (InputStream in = Files.newInputStream(path)) {
+        try (InputStream in = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
             data = in.readNBytes(MAX_SCAN_BYTES);
         }
         if (data.length < 5 || data[0] != '%' || data[1] != 'P' || data[2] != 'D' || data[3] != 'F') return null;

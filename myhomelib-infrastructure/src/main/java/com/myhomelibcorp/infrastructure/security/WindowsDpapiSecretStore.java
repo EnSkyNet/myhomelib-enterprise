@@ -1,65 +1,98 @@
 package com.myhomelibcorp.infrastructure.security;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.shared.security.CredentialMasterKeyManager;
 import com.myhomelibcorp.shared.security.SecretStore;
 import com.myhomelibcorp.shared.security.SecretStoreException;
+import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import com.sun.jna.platform.win32.Crypt32Util;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
-import java.nio.file.StandardOpenOption;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
+import java.util.HexFormat;
+import java.util.Objects;
 import java.util.Optional;
 
-/** Windows CurrentUser DPAPI store. The file beside config contains only a DPAPI-protected blob. */
+/** Windows CurrentUser DPAPI store. Files beside config contain only DPAPI-protected blobs. */
 final class WindowsDpapiSecretStore implements SecretStore {
-    private static final String FILE_NAME = "credential-key.dpapi";
-    private final Path blobFile;
+    /** Keep the historical master-key filename for backward compatibility. */
+    private static final String LEGACY_MASTER_KEY_FILE = "credential-key.dpapi";
+    private static final String KEYED_FILE_PREFIX = "credential-secret-v1-";
+    private static final int MAX_BLOB_FILE_BYTES = 64 * 1024;
+
+    private final Path configDir;
 
     WindowsDpapiSecretStore(Path configDir) {
-        this.blobFile = configDir.resolve(FILE_NAME);
+        this.configDir = Objects.requireNonNull(configDir, "configDir").toAbsolutePath().normalize();
     }
 
     @Override
     public Optional<String> read(String key) {
-        if (!Files.isRegularFile(blobFile)) return Optional.empty();
+        Path blobFile = blobFile(key);
+        if (!Files.exists(blobFile, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         try {
-            byte[] protectedBytes = Base64.getDecoder().decode(Files.readString(blobFile, StandardCharsets.US_ASCII).trim());
+            Path safe = SafeFilePublication.requireSafeRegularFile(blobFile, "Windows DPAPI secret blob");
+            String encoded;
+            try (var in = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS)) {
+                encoded = new String(BoundedIoSupport.readFully(in, MAX_BLOB_FILE_BYTES), StandardCharsets.US_ASCII).trim();
+            }
+            byte[] protectedBytes = Base64.getDecoder().decode(encoded);
             byte[] plain = Crypt32Util.cryptUnprotectData(protectedBytes);
             return Optional.of(new String(plain, StandardCharsets.UTF_8));
         } catch (Exception e) {
-            throw new SecretStoreException("Windows DPAPI could not decrypt the credential master key", e);
+            throw new SecretStoreException("Windows DPAPI could not decrypt the requested secret", e);
         }
     }
 
     @Override
     public void write(String key, String secret) {
+        Objects.requireNonNull(secret, "secret");
+        Path blobFile = blobFile(key);
+        Path workspace = null;
         try {
-            Files.createDirectories(blobFile.getParent());
+            Path parent = SafeFilePublication.createDirectoriesNoLinks(
+                    blobFile.getParent(), "Windows DPAPI secret directory");
+            String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                    blobFile, "Windows DPAPI secret blob");
             byte[] protectedBytes = Crypt32Util.cryptProtectData(secret.getBytes(StandardCharsets.UTF_8));
             String encoded = Base64.getEncoder().encodeToString(protectedBytes) + System.lineSeparator();
-            Path temp = Files.createTempFile(blobFile.getParent(), ".credential-dpapi-", ".tmp");
-            try {
-                Files.writeString(temp, encoded, StandardCharsets.US_ASCII,
-                        StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE);
-                try {
-                    Files.move(temp, blobFile, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
-                } catch (java.nio.file.AtomicMoveNotSupportedException e) {
-                    Files.move(temp, blobFile, StandardCopyOption.REPLACE_EXISTING);
-                }
-            } finally {
-                Files.deleteIfExists(temp);
+            workspace = SafeFilePublication.createPrivateWorkspace(
+                    parent, ".credential-dpapi-work-", "Windows DPAPI secret workspace");
+            Path temp = workspace.resolve(blobFile.getFileName().toString());
+            try (var out = SafeFilePublication.openFreshOutputStream(temp, "Windows DPAPI staged secret blob")) {
+                out.write(encoded.getBytes(StandardCharsets.US_ASCII));
+                out.flush();
             }
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    temp, blobFile, expectedTargetHash, "Windows DPAPI secret publication");
         } catch (Exception e) {
-            throw new SecretStoreException("Windows DPAPI could not protect the credential master key", e);
+            throw new SecretStoreException("Windows DPAPI could not protect the requested secret", e);
+        } finally {
+            if (workspace != null) {
+                try {
+                    SafeFilePublication.cleanupPrivateWorkspace(workspace);
+                } catch (Exception cleanup) {
+                    // A failed cleanup must never trigger deletion outside the verified private workspace.
+                }
+            }
         }
     }
 
     @Override
     public void delete(String key) {
+        Path blobFile = blobFile(key);
         try {
-            Files.deleteIfExists(blobFile);
+            String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                    blobFile, "Windows DPAPI secret blob deletion");
+            if (expectedTargetHash != null) {
+                SafeFilePublication.removeIfOwned(
+                        blobFile, expectedTargetHash, "Windows DPAPI secret blob deletion");
+            }
         } catch (Exception e) {
             throw new SecretStoreException("Windows DPAPI secret blob could not be removed", e);
         }
@@ -68,5 +101,31 @@ final class WindowsDpapiSecretStore implements SecretStore {
     @Override
     public String backendId() {
         return "windows-dpapi-current-user";
+    }
+
+    private Path blobFile(String key) {
+        return configDir.resolve(blobFileNameFor(key));
+    }
+
+    /** Visible to package tests so slot isolation can be verified without invoking Windows DPAPI. */
+    static String blobFileNameFor(String key) {
+        String validated = requireLogicalKey(key);
+        if (CredentialMasterKeyManager.SECRET_NAME.equals(validated)) return LEGACY_MASTER_KEY_FILE;
+        return KEYED_FILE_PREFIX + sha256(validated) + ".dpapi";
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static String requireLogicalKey(String key) {
+        Objects.requireNonNull(key, "key");
+        if (key.isBlank()) throw new IllegalArgumentException("Secret key must not be blank");
+        return key;
     }
 }

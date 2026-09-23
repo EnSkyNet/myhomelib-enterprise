@@ -42,6 +42,20 @@ class SqliteStatisticsRepositoryTest {
     }
 
     @Test
+    void missingCacheRowIsReadOnlyUntilExplicitRefresh() {
+        jdbc.update("DELETE FROM library_statistics");
+
+        var stale = repository.getStatistics();
+
+        assertThat(stale.isStale()).isTrue();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM library_statistics", Long.class)).isZero();
+
+        repository.refreshStatistics();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM library_statistics", Long.class)).isEqualTo(1L);
+        assertThat(repository.getStatistics().isStale()).isFalse();
+    }
+
+    @Test
     void aggregateRefreshPreservesLegacyNullDeletedSemantics() {
         insertBook("active", 0, "en", "Pub", 100, 1, 100, "");
         insertBook("legacy-null", null, "en", "Pub", 50, 0, 0, "cover");

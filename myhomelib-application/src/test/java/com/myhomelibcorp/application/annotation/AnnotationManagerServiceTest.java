@@ -1,10 +1,14 @@
 package com.myhomelibcorp.application.annotation;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationManagerQueryPort;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.AnnotationRepository;
 import com.myhomelibcorp.domain.model.annotation.Annotation;
 import com.myhomelibcorp.domain.model.annotation.AnnotationAnchor;
 import com.myhomelibcorp.domain.model.annotation.AnnotationType;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import org.junit.jupiter.api.Test;
 
 import java.time.Instant;
@@ -16,6 +20,12 @@ import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 
 class AnnotationManagerServiceTest {
 
@@ -84,6 +94,50 @@ class AnnotationManagerServiceTest {
                 .hasMessageContaining("Annotation not found");
     }
 
+
+    @Test
+    void mutationHoldsAnnotationLifecycleBarrierAgainstCollectionSwitch() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        AnnotationRepository repository = mock(AnnotationRepository.class);
+        Instant now = Instant.parse("2026-09-14T09:00:00Z");
+        Annotation original = annotation("guarded", Set.of("tag"), now);
+        when(repository.findById("guarded")).thenReturn(Optional.of(original));
+        doAnswer(invocation -> {
+            assertThatThrownBy(() -> coordinator.acquire(LibraryOperationType.SWITCH))
+                    .isInstanceOf(RuntimeException.class);
+            return invocation.getArgument(0);
+        }).when(repository).save(any(Annotation.class));
+
+        AnnotationManagerService service = new AnnotationManagerService(
+                new MemoryQueryPort(), repository, null, coordinator);
+
+        service.update("guarded", "", "#112233", Set.of("tag"));
+    }
+
+    @Test
+    void undoTokenCannotBeRestoredIntoAnotherActiveCollection() {
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        AnnotationRepository repository = mock(AnnotationRepository.class);
+        CollectionLifecyclePort lifecycle = mock(CollectionLifecyclePort.class);
+        Collection first = mock(Collection.class);
+        Collection second = mock(Collection.class);
+        when(first.getId()).thenReturn("c1");
+        when(second.getId()).thenReturn("c2");
+        when(lifecycle.getCurrentCollection()).thenReturn(first, second);
+        Instant now = Instant.parse("2026-09-14T09:30:00Z");
+        Annotation original = annotation("undo-guarded", Set.of("tag"), now);
+        when(repository.findById("undo-guarded")).thenReturn(Optional.of(original));
+
+        AnnotationManagerService service = new AnnotationManagerService(
+                new MemoryQueryPort(), repository, null, coordinator, lifecycle);
+        AnnotationUndoToken token = service.deleteForUndo("undo-guarded");
+
+        assertThat(token.collectionId()).isEqualTo("c1");
+        assertThatThrownBy(() -> service.restoreDeleted(token))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("another collection");
+        verify(repository, never()).save(any(Annotation.class));
+    }
 
     @Test
     void batchDeleteProducesSingleUndoOperationAndRestoresAllRows() {

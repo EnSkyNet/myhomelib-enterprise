@@ -7,10 +7,12 @@ import com.myhomelibcorp.application.port.out.download.RemoteCatalogUpdatePlan;
 import com.myhomelibcorp.application.port.out.download.RemoteDownloadMetadata;
 import com.myhomelibcorp.application.port.out.download.RemoteDownloadProgress;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.domain.model.collection.Collection;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.Sha256Support;
+import com.myhomelibcorp.shared.util.BoundedHttpBodyHandlers;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -27,7 +29,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.nio.file.LinkOption;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
@@ -35,14 +37,13 @@ import java.util.Locale;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.DoubleConsumer;
 import java.util.function.Consumer;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipException;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
 
 /** HTTP downloader for validated, resumable catalog updates. */
 @Component
 @Slf4j
 public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPort {
+    private static final int MAX_VERSION_RESPONSE_BYTES = 4096;
     private static final CatalogSourceProfile FLIBUSTA = CatalogSourceProfile.FLIBUSTA_MHL;
 
     // Package-visible aliases kept for focused regression tests.
@@ -53,6 +54,9 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
     static final String FLIBUSTA_EXTRA_UPDATE = FLIBUSTA.incrementalUpdateFile();
 
     private static final int MAX_ATTEMPTS = 4;
+    private static final long DEFAULT_MAX_DOWNLOAD_BYTES = 2L * 1024 * 1024 * 1024;
+    private static final long DEFAULT_MIN_FREE_SPACE_BYTES = 256L * 1024 * 1024;
+    private static final long SPACE_RECHECK_BYTES = 16L * 1024 * 1024;
 
     private final ApplicationSettingsPort settings;
     private final OnlineHttpPolicy httpPolicy;
@@ -147,7 +151,8 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                     packages.add(RemoteCatalogPackage.of(
                             baseline.path(), baselineUri.toString(), baselineVersion, true, baseline.metadata()));
                 } else {
-                    deleteQuietly(baseline.path());
+                    removeDownloadedIfOwned(baseline.path(), baseline.metadata().sha256(),
+                            "Unneeded catalog baseline cleanup", null);
                     sink.accept(1.0);
                     log.info("Remote Flibusta baseline is not newer: local={}, baseline={}",
                             currentVersion, baselineVersion);
@@ -193,7 +198,10 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             }
             return RemoteCatalogUpdatePlan.of(packages, latest);
         } catch (Exception e) {
-            for (RemoteCatalogPackage pkg : packages) deleteQuietly(pkg.file());
+            for (RemoteCatalogPackage pkg : packages) {
+                removeDownloadedIfOwned(pkg.file(), pkg.metadata().sha256(),
+                        "Failed catalog-update package cleanup", e);
+            }
             throw e;
         }
     }
@@ -208,23 +216,33 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             double progressSpan) throws Exception {
         if (cancel.get()) throw new IOException("Оновлення скасовано");
         Path dir = AppPaths.cacheDir().resolve("catalog-updates");
-        Files.createDirectories(dir);
+        SafeFilePublication.createDirectoriesNoLinks(dir, "Catalog download cache directory");
         String key = shortHash(uri.toString());
         Path part = dir.resolve("catalog-" + key + ".inpx.part");
         Path partMeta = dir.resolve("catalog-" + key + ".inpx.part.meta");
         Path out = dir.resolve("catalog-" + key + ".inpx");
-        Exception last = null;
+        String expectedOutHash = SafeFilePublication.snapshotExistingTarget(out, "Catalog download target");
 
+        OwnedDownloadFile.Snapshot partSnapshot = OwnedDownloadFile.snapshot(part, "Catalog partial download");
+        HttpResumeSupport.ResumeMetadata resume = partSnapshot.size() > 0 ? HttpResumeSupport.read(partMeta, uri) : null;
+        if (partSnapshot.size() > 0 && (resume == null || resume.validator().isBlank())) {
+            preserveStaleDownloadState(part, "Untrusted catalog partial download");
+            preserveStaleDownloadState(partMeta, "Untrusted catalog resume metadata");
+            partSnapshot = OwnedDownloadFile.Snapshot.absent();
+            resume = null;
+        } else if (partSnapshot.exists() && partSnapshot.size() == 0L) {
+            preserveStaleDownloadState(part, "Zero-length catalog partial download");
+            partSnapshot = OwnedDownloadFile.Snapshot.absent();
+        }
+        if (!partSnapshot.exists() && Files.exists(partMeta, LinkOption.NOFOLLOW_LINKS)) {
+            preserveStaleDownloadState(partMeta, "Orphaned catalog resume metadata");
+            resume = null;
+        }
+
+        Exception last = null;
         for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
             if (cancel.get() || Thread.currentThread().isInterrupted()) throw new IOException("Оновлення скасовано");
-            long offset = Files.exists(part) ? Files.size(part) : 0L;
-            HttpResumeSupport.ResumeMetadata resume = offset > 0 ? HttpResumeSupport.read(partMeta, uri) : null;
-            if (offset > 0 && (resume == null || resume.validator().isBlank())) {
-                Files.deleteIfExists(part);
-                Files.deleteIfExists(partMeta);
-                offset = 0L;
-                resume = null;
-            }
+            long offset = partSnapshot.size();
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
                 HttpRequest.Builder builder = request(collection, uri);
                 if (offset > 0) {
@@ -234,18 +252,32 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 HttpResponse<InputStream> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofInputStream());
                 int status = response.statusCode();
 
-                if (offset > 0 && status == 206) {
-                    HttpResumeSupport.validateContentRange(response, offset, uri);
+                boolean resumed = offset > 0 && status == 206;
+                if (resumed) {
+                    try {
+                        HttpResumeSupport.validateContentRange(response, offset, uri);
+                    } catch (IOException invalidRange) {
+                        closeQuietly(response.body());
+                        removeOwnedCatalogPartial(part, partSnapshot, "Invalid Content-Range partial cleanup");
+                        removeOwnedCatalogMeta(partMeta, resume, "Invalid Content-Range metadata cleanup");
+                        partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                        resume = null;
+                        throw invalidRange;
+                    }
                 } else if (status == 200) {
                     if (offset > 0) {
-                        Files.deleteIfExists(part);
-                        Files.deleteIfExists(partMeta);
-                        offset = 0;
+                        removeOwnedCatalogPartial(part, partSnapshot, "Restarted catalog partial cleanup");
+                        removeOwnedCatalogMeta(partMeta, resume, "Restarted catalog metadata cleanup");
+                        partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                        resume = null;
+                        offset = 0L;
                     }
                 } else if (status == 416 && offset > 0) {
                     closeQuietly(response.body());
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedCatalogPartial(part, partSnapshot, "HTTP 416 catalog partial cleanup");
+                    removeOwnedCatalogMeta(partMeta, resume, "HTTP 416 catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     throw new RetryableDownloadException("HTTP 416 для resume " + SensitiveDataSanitizer.sanitizeUri(uri));
                 } else if (OnlineRetryPolicy.isRetryableStatus(status)) {
                     String retryAfter = response.headers().firstValue("Retry-After").orElse(null);
@@ -260,28 +292,73 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 String contentType = response.headers().firstValue("Content-Type").orElse("").toLowerCase(Locale.ROOT);
                 if (contentType.contains("text/html")) {
                     closeQuietly(response.body());
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedCatalogPartial(part, partSnapshot, "HTML catalog partial cleanup");
+                    removeOwnedCatalogMeta(partMeta, resume, "HTML catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     throw new IOException("Сервер повернув HTML замість INPX/ZIP: " + SensitiveDataSanitizer.sanitizeUri(uri));
                 }
 
-                HttpResumeSupport.write(partMeta, uri, response);
+                long responseLength = response.headers().firstValueAsLong("Content-Length").orElse(-1L);
+                long maxDownloadBytes = maxDownloadBytes();
+                long minFreeSpaceBytes = minFreeSpaceBytes();
+                if (offset > maxDownloadBytes
+                        || (responseLength >= 0 && responseLength > maxDownloadBytes - offset)) {
+                    closeQuietly(response.body());
+                    removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");
+                    removeOwnedCatalogMeta(partMeta, resume, "Oversized catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
+                    throw new NonRetryableCatalogDownloadException(downloadLimitMessage(maxDownloadBytes));
+                }
+
                 long expectedTotal = HttpResumeSupport.expectedTotal(response, offset);
+                if (expectedTotal > maxDownloadBytes) {
+                    closeQuietly(response.body());
+                    removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");
+                    removeOwnedCatalogMeta(partMeta, resume, "Oversized catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
+                    throw new NonRetryableCatalogDownloadException(downloadLimitMessage(maxDownloadBytes));
+                }
+                try {
+                    ensureDownloadSpace(dir, minFreeSpaceBytes, responseLength > 0 ? responseLength : 0L);
+                } catch (NonRetryableCatalogDownloadException noSpace) {
+                    closeQuietly(response.body());
+                    removeOwnedCatalogPartial(part, partSnapshot, "No-space catalog partial cleanup");
+                    removeOwnedCatalogMeta(partMeta, resume, "No-space catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
+                    throw noSpace;
+                }
+
+                resume = HttpResumeSupport.write(partMeta, uri, response,
+                        resume == null ? null : resume.ownershipHash());
                 long done = offset;
+                long nextSpaceCheck = safeSpaceRecheckThreshold(done);
                 OnlineProgressThrottle progressThrottle = new OnlineProgressThrottle(done);
                 emitDownloadProgress(detailedProgress, done, expectedTotal, uri, progressStart, progressSpan);
-                var options = offset > 0
-                        ? new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.APPEND}
-                        : new StandardOpenOption[]{StandardOpenOption.CREATE, StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING};
-                try (InputStream in = response.body(); var os = Files.newOutputStream(part, options)) {
+
+                OwnedDownloadFile.Session session = OwnedDownloadFile.open(
+                        part, partSnapshot, resumed, "Catalog partial download");
+                Exception bodyFailure = null;
+                try (InputStream in = response.body()) {
+                    var os = session.outputStream();
                     byte[] buffer = new byte[128 * 1024];
                     for (int n; (n = in.read(buffer)) != -1;) {
                         if (cancel.get() || Thread.currentThread().isInterrupted()) {
                             throw new IOException("Оновлення скасовано");
                         }
                         if (n == 0) continue;
+                        if (done > maxDownloadBytes - n) {
+                            throw new NonRetryableCatalogDownloadException(downloadLimitMessage(maxDownloadBytes));
+                        }
                         os.write(buffer, 0, n);
                         done += n;
+                        if (done >= nextSpaceCheck) {
+                            ensureDownloadSpace(dir, minFreeSpaceBytes, 0L);
+                            nextSpaceCheck = safeSpaceRecheckThreshold(done);
+                        }
                         if (progressThrottle.shouldEmit(done, expectedTotal)) {
                             if (expectedTotal > 0) {
                                 double local = Math.min(1.0, (double) done / expectedTotal);
@@ -290,36 +367,63 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                             emitDownloadProgress(detailedProgress, done, expectedTotal, uri, progressStart, progressSpan);
                         }
                     }
+                    os.flush();
+                } catch (Exception failure) {
+                    bodyFailure = failure;
                 }
+                try {
+                    partSnapshot = session.finish();
+                } catch (IOException ownershipFailure) {
+                    if (bodyFailure != null) ownershipFailure.addSuppressed(bodyFailure);
+                    throw new IOException("Catalog partial download was replaced while being written: " + part, ownershipFailure);
+                } finally {
+                    try { session.close(); } catch (IOException ignoredClose) { }
+                }
+                if (bodyFailure != null) throw bodyFailure;
 
-                long actual = Files.size(part);
+                long actual = partSnapshot.size();
                 if (expectedTotal > 0 && actual != expectedTotal) {
                     if (actual > expectedTotal) {
-                        Files.deleteIfExists(part);
-                        Files.deleteIfExists(partMeta);
+                        removeOwnedCatalogPartial(part, partSnapshot, "Oversized catalog partial cleanup");
+                        removeOwnedCatalogMeta(partMeta, resume, "Oversized catalog metadata cleanup");
+                        partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                        resume = null;
                     }
-                    throw new RetryableDownloadException("Неповне завантаження: " + actual + " з " + expectedTotal + " байт для " + SensitiveDataSanitizer.sanitizeUri(uri));
+                    throw new RetryableDownloadException("Неповне завантаження: " + actual + " з " + expectedTotal
+                            + " байт для " + SensitiveDataSanitizer.sanitizeUri(uri));
                 }
 
                 String embeddedVersion;
                 try {
                     embeddedVersion = validateCatalogArchive(part, uri);
+                    SafeFilePublication.requireOwnedPath(part, partSnapshot.sha256(), "Validated catalog partial");
                 } catch (IOException invalid) {
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    removeOwnedCatalogPartial(part, partSnapshot, "Invalid catalog partial cleanup");
+                    removeOwnedCatalogMeta(partMeta, resume, "Invalid catalog metadata cleanup");
+                    partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                    resume = null;
                     throw invalid;
                 }
 
-                String sha256 = sha256(part);
+                String sha256 = partSnapshot.sha256();
                 String etag = response.headers().firstValue("ETag").orElse("");
                 String lastModified = response.headers().firstValue("Last-Modified").orElse("");
-                AtomicFileSupport.moveReplacing(part, out);
-                Files.deleteIfExists(partMeta);
+                SafeFilePublication.publishReplacingIfUnchanged(
+                        part, out, expectedOutHash, "Catalog download");
+                partSnapshot = OwnedDownloadFile.Snapshot.absent();
+                removeOwnedCatalogMeta(partMeta, resume, "Catalog resume metadata cleanup");
+                resume = null;
                 progress.accept(Math.min(1.0, progressStart + progressSpan));
-                emitDownloadProgress(detailedProgress, actual, expectedTotal > 0 ? expectedTotal : actual, uri, progressStart, progressSpan);
-                // Використовуємо фабричний метод RemoteDownloadMetadata.of
+                emitDownloadProgress(detailedProgress, actual, expectedTotal > 0 ? expectedTotal : actual,
+                        uri, progressStart, progressSpan);
                 RemoteDownloadMetadata metadata = RemoteDownloadMetadata.of(etag, lastModified, sha256, actual, "inpx");
                 return new Downloaded(out, embeddedVersion, metadata);
+            } catch (NonRetryableCatalogDownloadException e) {
+                try { removeOwnedCatalogPartial(part, partSnapshot, "Non-retryable catalog partial cleanup"); }
+                catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
+                try { removeOwnedCatalogMeta(partMeta, resume, "Non-retryable catalog metadata cleanup"); }
+                catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
+                throw e;
             } catch (RetryableDownloadException e) {
                 last = e;
                 if (attempt == MAX_ATTEMPTS) break;
@@ -328,15 +432,33 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
                 last = e;
                 if (cancel.get() || Thread.currentThread().isInterrupted()) throw e;
                 if (isSemanticFailure(e)) {
-                    Files.deleteIfExists(part);
-                    Files.deleteIfExists(partMeta);
+                    try { removeOwnedCatalogPartial(part, partSnapshot, "Semantic-failure catalog partial cleanup"); }
+                    catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
+                    try { removeOwnedCatalogMeta(partMeta, resume, "Semantic-failure catalog metadata cleanup"); }
+                    catch (IOException cleanupFailure) { e.addSuppressed(cleanupFailure); }
                     throw e;
                 }
                 if (attempt == MAX_ATTEMPTS) break;
                 backoff(attempt, cancel, null);
             }
         }
-        throw OnlineRetryPolicy.safeNetworkFailure("Не вдалося завантажити каталог після " + MAX_ATTEMPTS + " спроб", uri, last);
+        throw OnlineRetryPolicy.safeNetworkFailure(
+                "Не вдалося завантажити каталог після " + MAX_ATTEMPTS + " спроб", uri, last);
+    }
+
+    private static void removeOwnedCatalogPartial(
+            Path part, OwnedDownloadFile.Snapshot snapshot, String role) throws IOException {
+        if (snapshot != null && snapshot.exists()) {
+            OwnedDownloadFile.removeIfOwned(part, snapshot, role);
+        }
+    }
+
+    private static void removeOwnedCatalogMeta(
+            Path partMeta, HttpResumeSupport.ResumeMetadata resume, String role) throws IOException {
+        if (resume != null && resume.ownershipHash() != null && !resume.ownershipHash().isBlank()
+                && Files.exists(partMeta, LinkOption.NOFOLLOW_LINKS)) {
+            SafeFilePublication.removeIfOwned(partMeta, resume.ownershipHash(), role);
+        }
     }
 
     private static void emitDownloadProgress(
@@ -355,6 +477,19 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
         }
     }
 
+    private static long safePartialSize(Path part) throws IOException {
+        if (!Files.exists(part, LinkOption.NOFOLLOW_LINKS)) return 0L;
+        Path safe = SafeFilePublication.requireSafeRegularFile(part, "Catalog partial download");
+        return Files.size(safe);
+    }
+
+    private static void preserveStaleDownloadState(Path path, String role) throws IOException {
+        if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return;
+        String hash = SafeFilePublication.sha256(path, role);
+        Path evidence = SafeFilePublication.detachIfOwned(path, hash, role);
+        log.warn("Preserved stale catalog download state as evidence: {}", evidence);
+    }
+
     private static String shortHash(String value) {
         String hash = Sha256Support.utf8(value);
         return hash.substring(0, Math.min(20, hash.length()));
@@ -365,23 +500,47 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
     }
 
     private String validateCatalogArchive(Path file, URI source) throws IOException {
-        if (Files.size(file) < 4) throw new IOException("Порожній або пошкоджений каталог: " + SensitiveDataSanitizer.sanitizeUri(source));
-        byte[] prefix;
-        try (InputStream in = Files.newInputStream(file)) { prefix = in.readNBytes(256); }
-        String head = new String(prefix, StandardCharsets.UTF_8).stripLeading().toLowerCase(Locale.ROOT);
-        if (head.startsWith("<!doctype html") || head.startsWith("<html")) {
-            throw new IOException("Сервер повернув HTML замість INPX/ZIP: " + SensitiveDataSanitizer.sanitizeUri(source));
-        }
-        try (ZipFile zip = new ZipFile(file.toFile())) {
-            boolean hasInp = zip.stream().anyMatch(e -> !e.isDirectory() && e.getName().toLowerCase(Locale.ROOT).endsWith(".inp"));
-            if (!hasInp) throw new IOException("Архів не містить жодного *.inp і не є каталогом MyHomeLib: " + SensitiveDataSanitizer.sanitizeUri(source));
-            ZipEntry version = zip.getEntry("version.info");
+        final String sanitizedSource = SensitiveDataSanitizer.sanitizeUri(source);
+        try (SafeZipArchive opened = SafeZipArchive.open(file, StandardCharsets.UTF_8, "Downloaded catalog archive")) {
+            if (opened.size() < 4) {
+                throw new CatalogArchiveValidationException("Порожній або пошкоджений каталог: " + sanitizedSource);
+            }
+            String head = new String(opened.readPrefix(256), StandardCharsets.UTF_8)
+                    .stripLeading()
+                    .toLowerCase(Locale.ROOT);
+            if (head.startsWith("<!doctype html") || head.startsWith("<html")) {
+                throw new CatalogArchiveValidationException("Сервер повернув HTML замість INPX/ZIP: " + sanitizedSource);
+            }
+
+            var zip = opened.zip();
+            boolean hasInp = false;
+            var entries = zip.getEntries();
+            while (entries.hasMoreElements()) {
+                ZipArchiveEntry entry = entries.nextElement();
+                if (!entry.isDirectory() && entry.getName().toLowerCase(Locale.ROOT).endsWith(".inp")) {
+                    hasInp = true;
+                    break;
+                }
+            }
+            if (!hasInp) {
+                throw new CatalogArchiveValidationException(
+                        "Архів не містить жодного *.inp і не є каталогом MyHomeLib: " + sanitizedSource);
+            }
+            ZipArchiveEntry version = zip.getEntry("version.info");
             if (version == null) return null;
             try (InputStream in = zip.getInputStream(version)) {
                 return normalizeVersion(new String(in.readNBytes(128), StandardCharsets.UTF_8));
             }
-        } catch (ZipException e) {
-            throw new IOException("Завантажений файл не є коректним INPX/ZIP: " + SensitiveDataSanitizer.sanitizeUri(source), e);
+        } catch (CatalogArchiveValidationException validationFailure) {
+            throw validationFailure;
+        } catch (IOException archiveFailure) {
+            throw new IOException("Завантажений файл не є коректним INPX/ZIP: " + sanitizedSource, archiveFailure);
+        }
+    }
+
+    private static final class CatalogArchiveValidationException extends IOException {
+        private CatalogArchiveValidationException(String message) {
+            super(message);
         }
     }
 
@@ -394,7 +553,7 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
             HttpResponse<String> response;
             try (OnlineRequestLimiter.Permit ignored = requestLimiter.acquire(uri, cancel)) {
                 response = client.send(request(collection, uri).build(),
-                        HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
+                        BoundedHttpBodyHandlers.ofString(MAX_VERSION_RESPONSE_BYTES, StandardCharsets.UTF_8));
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 throw new IOException("Оновлення скасовано", e);
@@ -541,11 +700,73 @@ public class HttpRemoteCatalogDownloadAdapter implements RemoteCatalogDownloadPo
     private static String firstNonBlank(String first, String second) {
         String a = normalizeVersion(first); return a != null ? a : normalizeVersion(second);
     }
-    private static void deleteQuietly(Path path) { if (path != null) try { Files.deleteIfExists(path); } catch (Exception ignored) { } }
+    private long maxDownloadBytes() {
+        return positiveLongSetting("online.maxDownloadBytes", DEFAULT_MAX_DOWNLOAD_BYTES,
+                1024L, 64L * 1024 * 1024 * 1024);
+    }
+
+    private long minFreeSpaceBytes() {
+        return positiveLongSetting("online.minFreeSpaceBytes", DEFAULT_MIN_FREE_SPACE_BYTES,
+                0L, 16L * 1024 * 1024 * 1024);
+    }
+
+    private long positiveLongSetting(String key, long fallback, long min, long max) {
+        try {
+            long value = Long.parseLong(settings.get(key, Long.toString(fallback)).trim());
+            return Math.max(min, Math.min(max, value));
+        } catch (Exception ignored) {
+            return fallback;
+        }
+    }
+
+    private static void ensureDownloadSpace(Path directory, long minimumFreeBytes, long expectedAdditionalBytes)
+            throws IOException {
+        if (directory == null || minimumFreeBytes <= 0 && expectedAdditionalBytes <= 0) return;
+        long usable = Files.getFileStore(directory).getUsableSpace();
+        long required;
+        try {
+            required = Math.addExact(minimumFreeBytes, Math.max(0L, expectedAdditionalBytes));
+        } catch (ArithmeticException overflow) {
+            required = Long.MAX_VALUE;
+        }
+        if (usable < required) {
+            throw new NonRetryableCatalogDownloadException(
+                    "Недостатньо вільного місця для завантаження каталогу: доступно "
+                            + usable + " байт, потрібно щонайменше " + required + " байт");
+        }
+    }
+
+    private static long safeSpaceRecheckThreshold(long done) {
+        try {
+            return Math.addExact(done, SPACE_RECHECK_BYTES);
+        } catch (ArithmeticException overflow) {
+            return Long.MAX_VALUE;
+        }
+    }
+
+    private static String downloadLimitMessage(long maxDownloadBytes) {
+        return "Завантаження каталогу перевищує дозволений ліміт " + maxDownloadBytes + " байт";
+    }
+
+    private static void removeDownloadedIfOwned(Path path, String expectedSha256, String role, Throwable owner) {
+        if (path == null || expectedSha256 == null || expectedSha256.isBlank()) return;
+        try {
+            SafeFilePublication.removeIfOwned(path, expectedSha256, role);
+        } catch (Exception cleanupFailure) {
+            if (owner != null) owner.addSuppressed(cleanupFailure);
+            else log.warn("Could not safely clean owned catalog file {}: {}", path,
+                    SensitiveDataSanitizer.sanitizeText(cleanupFailure.getMessage()));
+        }
+    }
+
     private static void closeQuietly(InputStream in) { if (in != null) try { in.close(); } catch (Exception ignored) { } }
 
     private record Downloaded(Path path, String version, RemoteDownloadMetadata metadata) { }
     record MhlBases(String inpxBase, String updateBase) { }
+    private static final class NonRetryableCatalogDownloadException extends IOException {
+        NonRetryableCatalogDownloadException(String message) { super(message); }
+    }
+
     private static final class RetryableDownloadException extends IOException {
         private final String retryAfter;
         RetryableDownloadException(String message) { this(message, null); }

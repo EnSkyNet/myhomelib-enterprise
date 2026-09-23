@@ -1,5 +1,6 @@
 package com.myhomelibcorp.domain.model.valueobject;
 
+import java.nio.charset.StandardCharsets;
 import java.util.Objects;
 import java.util.UUID;
 
@@ -18,7 +19,7 @@ public record BookId(UUID value) {
 
     public static BookId fromLong(long id) {
         // Для зворотної сумісності з SQLite
-        return new BookId(UUID.nameUUIDFromBytes(Long.toString(id).getBytes()));
+        return new BookId(UUID.nameUUIDFromBytes(Long.toString(id).getBytes(StandardCharsets.UTF_8)));
     }
 
     public String asString() {

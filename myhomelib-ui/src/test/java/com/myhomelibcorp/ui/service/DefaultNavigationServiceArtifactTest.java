@@ -2,6 +2,8 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.dto.BookArtifactDto;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
@@ -68,4 +70,43 @@ class DefaultNavigationServiceArtifactTest {
 
         verifyNoInteractions(launcher);
     }
+    @Test
+    void seriesLookupHoldsQueryBarrierAroundDirectRepositoryRead() {
+        WorkspaceManager workspace = mock(WorkspaceManager.class);
+        SeriesRepository series = mock(SeriesRepository.class);
+        NavigationPanelController panel = mock(NavigationPanelController.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        BookDownloadCoordinator downloads = mock(BookDownloadCoordinator.class);
+        ExternalBookLauncher launcher = mock(ExternalBookLauncher.class);
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        when(series.findByName("Saga")).thenAnswer(invocation -> {
+            assertThat(coordinator.activeOperation()).isEqualTo(LibraryOperationType.QUERY);
+            return java.util.Optional.empty();
+        });
+        DefaultNavigationService service = new DefaultNavigationService(
+                workspace, series, panel, resources, downloads, launcher, coordinator);
+
+        service.navigateToSeriesByName("Saga");
+
+        verify(series).findByName("Saga");
+        assertThat(coordinator.isBusy()).isFalse();
+    }
+
+    @Test
+    void seriesLookupDoesNotTouchRepositoryDuringCollectionSwitch() {
+        WorkspaceManager workspace = mock(WorkspaceManager.class);
+        SeriesRepository series = mock(SeriesRepository.class);
+        LibraryOperationCoordinator coordinator = new LibraryOperationCoordinator();
+        DefaultNavigationService service = new DefaultNavigationService(
+                workspace, series, mock(NavigationPanelController.class), mock(BookResourcePort.class),
+                mock(BookDownloadCoordinator.class), mock(ExternalBookLauncher.class), coordinator);
+
+        try (var ignored = coordinator.acquire(LibraryOperationType.SWITCH)) {
+            service.navigateToSeriesByName("Saga");
+        }
+
+        verifyNoInteractions(series);
+        verifyNoInteractions(workspace);
+    }
+
 }

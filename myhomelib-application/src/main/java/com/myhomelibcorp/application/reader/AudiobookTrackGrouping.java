@@ -35,7 +35,7 @@ public final class AudiobookTrackGrouping {
                 try { path = locator.apply(book.selectPreferredArtifact(artifact.getId())).orElse(null); }
                 catch (RuntimeException ignored) { path = null; }
             }
-            if (path != null && Files.isRegularFile(path)) candidates.add(new Item(artifact, path));
+            if (path != null && Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) candidates.add(new Item(artifact, path));
         }
         if (candidates.isEmpty()) return List.of(primaryPath);
         candidates.sort(Comparator.comparingInt((Item i) -> trackNumber(i.artifact())).thenComparing(i -> i.path().toString()));

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.application.folderwatch;
 
 import com.myhomelibcorp.application.imports.statistics.ImportResult;
+import com.myhomelibcorp.application.imports.context.StaleImportSourceException;
 import com.myhomelibcorp.application.port.out.collection.IncomingFolderWatchPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
@@ -16,6 +17,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Callable;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.Mockito.*;
 
 class IncomingFolderImportCoordinatorTest {
@@ -47,8 +49,65 @@ class IncomingFolderImportCoordinatorTest {
 
         coordinator.schedule("target");
 
-        verify(importer, times(1)).execute(any());
+        verify(importer, times(1)).execute(argThat(context ->
+                HASH.equals(context.getExpectedSourceSha256())
+                        && "target".equals(context.getExpectedCollectionId())
+                        && file.equals(context.getFile())));
         verify(watcher).markImported("target", file, HASH, 1, 0, 0);
+    }
+
+
+    @Test
+    void lifecycleChangeReleasesClaimForRetryInsteadOfMarkingCandidateFailed() {
+        IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
+        ImportFileUseCase importer = mock(ImportFileUseCase.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        IncomingFolderImportCoordinator coordinator = new IncomingFolderImportCoordinator(
+                watcher, importer, collections, new DirectExecutor());
+        Path folder = Path.of("/tmp/incoming");
+        Path file = folder.resolve("book.txt");
+        IncomingFolderCandidate candidate = new IncomingFolderCandidate(
+                "target", file, HASH, 10, 20, IncomingFolderCandidateStatus.READY, Instant.now(), null);
+
+        when(collections.getCurrentCollection()).thenReturn(collection("target"));
+        when(watcher.listReady("target", 25)).thenReturn(List.of(candidate));
+        when(watcher.claimReady("target", file, HASH)).thenReturn(true);
+        when(watcher.findState("target")).thenReturn(Optional.of(new IncomingFolderWatchState(
+                "target", folder, true, 2, 3, Instant.now(), "WATCHING", 0, 1, 0, 0, 0, 0)));
+        when(importer.execute(any())).thenThrow(
+                new ImportFileUseCase.StaleImportCollectionException("collection switched"));
+
+        coordinator.schedule("target");
+
+        verify(watcher).releaseClaim("target", file, HASH);
+        verify(watcher, never()).markFailed(eq("target"), eq(file), eq(HASH), any());
+    }
+
+    @Test
+    void changedSourceIsFailedAndRescannedInsteadOfImported() {
+        IncomingFolderWatchPort watcher = mock(IncomingFolderWatchPort.class);
+        ImportFileUseCase importer = mock(ImportFileUseCase.class);
+        CollectionLifecyclePort collections = mock(CollectionLifecyclePort.class);
+        IncomingFolderImportCoordinator coordinator = new IncomingFolderImportCoordinator(
+                watcher, importer, collections, new DirectExecutor());
+        Path folder = Path.of("/tmp/incoming");
+        Path file = folder.resolve("book.txt");
+        IncomingFolderCandidate candidate = new IncomingFolderCandidate(
+                "target", file, HASH, 10, 20, IncomingFolderCandidateStatus.READY, Instant.now(), null);
+
+        when(collections.getCurrentCollection()).thenReturn(collection("target"));
+        when(watcher.listReady("target", 25)).thenReturn(List.of(candidate), List.of());
+        when(watcher.claimReady("target", file, HASH)).thenReturn(true);
+        when(watcher.findState("target")).thenReturn(Optional.of(new IncomingFolderWatchState(
+                "target", folder, true, 2, 3, Instant.now(), "WATCHING", 0, 1, 0, 0, 0, 0)));
+        when(importer.execute(any())).thenThrow(
+                new StaleImportSourceException("source changed"));
+
+        coordinator.schedule("target");
+
+        verify(watcher).markFailed(eq("target"), eq(file), eq(HASH), contains("source changed"));
+        verify(watcher).scanNow("target");
+        verify(watcher, never()).markImported(any(), any(), any(), anyLong(), anyLong(), anyLong());
     }
 
     private static Collection collection(String id) {

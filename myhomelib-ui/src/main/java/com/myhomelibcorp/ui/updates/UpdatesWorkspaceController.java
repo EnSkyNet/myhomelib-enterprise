@@ -1,11 +1,14 @@
 package com.myhomelibcorp.ui.updates;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.catalog.CatalogUpdateAuthorGroup;
 import com.myhomelibcorp.application.catalog.CatalogUpdateItem;
 import com.myhomelibcorp.application.catalog.CatalogUpdateService;
 import com.myhomelibcorp.application.catalog.CatalogUpdateSnapshot;
 import com.myhomelibcorp.application.catalog.CatalogUpdateType;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -111,8 +114,8 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         if (selected == null || selected.getValue() == null) return;
         UpdateTreeNode node = selected.getValue();
         setBusy(true);
-        detailLabel.setText(localizationService.tr("Позначення оновлення як переглянутого…"));
-        executor.submit(() -> {
+        detailLabel.setText(localizationService.text("ui.text.marking_update_as_viewed"));
+        executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
             if (node.kind == Kind.BOOK && node.item != null) {
                 catalogUpdateService.acknowledgeUpdate(BookId.fromString(node.item.bookId()), node.item.type());
             } else if (node.kind == Kind.CATEGORY) {
@@ -132,8 +135,8 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
             setBusy(false);
             if (error != null) {
                 Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                detailLabel.setText(localizationService.tr("Не вдалося позначити оновлення") + ": "
-                        + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                detailLabel.setText(localizationService.text("ui.text.failed_to_mark_the_update") + ": "
+                        + UiExceptionSupport.message(cause));
                 return;
             }
             loadUpdates();
@@ -143,8 +146,8 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
     @FXML
     public void acknowledgeAll() {
         setBusy(true);
-        detailLabel.setText(localizationService.tr("Позначення всіх оновлень як переглянутих…"));
-        executor.submit(() -> {
+        detailLabel.setText(localizationService.text("ui.text.marking_all_updates_as_viewed"));
+        executor.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
                     catalogUpdateService.acknowledgeAllUpdates();
                     return null;
                 })
@@ -153,8 +156,8 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
                     setBusy(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                        detailLabel.setText(localizationService.tr("Не вдалося позначити оновлення") + ": "
-                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        detailLabel.setText(localizationService.text("ui.text.failed_to_mark_the_update") + ": "
+                                + UiExceptionSupport.message(cause));
                         return;
                     }
                     loadUpdates();
@@ -167,21 +170,22 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         if (node == null || node.kind != Kind.BOOK || node.item == null) return;
         CatalogUpdateItem item = node.item;
         setBusy(true);
-        detailLabel.setText(localizationService.tr("Підготовка завантаження…") + " " + item.bookTitle());
+        detailLabel.setText(localizationService.text("ui.text.preparing_download") + " " + item.bookTitle());
 
-        executor.submit(() -> loadBookByIdUseCase.execute(BookId.fromString(item.bookId()))
-                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + item.bookId())))
+        executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                        () -> loadBookByIdUseCase.execute(BookId.fromString(item.bookId()))
+                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.updates_workspace_controller.7e6db1b645") + item.bookId())))
                 .thenCompose(book -> download(item, book))
                 .whenComplete((path, error) -> UiExecutor.runOnUiThread(() -> {
                     if (disposed) return;
                     setBusy(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                        detailLabel.setText(localizationService.tr("Помилка завантаження") + ": "
-                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        detailLabel.setText(localizationService.text("ui.text.download_error") + ": "
+                                + UiExceptionSupport.message(cause));
                         return;
                     }
-                    detailLabel.setText(localizationService.tr("Завантажено. Оновлення підтверджено."));
+                    detailLabel.setText(localizationService.text("ui.text.downloaded_update_acknowledged"));
                     navigationPanelController.refreshAll();
                     loadUpdates();
                 }));
@@ -198,17 +202,17 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         setBusy(true);
         emptyLabel.setVisible(false);
         emptyLabel.setManaged(false);
-        detailLabel.setText(localizationService.tr("Завантаження оновлень…"));
-        executor.submit(catalogUpdateService::pendingUpdateSnapshot)
+        detailLabel.setText(localizationService.text("ui.text.loading_updates"));
+        executor.submitCollectionScoped(LibraryOperationType.QUERY, catalogUpdateService::pendingUpdateSnapshot)
                 .whenComplete((snapshot, error) -> UiExecutor.runOnUiThread(() -> {
                     if (disposed || generation != loadGeneration) return;
                     setBusy(false);
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
                         updatesTree.setRoot(new TreeItem<>(UpdateTreeNode.root()));
-                        summaryLabel.setText(localizationService.tr("Оновлення"));
-                        detailLabel.setText(localizationService.tr("Не вдалося завантажити оновлення") + ": "
-                                + (cause.getMessage() == null ? cause.toString() : cause.getMessage()));
+                        summaryLabel.setText(localizationService.text("ui.text.updates"));
+                        detailLabel.setText(localizationService.text("ui.text.failed_to_load_updates") + ": "
+                                + UiExceptionSupport.message(cause));
                         return;
                     }
                     applySnapshot(snapshot == null ? CatalogUpdateSnapshot.empty() : snapshot);
@@ -217,9 +221,9 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
 
     private void applySnapshot(CatalogUpdateSnapshot snapshot) {
         summaryLabel.setText(String.format("%s: %,d   •   %s: %,d   •   %s: %,d",
-                localizationService.tr("Усього"), snapshot.totalCount(),
-                localizationService.tr("Нові книги"), snapshot.newCount(),
-                localizationService.tr("Оновлені книги"), snapshot.updatedCount()));
+                localizationService.text("ui.text.total"), snapshot.totalCount(),
+                localizationService.text("ui.text.new_books_d358a89"), snapshot.newCount(),
+                localizationService.text("ui.text.updated_books"), snapshot.updatedCount()));
 
         TreeItem<UpdateTreeNode> root = new TreeItem<>(UpdateTreeNode.root());
         for (CatalogUpdateAuthorGroup author : snapshot.authors()) {
@@ -253,12 +257,28 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         emptyLabel.setVisible(empty);
         emptyLabel.setManaged(empty);
         if (empty) {
-            emptyLabel.setText(localizationService.tr("Немає нових оновлень каталогу"));
-            detailLabel.setText(localizationService.tr("Усі завантажені оновлення вже підтверджено."));
+            emptyLabel.setText(localizationService.text("ui.text.no_new_catalog_updates"));
+            detailLabel.setText(localizationService.text("ui.text.all_downloaded_updates_are_acknowledged"));
         } else {
-            detailLabel.setText(localizationService.tr("Виберіть книгу для перегляду або завантаження."));
+            detailLabel.setText(localizationService.text("ui.text.select_a_book_to_view_or_download"));
         }
         updateActions(null);
+    }
+
+    private String displayAuthor(String value) {
+        return displayAuthor(localizationService, value);
+    }
+
+    private String displayTitle(String value) {
+        return displayTitle(localizationService, value);
+    }
+
+    private static String displayAuthor(LocalizationService i18n, String value) {
+        return value == null || value.isBlank() ? i18n.text("common.author.unknown") : value;
+    }
+
+    private static String displayTitle(LocalizationService i18n, String value) {
+        return value == null || value.isBlank() ? i18n.text("common.title.untitled") : value;
     }
 
     private void updateActions(TreeItem<UpdateTreeNode> selected) {
@@ -273,7 +293,7 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
         acknowledgeAllButton.setDisable(progressIndicator.isVisible() || updatesTree.getRoot() == null
                 || updatesTree.getRoot().getChildren().isEmpty());
         if (book && node.item != null) {
-            detailLabel.setText(node.item.bookTitle() + " — " + node.authorName);
+            detailLabel.setText(displayTitle(node.item.bookTitle()) + " — " + displayAuthor(node.authorName));
         }
     }
 
@@ -336,11 +356,11 @@ public class UpdatesWorkspaceController implements WorkspaceLifecycle {
 
         String displayText(LocalizationService i18n) {
             return switch (kind) {
-                case ROOT -> i18n.tr("Оновлення");
-                case AUTHOR -> authorName + " (" + count + ")";
+                case ROOT -> i18n.text("ui.text.updates");
+                case AUTHOR -> displayAuthor(i18n, authorName) + " (" + count + ")";
                 case CATEGORY -> i18n.tr(type == CatalogUpdateType.NEW_BY_FOLLOWED_AUTHOR
-                        ? "Нові книги" : "Оновлені книги") + " (" + count + ")";
-                case BOOK -> item.bookTitle();
+                        ? UiText.text("ui.main.fxml.new_books") : UiText.text("ui.text.updated_books")) + " (" + count + ")";
+                case BOOK -> displayTitle(i18n, item.bookTitle());
             };
         }
     }

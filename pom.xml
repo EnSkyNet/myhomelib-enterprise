@@ -53,6 +53,9 @@
         <module>myhomelib-shared</module>
         <module>myhomelib-domain</module>
         <module>myhomelib-application</module>
+        <module>myhomelib-epub-optimizer</module>
+        <module>myhomelib-library-organizer</module>
+        <module>myhomelib-converter-toolchain</module>
         <module>myhomelib-plugin-api</module>
         <module>myhomelib-plugin-samples</module>
         <module>myhomelib-converter-calibre-plugin</module>

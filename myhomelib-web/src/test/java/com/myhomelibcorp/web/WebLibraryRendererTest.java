@@ -43,4 +43,14 @@ class WebLibraryRendererTest {
 
     private static OpdsBookDto book(String id,String title){return new OpdsBookDto(id,title,"Author","Series","uk",2026,"Annotation","FB2",true,"book.fb2","");}
     private static int count(String text,String needle){int n=0,p=0;while((p=text.indexOf(needle,p))>=0){n++;p+=needle.length();}return n;}
+
+    @Test void localizesCatalogueChromeForEnglishAndBulgarian() {
+        var page = new OpdsPage<>(List.of(book("1", "Title")), 1, 0, 20);
+        String en = renderer.books("en-US", "Library", "/web/", "", page);
+        String bg = renderer.books("bg", "Библиотека", "/web/", "", page);
+
+        assertThat(en).contains("<html lang=\"en\"", "Continue reading", "Title, author, series", "Found: 1", "Read", "Details", "Download")
+                .doesNotContain("Продовжити читання", "Знайдено:");
+        assertThat(bg).contains("<html lang=\"bg\"", "Продължи четенето", "Заглавие, автор, поредица", "Намерени: 1", "Чети", "Подробности", "Изтегли");
+    }
 }

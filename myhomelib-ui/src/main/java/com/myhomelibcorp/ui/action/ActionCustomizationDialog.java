@@ -1,5 +1,8 @@
 package com.myhomelibcorp.ui.action;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.action.ActionPreference;
 import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
@@ -24,15 +27,16 @@ public class ActionCustomizationDialog {
 
     public void show(Window owner) {
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("Команди та гарячі клавіші");
-        dialog.setHeaderText("Змініть комбінацію клавіш або приховайте команду. Порожнє поле вимикає комбінацію клавіш.");
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(UiText.text("ui.java.action_customization_dialog.46c0a9a78a"));
+        dialog.setHeaderText(UiText.text("ui.java.action_customization_dialog.531d6ba661"));
         if (owner != null) dialog.initOwner(owner);
-        ButtonType reset = new ButtonType("За замовчуванням", ButtonBar.ButtonData.LEFT);
+        ButtonType reset = new ButtonType(UiText.text("ui.java.action_customization_dialog.1cbc16d1b0"), ButtonBar.ButtonData.LEFT);
         dialog.getDialogPane().getButtonTypes().addAll(reset, ButtonType.CANCEL, ButtonType.OK);
 
         GridPane grid = new GridPane();
         grid.setHgap(10); grid.setVgap(8); grid.setPadding(new Insets(8));
-        grid.addRow(0, new Label("Команда"), new Label("Комбінація клавіш"), new Label("Видима"));
+        grid.addRow(0, new Label(UiText.text("ui.java.action_customization_dialog.0fe2342c2e")), new Label(UiText.text("ui.java.action_customization_dialog.f31be5404f")), new Label(UiText.text("ui.java.action_customization_dialog.60a11e4221")));
         Map<String, Draft> drafts = new LinkedHashMap<>();
         int row = 1;
         for (ActionRegistry.ActionSnapshot action : registry.snapshot()) {
@@ -63,7 +67,7 @@ public class ActionCustomizationDialog {
             Map<String, ActionPreference> preferences = collect(drafts);
             List<String> errors = registry.validate(preferences);
             if (!errors.isEmpty()) {
-                dialogs.showWarning("Гарячі клавіші", String.join("\n", errors));
+                dialogs.showWarning(UiText.text("ui.java.action_customization_dialog.62720b8ed3"), String.join("\n", errors));
                 event.consume();
                 return;
             }

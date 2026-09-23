@@ -85,6 +85,28 @@ class CollectionLifecycleServiceTest {
         verify(f.index).rebuildIndex();
     }
 
+
+    @Test
+    void rollbackFailureFailsClosedAndIsAttachedToPrimaryFailure() {
+        Fixture f = new Fixture();
+        Collection oldCollection = collection("old", "Old");
+        Collection next = collection("next", "Next");
+        when(f.lifecycle.getCurrentCollection()).thenReturn(oldCollection);
+        doThrow(new IllegalStateException("target switch failed")).when(f.lifecycle).switchToCollection(next);
+        IllegalStateException rollbackFailure = new IllegalStateException("rollback switch failed");
+        doThrow(rollbackFailure).when(f.lifecycle).switchToCollection(oldCollection);
+
+        RuntimeException thrown = assertThrows(RuntimeException.class,
+                () -> f.service.initializeCollection(next, false));
+
+        org.junit.jupiter.api.Assertions.assertTrue(
+                java.util.Arrays.asList(thrown.getSuppressed()).contains(rollbackFailure),
+                "rollback failure must remain attached to the primary initialization failure");
+        verify(f.searchLifecycle, atLeast(2)).closeCurrentIndex();
+        verify(f.lifecycle).closeCurrentCollection();
+        verify(f.cacheInvalidation).invalidateAll();
+    }
+
     @Test
     void manualAsyncRebuildOwnsIndexLeaseBeforeExecutorStartsAndUntilCompletion() {
         Fixture f = new Fixture();

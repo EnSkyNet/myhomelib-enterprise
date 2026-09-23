@@ -3,7 +3,9 @@ package com.myhomelibcorp.opds;
 import com.myhomelibcorp.application.opds.OpdsCertificateInfo;
 import com.myhomelibcorp.application.opds.OpdsCertificateManager;
 import com.myhomelibcorp.application.opds.OpdsTlsSettings;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -13,10 +15,9 @@ import java.io.InputStream;
 import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.nio.file.attribute.PosixFilePermission;
 import java.security.KeyFactory;
 import java.security.KeyPair;
@@ -49,15 +50,20 @@ import java.util.Set;
 public class JdkOpdsCertificateManager implements OpdsCertificateManager {
     private static final String STORE_TYPE = "PKCS12";
     private static final String ALIAS = "myhomelib-opds";
+    private static final int MAX_PEM_BYTES = 1024 * 1024;
+    private static final int MAX_KEYSTORE_BYTES = 8 * 1024 * 1024;
     private static final SecureRandom RANDOM = new SecureRandom();
 
     @Override
     public ManagedCertificate generateSelfSigned(String requestedHost) {
         try {
             Path dir = managedDirectory();
-            Files.createDirectories(dir);
+            SafeFilePublication.createDirectoriesNoLinks(dir, "OPDS TLS managed directory");
             Path target = managedKeyStore();
+            String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                    target, "OPDS TLS managed keystore");
             Path temp = Files.createTempFile(dir, ".opds-tls-", ".p12");
+            String tempHash = null;
             String password = randomPassword();
             String host = effectiveHost(requestedHost);
 
@@ -71,7 +77,7 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
                 KeyStore store = KeyStore.getInstance(STORE_TYPE);
                 store.load(null, chars);
                 store.setKeyEntry(ALIAS, keyPair.getPrivate(), chars, new Certificate[]{certificate});
-                try (var out = Files.newOutputStream(temp)) {
+                try (var out = Files.newOutputStream(temp, LinkOption.NOFOLLOW_LINKS)) {
                     store.store(out, chars);
                 }
             } finally {
@@ -79,12 +85,17 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
             }
 
             restrictPermissions(temp);
-            atomicReplace(temp, target);
-            restrictPermissions(target);
-            OpdsTlsSettings tls = new OpdsTlsSettings(true, target.toString(), STORE_TYPE, password);
-            OpdsCertificateInfo info = inspect(tls)
-                    .orElseThrow(() -> new IllegalStateException("Generated TLS certificate cannot be inspected"));
-            return new ManagedCertificate(tls, info);
+            tempHash = SafeFilePublication.sha256(temp, "staged OPDS TLS keystore");
+            try {
+                SafeFilePublication.publishReplacingIfUnchanged(
+                        temp, target, expectedTargetHash, "OPDS TLS keystore publication");
+                OpdsTlsSettings tls = new OpdsTlsSettings(true, target.toString(), STORE_TYPE, password);
+                OpdsCertificateInfo info = inspect(tls)
+                        .orElseThrow(() -> new IllegalStateException("Generated TLS certificate cannot be inspected"));
+                return new ManagedCertificate(tls, info);
+            } finally {
+                cleanupOwnedStaging(temp, tempHash, "generated OPDS TLS staging cleanup");
+            }
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -94,14 +105,10 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
 
     @Override
     public ManagedCertificate importPem(Path certificatePem, Path privateKeyPem) {
-        if (certificatePem == null || !Files.isRegularFile(certificatePem)) {
-            throw new IllegalArgumentException("Certificate PEM file does not exist");
-        }
-        if (privateKeyPem == null || !Files.isRegularFile(privateKeyPem)) {
-            throw new IllegalArgumentException("Private-key PEM file does not exist");
-        }
         try {
-            List<X509Certificate> chain = readCertificates(certificatePem);
+            Path safeCertificatePem = requireSafePem(certificatePem, "Certificate PEM file");
+            Path safePrivateKeyPem = requireSafePem(privateKeyPem, "Private-key PEM file");
+            List<X509Certificate> chain = readCertificates(safeCertificatePem);
             if (chain.isEmpty()) throw new IllegalArgumentException("No X.509 certificate found in PEM file");
             try {
                 chain.getFirst().checkValidity();
@@ -110,13 +117,16 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
             } catch (java.security.cert.CertificateNotYetValidException e) {
                 throw new IllegalArgumentException("TLS certificate is not valid yet: " + chain.getFirst().getNotBefore(), e);
             }
-            PrivateKey privateKey = readPrivateKey(privateKeyPem);
+            PrivateKey privateKey = readPrivateKey(safePrivateKeyPem);
             verifyPrivateKeyMatchesCertificate(privateKey, chain.getFirst());
 
             Path dir = managedDirectory();
-            Files.createDirectories(dir);
+            SafeFilePublication.createDirectoriesNoLinks(dir, "OPDS TLS managed directory");
             Path target = managedKeyStore();
+            String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(
+                    target, "OPDS TLS managed keystore");
             Path temp = Files.createTempFile(dir, ".opds-import-", ".p12");
+            String tempHash = null;
             String password = randomPassword();
             char[] chars = password.toCharArray();
             try {
@@ -124,20 +134,25 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
                 store.load(null, chars);
                 Certificate[] certificates = chain.toArray(Certificate[]::new);
                 store.setKeyEntry(ALIAS, privateKey, chars, certificates);
-                try (var out = Files.newOutputStream(temp)) {
+                try (var out = Files.newOutputStream(temp, LinkOption.NOFOLLOW_LINKS)) {
                     store.store(out, chars);
                 }
             } finally {
                 java.util.Arrays.fill(chars, '\0');
             }
             restrictPermissions(temp);
-            atomicReplace(temp, target);
-            restrictPermissions(target);
+            tempHash = SafeFilePublication.sha256(temp, "staged imported OPDS TLS keystore");
+            try {
+                SafeFilePublication.publishReplacingIfUnchanged(
+                        temp, target, expectedTargetHash, "OPDS TLS keystore publication");
 
-            OpdsTlsSettings tls = new OpdsTlsSettings(true, target.toString(), STORE_TYPE, password);
-            OpdsCertificateInfo info = inspect(tls)
-                    .orElseThrow(() -> new IllegalStateException("Imported TLS certificate cannot be inspected"));
-            return new ManagedCertificate(tls, info);
+                OpdsTlsSettings tls = new OpdsTlsSettings(true, target.toString(), STORE_TYPE, password);
+                OpdsCertificateInfo info = inspect(tls)
+                        .orElseThrow(() -> new IllegalStateException("Imported TLS certificate cannot be inspected"));
+                return new ManagedCertificate(tls, info);
+            } finally {
+                cleanupOwnedStaging(temp, tempHash, "imported OPDS TLS staging cleanup");
+            }
         } catch (RuntimeException e) {
             throw e;
         } catch (Exception e) {
@@ -149,12 +164,18 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
     public Optional<OpdsCertificateInfo> inspect(OpdsTlsSettings tls) {
         if (tls == null || !tls.hasKeyStorePath()) return Optional.empty();
         Path path = Path.of(tls.keyStorePath()).toAbsolutePath().normalize();
-        if (!Files.isRegularFile(path)) return Optional.empty();
+        if (!Files.exists(path, LinkOption.NOFOLLOW_LINKS)) return Optional.empty();
         char[] password = resolvePassword(tls).toCharArray();
         try {
+            Path safePath = SafeFilePublication.requireSafeRegularFile(path, "OPDS TLS keystore");
+            String expectedHash = SafeFilePublication.sha256(safePath, "OPDS TLS keystore snapshot");
+            byte[] bytes = SafeFilePublication.readOwnedBytes(
+                    safePath, expectedHash, MAX_KEYSTORE_BYTES, "OPDS TLS keystore");
             KeyStore store = KeyStore.getInstance(tls.keyStoreType());
-            try (InputStream in = Files.newInputStream(path)) {
+            try (InputStream in = new ByteArrayInputStream(bytes)) {
                 store.load(in, password);
+            } finally {
+                java.util.Arrays.fill(bytes, (byte) 0);
             }
             X509Certificate certificate = firstKeyCertificate(store);
             if (certificate == null) return Optional.empty();
@@ -386,7 +407,8 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
 
     private static List<X509Certificate> readCertificates(Path pem) throws Exception {
         CertificateFactory factory = CertificateFactory.getInstance("X.509");
-        try (InputStream in = Files.newInputStream(pem)) {
+        byte[] bytes = readStableBytes(pem, MAX_PEM_BYTES, "Certificate PEM file");
+        try (InputStream in = new ByteArrayInputStream(bytes)) {
             Collection<? extends Certificate> certificates = factory.generateCertificates(in);
             List<X509Certificate> result = new ArrayList<>();
             for (Certificate certificate : certificates) {
@@ -397,7 +419,13 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
     }
 
     private static PrivateKey readPrivateKey(Path pem) throws Exception {
-        String text = Files.readString(pem, StandardCharsets.US_ASCII);
+        byte[] pemBytes = readStableBytes(pem, MAX_PEM_BYTES, "Private-key PEM file");
+        String text;
+        try {
+            text = new String(pemBytes, StandardCharsets.US_ASCII);
+        } finally {
+            java.util.Arrays.fill(pemBytes, (byte) 0);
+        }
         if (text.contains("BEGIN RSA PRIVATE KEY") || text.contains("BEGIN EC PRIVATE KEY")) {
             throw new IllegalArgumentException("Private key must use unencrypted PKCS#8 PEM (BEGIN PRIVATE KEY)");
         }
@@ -482,11 +510,29 @@ public class JdkOpdsCertificateManager implements OpdsCertificateManager {
         return System.getenv().getOrDefault("MYHOMELIB_OPDS_TLS_KEYSTORE_PASSWORD", "");
     }
 
-    private static void atomicReplace(Path source, Path target) throws Exception {
+    private static byte[] readStableBytes(Path path, int maxBytes, String role) throws Exception {
+        Path safe = SafeFilePublication.requireSafeRegularFile(path, role);
+        String expectedHash = SafeFilePublication.sha256(safe, role + " snapshot");
+        return SafeFilePublication.readOwnedBytes(safe, expectedHash, maxBytes, role);
+    }
+
+    private static Path requireSafePem(Path path, String role) {
+        if (path == null || !Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IllegalArgumentException(role + " does not exist");
+        }
         try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
+            return SafeFilePublication.requireSafeRegularFile(path, role);
+        } catch (Exception e) {
+            throw new IllegalArgumentException(role + " is unsafe: " + safeMessage(e), e);
+        }
+    }
+
+    private static void cleanupOwnedStaging(Path temp, String expectedHash, String role) {
+        if (temp == null || expectedHash == null || !Files.exists(temp, LinkOption.NOFOLLOW_LINKS)) return;
+        try {
+            SafeFilePublication.removeIfOwned(temp, expectedHash, role);
+        } catch (Exception e) {
+            log.warn("Cannot safely remove OPDS TLS staging file {}: {}", temp, safeMessage(e));
         }
     }
 

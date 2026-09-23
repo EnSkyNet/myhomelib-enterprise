@@ -1,0 +1,23 @@
+MyHomeLib 8.0.0 — R4 audit summary
+Дата: 2026-09-19
+
+Фактичний regression-результат перед фінальним Windows packaging:
+- 1224 тести
+- 0 failures
+- 0 errors
+- 12 skipped (platform/performance probes)
+- 410 Surefire test suites
+- UI: 151 тест
+- Infrastructure: 468 тестів
+
+R4 додатково закриває:
+- локалізацію стандартних JavaFX Dialog/ButtonType;
+- українські/болгарські JavaFX ControlResources;
+- ранню синхронізацію JVM Locale з вибраною мовою;
+- витоки DTO/toString() у ListView/ChoiceDialog;
+- локалізацію enum-значень у видимому UI;
+- повний обхід вкладених JavaFX control-owned nodes;
+- реальне виконання display-dependent JavaFX/FXML тестів під DISPLAY/Xvfb;
+- синхронізацію copy-between-collections post-commit guard.
+
+Windows-targeted production JAR для R4 збирається окремо з JavaFX 21.0.12 classifier=win.

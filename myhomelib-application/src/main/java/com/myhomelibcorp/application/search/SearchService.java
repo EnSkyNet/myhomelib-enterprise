@@ -8,6 +8,8 @@ import com.myhomelibcorp.application.dto.GenreDto;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.cache.SearchCache;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
@@ -18,17 +20,17 @@ import com.myhomelibcorp.application.query.search.SearchRequest;
 import com.myhomelibcorp.application.query.common.PageResult;
 import com.myhomelibcorp.application.query.search.SearchResult;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import java.util.function.Supplier;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class SearchService {
 
@@ -42,8 +44,53 @@ public class SearchService {
     private final AuthorMapper authorMapper;
     private final GenreMapper genreMapper;
     private final BookFilterStateService filterStateService;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for focused tests without lifecycle wiring. */
+    public SearchService(SearchQueryService searchQueryService,
+                         BookQueryRepository bookQueryRepository,
+                         BookMapper bookMapper,
+                         SearchCache searchCache,
+                         GenreRepository genreRepository,
+                         SeriesRepository seriesRepository,
+                         AuthorRepository authorRepository,
+                         AuthorMapper authorMapper,
+                         GenreMapper genreMapper,
+                         BookFilterStateService filterStateService) {
+        this(searchQueryService, bookQueryRepository, bookMapper, searchCache, genreRepository, seriesRepository,
+                authorRepository, authorMapper, genreMapper, filterStateService, null);
+    }
+
+    @Autowired
+    public SearchService(SearchQueryService searchQueryService,
+                         BookQueryRepository bookQueryRepository,
+                         BookMapper bookMapper,
+                         SearchCache searchCache,
+                         GenreRepository genreRepository,
+                         SeriesRepository seriesRepository,
+                         AuthorRepository authorRepository,
+                         AuthorMapper authorMapper,
+                         GenreMapper genreMapper,
+                         BookFilterStateService filterStateService,
+                         LibraryOperationCoordinator operationCoordinator) {
+        this.searchQueryService = java.util.Objects.requireNonNull(searchQueryService, "searchQueryService");
+        this.bookQueryRepository = java.util.Objects.requireNonNull(bookQueryRepository, "bookQueryRepository");
+        this.bookMapper = java.util.Objects.requireNonNull(bookMapper, "bookMapper");
+        this.searchCache = java.util.Objects.requireNonNull(searchCache, "searchCache");
+        this.genreRepository = java.util.Objects.requireNonNull(genreRepository, "genreRepository");
+        this.seriesRepository = java.util.Objects.requireNonNull(seriesRepository, "seriesRepository");
+        this.authorRepository = java.util.Objects.requireNonNull(authorRepository, "authorRepository");
+        this.authorMapper = java.util.Objects.requireNonNull(authorMapper, "authorMapper");
+        this.genreMapper = java.util.Objects.requireNonNull(genreMapper, "genreMapper");
+        this.filterStateService = java.util.Objects.requireNonNull(filterStateService, "filterStateService");
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public List<BookDto> search(String query, int limit) {
+        return withQueryLease(() -> searchLocked(query, limit));
+    }
+
+    private List<BookDto> searchLocked(String query, int limit) {
         BookFilterSpec filter = filterStateService.current();
         String normalizedQuery = query == null ? "" : query.trim();
         if (normalizedQuery.isBlank() && !filter.isActive()) {
@@ -84,6 +131,10 @@ public class SearchService {
 
 
     public List<BookDto> search(SearchRequest request) {
+        return withQueryLease(() -> searchRequestLocked(request));
+    }
+
+    private List<BookDto> searchRequestLocked(SearchRequest request) {
         if (request == null) return List.of();
         SearchRequest effective = withFilter(request,
                 request.filterSpec() == null ? filterStateService.current() : request.filterSpec());
@@ -92,6 +143,10 @@ public class SearchService {
     }
 
     public PageResult<BookDto> searchPage(SearchRequest request) {
+        return withQueryLease(() -> searchPageLocked(request));
+    }
+
+    private PageResult<BookDto> searchPageLocked(SearchRequest request) {
         if (request == null) return PageResult.empty();
         SearchRequest effective = withFilter(request,
                 request.filterSpec() == null ? filterStateService.current() : request.filterSpec());
@@ -103,9 +158,11 @@ public class SearchService {
 
     /** Load a specific interactive page without leaking SearchRequest-copy logic into the UI layer. */
     public PageResult<BookDto> searchPage(SearchRequest request, int limit, int offset) {
-        if (request == null) return PageResult.empty();
-        int safeLimit = Math.max(1, Math.min(limit, 1000));
-        return searchPage(withPaging(request, safeLimit, Math.max(0, offset), true));
+        return withQueryLease(() -> {
+            if (request == null) return PageResult.empty();
+            int safeLimit = Math.max(1, Math.min(limit, 1000));
+            return searchPageLocked(withPaging(request, safeLimit, Math.max(0, offset), true));
+        });
     }
 
     /**
@@ -114,6 +171,10 @@ public class SearchService {
      * an expensive Lucene count(query) while preserving the exact UI total.
      */
     public PageResult<BookDto> searchPage(SearchRequest request, int limit, int offset, long knownTotal) {
+        return withQueryLease(() -> searchPageKnownTotalLocked(request, limit, offset, knownTotal));
+    }
+
+    private PageResult<BookDto> searchPageKnownTotalLocked(SearchRequest request, int limit, int offset, long knownTotal) {
         if (request == null) return PageResult.empty();
         int safeLimit = Math.max(1, Math.min(limit, 1000));
         int safeOffset = Math.max(0, offset);
@@ -136,12 +197,16 @@ public class SearchService {
      * and keeps these secondary result groups intentionally bounded.</p>
      */
     public GlobalSearchResult searchOverview(String query) {
+        return withQueryLease(() -> searchOverviewLocked(query));
+    }
+
+    private GlobalSearchResult searchOverviewLocked(String query) {
         String normalizedQuery = query == null ? "" : query.trim();
         if (normalizedQuery.isBlank()) {
             return GlobalSearchResult.empty();
         }
 
-        List<AuthorDto> authors = searchAuthors(normalizedQuery, 200);
+        List<AuthorDto> authors = searchAuthorsLocked(normalizedQuery, 200);
         List<String> series = seriesRepository.searchNames(normalizedQuery, 200);
         List<GenreDto> genres = genreRepository.searchByName(normalizedQuery, 200).stream()
                 .map(genreMapper::toDto)
@@ -178,19 +243,23 @@ public class SearchService {
      * remains bounded to avoid accidentally materializing the complete collection.
      */
     public GlobalSearchResult searchAll(String query) {
+        return withQueryLease(() -> searchAllLocked(query));
+    }
+
+    private GlobalSearchResult searchAllLocked(String query) {
         String normalizedQuery = query == null ? "" : query.trim();
         BookFilterSpec filter = filterStateService.current();
         if (normalizedQuery.isBlank()) {
             if (!filter.isActive()) return GlobalSearchResult.empty();
-            return new GlobalSearchResult(List.of(), List.of(), List.of(), search("", 1000));
+            return new GlobalSearchResult(List.of(), List.of(), List.of(), searchLocked("", 1000));
         }
 
-        List<AuthorDto> authors = searchAuthorsAll(normalizedQuery);
+        List<AuthorDto> authors = searchAuthorsAllLocked(normalizedQuery);
         List<String> series = seriesRepository.searchNames(normalizedQuery, 200);
         List<GenreDto> genres = genreRepository.searchByName(normalizedQuery, 200).stream()
                 .map(genreMapper::toDto)
                 .toList();
-        List<BookDto> books = searchAllBooks(normalizedQuery);
+        List<BookDto> books = searchAllBooksLocked(normalizedQuery);
 
         log.debug("Пошук '{}' завершено: авторів {}, серій {}, жанрів {}, книг {}",
                 normalizedQuery, authors.size(), series.size(), genres.size(), books.size());
@@ -199,6 +268,10 @@ public class SearchService {
 
     /** Load every Lucene hit through bounded pages; no visible 50-book ceiling. */
     public List<BookDto> searchAllBooks(String query) {
+        return withQueryLease(() -> searchAllBooksLocked(query));
+    }
+
+    private List<BookDto> searchAllBooksLocked(String query) {
         String normalizedQuery = query == null ? "" : query.trim();
         BookFilterSpec filter = filterStateService.current();
         if (normalizedQuery.isBlank() && !filter.isActive()) return List.of();
@@ -207,11 +280,15 @@ public class SearchService {
                 .filterSpec(filter)
                 .mode(com.myhomelibcorp.application.query.search.SearchMode.PHRASE)
                 .build();
-        return searchAll(base);
+        return searchAllRequestLocked(base);
     }
 
     /** Complete advanced-search result, fetched in bounded Lucene/SQL chunks. */
     public List<BookDto> searchAll(SearchRequest request) {
+        return withQueryLease(() -> searchAllRequestLocked(request));
+    }
+
+    private List<BookDto> searchAllRequestLocked(SearchRequest request) {
         if (request == null) return List.of();
         SearchRequest effective = withFilter(request,
                 request.filterSpec() == null ? filterStateService.current() : request.filterSpec());
@@ -249,6 +326,10 @@ public class SearchService {
 
     /** All matching authors, loaded in bounded SQL pages rather than a hard 20-row cap. */
     public List<AuthorDto> searchAuthorsAll(String query) {
+        return withQueryLease(() -> searchAuthorsAllLocked(query));
+    }
+
+    private List<AuthorDto> searchAuthorsAllLocked(String query) {
         String normalizedQuery = query == null ? "" : query.trim();
         if (normalizedQuery.isBlank()) return List.of();
         final int chunkSize = 500;
@@ -271,6 +352,10 @@ public class SearchService {
      * filtering the complete author dictionary for large collections.
      */
     public List<AuthorDto> searchAuthors(String query, int limit) {
+        return withQueryLease(() -> searchAuthorsLocked(query, limit));
+    }
+
+    private List<AuthorDto> searchAuthorsLocked(String query, int limit) {
         String normalizedQuery = query == null ? "" : query.trim();
         if (normalizedQuery.isBlank()) return List.of();
         int safeLimit = Math.max(1, Math.min(limit, 200));
@@ -278,4 +363,20 @@ public class SearchService {
                 .map(authorMapper::toDto)
                 .collect(Collectors.toList());
     }
+
+    private <T> T withQueryLease(Supplier<T> action) {
+        if (operationCoordinator == null) return action.get();
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
 }

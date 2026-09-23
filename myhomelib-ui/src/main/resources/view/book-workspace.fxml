@@ -9,43 +9,43 @@
       fx:controller="com.myhomelibcorp.ui.book.BookWorkspaceController"
       spacing="10" style="-fx-padding: 20; -fx-background-color: -mhl-panel;">
 
-    <Label fx:id="loadStateLabel" text="Завантаження…" visible="false" managed="false"
+    <Label fx:id="loadStateLabel" text="ui.fxml.book_workspace.loading" visible="false" managed="false"
            style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
 
     <HBox spacing="20" alignment="TOP_LEFT">
         <ImageView fx:id="coverImageView" fitWidth="180" fitHeight="250" preserveRatio="true"
                    style="-fx-effect: dropshadow(three-pass-box, rgba(0,0,0,0.3), 12, 0, 0, 4);"/>
         <VBox spacing="5" HBox.hgrow="ALWAYS">
-            <Label fx:id="titleLabel" text="Назва" wrapText="true" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
-            <Label fx:id="authorLabel" text="Автор" style="-fx-font-size: 14px;"/>
-            <Label fx:id="seriesLabel" text="Серія"/>
-            <Label fx:id="genresLabel" text="Жанри"/>
-            <Label fx:id="languageLabel" text="Мова"/>
-            <Label fx:id="yearLabel" text="Рік"/>
-            <Label fx:id="publisherLabel" text="Видавництво"/>
-            <Label fx:id="isbnLabel" text="ISBN"/>
-            <Label fx:id="formatLabel" text="Формат"/>
-            <Label fx:id="sizeLabel" text="Розмір"/>
-            <Label fx:id="ratingLabel" text="Рейтинг"/>
+            <Label fx:id="titleLabel" text="ui.fxml.book_workspace.title" wrapText="true" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+            <Label fx:id="authorLabel" text="ui.fxml.book_workspace.author" style="-fx-font-size: 14px;"/>
+            <Label fx:id="seriesLabel" text="ui.fxml.book_workspace.series"/>
+            <Label fx:id="genresLabel" text="ui.fxml.book_workspace.genres"/>
+            <Label fx:id="languageLabel" text="ui.fxml.book_workspace.language"/>
+            <Label fx:id="yearLabel" text="ui.fxml.book_workspace.year"/>
+            <Label fx:id="publisherLabel" text="ui.fxml.book_workspace.publisher"/>
+            <Label fx:id="isbnLabel" text="ui.fxml.book_workspace.isbn"/>
+            <Label fx:id="formatLabel" text="ui.fxml.book_workspace.format"/>
+            <Label fx:id="sizeLabel" text="ui.fxml.book_workspace.size"/>
+            <Label fx:id="ratingLabel" text="ui.fxml.book_workspace.rating"/>
             <HBox spacing="5" alignment="CENTER_LEFT">
                 <ProgressBar fx:id="readingProgress" prefWidth="150"/>
-                <Label fx:id="progressLabel" text="0%"/>
+                <Label fx:id="progressLabel" text="ui.fxml.book_workspace.0"/>
             </HBox>
         </VBox>
     </HBox>
 
-    <Label text="Анотація:" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+    <Label text="ui.fxml.book_workspace.annotation" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
     <Label fx:id="annotationLabel" wrapText="true" maxWidth="1.7976931348623157E308"/>
 
     <HBox spacing="10">
-        <Button text="Відкрити у зовнішній програмі" onAction="#onOpen" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
-        <Button text="Читати у MyHomeLib" onAction="#onRead" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
-        <Button text="Завантажити" onAction="#onDownload"/>
-        <Button text="Редагувати" onAction="#onEdit" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
-        <Button text="Відкрити папку" onAction="#onOpenFolder"/>
-        <Button text="Додати до групи" onAction="#onAddToCollection"/>
+        <Button text="ui.fxml.book_workspace.open_in_external_application" onAction="#onOpen" style="-fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="ui.fxml.book_workspace.read_in_myhomelib" onAction="#onRead" style="-fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="ui.fxml.book_workspace.download" onAction="#onDownload"/>
+        <Button text="ui.fxml.book_workspace.edit" onAction="#onEdit" style="-fx-background-color: -mhl-warning; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="ui.fxml.book_workspace.open_folder" onAction="#onOpenFolder"/>
+        <Button text="ui.fxml.book_workspace.add_to_group" onAction="#onAddToCollection"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Видалити запис із каталогу" onAction="#onDeleteBook" style="-fx-background-color: -mhl-danger; -fx-text-fill: -mhl-on-accent;"/>
-        <Button text="← Назад" onAction="#onBack"/>
+        <Button text="ui.fxml.book_workspace.delete_record_from_catalog" onAction="#onDeleteBook" style="-fx-background-color: -mhl-danger; -fx-text-fill: -mhl-on-accent;"/>
+        <Button text="ui.fxml.book_workspace.back" onAction="#onBack"/>
     </HBox>
 </VBox>

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.persistence.sqlite;
 
 import com.myhomelibcorp.application.port.out.collection.BookUserStateTransferPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionDatabasePathResolver;
@@ -11,7 +12,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.ConnectionCallback;
 import org.springframework.stereotype.Component;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -58,12 +58,25 @@ public class SqliteBookUserStateTransferAdapter implements BookUserStateTransfer
         if (sourceDb.equals(targetDb)) {
             throw new IllegalArgumentException("Source and target collections resolve to the same SQLite database");
         }
-        if (!Files.isRegularFile(sourceDb)) {
-            throw new IllegalStateException("Source collection database is unavailable: " + sourceDb);
+        final Path safeSourceDb;
+        try {
+            // Collection DBs are application-controlled state. Never follow a symlink/reparse
+            // component while reopening the now-inactive source database for state transfer.
+            safeSourceDb = SafeFilePublication.requireSafeRegularFile(
+                    sourceDb, "Source collection database");
+        } catch (java.io.IOException unsafeSource) {
+            throw new IllegalStateException("Source collection database is unavailable or unsafe: " + sourceDb, unsafeSource);
         }
 
         collections.getCurrentJdbcTemplate().execute((ConnectionCallback<Void>) target -> {
-            try (Connection source = DriverManager.getConnection("jdbc:sqlite:" + sourceDb)) {
+            try (Connection source = DriverManager.getConnection("jdbc:sqlite:" + safeSourceDb)) {
+                // SQLite JDBC reopens by pathname. Revalidate immediately after open so a parent
+                // symlink/reparse swap cannot silently redirect the read-only source database.
+                try {
+                    SafeFilePublication.requireSafeRegularFile(safeSourceDb, "opened source collection database");
+                } catch (java.io.IOException unsafeOpenedPath) {
+                    throw new SQLException("Source collection database path changed while opening", unsafeOpenedPath);
+                }
                 try (var st = source.createStatement()) {
                     st.execute("PRAGMA query_only=ON");
                     st.execute("PRAGMA busy_timeout=5000");

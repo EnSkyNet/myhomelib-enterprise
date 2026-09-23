@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.controller;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.usecase.search.LoadSmartCollectionDefinitionUseCase;
 import com.myhomelibcorp.application.usecase.search.SaveSmartCollectionUseCase;
 import com.myhomelibcorp.application.usecase.search.SmartCollectionDefinition;
@@ -109,7 +110,7 @@ public class SmartCollectionDialogController {
         } catch (NumberFormatException e) {
             dialogs.showWarning(i18n.text("common.warning"), i18n.text("ui.smart_collection.limit_invalid"));
         } catch (IllegalArgumentException e) {
-            dialogs.showWarning(i18n.text("common.warning"), e.getMessage());
+            dialogs.showWarning(i18n.text("common.warning"), UiExceptionSupport.message(e));
         } catch (Exception e) {
             dialogs.showError(i18n.text("common.error"), i18n.format("ui.smart_collection.save_error", rootMessage(e)));
         }
@@ -215,9 +216,7 @@ public class SmartCollectionDialogController {
     }
 
     private static String rootMessage(Throwable error) {
-        Throwable cursor = error;
-        while (cursor.getCause() != null && cursor.getCause() != cursor) cursor = cursor.getCause();
-        return cursor.getMessage() == null ? cursor.getClass().getSimpleName() : cursor.getMessage();
+        return UiExceptionSupport.message(error);
     }
 
     private enum Mode { AND, OR }

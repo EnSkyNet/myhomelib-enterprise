@@ -44,7 +44,7 @@ public final class BookQueries {
                 annotation = excluded.annotation,
                 rate = excluded.rate,
                 progress = excluded.progress,
-                update_date = excluded.update_date,
+                update_date = COALESCE(excluded.update_date, books.update_date),
                 isbn = excluded.isbn,
                 deleted = excluded.deleted,
                 local = excluded.local,
@@ -63,8 +63,8 @@ public final class BookQueries {
             """;
 
     public static final String DELETE_BY_ID = "DELETE FROM books WHERE id = ?";
-    public static final String UPDATE_RATE = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
-    public static final String UPDATE_PROGRESS = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+    public static final String UPDATE_RATE = "UPDATE books SET rate = ? WHERE id = ?";
+    public static final String UPDATE_PROGRESS = "UPDATE books SET progress = ? WHERE id = ?";
     public static final String UPDATE_BOOK = """
             UPDATE books SET
                 title = ?,
@@ -79,7 +79,7 @@ public final class BookQueries {
                 annotation = ?,
                 rate = ?,
                 progress = ?,
-                update_date = ?,
+                update_date = COALESCE(?, update_date),
                 isbn = ?,
                 deleted = ?,
                 local = ?,

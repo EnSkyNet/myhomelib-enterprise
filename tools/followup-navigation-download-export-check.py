@@ -46,8 +46,10 @@ require("handleRefresh" not in chunk, "download still routes through global hand
 # One canonical batch download flow + progress UI.
 require("downloadBatch(List<BookId> bookIds, Window owner)" in coord, "canonical batch download API missing")
 require("BookDownloadProgressDialog" in coord, "batch download progress dialog not used")
-require("Підключення" in progress and "Завантажено:" in progress and "Збережено до бібліотеки:" in progress,
-        "download progress window does not expose connection/download/save states")
+require('ui.java.book_download_progress_dialog.4258f771b1' in progress
+        and 'ui.java.book_download_progress_dialog.491361bc90' in progress
+        and 'ui.java.book_download_progress_dialog.6126a2c620' in progress,
+        "download progress window does not expose localized connection/download/save states")
 require("if (result.downloaded() > 0) eventPublisher.publishEvent(new NavigationRefreshEvent())" in coord,
         "batch download does not publish one post-batch navigation refresh")
 require("download(book, false, showErrors, showErrors)" in coord, "batch path may still publish per-book navigation refresh")

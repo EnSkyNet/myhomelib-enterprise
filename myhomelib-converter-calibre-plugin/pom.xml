@@ -14,6 +14,16 @@
   <dependencies>
     <dependency>
       <groupId>com.myhomelibcorp</groupId>
+      <artifactId>myhomelib-application</artifactId>
+      <version>${project.parent.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.myhomelibcorp</groupId>
+      <artifactId>myhomelib-domain</artifactId>
+      <version>${project.parent.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>com.myhomelibcorp</groupId>
       <artifactId>myhomelib-plugin-api</artifactId>
       <version>${project.parent.version}</version>
     </dependency>

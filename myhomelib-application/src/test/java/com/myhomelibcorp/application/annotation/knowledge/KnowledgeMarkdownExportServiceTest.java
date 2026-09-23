@@ -161,6 +161,38 @@ class KnowledgeMarkdownExportServiceTest {
     }
 
     @Test
+    void replaceManagedRefusesConcurrentTargetReplacementAndPreservesForeignBytes() throws Exception {
+        AnnotationExportRow initialRow = row("initial", "book-1", "Book", "Author", "Chapter", "old", "note");
+        KnowledgeMarkdownExportRequest request = request(
+                tempDir, KnowledgeMarkdownReExportPolicy.REPLACE_MANAGED, true, true);
+        new KnowledgeMarkdownExportService(new RecordingPort(List.of(initialRow))).export(request);
+        Path target = tempDir.resolve("Author").resolve("Book [book-1].md");
+
+        List<AnnotationExportRow> rows = new ArrayList<>();
+        for (int i = 0; i < 251; i++) {
+            rows.add(row("a-" + i, "book-1", "Book", "Author", "Chapter", "q" + i, "note"));
+        }
+        AnnotationExportQueryPort replacingPort = (selection, offset, limit) -> {
+            if (offset > 0) {
+                try {
+                    Files.writeString(target, "FOREIGN REPLACEMENT", StandardCharsets.UTF_8);
+                } catch (IOException e) {
+                    throw new RuntimeException(e);
+                }
+            }
+            int from = Math.min(offset, rows.size());
+            int to = Math.min(rows.size(), from + limit);
+            return new AnnotationExportPage(rows.subList(from, to), offset, limit, to < rows.size());
+        };
+
+        KnowledgeMarkdownExportService service = new KnowledgeMarkdownExportService(replacingPort);
+        assertThatThrownBy(() -> service.export(request))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("target changed before detach");
+        assertThat(Files.readString(target, StandardCharsets.UTF_8)).isEqualTo("FOREIGN REPLACEMENT");
+    }
+
+    @Test
     void cancellationDoesNotPublishPartialReplacementOrLeaveStagingFiles() throws Exception {
         AnnotationExportRow value = row("a-1", "book-1", "Book", "Author", "Chapter", "new", "note");
         RecordingPort initialPort = new RecordingPort(List.of(value));

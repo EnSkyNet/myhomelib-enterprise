@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.presenter;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.progress.OperationStage;
@@ -84,15 +85,17 @@ public class BookImportPresenter {
         statusBar.setStatusText(localizationService.format("ui.import.presenter.directory_started", directory.getFileName()));
         statusBar.setProgressVisible(true);
         AtomicBoolean cancelFlag = new AtomicBoolean(false);
-        DoubleConsumer progressConsumer = progress -> UiExecutor.runOnUiThread(() ->
-                statusBar.setProgress(progress));
+        String collectionId = currentCollectionId();
+        DoubleConsumer progressConsumer = progress -> UiExecutor.runOnUiThread(() -> {
+            if (isCurrentCollection(collectionId)) statusBar.setProgress(progress);
+        });
 
         String operationTitle = localizationService.format("ui.import.operation.directory", directory.getFileName());
-        String collectionId = currentCollectionId();
         String operationId = operationCenter.start(operationTitle, collectionId, OperationKind.CATALOG_IMPORT,
                 OperationStage.IMPORTING, false);
         ImportContext context = ImportContext.builder()
                 .rootDirectory(directory)
+                .expectedCollectionId(collectionId)
                 .updateExisting(true)
                 .batchSize(defaultBatchSize)
                 .indexAfterSave(true)
@@ -100,7 +103,9 @@ public class BookImportPresenter {
                 .operationProgressListener(progress -> operationCenter.accept(
                         operationTitle, collectionId, OperationKind.CATALOG_IMPORT, progress))
                 .progressListener(progressConsumer)
-                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBar.setStatusText(status)))
+                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> {
+                    if (isCurrentCollection(collectionId)) statusBar.setStatusText(status);
+                }))
                 .cancelFlag(cancelFlag)
                 .build();
 
@@ -112,6 +117,7 @@ public class BookImportPresenter {
                         operationCenter.complete(operationId, localizationService.format("ui.import.result.imported", result.imported())
                                 + (result.errors() > 0 ? localizationService.format("ui.import.result.errors_suffix", result.errors()) : ""));
                     }
+                    if (!isCurrentCollection(collectionId)) return;
                     statusBar.setProgressVisible(false);
                     statusBar.setStatusText(localizationService.format("ui.import.presenter.directory_completed", result.imported()));
                     if (onComplete != null) onComplete.run();
@@ -120,8 +126,9 @@ public class BookImportPresenter {
                     Throwable cause = unwrap(ex);
                     operationCenter.fail(operationId, cause);
                     UiExecutor.runOnUiThread(() -> {
+                        if (!isCurrentCollection(collectionId)) return;
                         statusBar.setProgressVisible(false);
-                        statusBar.setStatusText(localizationService.format("ui.import.presenter.error", cause.getMessage()));
+                        statusBar.setStatusText(localizationService.format("ui.import.presenter.error", UiExceptionSupport.message(cause)));
                     });
                     log.error("Directory import failed", cause);
                     return null;
@@ -157,13 +164,18 @@ public class BookImportPresenter {
                 OperationStage.IMPORTING, false);
         ImportContext context = ImportContext.builder()
                 .file(file)
+                .expectedCollectionId(collectionId)
                 .batchSize(defaultBatchSize)
                 .indexAfterSave(true)
                 .operationId(operationId)
                 .operationProgressListener(progress -> operationCenter.accept(
                         operationTitle, collectionId, operationKind, progress))
-                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> statusBar.setStatusText(status)))
-                .progressListener(progress -> UiExecutor.runOnUiThread(() -> statusBar.setProgress(progress)))
+                .statusConsumer(status -> UiExecutor.runOnUiThread(() -> {
+                    if (isCurrentCollection(collectionId)) statusBar.setStatusText(status);
+                }))
+                .progressListener(progress -> UiExecutor.runOnUiThread(() -> {
+                    if (isCurrentCollection(collectionId)) statusBar.setProgress(progress);
+                }))
                 .build();
 
         executor.submit(() -> importFileUseCase.execute(context))
@@ -177,6 +189,7 @@ public class BookImportPresenter {
                         operationCenter.complete(operationId, resultLabel
                                 + (result.errors() > 0 ? localizationService.format("ui.import.result.errors_suffix", result.errors()) : ""));
                     }
+                    if (!isCurrentCollection(collectionId)) return;
                     statusBar.setProgressVisible(false);
                     statusBar.setStatusText(collectionUpdate
                             ? localizationService.format("ui.import.result.collection_updated", result.imported())
@@ -187,8 +200,9 @@ public class BookImportPresenter {
                     Throwable cause = unwrap(ex);
                     operationCenter.fail(operationId, cause);
                     UiExecutor.runOnUiThread(() -> {
+                        if (!isCurrentCollection(collectionId)) return;
                         statusBar.setProgressVisible(false);
-                        statusBar.setStatusText(localizationService.format("ui.import.presenter.error", cause.getMessage()));
+                        statusBar.setStatusText(localizationService.format("ui.import.presenter.error", UiExceptionSupport.message(cause)));
                     });
                     log.error("File import failed", cause);
                     return null;
@@ -202,6 +216,10 @@ public class BookImportPresenter {
     private String currentCollectionId() {
         var collection = appState.getCurrentLibraryCollection();
         return collection == null || collection.getId() == null ? "" : collection.getId();
+    }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return java.util.Objects.equals(expectedCollectionId, currentCollectionId());
     }
 
     private Throwable unwrap(Throwable error) {

@@ -1,7 +1,7 @@
 package com.myhomelibcorp.infrastructure.importengine;
 
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
-import com.myhomelibcorp.shared.archive.ZipCharsetSupport;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -11,8 +11,8 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Collections;
 import java.util.List;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -20,17 +20,21 @@ import static org.mockito.Mockito.*;
 
 class InpxReaderResourceTest {
     @Test
-    void rejectedArchiveClosesItsAlreadyOpenedZipFile() throws Exception {
-        Path path = Path.of("rejected.inpx");
+    void rejectedArchiveClosesItsAlreadyOpenedSafeArchive(@TempDir Path directory) throws Exception {
+        Path path = directory.resolve("rejected.inpx");
+        Files.write(path, new byte[]{0});
+        Path safePath = path.toAbsolutePath().normalize();
+        SafeZipArchive opened = mock(SafeZipArchive.class);
         ZipFile zip = mock(ZipFile.class);
-        ZipEntry oversized = new ZipEntry("catalog.inp");
+        ZipArchiveEntry oversized = new ZipArchiveEntry("catalog.inp");
         oversized.setSize(ArchiveSafetyLimits.MAX_ENTRY_BYTES + 1);
-        when(zip.entries()).thenAnswer(call -> Collections.enumeration(List.of(oversized)));
-        try (var support = mockStatic(ZipCharsetSupport.class)) {
-            support.when(() -> ZipCharsetSupport.open(path)).thenReturn(zip);
+        when(opened.zip()).thenReturn(zip);
+        when(zip.getEntries()).thenAnswer(call -> Collections.enumeration(List.of(oversized)));
+        try (var support = mockStatic(SafeZipArchive.class)) {
+            support.when(() -> SafeZipArchive.openDetected(safePath, "INPX source")).thenReturn(opened);
             var failure = assertThrows(UncheckedIOException.class, () -> new InpxReader().read(path));
             assertThat(failure.getCause()).isInstanceOf(IOException.class).hasMessageContaining("too large");
-            verify(zip).close();
+            verify(opened).close();
         }
     }
 

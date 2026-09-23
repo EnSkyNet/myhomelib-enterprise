@@ -2,6 +2,8 @@ package com.myhomelibcorp.application.folderwatch;
 
 import com.myhomelibcorp.application.event.IncomingFolderFileReadyEvent;
 import com.myhomelibcorp.application.imports.context.ImportContext;
+import com.myhomelibcorp.application.imports.context.StaleImportSourceException;
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
 import com.myhomelibcorp.application.imports.statistics.ImportStatus;
 import com.myhomelibcorp.application.port.out.collection.IncomingFolderWatchPort;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
@@ -73,19 +75,21 @@ public class IncomingFolderImportCoordinator {
                 if (candidate == null || candidate.file() == null || candidate.fingerprint() == null) continue;
                 if (!watcher.claimReady(collectionId, candidate.file(), candidate.fingerprint())) continue;
                 claimedAny = true;
-                importOne(collectionId, candidate);
+                if (!importOne(collectionId, candidate)) return;
             }
             if (!claimedAny) return;
         }
     }
 
-    private void importOne(String collectionId, IncomingFolderCandidate candidate) {
+    private boolean importOne(String collectionId, IncomingFolderCandidate candidate) {
         Path folder = watcher.findState(collectionId).map(IncomingFolderWatchState::folder)
                 .orElse(candidate.file().getParent());
         try {
             var result = importer.execute(ImportContext.builder()
                     .file(candidate.file())
                     .rootDirectory(folder)
+                    .expectedCollectionId(collectionId)
+                    .expectedSourceSha256(candidate.fingerprint())
                     .updateExisting(false)
                     .indexAfterSave(true)
                     .publishFinishedEvent(true)
@@ -94,19 +98,64 @@ public class IncomingFolderImportCoordinator {
                     .build());
             if (result.status() == ImportStatus.CANCELLED) {
                 watcher.markFailed(collectionId, candidate.file(), candidate.fingerprint(), "Import cancelled");
-                return;
+                return true;
             }
             if (result.errors() > 0) {
                 watcher.markFailed(collectionId, candidate.file(), candidate.fingerprint(),
                         "Import completed with " + result.errors() + " error(s)");
-                return;
+                return true;
             }
             watcher.markImported(collectionId, candidate.file(), candidate.fingerprint(),
                     result.imported(), result.duplicates(), result.errors());
+            return true;
         } catch (Exception failure) {
+            if (isRetryableLifecycleFailure(failure)) {
+                // The candidate was claimed before ImportFileUseCase could acquire its lifecycle lease.
+                // Put it back so CollectionOpenedEvent can resume it when this collection is active again.
+                watcher.releaseClaim(collectionId, candidate.file(), candidate.fingerprint());
+                log.debug("Incoming-folder import deferred for {} because collection lifecycle changed", candidate.file());
+                // Stop this drain pass. Retrying immediately can reclaim the same READY row in a tight loop
+                // while the lifecycle transition is still in progress. CollectionOpenedEvent will reschedule it.
+                return false;
+            }
+            if (isStaleSourceFailure(failure)) {
+                // Do not import bytes that differ from the persisted READY fingerprint. Mark the old
+                // claim non-ready first, then force a fresh stability/fingerprint observation.
+                watcher.markFailed(collectionId, candidate.file(), candidate.fingerprint(), safeMessage(failure));
+                try { watcher.scanNow(collectionId); }
+                catch (RuntimeException rescanFailure) {
+                    log.warn("Cannot rescan changed incoming file {}: {}", candidate.file(), safeMessage(rescanFailure));
+                }
+                log.debug("Incoming-folder source changed before import; revalidation scheduled for {}", candidate.file());
+                return true;
+            }
             watcher.markFailed(collectionId, candidate.file(), candidate.fingerprint(), safeMessage(failure));
             log.warn("Incoming-folder import failed for {}: {}", candidate.file(), safeMessage(failure));
+            return true;
         }
+    }
+
+    private static boolean isRetryableLifecycleFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof LibraryOperationConflictException
+                    || current instanceof ImportFileUseCase.StaleImportCollectionException) {
+                return true;
+            }
+            if (current.getCause() == current) break;
+            current = current.getCause();
+        }
+        return false;
+    }
+
+    private static boolean isStaleSourceFailure(Throwable failure) {
+        Throwable current = failure;
+        while (current != null) {
+            if (current instanceof StaleImportSourceException) return true;
+            if (current.getCause() == current) break;
+            current = current.getCause();
+        }
+        return false;
     }
 
     private boolean activeCollectionIs(String collectionId) {

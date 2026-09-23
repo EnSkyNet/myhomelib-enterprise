@@ -1,6 +1,8 @@
 package com.myhomelibcorp.ui.service;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.catalog.LegacyOnlineBookLocation;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
@@ -74,8 +76,9 @@ public class BookDownloadCoordinator {
     /** Load the authoritative DB row first. List workspaces intentionally carry only a lightweight DTO. */
     public CompletableFuture<Path> ensureLocal(BookId bookId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
-        return executor.submit(() -> loadBookByIdUseCase.execute(bookId)
-                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
+        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                        () -> loadBookByIdUseCase.execute(bookId)
+                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId)))
                 .thenCompose(book -> download(book, false));
     }
 
@@ -89,8 +92,9 @@ public class BookDownloadCoordinator {
 
     private CompletableFuture<EnsureLocalOutcome> ensureLocalWithStatus(BookId bookId, boolean showErrors) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
-        return executor.submit(() -> loadBookByIdUseCase.execute(bookId)
-                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
+        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                        () -> loadBookByIdUseCase.execute(bookId)
+                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId)))
                 .thenCompose(book -> {
                     normalizeLegacyRemoteStorage(book);
                     var existing = bookResourcePort.locateBookFile(
@@ -125,7 +129,7 @@ public class BookDownloadCoordinator {
 
         BookDownloadProgressDialog progressDialog = new BookDownloadProgressDialog(owner, ids.size());
         progressDialog.show();
-        progressDialog.update(0, ids.size(), 0, 0, 0, "Підключення / перевірка локальних копій…");
+        progressDialog.update(0, ids.size(), 0, 0, 0, UiText.text("ui.java.book_download_coordinator.0f720c36df"));
 
         java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger();
         java.util.concurrent.atomic.AtomicInteger downloaded = new java.util.concurrent.atomic.AtomicInteger();
@@ -144,7 +148,7 @@ public class BookDownloadCoordinator {
             }
             int done = completed.incrementAndGet();
             Platform.runLater(() -> progressDialog.update(done, ids.size(), downloaded.get(), alreadyLocal.get(), failed.get(),
-                    "Підключено. Завантаження та збереження книг…"));
+                    UiText.text("ui.java.book_download_coordinator.ae22229ad2")));
             return null;
         })).toArray(CompletableFuture[]::new);
 
@@ -168,7 +172,7 @@ public class BookDownloadCoordinator {
                 .filter(java.util.Objects::nonNull).distinct().toList();
         if (ids.isEmpty()) return CompletableFuture.completedFuture(new BatchDownloadResult(0, 0, 0, 0, List.of()));
 
-        return executor.submit(() -> {
+        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD, () -> {
             java.util.ArrayList<BookId> missing = new java.util.ArrayList<>();
             int local = 0;
             for (BookId id : ids) {
@@ -213,8 +217,9 @@ public class BookDownloadCoordinator {
 
     public CompletableFuture<Path> ensureLocalForOpen(BookId bookId) {
         if (bookId == null) return CompletableFuture.failedFuture(new IllegalArgumentException("BookId is null"));
-        return executor.submit(() -> loadBookByIdUseCase.execute(bookId)
-                        .orElseThrow(() -> new IllegalStateException("Книгу не знайдено: " + bookId)))
+        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                        () -> loadBookByIdUseCase.execute(bookId)
+                        .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.book_download_coordinator.7e6db1b645") + bookId)))
                 .thenCompose(this::ensureLocalForOpenAuthoritative);
     }
 
@@ -234,12 +239,12 @@ public class BookDownloadCoordinator {
         }
 
         boolean approved = dialogService.showConfirmation(
-                "Книга відсутня",
-                book.getTitle() == null || book.getTitle().isBlank() ? "Файл книги відсутній" : book.getTitle(),
-                "Книга фізично відсутня на комп’ютері. Завантажити та зберегти її перед відкриттям?");
+                UiText.text("ui.java.book_download_coordinator.ab4bcb3327"),
+                book.getTitle() == null || book.getTitle().isBlank() ? UiText.text("ui.java.book_download_coordinator.56f377fe01") : book.getTitle(),
+                UiText.text("ui.java.book_download_coordinator.0e3394ae8f"));
         if (!approved) {
             return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(
-                    "Відкриття скасовано користувачем"));
+                    UiText.text("ui.java.book_download_coordinator.39fb6cb400")));
         }
         return download(book, false);
     }
@@ -262,7 +267,8 @@ public class BookDownloadCoordinator {
         } catch (RuntimeException invalidId) {
             return CompletableFuture.completedFuture(fallback);
         }
-        return executor.submit(() -> loadBookByIdUseCase.execute(id).orElse(fallback));
+        return executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                () -> loadBookByIdUseCase.execute(id).orElse(fallback));
     }
 
     private CompletableFuture<Path> download(BookDto book, boolean force) {
@@ -284,34 +290,34 @@ public class BookDownloadCoordinator {
 
         Collection collection = applicationState.getCurrentLibraryCollection();
         if (collection == null) {
-            return failedVisible("Файл відсутній локально, але активну онлайн-колекцію не визначено");
+            return failedVisible(UiText.text("ui.java.book_download_coordinator.876d0b4d3f"));
         }
         if ((collection.getUrl() == null || collection.getUrl().isBlank())
                 && (collection.getConnectionScript() == null || collection.getConnectionScript().isBlank())) {
-            return failedVisible("Файл відсутній локально, а URL/ConnectionScript онлайн-колекції не налаштовано");
+            return failedVisible(UiText.text("ui.java.book_download_coordinator.bd6ccfa947"));
         }
 
         AtomicBoolean cancel = new AtomicBoolean(false);
         AtomicBoolean previous = active.putIfAbsent(book.getId(), cancel);
         if (previous != null) {
-            return CompletableFuture.failedFuture(new IllegalStateException("Завантаження цієї книги вже виконується"));
+            return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.java.book_download_coordinator.56699e79ab")));
         }
 
         String collectionId = collection.getId() == null ? "" : collection.getId();
-        String operationTitle = "Завантаження книги — " + safeBookTitle(book);
+        String operationTitle = UiText.text("ui.java.book_download_coordinator.f6cd0d8490") + safeBookTitle(book);
         String operationId = operationCenter.start(operationTitle, collectionId, OperationKind.BOOK_DOWNLOAD,
                 OperationStage.BOOK_DOWNLOAD, true);
 
         // Показуємо початок завантаження
         Platform.runLater(() -> {
-            applicationState.getStatusBar().setStatusText("📥 Завантаження: " + book.getTitle());
+            applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.28e9bf28d4") + book.getTitle());
             applicationState.getStatusBar().setProgressVisible(true);
             applicationState.getStatusBar().setProgress(0);
         });
 
         long startTime = System.currentTimeMillis();
 
-        return executor.submit(() -> {
+        return executor.submitCollectionScoped(LibraryOperationType.DOWNLOAD, () -> {
                     boolean acquired = false;
                     try {
                         while (!cancel.get() && !Thread.currentThread().isInterrupted()) {
@@ -321,12 +327,12 @@ public class BookDownloadCoordinator {
                             }
                         }
                         if (!acquired || cancel.get() || Thread.currentThread().isInterrupted()) {
-                            throw new java.util.concurrent.CancellationException("Завантаження скасовано");
+                            throw new java.util.concurrent.CancellationException(UiText.text("ui.java.book_download_coordinator.b23355d41c"));
                         }
 
                         // Оновлюємо статус
                         Platform.runLater(() -> {
-                            applicationState.getStatusBar().setStatusText("⏳ Завантаження: " + book.getTitle() + " (очікування слота)");
+                            applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.ceea793bc6") + book.getTitle() + UiText.text("ui.java.book_download_coordinator.0cafc3a4a6"));
                         });
 
                         BookDto effectiveBook = loadBookByIdUseCase.execute(BookId.fromString(book.getId())).orElse(book);
@@ -340,7 +346,7 @@ public class BookDownloadCoordinator {
                             Platform.runLater(() -> {
                                 applicationState.getStatusBar().setProgress(value);
                                 int percent = (int) Math.round(value * 100);
-                                applicationState.getStatusBar().setStatusText("📥 Завантаження: " + effectiveBook.getTitle() + " (" + percent + "%)");
+                                applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.28e9bf28d4") + effectiveBook.getTitle() + " (" + percent + "%)");
                             });
                         }, force);
                     } finally {
@@ -356,13 +362,11 @@ public class BookDownloadCoordinator {
                     // observe the pre-download remote folder/fileName.
                     if (error == null) {
                         copyStorageState(refreshed, book);
-                        operationCenter.complete(operationId, "Завантажено за " + Math.max(0, duration / 1000) + " с");
+                        operationCenter.complete(operationId, UiText.text("ui.java.book_download_coordinator.a0c024460b") + Math.max(0, duration / 1000) + UiText.text("ui.java.book_download_coordinator.488d98cad9"));
                     } else {
                         Throwable operationFailure = unwrap(error);
-                        if (operationFailure instanceof java.util.concurrent.CancellationException
-                                || (operationFailure.getMessage() != null
-                                && operationFailure.getMessage().toLowerCase(java.util.Locale.ROOT).contains("скасовано"))) {
-                            operationCenter.cancel(operationId, "Завантаження скасовано");
+                        if (UiExceptionSupport.isCancellation(operationFailure)) {
+                            operationCenter.cancel(operationId, UiText.text("ui.java.book_download_coordinator.b23355d41c"));
                         } else {
                             operationCenter.fail(operationId, operationFailure);
                         }
@@ -370,7 +374,7 @@ public class BookDownloadCoordinator {
                     Platform.runLater(() -> {
                         applicationState.getStatusBar().setProgressVisible(false);
                         if (error == null) {
-                            applicationState.getStatusBar().setStatusText("✅ Завантажено: " + refreshed.getTitle() + " (" + duration / 1000 + "с)");
+                            applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.a10fff9611") + refreshed.getTitle() + " (" + duration / 1000 + UiText.text("ui.java.book_download_coordinator.3023b67d72"));
                             BookDto details = applicationState.getBookDetails().getCurrentBook();
                             if (details != null && book.getId().equals(details.getId())) {
                                 applicationState.getBookDetails().setCurrentBook(refreshed);
@@ -389,11 +393,10 @@ public class BookDownloadCoordinator {
                             if (publishNavigationRefresh) eventPublisher.publishEvent(new NavigationRefreshEvent());
                         } else {
                             Throwable cause = unwrap(error);
-                            applicationState.getStatusBar().setStatusText("❌ Помилка завантаження: " + book.getTitle());
-                            String message = cause.getMessage() == null ? cause.toString() : cause.getMessage();
-                            if (!message.toLowerCase(java.util.Locale.ROOT).contains("скасовано")) {
+                            applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.4f6a3c9ef7") + book.getTitle());
+                            if (!UiExceptionSupport.isCancellation(cause)) {
                                 log.error("Завантаження книги {} завершилося помилкою: {}", book.getId(), compactError(cause));
-                                if (showErrors) dialogService.showError("Завантаження", userVisibleDownloadError(cause));
+                                if (showErrors) dialogService.showError(UiText.text("ui.import.stage.downloading"), userVisibleDownloadError(cause));
                             }
                         }
                     });
@@ -445,7 +448,7 @@ public class BookDownloadCoordinator {
                     .filter(v -> v != null && !v.isBlank()).collect(java.util.stream.Collectors.joining(" "));
         }
         String text = book == null ? null : book.getAuthorsText();
-        if (text == null || text.isBlank()) return "Невідомий Автор";
+        if (text == null || text.isBlank()) return "";
         int comma = text.indexOf(',');
         return (comma > 0 ? text.substring(0, comma) : text).trim();
     }
@@ -481,34 +484,39 @@ public class BookDownloadCoordinator {
     }
 
     private static String safeBookTitle(BookDto book) {
-        if (book == null || book.getTitle() == null || book.getTitle().isBlank()) return "Без назви";
+        if (book == null || book.getTitle() == null || book.getTitle().isBlank()) return UiText.text("ui.java.book_download_coordinator.6424359615");
         return book.getTitle().trim();
     }
 
     private CompletableFuture<Path> failedVisible(String message) {
-        Platform.runLater(() -> dialogService.showError("Завантаження", message));
+        Platform.runLater(() -> dialogService.showError(UiText.text("ui.import.stage.downloading"), message));
         return CompletableFuture.failedFuture(new IllegalStateException(message));
     }
 
     public CompletableFuture<Integer> removeLocalCopy(BookDto book) {
         if (book == null) return CompletableFuture.failedFuture(new IllegalArgumentException("Book is null"));
-        if (isDownloading(book)) return CompletableFuture.failedFuture(new IllegalStateException("Спочатку скасуйте активне завантаження"));
+        if (isDownloading(book)) return CompletableFuture.failedFuture(new IllegalStateException(UiText.text("ui.java.book_download_coordinator.b536619b61")));
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+        }
         return loadAuthoritative(book).thenCompose(authoritative ->
-                executor.submit(() -> removeLocalBookCopyUseCase.preview(authoritative))
+                executor.submitCollectionScoped(LibraryOperationType.QUERY,
+                                () -> removeLocalBookCopyUseCase.preview(authoritative))
                         .thenCompose(preview -> confirmSingleRemoval(authoritative, preview)
                                 .thenCompose(approved -> approved
-                                        ? executor.submit(() -> removeLocalBookCopyUseCase.execute(authoritative))
-                                        : CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("Видалення скасовано користувачем")))))
+                                        ? executor.submit(() -> removeLocalBookCopyUseCase.execute(authoritative, expectedCollectionId))
+                                        : CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(UiText.text("ui.java.book_download_coordinator.fd5c8520d7"))))))
                 .whenComplete((count, error) -> Platform.runLater(() -> {
                     if (error == null) {
                         book.setLocal(false);
                         book.setMissingSince(null);
-                        applicationState.getStatusBar().setStatusText("Локальну копію видалено: " + book.getTitle());
+                        applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.2b14cd684a") + book.getTitle());
                         eventPublisher.publishEvent(new NavigationRefreshEvent());
                     } else {
                         Throwable cause = unwrap(error);
                         if (!(cause instanceof java.util.concurrent.CancellationException)) {
-                            dialogService.showError("Локальна копія", cause.getMessage() == null ? cause.toString() : cause.getMessage());
+                            dialogService.showError(UiText.text("ui.java.book_download_coordinator.b4d025c63a"), UiExceptionSupport.message(cause));
                         }
                     }
                 }));
@@ -516,33 +524,34 @@ public class BookDownloadCoordinator {
 
     public CompletableFuture<Integer> removeLocalCopies(List<BookId> bookIds) {
         if (bookIds == null || bookIds.isEmpty()) return CompletableFuture.completedFuture(0);
-        return executor.submit(() -> {
+        String expectedCollectionId = applicationState.getCurrentLibraryCollectionId();
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) {
+            return CompletableFuture.failedFuture(new IllegalStateException("Активну колекцію не вибрано"));
+        }
+        return executor.submitCollectionScoped(LibraryOperationType.QUERY, () -> {
             LinkedHashMap<String, PlannedRemoval> unique = new LinkedHashMap<>();
             for (BookId id : bookIds.stream().distinct().toList()) {
                 BookDto book = loadBookByIdUseCase.execute(id).orElse(null);
                 if (book == null) continue;
                 var preview = removeLocalBookCopyUseCase.preview(book);
-                String key = preview.physicalPath() == null
-                        ? "book:" + book.getId()
-                        : "file:" + preview.physicalPath().toAbsolutePath().normalize();
+                String key = preview.sharedArchive() && preview.physicalPath() != null
+                        ? "archive:" + preview.physicalPath().toAbsolutePath().normalize()
+                        : "book:" + book.getId();
                 unique.putIfAbsent(key, new PlannedRemoval(book, preview));
             }
             return List.copyOf(unique.values());
         }).thenCompose(plans -> confirmBatchRemoval(plans).thenCompose(approved -> {
-            if (!approved) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException("Видалення скасовано користувачем"));
-            return executor.submit(() -> {
-                int affected = 0;
-                for (PlannedRemoval plan : plans) affected += removeLocalBookCopyUseCase.execute(plan.book());
-                return affected;
-            });
+            if (!approved) return CompletableFuture.failedFuture(new java.util.concurrent.CancellationException(UiText.text("ui.java.book_download_coordinator.fd5c8520d7")));
+            return executor.submit(() -> removeLocalBookCopyUseCase.executeBatch(
+                    plans.stream().map(PlannedRemoval::book).toList(), expectedCollectionId));
         })).whenComplete((count, error) -> Platform.runLater(() -> {
             if (error == null) {
-                applicationState.getStatusBar().setStatusText("Локальні копії видалено; оновлено записів: " + count);
+                applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.04a43f7a95") + count);
                 eventPublisher.publishEvent(new NavigationRefreshEvent());
             } else {
                 Throwable cause = unwrap(error);
                 if (!(cause instanceof java.util.concurrent.CancellationException)) {
-                    dialogService.showError("Локальні копії", cause.getMessage() == null ? cause.toString() : cause.getMessage());
+                    dialogService.showError(UiText.text("ui.java.book_download_coordinator.79701faed9"), UiExceptionSupport.message(cause));
                 }
             }
         }));
@@ -550,20 +559,20 @@ public class BookDownloadCoordinator {
 
     private CompletableFuture<Boolean> confirmSingleRemoval(BookDto book, RemoveLocalBookCopyUseCase.RemovalPreview preview) {
         String details = preview.sharedArchive()
-                ? "Файл/архів: " + displayPath(preview.physicalPath()) + "\nУ ньому каталогізовано книг: " + preview.affectedBooks() +
-                  "\nПісля видалення всі вони стануть віддаленими. Продовжити?"
-                : "Файл: " + displayPath(preview.physicalPath()) + "\nКаталожний запис буде збережено. Продовжити?";
-        return confirmOnFx("Видалення локальної копії", book.getTitle(), details);
+                ? UiText.text("ui.java.book_download_coordinator.2e028d2f14") + displayPath(preview.physicalPath()) + UiText.text("ui.java.book_download_coordinator.6ad8ec352c") + preview.affectedBooks() +
+                  UiText.text("ui.java.book_download_coordinator.c68c3e7f8e")
+                : UiText.text("ui.java.book_download_coordinator.813eeb90bc") + displayPath(preview.physicalPath()) + UiText.text("ui.java.book_download_coordinator.d22c2a822e");
+        return confirmOnFx(UiText.text("ui.java.book_download_coordinator.aa69d6a084"), book.getTitle(), details);
     }
 
     private CompletableFuture<Boolean> confirmBatchRemoval(List<PlannedRemoval> plans) {
         int physicalFiles = (int) plans.stream().filter(p -> p.preview().physicalPath() != null).count();
         int affectedBooks = plans.stream().mapToInt(p -> p.preview().affectedBooks()).sum();
         long sharedArchives = plans.stream().filter(p -> p.preview().sharedArchive()).count();
-        String details = "Фізичних файлів/архівів: " + physicalFiles + "\nЗаписів, що стануть віддаленими: " + affectedBooks
-                + (sharedArchives > 0 ? "\nСпільних архівів: " + sharedArchives : "")
-                + "\nКаталожні записи не видаляються. Продовжити?";
-        return confirmOnFx("Видалення локальних копій", "Вибрано книг: " + plans.size(), details);
+        String details = UiText.text("ui.java.book_download_coordinator.e9624deb1e") + physicalFiles + UiText.text("ui.java.book_download_coordinator.84f73be152") + affectedBooks
+                + (sharedArchives > 0 ? UiText.text("ui.java.book_download_coordinator.4356af2404") + sharedArchives : "")
+                + UiText.text("ui.java.book_download_coordinator.a17432d8d1");
+        return confirmOnFx(UiText.text("ui.java.book_download_coordinator.5efe8f80f6"), UiText.text("ui.java.book_download_coordinator.02db26baaf") + plans.size(), details);
     }
 
     private CompletableFuture<Boolean> confirmOnFx(String title, String header, String details) {
@@ -579,7 +588,7 @@ public class BookDownloadCoordinator {
     }
 
     private static String displayPath(Path path) {
-        return path == null ? "файл уже відсутній" : path.toString();
+        return path == null ? UiText.text("ui.java.book_download_coordinator.73e081d220") : path.toString();
     }
 
     private record PlannedRemoval(BookDto book, RemoveLocalBookCopyUseCase.RemovalPreview preview) { }
@@ -589,7 +598,7 @@ public class BookDownloadCoordinator {
         AtomicBoolean flag = active.get(book.getId());
         if (flag == null) return false;
         flag.set(true);
-        applicationState.getStatusBar().setStatusText("⏹ Скасування завантаження…");
+        applicationState.getStatusBar().setStatusText(UiText.text("ui.java.book_download_coordinator.a0a3d60bc9"));
         return true;
     }
 
@@ -602,25 +611,18 @@ public class BookDownloadCoordinator {
         String normalized = detail.toLowerCase(java.util.Locale.ROOT);
         if (normalized.contains("sqlite_busy") || normalized.contains("database is locked")
                 || normalized.contains("database table is locked")) {
-            return "База даних тимчасово зайнята іншою операцією. "
-                    + "Програма вже виконала повторні спроби запису. Повторіть завантаження через кілька секунд.";
+            return UiText.text("ui.java.book_download_coordinator.f3e9f924e2")
+                    + UiText.text("ui.java.book_download_coordinator.625e661c57");
         }
         if (normalized.contains("preparedstatementcallback") || normalized.contains("uncategorized sqlexception")) {
-            return "Не вдалося зберегти результат завантаження в базі даних. "
-                    + "Файл не буде позначено як успішно завантажений. Перегляньте журнал помилок.";
+            return UiText.text("ui.java.book_download_coordinator.2b2525927d")
+                    + UiText.text("ui.java.book_download_coordinator.44b16f26d7");
         }
-        return detail.isBlank() ? "Невідома помилка завантаження" : detail;
+        return UiExceptionSupport.message(error);
     }
 
     private static String compactError(Throwable error) {
-        if (error == null) return "";
-        Throwable current = error;
-        String best = current.getMessage();
-        while (current.getCause() != null && current.getCause() != current) {
-            current = current.getCause();
-            if (current.getMessage() != null && !current.getMessage().isBlank()) best = current.getMessage();
-        }
-        return best == null ? current.getClass().getSimpleName() : best;
+        return error == null ? "" : UiExceptionSupport.technicalMessage(error);
     }
 
     private Throwable unwrap(Throwable error) {

@@ -12,7 +12,8 @@ public record AnnotationUndoToken(
         String note,
         Set<String> tags,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        String collectionId
 ) {
     public AnnotationUndoToken {
         if (id == null || id.isBlank()) throw new IllegalArgumentException("id is required");
@@ -24,5 +25,13 @@ public record AnnotationUndoToken(
         tags = tags == null ? Set.of() : Set.copyOf(tags);
         if (createdAt == null) throw new IllegalArgumentException("createdAt is required");
         if (updatedAt == null) updatedAt = createdAt;
+        collectionId = collectionId == null ? "" : collectionId.trim();
+    }
+
+    /** Compatibility constructor for legacy/in-memory callers without collection binding. */
+    public AnnotationUndoToken(String id, AnnotationManagerType type, AnnotationAnchorData anchor,
+                               String color, String note, Set<String> tags,
+                               Instant createdAt, Instant updatedAt) {
+        this(id, type, anchor, color, note, tags, createdAt, updatedAt, "");
     }
 }

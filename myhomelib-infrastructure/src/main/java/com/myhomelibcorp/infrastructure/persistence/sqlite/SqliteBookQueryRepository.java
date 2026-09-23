@@ -422,7 +422,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
                 snapshots.add(BookSnapshot.builder()
                         .id(BookId.fromString(row.id()))
                         .title(row.title())
-                        .authorsText(author == null || author.text().isBlank() ? "Невідомий Автор" : author.text())
+                        .authorsText(author == null ? "" : author.text())
                         .authorIds(author == null ? "" : author.ids())
                         .series(row.series())
                         .genresText(genre == null ? "" : genre.text())
@@ -488,6 +488,7 @@ public class SqliteBookQueryRepository implements BookQueryRepository {
             String bookId = rs.getString("book_id");
             if (!pageIds.contains(bookId)) return;
             String fullName = joinName(rs.getString("last_name"), rs.getString("first_name"), rs.getString("middle_name"));
+            if (Book.isLegacyUnknownAuthorPlaceholder(fullName)) return;
             result.computeIfAbsent(bookId, ignored -> new RelatedText(", ", " "))
                     .add(fullName, rs.getString("id"));
         }, firstId, lastId);

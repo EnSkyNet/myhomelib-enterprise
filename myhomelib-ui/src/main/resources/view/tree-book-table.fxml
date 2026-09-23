@@ -8,22 +8,22 @@
       fx:controller="com.myhomelibcorp.ui.table.TreeBookTableController"
       spacing="5" style="-fx-padding: 10;">
 
-    <Label text="📚 Ієрархічний перегляд поточної сторінки" style="-fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 0 0 5 0;"/>
+    <Label text="ui.fxml.tree_book_table.hierarchical_view_of_the_current_page" style="-fx-font-size: 14px; -fx-font-weight: bold; -fx-padding: 0 0 5 0;"/>
 
     <!-- Панель інструментів -->
     <ToolBar style="-fx-background-color: -mhl-panel; -fx-padding: 2;">
-        <Button text="☑ Вибрати всі" onAction="#selectAll" style="-fx-font-size: 11px;">
-            <tooltip><Tooltip text="Вибрати всі книги в дереві"/></tooltip>
+        <Button text="ui.fxml.tree_book_table.select_all" onAction="#selectAll" style="-fx-font-size: 11px;">
+            <tooltip><Tooltip text="ui.fxml.tree_book_table.select_all_books_in_the_tree"/></tooltip>
         </Button>
-        <Button text="☐ Зняти вибір" onAction="#deselectAll" style="-fx-font-size: 11px;">
-            <tooltip><Tooltip text="Зняти вибір з усіх книг"/></tooltip>
+        <Button text="ui.fxml.tree_book_table.clear_selection" onAction="#deselectAll" style="-fx-font-size: 11px;">
+            <tooltip><Tooltip text="ui.fxml.tree_book_table.clear_selection_from_all_books"/></tooltip>
         </Button>
         <Separator orientation="VERTICAL"/>
-        <Button text="📤 Експортувати вибрані" onAction="#exportSelected" style="-fx-font-size: 11px; -fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;">
-            <tooltip><Tooltip text="Експортувати вибрані книги"/></tooltip>
+        <Button text="ui.fxml.tree_book_table.export_selected" onAction="#exportSelected" style="-fx-font-size: 11px; -fx-background-color: -mhl-success; -fx-text-fill: -mhl-on-accent;">
+            <tooltip><Tooltip text="ui.fxml.tree_book_table.export_selected_books"/></tooltip>
         </Button>
-        <Button text="📖 Позначити прочитаними" onAction="#markSelectedAsRead" style="-fx-font-size: 11px; -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;">
-            <tooltip><Tooltip text="Позначити вибрані книги як прочитані"/></tooltip>
+        <Button text="ui.fxml.tree_book_table.mark_as_read" onAction="#markSelectedAsRead" style="-fx-font-size: 11px; -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent;">
+            <tooltip><Tooltip text="ui.fxml.tree_book_table.mark_selected_books_as_read"/></tooltip>
         </Button>
     </ToolBar>
 
@@ -31,14 +31,14 @@
         <columns>
             <!-- ВАЖЛИВО: колонка з чекбоксами додається в коді ПЕРШОЮ -->
             <!-- Інші колонки -->
-            <TreeTableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
-            <TreeTableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
-            <TreeTableColumn fx:id="seriesColumn" text="Серія" prefWidth="120"/>
-            <TreeTableColumn fx:id="genresColumn" text="Жанри" prefWidth="100"/>
-            <TreeTableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
-            <TreeTableColumn fx:id="rateColumn" text="Оцінка" prefWidth="80"/>
-            <TreeTableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
-            <TreeTableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>
+            <TreeTableColumn fx:id="titleColumn" text="ui.fxml.tree_book_table.title" prefWidth="250"/>
+            <TreeTableColumn fx:id="authorColumn" text="ui.fxml.tree_book_table.author" prefWidth="150"/>
+            <TreeTableColumn fx:id="seriesColumn" text="ui.fxml.tree_book_table.series" prefWidth="120"/>
+            <TreeTableColumn fx:id="genresColumn" text="ui.fxml.tree_book_table.genres" prefWidth="100"/>
+            <TreeTableColumn fx:id="fileSizeColumn" text="ui.fxml.tree_book_table.size" prefWidth="90"/>
+            <TreeTableColumn fx:id="rateColumn" text="ui.fxml.tree_book_table.rating" prefWidth="80"/>
+            <TreeTableColumn fx:id="progressColumn" text="ui.fxml.tree_book_table.progress" prefWidth="80"/>
+            <TreeTableColumn fx:id="dateColumn" text="ui.fxml.tree_book_table.added" prefWidth="100"/>
         </columns>
     </TreeTableView>
 </VBox>

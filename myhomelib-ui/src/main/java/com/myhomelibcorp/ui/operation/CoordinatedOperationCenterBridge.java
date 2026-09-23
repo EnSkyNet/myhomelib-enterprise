@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.operation;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.operation.LibraryOperationCompletion;
 import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
 import com.myhomelibcorp.application.operation.LibraryOperationOutcome;
@@ -9,6 +11,7 @@ import com.myhomelibcorp.ui.viewmodel.ApplicationState;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.EnumMap;
@@ -22,6 +25,7 @@ import java.util.Map;
  */
 @Component
 @RequiredArgsConstructor
+@Slf4j
 public final class CoordinatedOperationCenterBridge {
     private final LibraryOperationCoordinator coordinator;
     private final OperationCenterService operationCenter;
@@ -75,13 +79,18 @@ public final class CoordinatedOperationCenterBridge {
         synchronized (lock) {
             String operationId = syntheticOperations.remove(completion.operation());
             if (operationId == null) return;
-            String detail = completion.detail() == null ? "" : completion.detail().trim();
+            String technicalDetail = completion.detail() == null ? "" : completion.detail().trim();
+            if (!technicalDetail.isBlank()) {
+                log.info("Library operation {} completed with technical detail: {}", completion.operation(), technicalDetail);
+            }
             if (completion.outcome() == LibraryOperationOutcome.FAILED) {
-                operationCenter.fail(operationId, detail);
+                String message = UiText.text("common.error.operation_failed");
+                if (!technicalDetail.isBlank()) message += " " + UiText.text("common.error.details_in_log");
+                operationCenter.fail(operationId, message);
             } else if (completion.outcome() == LibraryOperationOutcome.CANCELLED) {
-                operationCenter.cancel(operationId, detail.isBlank() ? "Операцію скасовано" : detail);
+                operationCenter.cancel(operationId, UiText.text("ui.java.coordinated_operation_center_bridge.bd689af101"));
             } else {
-                operationCenter.complete(operationId, detail.isBlank() ? "Операцію завершено" : detail);
+                operationCenter.complete(operationId, UiText.text("ui.java.coordinated_operation_center_bridge.c59651b8e4"));
             }
         }
     }
@@ -112,10 +121,10 @@ public final class CoordinatedOperationCenterBridge {
 
     private static String title(LibraryOperationType operation) {
         return switch (operation) {
-            case INDEX -> "Оновлення пошукового індексу";
-            case SWITCH -> "Перемикання колекції";
-            case SYNC -> "Синхронізація колекції";
-            default -> "Фонова операція";
+            case INDEX -> UiText.text("ui.import.stage.updating_index");
+            case SWITCH -> UiText.text("ui.java.coordinated_operation_center_bridge.09a47bc6a4");
+            case SYNC -> UiText.text("ui.java.coordinated_operation_center_bridge.ac68b1fc8a");
+            default -> UiText.text("ui.operation.background.title");
         };
     }
 }

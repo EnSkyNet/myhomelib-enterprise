@@ -31,6 +31,12 @@
             <version>${javafx.version}</version>
         </dependency>
 
+        <!-- EPUB ZIP parsing via already-open NOFOLLOW channels -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-compress</artifactId>
+        </dependency>
+
         <!-- Internal PDF Reader renderer backend -->
         <dependency>
             <groupId>org.apache.pdfbox</groupId>

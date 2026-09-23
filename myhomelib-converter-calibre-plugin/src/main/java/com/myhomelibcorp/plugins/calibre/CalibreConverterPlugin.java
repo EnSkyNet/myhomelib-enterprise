@@ -3,6 +3,7 @@ package com.myhomelibcorp.plugins.calibre;
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
 import com.myhomelibcorp.application.conversion.BookConversionContext;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.plugin.api.BookConverter;
 import com.myhomelibcorp.plugin.api.PluginApiRange;
 import com.myhomelibcorp.plugin.api.PluginApiVersion;
@@ -15,7 +16,6 @@ import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.time.Duration;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -24,6 +24,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import java.nio.file.LinkOption;
 import java.util.function.BooleanSupplier;
 
 /** Installable plugin bridge to calibre's separately installed ebook-convert executable. */
@@ -33,7 +34,7 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
     @Override
     public PluginManifest manifest() {
         return new PluginManifest(
-                "converter.calibre", "Calibre — конвертація книг", "1.0.0",
+                "converter.calibre", "Calibre", "1.0.0",
                 new PluginApiRange(new PluginApiVersion(1, 4), new PluginApiVersion(1, 99)),
                 Set.of(PluginService.BOOK_CONVERTER), Set.of(),
                 Set.of(PluginPermission.FILESYSTEM_READ, PluginPermission.FILESYSTEM_WRITE,
@@ -49,7 +50,7 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
         private static final Set<String> SOURCES = Set.of(
                 "azw", "azw3", "azw4", "cbz", "cbr", "cb7", "cbc", "chm", "djvu", "docx",
                 "epub", "fb2", "fb2_zip", "fbz", "html", "htm", "htmlz", "kepub", "lit", "lrf",
-                "mobi", "odt", "pdf", "prc", "pdb", "pml", "rb", "rtf", "snb", "tcr", "txt", "txtz");
+                "mobi", "odt", "pdf", "prc", "pdb", "pml", "pmlz", "rb", "rtf", "snb", "tcr", "txt", "txtz");
         private static final List<Target> TARGETS = List.of(
                 new Target("azw3", ".azw3"), new Target("epub", ".epub"), new Target("docx", ".docx"),
                 new Target("fb2", ".fb2"), new Target("htmlz", ".htmlz"), new Target("kepub", ".kepub"),
@@ -65,6 +66,7 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
         private static final int MAX_FAILURE_TEXT = 2_000;
 
         @Override public String id() { return "plugin:calibre-cli"; }
+        @Override public int priority() { return 100; }
         @Override public boolean isAvailable() { return executable().isPresent(); }
         @Override public boolean supports(Book book) { return SOURCES.contains(sourceFormat(book)); }
         @Override public boolean supports(Book book, String sourceFormat) {
@@ -82,17 +84,17 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
 
         @Override
         public void convert(BookConversionContext context) throws Exception {
-            run(context.sourceFormat(), context.sourceStream(), context.targetFormat(), context.targetFile(), context.cancelled());
+            run(context.sourceFormat(), context.sourceStream(), context.targetFormat(), context.targetFile(), context.cancelled(), context.maxOutputBytes());
         }
 
         @Override
         public void convert(Book book, InputStream sourceStream, Path targetFile) throws Exception {
             String target = extensionFormat(targetFile);
-            run(sourceFormat(book), sourceStream, target, targetFile, () -> false);
+            run(sourceFormat(book), sourceStream, target, targetFile, () -> false, Long.MAX_VALUE);
         }
 
         private void run(String sourceFormat, InputStream input, String targetFormat, Path targetFile,
-                         BooleanSupplier cancelled) throws Exception {
+                         BooleanSupplier cancelled, long maxOutputBytes) throws Exception {
             Path exe = executable().orElseThrow(() -> new IllegalStateException(
                     "calibre ebook-convert не знайдено. Встановіть calibre або додайте ebook-convert до PATH."));
             String source = BookConversionCapability.normalizeFormat(sourceFormat);
@@ -101,16 +103,17 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
             if (TARGETS.stream().noneMatch(value -> value.format().equals(target))) {
                 throw new IllegalArgumentException("Непідтримуваний формат результату: " + target);
             }
+            if (maxOutputBytes <= 0) throw new IllegalArgumentException("maxOutputBytes must be positive");
             if (cancelled.getAsBoolean()) throw new java.util.concurrent.CancellationException("Конвертацію скасовано");
 
-            Path work = Files.createTempDirectory("mhl-calibre-plugin-");
+            Path tempRoot = Path.of(System.getProperty("java.io.tmpdir"));
+            Path work = SafeFilePublication.createPrivateWorkspace(tempRoot, "mhl-calibre-plugin-", "Calibre plugin workspace");
             Path sourceFile = work.resolve("source" + sourceExtension(source));
-            Path out = targetFile.toAbsolutePath().normalize();
+            Path processOutput = work.resolve("output" + TARGETS.stream()
+                    .filter(value -> value.format().equals(target)).findFirst().orElseThrow().extension());
             try {
-                Files.copy(input, sourceFile, StandardCopyOption.REPLACE_EXISTING);
-                Files.createDirectories(out.getParent());
-                Files.deleteIfExists(out);
-                Process process = new ProcessBuilder(exe.toString(), sourceFile.toString(), out.toString())
+                SafeFilePublication.copyFresh(input, sourceFile, "Calibre plugin staged input");
+                Process process = new ProcessBuilder(exe.toString(), sourceFile.toString(), processOutput.toString())
                         .directory(work.toFile()).redirectErrorStream(true).start();
                 ByteArrayOutputStream captured = new ByteArrayOutputStream();
                 Thread reader = Thread.ofVirtual().start(() -> {
@@ -126,34 +129,76 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
                         }
                     } catch (Exception ignored) { }
                 });
-                Duration timeout = configuredTimeout();
-                long deadline = System.nanoTime() + timeout.toNanos();
-                while (process.isAlive()) {
-                    if (cancelled.getAsBoolean()) {
-                        process.destroyForcibly();
-                        throw new java.util.concurrent.CancellationException("Конвертацію скасовано");
+                try {
+                    Duration timeout = configuredTimeout();
+                    long deadline = System.nanoTime() + timeout.toNanos();
+                    while (process.isAlive()) {
+                        if (cancelled.getAsBoolean()) {
+                            terminateProcessTree(process);
+                            throw new java.util.concurrent.CancellationException("Конвертацію скасовано");
+                        }
+                        SafeFilePublication.requireSafeDirectoryPath(work, "Calibre plugin workspace monitor");
+                        if (Files.exists(processOutput, LinkOption.NOFOLLOW_LINKS)) {
+                            SafeFilePublication.requireSafeRegularFile(processOutput, "Calibre plugin monitored output");
+                            if (Files.size(processOutput) > maxOutputBytes) {
+                                terminateProcessTree(process);
+                                throw new IllegalStateException("calibre output exceeded limit " + maxOutputBytes + " bytes");
+                            }
+                        }
+                        if (System.nanoTime() > deadline) {
+                            terminateProcessTree(process);
+                            throw new IllegalStateException("calibre перевищив ліміт часу " + timeout.toSeconds() + " с");
+                        }
+                        process.waitFor(100, TimeUnit.MILLISECONDS);
                     }
-                    if (System.nanoTime() > deadline) {
-                        process.destroyForcibly();
-                        throw new IllegalStateException("calibre перевищив ліміт часу " + timeout.toSeconds() + " с");
+                    reader.join(1000);
+                    if (process.exitValue() != 0) {
+                        String text = captured.toString(java.nio.charset.StandardCharsets.UTF_8);
+                        if (text.length() > MAX_FAILURE_TEXT) text = text.substring(0, MAX_FAILURE_TEXT);
+                        throw new IllegalStateException("calibre завершився з кодом " + process.exitValue()
+                                + (text.isBlank() ? "" : ": " + text.strip()));
                     }
-                    process.waitFor(100, TimeUnit.MILLISECONDS);
-                }
-                reader.join(1000);
-                if (process.exitValue() != 0) {
-                    String text = captured.toString(java.nio.charset.StandardCharsets.UTF_8);
-                    if (text.length() > MAX_FAILURE_TEXT) text = text.substring(0, MAX_FAILURE_TEXT);
-                    throw new IllegalStateException("calibre завершився з кодом " + process.exitValue()
-                            + (text.isBlank() ? "" : ": " + text.strip()));
-                }
-                if (!Files.isRegularFile(out) || Files.size(out) <= 0) {
-                    throw new IllegalStateException("calibre не створив коректний файл результату");
+                    SafeFilePublication.requireSafeRegularFile(processOutput, "Calibre plugin output");
+                    long outputBytes = Files.size(processOutput);
+                    if (outputBytes <= 0) throw new IllegalStateException("calibre не створив коректний файл результату");
+                    if (outputBytes > maxOutputBytes) {
+                        throw new IllegalStateException("calibre output exceeded limit " + maxOutputBytes + " bytes");
+                    }
+                    SafeFilePublication.moveNoReplace(processOutput, targetFile, "Calibre plugin publication");
+                } catch (InterruptedException interrupted) {
+                    terminateProcessTree(process);
+                    Thread.currentThread().interrupt();
+                    throw interrupted;
+                } finally {
+                    if (process.isAlive()) terminateProcessTree(process);
                 }
             } finally {
-                try (var paths = Files.walk(work)) {
-                    paths.sorted(java.util.Comparator.reverseOrder()).forEach(path -> { try { Files.deleteIfExists(path); } catch (Exception ignored) { } });
-                }
+                SafeFilePublication.cleanupPrivateWorkspace(work);
             }
+        }
+
+        private static void terminateProcessTree(Process process) {
+            if (process == null) return;
+            java.util.List<ProcessHandle> descendants;
+            try { descendants = process.toHandle().descendants().toList(); }
+            catch (RuntimeException ignored) { descendants = java.util.List.of(); }
+            descendants.forEach(child -> {
+                try { child.destroy(); } catch (RuntimeException ignored) { }
+            });
+            try { process.destroy(); } catch (RuntimeException ignored) { }
+            boolean interrupted = false;
+            try { process.waitFor(300, TimeUnit.MILLISECONDS); }
+            catch (InterruptedException ignored) { interrupted = true; }
+            descendants.forEach(child -> {
+                if (child.isAlive()) try { child.destroyForcibly(); } catch (RuntimeException ignored) { }
+            });
+            if (process.isAlive()) try { process.destroyForcibly(); } catch (RuntimeException ignored) { }
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
+            while (process.isAlive() && System.nanoTime() < deadline) {
+                try { process.waitFor(50, TimeUnit.MILLISECONDS); }
+                catch (InterruptedException e) { interrupted = true; }
+            }
+            if (interrupted) Thread.currentThread().interrupt();
         }
 
         private static Optional<Path> executable() {
@@ -223,7 +268,7 @@ public final class CalibreConverterPlugin implements PluginEntrypoint {
         }
 
         private static boolean validExecutable(Path path) {
-            return Files.isRegularFile(path) && (isWindows() || Files.isExecutable(path));
+            return Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS) && (isWindows() || Files.isExecutable(path));
         }
 
         private static boolean isWindows() {

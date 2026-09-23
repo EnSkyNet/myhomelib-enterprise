@@ -37,4 +37,14 @@ reader_body=workspace.split('public void showNewReaderWorkspace(BookId bookId)',
 assert 'ensureLocalForOpen(bookId)' in reader_body, 'Reader must use the single asynchronous guarded BookId entry point'
 assert 'loadBookByIdUseCase' not in reader_body, 'Reader entry must not duplicate a synchronous DB load on the FX thread'
 
+
+update_ui=(ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/CollectionUpdateUiService.java').read_text()
+assert 'settings.getBoolean("online.autoUpdateOnStartup", false)' in update_ui, 'online catalog update must be opt-in so first startup cannot silently create a multi-GB recovery checkpoint'
+settings_dialog=(ROOT/'myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java').read_text()
+assert '"online.autoUpdateOnStartup"' in settings_dialog and 'ui.settings.online.auto_update_on_startup' in settings_dialog, 'startup online-update option must be visible and localized'
+backup_adapter=(ROOT/'myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/adapter/CollectionBackupAdapter.java').read_text()
+recovery_body=backup_adapter.split('public void createRecoveryCheckpoint',1)[1].split('private void createSnapshot',1)[0]
+assert 'createSnapshot(collection, targetFile, false)' in recovery_body, 'recovery checkpoint must use the fast validation path'
+assert 'validateRecoveryCheckpoint(staged)' in backup_adapter, 'fast recovery checkpoint validation missing'
+
 print('startup-nonblocking-check: PASS')

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.collection;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.config.DataSourceConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -10,6 +11,8 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import javax.sql.DataSource;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.sql.SQLException;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -65,7 +68,13 @@ public class CollectionManager {
 
             // Спочатку повністю відкриваємо і перевіряємо нову БД. Стару колекцію
             // не закриваємо, доки не впевнимося, що переключення можливе.
-            Path path = CollectionDatabasePathResolver.resolve(collection);
+            Path path = CollectionDatabasePathResolver.resolve(collection).toAbsolutePath().normalize();
+
+            // SQLite opens paths by name, so reject symlink/junction/reparse components before any
+            // recovery or Hikari work. For an existing database the leaf itself must also be a
+            // normal regular file. Re-check after recovery because recovery is allowed to replace
+            // the database atomically.
+            validateDatabasePathBeforeOpen(path);
 
             // Crash recovery must happen before Hikari opens the target SQLite file. On Windows an
             // open datasource would prevent the atomic file swaps used by recovery. A same-DB
@@ -73,18 +82,14 @@ public class CollectionManager {
             Collection currentBeforeSwitch = currentCollection.get();
             boolean sameDatabaseAlreadyOpen = currentBeforeSwitch != null
                     && CollectionDatabasePathResolver.resolve(currentBeforeSwitch).toAbsolutePath().normalize()
-                    .equals(path.toAbsolutePath().normalize())
+                    .equals(path)
                     && currentHikariDataSource.get() != null;
             if (!sameDatabaseAlreadyOpen) {
                 startupRecoveryService.recoverBeforeOpen(collection);
+                validateDatabasePathBeforeOpen(path);
             }
 
-            // Створюємо директорію, якщо її немає
-            if (path.toAbsolutePath().getParent() != null) {
-                java.nio.file.Files.createDirectories(path.toAbsolutePath().getParent());
-            }
-
-            candidate = dataSourceConfig.createDataSourceForPath(path.toAbsolutePath().toString());
+            candidate = dataSourceConfig.createDataSourceForPath(path.toString());
 
             // Перевіряємо з'єднання
             try (var conn = candidate.getConnection()) {
@@ -95,6 +100,10 @@ public class CollectionManager {
             } catch (SQLException e) {
                 throw new RuntimeException("Помилка підключення до БД: " + e.getMessage(), e);
             }
+            // JDBC/Hikari must open SQLite by pathname. Revalidate the complete chain after the
+            // successful open and before publishing the candidate DataSource so a path replaced by
+            // a symlink/reparse entry during the check->open window fails closed.
+            validateDatabasePathBeforeOpen(path);
 
             HikariDataSource previous = currentHikariDataSource.getAndSet(candidate);
             currentDataSource.set(candidate);
@@ -124,6 +133,18 @@ public class CollectionManager {
             throw new RuntimeException("Не вдалося переключити колекцію: " + e.getMessage(), e);
         } finally {
             isSwitching.set(false);
+        }
+    }
+
+
+    private static void validateDatabasePathBeforeOpen(Path path) throws java.io.IOException {
+        Path parent = path.getParent();
+        if (parent == null) {
+            throw new java.io.IOException("Collection database path has no parent directory: " + path);
+        }
+        SafeFilePublication.createDirectoriesNoLinks(parent, "collection database directory");
+        if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+            SafeFilePublication.requireSafeRegularFile(path, "collection database");
         }
     }
 

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
 import com.myhomelibcorp.application.port.out.collection.BookUserStateTransferPort;
@@ -36,14 +37,16 @@ class CopyBooksBetweenCollectionsUseCaseTest {
         Fixture f = new Fixture(tempDir);
         when(f.lifecycle.initializeCollection(f.target, false)).thenReturn(false);
         f.savedBatchSucceeds();
+        when(f.searchSync.rebuildSafelyNow()).thenReturn(true);
         when(f.searchSync.synchronizeSafelyNow(anyList())).thenReturn(true);
 
         CopyBooksBetweenCollectionsUseCase.Result result = f.useCase.execute(List.of(f.bookId), "target");
 
         org.assertj.core.api.Assertions.assertThat(result.copied()).isEqualTo(1);
         org.assertj.core.api.Assertions.assertThat(result.failed()).isZero();
-        verify(f.lifecycle).rebuildSearchIndex();
+        verify(f.searchSync).rebuildSafelyNow();
         verify(f.bookSaver).saveBatchReturningSaved(anyList(), eq(false), eq(DuplicatePolicy.SKIP), any());
+        verify(f.contentIndexScheduling).markStale("target");
         verify(f.searchSync).synchronizeSafelyNow(List.of(f.bookId));
         verify(f.userState).transferCopiedBookState(f.source, f.target, List.of(f.bookId));
         org.assertj.core.api.Assertions.assertThat(f.managedFiles()).hasSize(1);
@@ -61,6 +64,7 @@ class CopyBooksBetweenCollectionsUseCaseTest {
                 () -> f.useCase.execute(List.of(f.bookId), "target"));
 
         verify(f.userState).transferCopiedBookState(f.source, f.target, List.of(f.bookId));
+        verify(f.contentIndexScheduling).markStale("target");
         org.assertj.core.api.Assertions.assertThat(f.managedFiles()).hasSize(1);
         verify(f.lifecycle).initializeCollection(f.source, true);
     }
@@ -89,6 +93,82 @@ class CopyBooksBetweenCollectionsUseCaseTest {
     }
 
     @Test
+    void rollbackPreservesForeignReplacementInsteadOfDeletingIt() throws Exception {
+        Fixture f = new Fixture(tempDir);
+        when(f.lifecycle.initializeCollection(f.target, false)).thenReturn(true);
+        when(f.bookSaver.saveBatchReturningSaved(anyList(), eq(false), eq(DuplicatePolicy.SKIP), any()))
+                .thenAnswer(invocation -> {
+                    List<Book> batch = List.copyOf(invocation.getArgument(0));
+                    Book staged = batch.getFirst();
+                    Path published = f.targetRoot.resolve(staged.getFolder()).resolve(staged.getFileName());
+                    Files.writeString(published, "foreign replacement");
+                    throw new IllegalStateException("forced pre-commit failure");
+                });
+
+        CopyBooksBetweenCollectionsUseCase.Result result = f.useCase.execute(List.of(f.bookId), "target");
+
+        org.assertj.core.api.Assertions.assertThat(result.copied()).isZero();
+        org.assertj.core.api.Assertions.assertThat(result.failed()).isEqualTo(1);
+        org.assertj.core.api.Assertions.assertThat(f.managedFiles()).hasSize(1);
+        org.assertj.core.api.Assertions.assertThat(Files.readString(f.managedFiles().getFirst()))
+                .isEqualTo("foreign replacement");
+    }
+
+    @Test
+    void rejectsSymlinkedManagedFolderWithoutWritingOutsideWhenSupported() throws Exception {
+        Fixture f = new Fixture(tempDir);
+        Path managed = f.targetRoot.resolve(".myhomelib-copied");
+        Path outside = tempDir.resolve("outside");
+        Files.createDirectories(outside);
+        try {
+            Files.createSymbolicLink(managed, outside);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort("Symbolic links are unavailable: " + unsupported);
+        }
+
+        assertThrows(IllegalStateException.class,
+                () -> f.useCase.execute(List.of(f.bookId), "target"));
+        try (var stream = Files.list(outside)) {
+            org.assertj.core.api.Assertions.assertThat(stream.toList()).isEmpty();
+        }
+    }
+
+
+    @Test
+    void sourceReactivationFailureIsNotReportedAsSuccessfulCopy() throws Exception {
+        Fixture f = new Fixture(tempDir);
+        when(f.lifecycle.initializeCollection(f.target, false)).thenReturn(true);
+        f.savedBatchSucceeds();
+        when(f.searchSync.synchronizeSafelyNow(anyList())).thenReturn(true);
+        doThrow(new IllegalStateException("source reopen failed"))
+                .when(f.lifecycle).initializeCollection(f.source, true);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> f.useCase.execute(List.of(f.bookId), "target"));
+
+        org.assertj.core.api.Assertions.assertThat(failure.getMessage())
+                .contains("не вдалося повернутися до вихідної колекції");
+        verify(f.bookSaver).saveBatchReturningSaved(anyList(), eq(false), eq(DuplicatePolicy.SKIP), any());
+        org.assertj.core.api.Assertions.assertThat(f.managedFiles()).hasSize(1);
+    }
+
+    @Test
+    void sourceReactivationFailureIsSuppressedWhenCopyAlreadyFailed() throws Exception {
+        Fixture f = new Fixture(tempDir);
+        when(f.lifecycle.initializeCollection(f.target, false)).thenThrow(new IllegalStateException("target open failed"));
+        doThrow(new IllegalStateException("source reopen failed"))
+                .when(f.lifecycle).initializeCollection(f.source, true);
+
+        IllegalStateException failure = assertThrows(IllegalStateException.class,
+                () -> f.useCase.execute(List.of(f.bookId), "target"));
+
+        org.assertj.core.api.Assertions.assertThat(failure.getMessage()).contains("target open failed");
+        org.assertj.core.api.Assertions.assertThat(failure.getSuppressed())
+                .extracting(Throwable::getMessage)
+                .contains("source reopen failed");
+    }
+
+    @Test
     void duplicateSkipRemovesUnusedCopiedFileAndDoesNotTouchLucene() throws Exception {
         Fixture f = new Fixture(tempDir);
         when(f.lifecycle.initializeCollection(f.target, false)).thenReturn(true);
@@ -111,6 +191,7 @@ class CopyBooksBetweenCollectionsUseCaseTest {
         final BookSaver bookSaver = mock(BookSaver.class);
         final BookUserStateTransferPort userState = mock(BookUserStateTransferPort.class);
         final SearchIndexSynchronizer searchSync = mock(SearchIndexSynchronizer.class);
+        final ContentIndexAutoSchedulingService contentIndexScheduling = mock(ContentIndexAutoSchedulingService.class);
         final Collection source = mock(Collection.class);
         final Collection target = mock(Collection.class);
         final Book sourceBook = mock(Book.class);
@@ -143,7 +224,7 @@ class CopyBooksBetweenCollectionsUseCaseTest {
                     new ByteArrayInputStream("payload".getBytes(StandardCharsets.UTF_8))));
 
             useCase = new CopyBooksBetweenCollectionsUseCase(
-                    books, collections, resources, lifecycle, bookSaver, userState, searchSync);
+                    books, collections, resources, lifecycle, bookSaver, userState, searchSync, contentIndexScheduling);
         }
 
         void savedBatchSucceeds() {

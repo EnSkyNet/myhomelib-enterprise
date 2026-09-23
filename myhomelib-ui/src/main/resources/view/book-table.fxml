@@ -8,46 +8,46 @@
       spacing="5" style="-fx-padding: 10;">
 
     <HBox spacing="7" alignment="CENTER_LEFT">
-        <Button text="Фільтри…" onAction="#openGlobalFilters"/>
-        <Label fx:id="filterIndicatorLabel" text="Фільтр вимкнено"/>
+        <Button text="ui.fxml.book_table.filters" onAction="#openGlobalFilters"/>
+        <Label fx:id="filterIndicatorLabel" text="ui.fxml.book_table.filter_off"/>
         <Separator orientation="VERTICAL"/>
-        <Label text="Швидкий фільтр:"/>
+        <Label text="ui.fxml.book_table.quick_filter"/>
         <ComboBox fx:id="quickFilterColumnComboBox" prefWidth="125"/>
-        <TextField fx:id="quickFilterValueField" promptText="Введіть значення…" HBox.hgrow="ALWAYS"/>
-        <Button text="Застосувати" onAction="#applyQuickFilter"/>
-        <Button text="✕" accessibleText="Очистити швидкий фільтр" onAction="#clearQuickFilter">
+        <TextField fx:id="quickFilterValueField" promptText="ui.fxml.book_table.enter_value" HBox.hgrow="ALWAYS"/>
+        <Button text="ui.fxml.book_table.apply" onAction="#applyQuickFilter"/>
+        <Button text="ui.fxml.book_table.value" accessibleText="ui.fxml.book_table.clear_quick_filter" onAction="#clearQuickFilter">
             <tooltip>
-                <Tooltip text="Очистити швидкий фільтр"/>
+                <Tooltip text="ui.fxml.book_table.clear_quick_filter"/>
             </tooltip>
         </Button>
-        <Button text="Колонки…" onAction="#showColumnChooser"/>
-        <Button text="Скинути вигляд" onAction="#resetTableProfile"/>
+        <Button text="ui.fxml.book_table.columns" onAction="#showColumnChooser"/>
+        <Button text="ui.fxml.book_table.reset_view" onAction="#resetTableProfile"/>
     </HBox>
 
     <TableView fx:id="bookTableView" VBox.vgrow="ALWAYS">
         <columns>
-            <TableColumn fx:id="titleColumn" text="Назва" prefWidth="250"/>
-            <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
-            <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
-            <TableColumn fx:id="genresColumn" text="Жанри" prefWidth="100"/>
-            <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
-            <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="80"/>
-            <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+            <TableColumn fx:id="titleColumn" text="ui.fxml.book_table.title" prefWidth="250"/>
+            <TableColumn fx:id="authorColumn" text="ui.fxml.book_table.author" prefWidth="150"/>
+            <TableColumn fx:id="seriesColumn" text="ui.fxml.book_table.series" prefWidth="100"/>
+            <TableColumn fx:id="genresColumn" text="ui.fxml.book_table.genres" prefWidth="100"/>
+            <TableColumn fx:id="fileSizeColumn" text="ui.fxml.book_table.size" prefWidth="90"/>
+            <TableColumn fx:id="rateColumn" text="ui.fxml.book_table.rating" prefWidth="80"/>
+            <TableColumn fx:id="progressColumn" text="ui.fxml.book_table.progress" prefWidth="80"/>
             <TableColumn fx:id="activityColumn" text="ui.book.activity" prefWidth="140" sortable="false"/>
-            <TableColumn fx:id="dateColumn" text="Додано" prefWidth="100"/>
+            <TableColumn fx:id="dateColumn" text="ui.fxml.book_table.added" prefWidth="100"/>
         </columns>
     </TableView>
 
     <HBox spacing="10" alignment="CENTER_RIGHT" style="-fx-padding: 5 0 0 0;">
-        <Label text="Поточна:"/>
-        <Label fx:id="currentBookLabel" text="—"/>
+        <Label text="ui.fxml.book_table.current"/>
+        <Label fx:id="currentBookLabel" text="ui.fxml.book_table.value_925b09a"/>
         <Separator orientation="VERTICAL"/>
-        <Label fx:id="batchSelectionLabel" text="Пакетно вибрано: 0"/>
+        <Label fx:id="batchSelectionLabel" text="ui.fxml.book_table.batch_selected_0"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Label text="Розмір сторінки:"/>
+        <Label text="ui.fxml.book_table.page_size"/>
         <ComboBox fx:id="pageSizeComboBox" prefWidth="70"/>
-        <Button fx:id="prevPageButton" text="◀" accessibleText="Попередня сторінка"/>
-        <Label fx:id="pageInfoLabel" text="Сторінка 1 з 1"/>
-        <Button fx:id="nextPageButton" text="▶" accessibleText="Наступна сторінка"/>
+        <Button fx:id="prevPageButton" text="ui.fxml.book_table.value_e683eb5" accessibleText="ui.fxml.book_table.previous_page"/>
+        <Label fx:id="pageInfoLabel" text="ui.fxml.book_table.page_1_of_1"/>
+        <Button fx:id="nextPageButton" text="ui.fxml.book_table.value_60280e6" accessibleText="ui.fxml.book_table.next_page"/>
     </HBox>
 </VBox>

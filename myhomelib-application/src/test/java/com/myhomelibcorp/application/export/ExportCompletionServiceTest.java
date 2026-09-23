@@ -32,6 +32,19 @@ class ExportCompletionServiceTest {
     }
 
     @Test
+    void ownedCompletionRejectsBytesDifferentFromPublishedFingerprint() throws Exception {
+        Path file = temp.resolve("owned.fb2");
+        Files.writeString(file, "book", StandardCharsets.UTF_8);
+        String expected = com.myhomelibcorp.application.util.SafeFilePublication.sha256(file, "expected");
+        Files.writeString(file, "foreign", StandardCharsets.UTF_8);
+
+        assertThatThrownBy(() -> service.complete(
+                file, ExportRequest.CompletionPolicy.VERIFY_READABLE, expected))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("changed");
+    }
+
+    @Test
     void ejectSafePolicyFailsClosedWhenCommittedFileIsMissing() {
         Path missing = temp.resolve("missing.fb2");
         assertThatThrownBy(() -> service.complete(missing, ExportRequest.CompletionPolicy.EJECT_SAFE))

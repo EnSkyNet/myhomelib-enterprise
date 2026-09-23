@@ -1,11 +1,15 @@
 package com.myhomelibcorp.ui.duplicate;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.duplicate.ExactDuplicateGroup;
 import com.myhomelibcorp.application.duplicate.ExactDuplicateScanResult;
 import com.myhomelibcorp.application.duplicate.merge.BookMergePlan;
 import com.myhomelibcorp.application.duplicate.merge.BookMergeResult;
 import com.myhomelibcorp.application.progress.OperationProgress;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.duplicate.ExactDuplicateScanner;
 import com.myhomelibcorp.application.usecase.duplicate.MergeBooksUseCase;
@@ -34,6 +38,7 @@ import java.text.NumberFormat;
 import java.util.List;
 import java.util.Optional;
 import java.util.Locale;
+import java.util.Objects;
 
 /** Production UI for exact/fuzzy duplicate review plus explicit undoable logical-book merge. */
 @Component
@@ -51,11 +56,11 @@ public class DuplicateReviewUiService {
 
     public void show(Window owner) {
         if (appState.getCurrentLibraryCollection() == null) {
-            dialogs.showWarning("Дублікати", "Спочатку виберіть колекцію.");
+            dialogs.showWarning(UiText.text("ui.fxml.integrity_check.duplicates"), UiText.text("ui.java.duplicate_review_ui_service.6686ed3c16"));
             return;
         }
         Stage stage = new Stage();
-        stage.setTitle("Дублікати книг і файлів");
+        stage.setTitle(UiText.text("ui.java.duplicate_review_ui_service.6945022608"));
         stage.initModality(Modality.NONE);
         if (owner != null) stage.initOwner(owner);
 
@@ -75,26 +80,26 @@ public class DuplicateReviewUiService {
         sourceMeta.setWrapText(true);
         Label sourceArtifacts = new Label();
         sourceArtifacts.setWrapText(true);
-        Label status = new Label("Пошук схожих книг лише пропонує кандидатів. Злиття можливе тільки після окремого ручного підтвердження; файли на диску не видаляються.");
+        Label status = new Label(UiText.text("ui.java.duplicate_review_ui_service.d50b4eef7e"));
         status.setWrapText(true);
 
         TableView<DuplicateReviewRow> table = new TableView<>();
         table.setColumnResizePolicy(TableView.CONSTRAINED_RESIZE_POLICY_FLEX_LAST_COLUMN);
-        table.getColumns().add(column("Кандидат", DuplicateReviewRow::candidateTitle, 230));
-        table.getColumns().add(column("Автор", DuplicateReviewRow::candidateAuthors, 180));
-        table.getColumns().add(column("Рік", DuplicateReviewRow::candidateYear, 70));
+        table.getColumns().add(column(UiText.text("ui.java.duplicate_review_ui_service.0e4e1b8481"), DuplicateReviewRow::candidateTitle, 230));
+        table.getColumns().add(column(UiText.text("ui.annotations.digest_author"), DuplicateReviewRow::candidateAuthors, 180));
+        table.getColumns().add(column(UiText.text("ui.bulkedit.field.year"), DuplicateReviewRow::candidateYear, 70));
         table.getColumns().add(column("ISBN", DuplicateReviewRow::candidateIsbn, 130));
-        table.getColumns().add(column("Оцінка схожості", DuplicateReviewRow::score, 85));
-        table.getColumns().add(column("Причини", DuplicateReviewRow::reasons, 260));
-        table.getColumns().add(column("Файли / стан", DuplicateReviewRow::artifacts, 300));
-        table.setPlaceholder(new Label("Немає пропозицій для перегляду."));
+        table.getColumns().add(column(UiText.text("ui.java.duplicate_review_ui_service.bdc610b581"), DuplicateReviewRow::score, 85));
+        table.getColumns().add(column(UiText.text("ui.java.duplicate_review_ui_service.4a02475f1f"), DuplicateReviewRow::reasons, 260));
+        table.getColumns().add(column(UiText.text("ui.java.duplicate_review_ui_service.125e608d8f"), DuplicateReviewRow::artifacts, 300));
+        table.setPlaceholder(new Label(UiText.text("ui.java.duplicate_review_ui_service.a6f9844596")));
 
         ProgressIndicator loading = new ProgressIndicator();
         loading.setPrefSize(24, 24);
         loading.setVisible(false);
-        Button refresh = new Button("Перевірити вибрану книгу");
-        Button merge = new Button("Переглянути та злити…");
-        Button undo = new Button("Скасувати останнє злиття");
+        Button refresh = new Button(UiText.text("ui.java.duplicate_review_ui_service.d569fabe33"));
+        Button merge = new Button(UiText.text("ui.java.duplicate_review_ui_service.83d808d6ef"));
+        Button undo = new Button(UiText.text("ui.java.duplicate_review_ui_service.1c48a78d03"));
         merge.setDisable(true);
         table.getSelectionModel().selectedItemProperty().addListener((obs, old, row) -> merge.setDisable(row == null));
         HBox actions = new HBox(10, refresh, merge, undo, loading);
@@ -106,22 +111,23 @@ public class DuplicateReviewUiService {
         Platform.runLater(load);
 
         VBox content = new VBox(8,
-                new Label("Вихідна книга:"), sourceTitle, sourceMeta,
-                new Label("Файли вихідної книги:"), sourceArtifacts,
+                new Label(UiText.text("ui.java.duplicate_review_ui_service.0e7c32d612")), sourceTitle, sourceMeta,
+                new Label(UiText.text("ui.java.duplicate_review_ui_service.8347524e08")), sourceArtifacts,
                 new Separator(), actions, status, table);
         content.setPadding(new Insets(12));
         VBox.setVgrow(table, Priority.ALWAYS);
-        Tab tab = new Tab("Схожі книги", content);
+        Tab tab = new Tab(UiText.text("ui.java.duplicate_review_ui_service.358bf8ee1f"), content);
         tab.setClosable(false);
         return tab;
     }
 
     private void loadFuzzy(Label sourceTitle, Label sourceMeta, Label sourceArtifacts, Label status,
                            TableView<DuplicateReviewRow> table, Button refresh, ProgressIndicator loading) {
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         BookDto selected = appState.getBookDetails().getCurrentBook();
         if (selected == null || selected.getId() == null || selected.getId().isBlank()) {
-            sourceTitle.setText("Книгу не вибрано");
-            sourceMeta.setText("Виберіть книгу в бібліотеці та натисніть «Перевірити вибрану книгу».");
+            sourceTitle.setText(UiText.text("ui.java.duplicate_review_ui_service.1215889a21"));
+            sourceMeta.setText(UiText.text("ui.java.duplicate_review_ui_service.f56e10ef19"));
             sourceArtifacts.setText("—");
             table.setItems(FXCollections.observableArrayList());
             return;
@@ -129,17 +135,19 @@ public class DuplicateReviewUiService {
         sourceTitle.setText(selected.getTitle());
         sourceMeta.setText(selected.getAuthorsText() == null ? "" : selected.getAuthorsText());
         sourceArtifacts.setText(presenter.artifacts(selected));
-        status.setText("Пошук кандидатів у заданих межах… Автоматичного злиття немає.");
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.4ddbf5342d"));
         refresh.setDisable(true);
         loading.setVisible(true);
 
-        background.submit(() -> fuzzyReview.review(BookId.fromString(selected.getId()), ReviewBookDuplicatesUseCase.DEFAULT_LIMIT))
+        background.submitCollectionScoped(LibraryOperationType.QUERY,
+                () -> fuzzyReview.review(BookId.fromString(selected.getId()), ReviewBookDuplicatesUseCase.DEFAULT_LIMIT))
                 .whenComplete((suggestions, error) -> UiExecutor.runOnUiThread(() -> {
                     refresh.setDisable(false);
                     loading.setVisible(false);
+                    if (!isCurrentCollection(expectedCollectionId)) return;
                     if (error != null) {
                         Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                        status.setText("Не вдалося перевірити схожі книги: " + cause.getMessage());
+                        status.setText(UiText.text("ui.java.duplicate_review_ui_service.1f3a7d510c") + UiExceptionSupport.message(cause));
                         return;
                     }
                     var presentation = presenter.present(suggestions, selected);
@@ -148,57 +156,61 @@ public class DuplicateReviewUiService {
                     sourceArtifacts.setText(presentation.sourceArtifacts());
                     table.setItems(FXCollections.observableArrayList(presentation.rows()));
                     status.setText(presentation.rows().isEmpty()
-                            ? "Схожих книг вище порогу не знайдено."
-                            : "Знайдено пропозицій: " + presentation.rows().size()
-                            + ". Перевірте оцінку схожості, причини й файли; злиття потребує окремого підтвердження.");
+                            ? UiText.text("ui.java.duplicate_review_ui_service.e24097d3a7")
+                            : UiText.text("ui.java.duplicate_review_ui_service.99a6c0fe1d") + presentation.rows().size()
+                            + UiText.text("ui.java.duplicate_review_ui_service.ff70ac70a1"));
                 }));
     }
 
 
     private void reviewAndMerge(DuplicateReviewRow row, Label status, Runnable reload) {
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
         BookDto source = appState.getBookDetails().getCurrentBook();
         if (source == null || row == null || row.candidateId() == null || row.candidateId().isBlank()) return;
         if (exactScanner.isRunning()) {
-            dialogs.showWarning("Злиття книг", "Спочатку завершіть або скасуйте сканування SHA-256. Злиття змінює належність файлів.");
+            dialogs.showWarning(UiText.text("ui.java.duplicate_review_ui_service.5b56aa66a8"), UiText.text("ui.java.duplicate_review_ui_service.b3adfac1df"));
             return;
         }
-        status.setText("Завантаження обох книг для порівняння поруч…");
-        background.submit(() -> loadBook.execute(BookId.fromString(row.candidateId())))
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.36fc43e6f4"));
+        background.submitCollectionScoped(LibraryOperationType.QUERY,
+                () -> loadBook.execute(BookId.fromString(row.candidateId())))
                 .whenComplete((candidate, error) -> UiExecutor.runOnUiThread(() -> {
+                    if (!isCurrentCollection(expectedCollectionId)) return;
                     if (error != null) {
-                        status.setText("Не вдалося завантажити кандидата: " + UiExceptionSupport.unwrapAsync(error).getMessage());
+                        status.setText(UiText.text("ui.java.duplicate_review_ui_service.0c21524590") + UiExceptionSupport.message(error));
                         return;
                     }
                     if (candidate == null || candidate.isEmpty()) {
-                        status.setText("Кандидат уже недоступний. Оновіть список.");
+                        status.setText(UiText.text("ui.java.duplicate_review_ui_service.6edc922d63"));
                         reload.run();
                         return;
                     }
-                    confirmMerge(source, candidate.get()).ifPresent(plan -> executeMerge(plan, status, reload));
+                    confirmMerge(source, candidate.get()).ifPresent(plan -> executeMerge(plan, expectedCollectionId, status, reload));
                 }));
     }
 
     private Optional<BookMergePlan> confirmMerge(BookDto source, BookDto candidate) {
         Dialog<BookMergePlan> dialog = new Dialog<>();
-        dialog.setTitle("Підтвердження злиття книг");
-        dialog.setHeaderText("Порівняйте книги поруч. Це логічне злиття бази даних; фізичні файли не видаляються.");
-        ButtonType mergeType = new ButtonType("Злити без видалення файлів", ButtonBar.ButtonData.OK_DONE);
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(UiText.text("ui.java.duplicate_review_ui_service.dd186f5e83"));
+        dialog.setHeaderText(UiText.text("ui.java.duplicate_review_ui_service.6c2bf2de38"));
+        ButtonType mergeType = new ButtonType(UiText.text("ui.java.duplicate_review_ui_service.8dbcd06a67"), ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(mergeType, ButtonType.CANCEL);
 
         GridPane comparison = new GridPane();
         comparison.setHgap(16);
         comparison.setVgap(7);
-        comparison.addRow(0, new Label(""), strong("Поточна книга"), strong("Кандидат"));
-        comparison.addRow(1, new Label("Назва"), wrap(source.getTitle()), wrap(candidate.getTitle()));
-        comparison.addRow(2, new Label("Автор"), wrap(source.getAuthorsText()), wrap(candidate.getAuthorsText()));
-        comparison.addRow(3, new Label("Рік"), wrap(value(source.getYear())), wrap(value(candidate.getYear())));
-        comparison.addRow(4, new Label("ISBN"), wrap(value(source.getIsbn())), wrap(value(candidate.getIsbn())));
-        comparison.addRow(5, new Label("Файли"), wrap(presenter.artifacts(source)), wrap(presenter.artifacts(candidate)));
-        comparison.addRow(6, new Label("Оцінка / прогрес"), wrap(source.getRate() + " / " + source.getProgress() + "%"),
+        comparison.addRow(0, new Label(""), strong(UiText.text("ui.java.duplicate_review_ui_service.a671efaced")), strong(UiText.text("ui.java.duplicate_review_ui_service.0e4e1b8481")));
+        comparison.addRow(1, new Label(UiText.text("ui.bulkedit.field.title")), wrap(source.getTitle()), wrap(candidate.getTitle()));
+        comparison.addRow(2, new Label(UiText.text("ui.annotations.digest_author")), wrap(source.getAuthorsText()), wrap(candidate.getAuthorsText()));
+        comparison.addRow(3, new Label(UiText.text("ui.bulkedit.field.year")), wrap(value(source.getYear())), wrap(value(candidate.getYear())));
+        comparison.addRow(4, new Label(UiText.text("ui.common.isbn")), wrap(value(source.getIsbn())), wrap(value(candidate.getIsbn())));
+        comparison.addRow(5, new Label(UiText.text("ui.details.section.files")), wrap(presenter.artifacts(source)), wrap(presenter.artifacts(candidate)));
+        comparison.addRow(6, new Label(UiText.text("ui.java.duplicate_review_ui_service.976c268acb")), wrap(source.getRate() + " / " + source.getProgress() + "%"),
                 wrap(candidate.getRate() + " / " + candidate.getProgress() + "%"));
 
-        BookChoice sourceChoice = new BookChoice(source.getId(), "Поточна: " + source.getTitle());
-        BookChoice candidateChoice = new BookChoice(candidate.getId(), "Кандидат: " + candidate.getTitle());
+        BookChoice sourceChoice = new BookChoice(source.getId(), UiText.text("ui.java.duplicate_review_ui_service.c36b2d0853") + source.getTitle());
+        BookChoice candidateChoice = new BookChoice(candidate.getId(), UiText.text("ui.java.duplicate_review_ui_service.4b0bc3f904") + candidate.getTitle());
         ComboBox<BookChoice> survivor = new ComboBox<>(FXCollections.observableArrayList(sourceChoice, candidateChoice));
         survivor.getSelectionModel().select(sourceChoice);
         ComboBox<BookChoice> metadata = new ComboBox<>(FXCollections.observableArrayList(sourceChoice, candidateChoice));
@@ -206,11 +218,11 @@ public class DuplicateReviewUiService {
         survivor.setMaxWidth(Double.MAX_VALUE);
         metadata.setMaxWidth(Double.MAX_VALUE);
 
-        Label policy = new Label("Збереження користувацьких даних: автори, жанри, групи та ключові слова об’єднуються; закладки й файли переходять до книги, що залишається; стан читання об’єднується за визначеними правилами. Можливість скасування злиття зберігається в базі даних.");
+        Label policy = new Label(UiText.text("ui.java.duplicate_review_ui_service.bd0b1d289c"));
         policy.setWrapText(true);
         VBox content = new VBox(12, comparison,
-                new Label("Яку книгу залишити:"), survivor,
-                new Label("З якої книги взяти бібліографічні поля:"), metadata,
+                new Label(UiText.text("ui.java.duplicate_review_ui_service.e32e4deb13")), survivor,
+                new Label(UiText.text("ui.java.duplicate_review_ui_service.4dd90eb9a9")), metadata,
                 policy);
         content.setPrefWidth(780);
         dialog.getDialogPane().setContent(content);
@@ -222,21 +234,24 @@ public class DuplicateReviewUiService {
         return dialog.showAndWait();
     }
 
-    private void executeMerge(BookMergePlan plan, Label status, Runnable reload) {
-        status.setText("Транзакційне злиття…");
-        background.submit(() -> {
+    private void executeMerge(BookMergePlan plan, String expectedCollectionId, Label status, Runnable reload) {
+        if (!isCurrentCollection(expectedCollectionId)) return;
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.bb7cd21e20"));
+        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+            requireCurrentCollection(expectedCollectionId);
             BookMergeResult result = mergeBooks.merge(plan);
             BookDto survivor = loadBook.execute(result.survivorBookId()).orElse(null);
             return new MergeUiResult(result, survivor);
         }).whenComplete((value, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
-                status.setText("Злиття відхилено або не виконано: " + UiExceptionSupport.unwrapAsync(error).getMessage());
+                status.setText(UiText.text("ui.java.duplicate_review_ui_service.1eac627fb3") + UiExceptionSupport.message(error));
                 return;
             }
             if (value.survivor() != null) appState.getBookDetails().setCurrentBook(value.survivor());
-            status.setText("Злиття виконано. ID злиття: " + value.result().mergeId()
-                    + (value.result().searchIndexSynchronized() ? ". Пошуковий індекс синхронізовано."
-                    : ". Зміни в базі даних збережено, але пошуковий індекс потребує перебудови."));
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.f7ee989cc7") + value.result().mergeId()
+                    + (value.result().searchIndexSynchronized() ? UiText.text("ui.java.duplicate_review_ui_service.f163fed16a")
+                    : UiText.text("ui.java.duplicate_review_ui_service.e12ccbbe50")));
             reload.run();
         }));
     }
@@ -244,32 +259,46 @@ public class DuplicateReviewUiService {
     private void undoLatest(Label status, Runnable reload) {
         BookDto selected = appState.getBookDetails().getCurrentBook();
         if (selected == null || selected.getId() == null || selected.getId().isBlank()) {
-            dialogs.showWarning("Скасування злиття", "Виберіть книгу, для якої потрібно знайти останнє злиття.");
+            dialogs.showWarning(UiText.text("ui.java.duplicate_review_ui_service.136fa4aa18"), UiText.text("ui.java.duplicate_review_ui_service.160fa2aae4"));
             return;
         }
         if (exactScanner.isRunning()) {
-            dialogs.showWarning("Скасування злиття", "Спочатку завершіть або скасуйте сканування SHA-256.");
+            dialogs.showWarning(UiText.text("ui.java.duplicate_review_ui_service.136fa4aa18"), UiText.text("ui.java.duplicate_review_ui_service.a257177e71"));
             return;
         }
         String selectedId = selected.getId();
-        status.setText("Пошук останнього активного запису про злиття…");
-        background.submit(() -> {
+        String expectedCollectionId = appState.getCurrentLibraryCollectionId();
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.ab9a18a7bc"));
+        background.submitCollectionScoped(LibraryOperationType.EDIT, () -> {
+            requireCurrentCollection(expectedCollectionId);
             var journal = mergeBooks.latestActiveMerge(BookId.fromString(selectedId))
-                    .orElseThrow(() -> new IllegalStateException("Активного злиття для вибраної книги немає"));
+                    .orElseThrow(() -> new IllegalStateException(UiText.text("ui.java.duplicate_review_ui_service.bf9967bb74")));
             BookMergeResult result = mergeBooks.undo(journal.mergeId());
             BookDto restored = loadBook.execute(BookId.fromString(selectedId)).orElse(null);
             return new MergeUiResult(result, restored);
         }).whenComplete((value, error) -> UiExecutor.runOnUiThread(() -> {
+            if (!isCurrentCollection(expectedCollectionId)) return;
             if (error != null) {
-                status.setText("Скасування злиття не виконано: " + UiExceptionSupport.unwrapAsync(error).getMessage());
+                status.setText(UiText.text("ui.java.duplicate_review_ui_service.22c2b1d205") + UiExceptionSupport.message(error));
                 return;
             }
             if (value.survivor() != null) appState.getBookDetails().setCurrentBook(value.survivor());
-            status.setText("Злиття скасовано: " + value.result().mergeId()
-                    + (value.result().searchIndexSynchronized() ? ". Пошуковий індекс синхронізовано."
-                    : ". Базу даних відновлено, але пошуковий індекс потребує перебудови."));
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.4e38f4437a") + value.result().mergeId()
+                    + (value.result().searchIndexSynchronized() ? UiText.text("ui.java.duplicate_review_ui_service.f163fed16a")
+                    : UiText.text("ui.java.duplicate_review_ui_service.dd32f90203")));
             reload.run();
         }));
+    }
+
+    private boolean isCurrentCollection(String expectedCollectionId) {
+        return expectedCollectionId != null
+                && Objects.equals(expectedCollectionId, appState.getCurrentLibraryCollectionId());
+    }
+
+    private void requireCurrentCollection(String expectedCollectionId) {
+        if (!isCurrentCollection(expectedCollectionId)) {
+            throw new IllegalStateException("Активна колекція змінилася до виконання операції з дублікатами");
+        }
     }
 
     private static Label strong(String value) {
@@ -296,7 +325,7 @@ public class DuplicateReviewUiService {
     private record MergeUiResult(BookMergeResult result, BookDto survivor) {}
 
     private Tab exactTab() {
-        Label status = new Label("Сканування SHA-256 порівнює повний вміст локальних файлів.");
+        Label status = new Label(UiText.text("ui.java.duplicate_review_ui_service.3d148c2262"));
         status.setWrapText(true);
         ProgressBar progress = new ProgressBar(0);
         progress.setMaxWidth(Double.MAX_VALUE);
@@ -304,25 +333,25 @@ public class DuplicateReviewUiService {
         TextArea results = new TextArea();
         results.setEditable(false);
         results.setWrapText(false);
-        results.setPromptText("Тут з’являться групи файлів, повністю однакових за вмістом.");
+        results.setPromptText(UiText.text("ui.java.duplicate_review_ui_service.629f8d87f7"));
 
-        Button start = new Button("Запустити / продовжити сканування");
-        Button cancel = new Button("Скасувати");
+        Button start = new Button(UiText.text("ui.java.duplicate_review_ui_service.2f67bac666"));
+        Button cancel = new Button(UiText.text("ui.fxml.import_workspace.cancel"));
         cancel.setDisable(!exactScanner.isRunning());
         start.setDisable(exactScanner.isRunning());
 
         start.setOnAction(event -> startExactScan(start, cancel, status, counters, progress, results));
         cancel.setOnAction(event -> {
             exactScanner.cancel();
-            status.setText("Запит на скасування надіслано. Знімок стану буде збережено для продовження.");
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.9fb560a72a"));
         });
 
         VBox content = new VBox(10,
                 new HBox(10, start, cancel), status, progress, counters,
-                new Label("Групи точних дублікатів:"), results);
+                new Label(UiText.text("ui.java.duplicate_review_ui_service.91b5be80ba")), results);
         content.setPadding(new Insets(12));
         VBox.setVgrow(results, Priority.ALWAYS);
-        Tab tab = new Tab("Точні файли (SHA-256)", content);
+        Tab tab = new Tab(UiText.text("ui.java.duplicate_review_ui_service.e818fee43c"), content);
         tab.setClosable(false);
         return tab;
     }
@@ -331,18 +360,18 @@ public class DuplicateReviewUiService {
                                 ProgressBar progress, TextArea results) {
         var collection = appState.getCurrentLibraryCollection();
         if (collection == null) {
-            dialogs.showWarning("Дублікати", "Спочатку виберіть колекцію.");
+            dialogs.showWarning(UiText.text("ui.fxml.integrity_check.duplicates"), UiText.text("ui.java.duplicate_review_ui_service.6686ed3c16"));
             return;
         }
         start.setDisable(true);
         cancel.setDisable(false);
         results.clear();
-        status.setText("Сканування локальних файлів…");
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.a809b85f6b"));
         try {
             java.util.concurrent.atomic.AtomicReference<String> operationId = new java.util.concurrent.atomic.AtomicReference<>();
             exactScanner.scanAsync(telemetry -> {
                         operationId.set(telemetry.operationId());
-                        operationCenter.accept("Пошук точних дублікатів", collection.getId(), telemetry);
+                        operationCenter.accept(UiText.text("ui.java.duplicate_review_ui_service.7bac3520ec"), collection.getId(), telemetry);
                         UiExecutor.runOnUiThread(() -> applyProgress(telemetry, status, counters, progress));
                     })
                     .whenComplete((result, error) -> {
@@ -356,16 +385,17 @@ public class DuplicateReviewUiService {
                                     .filter(entry -> id.equals(entry.operationId()) && entry.active())
                                     .findFirst()
                                     .ifPresent(entry -> {
-                                        if (result.cancelled()) operationCenter.cancel(id, "Пошук дублікатів скасовано");
-                                        else operationCenter.complete(id, "Груп знайдено: " + result.groups().size());
+                                        if (result.cancelled()) operationCenter.cancel(id, UiText.text("ui.java.duplicate_review_ui_service.2553d725bc"));
+                                        else operationCenter.complete(id, UiText.text("ui.java.duplicate_review_ui_service.7f710ec992") + result.groups().size());
                                     });
                         }
                         UiExecutor.runOnUiThread(() -> {
                             start.setDisable(false);
                             cancel.setDisable(true);
+                            if (!isCurrentCollection(collection.getId())) return;
                             if (error != null) {
                                 Throwable cause = UiExceptionSupport.unwrapAsync(error);
-                                status.setText("Помилка сканування: " + cause.getMessage());
+                                status.setText(UiText.text("ui.java.duplicate_review_ui_service.13820cb274") + UiExceptionSupport.message(cause));
                                 return;
                             }
                             renderExactResult(result, status, counters, progress, results);
@@ -374,7 +404,7 @@ public class DuplicateReviewUiService {
         } catch (RuntimeException error) {
             start.setDisable(false);
             cancel.setDisable(true);
-            status.setText("Не вдалося запустити сканування: " + error.getMessage());
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.0fd8afea33") + UiExceptionSupport.message(error));
         }
     }
 
@@ -384,37 +414,37 @@ public class DuplicateReviewUiService {
         progress.setProgress(total <= 0 ? ProgressIndicator.INDETERMINATE_PROGRESS : value.fraction());
         counters.setText(NumberFormat.getIntegerInstance(Locale.getDefault()).format(processed)
                 + " / " + NumberFormat.getIntegerInstance(Locale.getDefault()).format(total));
-        status.setText("Стан: " + operationStageText(value.stage()) + (value.currentItem().isBlank() ? "" : " · " + value.currentItem()));
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.384f693f20") + operationStageText(value.stage()) + (value.currentItem().isBlank() ? "" : " · " + value.currentItem()));
     }
 
     private static String operationStageText(com.myhomelibcorp.application.progress.OperationStage stage) {
         if (stage == null) return "—";
         return switch (stage) {
-            case CHECKING_SERVER -> "Перевірка";
-            case DOWNLOADING -> "Завантаження";
-            case CREATING_CHECKPOINT -> "Створення точки відновлення";
-            case VALIDATING -> "Перевірка даних";
-            case READING_CATALOG -> "Читання каталогу";
-            case IMPORTING -> "Імпорт";
-            case UPDATING_AUTHORS -> "Оновлення авторів";
-            case APPLYING_DELETIONS -> "Обробка видалень";
-            case UPDATING_SEARCH_INDEX -> "Оновлення пошукового індексу";
-            case ROLLING_BACK -> "Відновлення попереднього стану";
-            case REFRESHING_STATISTICS -> "Оновлення статистики";
-            case INTEGRITY_CHECKS -> "Перевірка цілісності";
-            case SCANNING_DUPLICATES -> "Пошук дублікатів";
-            case SYNCHRONIZING_FILES -> "Синхронізація файлів";
-            case OPTIMIZING_DATABASE -> "Оптимізація бази даних";
-            case BACKING_UP -> "Резервне копіювання";
-            case RESTORING -> "Відновлення";
-            case CREATING_COLLECTION -> "Створення колекції";
-            case DELETING_COLLECTION -> "Видалення колекції";
-            case FINALIZING -> "Завершення";
-            case BOOK_DOWNLOAD -> "Завантаження книги";
-            case CONVERTING -> "Конвертація";
-            case COMPLETED -> "Завершено";
-            case CANCELLED -> "Скасовано";
-            case FAILED -> "Помилка";
+            case CHECKING_SERVER -> UiText.text("ui.java.duplicate_review_ui_service.d5cb0c3a91");
+            case DOWNLOADING -> UiText.text("ui.import.stage.downloading");
+            case CREATING_CHECKPOINT -> UiText.text("ui.import.stage.creating_checkpoint");
+            case VALIDATING -> UiText.text("ui.import.stage.validating");
+            case READING_CATALOG -> UiText.text("ui.import.stage.reading_catalog");
+            case IMPORTING -> UiText.text("ui.import.action.generic");
+            case UPDATING_AUTHORS -> UiText.text("ui.import.stage.updating_authors");
+            case APPLYING_DELETIONS -> UiText.text("ui.import.stage.applying_deletions");
+            case UPDATING_SEARCH_INDEX -> UiText.text("ui.import.stage.updating_index");
+            case ROLLING_BACK -> UiText.text("ui.java.duplicate_review_ui_service.d0f715afcd");
+            case REFRESHING_STATISTICS -> UiText.text("ui.java.duplicate_review_ui_service.7c96a35ead");
+            case INTEGRITY_CHECKS -> UiText.text("ui.import.stage.integrity_checks");
+            case SCANNING_DUPLICATES -> UiText.text("ui.import.stage.scanning_duplicates");
+            case SYNCHRONIZING_FILES -> UiText.text("ui.import.stage.synchronizing_files");
+            case OPTIMIZING_DATABASE -> UiText.text("ui.java.duplicate_review_ui_service.bd69af2a4d");
+            case BACKING_UP -> UiText.text("ui.backup.confirm.start.title");
+            case RESTORING -> UiText.text("ui.import.stage.restoring");
+            case CREATING_COLLECTION -> UiText.text("ui.import.stage.creating_collection");
+            case DELETING_COLLECTION -> UiText.text("ui.import.stage.deleting_collection");
+            case FINALIZING -> UiText.text("ui.fxml.operation_center_workspace.finalizing");
+            case BOOK_DOWNLOAD -> UiText.text("ui.import.stage.book_download");
+            case CONVERTING -> UiText.text("ui.import.stage.converting");
+            case COMPLETED -> UiText.text("ui.import.stage.completed");
+            case CANCELLED -> UiText.text("ui.import.stage.cancelled");
+            case FAILED -> UiText.text("common.error");
         };
     }
 
@@ -424,17 +454,17 @@ public class DuplicateReviewUiService {
         progress.setProgress(result.total() == 0 ? 1.0 : Math.min(1.0, (double) result.processed() / result.total()));
         counters.setText(result.processed() + " / " + result.total());
         if (result.cancelled()) {
-            status.setText("Сканування призупинено. Оброблено " + result.processed() + " з " + result.total()
-                    + "; наступний запуск продовжить зі знімка " + result.scanId() + ".");
+            status.setText(UiText.text("ui.java.duplicate_review_ui_service.69c903c2bb") + result.processed() + UiText.text("ui.java.duplicate_review_ui_service.5a37634d69") + result.total()
+                    + UiText.text("ui.java.duplicate_review_ui_service.d5600fa21d") + result.scanId() + ".");
             return;
         }
-        status.setText("Сканування завершено: груп " + result.groups().size() + ", файлів-дублікатів "
-                + result.duplicateArtifacts() + ", пропущено " + result.skipped() + ".");
+        status.setText(UiText.text("ui.java.duplicate_review_ui_service.13c279bfac") + result.groups().size() + UiText.text("ui.java.duplicate_review_ui_service.d2f0a5e078")
+                + result.duplicateArtifacts() + UiText.text("ui.java.duplicate_review_ui_service.e9c2512251") + result.skipped() + ".");
         results.setText(formatExactGroups(result.groups()));
     }
 
     static String formatExactGroups(List<ExactDuplicateGroup> groups) {
-        if (groups == null || groups.isEmpty()) return "Файлів, повністю однакових за вмістом, не знайдено.";
+        if (groups == null || groups.isEmpty()) return UiText.text("ui.java.duplicate_review_ui_service.994406e058");
         StringBuilder out = new StringBuilder();
         int index = 1;
         for (ExactDuplicateGroup group : groups) {
@@ -442,7 +472,7 @@ public class DuplicateReviewUiService {
             group.artifacts().forEach(artifact -> out.append("  • ")
                     .append(artifact.title()).append(" — ")
                     .append(artifact.format().toUpperCase(Locale.ROOT)).append(" — ")
-                    .append(artifact.file().getFileName()).append(" (книга ")
+                    .append(artifact.file().getFileName()).append(UiText.text("ui.java.duplicate_review_ui_service.f470563a9e"))
                     .append(artifact.bookId().asString()).append(")\n"));
             out.append('\n');
         }

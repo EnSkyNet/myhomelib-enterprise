@@ -9,6 +9,7 @@ import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.application.usecase.imports.ImportFileUseCase;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Files;
@@ -30,6 +31,46 @@ class CreateCollectionUseCaseRollbackTest {
         CreateCollectionRequest request = request(temp.resolve("missing.inpx"));
 
         assertThrows(IllegalArgumentException.class, () -> f.useCase.execute(request));
+
+        verifyNoInteractions(f.repository);
+    }
+
+
+    @Test
+    void symbolicLinkDatabaseIsRejectedBeforeMetadataIsCreated() throws Exception {
+        Fixture f = new Fixture();
+        Path target = Files.writeString(temp.resolve("real.db"), "not-a-database");
+        Path link = temp.resolve("linked.db");
+        try {
+            Files.createSymbolicLink(link, target.getFileName());
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException unavailable) {
+            Assumptions.abort("Symbolic links are unavailable: " + unavailable.getMessage());
+        }
+        CreateCollectionRequest request = CreateCollectionRequest.builder()
+                .name("Unsafe")
+                .dbFile(link)
+                .importOnCreate(false)
+                .build();
+
+        assertThrows(IllegalArgumentException.class, () -> f.useCase.execute(request));
+
+        verifyNoInteractions(f.repository);
+    }
+
+    @Test
+    void sourceReachedThroughSymlinkedParentIsRejectedBeforeMetadataIsCreated() throws Exception {
+        Fixture f = new Fixture();
+        Path outside = Files.createDirectories(temp.resolve("outside-source"));
+        Files.writeString(outside.resolve("source.inpx"), "test");
+        Path alias = temp.resolve("source-alias");
+        try {
+            Files.createSymbolicLink(alias, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException unavailable) {
+            Assumptions.abort("Symbolic links are unavailable: " + unavailable.getMessage());
+        }
+
+        assertThrows(IllegalArgumentException.class,
+                () -> f.useCase.execute(request(alias.resolve("source.inpx"))));
 
         verifyNoInteractions(f.repository);
     }

@@ -26,7 +26,7 @@ prefs=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/ac
 profile=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/action/BookActionProfileService.java',
     'bookActions.order','legacy-post-command','export.postCommand','replaceAll','findByPrefix')
 execs=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/action/BookActionExecutionService.java',
-    'new ProcessBuilder(argv)','waitFor(','redirectOutput','redirectError')
+    'new ProcessBuilder(argv)','waitFor(','redirectOutput','redirectError','ProcessExecutionSupport.terminate')
 if 'cmd.exe' in execs or '"sh"' in execs or "'sh'" in execs:
     errors.append('BookActionExecutionService must not invoke a shell')
 usecase=need('myhomelib-application/src/main/java/com/myhomelibcorp/application/usecase/book/RunBookActionUseCase.java',
@@ -53,7 +53,9 @@ try:
         (src/'com/myhomelibcorp/application/util').mkdir(parents=True)
         (src/'com/myhomelibcorp/application/action').mkdir(parents=True)
         (src/'org/springframework/stereotype').mkdir(parents=True)
+        (src/'com/myhomelibcorp/shared/util').mkdir(parents=True)
         shutil.copy(ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/util/CommandTemplate.java', src/'com/myhomelibcorp/application/util/CommandTemplate.java')
+        shutil.copy(ROOT/'myhomelib-shared/src/main/java/com/myhomelibcorp/shared/util/ProcessExecutionSupport.java', src/'com/myhomelibcorp/shared/util/ProcessExecutionSupport.java')
         for name in ['BookActionCommand.java','BookActionProfile.java','BookActionPreview.java','BookActionRunResult.java','BookActionExecutionService.java']:
             shutil.copy(ROOT/'myhomelib-application/src/main/java/com/myhomelibcorp/application/action'/name, src/'com/myhomelibcorp/application/action'/name)
         (src/'org/springframework/stereotype/Component.java').write_text('package org.springframework.stereotype; public @interface Component {}',encoding='utf-8')
@@ -83,6 +85,6 @@ print('STAGE 14+15 ACTIONS CHECK: PASS')
 print(' - centralized ActionRegistry + persisted shortcut/visibility state: PASS')
 print(' - conflict/syntax validation + no hardcoded MainController key filter: PASS')
 print(' - named ordered book-action profiles + legacy post-command migration: PASS')
-print(' - ProcessBuilder/no-shell execution + exact argv preview: PASS')
+print(' - ProcessBuilder/no-shell execution + process-tree termination + exact argv preview: PASS')
 print(' - quote/space/Windows+UNC command-template round-trip: PASS')
 print(' - context-menu binding + archive-aware RunBookActionUseCase: PASS')

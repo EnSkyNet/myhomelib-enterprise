@@ -19,11 +19,11 @@ def require(label, rel, needles=(), forbidden=()):
 try:
     require("book workspace group semantics",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/book/BookWorkspaceController.java",
-            ["AddBookToGroupUseCase", '"Додати до групи"', '"Група:"', "classicLibraryActionsService.editBook"],
+            ["AddBookToGroupUseCase", 'ui.fxml.book_workspace.add_to_group', 'ui.java.book_workspace_controller.483dbb9035', "classicLibraryActionsService.editBook"],
             ["currentBook.setTitle(newTitle)", '"Додати до колекції"'])
     require("book workspace labels",
             "myhomelib-ui/src/main/resources/view/book-workspace.fxml",
-            ["Додати до групи", "Читати у MyHomeLib", "Відкрити у зовнішній програмі", "Видалити запис із каталогу"],
+            ['text="ui.fxml.book_workspace.add_to_group"', 'text="ui.fxml.book_workspace.read_in_myhomelib"', 'text="ui.fxml.book_workspace.open_in_external_application"', 'text="ui.fxml.book_workspace.delete_record_from_catalog"'],
             [">Відкрити</Button>", ">Читати</Button>"])
     require("folder resolution",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/DefaultNavigationService.java",
@@ -52,10 +52,10 @@ try:
             ["vm.setSelectedBook(vms.get(0))"])
     require("row and batch selection are explicit in UI",
             "myhomelib-ui/src/main/resources/view/book-table.fxml",
-            ["Поточна:", "currentBookLabel", "Пакетно вибрано: 0", "batchSelectionLabel"], [])
+            ['text="ui.fxml.book_table.current"', "currentBookLabel", 'text="ui.fxml.book_table.batch_selected_0"', "batchSelectionLabel"], [])
     require("row and batch selection counters stay live",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/table/BookTableController.java",
-            ["installSelectionStatusTracking", "selectedCountProperty", "Пакетно вибрано: "], [])
+            ["installSelectionStatusTracking", "selectedCountProperty", "ui.java.book_table_controller.491bcebf87"], [])
     require("password preserve on decrypt failure",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/CollectionPropertiesUiService.java",
             ["passwordReadable[0] = false", "pass.setDisable(true)", "c.getPassword()"],
@@ -81,10 +81,10 @@ try:
             ["RemovalPreview", "preview(BookDto book)", "affectedBooks"], [])
     require("shared archive confirmation and batch removal",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/BookDownloadCoordinator.java",
-            ["confirmSingleRemoval", "У ньому каталогізовано книг", "removeLocalCopies(List<BookId>", "confirmBatchRemoval"], [])
+            ["confirmSingleRemoval", "ui.java.book_download_coordinator.6ad8ec352c", "removeLocalCopies(List<BookId>", "confirmBatchRemoval"], [])
     require("batch delete/remove semantics",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/BatchOperationsController.java",
-            ["handleBatchRemoveLocal", "handleBatchDelete", "Файли на диску НЕ видаляються"], [])
+            ["handleBatchRemoveLocal", "handleBatchDelete", "ui.java.batch_operations_controller.eb95ca1047"], [])
     require("main command batch fallbacks",
             "myhomelib-ui/src/main/java/com/myhomelibcorp/ui/controller/MainController.java",
             ["handleBatchDelete", "handleBatchRemoveLocal"], [])

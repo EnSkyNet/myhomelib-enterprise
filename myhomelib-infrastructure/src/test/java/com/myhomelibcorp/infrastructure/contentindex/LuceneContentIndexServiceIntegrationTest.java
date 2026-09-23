@@ -147,6 +147,51 @@ class LuceneContentIndexServiceIntegrationTest {
         assertThat(service.health("c1").documentCount()).isEqualTo(1);
     }
 
+
+    @Test
+    void symlinkedIndexDirectoryIsRejectedWithoutWritingExternalDirectory() throws Exception {
+        Path contentRoot = Files.createDirectories(temp.resolve("content-index"));
+        Path outside = Files.createDirectories(temp.resolve("outside-index"));
+        Path sentinel = outside.resolve("sentinel.txt");
+        Files.writeString(sentinel, "KEEP");
+        Path linked = contentRoot.resolve("c1");
+        try {
+            Files.createSymbolicLink(linked, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+        LuceneContentIndexService service = service();
+
+        assertThatThrownBy(() -> service.replaceArtifact("c1",
+                entry("book-1", "artifact-1", "One", "must-not-be-written")))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(Files.readString(sentinel)).isEqualTo("KEEP");
+        try (var files = Files.list(outside)) {
+            assertThat(files.map(path -> path.getFileName().toString()).toList()).containsExactly("sentinel.txt");
+        }
+    }
+
+    @Test
+    void rebuildRejectsSymlinkedActiveIndexWithoutReplacingIt() throws Exception {
+        Path contentRoot = Files.createDirectories(temp.resolve("content-index"));
+        Path outside = Files.createDirectories(temp.resolve("outside-rebuild"));
+        Path sentinel = outside.resolve("sentinel.txt");
+        Files.writeString(sentinel, "KEEP");
+        Path linked = contentRoot.resolve("c1");
+        try {
+            Files.createSymbolicLink(linked, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+        LuceneContentIndexService service = service();
+
+        assertThatThrownBy(() -> service.rebuild("c1",
+                List.of(entry("book-1", "artifact-1", "One", "must-not-be-written"))))
+                .isInstanceOf(IllegalStateException.class);
+        assertThat(Files.isSymbolicLink(linked)).isTrue();
+        assertThat(Files.readString(sentinel)).isEqualTo("KEEP");
+    }
+
     private LuceneContentIndexService service() {
         return new LuceneContentIndexService(id -> temp.resolve("content-index").resolve(id));
     }

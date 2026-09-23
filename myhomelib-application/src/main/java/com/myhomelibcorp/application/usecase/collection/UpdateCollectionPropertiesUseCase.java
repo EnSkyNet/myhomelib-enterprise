@@ -1,19 +1,34 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.collection.CollectionType;
 import com.myhomelibcorp.application.catalog.collectioninfo.CollectionPropertiesTrustPolicy;
 import com.myhomelibcorp.application.catalog.collectioninfo.CollectionSourceProperties;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 
 import java.nio.file.Path;
 
-@RequiredArgsConstructor
 public class UpdateCollectionPropertiesUseCase {
     private final CollectionRepository repository;
     private final CollectionLifecyclePort lifecyclePort;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for isolated tests/non-Spring embedding. */
+    public UpdateCollectionPropertiesUseCase(CollectionRepository repository, CollectionLifecyclePort lifecyclePort) {
+        this(repository, lifecyclePort, null);
+    }
+
+    @Autowired
+    public UpdateCollectionPropertiesUseCase(CollectionRepository repository, CollectionLifecyclePort lifecyclePort,
+                                             LibraryOperationCoordinator operationCoordinator) {
+        this.repository = repository;
+        this.lifecyclePort = lifecyclePort;
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public Collection execute(Collection current, String name, Path rootFolder, int type,
                               String user, String password, String url, String notes) {
@@ -24,6 +39,25 @@ public class UpdateCollectionPropertiesUseCase {
     public Collection execute(Collection current, String name, Path rootFolder, int type,
                               String user, String password, String url, String notes,
                               String connectionScript) {
+        if (operationCoordinator == null) {
+            return executeLocked(current, name, rootFolder, type, user, password, url, notes, connectionScript);
+        }
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            Collection result = executeLocked(current, name, rootFolder, type, user, password, url, notes, connectionScript);
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private Collection executeLocked(Collection current, String name, Path rootFolder, int type,
+                                     String user, String password, String url, String notes,
+                                     String connectionScript) {
         if (current == null) throw new IllegalArgumentException("Колекцію не вибрано");
         boolean validType = java.util.Arrays.stream(CollectionType.values()).anyMatch(value -> value.getCode() == type);
         if (!validType) throw new IllegalArgumentException("Невідомий тип колекції: " + type);

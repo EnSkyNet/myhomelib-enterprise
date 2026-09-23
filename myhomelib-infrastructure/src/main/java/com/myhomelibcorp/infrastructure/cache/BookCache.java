@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.cache;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
@@ -27,8 +28,9 @@ public class BookCache {
             .build();
 
     private String buildKey(BookId id) {
-        String collectionId = collectionManager.getCurrentCollection() != null
-                ? collectionManager.getCurrentCollection().getId()
+        Collection current = collectionManager.getCurrentCollection();
+        String collectionId = current != null && current.getId() != null && !current.getId().isBlank()
+                ? current.getId().trim()
                 : "default";
         return collectionId + ":" + id.asString();
     }
@@ -44,6 +46,16 @@ public class BookCache {
 
     public void evict(BookId id) {
         if (id != null) cache.invalidate(buildKey(id));
+    }
+
+    /**
+     * Evicts one logical book from every collection scope. Required for asynchronous domain
+     * events whose listener may execute after the active collection has already changed.
+     */
+    public void evictAllScopes(BookId id) {
+        if (id == null) return;
+        String suffix = ":" + id.asString();
+        cache.asMap().keySet().removeIf(key -> key != null && key.endsWith(suffix));
     }
 
     public void clear() {

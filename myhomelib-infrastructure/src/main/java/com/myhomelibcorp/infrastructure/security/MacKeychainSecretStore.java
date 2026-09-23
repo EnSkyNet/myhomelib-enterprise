@@ -1,32 +1,40 @@
 package com.myhomelibcorp.infrastructure.security;
 
+import com.myhomelibcorp.shared.security.CredentialMasterKeyManager;
 import com.myhomelibcorp.shared.security.SecretStore;
 import com.myhomelibcorp.shared.security.SecretStoreException;
 import com.sun.jna.Library;
 import com.sun.jna.Native;
 import com.sun.jna.Pointer;
+import com.sun.jna.platform.mac.CoreFoundation;
 import com.sun.jna.ptr.IntByReference;
 import com.sun.jna.ptr.PointerByReference;
-import com.sun.jna.platform.mac.CoreFoundation;
 
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
+import java.util.Objects;
 import java.util.Optional;
 
 /** macOS login Keychain adapter backed directly by Security.framework (no secret in process argv). */
 final class MacKeychainSecretStore implements SecretStore {
-    private static final byte[] SERVICE = "com.myhomelibcorp.credential-master-key-v1".getBytes(StandardCharsets.UTF_8);
+    /** Preserve the historical master-key service name so existing installations keep working. */
+    private static final String LEGACY_SERVICE = "com.myhomelibcorp.credential-master-key-v1";
+    private static final String KEYED_SERVICE_PREFIX = "com.myhomelibcorp.secret.v1.";
     private static final int ERR_SEC_SUCCESS = 0;
     private static final int ERR_SEC_ITEM_NOT_FOUND = -25300;
 
     private final byte[] account;
 
     MacKeychainSecretStore(String account) {
-        this.account = account.getBytes(StandardCharsets.UTF_8);
+        this.account = Objects.requireNonNull(account, "account").getBytes(StandardCharsets.UTF_8);
     }
 
     @Override
     public Optional<String> read(String key) {
-        FoundItem found = find();
+        byte[] service = serviceFor(key);
+        FoundItem found = find(service);
         if (found.status == ERR_SEC_ITEM_NOT_FOUND) return Optional.empty();
         ensureSuccess(found.status, "lookup");
         try {
@@ -39,12 +47,14 @@ final class MacKeychainSecretStore implements SecretStore {
 
     @Override
     public void write(String key, String secret) {
+        Objects.requireNonNull(secret, "secret");
+        byte[] service = serviceFor(key);
         byte[] bytes = secret.getBytes(StandardCharsets.UTF_8);
-        FoundItem found = find();
+        FoundItem found = find(service);
         if (found.status == ERR_SEC_ITEM_NOT_FOUND) {
             int status = SecurityApi.INSTANCE.SecKeychainAddGenericPassword(
                     null,
-                    SERVICE.length, SERVICE,
+                    service.length, service,
                     account.length, account,
                     bytes.length, bytes,
                     null);
@@ -63,7 +73,8 @@ final class MacKeychainSecretStore implements SecretStore {
 
     @Override
     public void delete(String key) {
-        FoundItem found = find();
+        byte[] service = serviceFor(key);
+        FoundItem found = find(service);
         if (found.status == ERR_SEC_ITEM_NOT_FOUND) return;
         ensureSuccess(found.status, "lookup-before-delete");
         try {
@@ -78,13 +89,13 @@ final class MacKeychainSecretStore implements SecretStore {
         return "macos-keychain-security-framework";
     }
 
-    private FoundItem find() {
+    private FoundItem find(byte[] service) {
         IntByReference length = new IntByReference();
         PointerByReference data = new PointerByReference();
         PointerByReference item = new PointerByReference();
         int status = SecurityApi.INSTANCE.SecKeychainFindGenericPassword(
                 null,
-                SERVICE.length, SERVICE,
+                service.length, service,
                 account.length, account,
                 length, data, item);
         return new FoundItem(status, length.getValue(), data.getValue(), item.getValue());
@@ -102,6 +113,25 @@ final class MacKeychainSecretStore implements SecretStore {
     private static void ensureSuccess(int status, String operation) {
         if (status != ERR_SEC_SUCCESS) {
             throw new SecretStoreException("macOS Keychain " + operation + " failed with OSStatus " + status);
+        }
+    }
+
+    /** Visible to package tests so slot isolation can be verified without loading Security.framework. */
+    static byte[] serviceFor(String key) {
+        Objects.requireNonNull(key, "key");
+        if (key.isBlank()) throw new IllegalArgumentException("Secret key must not be blank");
+        String service = CredentialMasterKeyManager.SECRET_NAME.equals(key)
+                ? LEGACY_SERVICE
+                : KEYED_SERVICE_PREFIX + sha256(key);
+        return service.getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static String sha256(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
         }
     }
 

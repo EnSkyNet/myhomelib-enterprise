@@ -3,6 +3,7 @@ package com.myhomelibcorp.reader.format.epub;
 import com.myhomelibcorp.reader.api.FileBookSource;
 import com.myhomelibcorp.reader.api.ReaderDocument;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.io.OutputStream;
@@ -105,6 +106,25 @@ class EpubParserTest {
     }
 
 
+
+    @Test
+    void acceptsIdentifierWithoutSchemeAttribute() throws Exception {
+        Path epub = temp.resolve("identifier-without-scheme.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", """
+                    <package><metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
+                    <dc:title>No Scheme</dc:title><dc:identifier>urn:uuid:12345678-1234-1234-1234-123456789012</dc:identifier>
+                    </metadata><manifest><item id="c" href="chapter.xhtml" media-type="application/xhtml+xml"/></manifest>
+                    <spine><itemref idref="c"/></spine></package>""");
+            put(zip, "OPS/chapter.xhtml", "<html><body><p>TEXT</p></body></html>");
+        }
+
+        ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
+        assertThat(doc.metadata().title()).isEqualTo("No Scheme");
+        assertThat(doc.text().getFullText()).contains("TEXT");
+    }
+
     @Test
     void readsMixedContentMetadataWithoutLeakingNonMetadataTitles() throws Exception {
         Path epub = temp.resolve("mixed-metadata.epub");
@@ -124,6 +144,46 @@ class EpubParserTest {
         ReaderDocument doc = new EpubParser().parse(new FileBookSource(epub));
         assertThat(doc.metadata().title()).isEqualTo("Reader Title");
         assertThat(doc.metadata().authors()).containsExactly("Іван Петренко");
+    }
+
+
+    @Test
+    void refusesEpubThroughSymlinkedParentDirectory() throws Exception {
+        Path real = java.nio.file.Files.createDirectories(temp.resolve("real-parent"));
+        Path epub = real.resolve("book.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(epub))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", "<package><metadata><title>Real</title></metadata><manifest><item id=\"c\" href=\"c.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>");
+            put(zip, "OPS/c.xhtml", "<html><body>REAL</body></html>");
+        }
+        Path alias = temp.resolve("linked-parent");
+        try {
+            java.nio.file.Files.createSymbolicLink(alias, real);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException unavailable) {
+            Assumptions.abort("Symbolic links are unavailable: " + unavailable.getMessage());
+        }
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new EpubParser().parse(new FileBookSource(alias.resolve("book.epub"))))
+                .isInstanceOf(java.io.IOException.class);
+    }
+
+    @Test
+    void refusesTopLevelEpubSymlinkInsteadOfBypassingBookSourceNoFollow() throws Exception {
+        Path target = temp.resolve("real.epub");
+        try (ZipOutputStream zip = new ZipOutputStream(java.nio.file.Files.newOutputStream(target))) {
+            put(zip, "META-INF/container.xml", "<container><rootfiles><rootfile full-path=\"OPS/book.opf\"/></rootfiles></container>");
+            put(zip, "OPS/book.opf", "<package><metadata><title>Real</title></metadata><manifest><item id=\"c\" href=\"c.xhtml\" media-type=\"application/xhtml+xml\"/></manifest><spine><itemref idref=\"c\"/></spine></package>");
+            put(zip, "OPS/c.xhtml", "<html><body>REAL</body></html>");
+        }
+        Path link = temp.resolve("linked.epub");
+        try {
+            java.nio.file.Files.createSymbolicLink(link, target.getFileName());
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException | SecurityException unavailable) {
+            Assumptions.abort("Symbolic links are unavailable: " + unavailable.getMessage());
+        }
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> new EpubParser().parse(new FileBookSource(link)))
+                .isInstanceOf(java.io.IOException.class);
     }
 
     private void put(ZipOutputStream zip, String name, String content) throws Exception {

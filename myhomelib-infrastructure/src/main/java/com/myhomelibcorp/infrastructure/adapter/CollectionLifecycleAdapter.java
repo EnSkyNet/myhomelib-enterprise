@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.adapter;
 
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
@@ -9,6 +10,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.dao.DataAccessException;
 
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 
 @Component
 @RequiredArgsConstructor
@@ -68,7 +73,9 @@ public class CollectionLifecycleAdapter implements CollectionLifecyclePort {
             return 0;
         }
         try {
-            return java.nio.file.Files.size(java.nio.file.Paths.get(dbPath));
+            Path safe = SafeFilePublication.requireSafeRegularFile(Path.of(dbPath), "Active collection database");
+            BasicFileAttributes attrs = Files.readAttributes(safe, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return attrs.isRegularFile() ? attrs.size() : 0L;
         } catch (IOException e) {
             log.warn("Не вдалося визначити розмір БД {}: {}", dbPath, e.getMessage());
             return 0;

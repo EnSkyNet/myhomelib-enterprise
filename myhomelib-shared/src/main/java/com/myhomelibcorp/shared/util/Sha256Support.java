@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -36,7 +37,7 @@ public final class Sha256Support {
         if (bufferBytes < 4 * 1024) throw new IllegalArgumentException("SHA-256 buffer must be at least 4 KiB");
         MessageDigest digest = newDigest();
         byte[] buffer = new byte[bufferBytes];
-        try (InputStream in = Files.newInputStream(file)) {
+        try (InputStream in = Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS)) {
             for (int n; (n = in.read(buffer)) >= 0;) {
                 if (cancelled != null && cancelled.getAsBoolean()) return Optional.empty();
                 if (n > 0) digest.update(buffer, 0, n);

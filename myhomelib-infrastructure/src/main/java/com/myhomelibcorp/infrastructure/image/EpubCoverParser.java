@@ -1,6 +1,7 @@
 package com.myhomelibcorp.infrastructure.image;
 
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayOutputStream;
@@ -13,8 +14,8 @@ import java.util.Enumeration;
 import java.util.Locale;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 @Component
 public class EpubCoverParser {
@@ -22,10 +23,11 @@ public class EpubCoverParser {
     private static final int MAX_COVER = 24 * 1024 * 1024;
 
     public byte[] parse(Path path) throws IOException {
-        try (ZipFile zip = new ZipFile(path.toFile(), StandardCharsets.UTF_8)) {
+        try (SafeZipArchive opened = SafeZipArchive.open(path, StandardCharsets.UTF_8, "EPUB cover source")) {
+            ZipFile zip = opened.zip();
             String rootFile = rootFile(zip);
             if (rootFile == null) return firstLikelyCover(zip);
-            ZipEntry opfEntry = zip.getEntry(rootFile);
+            ZipArchiveEntry opfEntry = zip.getEntry(rootFile);
             if (opfEntry == null) return firstLikelyCover(zip);
             String opf;
             try (InputStream in = zip.getInputStream(opfEntry)) {
@@ -35,7 +37,7 @@ public class EpubCoverParser {
             if (href != null) {
                 String base = rootFile.contains("/") ? rootFile.substring(0, rootFile.lastIndexOf('/') + 1) : "";
                 String resolved = normalize(base + decode(href));
-                ZipEntry cover = findEntry(zip, resolved);
+                ZipArchiveEntry cover = findEntry(zip, resolved);
                 if (cover != null && !cover.isDirectory()) {
                     try (InputStream in = zip.getInputStream(cover)) {
                         return readBounded(in, MAX_COVER);
@@ -47,7 +49,7 @@ public class EpubCoverParser {
     }
 
     private static String rootFile(ZipFile zip) throws IOException {
-        ZipEntry container = zip.getEntry("META-INF/container.xml");
+        ZipArchiveEntry container = zip.getEntry("META-INF/container.xml");
         if (container == null) return null;
         String xml;
         try (InputStream in = zip.getInputStream(container)) {
@@ -82,11 +84,11 @@ public class EpubCoverParser {
     }
 
     private static byte[] firstLikelyCover(ZipFile zip) throws IOException {
-        ZipEntry firstImage = null;
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        ZipArchiveEntry firstImage = null;
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         int count = 0;
         while (entries.hasMoreElements() && count++ < ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
-            ZipEntry entry = entries.nextElement();
+            ZipArchiveEntry entry = entries.nextElement();
             if (entry.isDirectory()) continue;
             String lower = entry.getName().toLowerCase(Locale.ROOT);
             if (!lower.matches(".*\\.(jpe?g|png|gif|webp)$")) continue;
@@ -101,12 +103,12 @@ public class EpubCoverParser {
         return null;
     }
 
-    private static ZipEntry findEntry(ZipFile zip, String name) {
-        ZipEntry direct = zip.getEntry(name);
+    private static ZipArchiveEntry findEntry(ZipFile zip, String name) {
+        ZipArchiveEntry direct = zip.getEntry(name);
         if (direct != null) return direct;
-        Enumeration<? extends ZipEntry> entries = zip.entries();
+        Enumeration<ZipArchiveEntry> entries = zip.getEntries();
         while (entries.hasMoreElements()) {
-            ZipEntry e = entries.nextElement();
+            ZipArchiveEntry e = entries.nextElement();
             if (normalize(e.getName()).equalsIgnoreCase(name)) return e;
         }
         return null;

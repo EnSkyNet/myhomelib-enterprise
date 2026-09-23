@@ -1,60 +1,66 @@
 package com.myhomelibcorp.ui.operation;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.progress.OperationStage;
 
-/** Ukrainian user-facing text for serialized/background library operations. */
+/** Localized user-facing text for serialized/background library operations. */
 public final class LibraryOperationUiText {
     private LibraryOperationUiText() { }
 
     public static String activeStatus(LibraryOperationType operation) {
         if (operation == null) return "";
         return switch (operation) {
-            case INDEX -> "Оновлення пошукового індексу у фоні…";
-            case UPDATE -> "Оновлення колекції у фоні…";
-            case IMPORT -> "Імпорт каталогу у фоні…";
-            case BACKUP -> "Створення резервної копії…";
-            case RESTORE -> "Відновлення колекції…";
-            case VACUUM -> "Оптимізація бази даних…";
-            case SWITCH -> "Перемикання колекції…";
-            case DELETE -> "Видалення колекції…";
-            case CREATE -> "Створення колекції…";
-            case SYNC -> "Синхронізація колекції…";
-            case INTEGRITY_AUDIT -> "Перевірка цілісності колекції…";
+            case INDEX -> UiText.text("ui.java.library_operation_ui_text.c2b9974c8f");
+            case UPDATE -> UiText.text("ui.java.library_operation_ui_text.fe77681395");
+            case IMPORT -> UiText.text("ui.java.library_operation_ui_text.f8d08d8feb");
+            case BACKUP -> UiText.text("ui.java.library_operation_ui_text.3cbae27e4d");
+            case RESTORE -> UiText.text("ui.java.library_operation_ui_text.75322e22e4");
+            case VACUUM -> UiText.text("ui.java.library_operation_ui_text.7b6c3952d5");
+            case SWITCH -> UiText.text("ui.java.library_operation_ui_text.ed45ccb5d7");
+            case DELETE -> UiText.text("ui.java.library_operation_ui_text.86622c9554");
+            case CREATE -> UiText.text("ui.java.library_operation_ui_text.703d5974b7");
+            case SYNC -> UiText.text("ui.java.library_operation_ui_text.43d605d3a8");
+            case DOWNLOAD -> UiText.text("ui.java.library_operation_ui_text.a3c6cfd395");
+            case CONVERSION -> UiText.text("ui.java.library_operation_ui_text.273d78eda4");
+            case EDIT, ANNOTATION, COPY, EXPORT, QUERY, READER_STATE -> UiText.text("ui.java.library_operation_ui_text.7d12d8cbba");
+            case INTEGRITY_AUDIT -> UiText.text("ui.java.library_operation_ui_text.c1ece3ee06");
+            case ORGANIZE -> UiText.text("ui.organizer.title");
         };
     }
 
     public static String blockingMessage(String requestedAction, LibraryOperationType activeOperation) {
-        String requested = requestedAction == null || requestedAction.isBlank() ? "Операція" : requestedAction.trim();
+        String requested = requestedAction == null || requestedAction.isBlank() ? UiText.text("ui.fxml.operation_center_workspace.operation") : requestedAction.trim();
         String active = activeOperationName(activeOperation);
-        return requested + " недоступне: зараз виконується " + active + ". Дочекайтеся завершення фонової операції.";
+        return requested + UiText.text("ui.java.library_operation_ui_text.d6e54fe884") + active + UiText.text("ui.java.library_operation_ui_text.6f3f34ffee");
     }
 
     public static String entryStatus(OperationCenterEntry entry) {
-        if (entry == null) return "Виконується фонова операція…";
+        if (entry == null) return UiText.text("ui.java.library_operation_ui_text.7d12d8cbba");
         String base = switch (entry.stage()) {
-            case CHECKING_SERVER -> "Перевірка сервера оновлень…";
-            case DOWNLOADING -> "Завантаження даних…";
-            case VALIDATING -> "Перевірка завантажених даних…";
-            case CREATING_CHECKPOINT -> "Створення точки відновлення…";
-            case READING_CATALOG -> "Читання каталогу…";
-            case IMPORTING -> "Імпорт каталогу…";
-            case UPDATING_AUTHORS -> "Оновлення авторів…";
-            case APPLYING_DELETIONS -> "Застосування змін каталогу…";
-            case UPDATING_SEARCH_INDEX -> "Оновлення пошукового індексу…";
-            case REFRESHING_STATISTICS -> "Оновлення статистики бібліотеки…";
-            case ROLLING_BACK -> "Відновлення попереднього стану…";
-            case INTEGRITY_CHECKS -> "Перевірка цілісності колекції…";
-            case SCANNING_DUPLICATES -> "Пошук дублікатів…";
-            case SYNCHRONIZING_FILES -> "Синхронізація файлів…";
-            case OPTIMIZING_DATABASE -> "Оптимізація бази даних…";
-            case BACKING_UP -> "Створення резервної копії…";
-            case RESTORING -> "Відновлення з резервної копії…";
-            case CREATING_COLLECTION -> "Створення колекції…";
-            case DELETING_COLLECTION -> "Видалення колекції…";
-            case FINALIZING -> "Завершення фонової операції…";
-            case BOOK_DOWNLOAD -> "Завантаження книги…";
-            case CONVERTING -> "Конвертація книги…";
+            case CHECKING_SERVER -> UiText.text("ui.java.library_operation_ui_text.c0edea5d0a");
+            case DOWNLOADING -> UiText.text("ui.java.library_operation_ui_text.d6556511fd");
+            case VALIDATING -> UiText.text("ui.java.library_operation_ui_text.d730769fee");
+            case CREATING_CHECKPOINT -> UiText.text("ui.java.library_operation_ui_text.579450e677");
+            case READING_CATALOG -> UiText.text("ui.java.library_operation_ui_text.5a0446f84a");
+            case IMPORTING -> UiText.text("ui.java.library_operation_ui_text.4d3d9427fe");
+            case UPDATING_AUTHORS -> UiText.text("ui.java.library_operation_ui_text.0245d6fcb5");
+            case APPLYING_DELETIONS -> UiText.text("ui.java.library_operation_ui_text.6aa46441ef");
+            case UPDATING_SEARCH_INDEX -> UiText.text("ui.java.library_operation_ui_text.860c7231f7");
+            case REFRESHING_STATISTICS -> UiText.text("ui.java.library_operation_ui_text.ba2ddc9286");
+            case ROLLING_BACK -> UiText.text("ui.history.undo_progress");
+            case INTEGRITY_CHECKS -> UiText.text("ui.java.library_operation_ui_text.c1ece3ee06");
+            case SCANNING_DUPLICATES -> UiText.text("ui.java.library_operation_ui_text.47b5420b40");
+            case SYNCHRONIZING_FILES -> UiText.text("ui.java.library_operation_ui_text.67ed37311c");
+            case OPTIMIZING_DATABASE -> UiText.text("ui.java.library_operation_ui_text.7b6c3952d5");
+            case BACKING_UP -> UiText.text("ui.java.library_operation_ui_text.3cbae27e4d");
+            case RESTORING -> UiText.text("ui.java.library_operation_ui_text.fb27736858");
+            case CREATING_COLLECTION -> UiText.text("ui.java.library_operation_ui_text.703d5974b7");
+            case DELETING_COLLECTION -> UiText.text("ui.java.library_operation_ui_text.86622c9554");
+            case FINALIZING -> UiText.text("ui.java.library_operation_ui_text.30a8f3e716");
+            case BOOK_DOWNLOAD -> UiText.text("ui.java.library_operation_ui_text.a3c6cfd395");
+            case CONVERTING -> UiText.text("ui.java.library_operation_ui_text.273d78eda4");
             case COMPLETED, CANCELLED, FAILED -> entry.title();
         };
         double fraction = entry.fraction();
@@ -81,24 +87,31 @@ public final class LibraryOperationUiText {
             case CREATE -> entry.kind() == OperationKind.COLLECTION_CREATE;
             case DELETE -> entry.kind() == OperationKind.COLLECTION_DELETE;
             case INTEGRITY_AUDIT -> entry.kind() == OperationKind.INTEGRITY_CHECK;
-            case VACUUM, SYNC, SWITCH -> entry.kind() == OperationKind.MAINTENANCE || entry.kind() == OperationKind.GENERIC;
+            case DOWNLOAD -> entry.kind() == OperationKind.BOOK_DOWNLOAD;
+            case CONVERSION -> entry.kind() == OperationKind.BOOK_CONVERSION;
+            case VACUUM, SYNC, SWITCH, ORGANIZE, EDIT, ANNOTATION, COPY, EXPORT, QUERY, READER_STATE ->
+                    entry.kind() == OperationKind.MAINTENANCE || entry.kind() == OperationKind.GENERIC;
         };
     }
 
     private static String activeOperationName(LibraryOperationType operation) {
-        if (operation == null) return "інша операція з бібліотекою";
+        if (operation == null) return UiText.text("ui.java.library_operation_ui_text.fb62fcd042");
         return switch (operation) {
-            case INDEX -> "оновлення пошукового індексу";
-            case UPDATE -> "оновлення колекції";
-            case IMPORT -> "імпорт каталогу";
-            case BACKUP -> "резервне копіювання";
-            case RESTORE -> "відновлення колекції";
-            case VACUUM -> "оптимізація бази даних";
-            case SWITCH -> "перемикання колекції";
-            case DELETE -> "видалення колекції";
-            case CREATE -> "створення колекції";
-            case SYNC -> "синхронізація колекції";
-            case INTEGRITY_AUDIT -> "перевірка цілісності";
+            case INDEX -> UiText.text("ui.java.library_operation_ui_text.027dac2425");
+            case UPDATE -> UiText.text("ui.java.library_operation_ui_text.c9522cfdf0");
+            case IMPORT -> UiText.text("ui.java.library_operation_ui_text.3e30a7f744");
+            case BACKUP -> UiText.text("ui.java.library_operation_ui_text.a963bf2a71");
+            case RESTORE -> UiText.text("ui.java.library_operation_ui_text.3546b21546");
+            case VACUUM -> UiText.text("ui.java.library_operation_ui_text.a5f1516263");
+            case SWITCH -> UiText.text("ui.java.library_operation_ui_text.62ba38acc9");
+            case DELETE -> UiText.text("ui.java.library_operation_ui_text.925caf3458");
+            case CREATE -> UiText.text("ui.java.library_operation_ui_text.3a7f411870");
+            case SYNC -> UiText.text("ui.java.library_operation_ui_text.8e3a66c7e5");
+            case DOWNLOAD -> UiText.text("ui.import.stage.book_download");
+            case CONVERSION -> UiText.text("ui.java.library_operation_ui_text.273d78eda4");
+            case EDIT, ANNOTATION, COPY, EXPORT, QUERY, READER_STATE -> UiText.text("ui.java.library_operation_ui_text.fb62fcd042");
+            case INTEGRITY_AUDIT -> UiText.text("ui.java.library_operation_ui_text.cc9c7e7ace");
+            case ORGANIZE -> UiText.text("ui.organizer.title");
         };
     }
 }

@@ -1,6 +1,7 @@
 package com.myhomelibcorp.ui.viewmodel;
 
 import com.myhomelibcorp.application.dto.LibraryStatistics;
+import com.myhomelibcorp.ui.service.UiText;
 import javafx.beans.property.*;
 
 /**
@@ -12,14 +13,14 @@ import javafx.beans.property.*;
  */
 public class StatusBarViewModel {
 
-    private static final String DEFAULT_STATUS = "Готово до роботи";
+    private static final String DEFAULT_STATUS_KEY = "ui.fxml.statusbar.ready";
 
-    private final StringProperty statusText = new SimpleStringProperty(DEFAULT_STATUS);
+    private final StringProperty statusText = new SimpleStringProperty(UiText.text(DEFAULT_STATUS_KEY));
     private final DoubleProperty progress = new SimpleDoubleProperty(0);
     private final BooleanProperty progressVisible = new SimpleBooleanProperty(false);
     private final ObjectProperty<LibraryStatistics> statistics = new SimpleObjectProperty<>();
 
-    private String foregroundStatus = DEFAULT_STATUS;
+    private String foregroundStatus = UiText.text(DEFAULT_STATUS_KEY);
     private double foregroundProgress;
     private boolean foregroundProgressVisible;
 
@@ -45,7 +46,7 @@ public class StatusBarViewModel {
     }
 
     public void setStatusText(String text) {
-        foregroundStatus = text == null || text.isBlank() ? DEFAULT_STATUS : text;
+        foregroundStatus = text == null || text.isBlank() ? UiText.text(DEFAULT_STATUS_KEY) : text;
         refreshEffectiveState();
     }
 
@@ -62,7 +63,7 @@ public class StatusBarViewModel {
     /** Shows a background operation with higher display priority than transient foreground messages. */
     public void setBackgroundOperation(String text, double progressValue, boolean showProgress) {
         backgroundOperationActive = true;
-        backgroundStatus = text == null || text.isBlank() ? "Виконується фонова операція…" : text;
+        backgroundStatus = text == null || text.isBlank() ? UiText.text("ui.java.status_bar_view_model.7d12d8cbba") : text;
         backgroundProgress = progressValue;
         backgroundProgressVisible = showProgress;
         refreshEffectiveState();

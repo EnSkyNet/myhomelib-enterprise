@@ -19,9 +19,9 @@ public record BookMetadata(
     public static BookMetadata empty() {
         return new BookMetadata(
                 "",
-                "Без назви",
-                List.of("Невідомий автор"),
-                "uk",
+                "",
+                List.of(),
+                "und",
                 null,
                 null,
                 List.of(),

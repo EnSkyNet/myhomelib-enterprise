@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
@@ -34,7 +35,8 @@ class InpxBookNormalizerTest {
         assertThat(result.withoutAuthor()).isTrue();
         assertThat(result.withoutGenre()).isTrue();
         assertThat(result.explicitlyDeleted()).isTrue();
-        assertThat(pendingAuthors.keySet()).anyMatch(key -> InpxBookNormalizer.WITHOUT_AUTHOR_NAME.equals(key.lastName()));
+        assertThat(pendingAuthors).isEmpty();
+        assertThat((java.util.List<?>) result.row()[19]).isEmpty();
         assertThat((java.util.List<?>) result.row()[20]).isEmpty();
         assertThat(result.row()[15]).isEqualTo(1);
     }
@@ -150,6 +152,64 @@ class InpxBookNormalizerTest {
 
         assertThat(result).isNotNull();
         assertThat(result.row()[16]).isEqualTo(0);
+    }
+
+    @Test
+    void symlinkedParentIsNotClassifiedAsLocalBook(@TempDir Path temp) throws Exception {
+        Path root = Files.createDirectories(temp.resolve("library"));
+        Path real = Files.createDirectories(root.resolve("real"));
+        Files.writeString(real.resolve("book.fb2"), "book");
+        Path alias = root.resolve("alias");
+        try {
+            Files.createSymbolicLink(alias, real);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+
+        InpxBookNormalizer normalizer = new InpxBookNormalizer(new HashMap<>(), new HashMap<>());
+        InpxRecord record = new InpxRecord(Map.of(
+                "TITLE", "Symlinked",
+                "FILE", "book",
+                "EXT", "fb2",
+                "FOLDER", "alias"
+        ), "books.inp", "");
+
+        InpxBookNormalizer.NormalizedBook result = normalizer.normalize(
+                record, new HashMap<>(), new HashMap<>(), root, new HashMap<>(), "test-source", false);
+
+        assertThat(result).isNotNull();
+        assertThat(result.row()[16]).isEqualTo(0);
+    }
+
+    @Test
+    void libIdProvidesStableFileIdentityWhenFileFieldIsMissing(@TempDir Path root) {
+        InpxBookNormalizer normalizer = new InpxBookNormalizer(new HashMap<>(), new HashMap<>());
+        InpxRecord record = new InpxRecord(Map.of(
+                "TITLE", "Catalog-only record",
+                "EXT", "fb2",
+                "LIBID", "777"
+        ), "books.inp", "");
+
+        InpxBookNormalizer.NormalizedBook result = normalizer.normalize(
+                record, new HashMap<>(), new HashMap<>(), root, new HashMap<>(), "test-source", false);
+
+        assertThat(result).isNotNull();
+        assertThat(result.row()[4]).isEqualTo("777.fb2");
+        assertThat(result.catalogSnapshot().sourceBookKey()).isEqualTo("libid:777");
+    }
+
+    @Test
+    void recordWithoutFileOrLibIdIsRejectedInsteadOfCollapsingToUnknown(@TempDir Path root) {
+        InpxBookNormalizer normalizer = new InpxBookNormalizer(new HashMap<>(), new HashMap<>());
+        InpxRecord record = new InpxRecord(Map.of(
+                "TITLE", "Malformed",
+                "EXT", "fb2"
+        ), "books.inp", "");
+
+        assertThat(normalizer.normalize(
+                record, new HashMap<>(), new HashMap<>(), root, new HashMap<>(), "test-source", false))
+                .isNull();
+        assertThat(normalizer.preview(record, "test-source")).isNull();
     }
 
 }

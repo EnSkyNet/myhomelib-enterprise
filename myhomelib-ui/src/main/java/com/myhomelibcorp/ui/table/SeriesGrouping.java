@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.table;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.ui.viewmodel.BookViewModel;
 
 import java.util.ArrayList;
@@ -22,7 +24,7 @@ public final class SeriesGrouping {
             String series = normalize(book.getSeries());
             if (series != null && !series.equals(currentSeries)) {
                 BookViewModel header = new BookViewModel();
-                header.setTitle("Серія: " + series);
+                header.setTitle(UiText.text("ui.java.series_grouping.629c14f6e5") + series);
                 header.setSeries(series);
                 header.setGroupHeader(true);
                 rows.add(header);

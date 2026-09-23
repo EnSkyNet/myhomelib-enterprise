@@ -130,7 +130,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
             log.error("Спроба оновити рейтинг з null BookId");
             return;
         }
-        String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+        String sql = "UPDATE books SET rate = ? WHERE id = ?";
         int updated = getJdbcTemplate().update(sql, rate, bookId.asString());
         if (updated > 0) {
             log.debug("Оновлено рейтинг для книги {}: {}", bookId, rate);
@@ -152,7 +152,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         }
 
         // Використовуємо CURRENT_TIMESTAMP для узгодженості з іншими методами
-        String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id = ?";
+        String sql = "UPDATE books SET progress = ? WHERE id = ?";
         int updated = getJdbcTemplate().update(sql, progress, bookId.asString());
 
         if (updated > 0) {
@@ -169,7 +169,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         busyRetry.run("book storage update", () -> getJdbcTemplate().update("""
                 UPDATE books
                 SET collection_root = ?, folder = ?, file_name = ?, archive_entry = ?, local = ?,
-                    missing_since = NULL, format = ?, update_date = CURRENT_TIMESTAMP
+                    missing_since = NULL, format = ?
                 WHERE id = ?
                 """,
                 collectionRoot == null ? "" : collectionRoot,
@@ -188,8 +188,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         busyRetry.run("book storage missing", () -> getJdbcTemplate().update("""
                 UPDATE books
                    SET local = 0,
-                       missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP),
-                       update_date = CURRENT_TIMESTAMP
+                       missing_since = COALESCE(missing_since, CURRENT_TIMESTAMP)
                  WHERE id = ?
                 """, bookId.asString()));
         bookCache.evict(bookId);
@@ -251,8 +250,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                            format = COALESCE((
                                SELECT NULLIF(ba.file_format, '') FROM book_artifacts ba
                                 WHERE ba.book_id = books.id AND ba.artifact_id = ?
-                           ), format),
-                           update_date = CURRENT_TIMESTAMP
+                           ), format)
                      WHERE id = ?
                     """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
                     bookId.asString());
@@ -353,8 +351,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
                                           WHERE ba.book_id = books.id AND ba.artifact_id = ?), 0) = 1
                            THEN NULL ELSE COALESCE(missing_since, CURRENT_TIMESTAMP) END,
                        format = COALESCE((SELECT NULLIF(ba.file_format, '') FROM book_artifacts ba
-                                          WHERE ba.book_id = books.id AND ba.artifact_id = ?), format),
-                       update_date = CURRENT_TIMESTAMP
+                                          WHERE ba.book_id = books.id AND ba.artifact_id = ?), format)
                  WHERE id = ?
                 """, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId, artifactId,
                 bookId.asString());
@@ -391,7 +388,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         }
         int[] updated = {0};
         SqliteInClauseSupport.forEachChunk(bookIds, part -> {
-            String sql = "UPDATE books SET rate = ?, update_date = CURRENT_TIMESTAMP WHERE id IN ("
+            String sql = "UPDATE books SET rate = ? WHERE id IN ("
                     + SqliteInClauseSupport.placeholders(part.size()) + ")";
             Object[] params = new Object[part.size() + 1];
             params[0] = rate;
@@ -409,7 +406,7 @@ public class SqliteBookCommandRepository implements BookCommandRepository {
         }
         int[] updated = {0};
         SqliteInClauseSupport.forEachChunk(bookIds, part -> {
-            String sql = "UPDATE books SET progress = ?, update_date = CURRENT_TIMESTAMP WHERE id IN ("
+            String sql = "UPDATE books SET progress = ? WHERE id IN ("
                     + SqliteInClauseSupport.placeholders(part.size()) + ")";
             Object[] params = new Object[part.size() + 1];
             params[0] = progress;

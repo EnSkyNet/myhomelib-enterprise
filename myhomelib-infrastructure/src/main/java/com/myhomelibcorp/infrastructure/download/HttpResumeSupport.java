@@ -1,7 +1,8 @@
 package com.myhomelibcorp.infrastructure.download;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.shared.util.BoundedIoSupport;
 import com.myhomelibcorp.shared.util.Sha256Support;
 
 import java.io.IOException;
@@ -11,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardOpenOption;
 import java.util.Properties;
 import java.util.regex.Matcher;
@@ -18,33 +20,52 @@ import java.util.regex.Pattern;
 
 /** Shared, credential-safe state for resumable HTTP downloads. */
 final class HttpResumeSupport {
+    private static final int MAX_METADATA_BYTES = 64 * 1024;
     private static final Pattern CONTENT_RANGE = Pattern.compile("bytes\\s+(\\d+)-(\\d+)/(\\d+|\\*)", Pattern.CASE_INSENSITIVE);
 
     private HttpResumeSupport() { }
 
-    static void write(Path meta, URI uri, HttpResponse<?> response) throws IOException {
+    static ResumeMetadata write(Path meta, URI uri, HttpResponse<?> response, String expectedMetaHash) throws IOException {
         String validator = response.headers().firstValue("ETag")
                 .filter(value -> !value.isBlank())
                 .orElseGet(() -> response.headers().firstValue("Last-Modified").orElse(""));
         Properties properties = new Properties();
         properties.setProperty("sourceSha256", sourceHash(uri));
         properties.setProperty("validator", validator);
-        Path temp = meta.resolveSibling(meta.getFileName() + ".tmp");
-        try (OutputStream out = Files.newOutputStream(temp, StandardOpenOption.CREATE,
-                StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
-            properties.store(out, "MyHomeLib 8.0.0 resumable download metadata; no URL/credentials stored");
+        Path absolute = meta.toAbsolutePath().normalize();
+        String expectedHash = expectedMetaHash;
+        if (expectedHash == null && Files.exists(absolute, LinkOption.NOFOLLOW_LINKS)) {
+            throw new IOException("HTTP resume metadata appeared during the download: " + absolute);
         }
-        AtomicFileSupport.moveReplacing(temp, meta);
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                absolute.getParent(), ".mhl-resume-meta-", "HTTP resume metadata workspace");
+        Path temp = workspace.resolve("metadata.properties");
+        try {
+            try (OutputStream out = SafeFilePublication.openFreshOutputStream(temp, "HTTP resume metadata staging")) {
+                properties.store(out, "MyHomeLib 8.0.0 resumable download metadata; no URL/credentials stored");
+            }
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    temp, absolute, expectedHash, "HTTP resume metadata publication");
+            return new ResumeMetadata(validator,
+                    SafeFilePublication.sha256(absolute, "HTTP resume metadata"));
+        } finally {
+            SafeFilePublication.cleanupPrivateWorkspace(workspace);
+        }
     }
 
-    static ResumeMetadata read(Path meta, URI uri) {
-        if (!Files.isRegularFile(meta)) return null;
+    static ResumeMetadata read(Path meta, URI uri) throws IOException {
+        if (!Files.exists(meta, LinkOption.NOFOLLOW_LINKS)) return null;
+        String ownershipHash = SafeFilePublication.snapshotExistingTarget(meta, "HTTP resume metadata");
+        if (ownershipHash == null) return null;
         Properties properties = new Properties();
-        try (InputStream in = Files.newInputStream(meta)) {
-            properties.load(in);
+        try (InputStream bounded = new java.io.ByteArrayInputStream(
+                SafeFilePublication.readOwnedBytes(meta, ownershipHash, MAX_METADATA_BYTES, "HTTP resume metadata"))) {
+            properties.load(bounded);
             if (!sourceHash(uri).equals(properties.getProperty("sourceSha256", ""))) return null;
-            return new ResumeMetadata(properties.getProperty("validator", ""));
-        } catch (Exception ignored) {
+            return new ResumeMetadata(properties.getProperty("validator", ""), ownershipHash);
+        } catch (IOException e) {
+            throw e;
+        } catch (Exception invalid) {
             return null;
         }
     }
@@ -91,5 +112,5 @@ final class HttpResumeSupport {
         return Sha256Support.utf8(uri.toASCIIString());
     }
 
-    record ResumeMetadata(String validator) { }
+    record ResumeMetadata(String validator, String ownershipHash) { }
 }

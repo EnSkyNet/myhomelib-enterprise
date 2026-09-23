@@ -3,13 +3,25 @@ package com.myhomelibcorp.application.usecase.search;
 import com.myhomelibcorp.application.port.out.repository.SavedSearchRepository;
 import com.myhomelibcorp.domain.model.search.SavedSearch;
 import com.myhomelibcorp.domain.model.search.SmartCollectionSpec;
-import lombok.RequiredArgsConstructor;
-
-@RequiredArgsConstructor
 public class SaveSmartCollectionUseCase {
     private final SavedSearchRepository repository;
+    private final SavedSearchOperationExecutor operations;
+
+    public SaveSmartCollectionUseCase(SavedSearchRepository repository) {
+        this(repository, null);
+    }
+
+    public SaveSmartCollectionUseCase(SavedSearchRepository repository, SavedSearchOperationExecutor operations) {
+        this.repository = repository;
+        this.operations = operations;
+    }
 
     public SmartCollectionDefinition execute(SmartCollectionDefinition definition) {
+        if (operations == null) return executeDefinitionLocked(definition);
+        return operations.mutate(() -> executeDefinitionLocked(definition));
+    }
+
+    private SmartCollectionDefinition executeDefinitionLocked(SmartCollectionDefinition definition) {
         if (definition == null) throw new IllegalArgumentException("Smart collection definition is required");
         var rules = definition.rules().stream()
                 .map(rule -> new com.myhomelibcorp.domain.model.search.SmartCollectionRule(
@@ -31,7 +43,7 @@ public class SaveSmartCollectionUseCase {
                     .map(existing -> repository.save(existing.withSmartCollection(spec).withPinned(definition.pinned())))
                     .orElseThrow(() -> new IllegalArgumentException("Smart collection not found: " + definition.id()));
         } else {
-            saved = execute(definition.name(), spec, definition.pinned());
+            saved = saveByNameLocked(definition.name(), spec, definition.pinned());
         }
         var savedSpec = saved.getSmartCollection();
         return new SmartCollectionDefinition(saved.getId(), saved.getName(), saved.isPinned(),
@@ -41,6 +53,11 @@ public class SaveSmartCollectionUseCase {
     }
 
     public SavedSearch execute(String name, SmartCollectionSpec spec, boolean pinned) {
+        if (operations == null) return saveByNameLocked(name, spec, pinned);
+        return operations.mutate(() -> saveByNameLocked(name, spec, pinned));
+    }
+
+    private SavedSearch saveByNameLocked(String name, SmartCollectionSpec spec, boolean pinned) {
         if (name == null || name.isBlank()) throw new IllegalArgumentException("Назва smart-колекції не може бути порожньою");
         if (spec == null) throw new IllegalArgumentException("Правила smart-колекції обов'язкові");
         return repository.findByName(name.trim())

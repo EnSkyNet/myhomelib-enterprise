@@ -19,6 +19,10 @@ public class ImportContext {
     String catalogSourceKey;
     /** Optional diagnostic source location; credentials/query tokens are not persisted by the adapter. */
     String catalogSourceLocation;
+    /** Collection identity captured by the initiating flow; prevents queued imports from crossing a later switch. */
+    String expectedCollectionId;
+    /** Optional immutable-source fingerprint captured by a watcher before queueing the import. */
+    String expectedSourceSha256;
     @Builder.Default boolean updateExisting = false;
     @Builder.Default boolean indexAfterSave = true;
     /** Publish one public ImportFinishedEvent for this context. Composite operations disable child events. */

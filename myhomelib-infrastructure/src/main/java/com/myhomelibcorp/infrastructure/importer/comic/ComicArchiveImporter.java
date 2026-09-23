@@ -1,7 +1,6 @@
 package com.myhomelibcorp.infrastructure.importer.comic;
 
 import com.myhomelibcorp.application.port.out.cover.ArchiveReader;
-import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
@@ -15,7 +14,9 @@ import org.springframework.stereotype.Component;
 
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
 import java.util.List;
 
@@ -40,7 +41,7 @@ public class ComicArchiveImporter extends AbstractBookImporter {
 
     @Override
     protected Book parseBook(Path file) throws Exception {
-        if (file == null || !Files.isRegularFile(file)) {
+        if (file == null || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) {
             throw new IOException("Comic archive does not exist: " + file);
         }
         List<String> pages = ComicPageNameSupport.sortPages(archiveReader.listEntries(file));
@@ -59,21 +60,22 @@ public class ComicArchiveImporter extends AbstractBookImporter {
                 .rate(0)
                 .progress(0)
                 .build();
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isRegularFile()) throw new IOException("Comic archive is not a regular file: " + file);
         BookFile bookFile = new BookFile(
                 name,
                 parent == null ? "" : parent.toString(),
                 "",
-                Files.size(file),
+                attributes.size(),
                 null);
-        LocalDateTime modified = LocalDateTime.ofInstant(
-                Files.getLastModifiedTime(file).toInstant(), java.time.ZoneId.systemDefault());
-        return createBook(title, List.of(new Author("", "", "Невідомий автор")), List.of(), "", 0,
+        LocalDateTime modified = fileUpdateTime(file);
+        return createBook(title, List.of(), List.of(), "", 0,
                 metadata, bookFile, modified);
     }
 
     @Override
     public long countBooks(Path file) {
-        if (!supports(file) || file == null || !Files.isRegularFile(file)) return 0;
+        if (!supports(file) || file == null || !Files.isRegularFile(file, LinkOption.NOFOLLOW_LINKS)) return 0;
         try {
             return ComicPageNameSupport.sortPages(archiveReader.listEntries(file)).isEmpty() ? 0 : 1;
         } catch (RuntimeException error) {

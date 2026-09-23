@@ -365,11 +365,11 @@ def check_source_invariants() -> None:
             "MYHOMELIB-OPERATIONS.md",
             "MYHOMELIB-DEVELOPMENT.md",
             "MYHOMELIB-RELEASE.md",
-            "docs/history/MYHOMELIB-HISTORY-STAGES.md",
-            "docs/history/MYHOMELIB-HISTORY-FIXES.md",
-            "docs/history/MYHOMELIB-HISTORY-AUDITS.md",
-            "docs/history/MYHOMELIB-HISTORY-ITERATIONS.md",
-            "docs/release/CURRENT-VALIDATION.md"):
+            "docs/history/HISTORY.md",
+            "docs/README.md",
+            "docs/release/CURRENT-VALIDATION.md",
+            "docs/release/EXTERNAL-TEST-PLAN.md",
+            "docs/release/WHAT-REMAINS-UA.md"):
         read(required_doc)
 
     pom = read("pom.xml")
@@ -406,7 +406,8 @@ def check_source_invariants() -> None:
     mvnw_path = ROOT / "mvnw"
     if mvnw_path.exists():
         mvnw = mvnw_path.read_text(encoding="utf-8-sig")
-        assert mvnw.startswith("#!/bin/sh"), "Unix mvnw is not a shell script"
+        assert mvnw.startswith("#!/bin/sh") or mvnw.startswith("#!/usr/bin/env bash") or mvnw.startswith("#!/bin/bash"), \
+            "Unix mvnw is not a supported shell script"
     # Code-only handoff checkpoints intentionally omit Maven Wrapper/.mvn; pom.xml remains authoritative.
     assert (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V35__catalog_source_sync_state.sql").exists()
     assert (ROOT / "myhomelib-infrastructure/src/main/resources/db/migration/V36__catalog_manifest_and_artifacts.sql").exists()

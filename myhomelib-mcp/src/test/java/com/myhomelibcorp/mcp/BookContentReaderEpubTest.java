@@ -3,6 +3,7 @@ package com.myhomelibcorp.mcp;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -11,6 +12,7 @@ import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class BookContentReaderEpubTest {
@@ -25,6 +27,26 @@ class BookContentReaderEpubTest {
 
         String text = reader.text(location);
         assertTrue(text.indexOf("FIRST-SPINE") < text.indexOf("SECOND-SPINE"), text);
+    }
+
+
+    @Test
+    void rejectsBookThroughSymlinkedParentDirectory() throws Exception {
+        Path outside = Files.createDirectories(temp.resolve("outside"));
+        Files.writeString(outside.resolve("secret.txt"), "OUTSIDE-SECRET", StandardCharsets.UTF_8);
+        Path linked = temp.resolve("linked");
+        try {
+            Files.createSymbolicLink(linked, outside);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.abort("Symbolic links are unavailable: " + unsupported.getMessage());
+        }
+
+        BookContentReader reader = new BookContentReader();
+        LibraryDb.BookLocation location = new LibraryDb.BookLocation(
+                "test", "secret.txt", "linked", "", temp.toString());
+
+        IOException error = assertThrows(IOException.class, () -> reader.text(location));
+        assertTrue(error.getMessage().toLowerCase(java.util.Locale.ROOT).contains("symbolic link"), error.getMessage());
     }
 
     @Test

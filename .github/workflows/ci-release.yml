@@ -158,6 +158,11 @@ jobs:
         shell: pwsh
         run: .\smoke-desktop.ps1
 
+      - name: Smoke packaged converter and validator tools (Windows)
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: .\tools\smoke-runtime-tools.ps1
+
       - name: Smoke extracted portable archive (Windows)
         if: matrix.platform == 'windows'
         shell: pwsh
@@ -167,6 +172,11 @@ jobs:
         if: matrix.platform != 'windows'
         shell: bash
         run: ./smoke-desktop.sh
+
+      - name: Smoke packaged converter and validator tools (Linux/macOS)
+        if: matrix.platform != 'windows'
+        shell: bash
+        run: ./tools/smoke-runtime-tools.sh
 
       - name: Smoke extracted portable archive (Linux/macOS)
         if: matrix.platform != 'windows'

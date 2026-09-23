@@ -1,5 +1,8 @@
 package com.myhomelibcorp.ui.metadata;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.metadata.MetadataCandidate;
 import com.myhomelibcorp.application.metadata.merge.ApplyMetadataCandidateUseCase;
 import com.myhomelibcorp.application.metadata.merge.MetadataMergeField;
@@ -138,6 +141,7 @@ public class MetadataMergeUiService {
     private Dialog<ButtonType> showProgress(Window owner, Label label, ProgressBar bar,
                                             AtomicBoolean finished, AtomicBoolean cancelled) {
         Dialog<ButtonType> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.metadata.title"));
         if (owner != null) dialog.initOwner(owner);
         dialog.getDialogPane().getButtonTypes().add(ButtonType.CANCEL);
@@ -160,12 +164,13 @@ public class MetadataMergeUiService {
         List<MetadataMergePresenter.Row> rows = presenter.present(safe);
 
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle(safe.size() == 1 ? "Перегляд онлайн-метаданих" : "Пакетний перегляд онлайн-метаданих");
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(safe.size() == 1 ? UiText.text("ui.java.metadata_merge_ui_service.cf029076c3") : UiText.text("ui.java.metadata_merge_ui_service.57d9f2434e"));
         dialog.setHeaderText(safe.size() == 1
                 ? safe.getFirst().source().providerName() + " · " + percent(safe.getFirst().confidence())
-                : "Книг: " + safe.size() + " · виберіть поля для застосування");
+                : UiText.text("ui.java.metadata_merge_ui_service.16b100ce7b") + safe.size() + UiText.text("ui.java.metadata_merge_ui_service.111a3e31b6"));
         if (owner != null) dialog.initOwner(owner);
-        ButtonType applyButtonType = new ButtonType("Застосувати вибране", ButtonBar.ButtonData.OK_DONE);
+        ButtonType applyButtonType = new ButtonType(UiText.text("ui.java.metadata_merge_ui_service.b7cd0cddac"), ButtonBar.ButtonData.OK_DONE);
         dialog.getDialogPane().getButtonTypes().addAll(applyButtonType, ButtonType.CANCEL);
 
         VBox content = new VBox(10);
@@ -225,9 +230,10 @@ public class MetadataMergeUiService {
         if (candidates.size() == 1) return candidates.getFirst();
         List<CandidateChoice> choices = candidates.stream().map(CandidateChoice::new).toList();
         ChoiceDialog<CandidateChoice> dialog = new ChoiceDialog<>(choices.getFirst(), choices);
-        dialog.setTitle("Онлайн-метадані");
-        dialog.setHeaderText("Знайдено варіантів: " + choices.size());
-        dialog.setContentText("Оберіть джерело:");
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(UiText.text("ui.metadata.title"));
+        dialog.setHeaderText(UiText.text("ui.java.metadata_merge_ui_service.b80b688ee1") + choices.size());
+        dialog.setContentText(UiText.text("ui.java.metadata_merge_ui_service.00fbc557fc"));
         if (owner != null) dialog.initOwner(owner);
         return dialog.showAndWait().map(CandidateChoice::preview).orElse(null);
     }
@@ -239,8 +245,8 @@ public class MetadataMergeUiService {
         grid.setPadding(new Insets(2, 0, 4, 8));
         grid.getColumnConstraints().addAll(column(20, Priority.NEVER), column(40, Priority.ALWAYS), column(40, Priority.ALWAYS));
         grid.add(field, 0, 0);
-        grid.add(new Label("Поточне"), 1, 0);
-        grid.add(new Label("Запропоноване"), 2, 0);
+        grid.add(new Label(UiText.text("ui.java.metadata_merge_ui_service.ee9016a7fc")), 1, 0);
+        grid.add(new Label(UiText.text("ui.java.metadata_merge_ui_service.1150dc9e03")), 2, 0);
         grid.add(current, 1, 1);
         grid.add(proposed, 2, 1);
         return grid;

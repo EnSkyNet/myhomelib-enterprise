@@ -3,8 +3,10 @@ package com.myhomelibcorp.infrastructure.search;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexLifecycle;
 import com.myhomelibcorp.application.search.SearchIndexHealth;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.shared.util.AppPaths;
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
 import jakarta.annotation.PostConstruct;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -12,8 +14,10 @@ import org.apache.lucene.store.FSDirectory;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 
 /** Owns per-collection Lucene storage selection and DB/WAL freshness markers. */
@@ -21,6 +25,7 @@ import java.nio.file.Path;
 @RequiredArgsConstructor
 @Slf4j
 public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
+    private static final long MAX_STATE_FILE_BYTES = 4096L;
     private final LuceneSearchService search;
     private final BookQueryRepository books;
 
@@ -47,7 +52,7 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
             requireId(collection);
             try {
                 Path indexPath = AppPaths.collectionSearchIndexDir(collection.getId());
-                Files.createDirectories(indexPath);
+                SafeFilePublication.createDirectoriesNoLinks(indexPath, "Lucene collection index directory");
                 activeCollectionId = collection.getId();
                 activeDatabasePath = resolveDatabasePath(collection);
                 activeStateFile = AppPaths.collectionSearchIndexStateFile(collection.getId());
@@ -95,7 +100,10 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
             if (activeCollectionId == null) return;
             activeIndexDirty = true;
             search.setQueryAvailability(false, "Пошуковий індекс синхронізується з каталогом");
-            if (activeStateFile != null) persistDirtyMarker(activeStateFile);
+            if (activeStateFile == null) {
+                throw new IllegalStateException("Cannot persist DIRTY marker without an active Lucene state file");
+            }
+            persistDirtyMarkerStrict(activeStateFile);
         }
     }
 
@@ -151,11 +159,13 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     }
 
     private ReuseCheck checkCurrentIndexReusable() {
-        if (activeStateFile == null || !Files.isRegularFile(activeStateFile)) {
+        if (activeStateFile == null || !Files.exists(activeStateFile, LinkOption.NOFOLLOW_LINKS)) {
             return new ReuseCheck(false, "freshness marker is absent");
         }
         try {
-            String persisted = Files.readString(activeStateFile, StandardCharsets.UTF_8).trim();
+            Path safeMarker = SafeFilePublication.requireSafeRegularFile(
+                    activeStateFile, "Lucene freshness marker");
+            String persisted = readMarkerBounded(safeMarker);
             if (persisted.equals("DIRTY")) {
                 return new ReuseCheck(false, "previous DB/search synchronization was not completed");
             }
@@ -177,37 +187,38 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
 
     private record ReuseCheck(boolean reusable, String reason) { }
 
+    private static String readMarkerBounded(Path marker) throws IOException {
+        try (InputStream in = Files.newInputStream(marker, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] bytes = in.readNBytes((int) MAX_STATE_FILE_BYTES + 1);
+            if (bytes.length > MAX_STATE_FILE_BYTES) {
+                throw new IOException("Lucene freshness marker exceeds safety limit: " + marker);
+            }
+            return new String(bytes, StandardCharsets.UTF_8).trim();
+        }
+    }
+
+    private void persistDirtyMarkerStrict(Path stateFile) {
+        try {
+            AtomicFileSupport.writeStringReplacing(stateFile, "DIRTY", StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException("Cannot persist mandatory dirty Lucene marker " + stateFile, e);
+        }
+    }
+
     private void persistDirtyMarker(Path stateFile) {
         try {
-            Files.createDirectories(stateFile.getParent());
-            Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
-            Files.writeString(tmp, "DIRTY", StandardCharsets.UTF_8);
-            try {
-                Files.move(tmp, stateFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-                Files.move(tmp, stateFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
+            AtomicFileSupport.writeStringReplacing(stateFile, "DIRTY", StandardCharsets.UTF_8);
         } catch (Exception e) {
             log.warn("Cannot persist dirty Lucene marker {}: {}", stateFile, e.toString());
-            try { Files.deleteIfExists(stateFile); } catch (IOException ignored) { }
         }
     }
 
     private void persistMarker(Path stateFile, Path databasePath, long documentCount) {
         try {
-            Files.createDirectories(stateFile.getParent());
-            Path tmp = stateFile.resolveSibling(stateFile.getFileName() + ".tmp");
-            Files.writeString(tmp, freshnessToken(databasePath, documentCount), StandardCharsets.UTF_8);
-            try {
-                Files.move(tmp, stateFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING,
-                        java.nio.file.StandardCopyOption.ATOMIC_MOVE);
-            } catch (java.nio.file.AtomicMoveNotSupportedException unsupported) {
-                Files.move(tmp, stateFile, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
+            AtomicFileSupport.writeStringReplacing(
+                    stateFile, freshnessToken(databasePath, documentCount), StandardCharsets.UTF_8);
         } catch (Exception e) {
             log.warn("Cannot persist Lucene freshness marker {}: {}", stateFile, e.toString());
-            try { Files.deleteIfExists(stateFile); } catch (IOException ignored) { }
         }
     }
 
@@ -223,19 +234,26 @@ public class LuceneCollectionIndexLifecycle implements SearchIndexLifecycle {
     private static void appendFileState(StringBuilder out, Path path) throws IOException {
         Path normalized = path.toAbsolutePath().normalize();
         out.append('|').append(normalized);
-        if (!Files.exists(normalized)) { out.append(":missing"); return; }
-        out.append(':').append(Files.size(normalized))
-                .append(':').append(Files.getLastModifiedTime(normalized).toMillis());
+        if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) { out.append(":missing"); return; }
+        Path safe = SafeFilePublication.requireSafeRegularFile(normalized, "Lucene freshness database");
+        out.append(':').append(Files.size(safe))
+                .append(':').append(Files.getLastModifiedTime(safe, LinkOption.NOFOLLOW_LINKS).toMillis());
     }
 
     private static void appendWalState(StringBuilder out, Path walPath) throws IOException {
         Path normalized = walPath.toAbsolutePath().normalize();
-        if (!Files.exists(normalized) || Files.size(normalized) == 0L) {
+        if (!Files.exists(normalized, LinkOption.NOFOLLOW_LINKS)) {
             out.append("|wal:clean");
             return;
         }
-        out.append("|wal:").append(Files.size(normalized))
-                .append(':').append(Files.getLastModifiedTime(normalized).toMillis());
+        Path safe = SafeFilePublication.requireSafeRegularFile(normalized, "Lucene freshness WAL");
+        long size = Files.size(safe);
+        if (size == 0L) {
+            out.append("|wal:clean");
+            return;
+        }
+        out.append("|wal:").append(size)
+                .append(':').append(Files.getLastModifiedTime(safe, LinkOption.NOFOLLOW_LINKS).toMillis());
     }
 
     private static Path resolveDatabasePath(Collection collection) {

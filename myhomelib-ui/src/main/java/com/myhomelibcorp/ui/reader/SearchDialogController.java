@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.reader;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.reader.api.ReaderDocument;
 import com.myhomelibcorp.reader.api.ReaderPosition;
 import com.myhomelibcorp.reader.service.ReaderSearchService;
@@ -129,7 +130,7 @@ public class SearchDialogController {
         searchButton.setDisable(false);
         if (error != null) {
             if (error instanceof java.util.concurrent.CancellationException) return;
-            statusLabel.setText(error.getMessage() == null ? i18n.text("ui.reader.search.error") : error.getMessage());
+            statusLabel.setText(UiExceptionSupport.message(error) == null ? i18n.text("ui.reader.search.error") : UiExceptionSupport.message(error));
             resultsListView.getItems().clear();
             return;
         }

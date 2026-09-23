@@ -10,12 +10,14 @@ import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.CancellationException;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.function.BooleanSupplier;
 
 /**
  * Executes native processes without the classic stdout/stderr pipe deadlock.
@@ -42,8 +44,19 @@ public final class ProcessExecutionSupport {
 
     public static Result run(ProcessBuilder builder, byte[] stdin, Duration timeout, int maxCaptureBytes)
             throws IOException, InterruptedException {
+        return run(builder, stdin, timeout, maxCaptureBytes, () -> false);
+    }
+
+    /**
+     * Cancellable process execution variant. Cancellation terminates the complete descendant tree,
+     * waits briefly for handles/locks to be released and then throws {@link CancellationException}.
+     */
+    public static Result run(ProcessBuilder builder, byte[] stdin, Duration timeout, int maxCaptureBytes,
+                             BooleanSupplier cancelled)
+            throws IOException, InterruptedException {
         Objects.requireNonNull(builder, "builder");
         Objects.requireNonNull(timeout, "timeout");
+        Objects.requireNonNull(cancelled, "cancelled");
         if (timeout.isZero() || timeout.isNegative()) throw new IllegalArgumentException("timeout must be positive");
         if (maxCaptureBytes <= 0) throw new IllegalArgumentException("maxCaptureBytes must be positive");
 
@@ -62,12 +75,24 @@ public final class ProcessExecutionSupport {
             return null;
         });
 
+        long timeoutNanos = timeout.toNanos();
+        long started = System.nanoTime();
         try {
-            boolean finished = process.waitFor(timeout.toMillis(), TimeUnit.MILLISECONDS);
-            if (!finished) {
-                terminateTree(process);
-                awaitTermination(process);
-                throw new ProcessTimeoutException("Process timed out after " + timeout.toMillis() + " ms");
+            while (process.isAlive()) {
+                if (cancelled.getAsBoolean()) {
+                    terminateTree(process);
+                    awaitTermination(process);
+                    throw new CancellationException("Process execution cancelled");
+                }
+                long elapsed = System.nanoTime() - started;
+                if (elapsed >= timeoutNanos) {
+                    terminateTree(process);
+                    awaitTermination(process);
+                    throw new ProcessTimeoutException("Process timed out after " + timeout.toMillis() + " ms");
+                }
+                long remainingNanos = timeoutNanos - elapsed;
+                long waitMillis = Math.max(1L, Math.min(100L, TimeUnit.NANOSECONDS.toMillis(remainingNanos)));
+                process.waitFor(waitMillis, TimeUnit.MILLISECONDS);
             }
 
             awaitStdin(stdinWriter);
@@ -79,7 +104,10 @@ public final class ProcessExecutionSupport {
             awaitTerminationUninterruptibly(process);
             throw e;
         } finally {
-            if (process.isAlive()) terminateTree(process);
+            if (process.isAlive()) {
+                terminateTree(process);
+                awaitTerminationUninterruptibly(process);
+            }
             stdout.cancel(true);
             stderr.cancel(true);
             stdinWriter.cancel(true);
@@ -133,6 +161,23 @@ public final class ProcessExecutionSupport {
             if (cause instanceof RuntimeException runtime) throw runtime;
             throw new IOException("Cannot write process input", cause);
         }
+    }
+
+    /**
+     * Terminates a running process and its descendants, then waits briefly for file handles and
+     * other native resources to be released. The current thread interrupt status is preserved.
+     */
+    public static void terminate(Process process) {
+        if (process == null) return;
+        boolean interrupted = false;
+        terminateTree(process);
+        try {
+            awaitTermination(process);
+        } catch (InterruptedException e) {
+            interrupted = true;
+            awaitTerminationUninterruptibly(process);
+        }
+        if (interrupted) Thread.currentThread().interrupt();
     }
 
     private static void terminateTree(Process process) {

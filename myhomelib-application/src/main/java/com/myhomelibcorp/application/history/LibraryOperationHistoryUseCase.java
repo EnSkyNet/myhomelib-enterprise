@@ -65,9 +65,21 @@ public class LibraryOperationHistoryUseCase {
             }
             case BOOK_MERGE -> {
                 if (cancelled != null && cancelled.get()) throw new java.util.concurrent.CancellationException("Undo cancelled");
-                try (var lease = operations.acquire(LibraryOperationType.UPDATE)) {
+                var lease = operations.acquireDetachedShared(LibraryOperationType.EDIT);
+                try {
+                    LibraryOperationHistoryEntry latest = history.latestUndoable()
+                            .orElseThrow(() -> new IllegalStateException("No undoable library operation"));
+                    if (!entry.operationId().equals(latest.operationId())) {
+                        throw new IllegalStateException("A newer reversible library operation exists; review undo again");
+                    }
                     var result = mergeBooks.undo(entry.operationId());
+                    lease.markCompleted("");
                     yield new LibraryOperationUndoResult(entry.operationId(), entry.type(), 2, result.searchIndexSynchronized());
+                } catch (RuntimeException | Error failure) {
+                    lease.markFailed(failure);
+                    throw failure;
+                } finally {
+                    lease.close();
                 }
             }
         };

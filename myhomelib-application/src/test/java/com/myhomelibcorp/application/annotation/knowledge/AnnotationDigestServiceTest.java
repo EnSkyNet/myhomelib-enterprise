@@ -47,6 +47,31 @@ class AnnotationDigestServiceTest {
     }
 
     @Test
+    void concurrentDigestReplacementIsPreservedAndExportFailsClosed() throws Exception {
+        Path out = tempDir.resolve("digest.md");
+        Files.writeString(out, "ORIGINAL", StandardCharsets.UTF_8);
+        List<AnnotationExportRow> rows = new ArrayList<>();
+        for (int i = 0; i < 301; i++) {
+            rows.add(row("a-" + i, "book-1", "Book", "Chapter", "q" + i, "n", List.of()));
+        }
+        AnnotationExportQueryPort replacing = (selection, offset, limit) -> {
+            if (offset > 0) {
+                try { Files.writeString(out, "FOREIGN", StandardCharsets.UTF_8); }
+                catch (java.io.IOException e) { throw new RuntimeException(e); }
+            }
+            int from = Math.min(offset, rows.size());
+            int to = Math.min(rows.size(), from + limit);
+            return new AnnotationExportPage(rows.subList(from, to), offset, limit, to < rows.size());
+        };
+        AnnotationDigestService service = new AnnotationDigestService(replacing);
+
+        assertThatThrownBy(() -> service.export(AnnotationExportSelection.all(), out))
+                .isInstanceOf(java.io.IOException.class)
+                .hasMessageContaining("target changed before detach");
+        assertThat(Files.readString(out, StandardCharsets.UTF_8)).isEqualTo("FOREIGN");
+    }
+
+    @Test
     void cancellationDoesNotReplaceExistingDigestAndLeavesNoPartFile() throws Exception {
         Path out = tempDir.resolve("digest.md");
         Files.writeString(out, "ORIGINAL", StandardCharsets.UTF_8);

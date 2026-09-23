@@ -8,47 +8,47 @@
       fx:controller="com.myhomelibcorp.ui.group.GroupWorkspaceController"
       spacing="10" style="-fx-padding: 15; -fx-background-color: -mhl-background;">
 
-    <Label text="Групи (списки книг)" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
+    <Label text="ui.fxml.groups_workspace.groups_book_lists" style="-fx-font-size: 18px; -fx-font-weight: bold;"/>
 
     <SplitPane dividerPositions="0.3" VBox.vgrow="ALWAYS">
         <items>
             <!-- Ліва панель: список груп -->
             <VBox spacing="5" style="-fx-padding: 5;">
                 <HBox spacing="5">
-                    <Button text="+" accessibleText="Створити групу" onAction="#onCreateGroup" prefWidth="30"/>
-                    <Button text="✎" accessibleText="Перейменувати групу" onAction="#onRenameGroup" prefWidth="30"/>
-                    <Button text="✕" accessibleText="Видалити групу" onAction="#onDeleteGroup" prefWidth="30"/>
-                    <Button text="↻" accessibleText="Оновити групи" onAction="#onRefresh" prefWidth="30"/>
+                    <Button text="ui.fxml.groups_workspace.value" accessibleText="ui.fxml.groups_workspace.create_group" onAction="#onCreateGroup" prefWidth="30"/>
+                    <Button text="ui.fxml.groups_workspace.value_6ab8c4b" accessibleText="ui.fxml.groups_workspace.rename_group" onAction="#onRenameGroup" prefWidth="30"/>
+                    <Button text="ui.fxml.groups_workspace.value_231fcd7" accessibleText="ui.fxml.groups_workspace.delete_group" onAction="#onDeleteGroup" prefWidth="30"/>
+                    <Button text="ui.fxml.groups_workspace.value_9957e19" accessibleText="ui.fxml.groups_workspace.refresh_groups" onAction="#onRefresh" prefWidth="30"/>
                     <Region HBox.hgrow="ALWAYS"/>
                 </HBox>
-                <Label fx:id="groupsStateLabel" text="Завантаження…" visible="false" managed="false" wrapText="true"
+                <Label fx:id="groupsStateLabel" text="ui.fxml.groups_workspace.loading" visible="false" managed="false" wrapText="true"
                        style="-fx-text-fill: -mhl-muted-text; -fx-font-style: italic;"/>
                 <ListView fx:id="groupsListView" VBox.vgrow="ALWAYS"/>
             </VBox>
 
             <!-- Права панель: деталі групи та книги -->
             <VBox fx:id="groupDetailsBox" spacing="10" style="-fx-padding: 10;">
-                <Label fx:id="groupNameLabel" text="Група" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
-                <Label fx:id="booksCountLabel" text="0 книг"/>
+                <Label fx:id="groupNameLabel" text="ui.fxml.groups_workspace.group" style="-fx-font-size: 16px; -fx-font-weight: bold;"/>
+                <Label fx:id="booksCountLabel" text="ui.fxml.groups_workspace.0_books"/>
 
                 <HBox spacing="5">
-                    <Button text="Додати книгу" onAction="#onAddBookToGroup"/>
-                    <Button text="Видалити книгу" onAction="#onRemoveBookFromGroup"/>
+                    <Button text="ui.fxml.groups_workspace.add_book" onAction="#onAddBookToGroup"/>
+                    <Button text="ui.fxml.groups_workspace.delete_book" onAction="#onRemoveBookFromGroup"/>
                 </HBox>
 
                 <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
                     <columns>
-                        <TableColumn fx:id="titleColumn" text="Назва" prefWidth="200"/>
-                        <TableColumn fx:id="authorColumn" text="Автор" prefWidth="150"/>
-                        <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="100"/>
-                        <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
+                        <TableColumn fx:id="titleColumn" text="ui.fxml.groups_workspace.title" prefWidth="200"/>
+                        <TableColumn fx:id="authorColumn" text="ui.fxml.groups_workspace.author" prefWidth="150"/>
+                        <TableColumn fx:id="seriesColumn" text="ui.fxml.groups_workspace.series" prefWidth="100"/>
+                        <TableColumn fx:id="fileSizeColumn" text="ui.fxml.groups_workspace.size" prefWidth="90"/>
                     </columns>
                 </TableView>
 
                 <HBox spacing="10" alignment="CENTER">
-                    <Button fx:id="previousPageButton" text="← Попередня" onAction="#onPreviousPage"/>
-                    <Label fx:id="pageLabel" text="Сторінка 0 / 0"/>
-                    <Button fx:id="nextPageButton" text="Наступна →" onAction="#onNextPage"/>
+                    <Button fx:id="previousPageButton" text="ui.fxml.groups_workspace.previous" onAction="#onPreviousPage"/>
+                    <Label fx:id="pageLabel" text="ui.fxml.groups_workspace.page_0_0"/>
+                    <Button fx:id="nextPageButton" text="ui.fxml.groups_workspace.next" onAction="#onNextPage"/>
                 </HBox>
             </VBox>
         </items>

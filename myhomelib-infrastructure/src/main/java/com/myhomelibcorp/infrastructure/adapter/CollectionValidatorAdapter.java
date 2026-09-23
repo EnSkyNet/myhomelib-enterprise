@@ -3,11 +3,13 @@ package com.myhomelibcorp.infrastructure.adapter;
 import com.myhomelibcorp.application.dto.CreateCollectionRequest;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.validation.CollectionValidatorPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -34,16 +36,16 @@ public class CollectionValidatorAdapter implements CollectionValidatorPort {
             return false;
         }
         try {
-            Path path = Paths.get(dbPath);
-            if (Files.exists(path)) {
+            Path path = Paths.get(dbPath).toAbsolutePath().normalize();
+            Path parent = path.getParent();
+            if (parent == null) return false;
+            SafeFilePublication.requireSafeDirectoryPath(parent, "collection database parent");
+            if (!Files.isWritable(parent)) return false;
+            if (Files.exists(path, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.requireSafeRegularFile(path, "collection database");
                 return Files.isWritable(path);
             }
-            // Перевіряємо, чи можна створити файл у директорії
-            Path parent = path.getParent();
-            if (parent == null || !Files.exists(parent)) {
-                return false;
-            }
-            return Files.isWritable(parent);
+            return true;
         } catch (Exception e) {
             log.warn("Помилка перевірки шляху до БД: {}", e.getMessage());
             return false;
@@ -76,21 +78,24 @@ public class CollectionValidatorAdapter implements CollectionValidatorPort {
 
         // Перевірка кореневої папки
         if (request.getRootFolder() != null) {
-            Path root = request.getRootFolder();
-            if (!Files.exists(root)) {
-                errors.add("Коренева папка не існує: " + root);
-            } else if (!Files.isDirectory(root)) {
-                errors.add("Шлях не є директорією: " + root);
-            } else if (!Files.isWritable(root)) {
-                errors.add("Немає прав на запис у кореневу папку: " + root);
+            Path root = request.getRootFolder().toAbsolutePath().normalize();
+            try {
+                SafeFilePublication.requireSafeDirectoryPath(root, "collection root");
+                if (!Files.isWritable(root)) {
+                    errors.add("Немає прав на запис у кореневу папку: " + root);
+                }
+            } catch (Exception unsafeRoot) {
+                errors.add("Коренева папка не існує або небезпечна: " + root);
             }
         }
 
         // Перевірка джерела (якщо вказано)
         if (request.getSourcePath() != null && !request.getSourcePath().isBlank()) {
-            Path source = Paths.get(request.getSourcePath());
-            if (!Files.exists(source)) {
-                errors.add("Джерело не існує: " + request.getSourcePath());
+            Path source = Paths.get(request.getSourcePath()).toAbsolutePath().normalize();
+            try {
+                SafeFilePublication.requireSafeRegularFile(source, "collection source");
+            } catch (Exception unsafeSource) {
+                errors.add("Джерело не існує або небезпечне: " + request.getSourcePath());
             }
         }
 

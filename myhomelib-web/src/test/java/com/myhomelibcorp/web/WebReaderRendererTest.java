@@ -25,8 +25,22 @@ class WebReaderRendererTest {
     }
 
     @Test void unsupportedFormatShowsDownloadInsteadOfFakeReader() {
-        String html = renderer.render(new WebReaderDocument("42", "PDF", "pdf", false,
-                "Unsupported", List.of(), 0, 0, 0, 0));
-        assertThat(html).contains("Unsupported", "/web/download/42").doesNotContain("id=content");
+        String html = renderer.render("en", new WebReaderDocument("42", "PDF", "pdf", false,
+                "web.reader.unsupported_format", List.of(), 0, 0, 0, 0));
+        assertThat(html).contains("not supported by Web Reader", "Download file", "/web/download/42")
+                .doesNotContain("id=content", "не підтримується");
+    }
+
+    @Test void localizesReaderChromeAndHtmlLanguageFromRequestedLocale() {
+        WebReaderDocument doc = new WebReaderDocument("1", "Book", "epub", true, "", List.of(
+                new WebReaderChapter(0, "c1", "", 0, 10, "text")
+        ), 0, 0, 0, 0);
+
+        String en = renderer.render("en-US", doc);
+        String bg = renderer.render("bg", doc);
+
+        assertThat(en).contains("<html lang=\"en\"", "Contents", "Theme", "Light", "Font", "Chapter 1")
+                .doesNotContain("Зміст", "Розділ 1");
+        assertThat(bg).contains("<html lang=\"bg\"", "Съдържание", "Тема", "Светла", "Шрифт", "Глава 1");
     }
 }

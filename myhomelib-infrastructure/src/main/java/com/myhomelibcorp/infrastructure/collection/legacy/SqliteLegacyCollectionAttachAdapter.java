@@ -1,15 +1,19 @@
 package com.myhomelibcorp.infrastructure.collection.legacy;
 
 import com.myhomelibcorp.application.port.out.collection.LegacyCollectionAttachPort;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionStorageManager;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionDatabaseOwnershipPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.service.CollectionLifecycleService;
 import com.myhomelibcorp.domain.model.collection.Collection;
+import com.myhomelibcorp.domain.service.LanguageResolver;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.shared.util.AppPaths;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.AuthorSearchNameNormalizer;
 import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.KeywordIndexSupport;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -21,43 +25,143 @@ import java.util.*;
 
 /** Attaches a modern SQLite collection or losslessly migrates an original Delphi .hlc2 into the modern schema. */
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAttachPort {
     private final CollectionRepository collectionRepository;
     private final CollectionLifecycleService lifecycle;
     private final CollectionManager collectionManager;
+    private final CollectionStorageManager storageManager;
+    private final CollectionDatabaseOwnershipPort databaseOwnership;
+
+    /** Production constructor — Spring uses this one. */
+    @Autowired
+    public SqliteLegacyCollectionAttachAdapter(CollectionRepository collectionRepository,
+                                               CollectionLifecycleService lifecycle,
+                                               CollectionManager collectionManager,
+                                               CollectionStorageManager storageManager,
+                                               CollectionDatabaseOwnershipPort databaseOwnership) {
+        this.collectionRepository = collectionRepository;
+        this.lifecycle = lifecycle;
+        this.collectionManager = collectionManager;
+        this.storageManager = storageManager;
+        this.databaseOwnership = databaseOwnership;
+    }
+
+    /** Compatibility constructor for isolated adapter tests. */
+    public SqliteLegacyCollectionAttachAdapter(CollectionRepository collectionRepository,
+                                               CollectionLifecycleService lifecycle,
+                                               CollectionManager collectionManager,
+                                               CollectionStorageManager storageManager) {
+        this(collectionRepository, lifecycle, collectionManager, storageManager, null);
+    }
 
     @Override
     public AttachResult attach(Path source, String collectionName, Path root) {
-        try (Connection src = openReadOnly(source)) {
+        Path safeSource;
+        Path safeRoot;
+        try {
+            safeSource = SafeFilePublication.requireSafeRegularFile(source, "legacy collection attach source");
+            safeRoot = SafeFilePublication.requireSafeDirectoryPath(root, "legacy collection root");
+        } catch (java.io.IOException unsafePath) {
+            throw new IllegalArgumentException("Небезпечний або недоступний шлях колекції", unsafePath);
+        }
+
+        SafeFilePublication.FileSnapshot sourceSnapshot = snapshotSource(safeSource);
+        Collection previous = lifecycle.getCurrentCollection();
+        Collection created = null;
+        boolean ownsDatabase = false;
+        try (Connection src = openReadOnly(safeSource)) {
+            requireSourceUnchanged(safeSource, sourceSnapshot, "після відкриття SQLite");
+            long sourceDataVersion = scalar(src, "PRAGMA data_version");
             Set<String> bookColumns = columns(src, "books");
             if (bookColumns.contains("id") && bookColumns.contains("file_name")) {
-                Collection c = collectionRepository.save(new Collection(UUID.randomUUID().toString(), collectionName, root,
-                        source.toString(), 0, null, null, null, "Attached SQLite collection"));
-                lifecycle.initializeCollection(c, true);
-                long count = scalar(collectionManager.getCurrentJdbcTemplate(), "SELECT COUNT(*) FROM books");
-                long authors = scalar(collectionManager.getCurrentJdbcTemplate(), "SELECT COUNT(*) FROM authors");
-                long genres = scalar(collectionManager.getCurrentJdbcTemplate(), "SELECT COUNT(*) FROM genres");
-                return new AttachResult(c, count, authors, genres, false);
+                // Validate/read the source completely before mutating registry or active lifecycle state.
+                // Previously a missing/corrupt related table could fail only after save+switch, leaving
+                // orphan metadata behind.
+                long count = scalar(src, "SELECT COUNT(*) FROM books");
+                long authors = scalar(src, "SELECT COUNT(*) FROM authors");
+                long genres = scalar(src, "SELECT COUNT(*) FROM genres");
+                requireSourceStable(src, safeSource, sourceSnapshot, sourceDataVersion,
+                        "перед реєстрацією attached SQLite");
+                created = collectionRepository.save(new Collection(UUID.randomUUID().toString(), collectionName, safeRoot,
+                        safeSource.toString(), 0, null, null, null, "Attached SQLite collection"));
+                if (databaseOwnership != null) {
+                    databaseOwnership.setOwnership(created.getId(), CollectionDatabaseOwnershipPort.Ownership.EXTERNAL);
+                }
+                lifecycle.initializeCollection(created, true);
+                return new AttachResult(created, count, authors, genres, false);
             }
             if (!bookColumns.contains("bookid") || !bookColumns.contains("title")) {
                 throw new IllegalArgumentException("Файл не схожий на колекцію MyHomeLib (.hlc2)");
             }
 
             Path target = AppPaths.librariesDir().resolve(UUID.randomUUID() + ".db");
-            Collection c = collectionRepository.save(new Collection(UUID.randomUUID().toString(), collectionName, root,
-                    target.toString(), 0, null, null, null, "Migrated from " + source));
-            lifecycle.initializeCollection(c, false); // creates the modern schema via Flyway
+            ownsDatabase = true;
+            created = collectionRepository.save(new Collection(UUID.randomUUID().toString(), collectionName, safeRoot,
+                    target.toString(), 0, null, null, null, "Migrated from " + safeSource));
+            if (databaseOwnership != null) {
+                databaseOwnership.setOwnership(created.getId(), CollectionDatabaseOwnershipPort.Ownership.OWNED);
+            }
+            lifecycle.initializeCollection(created, false); // creates the modern schema via Flyway
             JdbcTemplate jt = collectionManager.getCurrentJdbcTemplate();
-            MigrationStats stats = migrate(src, jt, root);
+            MigrationStats stats = migrate(src, jt, safeRoot);
+            requireSourceStable(src, safeSource, sourceSnapshot, sourceDataVersion,
+                    "перед завершенням legacy migration");
             lifecycle.rebuildSearchIndex();
-            return new AttachResult(c, stats.books, stats.authors, stats.genres, true);
-        } catch (RuntimeException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new IllegalStateException("Не вдалося підключити .hlc2: " + e.getMessage(), e);
+            return new AttachResult(created, stats.books, stats.authors, stats.genres, true);
+        } catch (RuntimeException failure) {
+            rollbackFailedAttach(created, previous, ownsDatabase, failure);
+            throw failure;
+        } catch (Exception checkedFailure) {
+            IllegalStateException failure = new IllegalStateException(
+                    "Не вдалося підключити .hlc2: " + checkedFailure.getMessage(), checkedFailure);
+            rollbackFailedAttach(created, previous, ownsDatabase, failure);
+            throw failure;
         }
+    }
+
+    private void rollbackFailedAttach(Collection failed, Collection previous, boolean ownsDatabase, RuntimeException original) {
+        if (failed == null) return;
+        try {
+            Collection active = lifecycle.getCurrentCollection();
+            if (sameCollection(active, failed)) {
+                if (previous != null) lifecycle.initializeCollection(previous, true);
+                else lifecycle.closeCollection();
+            } else if (!sameCollection(active, previous)) {
+                // Initialization may have failed closed. Restore only when lifecycle state is not
+                // already the expected previous state.
+                if (previous != null) lifecycle.initializeCollection(previous, true);
+                else if (active != null) lifecycle.closeCollection();
+            }
+        } catch (RuntimeException restoreFailure) {
+            original.addSuppressed(restoreFailure);
+            log.error("Не вдалося відновити попередню колекцію після невдалого attach; metadata залишено для recovery",
+                    restoreFailure);
+            return;
+        }
+
+        try {
+            storageManager.closeCollection(failed);
+            if (ownsDatabase) storageManager.deletePhysicalFiles(failed);
+        } catch (RuntimeException cleanupFailure) {
+            original.addSuppressed(cleanupFailure);
+            log.error("Не вдалося очистити ресурси невдалого attach {}; metadata залишено для recovery",
+                    failed.getId(), cleanupFailure);
+            return;
+        }
+
+        try {
+            if (failed.getId() != null) collectionRepository.deleteById(failed.getId());
+        } catch (RuntimeException registryFailure) {
+            original.addSuppressed(registryFailure);
+            log.error("Не вдалося видалити registry metadata невдалого attach {}", failed.getId(), registryFailure);
+        }
+    }
+
+    private static boolean sameCollection(Collection left, Collection right) {
+        if (left == right) return true;
+        if (left == null || right == null || left.getId() == null || right.getId() == null) return false;
+        return left.getId().equals(right.getId());
     }
 
     private MigrationStats migrate(Connection src, JdbcTemplate jt, Path root) throws SQLException {
@@ -75,23 +179,24 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                 String libId = value(rs, cols, "libid");
                 String id = stableId("book", !libId.isBlank() ? libId : Long.toString(oldId));
                 bookIds.put(oldId, id);
-                String title = blankTo(value(rs, cols, "title"), "Без назви");
                 long seriesId = longValue(rs, cols, "seriesid", 0L);
                 String folder = normalize(value(rs, cols, "folder"));
                 String originalFile = normalize(value(rs, cols, "filename"));
                 String ext = trimDot(value(rs, cols, "ext"));
                 String fileName = originalFile;
                 if (!ext.isBlank() && !fileName.toLowerCase(Locale.ROOT).endsWith("." + ext.toLowerCase(Locale.ROOT))) fileName += "." + ext;
+                String title = firstNonBlank(value(rs, cols, "title"), stem(fileName), libId, "legacy-" + oldId);
                 boolean archive = isArchive(folder);
                 String archiveEntry = archive ? fileName : "";
                 String storedFile = archive ? folder : fileName;
                 String storedFolder = archive ? "" : folder;
-                String date = blankTo(value(rs, cols, "updatedate"), LocalDateTime.now().toString());
+                String sourceUpdateDate = blankToNull(value(rs, cols, "updatedate"));
+                String createdAt = sourceUpdateDate != null ? sourceUpdateDate : LocalDateTime.now().toString();
                 Integer year = intOrNull(rs, cols, "pubyear");
                 batch.add(new Object[]{id,title,series.getOrDefault(seriesId,""),intValue(rs,cols,"seqnumber",0),storedFile,storedFolder,
-                        archiveEntry,blankTo(value(rs,cols,"lang"),"uk"),longValue(rs,cols,"booksize",0L),value(rs,cols,"keywords"),
-                        value(rs,cols,"annotation"),intValue(rs,cols,"rate",0),intValue(rs,cols,"progress",0),date,value(rs,cols,"isbn"),
-                        intValue(rs,cols,"isdeleted",0),intValue(rs,cols,"islocal",0),value(rs,cols,"review"),date,root.toString(),year,
+                        archiveEntry,LanguageResolver.resolveValue(value(rs,cols,"lang")),longValue(rs,cols,"booksize",0L),value(rs,cols,"keywords"),
+                        value(rs,cols,"annotation"),intValue(rs,cols,"rate",0),intValue(rs,cols,"progress",0),sourceUpdateDate,value(rs,cols,"isbn"),
+                        intValue(rs,cols,"isdeleted",0),intValue(rs,cols,"islocal",0),value(rs,cols,"review"),createdAt,root.toString(),year,
                         value(rs,cols,"publisher"),libId,intValue(rs,cols,"librate",0),value(rs,cols,"translators"),value(rs,cols,"city"),""});
                 if (batch.size() >= 1000) { insertBooks(jt,batch); books += batch.size(); batch.clear(); }
             }
@@ -201,7 +306,7 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(id) DO UPDATE SET title=excluded.title,series=excluded.series,sequence_number=excluded.sequence_number,
                 file_name=excluded.file_name,folder=excluded.folder,archive_entry=excluded.archive_entry,language=excluded.language,
-                file_size=excluded.file_size,keywords=excluded.keywords,annotation=excluded.annotation,update_date=excluded.update_date,
+                file_size=excluded.file_size,keywords=excluded.keywords,annotation=excluded.annotation,update_date=COALESCE(excluded.update_date,books.update_date),
                 isbn=excluded.isbn,deleted=excluded.deleted,local=excluded.local,collection_root=excluded.collection_root,year=excluded.year,
                 publisher=excluded.publisher,lib_id=excluded.lib_id,library_rate=excluded.library_rate,translators=excluded.translators,city=excluded.city
                 """,batch);
@@ -210,7 +315,54 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
         KeywordIndexSupport.replaceForBooks(jt, keywordProjection);
     }
 
-    private static Connection openReadOnly(Path p) throws SQLException { Connection c=DriverManager.getConnection("jdbc:sqlite:"+p); c.setReadOnly(true); return c; }
+    private static Connection openReadOnly(Path p) throws SQLException {
+        org.sqlite.SQLiteConfig config = new org.sqlite.SQLiteConfig();
+        config.setReadOnly(true);
+        Connection connection = config.createConnection("jdbc:sqlite:" + p.toAbsolutePath().normalize());
+        try {
+            // sqlite-jdbc opens by pathname. Revalidate immediately after open so a path swapped
+            // for a symlink/reparse entry during check->open never becomes a trusted source.
+            SafeFilePublication.requireSafeRegularFile(p, "legacy collection attach opened source");
+            return connection;
+        } catch (java.io.IOException unsafeAfterOpen) {
+            try { connection.close(); } catch (SQLException closeFailure) { unsafeAfterOpen.addSuppressed(closeFailure); }
+            throw new SQLException("Legacy collection source became unsafe while opening", unsafeAfterOpen);
+        }
+    }
+
+    private static SafeFilePublication.FileSnapshot snapshotSource(Path source) {
+        try {
+            return SafeFilePublication.snapshot(source, "legacy collection attach source");
+        } catch (java.io.IOException failure) {
+            throw new IllegalArgumentException("Не вдалося зафіксувати стан legacy collection source", failure);
+        }
+    }
+
+    private static void requireSourceUnchanged(Path source,
+                                               SafeFilePublication.FileSnapshot expected,
+                                               String phase) throws SQLException {
+        try {
+            SafeFilePublication.FileSnapshot actual = SafeFilePublication.snapshot(
+                    source, "legacy collection attach source " + phase);
+            if (!expected.equals(actual)) {
+                throw new SQLException("Legacy collection source changed " + phase);
+            }
+        } catch (java.io.IOException failure) {
+            throw new SQLException("Legacy collection source became unsafe " + phase, failure);
+        }
+    }
+
+    private static void requireSourceStable(Connection sourceConnection,
+                                            Path source,
+                                            SafeFilePublication.FileSnapshot expected,
+                                            long expectedDataVersion,
+                                            String phase) throws SQLException {
+        long actualDataVersion = scalar(sourceConnection, "PRAGMA data_version");
+        if (actualDataVersion != expectedDataVersion) {
+            throw new SQLException("Legacy collection source changed concurrently " + phase);
+        }
+        requireSourceUnchanged(source, expected, phase);
+    }
     private static Set<String> columns(Connection c,String table) throws SQLException { Set<String>s=new HashSet<>(); try(Statement st=c.createStatement();ResultSet r=st.executeQuery("PRAGMA table_info('"+table.replace("'","''")+"')")){while(r.next())s.add(r.getString("name").toLowerCase(Locale.ROOT));} return s; }
     private static boolean tableExists(Connection c,String table){try(PreparedStatement p=c.prepareStatement("SELECT 1 FROM sqlite_master WHERE type='table' AND lower(name)=lower(?)")){p.setString(1,table);try(ResultSet r=p.executeQuery()){return r.next();}}catch(SQLException e){throw new IllegalStateException("Не вдалося перевірити legacy table " + table,e);}}
     private static Set<String> columnNames(ResultSet resultSet) throws SQLException {
@@ -276,11 +428,24 @@ public class SqliteLegacyCollectionAttachAdapter implements LegacyCollectionAtta
         }
     }
     private static long scalar(JdbcTemplate jt,String sql){Long n=jt.queryForObject(sql,Long.class);return n==null?0:n;}
+    private static long scalar(Connection connection, String sql) throws SQLException {
+        try (Statement statement = connection.createStatement(); ResultSet rows = statement.executeQuery(sql)) {
+            return rows.next() ? rows.getLong(1) : 0L;
+        }
+    }
     private static String stableId(String kind,String value){return UUID.nameUUIDFromBytes(("hlc2:"+kind+":"+value).getBytes(StandardCharsets.UTF_8)).toString();}
     private static String normalize(String s){return s==null?"":s.replace('\\','/').replaceAll("^/+","").trim();}
     private static String trimDot(String s){String v=s==null?"":s.trim();while(v.startsWith("."))v=v.substring(1);return v;}
     private static boolean isArchive(String s){String v=(s==null?"":s).toLowerCase(Locale.ROOT);return v.endsWith(".zip")||v.endsWith(".7z")||v.endsWith(".rar")||v.endsWith(".cbz")||v.endsWith(".jar");}
     private static String firstNonBlank(String...v){for(String s:v)if(s!=null&&!s.isBlank())return s.trim();return "";}
     private static String blankTo(String s,String d){return s==null||s.isBlank()?d:s;}
+    private static String blankToNull(String s){return s==null||s.isBlank()?null:s.trim();}
+    private static String stem(String value){
+        String v=value==null?"":value.trim();
+        int slash=Math.max(v.lastIndexOf('/'),v.lastIndexOf('\\'));
+        if(slash>=0)v=v.substring(slash+1);
+        int dot=v.lastIndexOf('.');
+        return dot>0?v.substring(0,dot):v;
+    }
     private record MigrationStats(long books,long authors,long genres){}
 }

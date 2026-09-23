@@ -70,6 +70,20 @@ class CollectionMaintenanceAdapterTest {
             assertThat(report.orphanedAuthors()).isEqualTo(1);
             assertThat(report.orphanedGenres()).isEqualTo(1);
             assertThat(report.duplicateBooks()).isEqualTo(1);
+            assertThat(report.issues()).allSatisfy(issue -> {
+                assertThat(issue.messageKey()).startsWith("ui.collection.maintenance.issue.");
+                assertThat(issue.technicalDetail()).doesNotContain("ui.collection.maintenance.issue.");
+            });
+            assertThat(report.issues()).anyMatch(i -> i.type() == MaintenanceIssueType.MISSING_FILE
+                    && i.messageKey().equals("ui.collection.maintenance.issue.missing_file"));
+            assertThat(report.issues()).anyMatch(i -> i.type() == MaintenanceIssueType.INVALID_ARCHIVE_REFERENCE
+                    && i.messageKey().startsWith("ui.collection.maintenance.issue.archive_"));
+            assertThat(report.issues()).anyMatch(i -> i.type() == MaintenanceIssueType.ORPHANED_AUTHOR
+                    && i.messageKey().equals("ui.collection.maintenance.issue.orphan_author"));
+            assertThat(report.issues()).anyMatch(i -> i.type() == MaintenanceIssueType.ORPHANED_GENRE
+                    && i.messageKey().equals("ui.collection.maintenance.issue.orphan_genre"));
+            assertThat(report.issues()).anyMatch(i -> i.type() == MaintenanceIssueType.DUPLICATE_BOOK
+                    && i.messageKey().equals("ui.collection.maintenance.issue.duplicate_book"));
             assertThat(report.issues()).anyMatch(i -> i.type() == MaintenanceIssueType.ORPHAN_FILE && !i.repairable());
 
             Set<String> repairable = report.issues().stream().filter(i -> i.repairable())

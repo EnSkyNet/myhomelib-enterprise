@@ -24,7 +24,7 @@ class ContentGlobalSearchUiContractTest {
                 "CONTENTS(\"ui.search.mode.contents\")",
                 "BOTH(\"ui.search.mode.both\")",
                 "contentSearchService.search",
-                "submitCancellable",
+                "submitCollectionScopedCancellable",
                 "task.cancel(true)",
                 "workspaceManager.showContentHitInReader",
                 "KeyCode.ENTER");

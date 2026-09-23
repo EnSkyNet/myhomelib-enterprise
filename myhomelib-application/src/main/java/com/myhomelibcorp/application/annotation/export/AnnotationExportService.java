@@ -1,14 +1,18 @@
 package com.myhomelibcorp.application.annotation.export;
 
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.annotation.AnnotationExportQueryPort;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.BufferedWriter;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
+import java.nio.file.StandardOpenOption;
 import java.nio.file.Path;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
@@ -22,20 +26,52 @@ import java.util.regex.Pattern;
  * Cancellation/error only removes the temporary file; an existing final file is untouched until commit.
  */
 @Service
-@RequiredArgsConstructor
 public class AnnotationExportService {
     public static final String JSON_SCHEMA = "myhomelib.annotations.export/v1";
     private static final int PAGE_SIZE = 250;
     private static final Pattern TEMPLATE_PLACEHOLDER = Pattern.compile("\\$\\{([A-Za-z][A-Za-z0-9]*)\\}");
 
     private final AnnotationExportQueryPort queryPort;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for isolated tests/non-Spring embedding. */
+    public AnnotationExportService(AnnotationExportQueryPort queryPort) {
+        this(queryPort, null);
+    }
+
+    @Autowired
+    public AnnotationExportService(AnnotationExportQueryPort queryPort,
+                                   LibraryOperationCoordinator operationCoordinator) {
+        this.queryPort = java.util.Objects.requireNonNull(queryPort, "queryPort");
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public AnnotationExportResult export(AnnotationExportRequest request) throws IOException, InterruptedException {
+        if (operationCoordinator == null) return exportLocked(request);
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EXPORT);
+        try {
+            AnnotationExportResult result = exportLocked(request);
+            lease.markCompleted("");
+            return result;
+        } catch (IOException | InterruptedException | RuntimeException failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } catch (Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private AnnotationExportResult exportLocked(AnnotationExportRequest request) throws IOException, InterruptedException {
         Path destination = request.destination();
         Path parent = destination.getParent();
-        if (parent != null) Files.createDirectories(parent);
+        Path directory = parent != null ? parent : Path.of(".").toAbsolutePath().normalize();
+        SafeFilePublication.createDirectoriesNoLinks(directory, "Annotation export directory");
+        String originalTargetHash = SafeFilePublication.snapshotExistingTarget(destination, "Annotation export destination");
         String prefix = "." + destination.getFileName() + ".";
-        Path temp = Files.createTempFile(parent != null ? parent : Path.of("."), prefix, ".part");
+        Path temp = Files.createTempFile(directory, prefix, ".part");
         boolean committed = false;
         long count;
         try {
@@ -45,7 +81,8 @@ public class AnnotationExportService {
                 case JSON -> writeJson(request, temp);
             };
             checkCancelled();
-            AtomicFileSupport.moveReplacing(temp, destination);
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    temp, destination, originalTargetHash, "Annotation export");
             committed = true;
             return new AnnotationExportResult(count, destination);
         } finally {
@@ -62,7 +99,8 @@ public class AnnotationExportService {
         String before = marker >= 0 ? document.substring(0, marker) : document + "\n";
         String after = marker >= 0 ? document.substring(marker + "${items}".length()) : "";
         long count = 0;
-        try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+        try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8,
+                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
             writer.write(before);
             int offset = 0;
             while (true) {
@@ -84,7 +122,8 @@ public class AnnotationExportService {
     private long writeJson(AnnotationExportRequest request, Path temp) throws IOException, InterruptedException {
         long count = 0;
         boolean first = true;
-        try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8)) {
+        try (BufferedWriter writer = Files.newBufferedWriter(temp, StandardCharsets.UTF_8,
+                StandardOpenOption.WRITE, StandardOpenOption.TRUNCATE_EXISTING, LinkOption.NOFOLLOW_LINKS)) {
             writer.write("{\n  \"schema\": \""); writer.write(JSON_SCHEMA); writer.write("\",\n  \"annotations\": [");
             int offset = 0;
             while (true) {

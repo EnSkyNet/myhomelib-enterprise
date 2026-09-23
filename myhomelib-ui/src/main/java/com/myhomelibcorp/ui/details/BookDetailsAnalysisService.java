@@ -1,5 +1,8 @@
 package com.myhomelibcorp.ui.details;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolvedBookContent;
@@ -27,7 +30,7 @@ public class BookDetailsAnalysisService {
     public RichBookDetailsSession analyze(String bookId) {
         if (bookId == null || bookId.isBlank()) throw new IllegalArgumentException("Book id is required");
         BookDto fullBook = loadBookByIdUseCase.execute(BookId.fromString(bookId))
-                .orElseThrow(() -> new IllegalArgumentException("Книгу не знайдено: " + bookId));
+                .orElseThrow(() -> new IllegalArgumentException(UiText.text("ui.java.book_details_analysis_service.7e6db1b645") + bookId));
 
         var groups = loadBookGroupsUseCase.execute(fullBook.getId());
 
@@ -39,7 +42,7 @@ public class BookDetailsAnalysisService {
             return new RichBookDetailsSession(fullBook, inspection.inspection(), groups, inspection, source);
         } catch (Exception e) {
             DocumentInspection unavailable = DocumentInspection.unsupported(formatOf(fullBook),
-                    "Файл недоступний для аналізу: " + safeMessage(e));
+                    UiText.text("ui.java.book_details_analysis_service.a923ac5c4b") + safeMessage(e));
             return new RichBookDetailsSession(fullBook, unavailable, groups, null, null);
         }
     }
@@ -53,7 +56,6 @@ public class BookDetailsAnalysisService {
     }
 
     private static String safeMessage(Exception e) {
-        String message = e.getMessage();
-        return message == null || message.isBlank() ? e.getClass().getSimpleName() : message;
+        return UiExceptionSupport.message(e);
     }
 }

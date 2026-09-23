@@ -3,18 +3,23 @@ package com.myhomelibcorp.application.webreader;
 import com.myhomelibcorp.application.content.*;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.dto.ReadingProgressDto;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.ReadingProgressRepository;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolveBookContentUseCase;
 import com.myhomelibcorp.application.usecase.book.ResolvedBookContent;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.shared.format.SupportedFormatRegistry;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,24 +38,40 @@ public class WebReaderService implements WebReaderUseCase {
     private final ResolveBookContentUseCase resolveBookContent;
     private final ContentExtractionService extraction;
     private final ReadingProgressRepository progressRepository;
+    private final LibraryOperationCoordinator operationCoordinator;
 
+    /** Compatibility constructor for isolated tests/callers without lifecycle wiring. */
     public WebReaderService(LoadBookByIdUseCase loadBook,
                             ResolveBookContentUseCase resolveBookContent,
                             ContentExtractionService extraction,
                             ReadingProgressRepository progressRepository) {
+        this(loadBook, resolveBookContent, extraction, progressRepository, null);
+    }
+
+    @Autowired
+    public WebReaderService(LoadBookByIdUseCase loadBook,
+                            ResolveBookContentUseCase resolveBookContent,
+                            ContentExtractionService extraction,
+                            ReadingProgressRepository progressRepository,
+                            LibraryOperationCoordinator operationCoordinator) {
         this.loadBook = Objects.requireNonNull(loadBook, "loadBook");
         this.resolveBookContent = Objects.requireNonNull(resolveBookContent, "resolveBookContent");
         this.extraction = Objects.requireNonNull(extraction, "extraction");
         this.progressRepository = Objects.requireNonNull(progressRepository, "progressRepository");
+        this.operationCoordinator = operationCoordinator;
     }
 
     public Optional<WebReaderDocument> open(String bookId, int requestedChapter) throws IOException {
+        return withReaderState(() -> openUnderLease(bookId, requestedChapter));
+    }
+
+    private Optional<WebReaderDocument> openUnderLease(String bookId, int requestedChapter) throws IOException {
         BookDto book = load(bookId).orElse(null);
         if (book == null) return Optional.empty();
         String format = detectFormat(book);
         if (!WEB_FORMATS.contains(format)) {
             return Optional.of(new WebReaderDocument(bookId, book.getTitle(), format, false,
-                    "Формат не підтримується Web Reader. Завантажте файл для читання локально.",
+                    "web.reader.unsupported_format",
                     List.of(), 0, 0, 0L, existingPercent(bookId)));
         }
 
@@ -75,29 +96,31 @@ public class WebReaderService implements WebReaderUseCase {
     }
 
     public ReadingProgressDto saveProgress(String bookId, int chapterIndex, long absoluteOffset) throws IOException {
-        WebReaderDocument doc = open(bookId, chapterIndex)
-                .orElseThrow(() -> new IOException("Book not found"));
-        if (!doc.supported() || doc.chapters().isEmpty()) throw new IOException("Web Reader format is unsupported");
-        WebReaderChapter chapter = doc.currentChapter();
-        long clamped = Math.max(chapter.startOffset(), Math.min(absoluteOffset, chapter.endOffset()));
-        long total = doc.chapters().getLast().endOffset();
-        int localOffset = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, clamped - chapter.startOffset()));
-        ReadingProgressDto existing = progressRepository.findByBookId(bookId).orElse(null);
-        ReadingProgressDto dto = ReadingProgressDto.builder()
-                .bookId(bookId)
-                .anchorId(chapter.index() + ":" + clamped + ":0:" + localOffset)
-                .paragraphIndex(0)
-                .paragraphId("web:" + chapter.id())
-                .charOffset(localOffset)
-                .percent(total <= 0 ? 0.0 : Math.min(100.0, (double) clamped / total * 100.0))
-                .chapterTitle(chapter.title())
-                .chapterId(chapter.id())
-                .updatedAt(LocalDateTime.now())
-                .readingTimeSeconds(existing == null ? 0L : existing.getReadingTimeSeconds())
-                .lastDevice("web")
-                .build();
-        progressRepository.save(dto);
-        return dto;
+        return withReaderState(() -> {
+            WebReaderDocument doc = openUnderLease(bookId, chapterIndex)
+                    .orElseThrow(() -> new IOException("Book not found"));
+            if (!doc.supported() || doc.chapters().isEmpty()) throw new IOException("Web Reader format is unsupported");
+            WebReaderChapter chapter = doc.currentChapter();
+            long clamped = Math.max(chapter.startOffset(), Math.min(absoluteOffset, chapter.endOffset()));
+            long total = doc.chapters().getLast().endOffset();
+            int localOffset = (int) Math.min(Integer.MAX_VALUE, Math.max(0L, clamped - chapter.startOffset()));
+            ReadingProgressDto existing = progressRepository.findByBookId(bookId).orElse(null);
+            ReadingProgressDto dto = ReadingProgressDto.builder()
+                    .bookId(bookId)
+                    .anchorId(chapter.index() + ":" + clamped + ":0:" + localOffset)
+                    .paragraphIndex(0)
+                    .paragraphId("web:" + chapter.id())
+                    .charOffset(localOffset)
+                    .percent(total <= 0 ? 0.0 : Math.min(100.0, (double) clamped / total * 100.0))
+                    .chapterTitle(chapter.title())
+                    .chapterId(chapter.id())
+                    .updatedAt(LocalDateTime.now())
+                    .readingTimeSeconds(existing == null ? 0L : existing.getReadingTimeSeconds())
+                    .lastDevice("web")
+                    .build();
+            progressRepository.save(dto);
+            return dto;
+        });
     }
 
     private Optional<BookDto> load(String bookId) {
@@ -156,16 +179,42 @@ public class WebReaderService implements WebReaderUseCase {
         return -1L;
     }
 
+    private <T> T withReaderState(IoSupplier<T> action) throws IOException {
+        if (operationCoordinator == null) return action.get();
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.READER_STATE);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (IOException | RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    @FunctionalInterface
+    private interface IoSupplier<T> {
+        T get() throws IOException;
+    }
+
     private record PathSource(String id, Path path) implements ContentExtractionSource {
         private PathSource {
             Objects.requireNonNull(id, "id");
             Objects.requireNonNull(path, "path");
         }
         @Override public String name() { return path.getFileName() == null ? id : path.getFileName().toString(); }
-        @Override public InputStream openStream() throws IOException { return Files.newInputStream(path); }
+        @Override public InputStream openStream() throws IOException {
+            return Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS);
+        }
         @Override public OptionalLong size() {
-            try { return OptionalLong.of(Files.size(path)); }
-            catch (IOException ignored) { return OptionalLong.empty(); }
+            try {
+                BasicFileAttributes attributes = Files.readAttributes(path, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                return attributes.isRegularFile() ? OptionalLong.of(attributes.size()) : OptionalLong.empty();
+            } catch (IOException ignored) {
+                return OptionalLong.empty();
+            }
         }
     }
 }

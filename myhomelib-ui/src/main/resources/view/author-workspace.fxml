@@ -10,66 +10,66 @@
     <padding><Insets top="15" right="15" bottom="15" left="15"/></padding>
 
     <HBox spacing="15" alignment="CENTER_LEFT">
-        <Label fx:id="authorNameLabel" text="Автор" styleClass="workspace-title"/>
+        <Label fx:id="authorNameLabel" text="ui.fxml.author_workspace.author" styleClass="workspace-title"/>
         <Region HBox.hgrow="ALWAYS"/>
         <Label fx:id="followStatusLabel" text="" styleClass="muted-text"/>
-        <Button fx:id="followAuthorButton" text="Стежити за автором" onAction="#onToggleAuthorFollowed"/>
+        <Button fx:id="followAuthorButton" text="ui.fxml.author_workspace.follow_author" onAction="#onToggleAuthorFollowed"/>
     </HBox>
 
     <HBox spacing="20">
-        <Label fx:id="booksCountLabel" text="Книг: 0" styleClass="workspace-stat"/>
-        <Label fx:id="seriesCountLabel" text="Серій: 0" styleClass="workspace-stat"/>
-        <Label fx:id="genresCountLabel" text="Жанрів: 0" styleClass="workspace-stat"/>
+        <Label fx:id="booksCountLabel" text="ui.fxml.author_workspace.books_0" styleClass="workspace-stat"/>
+        <Label fx:id="seriesCountLabel" text="ui.fxml.author_workspace.series_0" styleClass="workspace-stat"/>
+        <Label fx:id="genresCountLabel" text="ui.fxml.author_workspace.genres_0" styleClass="workspace-stat"/>
     </HBox>
 
     <HBox alignment="CENTER_LEFT">
-        <Label text="Біографія:" styleClass="workspace-stat"/>
+        <Label text="ui.fxml.author_workspace.biography" styleClass="workspace-stat"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Редагувати опис" onAction="#onEditAuthorDescription"/>
+        <Button text="ui.fxml.author_workspace.edit_description" onAction="#onEditAuthorDescription"/>
     </HBox>
     <TextArea fx:id="bioLabel" prefHeight="60" editable="false" wrapText="true" styleClass="author-bio"/>
 
     <HBox spacing="8" alignment="CENTER_LEFT">
-        <Label text="Фільтр:"/>
-        <TextField fx:id="filterTextField" promptText="Назва, серія або жанр..." prefWidth="230"/>
+        <Label text="ui.fxml.author_workspace.filter"/>
+        <TextField fx:id="filterTextField" promptText="ui.fxml.author_workspace.title_series_or_genre" prefWidth="230"/>
         <ComboBox fx:id="localFilterComboBox" prefWidth="145"/>
         <Separator orientation="VERTICAL"/>
-        <Button text="За серією" onAction="#onSortBySeries"/>
-        <Button text="За назвою" onAction="#onSortByTitle"/>
-        <Button text="За роком" onAction="#onSortByYear"/>
-        <Button text="За рейтингом" onAction="#onSortByRating"/>
+        <Button text="ui.fxml.author_workspace.by_series" onAction="#onSortBySeries"/>
+        <Button text="ui.fxml.author_workspace.by_title" onAction="#onSortByTitle"/>
+        <Button text="ui.fxml.author_workspace.by_year" onAction="#onSortByYear"/>
+        <Button text="ui.fxml.author_workspace.by_rating" onAction="#onSortByRating"/>
     </HBox>
 
     <HBox spacing="8" alignment="CENTER_LEFT">
-        <Button fx:id="collapseAllButton" text="Згорнути всі" onAction="#onCollapseAll"/>
-        <Button fx:id="expandAllButton" text="Розгорнути всі" onAction="#onExpandAll"/>
-        <Label fx:id="loadingLabel" text="Завантаження..." visible="false" managed="false"/>
+        <Button fx:id="collapseAllButton" text="ui.fxml.author_workspace.collapse_all" onAction="#onCollapseAll"/>
+        <Button fx:id="expandAllButton" text="ui.fxml.author_workspace.expand_all" onAction="#onExpandAll"/>
+        <Label fx:id="loadingLabel" text="ui.fxml.author_workspace.downloading" visible="false" managed="false"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Button text="Відкрити книгу" onAction="#onOpenBook"/>
-        <Button text="Читати" onAction="#onReadBook"/>
-        <Button text="Завантажити вибрані" onAction="#onDownloadBook"/>
-        <Button text="Експорт вибраних" onAction="#onExportBooks"/>
+        <Button text="ui.fxml.author_workspace.open_book" onAction="#onOpenBook"/>
+        <Button text="ui.fxml.author_workspace.read" onAction="#onReadBook"/>
+        <Button text="ui.fxml.author_workspace.download_selected" onAction="#onDownloadBook"/>
+        <Button text="ui.fxml.author_workspace.export_selected" onAction="#onExportBooks"/>
     </HBox>
 
     <TableView fx:id="booksTableView" VBox.vgrow="ALWAYS">
         <columns>
-            <TableColumn fx:id="titleColumn" text="Назва" prefWidth="260"/>
-            <TableColumn fx:id="seriesColumn" text="Серія" prefWidth="120"/>
-            <TableColumn fx:id="genresColumn" text="Жанри" prefWidth="160"/>
-            <TableColumn fx:id="seqNumberColumn" text="№" prefWidth="45"/>
-            <TableColumn fx:id="yearColumn" text="Рік" prefWidth="65"/>
-            <TableColumn fx:id="createdAtColumn" text="Додано" prefWidth="135"/>
-            <TableColumn fx:id="formatColumn" text="Статус" prefWidth="120"/>
-            <TableColumn fx:id="fileSizeColumn" text="Розмір" prefWidth="90"/>
-            <TableColumn fx:id="rateColumn" text="Оцінка" prefWidth="100"/>
-            <TableColumn fx:id="progressColumn" text="Прогрес" prefWidth="80"/>
+            <TableColumn fx:id="titleColumn" text="ui.fxml.author_workspace.title" prefWidth="260"/>
+            <TableColumn fx:id="seriesColumn" text="ui.fxml.author_workspace.series" prefWidth="120"/>
+            <TableColumn fx:id="genresColumn" text="ui.fxml.author_workspace.genres" prefWidth="160"/>
+            <TableColumn fx:id="seqNumberColumn" text="ui.fxml.author_workspace.value" prefWidth="45"/>
+            <TableColumn fx:id="yearColumn" text="ui.fxml.author_workspace.year" prefWidth="65"/>
+            <TableColumn fx:id="createdAtColumn" text="ui.fxml.author_workspace.added" prefWidth="135"/>
+            <TableColumn fx:id="formatColumn" text="ui.fxml.author_workspace.status" prefWidth="120"/>
+            <TableColumn fx:id="fileSizeColumn" text="ui.fxml.author_workspace.size" prefWidth="90"/>
+            <TableColumn fx:id="rateColumn" text="ui.fxml.author_workspace.rating" prefWidth="100"/>
+            <TableColumn fx:id="progressColumn" text="ui.fxml.author_workspace.progress" prefWidth="80"/>
         </columns>
     </TableView>
 
     <HBox spacing="18" alignment="CENTER_LEFT" styleClass="workspace-status-bar">
-        <Label fx:id="currentBookLabel" text="Поточна: —"/>
-        <Label fx:id="batchSelectionLabel" text="Пакетно вибрано: 0"/>
+        <Label fx:id="currentBookLabel" text="ui.fxml.author_workspace.current"/>
+        <Label fx:id="batchSelectionLabel" text="ui.fxml.author_workspace.batch_selected_0"/>
         <Region HBox.hgrow="ALWAYS"/>
-        <Label text="Пробіл — вибір · Ctrl+A — усі видимі · ←/→ — серія" styleClass="muted-text"/>
+        <Label text="ui.fxml.author_workspace.space_select_ctrl_a_all_visible_series" styleClass="muted-text"/>
     </HBox>
 </VBox>

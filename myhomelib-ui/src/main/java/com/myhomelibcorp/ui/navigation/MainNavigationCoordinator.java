@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.navigation;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.service.ReadingHistoryService;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
@@ -8,6 +10,8 @@ import com.myhomelibcorp.ui.service.DialogService;
 import com.myhomelibcorp.ui.service.LocalizationService;
 import javafx.scene.control.Menu;
 import javafx.scene.control.MenuItem;
+import javafx.scene.control.RadioMenuItem;
+import javafx.scene.control.ToggleGroup;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
@@ -30,6 +34,26 @@ public class MainNavigationCoordinator {
 
     public void cleanupReader() {
         workspaceManager.disposeCurrentReaderIfActive();
+    }
+
+    public void populateLanguageMenu(Menu languageMenu) {
+        if (languageMenu == null) return;
+        var languages = localizationService.availableLanguages();
+        var selectedLanguage = localizationService.language();
+        var toggleGroup = new ToggleGroup();
+        languageMenu.getItems().clear();
+        for (var entry : languages.entrySet()) {
+            RadioMenuItem item = new RadioMenuItem(entry.getValue());
+            item.setToggleGroup(toggleGroup);
+            item.setSelected(entry.getKey().equals(selectedLanguage));
+            item.setOnAction(event -> {
+                localizationService.setLanguage(entry.getKey());
+                dialogService.showInfo(
+                        localizationService.text("ui.main.language.changed_title"),
+                        localizationService.format("ui.main.language.restart_required", entry.getValue()));
+            });
+            languageMenu.getItems().add(item);
+        }
     }
 
     public void authors() { cleanupReader(); navigationPanelController.onAuthors(); }
@@ -84,9 +108,9 @@ public class MainNavigationCoordinator {
 
     public void clearHistory(Menu recentBooksMenu) {
         if (!dialogService.showConfirmation(
-                "Очистити історію читання?",
-                "Список недавніх книг та історію читання буде очищено.",
-                "Позиція читання, закладки та позначка «Прочитано» залишаться без змін.")) {
+                UiText.text("ui.java.main_navigation_coordinator.2d2056a992"),
+                UiText.text("ui.java.main_navigation_coordinator.543a8bb34f"),
+                UiText.text("ui.java.main_navigation_coordinator.e22bb07459"))) {
             return;
         }
         readingHistoryService.clear();
@@ -103,7 +127,7 @@ public class MainNavigationCoordinator {
         DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy HH:mm");
         var recent = readingHistoryService.recent(12);
         if (recent.isEmpty()) {
-            MenuItem empty = new MenuItem(localizationService.tr("Історія порожня"));
+            MenuItem empty = new MenuItem(localizationService.text("ui.text.history_is_empty"));
             empty.setDisable(true);
             recentBooksMenu.getItems().add(empty);
             return;

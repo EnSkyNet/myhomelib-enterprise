@@ -33,7 +33,7 @@ public final class CatalogUpdateProgressDialog {
 
     private final Stage stage = new Stage();
     private final ProgressBar progressBar = new ProgressBar(-1);
-    private final Label stageLabel = new Label("Підготовка…");
+    private final Label stageLabel = new Label(UiText.text("ui.java.catalog_update_progress_dialog.f665b95c00"));
     private final Label currentItemLabel = new Label("");
     private final Label processedLabel = new Label("—");
     private final Label bytesLabel = new Label("—");
@@ -44,7 +44,7 @@ public final class CatalogUpdateProgressDialog {
     private final Label duplicatesLabel = new Label("0");
     private final Label warningsLabel = new Label("0");
     private final Label errorsLabel = new Label("0");
-    private final Button cancelButton = new Button("Скасувати");
+    private final Button cancelButton = new Button(UiText.text("ui.fxml.import_workspace.cancel"));
     private final NumberFormat number = NumberFormat.getIntegerInstance(Locale.getDefault());
     private final AtomicReference<OperationProgress> pending = new AtomicReference<>();
     private final AtomicBoolean scheduled = new AtomicBoolean(false);
@@ -53,12 +53,12 @@ public final class CatalogUpdateProgressDialog {
     private volatile boolean terminal;
 
     public CatalogUpdateProgressDialog(Window owner) {
-        stage.setTitle("Оновлення каталогу");
+        stage.setTitle(UiText.text("ui.fxml.updates_workspace.catalog_updates"));
         stage.initModality(Modality.APPLICATION_MODAL);
         if (owner != null) stage.initOwner(owner);
         stage.setResizable(false);
 
-        Label title = new Label("Оновлення каталогу");
+        Label title = new Label(UiText.text("ui.fxml.updates_workspace.catalog_updates"));
         title.setStyle("-fx-font-size: 17px; -fx-font-weight: bold;");
         stageLabel.setStyle("-fx-font-size: 14px; -fx-font-weight: bold;");
         currentItemLabel.setWrapText(true);
@@ -70,15 +70,15 @@ public final class CatalogUpdateProgressDialog {
         GridPane counters = new GridPane();
         counters.setHgap(22);
         counters.setVgap(7);
-        addCounter(counters, 0, 0, "Оброблено", processedLabel);
-        addCounter(counters, 0, 1, "Додано", insertedLabel);
-        addCounter(counters, 0, 2, "Оновлено", updatedLabel);
-        addCounter(counters, 0, 3, "Видалено", deletedLabel);
-        addCounter(counters, 1, 0, "Пропущено", skippedLabel);
-        addCounter(counters, 1, 1, "Дублікати", duplicatesLabel);
-        addCounter(counters, 1, 2, "Попередження", warningsLabel);
-        addCounter(counters, 1, 3, "Помилки", errorsLabel);
-        addCounter(counters, 0, 4, "Завантажено", bytesLabel);
+        addCounter(counters, 0, 0, UiText.text("ui.java.catalog_update_progress_dialog.933b1ef7b9"), processedLabel);
+        addCounter(counters, 0, 1, UiText.text("ui.fxml.author_workspace.added"), insertedLabel);
+        addCounter(counters, 0, 2, UiText.text("ui.annotations.column.updated"), updatedLabel);
+        addCounter(counters, 0, 3, UiText.text("ui.java.catalog_update_progress_dialog.bda8b3efd2"), deletedLabel);
+        addCounter(counters, 1, 0, UiText.text("ui.java.catalog_update_progress_dialog.3e2a004b46"), skippedLabel);
+        addCounter(counters, 1, 1, UiText.text("ui.fxml.integrity_check.duplicates"), duplicatesLabel);
+        addCounter(counters, 1, 2, UiText.text("ui.java.catalog_update_progress_dialog.590a9b3b6f"), warningsLabel);
+        addCounter(counters, 1, 3, UiText.text("ui.java.catalog_update_progress_dialog.3b1e6d9985"), errorsLabel);
+        addCounter(counters, 0, 4, UiText.text("ui.java.catalog_update_progress_dialog.b97107daa1"), bytesLabel);
 
         cancelButton.setOnAction(e -> requestCancel());
         HBox actions = new HBox(cancelButton);
@@ -183,7 +183,7 @@ public final class CatalogUpdateProgressDialog {
     private void requestCancel() {
         if (terminal || cancelButton.isDisabled()) return;
         cancelButton.setDisable(true);
-        stageLabel.setText("Скасування…");
+        stageLabel.setText(UiText.text("ui.java.catalog_update_progress_dialog.d553b63991"));
         Runnable action = onCancel;
         if (action != null) action.run();
     }
@@ -198,33 +198,33 @@ public final class CatalogUpdateProgressDialog {
     }
 
     private static String stageText(OperationStage stage) {
-        if (stage == null) return "Обробка…";
+        if (stage == null) return UiText.text("ui.java.catalog_update_progress_dialog.17df011233");
         return switch (stage) {
-            case CHECKING_SERVER -> "Перевірка сервера";
-            case DOWNLOADING -> "Завантаження";
-            case CREATING_CHECKPOINT -> "Створення точки відновлення";
-            case VALIDATING -> "Перевірка даних";
-            case READING_CATALOG -> "Читання каталогу";
-            case IMPORTING -> "Імпорт каталогу";
-            case UPDATING_AUTHORS -> "Оновлення авторів";
-            case APPLYING_DELETIONS -> "Застосування видалень";
-            case UPDATING_SEARCH_INDEX -> "Оновлення пошукового індексу";
-            case ROLLING_BACK -> "Відкат оновлення";
-            case REFRESHING_STATISTICS -> "Перерахунок статистики";
-            case INTEGRITY_CHECKS -> "Перевірка цілісності";
-            case SCANNING_DUPLICATES -> "Пошук дублікатів";
-            case SYNCHRONIZING_FILES -> "Синхронізація файлів";
-            case OPTIMIZING_DATABASE -> "Оптимізація БД";
-            case BACKING_UP -> "Резервне копіювання";
-            case RESTORING -> "Відновлення";
-            case CREATING_COLLECTION -> "Створення колекції";
-            case DELETING_COLLECTION -> "Видалення колекції";
-            case FINALIZING -> "Завершення";
-            case BOOK_DOWNLOAD -> "Завантаження книги";
-            case CONVERTING -> "Конвертація";
-            case COMPLETED -> "Завершено";
-            case CANCELLED -> "Скасовано";
-            case FAILED -> "Помилка";
+            case CHECKING_SERVER -> UiText.text("ui.import.stage.checking_server");
+            case DOWNLOADING -> UiText.text("ui.import.stage.downloading");
+            case CREATING_CHECKPOINT -> UiText.text("ui.import.stage.creating_checkpoint");
+            case VALIDATING -> UiText.text("ui.import.stage.validating");
+            case READING_CATALOG -> UiText.text("ui.import.stage.reading_catalog");
+            case IMPORTING -> UiText.text("ui.import.action.catalog");
+            case UPDATING_AUTHORS -> UiText.text("ui.import.stage.updating_authors");
+            case APPLYING_DELETIONS -> UiText.text("ui.java.catalog_update_progress_dialog.8bc92236cd");
+            case UPDATING_SEARCH_INDEX -> UiText.text("ui.import.stage.updating_index");
+            case ROLLING_BACK -> UiText.text("ui.import.stage.rolling_back");
+            case REFRESHING_STATISTICS -> UiText.text("ui.import.stage.refreshing_statistics");
+            case INTEGRITY_CHECKS -> UiText.text("ui.import.stage.integrity_checks");
+            case SCANNING_DUPLICATES -> UiText.text("ui.import.stage.scanning_duplicates");
+            case SYNCHRONIZING_FILES -> UiText.text("ui.import.stage.synchronizing_files");
+            case OPTIMIZING_DATABASE -> UiText.text("ui.import.stage.optimizing_database");
+            case BACKING_UP -> UiText.text("ui.backup.confirm.start.title");
+            case RESTORING -> UiText.text("ui.import.stage.restoring");
+            case CREATING_COLLECTION -> UiText.text("ui.import.stage.creating_collection");
+            case DELETING_COLLECTION -> UiText.text("ui.import.stage.deleting_collection");
+            case FINALIZING -> UiText.text("ui.fxml.operation_center_workspace.finalizing");
+            case BOOK_DOWNLOAD -> UiText.text("ui.import.stage.book_download");
+            case CONVERTING -> UiText.text("ui.import.stage.converting");
+            case COMPLETED -> UiText.text("ui.import.stage.completed");
+            case CANCELLED -> UiText.text("ui.import.stage.cancelled");
+            case FAILED -> UiText.text("common.error");
         };
     }
 

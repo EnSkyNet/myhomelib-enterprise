@@ -9,9 +9,10 @@ import org.springframework.stereotype.Component;
 public class IsBookInGroupUseCase {
 
     private final GroupRepository groupRepository;
+    private final GroupQueryExecutor queryExecutor;
 
     public boolean execute(Long groupId, String bookId) {
         if (groupId == null || bookId == null || bookId.isBlank()) return false;
-        return groupRepository.containsBook(groupId, bookId);
+        return queryExecutor.execute(() -> groupRepository.containsBook(groupId, bookId));
     }
 }

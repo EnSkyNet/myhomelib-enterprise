@@ -12,10 +12,14 @@ import com.myhomelibcorp.application.ai.AiProviderException;
 import com.myhomelibcorp.application.ai.AiRequest;
 import com.myhomelibcorp.application.extension.RuntimeExtensionRegistry;
 import com.myhomelibcorp.application.extension.DeviceProfileDetector;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.dto.ExportRequest;
 import com.myhomelibcorp.application.export.DeviceTargetProfile;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.application.service.PortableUserDataService;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewItem;
 import com.myhomelibcorp.application.sync.conflict.SyncConflictReviewSelection;
 import com.myhomelibcorp.domain.model.sync.ChangeSet;
@@ -47,6 +51,7 @@ import com.myhomelibcorp.shared.security.SecretStoreProvider;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.ui.integration.IntegrationBackend;
 import jakarta.annotation.PreDestroy;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.io.ByteArrayInputStream;
@@ -62,10 +67,10 @@ import java.net.URL;
 import java.net.URLClassLoader;
 import java.net.http.HttpClient;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.AtomicMoveNotSupportedException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
+import java.nio.file.StandardOpenOption;
 import java.security.MessageDigest;
 import java.time.Duration;
 import java.time.Instant;
@@ -107,6 +112,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     private static final String SNAPSHOT_PREFIX = "portable-user-data:";
     private static final int SNAPSHOT_CHUNK_CHARS = 700_000;
     private static final int MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
+    private static final int MAX_ENCODED_SNAPSHOT_CHARS = 12_000_000;
+    private static final int MAX_SNAPSHOT_CHUNKS =
+            (MAX_ENCODED_SNAPSHOT_CHARS + SNAPSHOT_CHUNK_CHARS - 1) / SNAPSHOT_CHUNK_CHARS;
     private static final int MAX_PLUGIN_MANIFEST_BYTES = 64 * 1024;
     private static final TypeReference<Map<String, Long>> CURSOR_MAP_TYPE = new TypeReference<>() { };
 
@@ -116,20 +124,35 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     private final ObjectMapper mapper;
     private final PortableSnapshotConflictService snapshotConflicts;
     private final List<AiProvider> builtInAiProviders;
+    private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecycle;
     private final Optional<SecretStore> secretStore;
     private final PluginManager pluginManager = new PluginManager(new PluginLoader(Set.of()));
     private final Path pluginDir = AppPaths.dataDir().resolve("plugins");
     private final Map<String, PluginPackage> pluginPackages = new ConcurrentHashMap<>();
     private final Map<String, BundledPlugin> bundledPlugins = new ConcurrentHashMap<>();
     private final Map<String, URLClassLoader> pluginClassLoaders = new ConcurrentHashMap<>();
+    private final Map<String, Path> pluginRuntimeWorkspaces = new ConcurrentHashMap<>();
     private final Map<String, String> pluginFailures = new ConcurrentHashMap<>();
     private final Map<String, PendingSync> pendingSync = new ConcurrentHashMap<>();
 
+    /** Compatibility constructor for isolated plugin/runtime tests that do not exercise WebDAV sync. */
+    DesktopIntegrationBackend(ApplicationSettingsPort settings,
+                              PortableUserDataService portableUserData,
+                              RuntimeExtensionRegistry runtimeExtensions,
+                              ObjectMapper mapper,
+                              List<AiProvider> builtInAiProviders) {
+        this(settings, portableUserData, runtimeExtensions, mapper, builtInAiProviders, null, null);
+    }
+
+    @Autowired
     public DesktopIntegrationBackend(ApplicationSettingsPort settings,
                                      PortableUserDataService portableUserData,
                                      RuntimeExtensionRegistry runtimeExtensions,
                                      ObjectMapper mapper,
-                                     List<AiProvider> builtInAiProviders) {
+                                     List<AiProvider> builtInAiProviders,
+                                     LibraryOperationCoordinator operationCoordinator,
+                                     CollectionLifecyclePort collectionLifecycle) {
         this.settings = Objects.requireNonNull(settings, "settings");
         this.portableUserData = Objects.requireNonNull(portableUserData, "portableUserData");
         this.runtimeExtensions = Objects.requireNonNull(runtimeExtensions, "runtimeExtensions");
@@ -139,10 +162,12 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 .filter(Objects::nonNull)
                 .sorted(Comparator.comparing(AiProvider::id))
                 .toList();
+        this.operationCoordinator = operationCoordinator;
+        this.collectionLifecycle = collectionLifecycle;
         this.secretStore = openSecretStore();
         synchronizeCalibreRuntimeProperties();
         try {
-            Files.createDirectories(pluginDir);
+            SafeFilePublication.createDirectoriesNoLinks(pluginDir, "Plugin directory");
             scanBundledPlugins();
             scanPluginPackages();
             autoEnableApprovedPlugins();
@@ -211,9 +236,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 } catch (Exception ignored) { }
                 resetWebDavState();
             }
-            return Result.ok("Налаштування WebDAV збережено. Ключ синхронізації потрібен на всіх пристроях, які мають читати ці дані.");
+            return Result.ok("ui.integration.webdav.saved");
         } catch (Exception e) {
-            return Result.fail(safeMessage(e));
+            return Result.failTechnical("ui.integration.webdav.save_failed", safeMessage(e));
         }
     }
 
@@ -228,7 +253,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         settings.remove(WEB_ENDPOINT);
         resetWebDavState();
         pendingSync.clear();
-        return Result.ok("Налаштування WebDAV очищено на цьому пристрої. Віддалені файли не видалялися.");
+        return Result.ok("ui.integration.webdav.cleared");
     }
 
     @Override
@@ -237,15 +262,18 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             WebDavSyncAdapter adapter = webDavAdapter();
             List<ChangeSet> bundles = adapter.pull(Map.of());
             long snapshots = bundles.stream().filter(this::isSnapshotChangeSet).count();
-            return Result.ok("З'єднання успішне. Доступних зашифрованих пакетів синхронізації: " + snapshots + ".");
+            return Result.ok("ui.integration.webdav.test_success", snapshots);
         } catch (Exception e) {
-            return Result.fail("Не вдалося перевірити WebDAV: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.webdav.test_failed", safeMessage(e));
         }
     }
 
     @Override
     public synchronized WebDavSyncAttempt synchronizeWebDav() {
+        LibraryOperationCoordinator.Lease lease = null;
         try {
+            lease = acquireWebDavSyncLease();
+            String originCollectionId = activeCollectionIdForSync();
             WebDavSyncAdapter adapter = webDavAdapter();
             String deviceId = ensureDeviceId();
             Snapshot local = exportSnapshot();
@@ -261,17 +289,17 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                     nextCursors.put(deviceId, seq);
                     commitSyncState(local.hash(), nextCursors);
                     return new WebDavSyncAttempt(SyncState.COMPLETED,
-                            "Першу зашифровану версію користувацьких даних завантажено на WebDAV.", "", List.of());
+                            UserMessage.of("ui.integration.webdav.sync.initial_uploaded"), "", List.of());
                 }
                 if (baseline.equals(local.hash())) {
                     saveCursorMap(nextCursors);
-                    return new WebDavSyncAttempt(SyncState.NO_CHANGES, "Змін для синхронізації немає.", "", List.of());
+                    return new WebDavSyncAttempt(SyncState.NO_CHANGES, UserMessage.of("ui.integration.webdav.sync.no_changes"), "", List.of());
                 }
                 long seq = pushSnapshot(adapter, local, deviceId);
                 nextCursors.put(deviceId, seq);
                 commitSyncState(local.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.COMPLETED,
-                        "Локальні зміни користувацьких даних завантажено на WebDAV.", "", List.of());
+                        UserMessage.of("ui.integration.webdav.sync.local_uploaded"), "", List.of());
             }
 
             Set<String> changedRemoteHashes = new LinkedHashSet<>();
@@ -280,8 +308,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             }
             if (changedRemoteHashes.size() > 1) {
                 return new WebDavSyncAttempt(SyncState.FAILED,
-                        "Одночасно виявлено різні нові версії на кількох віддалених пристроях. "
-                                + "Щоб не втратити дані, синхронізацію зупинено; спочатку синхронізуйте один із цих пристроїв повторно.",
+                        UserMessage.of("ui.integration.webdav.sync.multiple_remote_versions"),
                         "", List.of());
             }
 
@@ -289,7 +316,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             if (local.hash().equals(remote.snapshot().hash())) {
                 commitSyncState(local.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.NO_CHANGES,
-                        "Локальні та віддалені користувацькі дані вже однакові.", "", List.of());
+                        UserMessage.of("ui.integration.webdav.sync.same"), "", List.of());
             }
 
             boolean localChanged = baseline.isBlank() || !baseline.equals(local.hash());
@@ -298,44 +325,57 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 Snapshot restored = restoreRemoteSnapshot(remote.snapshot());
                 commitSyncState(restored.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.COMPLETED,
-                        "Віддалені користувацькі дані застосовано до локальної бібліотеки.", "", List.of());
+                        UserMessage.of("ui.integration.webdav.sync.remote_applied"), "", List.of());
             }
             if (localChanged && !remoteChanged) {
                 long seq = pushSnapshot(adapter, local, deviceId);
                 nextCursors.put(deviceId, seq);
                 commitSyncState(local.hash(), nextCursors);
                 return new WebDavSyncAttempt(SyncState.COMPLETED,
-                        "Локальні зміни користувацьких даних завантажено на WebDAV.", "", List.of());
+                        UserMessage.of("ui.integration.webdav.sync.local_uploaded"), "", List.of());
             }
 
             List<SyncConflictReviewItem> conflicts = snapshotConflicts.conflicts(local.bytes(), remote.snapshot().bytes());
             if (conflicts.isEmpty()) {
                 return new WebDavSyncAttempt(SyncState.FAILED,
-                        "Локальна та віддалена версії відрізняються, але конфліктні розділи не визначено. Дані не змінено.",
+                        UserMessage.of("ui.integration.webdav.sync.conflict_sections_unknown"),
                         "", List.of());
             }
             String token = UUID.randomUUID().toString();
             pendingSync.clear();
-            pendingSync.put(token, new PendingSync(local, remote, Map.copyOf(nextCursors)));
+            pendingSync.put(token, new PendingSync(originCollectionId, local, remote, Map.copyOf(nextCursors)));
             return new WebDavSyncAttempt(SyncState.CONFLICT,
-                    "Виявлено конфлікти у " + conflicts.size() + " розділ(ах). Виберіть версію для кожного розділу.",
+                    UserMessage.of("ui.integration.webdav.sync.conflicts_detected", conflicts.size()),
                     token, conflicts);
         } catch (Exception e) {
-            return new WebDavSyncAttempt(SyncState.FAILED, "Синхронізація WebDAV не виконана: " + safeMessage(e), "", List.of());
+            if (lease != null) lease.markFailed(e);
+            return new WebDavSyncAttempt(SyncState.FAILED,
+                    UserMessage.technical("ui.integration.webdav.sync.failed", safeMessage(e)), "", List.of());
+        } finally {
+            if (lease != null) lease.close();
         }
     }
 
     @Override
     public synchronized Result resolveWebDavConflict(String conflictToken, List<SyncConflictReviewSelection> selections) {
-        if (conflictToken == null || conflictToken.isBlank()) return Result.fail("Не вказано конфлікт синхронізації");
-        PendingSync pending = pendingSync.remove(conflictToken);
-        if (pending == null) return Result.fail("Конфлікт уже застарів. Запустіть синхронізацію повторно.");
+        if (conflictToken == null || conflictToken.isBlank()) return Result.fail("ui.integration.webdav.conflict.missing");
+        PendingSync pending = pendingSync.get(conflictToken);
+        if (pending == null) return Result.fail("ui.integration.webdav.conflict.stale");
+        LibraryOperationCoordinator.Lease lease = null;
         try {
+            lease = acquireWebDavSyncLease();
+            if (!sameActiveCollection(pending.collectionId())) {
+                pendingSync.remove(conflictToken, pending);
+                return Result.fail("ui.integration.webdav.conflict.collection_changed");
+            }
+            if (!pendingSync.remove(conflictToken, pending)) {
+                return Result.fail("ui.integration.webdav.conflict.stale");
+            }
             WebDavSyncAdapter adapter = webDavAdapter();
             String deviceId = ensureDeviceId();
             Snapshot currentLocal = exportSnapshot();
             if (!currentLocal.hash().equals(pending.local().hash())) {
-                return Result.fail("Локальні дані змінилися після відкриття конфлікту. Запустіть синхронізацію повторно, щоб не втратити нові зміни.");
+                return Result.fail("ui.integration.webdav.conflict.local_changed");
             }
             Map<String, Long> currentCursors = loadCursorMap();
             List<ChangeSet> check = adapter.pull(currentCursors);
@@ -349,7 +389,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                         .findFirst();
             }
             if (originalRemote.isEmpty()) {
-                return Result.fail("Віддалена версія змінилася. Запустіть синхронізацію повторно перед розв'язанням конфлікту.");
+                return Result.fail("ui.integration.webdav.conflict.remote_changed");
             }
             List<RemoteSnapshot> latest = latestExternalSnapshots(adapter.pull(Map.of()), deviceId);
             boolean remoteStillCurrent = latest.stream().anyMatch(value ->
@@ -357,7 +397,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             if (!remoteStillCurrent || latest.stream().anyMatch(value ->
                     value.changeSet().createdAt().isAfter(pending.remote().changeSet().createdAt())
                             && !value.snapshot().hash().equals(pending.remote().snapshot().hash()))) {
-                return Result.fail("Після відкриття конфлікту на WebDAV з'явилася новіша версія. Запустіть синхронізацію повторно.");
+                return Result.fail("ui.integration.webdav.conflict.newer_remote");
             }
 
             byte[] mergedBytes = snapshotConflicts.merge(
@@ -373,9 +413,12 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             Map<String, Long> nextCursors = new HashMap<>(pending.nextCursors());
             nextCursors.put(deviceId, seq);
             commitSyncState(resolved.hash(), nextCursors);
-            return Result.ok("Конфлікт розв'язано по розділах. Об'єднану версію застосовано локально та завантажено на WebDAV.");
+            return Result.ok("ui.integration.webdav.conflict.resolved");
         } catch (Exception e) {
-            return Result.fail("Не вдалося розв'язати конфлікт: " + safeMessage(e));
+            if (lease != null) lease.markFailed(e);
+            return Result.failTechnical("ui.integration.webdav.conflict.resolve_failed", safeMessage(e));
+        } finally {
+            if (lease != null) lease.close();
         }
     }
 
@@ -401,7 +444,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                     state, trust,
                     manifest.services().stream().map(Enum::name).sorted().toList(),
                     manifest.permissions().stream().map(Enum::name).sorted().toList(),
-                    "Входить до складу MyHomeLib", failure, bundled.fingerprint(), false));
+                    "BUNDLED", failure, bundled.fingerprint(), false));
         }
         for (PluginPackage pkg : pluginPackages.values()) {
             PluginStatus status = pluginManager.status(pkg.manifest().pluginId()).orElse(null);
@@ -420,45 +463,72 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
     @Override
     public synchronized Result installPlugin(Path jarFile) {
+        Path workspace = null;
         try {
-            if (jarFile == null || !Files.isRegularFile(jarFile)) throw new IllegalArgumentException("Файл плагіна не знайдено");
-            if (!jarFile.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar")) {
+            if (jarFile == null) throw new IllegalArgumentException("Файл плагіна не знайдено");
+            Path safeSource = SafeFilePublication.requireSafeRegularFile(jarFile, "Plugin installation source");
+            if (!safeSource.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar")) {
                 throw new IllegalArgumentException("Плагін має бути JAR-файлом");
             }
-            PluginManifest manifest = readPluginManifest(jarFile);
+            SafeFilePublication.createDirectoriesNoLinks(pluginDir, "Plugin directory");
+            workspace = SafeFilePublication.createPrivateWorkspace(pluginDir, ".plugin-install-", "Plugin installation workspace");
+            Path staged = workspace.resolve("package.jar");
+            try (InputStream in = Files.newInputStream(safeSource, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.copyFresh(in, staged, "Plugin staged package");
+            }
+
+            // Inspect only stable private bytes. The chooser path may change immediately after selection.
+            PluginManifest manifest = readPluginManifest(staged);
             pluginManager.inspect(manifest); // API compatibility and metadata validation only.
-            Files.createDirectories(pluginDir);
             String targetName = manifest.pluginId() + "-" + sanitizeFilePart(manifest.version()) + ".jar";
-            Path target = pluginDir.resolve(targetName);
+            Path target = pluginDir.resolve(targetName).toAbsolutePath().normalize();
             PluginPackage existing = pluginPackages.get(manifest.pluginId());
             if (existing != null && pluginManager.status(manifest.pluginId())
                     .map(PluginStatus::state).orElse(PluginState.DISABLED) == PluginState.ENABLED) {
                 throw new IllegalStateException("Спочатку вимкніть поточну версію плагіна " + manifest.displayName());
             }
-            Path temp = Files.createTempFile(pluginDir, ".plugin-", ".jar.tmp");
-            try {
-                Files.copy(jarFile, temp, StandardCopyOption.REPLACE_EXISTING);
-                // Verify copied bytes, not the source path that may change after chooser closes.
-                PluginManifest copied = readPluginManifest(temp);
-                if (!manifest.equals(copied)) throw new IllegalStateException("Маніфест плагіна змінився під час копіювання");
-                moveReplacing(temp, target);
-            } finally {
-                Files.deleteIfExists(temp);
+
+            String expectedTargetHash = null;
+            if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                if (existing == null || !existing.jar().equals(target)) {
+                    throw new IOException("Цільовий JAR плагіна вже існує, але не належить відомому пакету: " + target);
+                }
+                expectedTargetHash = existing.sha256();
             }
-            if (existing != null && !existing.jar().equals(target)) Files.deleteIfExists(existing.jar());
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    staged, target, expectedTargetHash, "Plugin package installation");
+            String publishedHash = SafeFilePublication.sha256(target, "Installed plugin package");
+
+            if (existing != null && !existing.jar().equals(target)) {
+                try {
+                    SafeFilePublication.removeIfOwned(existing.jar(), existing.sha256(), "Previous plugin package cleanup");
+                } catch (IOException cleanupFailure) {
+                    try {
+                        SafeFilePublication.removeIfOwned(target, publishedHash, "Failed plugin installation rollback");
+                    } catch (IOException rollbackFailure) {
+                        cleanupFailure.addSuppressed(rollbackFailure);
+                    }
+                    throw cleanupFailure;
+                }
+            }
             clearPluginApprovals(manifest.pluginId()); // New package bytes require fresh explicit approval.
             pluginManager.resetApproval(manifest);
             scanPluginPackages();
-            return Result.ok("Плагін встановлено, але ще не активовано. Перевірте дозволи й натисніть «Увімкнути».");
+            return Result.ok("ui.integration.plugin.install_success");
         } catch (Exception e) {
-            return Result.fail("Не вдалося встановити плагін: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.plugin.install_failed", safeMessage(e));
+        } finally {
+            if (workspace != null) {
+                try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+                catch (IOException ignored) { /* preserve unexpected replacement as evidence */ }
+            }
         }
     }
 
     @Override
     public synchronized Result enablePlugin(String pluginId, boolean approveRequestedPermissions) {
         if (!approveRequestedPermissions) {
-            return Result.fail("Для запуску плагіна потрібно явно підтвердити довіру до цієї версії та всі запитані дозволи.");
+            return Result.fail("ui.integration.plugin.approval_required");
         }
         try {
             if (!pluginPackages.containsKey(pluginId) && bundledPlugins.containsKey(pluginId)) {
@@ -466,7 +536,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             }
             PluginPackage pkg = requirePluginPackage(pluginId);
             disablePluginInternal(pluginId);
-            URLClassLoader classLoader = new URLClassLoader(new URL[]{pkg.jar().toUri().toURL()}, getClass().getClassLoader());
+            PluginRuntimePackage runtimePackage = stageVerifiedPluginPackageForLoad(pkg);
+            URLClassLoader classLoader = new URLClassLoader(
+                    new URL[]{runtimePackage.jar().toUri().toURL()}, getClass().getClassLoader());
             boolean success = false;
             try {
                 List<PluginEntrypoint> entrypoints = ServiceLoader.load(PluginEntrypoint.class, classLoader).stream()
@@ -481,24 +553,24 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
                 }
                 pluginManager.inspect(pkg.manifest());
                 LoadedPlugin loaded = pluginManager.enable(entrypoint, PluginApproval.trusted(pkg.manifest()));
-                try {
-                    registerRuntimeExtensions(loaded);
-                } catch (Exception | LinkageError registrationFailure) {
-                    runtimeExtensions.removePlugin(pluginId);
-                    pluginManager.disable(pluginId);
-                    throw registrationFailure;
-                }
-                pluginClassLoaders.put(pluginId, classLoader);
+                registerRuntimeExtensions(loaded);
                 settings.putBoolean(approvalKey(pkg), true);
+                pluginClassLoaders.put(pluginId, classLoader);
+                pluginRuntimeWorkspaces.put(pluginId, runtimePackage.workspace());
                 pluginFailures.remove(pluginId);
                 success = true;
-                return Result.ok("Плагін «" + pkg.manifest().displayName() + "» увімкнено.");
+                return Result.ok("ui.integration.plugin.enabled", pkg.manifest().displayName());
             } finally {
-                if (!success) classLoader.close();
+                if (!success) {
+                    runtimeExtensions.removePlugin(pluginId);
+                    pluginManager.disable(pluginId);
+                    try { classLoader.close(); } catch (IOException ignored) { }
+                    cleanupPluginRuntimeWorkspace(pluginId, runtimePackage.workspace());
+                }
             }
         } catch (Exception | LinkageError e) {
             pluginFailures.put(pluginId == null ? "" : pluginId, safeMessage(e));
-            return Result.fail("Не вдалося увімкнути плагін: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.plugin.enable_failed", safeMessage(e));
         }
     }
 
@@ -507,11 +579,11 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         try {
             PluginManifest manifest = requireAnyPluginManifest(pluginId);
             boolean changed = disablePluginInternal(pluginId);
-            return Result.ok(changed
-                    ? "Плагін «" + manifest.displayName() + "» вимкнено."
-                    : "Плагін уже вимкнений.");
+            return changed
+                    ? Result.ok("ui.integration.plugin.disabled", manifest.displayName())
+                    : Result.ok("ui.integration.plugin.already_disabled");
         } catch (Exception e) {
-            return Result.fail("Не вдалося вимкнути плагін: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.plugin.disable_failed", safeMessage(e));
         }
     }
 
@@ -519,17 +591,17 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     public synchronized Result removePlugin(String pluginId) {
         try {
             if (!pluginPackages.containsKey(pluginId) && bundledPlugins.containsKey(pluginId)) {
-                return Result.fail("Плагін входить до складу MyHomeLib і не видаляється окремо. Його можна вимкнути.");
+                return Result.fail("ui.integration.plugin.bundled_remove_forbidden");
             }
             PluginPackage pkg = requirePluginPackage(pluginId);
             disablePluginInternal(pluginId);
             clearPluginApprovals(pkg.manifest().pluginId());
-            Files.deleteIfExists(pkg.jar());
+            SafeFilePublication.removeIfOwned(pkg.jar(), pkg.sha256(), "Plugin package removal");
             pluginPackages.remove(pluginId);
             pluginFailures.remove(pluginId);
-            return Result.ok("Файл плагіна видалено. Дані бібліотеки не змінювалися.");
+            return Result.ok("ui.integration.plugin.removed");
         } catch (Exception e) {
-            return Result.fail("Не вдалося видалити плагін: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.plugin.remove_failed", safeMessage(e));
         }
     }
 
@@ -577,9 +649,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             if (apiKey != null && !apiKey.isBlank()) {
                 return saveAiProviderSecret(OpenAiResponsesProvider.ID, "api-key", apiKey);
             }
-            return Result.ok("Налаштування ШІ збережено.");
+            return Result.ok("ui.integration.ai.settings_saved");
         } catch (Exception e) {
-            return Result.fail("Не вдалося зберегти налаштування ШІ: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.ai.settings_save_failed", safeMessage(e));
         }
     }
 
@@ -595,10 +667,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             AiProvider provider = requireAiProvider(providerId);
             AiExtensionService service = aiService();
             service.saveProviderSecret(provider.id(), secretName, value);
-            return Result.ok("Секрет збережено у захищеному сховищі "
-                    + secretStore.map(SecretStore::backendId).orElse("") + ".");
+            return Result.ok("ui.integration.ai.secret_saved", secretStore.map(SecretStore::backendId).orElse(""));
         } catch (Exception e) {
-            return Result.fail("Не вдалося зберегти секрет провайдера: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.ai.secret_save_failed", safeMessage(e));
         }
     }
 
@@ -607,9 +678,9 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         try {
             AiProvider provider = requireAiProvider(providerId);
             aiService().deleteProviderSecret(provider.id(), secretName);
-            return Result.ok("Секрет видалено із захищеного сховища.");
+            return Result.ok("ui.integration.ai.secret_deleted");
         } catch (Exception e) {
-            return Result.fail("Не вдалося видалити секрет провайдера: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.ai.secret_delete_failed", safeMessage(e));
         }
     }
 
@@ -666,30 +737,35 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     }
 
     private Snapshot exportSnapshot() throws IOException {
-        Files.createDirectories(AppPaths.cacheDir());
-        Path temp = Files.createTempFile(AppPaths.cacheDir(), "user-data-sync-", ".json");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                AppPaths.cacheDir(), ".mhl-webdav-export-", "WebDAV snapshot export workspace");
+        Path temp = workspace.resolve("user-data.json");
         try {
             portableUserData.exportTo(temp);
-            byte[] bytes = Files.readAllBytes(temp);
-            if (bytes.length > MAX_SNAPSHOT_BYTES) throw new IOException("Користувацькі дані перевищують безпечний ліміт синхронізації 64 МБ");
+            SafeFilePublication.requireSafeRegularFile(temp, "WebDAV exported user-data snapshot");
+            byte[] bytes = readBounded(temp, MAX_SNAPSHOT_BYTES,
+                    "Користувацькі дані перевищують безпечний ліміт синхронізації 64 МБ");
             JsonNode root = mapper.readTree(bytes);
             if (!(root instanceof ObjectNode object)) throw new IOException("Експорт користувацьких даних має некоректний формат");
             object.remove("exportedAt"); // Timestamp must not create a false local change on every sync.
             byte[] canonical = mapper.writeValueAsBytes(object);
             return new Snapshot(canonical, sha256(canonical));
         } finally {
-            Files.deleteIfExists(temp);
+            cleanupWorkspace(workspace, "WebDAV snapshot export workspace");
         }
     }
 
     private Snapshot restoreRemoteSnapshot(Snapshot remote) throws IOException {
         Snapshot before = exportSnapshot();
-        Files.createDirectories(AppPaths.cacheDir());
-        Path remoteFile = Files.createTempFile(AppPaths.cacheDir(), "webdav-remote-user-data-", ".json");
-        Path rollbackFile = Files.createTempFile(AppPaths.cacheDir(), "webdav-local-rollback-", ".json");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                AppPaths.cacheDir(), ".mhl-webdav-restore-", "WebDAV snapshot restore workspace");
+        Path remoteFile = workspace.resolve("remote-user-data.json");
+        Path rollbackFile = workspace.resolve("local-rollback.json");
         try {
-            Files.write(remoteFile, remote.bytes());
-            Files.write(rollbackFile, before.bytes());
+            SafeFilePublication.copyFresh(new ByteArrayInputStream(remote.bytes()), remoteFile,
+                    "WebDAV remote snapshot");
+            SafeFilePublication.copyFresh(new ByteArrayInputStream(before.bytes()), rollbackFile,
+                    "WebDAV rollback snapshot");
             try {
                 portableUserData.restoreFrom(remoteFile);
             } catch (Exception failure) {
@@ -703,8 +779,36 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             }
             return exportSnapshot();
         } finally {
-            Files.deleteIfExists(remoteFile);
-            Files.deleteIfExists(rollbackFile);
+            cleanupWorkspace(workspace, "WebDAV snapshot restore workspace");
+        }
+    }
+
+    private LibraryOperationCoordinator.Lease acquireWebDavSyncLease() {
+        return operationCoordinator == null
+                ? null
+                : operationCoordinator.acquireDetachedShared(LibraryOperationType.SYNC);
+    }
+
+    private String activeCollectionIdForSync() {
+        if (collectionLifecycle == null) return "";
+        var active = collectionLifecycle.getCurrentCollection();
+        if (active == null || active.getId() == null || active.getId().isBlank()) {
+            throw new IllegalStateException("Активну колекцію для WebDAV-синхронізації не вибрано");
+        }
+        return active.getId();
+    }
+
+    private boolean sameActiveCollection(String expectedCollectionId) {
+        if (collectionLifecycle == null || expectedCollectionId == null || expectedCollectionId.isBlank()) return true;
+        var active = collectionLifecycle.getCurrentCollection();
+        return active != null && expectedCollectionId.equals(active.getId());
+    }
+
+    private void cleanupWorkspace(Path workspace, String role) throws IOException {
+        try {
+            SafeFilePublication.cleanupPrivateWorkspace(workspace);
+        } catch (IOException failure) {
+            throw new IOException("Не вдалося безпечно очистити " + role, failure);
         }
     }
 
@@ -712,7 +816,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         long sequence = Math.max(0L, parseLong(settings.get(WEB_SEQUENCE, "0"), 0L)) + 1L;
         Instant now = Instant.now();
         String encoded = gzipBase64(snapshot.bytes());
-        if (encoded.length() > 12_000_000) {
+        if (encoded.length() > MAX_ENCODED_SNAPSHOT_CHARS) {
             throw new IOException("Стиснений пакет користувацьких даних завеликий для одного безпечного WebDAV-пакета");
         }
         int count = Math.max(1, (encoded.length() + SNAPSHOT_CHUNK_CHARS - 1) / SNAPSHOT_CHUNK_CHARS);
@@ -748,15 +852,38 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
     private Snapshot decodeSnapshot(ChangeSet set) throws IOException {
         if (!isSnapshotChangeSet(set)) throw new IOException("Пакет не є підтримуваною версією синхронізації користувацьких даних");
-        List<SyncRecord> records = set.records().stream()
-                .sorted(Comparator.comparingInt(record -> Integer.parseInt(record.payload().getOrDefault("index", "-1"))))
-                .toList();
-        int expectedCount = Integer.parseInt(records.getFirst().payload().getOrDefault("count", "0"));
+        if (set.records().size() > MAX_SNAPSHOT_CHUNKS) {
+            throw new IOException("WebDAV snapshot contains too many chunks");
+        }
+        List<SyncRecord> records;
+        try {
+            records = set.records().stream()
+                    .sorted(Comparator.comparingInt(record -> parseSnapshotInt(record, "index")))
+                    .toList();
+        } catch (IllegalArgumentException invalidIndex) {
+            throw new IOException("WebDAV snapshot contains an invalid chunk index", invalidIndex);
+        }
+        int expectedCount;
+        try {
+            expectedCount = parseSnapshotInt(records.getFirst(), "count");
+        } catch (IllegalArgumentException invalidCount) {
+            throw new IOException("WebDAV snapshot contains an invalid chunk count", invalidCount);
+        }
         String expectedHash = records.getFirst().payload().getOrDefault("hash", "");
-        if (expectedCount < 1 || expectedCount != records.size() || expectedHash.isBlank()) {
+        if (expectedCount < 1 || expectedCount > MAX_SNAPSHOT_CHUNKS
+                || expectedCount != records.size() || !expectedHash.matches("[0-9a-fA-F]{64}")) {
             throw new IOException("Неповний пакет WebDAV-синхронізації");
         }
-        StringBuilder encoded = new StringBuilder(records.size() * SNAPSHOT_CHUNK_CHARS);
+        int totalChars = 0;
+        for (SyncRecord record : records) {
+            String chunk = record.payload().getOrDefault("chunk", "");
+            if (chunk.length() > SNAPSHOT_CHUNK_CHARS
+                    || totalChars > MAX_ENCODED_SNAPSHOT_CHARS - chunk.length()) {
+                throw new IOException("WebDAV snapshot exceeds the encoded safety limit");
+            }
+            totalChars += chunk.length();
+        }
+        StringBuilder encoded = new StringBuilder(totalChars);
         for (int i = 0; i < records.size(); i++) {
             SyncRecord record = records.get(i);
             if (!Integer.toString(i).equals(record.payload().get("index"))
@@ -771,6 +898,14 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         String actual = sha256(bytes);
         if (!expectedHash.equals(actual)) throw new IOException("Контрольна сума WebDAV-пакета не збігається");
         return new Snapshot(bytes, actual);
+    }
+
+    private static int parseSnapshotInt(SyncRecord record, String key) {
+        String value = record == null ? null : record.payload().get(key);
+        if (value == null || value.isBlank() || value.length() > 8) {
+            throw new IllegalArgumentException("Invalid snapshot integer field: " + key);
+        }
+        return Integer.parseInt(value);
     }
 
     private List<RemoteSnapshot> latestExternalSnapshots(List<ChangeSet> pulled, String localDeviceId) throws IOException {
@@ -868,15 +1003,15 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     }
 
     private void scanPluginPackages() throws IOException {
-        Files.createDirectories(pluginDir);
+        SafeFilePublication.createDirectoriesNoLinks(pluginDir, "Plugin directory");
         Map<String, PluginPackage> found = new LinkedHashMap<>();
         try (var stream = Files.list(pluginDir)) {
-            for (Path jar : stream.filter(Files::isRegularFile)
+            for (Path jar : stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".jar"))
                     .sorted().toList()) {
                 try {
                     PluginManifest manifest = readPluginManifest(jar);
-                    PluginPackage pkg = new PluginPackage(jar.toAbsolutePath().normalize(), manifest, sha256(Files.readAllBytes(jar)));
+                    PluginPackage pkg = new PluginPackage(jar.toAbsolutePath().normalize(), manifest, sha256(jar));
                     PluginPackage previous = found.putIfAbsent(manifest.pluginId(), pkg);
                     if (previous != null) {
                         pluginFailures.put(manifest.pluginId(), "Знайдено кілька JAR з однаковим pluginId; використовується " + previous.jar().getFileName());
@@ -902,7 +1037,8 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     }
 
     private PluginManifest readPluginManifest(Path jar) throws IOException {
-        try (ZipFile zip = new ZipFile(jar.toFile())) {
+        Path safeJar = SafeFilePublication.requireSafeRegularFile(jar, "Plugin JAR");
+        try (ZipFile zip = new ZipFile(safeJar.toFile())) {
             ZipEntry entry = zip.getEntry(PLUGIN_MANIFEST);
             if (entry == null || entry.isDirectory()) {
                 throw new IOException("У JAR відсутній " + PLUGIN_MANIFEST);
@@ -932,13 +1068,19 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             if (pluginPackages.containsKey(manifest.pluginId())) continue;
             if (!settings.getBoolean(approvalKey(manifest, bundled.fingerprint()), false)) continue;
             Result result = enablePlugin(manifest.pluginId(), true);
-            if (!result.success()) pluginFailures.put(manifest.pluginId(), result.message());
+            if (!result.success()) pluginFailures.put(manifest.pluginId(), technicalResultDetail(result));
         }
         for (PluginPackage pkg : new ArrayList<>(pluginPackages.values())) {
             if (!settings.getBoolean(approvalKey(pkg), false)) continue;
             Result result = enablePlugin(pkg.manifest().pluginId(), true);
-            if (!result.success()) pluginFailures.put(pkg.manifest().pluginId(), result.message());
+            if (!result.success()) pluginFailures.put(pkg.manifest().pluginId(), technicalResultDetail(result));
         }
+    }
+
+    private static String technicalResultDetail(Result result) {
+        if (result == null || result.userMessage() == null) return "integration operation failed";
+        String technical = result.userMessage().technicalDetail();
+        return technical == null || technical.isBlank() ? result.userMessage().key() : technical;
     }
 
     private void scanBundledPlugins() {
@@ -956,7 +1098,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
 
     private Result enableBundledPlugin(String pluginId) {
         BundledPlugin bundled = bundledPlugins.get(pluginId);
-        if (bundled == null) return Result.fail("Вбудований плагін не знайдено: " + pluginId);
+        if (bundled == null) return Result.fail("ui.integration.plugin.bundled_not_found", pluginId);
         PluginManifest manifest = bundled.entrypoint().manifest();
         try {
             disablePluginInternal(pluginId);
@@ -971,10 +1113,10 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             }
             settings.putBoolean(approvalKey(manifest, bundled.fingerprint()), true);
             pluginFailures.remove(pluginId);
-            return Result.ok("Плагін «" + manifest.displayName() + "» увімкнено.");
+            return Result.ok("ui.integration.plugin.enabled", manifest.displayName());
         } catch (Exception | LinkageError e) {
             pluginFailures.put(pluginId, safeMessage(e));
-            return Result.fail("Не вдалося увімкнути плагін: " + safeMessage(e));
+            return Result.failTechnical("ui.integration.plugin.enable_failed", safeMessage(e));
         }
     }
 
@@ -998,6 +1140,11 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         URLClassLoader loader = pluginClassLoaders.remove(pluginId);
         if (loader != null) {
             try { loader.close(); } catch (IOException ignored) { }
+            changed = true;
+        }
+        Path runtimeWorkspace = pluginRuntimeWorkspaces.remove(pluginId);
+        if (runtimeWorkspace != null) {
+            cleanupPluginRuntimeWorkspace(pluginId, runtimeWorkspace);
             changed = true;
         }
         return changed;
@@ -1086,32 +1233,49 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
             @Override
             public void convert(com.myhomelibcorp.application.conversion.BookConversionContext context) throws Exception {
                 context.checkCancelled();
+                Path target = SafeFilePublication.prepareTarget(context.targetFile(), "Plugin export target");
+                if (Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
+                    throw new IOException("Plugin export target must be absent before conversion: " + target);
+                }
                 String sourceExtension = context.sourceFormat() == null || context.sourceFormat().isBlank()
                         ? ".book" : "." + context.sourceFormat().replace('_', '.');
-                Path source = Files.createTempFile("mhl-plugin-export-", sourceExtension);
+                Path workspace = SafeFilePublication.createPrivateWorkspace(
+                        target.getParent(), ".mhl-plugin-export-", "Plugin export workspace");
                 try {
-                    Files.copy(context.sourceStream(), source, StandardCopyOption.REPLACE_EXISTING);
+                    Path source = workspace.resolve("source" + sourceExtension);
+                    SafeFilePublication.copyFresh(context.sourceStream(), source, "Plugin export source");
+                    Path pluginTarget = workspace.resolve("output" + extension);
                     com.myhomelibcorp.plugin.api.PluginOperationContext pluginContext = new com.myhomelibcorp.plugin.api.PluginOperationContext() {
                         @Override public boolean isCancelled() { return context.cancelled().getAsBoolean(); }
                         @Override public void reportProgress(long completed, long total) { /* host operation owns visible progress */ }
                     };
-                    Path produced = provider.export(source, context.targetFile(), targetFormat, pluginContext);
+                    Path produced = provider.export(source, pluginTarget, targetFormat, pluginContext);
                     context.checkCancelled();
-                    if (produced != null) {
-                        Path normalizedProduced = produced.toAbsolutePath().normalize();
-                        Path target = context.targetFile().toAbsolutePath().normalize();
-                        if (!normalizedProduced.equals(target)) {
-                            if (!Files.isRegularFile(normalizedProduced)) {
-                                throw new IOException("Плагін експорту не створив заявлений файл: " + normalizedProduced);
-                            }
-                            Files.copy(normalizedProduced, target, StandardCopyOption.REPLACE_EXISTING);
-                        }
+                    Path candidate = produced == null ? pluginTarget : produced.toAbsolutePath().normalize();
+                    Path safeCandidate = SafeFilePublication.requireSafeRegularFile(candidate, "Plugin export result");
+                    Path safeWorkspace = workspace.toAbsolutePath().normalize();
+                    if (!safeCandidate.startsWith(safeWorkspace)) {
+                        throw new IOException("Плагін експорту повернув файл поза приватним workspace: " + safeCandidate);
                     }
-                    if (!Files.isRegularFile(context.targetFile()) || Files.size(context.targetFile()) <= 0) {
-                        throw new IOException("Плагін експорту не створив коректний файл результату");
+                    long size = Files.size(safeCandidate);
+                    if (size <= 0 || size > context.maxOutputBytes()) {
+                        throw new IOException("Плагін експорту створив файл неприпустимого розміру: " + size + " bytes");
+                    }
+                    String candidateHashBefore = SafeFilePublication.sha256(safeCandidate, "Plugin export result snapshot");
+                    try (InputStream in = Files.newInputStream(safeCandidate, LinkOption.NOFOLLOW_LINKS)) {
+                        SafeFilePublication.copyFresh(in, target, "Plugin export publication");
+                    }
+                    String candidateHashAfter = SafeFilePublication.sha256(safeCandidate, "Plugin export result after publication");
+                    String publishedHash = SafeFilePublication.sha256(target, "Plugin export published target");
+                    if (!candidateHashBefore.equalsIgnoreCase(candidateHashAfter)
+                            || !candidateHashBefore.equalsIgnoreCase(publishedHash)) {
+                        try { SafeFilePublication.removeIfOwned(target, publishedHash, "Plugin export inconsistent publication cleanup"); }
+                        catch (IOException cleanupFailure) { /* preserve changed target as evidence */ }
+                        throw new IOException("Файл результату плагіна змінився під час publication");
                     }
                 } finally {
-                    Files.deleteIfExists(source);
+                    try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+                    catch (IOException ignored) { /* preserve unexpected replacement as evidence */ }
                 }
             }
             @Override
@@ -1237,8 +1401,50 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         if (loader != null) {
             try { loader.close(); } catch (IOException ignored) { }
         }
+        Path runtimeWorkspace = pluginRuntimeWorkspaces.remove(pluginId);
+        if (runtimeWorkspace != null) cleanupPluginRuntimeWorkspace(pluginId, runtimeWorkspace);
         if (quarantined) pluginFailures.put(pluginId, message == null ? "Помилка виконання плагіна" : message);
     }
+
+    /**
+     * Freezes exactly the approved plugin bytes into an application-owned runtime workspace.
+     * URLClassLoader may lazily reopen/read its URL long after enable() returns, so loading directly
+     * from the mutable installed-package pathname would leave a hash-check -> classload TOCTOU gap.
+     */
+    private PluginRuntimePackage stageVerifiedPluginPackageForLoad(PluginPackage pkg) throws IOException {
+        Path safeJar = SafeFilePublication.requireSafeRegularFile(pkg.jar(), "Plugin executable package");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                pluginDir, ".plugin-runtime-", "Plugin runtime workspace");
+        Path stagedJar = workspace.resolve("plugin.jar");
+        boolean success = false;
+        try {
+            try (InputStream in = Files.newInputStream(
+                    safeJar, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS)) {
+                SafeFilePublication.copyFresh(in, stagedJar, "Plugin runtime package");
+            }
+            String stagedHash = SafeFilePublication.sha256(stagedJar, "Plugin runtime package verification");
+            if (!pkg.sha256().equalsIgnoreCase(stagedHash)) {
+                clearPluginApprovals(pkg.manifest().pluginId());
+                pluginManager.resetApproval(pkg.manifest());
+                throw new SecurityException("JAR плагіна змінено після перевірки; повторно перевірте та схваліть пакет");
+            }
+            success = true;
+            return new PluginRuntimePackage(workspace, stagedJar);
+        } finally {
+            if (!success) cleanupPluginRuntimeWorkspace(pkg.manifest().pluginId(), workspace);
+        }
+    }
+
+    private void cleanupPluginRuntimeWorkspace(String pluginId, Path workspace) {
+        try {
+            SafeFilePublication.cleanupPrivateWorkspace(workspace);
+        } catch (IOException cleanupFailure) {
+            pluginFailures.put(pluginId == null ? "" : pluginId,
+                    "Не вдалося очистити runtime-копію плагіна: " + safeMessage(cleanupFailure));
+        }
+    }
+
+    private record PluginRuntimePackage(Path workspace, Path jar) { }
 
     private PluginPackage requirePluginPackage(String pluginId) {
         if (pluginId == null || pluginId.isBlank()) throw new IllegalArgumentException("Не вибрано плагін");
@@ -1315,14 +1521,6 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         return Set.copyOf(result);
     }
 
-    private static void moveReplacing(Path source, Path target) throws IOException {
-        try {
-            Files.move(source, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
-        } catch (AtomicMoveNotSupportedException e) {
-            Files.move(source, target, StandardCopyOption.REPLACE_EXISTING);
-        }
-    }
-
     private static String sanitizeFilePart(String value) {
         String normalized = value == null ? "" : value.replaceAll("[^A-Za-z0-9._-]", "_");
         return normalized.isBlank() ? "unknown" : normalized;
@@ -1360,6 +1558,18 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
         }
     }
 
+    private static String sha256(Path path) throws IOException {
+        return SafeFilePublication.sha256(path, "Plugin package");
+    }
+
+    private static byte[] readBounded(Path path, int maxBytes, String tooLargeMessage) throws IOException {
+        try (InputStream in = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] bytes = in.readNBytes(maxBytes + 1);
+            if (bytes.length > maxBytes) throw new IOException(tooLargeMessage);
+            return bytes;
+        }
+    }
+
     private static Optional<String> nonBlank(String value) {
         return value == null || value.isBlank() ? Optional.empty() : Optional.of(value.trim());
     }
@@ -1388,7 +1598,7 @@ public final class DesktopIntegrationBackend implements IntegrationBackend {
     }
 
     private record RemoteSnapshot(ChangeSet changeSet, Snapshot snapshot) { }
-    private record PendingSync(Snapshot local, RemoteSnapshot remote, Map<String, Long> nextCursors) { }
+    private record PendingSync(String collectionId, Snapshot local, RemoteSnapshot remote, Map<String, Long> nextCursors) { }
     private record PluginPackage(Path jar, PluginManifest manifest, String sha256) { }
     private record BundledPlugin(PluginEntrypoint entrypoint, String fingerprint) { }
 }

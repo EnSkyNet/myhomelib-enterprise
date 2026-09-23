@@ -91,7 +91,7 @@ def main() -> None:
     require(usecase, 'userStateTransfer.transferCopiedBookState', 'copy use case must transfer collection-local user state')
     require(usecase, 'searchIndexSynchronizer.synchronizeSafelyNow', 'copy use case must synchronize Lucene only after committed DB/state transfer')
     require(usecase, 'batch,\n                false,\n                DuplicatePolicy.SKIP', 'BookSaver copy path must not index Lucene inside its post-transaction phase')
-    require(usecase, 'PostCommitSearchSyncException', 'post-commit Lucene failure must be distinguished from transaction failure')
+    require(usecase, 'PostCommitDerivedIndexSyncException', 'post-commit derived-index failure must be distinguished from transaction failure')
     require(usecase, 'copied files are retained', 'post-commit Lucene failure must retain physical files')
     require(usecase, 'reusableTargetIndex' , 'copy use case must inspect target index reuse state before selective updates')
     require(usecase, 'lifecycle.rebuildSearchIndex()', 'dirty/absent target index must be rebuilt before selective copy updates')

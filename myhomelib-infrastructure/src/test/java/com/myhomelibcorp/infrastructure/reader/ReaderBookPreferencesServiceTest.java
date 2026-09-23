@@ -4,11 +4,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import com.myhomelibcorp.domain.model.reader.ReaderPreferences;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.sqlite.SQLiteDataSource;
 import org.springframework.jdbc.core.JdbcTemplate;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -65,4 +67,49 @@ class ReaderBookPreferencesServiceTest {
         // Legacy file is deliberately retained as a migration source for other collections.
         assertThat(Files.readString(config.resolve("reader-book-preferences.json"))).contains("22222222-2222-2222-2222-222222222222");
     }
+    @Test
+    void legacyMigrationRefusesSymlinkedPreferencesSource() throws Exception {
+        System.setProperty("myhomelib.dataDir", tempDir.resolve("appdata-symlink").toString());
+        Path config = tempDir.resolve("appdata-symlink/config");
+        Files.createDirectories(config);
+        Path outside = tempDir.resolve("outside-reader-book-preferences.json");
+        Files.writeString(outside, """
+                {
+                  "11111111-1111-1111-1111-111111111111":{"fontFamily":"Leaked"}
+                }
+                """, StandardCharsets.UTF_8);
+        Path legacy = config.resolve("reader-book-preferences.json");
+        Assumptions.assumeTrue(canCreateSymlink(legacy, outside));
+
+        SQLiteDataSource ds = new SQLiteDataSource();
+        ds.setUrl("jdbc:sqlite:" + tempDir.resolve("reader-symlink.db").toAbsolutePath());
+        JdbcTemplate jdbc = new JdbcTemplate(ds);
+        jdbc.execute("CREATE TABLE books(id TEXT PRIMARY KEY)");
+        jdbc.execute("CREATE TABLE settings(key TEXT PRIMARY KEY,value TEXT)");
+        jdbc.execute("CREATE TABLE reader_book_preferences(book_id TEXT PRIMARY KEY,preferences_json TEXT NOT NULL,updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)");
+        jdbc.update("INSERT INTO books(id) VALUES(?)", "11111111-1111-1111-1111-111111111111");
+
+        CollectionManager manager = mock(CollectionManager.class);
+        when(manager.hasActiveCollection()).thenReturn(true);
+        when(manager.getCurrentJdbcTemplate()).thenReturn(jdbc);
+        ObjectMapper mapper = new ObjectMapper();
+        ReaderBookPreferencesService service = new ReaderBookPreferencesService(
+                manager, mapper, new ReaderPreferencesJsonCodec(mapper));
+
+        assertThat(service.load("11111111-1111-1111-1111-111111111111")).isEmpty();
+        assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM reader_book_preferences", Integer.class)).isZero();
+        assertThat(jdbc.queryForObject(
+                "SELECT COUNT(*) FROM settings WHERE key='v71_reader_book_preferences_json_migrated'", Integer.class)).isZero();
+        assertThat(Files.readString(outside, StandardCharsets.UTF_8)).contains("Leaked");
+    }
+
+    private static boolean canCreateSymlink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (Exception unavailable) {
+            return false;
+        }
+    }
+
 }

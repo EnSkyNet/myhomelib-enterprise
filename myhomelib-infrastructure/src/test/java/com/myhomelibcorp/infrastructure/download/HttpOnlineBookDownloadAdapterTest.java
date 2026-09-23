@@ -139,6 +139,43 @@ class HttpOnlineBookDownloadAdapterTest {
         assertThat(temp.resolve("a.txt.part.meta")).doesNotExist();
     }
 
+
+    @Test
+    void refusesRegularFileReplacementBetweenResumeSnapshotAndAppend() throws Exception {
+        Path part = temp.resolve("race.txt.part");
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            int n = requests.incrementAndGet();
+            if (n == 1) {
+                exchange.getResponseHeaders().add("ETag", "\"race-v1\"");
+                exchange.sendResponseHeaders(200, 11);
+                exchange.getResponseBody().write("hello ".getBytes(StandardCharsets.UTF_8));
+                return;
+            }
+            assertThat(exchange.getRequestHeaders().getFirst("Range")).isEqualTo("bytes=6-");
+            Files.deleteIfExists(part);
+            Files.writeString(part, "FOREIGN", StandardCharsets.UTF_8);
+            exchange.getResponseHeaders().add("ETag", "\"race-v1\"");
+            exchange.getResponseHeaders().add("Content-Range", "bytes 6-10/11");
+            respond(exchange, 206, "world");
+        });
+
+        ApplicationSettingsPort config = settings();
+        when(config.getInt("online.retryCount", 3)).thenReturn(0);
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(config, mock(ArchiveReader.class));
+
+        assertThatThrownBy(() -> adapter.download(book("race", "race.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+        assertThat(Files.readString(part)).isEqualTo("hello ");
+
+        assertThatThrownBy(() -> adapter.download(book("race", "race.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+
+        assertThat(requests.get()).isEqualTo(2);
+        assertThat(Files.readString(part)).isEqualTo("FOREIGN");
+        assertThat(temp.resolve("race.txt")).doesNotExist();
+    }
+
     @Test
     void stalePartialWithoutValidatorIsRestartedInsteadOfBlindlyAppended() throws Exception {
         Files.writeString(temp.resolve("safe-resume.txt.part"), "old-partial", StandardCharsets.UTF_8);
@@ -151,6 +188,54 @@ class HttpOnlineBookDownloadAdapterTest {
         adapter.download(book("s", "safe-resume.txt", "", ""), onlineCollection(), null, null);
 
         assertThat(Files.readString(temp.resolve("safe-resume.txt"))).isEqualTo("new-complete");
+    }
+
+
+    @Test
+    void refusesSymlinkedPartialWithoutWritingForeignFile() throws Exception {
+        AtomicInteger requests = new AtomicInteger();
+        server = server(exchange -> {
+            requests.incrementAndGet();
+            respond(exchange, 200, "payload");
+        });
+        Path foreign = temp.resolve("foreign.txt");
+        Files.writeString(foreign, "FOREIGN", StandardCharsets.UTF_8);
+        Path part = temp.resolve("symlinked.txt.part");
+        try {
+            Files.createSymbolicLink(part, foreign);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        assertThatThrownBy(() -> adapter.download(book("s", "symlinked.txt", "", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class);
+
+        assertThat(requests.get()).isZero();
+        assertThat(Files.readString(foreign)).isEqualTo("FOREIGN");
+        assertThat(Files.isSymbolicLink(part)).isTrue();
+    }
+
+    @Test
+    void refusesCachedBookThroughSymlinkedParentDirectory() throws Exception {
+        server = server(exchange -> respond(exchange, 200, "network-should-not-be-used"));
+        Path outside = Files.createDirectories(temp.resolveSibling("outside-cache"));
+        Files.writeString(outside.resolve("cached.txt"), "FOREIGN", StandardCharsets.UTF_8);
+        Path linked = temp.resolve("linked");
+        try {
+            Files.createSymbolicLink(linked, outside);
+        } catch (UnsupportedOperationException | IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are not supported");
+        }
+
+        HttpOnlineBookDownloadAdapter adapter = new HttpOnlineBookDownloadAdapter(settings(), mock(ArchiveReader.class));
+        assertThatThrownBy(() -> adapter.download(
+                book("cached", "cached.txt", "linked", ""), onlineCollection(), null, null))
+                .isInstanceOf(IOException.class)
+                .hasMessageContaining("symbolic link");
+
+        assertThat(Files.readString(outside.resolve("cached.txt"))).isEqualTo("FOREIGN");
+        assertThat(Files.isSymbolicLink(linked)).isTrue();
     }
 
     @Test

@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.reader;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.reader.api.ReaderElementStyle;
 import com.myhomelibcorp.reader.api.ReaderSemanticElement;
 import com.myhomelibcorp.reader.api.ReaderSettings;
@@ -53,6 +54,7 @@ final class ReaderSettingsDialog {
         Controls c = new Controls(original, currentBookOverride, i18n);
 
         Dialog<Result> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         dialog.setTitle(i18n.text("ui.reader.settings.title"));
         dialog.setHeaderText(i18n.text("ui.reader.settings.header"));
         if (owner != null) dialog.initOwner(owner);
@@ -61,8 +63,8 @@ final class ReaderSettingsDialog {
         dialog.getDialogPane().getButtonTypes().addAll(apply, ButtonType.CANCEL);
 
         ComboBox<ReaderSettingsPreset> preset = new ComboBox<>(FXCollections.observableArrayList(ReaderSettingsPresets.builtIns()));
-        preset.setCellFactory(v -> presetCell());
-        preset.setButtonCell(presetCell());
+        preset.setCellFactory(v -> presetCell(i18n));
+        preset.setButtonCell(presetCell(i18n));
         preset.setPromptText(i18n.text("ui.reader.settings.preset.prompt"));
         Button applyPreset = new Button(i18n.text("ui.reader.settings.preset.apply"));
         applyPreset.setOnAction(e -> {
@@ -113,12 +115,24 @@ final class ReaderSettingsDialog {
         return dialog.showAndWait();
     }
 
-    private static ListCell<ReaderSettingsPreset> presetCell() {
+    private static ListCell<ReaderSettingsPreset> presetCell(LocalizationService i18n) {
         return new ListCell<>() {
             @Override protected void updateItem(ReaderSettingsPreset item, boolean empty) {
                 super.updateItem(item, empty);
-                setText(empty || item == null ? null : item.displayName());
+                setText(empty || item == null ? null : presetName(item, i18n));
             }
+        };
+    }
+
+    private static String presetName(ReaderSettingsPreset preset, LocalizationService i18n) {
+        if (preset == null) return "";
+        return switch (preset.id()) {
+            case "default" -> i18n.text("ui.reader.settings.preset.default");
+            case "day" -> i18n.text("ui.reader.settings.preset.day");
+            case "comfortable" -> i18n.text("ui.reader.settings.preset.comfortable");
+            case "compact" -> i18n.text("ui.reader.settings.preset.compact");
+            case "night" -> i18n.text("ui.reader.settings.preset.night");
+            default -> preset.displayName();
         };
     }
 
@@ -366,6 +380,16 @@ final class ReaderSettingsDialog {
 
         Controls(ReaderSettings settings,boolean bookOverride, LocalizationService i18n){
             this.i18n = java.util.Objects.requireNonNull(i18n, "i18n");
+            localizeChoice(theme, "ui.reader.theme.");
+            localizeChoice(alignment, "ui.reader.choice.alignment.");
+            localizeChoice(semanticAlignment, "ui.reader.choice.alignment.");
+            localizeChoice(semanticWeight, "ui.reader.choice.weight.");
+            for (ComboBox<String> box : tapControls()) localizeChoice(box, "ui.reader.choice.action.");
+            for (ComboBox<String> box : longTapControls()) localizeChoice(box, "ui.reader.choice.action.");
+            localizeChoice(swipeLeft, "ui.reader.choice.action.");
+            localizeChoice(swipeRight, "ui.reader.choice.action.");
+            localizeChoice(swipeUp, "ui.reader.choice.action.");
+            localizeChoice(swipeDown, "ui.reader.choice.action.");
             previewBookTitle.setText(t("ui.reader.settings.preview.book_title"));
             previewChapterTitle.setText(t("ui.reader.settings.preview.chapter_title"));
             previewText.setText(t("ui.reader.settings.preview.text"));
@@ -425,6 +449,22 @@ final class ReaderSettingsDialog {
         }
 
         String t(String key) { return i18n.text(key); }
+
+        void localizeChoice(ComboBox<String> box, String keyPrefix) {
+            box.setCellFactory(v -> localizedChoiceCell(keyPrefix));
+            box.setButtonCell(localizedChoiceCell(keyPrefix));
+        }
+
+        ListCell<String> localizedChoiceCell(String keyPrefix) {
+            return new ListCell<>() {
+                @Override protected void updateItem(String item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) { setText(null); return; }
+                    String key = keyPrefix + item.replace(' ', '_');
+                    setText(t(key));
+                }
+            };
+        }
 
         ListCell<ReaderSemanticElement> semanticElementCell() {
             return new ListCell<>() {

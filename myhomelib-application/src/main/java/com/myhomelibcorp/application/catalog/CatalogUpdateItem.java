@@ -15,9 +15,9 @@ public record CatalogUpdateItem(
 ) {
     public CatalogUpdateItem {
         bookId = bookId == null ? "" : bookId;
-        bookTitle = bookTitle == null || bookTitle.isBlank() ? "Без назви" : bookTitle;
+        bookTitle = bookTitle == null ? "" : bookTitle;
         authorId = authorId == null ? "" : authorId;
-        authorName = authorName == null || authorName.isBlank() ? "Без автора" : authorName;
+        authorName = authorName == null ? "" : authorName;
         detectedAt = detectedAt == null ? "" : detectedAt;
     }
 }

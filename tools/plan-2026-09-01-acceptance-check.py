@@ -32,7 +32,9 @@ pipeline=require('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infra
 if 'markTrackedBooksMissing(' in pipeline:
     failures.append('InpxImportPipeline still performs snapshot absence => deleted transition')
 require('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxBookNormalizer.java',
-        'WITHOUT_AUTHOR_NAME', '"Без автора"', 'field("DEL")', 'withoutAuthor', 'withoutGenre', 'explicitlyDeleted')
+        'field("DEL")', 'withoutAuthor', 'withoutGenre', 'explicitlyDeleted')
+forbid('myhomelib-infrastructure/src/main/java/com/myhomelibcorp/infrastructure/importengine/InpxBookNormalizer.java',
+       'WITHOUT_AUTHOR_NAME')
 require('myhomelib-application/src/main/java/com/myhomelibcorp/application/imports/statistics/ImportResult.java',
         'withoutAuthor', 'withoutGenre', 'explicitlyDeleted')
 
@@ -67,7 +69,7 @@ require('myhomelib-application/src/main/java/com/myhomelibcorp/application/useca
 require('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationThemeService.java',
         'SYSTEM', 'LIGHT', 'DARK', 'CUSTOM', 'Window.getWindows()', 'public void apply(ThemeConfig config)')
 require('myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java',
-        'Відновити стандартні', 'private void preview()', 'Theme')
+        'ui.java.application_settings_dialog.82ed5ad092', 'private void preview()', 'Theme')
 require('myhomelib-ui/src/main/resources/css/app-theme-base.css', '-mhl-background', '-mhl-panel', '-mhl-accent')
 require('myhomelib-bootstrap/src/main/java/com/myhomelibcorp/MyHomeLibApp.java', 'ApplicationThemeService')
 

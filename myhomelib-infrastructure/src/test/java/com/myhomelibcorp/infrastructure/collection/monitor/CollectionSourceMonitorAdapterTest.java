@@ -58,6 +58,27 @@ class CollectionSourceMonitorAdapterTest {
     }
 
     @Test
+    void sourceBehindSymlinkedParentIsRecordedAsUnsafeWhenSupported() throws Exception {
+        JdbcTemplate jdbc = metadataJdbc();
+        adapter = new CollectionSourceMonitorAdapter(jdbc, mock(Flyway.class), mock(DomainEventPublisher.class));
+        Path outside = Files.createDirectories(tempDir.resolve("outside"));
+        Path source = outside.resolve("catalog.inpx");
+        writeZip(source, "a.inp", "one");
+        Path alias = tempDir.resolve("alias");
+        try {
+            Files.createSymbolicLink(alias, outside);
+        } catch (UnsupportedOperationException | java.nio.file.FileSystemException unavailable) {
+            return;
+        }
+
+        var configured = adapter.configure("c1", alias.resolve("catalog.inpx"), false, 60);
+
+        assertThat(configured.baselineFingerprint()).isNull();
+        assertThat(configured.observedFingerprint()).isNull();
+        assertThat(configured.status()).contains("SOURCE_MISSING_OR_UNSAFE");
+    }
+
+    @Test
     void watchServiceDebouncesMatchingSourceAndIgnoresUnrelatedFiles() throws Exception {
         JdbcTemplate jdbc = metadataJdbc();
         DomainEventPublisher publisher = mock(DomainEventPublisher.class);

@@ -26,21 +26,21 @@ final class PortableSnapshotConflictService {
     private static final Set<String> STRUCTURAL_FIELDS = Set.of("schemaVersion", "format", "exportedAt");
     private static final String KEY_PREFIX = "portable-user-data:";
 
-    private static final Map<String, String> LABELS = Map.ofEntries(
-            Map.entry("bookState", "Стан книг і оцінки"),
-            Map.entry("readingProgress", "Прогрес читання"),
-            Map.entry("readingHistory", "Історія читання"),
-            Map.entry("readingStats", "Статистика читання"),
-            Map.entry("bookmarks", "Закладки"),
-            Map.entry("annotations", "Анотації"),
-            Map.entry("annotationTags", "Теги анотацій"),
-            Map.entry("groups", "Групи книг"),
-            Map.entry("groupMemberships", "Склад груп"),
-            Map.entry("savedSearches", "Збережені пошуки та розумні колекції"),
-            Map.entry("customFieldDefinitions", "Користувацькі поля"),
-            Map.entry("customFieldValues", "Значення користувацьких полів"),
-            Map.entry("filterSettings", "Налаштування фільтрів"),
-            Map.entry("readerSettings", "Налаштування читалки")
+    private static final Map<String, String> LABEL_KEYS = Map.ofEntries(
+            Map.entry("bookState", "ui.sync.conflict.entity.book_state"),
+            Map.entry("readingProgress", "ui.sync.conflict.entity.reading_progress"),
+            Map.entry("readingHistory", "ui.sync.conflict.entity.reading_history"),
+            Map.entry("readingStats", "ui.sync.conflict.entity.reading_stats"),
+            Map.entry("bookmarks", "ui.sync.conflict.entity.bookmarks"),
+            Map.entry("annotations", "ui.sync.conflict.entity.annotations"),
+            Map.entry("annotationTags", "ui.sync.conflict.entity.annotation_tags"),
+            Map.entry("groups", "ui.sync.conflict.entity.groups"),
+            Map.entry("groupMemberships", "ui.sync.conflict.entity.group_memberships"),
+            Map.entry("savedSearches", "ui.sync.conflict.entity.saved_searches"),
+            Map.entry("customFieldDefinitions", "ui.sync.conflict.entity.custom_field_definitions"),
+            Map.entry("customFieldValues", "ui.sync.conflict.entity.custom_field_values"),
+            Map.entry("filterSettings", "ui.sync.conflict.entity.filter_settings"),
+            Map.entry("readerSettings", "ui.sync.conflict.entity.reader_settings")
     );
 
     private final ObjectMapper mapper;
@@ -62,7 +62,7 @@ final class PortableSnapshotConflictService {
             result.add(new SyncConflictReviewItem(
                     KEY_PREFIX + field,
                     label(field),
-                    "Цей розділ змінено і локально, і на іншому пристрої після останньої спільної версії.",
+                    SyncConflictReviewItem.Text.of("ui.sync.conflict.reason.portable_section_changed"),
                     summarize(left),
                     summarize(right)));
         }
@@ -144,23 +144,31 @@ final class PortableSnapshotConflictService {
         return List.copyOf(fields);
     }
 
-    private static String label(String field) {
-        return LABELS.getOrDefault(field, "Користувацькі дані: " + field);
+    private static SyncConflictReviewItem.Text label(String field) {
+        String key = LABEL_KEYS.get(field);
+        return key == null
+                ? SyncConflictReviewItem.Text.of("ui.sync.conflict.entity.user_data", field)
+                : SyncConflictReviewItem.Text.of(key);
     }
 
-    private static String summarize(JsonNode node) {
-        if (node == null || node.isMissingNode()) return "Розділ відсутній";
-        String shape;
-        if (node.isArray()) shape = "Записів: " + node.size();
-        else if (node.isObject()) shape = "Полів: " + node.size();
-        else if (node.isNull()) shape = "Значення: немає";
-        else {
-            String text = node.asText();
-            if (text.length() > 160) text = text.substring(0, 160) + "…";
-            shape = "Значення: " + text;
+    private static SyncConflictReviewItem.Text summarize(JsonNode node) {
+        if (node == null || node.isMissingNode()) {
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.missing");
         }
         byte[] canonical = node.toString().getBytes(StandardCharsets.UTF_8);
-        return shape + "\nSHA-256: " + sha256(canonical);
+        String hash = sha256(canonical);
+        if (node.isArray()) {
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.records", node.size(), hash);
+        }
+        if (node.isObject()) {
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.fields", node.size(), hash);
+        }
+        if (node.isNull()) {
+            return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.no_value", hash);
+        }
+        String text = node.asText();
+        if (text.length() > 160) text = text.substring(0, 160) + "…";
+        return SyncConflictReviewItem.Text.of("ui.sync.conflict.snapshot.value", text, hash);
     }
 
     private static String sha256(byte[] bytes) {

@@ -74,6 +74,44 @@ class TtsPlaybackServiceTest {
         assertThat(provider.cancelCalls).hasValue(1);
     }
 
+
+    @Test
+    void startingNewPlaybackStopsPreviousOwnerBeforeSecondRun() {
+        BlockingProvider provider = new BlockingProvider();
+        TtsPlaybackService service = new TtsPlaybackService(List.of(provider), new AsyncExecutor(pool));
+        TtsPlayback first = service.start(
+                new TtsPlaybackRequest("First playback owns the provider.", 0, "en", "alpha", 1.0),
+                new TtsPlaybackListener() { });
+        await().atMost(Duration.ofSeconds(2)).until(() -> provider.speakCalls.get() == 1);
+
+        TtsPlayback second = service.start(
+                new TtsPlaybackRequest("Second playback replaces it.", 0, "en", "alpha", 1.0),
+                new TtsPlaybackListener() { });
+
+        assertThat(first.state()).isEqualTo(TtsPlaybackState.STOPPED);
+        assertThat(provider.cancelCalls).hasValue(1);
+        await().atMost(Duration.ofSeconds(2)).until(() -> second.state() == TtsPlaybackState.COMPLETED);
+        assertThat(provider.speakCalls).hasValue(2);
+    }
+
+    @Test
+    void executorRejectionClearsActiveOwnerSoNextStartCanProceed() {
+        ImmediateProvider provider = new ImmediateProvider();
+        RejectOnceExecutor rejecting = new RejectOnceExecutor(pool);
+        TtsPlaybackService service = new TtsPlaybackService(List.of(provider), rejecting);
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.start(
+                        new TtsPlaybackRequest("Rejected once.", 0, "en", "alpha", 1.0),
+                        new TtsPlaybackListener() { }))
+                .isInstanceOf(RejectedExecutionException.class);
+
+        TtsPlayback second = service.start(
+                new TtsPlaybackRequest("Accepted after rejection.", 0, "en", "alpha", 1.0),
+                new TtsPlaybackListener() { });
+        await().atMost(Duration.ofSeconds(2)).until(() -> second.state() == TtsPlaybackState.COMPLETED);
+        assertThat(provider.speakCalls).hasValue(1);
+    }
+
     private static final class AsyncExecutor implements ExecutorPort {
         private final ExecutorService pool;
         private AsyncExecutor(ExecutorService pool) { this.pool = pool; }
@@ -84,6 +122,36 @@ class TtsPlaybackServiceTest {
             }, pool);
         }
         @Override public void execute(Runnable task) { pool.execute(task); }
+    }
+
+
+    private static final class RejectOnceExecutor implements ExecutorPort {
+        private final ExecutorService pool;
+        private final AtomicInteger calls = new AtomicInteger();
+
+        private RejectOnceExecutor(ExecutorService pool) { this.pool = pool; }
+
+        @Override public <T> CompletableFuture<T> submit(Callable<T> task) {
+            throw new UnsupportedOperationException();
+        }
+
+        @Override public void execute(Runnable task) {
+            if (calls.getAndIncrement() == 0) throw new RejectedExecutionException("test rejection");
+            pool.execute(task);
+        }
+    }
+
+    private static final class ImmediateProvider implements TtsProvider {
+        private final AtomicInteger speakCalls = new AtomicInteger();
+
+        @Override public String id() { return "immediate"; }
+        @Override public String displayName() { return "Immediate"; }
+        @Override public boolean isAvailable() { return true; }
+        @Override public List<TtsVoice> availableVoices() {
+            return List.of(new TtsVoice("alpha", "Alpha", "en"));
+        }
+        @Override public void speak(String text, String voiceId, double rate) { speakCalls.incrementAndGet(); }
+        @Override public void cancelCurrent() { }
     }
 
     private static final class BlockingProvider implements TtsProvider {

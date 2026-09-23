@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.importer.streamarchive;
 
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
@@ -35,12 +36,16 @@ public class StreamArchiveImporter implements BookImporterPort {
 
     @Override public Stream<Book> importBooks(Path file) {
         try {
-            IteratorImpl it=new IteratorImpl(file, open(file));
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "TAR/CPIO import source");
+            IteratorImpl it=new IteratorImpl(safeFile, open(safeFile));
             return StreamSupport.stream(Spliterators.spliteratorUnknownSize(it,Spliterator.ORDERED),false).onClose(it::close);
         } catch(Exception e){throw new RuntimeException("Не вдалося відкрити архів: "+file,e);}
     }
     @Override public long countBooks(Path file){
-        long c=0; try(ArchiveInputStream<?> in=open(file)){ ArchiveEntry e; int n=0; while((e=in.getNextEntry())!=null){ if(++n>ArchiveSafetyLimits.MAX_ENTRY_COUNT) break; if(!e.isDirectory()&&isBook(e.getName()))c++; } }catch(Exception e){return -1;} return c;
+        long c=0; try{
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "TAR/CPIO import source");
+            try(ArchiveInputStream<?> in=open(safeFile)){ ArchiveEntry e; int n=0; while((e=in.getNextEntry())!=null){ if(++n>ArchiveSafetyLimits.MAX_ENTRY_COUNT) break; if(!e.isDirectory()&&isBook(e.getName()))c++; } }
+        } catch(Exception e){return -1;} return c;
     }
 
     private boolean isBook(String name){
@@ -49,7 +54,7 @@ public class StreamArchiveImporter implements BookImporterPort {
     }
     private ArchiveInputStream<?> open(Path p)throws Exception{
         String n=p.getFileName().toString().toLowerCase(Locale.ROOT);
-        InputStream raw=new BufferedInputStream(Files.newInputStream(p),64*1024);
+        InputStream raw=new BufferedInputStream(Files.newInputStream(p, java.nio.file.LinkOption.NOFOLLOW_LINKS),64*1024);
         InputStream source=raw;
         try{
             if(n.endsWith(".tar.gz")||n.endsWith(".tgz")) source=new CompressorStreamFactory().createCompressorInputStream(CompressorStreamFactory.GZIP,raw,true);

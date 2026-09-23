@@ -6,7 +6,10 @@ import com.myhomelibcorp.ui.operation.OperationCenterService;
 import com.myhomelibcorp.ui.operation.OperationKind;
 import org.junit.jupiter.api.Test;
 
+import com.myhomelibcorp.ui.service.UiText;
+
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 
 class CollectionRuntimeStateResolverTest {
 
@@ -33,7 +36,8 @@ class CollectionRuntimeStateResolverTest {
         center.fail(id, new IllegalStateException("index corrupted"));
         CollectionRuntimeStatus failed = CollectionRuntimeStateResolver.resolve("collection-1", center.snapshot());
         assertEquals(CollectionRuntimeState.ERROR, failed.state());
-        assertEquals("index corrupted", failed.detail());
+        assertEquals(UiText.text("common.error.operation_failed"), failed.detail());
+        assertFalse(failed.detail().contains("index corrupted"));
     }
 
     @Test

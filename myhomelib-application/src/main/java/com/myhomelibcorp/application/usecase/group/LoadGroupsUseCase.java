@@ -13,14 +13,15 @@ import java.util.stream.Collectors;
 public class LoadGroupsUseCase {
 
     private final GroupRepository groupRepository;
+    private final GroupQueryExecutor queryExecutor;
 
     public List<GroupDto> execute() {
-        return groupRepository.findAll().stream()
+        return queryExecutor.execute(() -> groupRepository.findAll().stream()
                 .map(group -> new GroupDto(
                         group.getId().asLong(),
                         group.getName(),
                         group.isAllowDelete()
                 ))
-                .collect(Collectors.toList());
+                .collect(Collectors.toList()));
     }
 }

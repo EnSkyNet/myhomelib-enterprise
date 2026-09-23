@@ -2,6 +2,7 @@ package com.myhomelibcorp.ui.service;
 
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -48,6 +49,10 @@ class SupportBundleServicePrivacyTest {
         Path normalLog = logs.resolve("myhomelib.log");
         Files.writeString(normalLog, """
                 login password=hunter2 token=abc123
+                Authorization: Bearer header-bearer-secret
+                proxy-authorization=Basic cHJveHk6c2VjcmV0
+                retry with Bearer standalone-bearer-secret
+                fallback Basic c3RhbmRhbG9uZTpzZWNyZXQ=
                 opened /home/alice/Books/Very Private Book.fb2
                 source=https://user:pass@example.test/private/book?token=abc
                 bookTitle=Very Private Book; author=Alice Writer
@@ -94,8 +99,12 @@ class SupportBundleServicePrivacyTest {
                 .contains("network.password=<REDACTED>")
                 .doesNotContain("dont-leak-me", "private.example.test", "Hidden Collection", data.toString());
         assertThat(entries.get("logs/myhomelib.log"))
-                .contains("password=<REDACTED>", "token=<REDACTED>", "<URL_REDACTED>", "<PATH_REDACTED>")
-                .doesNotContain("hunter2", "abc123", "Very Private Book", "Alice Writer", "alice.private@example.test");
+                .contains("password=<REDACTED>", "token=<REDACTED>", "Authorization=<REDACTED>",
+                        "proxy-authorization=<REDACTED>", "Bearer <REDACTED>", "Basic <REDACTED>",
+                        "<URL_REDACTED>", "<PATH_REDACTED>")
+                .doesNotContain("hunter2", "abc123", "header-bearer-secret", "cHJveHk6c2VjcmV0",
+                        "standalone-bearer-secret", "c3RhbmRhbG9uZTpzZWNyZXQ=",
+                        "Very Private Book", "Alice Writer", "alice.private@example.test");
         assertThat(combined)
                 .doesNotContain("topsecret", "private.example.test", data.toString(), launch.toString());
     }
@@ -122,6 +131,45 @@ class SupportBundleServicePrivacyTest {
                 .anySatisfy(item -> { if (item.name().equals("threads.txt")) assertThat(item.included()).isFalse(); });
     }
 
+    @Test
+    void symlinkedOutputTargetIsRejectedWithoutOverwritingExternalFile() throws Exception {
+        Path data = temp.resolve("data-symlink-output");
+        Files.createDirectories(data.resolve("logs"));
+        setProperty("myhomelib.dataDir", data.toString());
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        when(settings.findByPrefix("")).thenReturn(Map.of());
+        SupportBundleService service = new SupportBundleService(settings);
+
+        Path outside = temp.resolve("outside.zip");
+        Files.writeString(outside, "FOREIGN", StandardCharsets.UTF_8);
+        Path link = temp.resolve("support-link.zip");
+        Assumptions.assumeTrue(canCreateSymlink(link, outside));
+
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.create(link, new SupportBundleOptions(false, false, false)))
+                .isInstanceOf(IOException.class);
+        assertThat(Files.readString(outside, StandardCharsets.UTF_8)).isEqualTo("FOREIGN");
+    }
+
+    @Test
+    void symlinkedLogFileIsExcludedFromBundle() throws Exception {
+        Path data = temp.resolve("data-symlink-log");
+        Path logs = data.resolve("logs");
+        Files.createDirectories(logs);
+        setProperty("myhomelib.dataDir", data.toString());
+        Path outside = temp.resolve("outside-secret.log");
+        Files.writeString(outside, "password=must-not-leak\n", StandardCharsets.UTF_8);
+        Path link = logs.resolve("linked.log");
+        Assumptions.assumeTrue(canCreateSymlink(link, outside));
+
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        when(settings.findByPrefix("")).thenReturn(Map.of());
+        SupportBundleService service = new SupportBundleService(settings);
+
+        Map<String, String> entries = textEntries(service.create(temp.resolve("bundle.zip"), SupportBundleOptions.defaults()));
+        assertThat(entries).doesNotContainKey("logs/linked.log");
+        assertThat(String.join("\n", entries.values())).doesNotContain("must-not-leak");
+    }
+
     private void setProperty(String key, String value) {
         originalProperties.putIfAbsent(key, System.getProperty(key));
         System.setProperty(key, value);
@@ -144,5 +192,14 @@ class SupportBundleServicePrivacyTest {
             }
         }
         return out;
+    }
+
+    private static boolean canCreateSymlink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 }

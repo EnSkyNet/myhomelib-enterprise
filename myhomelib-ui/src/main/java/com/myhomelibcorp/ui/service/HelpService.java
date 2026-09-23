@@ -28,10 +28,11 @@ public class HelpService {
         HelpPage page = loadLocalized(language, name);
         if (page == null) page = loadLocalized("uk", name);
         if (page == null) page = loadLocalized("uk", "index");
-        String text = page == null ? localization.tr("Довідку не знайдено.") : page.text();
+        String text = page == null ? localization.text("ui.text.help_was_not_found") : page.text();
 
         Dialog<ButtonType> dialog = new Dialog<>();
-        dialog.setTitle("MyHomeLib — " + localization.tr("Допомога"));
+        DialogLocalization.prepare(dialog);
+        dialog.setTitle(localization.text("ui.brand.title_prefix") + localization.text("ui.text.help"));
         dialog.setHeaderText(page == null ? null : page.title());
         if (owner != null) dialog.initOwner(owner);
         TextArea area = new TextArea(text);

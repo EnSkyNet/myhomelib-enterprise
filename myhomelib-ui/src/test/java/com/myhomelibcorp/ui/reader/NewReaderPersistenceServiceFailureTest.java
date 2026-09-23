@@ -17,7 +17,7 @@ class NewReaderPersistenceServiceFailureTest {
     private final ReadingProgressRepository progress = mock(ReadingProgressRepository.class);
     private final BookmarkRepository bookmarks = mock(BookmarkRepository.class);
     private final LocalizationService i18n = mock(LocalizationService.class);
-    private final NewReaderPersistenceService service = new NewReaderPersistenceService(progress, bookmarks, i18n);
+    private final NewReaderPersistenceService service = newPersistence(progress, bookmarks, i18n);
 
     NewReaderPersistenceServiceFailureTest() {
         when(i18n.format("ui.reader.persistence.position_load_error", "book-1"))
@@ -62,5 +62,16 @@ class NewReaderPersistenceServiceFailureTest {
         boolean saved = service.savePosition("book-1", ReaderPosition.start(), 1000L);
 
         assertThat(saved).isFalse();
+    }
+
+    private static NewReaderPersistenceService newPersistence(
+            ReadingProgressRepository progress, BookmarkRepository bookmarks, LocalizationService i18n) {
+        var lifecycle = org.mockito.Mockito.mock(
+                com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort.class);
+        org.mockito.Mockito.when(lifecycle.getCurrentCollection()).thenReturn(
+                new com.myhomelibcorp.domain.model.collection.Collection(
+                        "c1", "Test", null, null, 0, null, null, null, null));
+        return new NewReaderPersistenceService(progress, bookmarks, i18n, lifecycle,
+                new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
     }
 }

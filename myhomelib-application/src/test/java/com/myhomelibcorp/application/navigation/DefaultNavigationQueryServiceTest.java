@@ -230,7 +230,7 @@ class DefaultNavigationQueryServiceTest {
     void updatesRemainIndependentFromBookFilter() {
         when(catalogUpdateService.pendingUpdateCount()).thenReturn(27L);
         assertThat(service.load(NavigationMode.UPDATES).join()).containsExactly(
-                new NavigationNodeDto(NavigationMode.UPDATES, "updates", "Оновлення", 27L));
+                new NavigationNodeDto(NavigationMode.UPDATES, "updates", "updates", 27L));
     }
 
     @Test

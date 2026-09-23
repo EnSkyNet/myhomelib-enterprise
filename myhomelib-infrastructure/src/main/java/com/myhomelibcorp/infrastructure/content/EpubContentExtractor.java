@@ -273,8 +273,7 @@ public final class EpubContentExtractor implements ContentExtractor {
             throw new IOException(role + " exceeds archive safety limit: " + entry.getName());
         }
         long compressed = entry.getCompressedSize();
-        if (compressed > 0L && size > 0L
-                && size / Math.max(1L, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
             throw new IOException(role + " has suspicious compression ratio: " + entry.getName());
         }
     }

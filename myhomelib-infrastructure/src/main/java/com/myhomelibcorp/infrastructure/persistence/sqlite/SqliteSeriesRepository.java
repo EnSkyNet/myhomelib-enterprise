@@ -48,6 +48,34 @@ public class SqliteSeriesRepository implements SeriesRepository {
     @Override
     public Optional<Series> findByName(String name) {
         if (name == null || name.isBlank()) return Optional.empty();
+        Optional<Series> existing = findStoredByName(name);
+        if (existing.isPresent()) return existing;
+
+        // Older/attached collections may have books.series populated while the derived
+        // series table is empty. Repair only the requested series here instead of forcing
+        // a catalogue-wide synchronization onto the application startup path.
+        String sql = """
+                INSERT OR IGNORE INTO series (id, name)
+                SELECT
+                    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                    lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                    lower(hex(randomblob(6))),
+                    MIN(TRIM(b.series))
+                FROM books b
+                WHERE b.series IS NOT NULL
+                  AND TRIM(b.series) <> ''
+                  AND LOWER(TRIM(b.series)) = LOWER(TRIM(?))
+                  AND NOT EXISTS (
+                      SELECT 1 FROM series s
+                      WHERE LOWER(TRIM(s.name)) = LOWER(TRIM(?))
+                  )
+                HAVING COUNT(*) > 0
+                """;
+        getJdbcTemplate().update(sql, name, name);
+        return findStoredByName(name);
+    }
+
+    private Optional<Series> findStoredByName(String name) {
         try {
             Series series = getJdbcTemplate().queryForObject(
                     "SELECT id, name FROM series WHERE LOWER(TRIM(name)) = LOWER(TRIM(?)) ORDER BY id LIMIT 1",
@@ -93,11 +121,18 @@ public class SqliteSeriesRepository implements SeriesRepository {
     public List<String> searchNames(String query, int limit) {
         if (query == null || query.isBlank() || limit <= 0) return List.of();
         String pattern = "%" + query.trim().toLowerCase(java.util.Locale.ROOT) + "%";
+        // Search the source of truth (books.series), not the derived series table. This
+        // keeps search correct for legacy/attached databases before lazy series repair.
         return getJdbcTemplate().query("""
-                SELECT name FROM series
-                 WHERE LOWER(name) LIKE ?
-                 ORDER BY LOWER(name), id
-                 LIMIT ?
+                SELECT MIN(TRIM(b.series)) AS name
+                FROM books b
+                WHERE b.deleted = 0
+                  AND b.series IS NOT NULL
+                  AND TRIM(b.series) <> ''
+                  AND LOWER(TRIM(b.series)) LIKE ?
+                GROUP BY LOWER(TRIM(b.series))
+                ORDER BY LOWER(MIN(TRIM(b.series)))
+                LIMIT ?
                 """, (rs, rowNum) -> rs.getString(1), pattern, Math.min(limit, 200));
     }
 

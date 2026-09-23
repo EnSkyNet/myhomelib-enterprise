@@ -9,13 +9,17 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class CreateGroupUseCase {
     private final GroupRepository groupRepository;
+    private final GroupMutationExecutor mutationExecutor;
 
     public Group execute(String groupName) {
+        return execute(groupName, null);
+    }
+
+    public Group execute(String groupName, String expectedCollectionId) {
         if (groupName == null || groupName.isBlank()) {
             throw new IllegalArgumentException("Group name cannot be empty");
         }
-        // Створюємо групу з null ID – репозиторій сам згенерує
         Group group = new Group(groupName, true);
-        return groupRepository.save(group);
+        return mutationExecutor.execute(expectedCollectionId, () -> groupRepository.save(group));
     }
 }

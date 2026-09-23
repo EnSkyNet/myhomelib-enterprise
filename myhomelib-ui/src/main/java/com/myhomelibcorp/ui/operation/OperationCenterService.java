@@ -1,7 +1,9 @@
 package com.myhomelibcorp.ui.operation;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.application.progress.OperationProgress;
 import com.myhomelibcorp.application.progress.OperationStage;
+import com.myhomelibcorp.ui.service.UiText;
 import org.springframework.stereotype.Component;
 
 import java.time.Instant;
@@ -29,7 +31,7 @@ import java.util.function.Consumer;
 @Component
 public class OperationCenterService {
     private static final int MAX_HISTORY = 100;
-    private static final String PHASE_FINISHED_DETAIL = "Етап завершено; наступний етап показано окремою операцією";
+    private static final String PHASE_FINISHED_DETAIL_KEY = "ui.operation.phase_finished_detail";
 
     private final Object lock = new Object();
     private final LinkedHashMap<String, OperationCenterEntry> entries = new LinkedHashMap<>();
@@ -58,7 +60,7 @@ public class OperationCenterService {
             RootOperationState root = roots.get(rootId);
 
             if (root == null) {
-                String rootTitle = normalizeTitle(title, "Операція");
+                String rootTitle = normalizeTitle(title, UiText.text("ui.fxml.operation_center_workspace.operation"));
                 String rootCollection = normalizeCollection(collectionId, "");
                 OperationKind rootKind = kind != null ? kind : inferKind(rootId, rootTitle, progress.stage());
                 OperationPhase phase = phaseFor(rootKind, progress.stage(), null);
@@ -113,7 +115,7 @@ public class OperationCenterService {
     }
 
     public void fail(String operationId, String message) {
-        String effective = message == null || message.isBlank() ? "Невідома помилка" : message.trim();
+        String effective = message == null || message.isBlank() ? UiText.text("ui.java.operation_center_service.ff60a5d911") : message.trim();
         transition(operationId, OperationStage.FAILED, effective, effective);
     }
 
@@ -189,13 +191,13 @@ public class OperationCenterService {
         if (previous == null || !previous.active()) return;
         String title = previous.title();
         if (previous.kind() == rootKind && (rootKind == OperationKind.CATALOG_UPDATE || rootKind == OperationKind.CATALOG_IMPORT)) {
-            title = title + " · основний етап";
+            title = title + UiText.text("ui.java.operation_center_service.e521ff0395");
         }
         entries.put(entryId, new OperationCenterEntry(
                 previous.operationId(), title, previous.collectionId(), previous.kind(), OperationStage.COMPLETED,
                 previous.processed(), previous.total(), previous.inserted(), previous.updated(), previous.deleted(),
                 previous.skipped(), previous.duplicates(), previous.warnings(), previous.errors(),
-                PHASE_FINISHED_DETAIL, false, previous.startedAt(), now, now, previous.errorMessage()));
+                UiText.text(PHASE_FINISHED_DETAIL_KEY), false, previous.startedAt(), now, now, previous.errorMessage()));
     }
 
     private String nextSegmentId(String rootId, int segmentNumber) {
@@ -259,13 +261,13 @@ public class OperationCenterService {
     private static String phaseTitle(String rootTitle, OperationKind rootKind, OperationPhase phase) {
         return switch (phase) {
             case MAIN -> rootTitle;
-            case SEARCH_INDEX -> "Оновлення пошукового індексу";
-            case STATISTICS -> "Оновлення статистики бібліотеки";
-            case ROLLBACK -> "Відновлення попереднього стану";
+            case SEARCH_INDEX -> UiText.text("ui.import.stage.updating_index");
+            case STATISTICS -> UiText.text("ui.java.operation_center_service.3b002936a7");
+            case ROLLBACK -> UiText.text("ui.java.operation_center_service.d0f715afcd");
             case FINALIZATION -> switch (rootKind) {
-                case CATALOG_UPDATE -> "Завершення оновлення каталогу";
-                case CATALOG_IMPORT -> "Завершення імпорту каталогу";
-                default -> "Завершення фонової операції";
+                case CATALOG_UPDATE -> UiText.text("ui.java.operation_center_service.466b28480d");
+                case CATALOG_IMPORT -> UiText.text("ui.java.operation_center_service.aee5f55def");
+                default -> UiText.text("ui.java.operation_center_service.aea128027f");
             };
         };
     }
@@ -280,22 +282,28 @@ public class OperationCenterService {
 
     private static OperationKind inferKind(String operationId, String title, OperationStage stage) {
         String id = operationId == null ? "" : operationId.toLowerCase(java.util.Locale.ROOT);
-        String text = title == null ? "" : title.toLowerCase(java.util.Locale.ROOT);
-        if (stage == OperationStage.CREATING_COLLECTION || text.contains("створення колекц")) return OperationKind.COLLECTION_CREATE;
-        if (stage == OperationStage.DELETING_COLLECTION || text.contains("видалення колекц")) return OperationKind.COLLECTION_DELETE;
-        if (id.startsWith("catalog-update-") || text.contains("оновлення каталог") || text.contains("автооновлення каталог")) return OperationKind.CATALOG_UPDATE;
+
+        // Operation classification must be independent of the visible, localized title.
+        // Prefer stable operation-id prefixes and semantic stages emitted by the application layer.
+        if (id.startsWith("catalog-update-")) return OperationKind.CATALOG_UPDATE;
         if (id.startsWith("file-import-") || id.startsWith("directory-import-") || id.startsWith("catalog-import-")
-                || id.startsWith("legacy-import-") || text.contains("імпорт")) return OperationKind.CATALOG_IMPORT;
-        if (stage == OperationStage.UPDATING_SEARCH_INDEX || text.contains("lucene") || text.contains("індекс")) return OperationKind.INDEX_REBUILD;
-        if (stage == OperationStage.BACKING_UP || text.contains("backup") || text.contains("резерв")) return OperationKind.BACKUP;
-        if (stage == OperationStage.RESTORING || text.contains("відновлення")) return OperationKind.RESTORE;
-        if (stage == OperationStage.INTEGRITY_CHECKS || text.contains("цілісн")) return OperationKind.INTEGRITY_CHECK;
-        if (stage == OperationStage.BOOK_DOWNLOAD) return OperationKind.BOOK_DOWNLOAD;
-        if (stage == OperationStage.CONVERTING || text.contains("конвертац")) return OperationKind.BOOK_CONVERSION;
-        if (stage == OperationStage.SYNCHRONIZING_FILES || stage == OperationStage.OPTIMIZING_DATABASE
-                || stage == OperationStage.REFRESHING_STATISTICS || stage == OperationStage.ROLLING_BACK
-                || stage == OperationStage.FINALIZING) return OperationKind.MAINTENANCE;
-        return OperationKind.GENERIC;
+                || id.startsWith("legacy-import-") || id.startsWith("folder-watch-")) return OperationKind.CATALOG_IMPORT;
+
+        if (stage == null) return OperationKind.GENERIC;
+        return switch (stage) {
+            case CREATING_COLLECTION -> OperationKind.COLLECTION_CREATE;
+            case DELETING_COLLECTION -> OperationKind.COLLECTION_DELETE;
+            case IMPORTING, READING_CATALOG, UPDATING_AUTHORS, APPLYING_DELETIONS -> OperationKind.CATALOG_IMPORT;
+            case UPDATING_SEARCH_INDEX -> OperationKind.INDEX_REBUILD;
+            case BACKING_UP -> OperationKind.BACKUP;
+            case RESTORING -> OperationKind.RESTORE;
+            case INTEGRITY_CHECKS, SCANNING_DUPLICATES -> OperationKind.INTEGRITY_CHECK;
+            case BOOK_DOWNLOAD -> OperationKind.BOOK_DOWNLOAD;
+            case CONVERTING -> OperationKind.BOOK_CONVERSION;
+            case SYNCHRONIZING_FILES, OPTIMIZING_DATABASE, REFRESHING_STATISTICS, ROLLING_BACK, FINALIZING
+                    -> OperationKind.MAINTENANCE;
+            default -> OperationKind.GENERIC;
+        };
     }
 
     private static boolean terminal(OperationStage stage) {
@@ -303,11 +311,7 @@ public class OperationCenterService {
     }
 
     private static String rootMessage(Throwable throwable) {
-        if (throwable == null) return "Невідома помилка";
-        Throwable current = throwable;
-        while (current.getCause() != null && current.getCause() != current) current = current.getCause();
-        String message = current.getMessage();
-        return message == null || message.isBlank() ? current.getClass().getSimpleName() : message;
+        return UiExceptionSupport.message(throwable);
     }
 
     private enum OperationPhase {

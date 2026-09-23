@@ -4,6 +4,7 @@ import com.myhomelibcorp.shared.security.SecretStore;
 import org.junit.jupiter.api.Test;
 
 import java.net.URI;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Optional;
@@ -50,11 +51,73 @@ class WebDavCredentialStoreTest {
         assertThat(nativeStore.values).hasSize(3);
     }
 
-    private static final class MemorySecretStore implements SecretStore {
-        private final Map<String, String> values = new HashMap<>();
+
+    @Test
+    void failedSaveRestoresPreviousCompleteCredentialSet() {
+        FaultInjectingSecretStore nativeStore = new FaultInjectingSecretStore();
+        WebDavCredentialStore store = new WebDavCredentialStore(nativeStore, URI.create("https://dav.example/books/"));
+        WebDavSyncSecrets original = store.createAndSave("alice", "old-password");
+        Map<String, String> before = Map.copyOf(nativeStore.values);
+        nativeStore.failOnceOnMutation(2);
+
+        assertThatThrownBy(() -> store.save(new WebDavSyncSecrets(
+                "bob", "new-password", Base64.getEncoder().encodeToString(new byte[32]), original.syncKeyBase64())))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("injected");
+
+        assertThat(nativeStore.values).isEqualTo(before);
+        assertThat(store.load()).contains(original);
+    }
+
+    @Test
+    void failedDeleteRestoresPreviousCompleteCredentialSet() {
+        FaultInjectingSecretStore nativeStore = new FaultInjectingSecretStore();
+        WebDavCredentialStore store = new WebDavCredentialStore(nativeStore, URI.create("https://dav.example/books/"));
+        WebDavSyncSecrets original = store.createAndSave("alice", "pw");
+        Map<String, String> before = Map.copyOf(nativeStore.values);
+        nativeStore.failOnceOnMutation(2);
+
+        assertThatThrownBy(store::delete)
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("injected");
+
+        assertThat(nativeStore.values).isEqualTo(before);
+        assertThat(store.load()).contains(original);
+    }
+
+    private static class MemorySecretStore implements SecretStore {
+        protected final Map<String, String> values = new HashMap<>();
         @Override public Optional<String> read(String key) { return Optional.ofNullable(values.get(key)); }
         @Override public void write(String key, String secret) { values.put(key, secret); }
         @Override public void delete(String key) { values.remove(key); }
         @Override public String backendId() { return "memory-native-test"; }
+    }
+
+    private static final class FaultInjectingSecretStore extends MemorySecretStore {
+        private int failOnMutation = -1;
+        private int mutationCount;
+
+        void failOnceOnMutation(int mutation) {
+            this.failOnMutation = mutation;
+            this.mutationCount = 0;
+        }
+
+        @Override public void write(String key, String secret) {
+            failIfRequested();
+            super.write(key, secret);
+        }
+
+        @Override public void delete(String key) {
+            failIfRequested();
+            super.delete(key);
+        }
+
+        private void failIfRequested() {
+            mutationCount++;
+            if (mutationCount == failOnMutation) {
+                failOnMutation = -1;
+                throw new IllegalStateException("injected secret-store mutation failure");
+            }
+        }
     }
 }

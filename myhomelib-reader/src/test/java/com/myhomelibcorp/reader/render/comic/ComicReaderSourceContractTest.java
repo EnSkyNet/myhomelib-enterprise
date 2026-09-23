@@ -13,7 +13,7 @@ class ComicReaderSourceContractTest {
         String view = Files.readString(Path.of("src/main/java/com/myhomelibcorp/reader/render/comic/ComicReaderView.java"));
         String session = Files.readString(Path.of("src/main/java/com/myhomelibcorp/reader/render/comic/ComicDocumentSession.java"));
 
-        assertThat(view).contains("Executors.newSingleThreadExecutor", "submitTrackedRender", "Platform.runLater",
+        assertThat(view).contains("ThreadPoolExecutor", "renderExecutor.purge()", "submitTrackedRender", "Platform.runLater",
                 "AtomicLong generation", "cancelOutstandingRenders", "task.cancel(true)",
                 "dualPageMode", "rtlMode", "continuousList", "thumbnails");
         assertThat(session).contains("source.listPageEntries()", "source.openPage(entry)", "ImageReadParam",

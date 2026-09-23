@@ -83,6 +83,10 @@ class CollectionRollbackJourneyE2ETest {
                     throw new IllegalStateException(e);
                 }
             }
+            @Override public void deleteDerivedFiles(Collection collection) { }
+            @Override public void preparePhysicalDeletion(Collection collection) { }
+            @Override public void commitPreparedPhysicalDeletion(Collection collection) { }
+            @Override public void rollbackPreparedPhysicalDeletion(Collection collection) { }
             @Override public void vacuumCurrent() { }
         };
 

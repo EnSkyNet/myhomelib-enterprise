@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.importer.sevenz;
 
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
 import com.myhomelibcorp.application.port.out.importer.ImporterRegistry;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.infrastructure.importer.archive.ArchiveImportSupport;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
@@ -14,8 +15,11 @@ import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Component;
 
 import java.io.IOException;
+import java.nio.channels.FileChannel;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
@@ -41,9 +45,9 @@ public class SevenZImporter implements BookImporterPort {
     @Override
     public Stream<Book> importBooks(Path file) {
         try {
-            SevenZFile archive = SevenZFile.builder().setFile(file.toFile())
-                    .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB).get();
-            SevenZIterator iterator = new SevenZIterator(file, archive);
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "7Z import source");
+            SevenZHandle handle = openSevenZNoFollow(safeFile);
+            SevenZIterator iterator = new SevenZIterator(safeFile, handle);
             return StreamSupport.stream(Spliterators.spliteratorUnknownSize(iterator, Spliterator.ORDERED), false)
                     .onClose(iterator::close);
         } catch (IOException e) {
@@ -54,8 +58,10 @@ public class SevenZImporter implements BookImporterPort {
     @Override
     public long countBooks(Path file) {
         long count = 0;
-        try (SevenZFile archive = SevenZFile.builder().setFile(file.toFile())
-                .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB).get()) {
+        try {
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, "7Z import source");
+            try (SevenZHandle handle = openSevenZNoFollow(safeFile)) {
+            SevenZFile archive = handle.archive();
             SevenZArchiveEntry entry;
             int entries = 0;
             while ((entry = archive.getNextEntry()) != null) {
@@ -63,6 +69,7 @@ public class SevenZImporter implements BookImporterPort {
                 if (!entry.isDirectory() && ArchiveImportSupport.isSupportedBookEntry(entry.getName(), importerRegistry)) count++;
             }
             return count;
+            }
         } catch (Exception e) {
             return -1;
         }
@@ -71,15 +78,17 @@ public class SevenZImporter implements BookImporterPort {
 
     private final class SevenZIterator implements Iterator<Book>, AutoCloseable {
         private final Path archivePath;
+        private final SevenZHandle handle;
         private final SevenZFile archive;
         private final Queue<Book> queue = new ArrayDeque<>();
         private boolean finished;
         private int entryCount;
         private long totalDecompressedBytes;
 
-        private SevenZIterator(Path archivePath, SevenZFile archive) {
+        private SevenZIterator(Path archivePath, SevenZHandle handle) {
             this.archivePath = archivePath;
-            this.archive = archive;
+            this.handle = handle;
+            this.archive = handle.archive();
         }
 
         @Override public boolean hasNext() { fill(); return !queue.isEmpty(); }
@@ -137,7 +146,41 @@ public class SevenZImporter implements BookImporterPort {
         @Override public void close() {
             if (finished) return;
             finished = true;
-            try { archive.close(); } catch (Exception ignored) { }
+            try { handle.close(); } catch (Exception ignored) { }
+        }
+    }
+
+    private SevenZHandle openSevenZNoFollow(Path source) throws IOException {
+        Path safe = SafeFilePublication.requireSafeRegularFile(source, "7Z import source");
+        FileChannel channel = FileChannel.open(safe, StandardOpenOption.READ, LinkOption.NOFOLLOW_LINKS);
+        try {
+            SevenZFile archive = SevenZFile.builder()
+                    .setSeekableByteChannel(channel)
+                    .setMaxMemoryLimitKiB(ArchiveSafetyLimits.SEVEN_Z_MEMORY_LIMIT_KIB)
+                    .get();
+            return new SevenZHandle(channel, archive);
+        } catch (IOException | RuntimeException failure) {
+            try { channel.close(); } catch (IOException closeFailure) { failure.addSuppressed(closeFailure); }
+            throw failure;
+        }
+    }
+
+    private record SevenZHandle(FileChannel channel, SevenZFile archive) implements AutoCloseable {
+        @Override
+        public void close() throws IOException {
+            IOException failure = null;
+            try {
+                archive.close();
+            } catch (IOException closeArchive) {
+                failure = closeArchive;
+            }
+            try {
+                channel.close();
+            } catch (IOException closeChannel) {
+                if (failure == null) failure = closeChannel;
+                else failure.addSuppressed(closeChannel);
+            }
+            if (failure != null) throw failure;
         }
     }
 }

@@ -1,6 +1,5 @@
 package com.myhomelibcorp.infrastructure.importer.txt;
 
-import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
@@ -11,12 +10,14 @@ import org.springframework.stereotype.Component;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.Charset;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
 
 @Component
@@ -42,14 +43,17 @@ public class TxtImporter extends AbstractBookImporter {
                 .rate(0)
                 .progress(0)
                 .build();
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isRegularFile()) throw new IOException("TXT source is not a regular file: " + file);
         BookFile bookFile = new BookFile(file.getFileName().toString(),
-                file.getParent() != null ? file.getParent().toString() : "", "", Files.size(file), null);
-        return createBook(title, List.of(new Author("", "", "Невідомий автор")), List.of(),
-                "", 0, metadata, bookFile, LocalDateTime.now());
+                file.getParent() != null ? file.getParent().toString() : "", "", attributes.size(), null);
+        return createBook(title, List.of(), List.of(),
+                "", 0, metadata, bookFile, fileUpdateTime(file));
     }
 
     private String firstMeaningfulLine(Path file, Charset charset) throws IOException {
-        try (BufferedReader r = Files.newBufferedReader(file, charset)) {
+        try (BufferedReader r = new BufferedReader(new InputStreamReader(
+                Files.newInputStream(file, LinkOption.NOFOLLOW_LINKS), charset))) {
             for (int i = 0; i < 20; i++) {
                 String line = r.readLine();
                 if (line == null) return null;

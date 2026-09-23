@@ -2,6 +2,7 @@ package com.myhomelibcorp.application.usecase.export;
 
 import com.myhomelibcorp.application.usecase.conversion.ConvertBookUseCase;
 import com.myhomelibcorp.application.conversion.BookConversionCapability;
+import com.myhomelibcorp.application.conversion.BookConversionContext;
 import com.myhomelibcorp.application.action.BookActionExecutionService;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.dto.ExportRequest;
@@ -59,10 +60,11 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         when(converter.getTargetExtension()).thenReturn(".epub");
         when(converter.getFormatName()).thenReturn("EPUB");
         ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(converter), resources,
-                settings, actions, actionExecution, history, mock(ExportCompletionService.class), mock(ConvertBookUseCase.class));
+                settings, actions, actionExecution, history, mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
 
         Path destination = temp.resolve("device");
         ExportRequest request = ExportRequest.builder()
+                .collectionId("c1")
                 .bookIds(List.of(id)).destinationFolder(destination)
                 .format(ExportRequest.ExportFormat.EPUB)
                 .preferredFormats(List.of(ExportRequest.ExportFormat.EPUB, ExportRequest.ExportFormat.FB2))
@@ -74,7 +76,7 @@ class ExportToDeviceUseCaseDeviceProfileTest {
 
         assertThat(result.failed()).isZero();
         assertThat(result.exported()).isEqualTo(1);
-        assertThat(Files.readString(destination.resolve("Без автора").resolve("book.epub")))
+        assertThat(Files.readString(destination.resolve("book.epub")))
                 .isEqualTo("EPUB");
         verify(converter, never()).convert(any(), any(), any());
     }
@@ -94,28 +96,31 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         when(books.findById(id)).thenReturn(Optional.of(book));
         when(resources.readBookData(book)).thenReturn(Optional.of(
                 new ByteArrayInputStream("FB2".getBytes(StandardCharsets.UTF_8))));
+        when(resources.readBookData(eq("book.fb2"), anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(new ByteArrayInputStream("FB2".getBytes(StandardCharsets.UTF_8))));
         when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
         when(converter.isAvailable()).thenReturn(true);
         when(converter.supports(book)).thenReturn(true);
+        when(converter.supports(book, "fb2")).thenReturn(true);
         when(converter.getTargetExtension()).thenReturn(".fb2.zip");
         when(converter.getFormatName()).thenReturn("FB2 ZIP");
         doAnswer(inv -> {
-            java.io.InputStream input = inv.getArgument(1);
-            Path target = inv.getArgument(2);
-            try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(target))) {
+            BookConversionContext context = inv.getArgument(0);
+            try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(context.targetFile()))) {
                 zip.putNextEntry(new ZipEntry("book.fb2"));
-                input.transferTo(zip);
+                context.sourceStream().transferTo(zip);
                 zip.closeEntry();
             }
             return null;
-        }).when(converter).convert(eq(book), any(), any());
+        }).when(converter).convert(any(BookConversionContext.class));
 
         ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(converter), resources, settings,
                 mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
-                mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class));
+                mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
 
         Path destination = temp.resolve("fb2zip-device");
         ExportRequest request = ExportRequest.builder()
+                .collectionId("c1")
                 .bookIds(List.of(id)).destinationFolder(destination)
                 .format(ExportRequest.ExportFormat.FB2_ZIP)
                 .preferredFormats(List.of(ExportRequest.ExportFormat.FB2_ZIP, ExportRequest.ExportFormat.FB2))
@@ -133,7 +138,10 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         try (ZipFile zip = new ZipFile(archive.toFile())) {
             assertThat(zip.getEntry("book.fb2")).isNotNull();
         }
-        verify(converter).convert(eq(book), any(), argThat(path -> path != null && path.getFileName().toString().endsWith(".fb2.zip")));
+        verify(converter).convert(argThat(context -> context != null
+                && "fb2".equals(context.sourceFormat())
+                && "fb2_zip".equals(context.targetFormat())
+                && context.targetFile().getFileName().toString().endsWith(".fb2.zip")));
     }
 
     @Test
@@ -151,10 +159,11 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
         ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(), resources, settings,
                 mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
-                mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class));
+                mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
 
         Path destination = temp.resolve("legacy-device");
         ExportRequest request = ExportRequest.builder()
+                .collectionId("c1")
                 .bookIds(List.of(id)).destinationFolder(destination)
                 .format(ExportRequest.ExportFormat.FB2)
                 .collisionPolicy(ExportRequest.CollisionPolicy.OVERWRITE)
@@ -168,6 +177,62 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         assertThat(Files.readString(destination.resolve("safe").resolve("legacy.fb2"))).isEqualTo("FB2");
     }
 
+
+    @Test
+    void conversionUsesCompatibleAlternativeArtifactAndSourceAwareContext() throws Exception {
+        BookId id = BookId.generate();
+        BookArtifact epub = artifact("epub-source", "book.epub", "epub", "EPUB-SOURCE".getBytes(StandardCharsets.UTF_8));
+        Book book = Book.builder().id(id).title("Book")
+                .file(new BookFile("opaque.bin", "", "", 11, temp.toString()))
+                .artifacts(List.of(epub)).preferredArtifactId(epub.getId()).local(true).build();
+
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        BookConverter converter = mock(BookConverter.class);
+        when(books.findById(id)).thenReturn(Optional.of(book));
+        when(resources.readBookData(eq("book.epub"), anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(new ByteArrayInputStream("EPUB-SOURCE".getBytes(StandardCharsets.UTF_8))));
+        when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        when(converter.isAvailable()).thenReturn(true);
+        when(converter.supports(book, "epub")).thenReturn(true);
+        when(converter.capabilities()).thenReturn(java.util.Set.of(
+                new BookConversionCapability(java.util.Set.of("epub"), "azw3", ".azw3")));
+        when(converter.getTargetExtension()).thenReturn(".azw3");
+        when(converter.getFormatName()).thenReturn("AZW3");
+        doAnswer(inv -> {
+            BookConversionContext context = inv.getArgument(0);
+            assertThat(context.sourceFormat()).isEqualTo("epub");
+            assertThat(context.targetFormat()).isEqualTo("azw3");
+            String source = new String(context.sourceStream().readAllBytes(), StandardCharsets.UTF_8);
+            Files.writeString(context.targetFile(), "converted:" + source, StandardCharsets.UTF_8);
+            return null;
+        }).when(converter).convert(any(BookConversionContext.class));
+
+        ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(converter), resources, settings,
+                mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
+                mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
+
+        assertThat(useCase.supportedFormatsForBooks(List.of(id))).contains(ExportRequest.ExportFormat.AZW3);
+
+        Path destination = temp.resolve("artifact-conversion-device");
+        ExportRequest request = ExportRequest.builder()
+                .collectionId("c1")
+                .bookIds(List.of(id)).destinationFolder(destination)
+                .format(ExportRequest.ExportFormat.AZW3)
+                .collisionPolicy(ExportRequest.CollisionPolicy.OVERWRITE)
+                .customFileNameTemplate("book").subfolderTemplate("safe")
+                .build();
+
+        ExportToDeviceUseCase.ExportResult result = useCase.execute(request);
+
+        assertThat(result.failed()).isZero();
+        assertThat(result.exported()).isEqualTo(1);
+        assertThat(Files.readString(destination.resolve("safe").resolve("book.azw3")))
+                .isEqualTo("converted:EPUB-SOURCE");
+        verify(resources, never()).readBookData(book);
+    }
+
     @Test
     void supportedFormatsAreDerivedFromConversionCapabilityMatrix() {
         ConvertBookUseCase conversion = mock(ConvertBookUseCase.class);
@@ -179,7 +244,7 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         ));
         ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(mock(BookQueryRepository.class), List.of(),
                 mock(BookResourcePort.class), mock(ApplicationSettingsPort.class), mock(BookActionProfileService.class),
-                mock(BookActionExecutionService.class), mock(ExportHistoryService.class), mock(ExportCompletionService.class), conversion);
+                mock(BookActionExecutionService.class), mock(ExportHistoryService.class), mock(ExportCompletionService.class), conversion, activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
 
         assertThat(useCase.supportedFormats()).containsExactly(ExportRequest.ExportFormat.EPUB);
         verify(conversion).capabilityMatrix();
@@ -196,14 +261,57 @@ class ExportToDeviceUseCaseDeviceProfileTest {
         when(books.findById(id)).thenReturn(Optional.of(book));
         ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(), mock(BookResourcePort.class),
                 mock(ApplicationSettingsPort.class), mock(BookActionProfileService.class),
-                mock(BookActionExecutionService.class), mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class));
+                mock(BookActionExecutionService.class), mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
 
         assertThat(useCase.supportedFormatsForBooks(List.of(id)))
                 .containsExactlyInAnyOrder(ExportRequest.ExportFormat.FB2, ExportRequest.ExportFormat.EPUB);
     }
 
+    @Test
+    void exportFilenameIsWindowsSafeForReservedDeviceNames() throws Exception {
+        BookId id = BookId.generate();
+        BookArtifact fb2 = artifact("fb2", "book.fb2", "fb2", "FB2".getBytes(StandardCharsets.UTF_8));
+        Book book = Book.builder().id(id).title("CON. ")
+                .file(fb2.getFile()).artifacts(List.of(fb2)).preferredArtifactId(fb2.getId()).local(true).build();
+
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookResourcePort resources = mock(BookResourcePort.class);
+        ApplicationSettingsPort settings = mock(ApplicationSettingsPort.class);
+        when(books.findById(id)).thenReturn(Optional.of(book));
+        when(resources.readBookData(eq("book.fb2"), anyString(), anyString(), anyString()))
+                .thenReturn(Optional.of(new ByteArrayInputStream("FB2".getBytes(StandardCharsets.UTF_8))));
+        when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
+        ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(), resources, settings,
+                mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
+                mock(ExportHistoryService.class), mock(ExportCompletionService.class), mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
+
+        Path destination = temp.resolve("windows-safe-device");
+        ExportRequest request = ExportRequest.builder()
+                .collectionId("c1")
+                .bookIds(List.of(id)).destinationFolder(destination)
+                .format(ExportRequest.ExportFormat.FB2)
+                .preferredFormats(List.of(ExportRequest.ExportFormat.FB2))
+                .collisionPolicy(ExportRequest.CollisionPolicy.OVERWRITE)
+                .customFileNameTemplate("%t").subfolderTemplate("")
+                .build();
+
+        ExportToDeviceUseCase.ExportResult result = useCase.execute(request);
+
+        assertThat(result.failed()).isZero();
+        assertThat(Files.readString(destination.resolve("_CON.fb2"))).isEqualTo("FB2");
+    }
+
     private BookArtifact artifact(String id, String fileName, String format, byte[] ignored) {
         return BookArtifact.builder().id(id).format(format).local(true)
                 .file(new BookFile(fileName, "", "", Math.max(1, ignored.length), temp.toString())).build();
+    }
+
+    private static com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort activeLifecycle() {
+        var lifecycle = org.mockito.Mockito.mock(
+                com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort.class);
+        org.mockito.Mockito.when(lifecycle.getCurrentCollection()).thenReturn(
+                new com.myhomelibcorp.domain.model.collection.Collection(
+                        "c1", "Test", null, null, 0, null, null, null, null));
+        return lifecycle;
     }
 }

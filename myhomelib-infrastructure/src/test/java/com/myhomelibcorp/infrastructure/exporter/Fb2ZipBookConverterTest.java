@@ -37,4 +37,25 @@ class Fb2ZipBookConverterTest {
             assertThat(zip.getEntry("demon.fb2")).isNotNull();
         }
     }
+    @Test
+    void neverEmitsTraversalPathFromArchiveEntryMetadata() throws Exception {
+        Book book = Book.builder()
+                .id(BookId.generate())
+                .title("Безпечна книга")
+                .file(new BookFile("ignored.fb2", "", "../../outside/evil.fb2", 4, temp.toString()))
+                .local(true)
+                .build();
+        Path target = temp.resolve("safe.fb2.zip");
+
+        new Fb2ZipBookConverter().convert(book,
+                new ByteArrayInputStream("<FictionBook/>".getBytes(StandardCharsets.UTF_8)), target);
+
+        try (ZipFile zip = new ZipFile(target.toFile())) {
+            assertThat(zip.size()).isEqualTo(1);
+            String name = zip.entries().nextElement().getName();
+            assertThat(name).isEqualTo("evil.fb2");
+            assertThat(name).doesNotContain("/", "\\", "..");
+        }
+    }
+
 }

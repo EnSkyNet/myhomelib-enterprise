@@ -9,11 +9,16 @@ import org.springframework.stereotype.Component;
 public class DeleteGroupUseCase {
 
     private final GroupRepository groupRepository;
+    private final GroupMutationExecutor mutationExecutor;
 
     public void execute(Long groupId) {
+        execute(groupId, null);
+    }
+
+    public void execute(Long groupId, String expectedCollectionId) {
         if (groupId == null) {
             throw new IllegalArgumentException("Group ID cannot be null");
         }
-        groupRepository.deleteById(groupId);
+        mutationExecutor.execute(expectedCollectionId, () -> groupRepository.deleteById(groupId));
     }
 }

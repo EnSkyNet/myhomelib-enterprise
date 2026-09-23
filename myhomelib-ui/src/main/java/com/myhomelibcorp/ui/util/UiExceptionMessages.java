@@ -1,14 +1,15 @@
 package com.myhomelibcorp.ui.util;
 
+/** Backward-compatible facade for user-safe localized exception text. */
 public final class UiExceptionMessages {
     private UiExceptionMessages() {
     }
 
     public static String root(Throwable error) {
-        if (error == null) return "Невідома помилка";
-        Throwable current = error;
-        while (current.getCause() != null) current = current.getCause();
-        return current.getMessage() == null || current.getMessage().isBlank()
-                ? current.getClass().getSimpleName() : current.getMessage();
+        return UiExceptionSupport.message(error);
+    }
+
+    public static String technicalRoot(Throwable error) {
+        return UiExceptionSupport.technicalMessage(error);
     }
 }

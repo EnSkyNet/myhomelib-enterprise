@@ -18,6 +18,15 @@ class ArchiveImportSupportTest {
     }
 
     @Test
+    void legacyHashUnicodeEntryKeepsRawIdentityButGetsReadableDisplayFileName() {
+        String raw = "books/#U0412#U043e#U0437#U0432#U0440#U0430#U0449#U0435#U043d#U0438#U0435_1.fb2";
+
+        assertThat(ArchiveImportSupport.isSafeEntryName(raw)).isTrue();
+        assertThat(ArchiveImportSupport.fileName(raw)).isEqualTo("Возвращение_1.fb2");
+        assertThat(ArchiveImportSupport.suffixFor(raw)).isEqualTo(".fb2");
+    }
+
+    @Test
     void traversalAndAbsoluteArchiveEntriesRemainRejected() {
         assertThat(ArchiveImportSupport.isSafeEntryName("../book.fb2")).isFalse();
         assertThat(ArchiveImportSupport.isSafeEntryName("books/../book.fb2")).isFalse();

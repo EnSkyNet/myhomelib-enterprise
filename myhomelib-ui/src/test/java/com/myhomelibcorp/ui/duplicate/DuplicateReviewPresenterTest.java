@@ -48,6 +48,22 @@ class DuplicateReviewPresenterTest {
     }
 
     @Test
+    void duplicateReviewShowsReadableLegacyArchiveEntry() {
+        String raw = "books/#U0412#U043e#U0437#U0432#U0440#U0430#U0449#U0435#U043d#U0438#U0435_1.fb2";
+        BookArtifactDto archived = BookArtifactDto.builder()
+                .id("fb2").format("fb2").state("AVAILABLE")
+                .fileName("bundle.zip").archiveEntry(raw).local(true).build();
+        BookDto source = book("1", "Book", "Author", archived);
+
+        var presentation = presenter.present(List.of(), source);
+
+        assertThat(presentation.sourceArtifacts())
+                .contains("Возвращение_1.fb2")
+                .doesNotContain("#U0412");
+        assertThat(archived.getArchiveEntry()).isEqualTo(raw);
+    }
+
+    @Test
     void exactGroupFormatterShowsHashTitlesFormatsAndBookIds() {
         String bookId = "11111111-1111-1111-1111-111111111111";
         var group = new ExactDuplicateGroup("abc123", List.of(

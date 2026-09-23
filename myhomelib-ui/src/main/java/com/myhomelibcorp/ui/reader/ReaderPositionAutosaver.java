@@ -6,7 +6,6 @@ import lombok.extern.slf4j.Slf4j;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -14,6 +13,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * thread and flushed to SQLite every three seconds. Workspace close always calls
  * flush() synchronously, while unexpected process termination loses at most the
  * most recent interval rather than relying on a JavaFX AnimationTimer pulse.
+ *
+ * <p>The logical state is kept in one atomic snapshot. This is important because
+ * {@link #start(String, String, long)} runs on the UI thread while the scheduled flush runs
+ * concurrently; publishing {@code bookId}, position and dirty flags separately can
+ * otherwise associate the previous book's position with the next book.</p>
  */
 @Slf4j
 final class ReaderPositionAutosaver implements AutoCloseable {
@@ -23,28 +27,24 @@ final class ReaderPositionAutosaver implements AutoCloseable {
         t.setDaemon(true);
         return t;
     });
-    private final AtomicReference<ReaderPosition> latest = new AtomicReference<>();
-    private final AtomicBoolean dirty = new AtomicBoolean();
-    private volatile String bookId;
-    private volatile long totalTextLength;
+    private final AtomicReference<State> state = new AtomicReference<>(State.empty());
 
     ReaderPositionAutosaver(NewReaderPersistenceService persistence) {
         this.persistence = persistence;
         executor.scheduleWithFixedDelay(this::flushIfDirty, 3, 3, TimeUnit.SECONDS);
     }
 
-    void start(String bookId, long totalTextLength) {
+    void start(String collectionId, String bookId, long totalTextLength) {
         flush();
-        this.bookId = bookId;
-        this.totalTextLength = Math.max(0L, totalTextLength);
-        latest.set(null);
-        dirty.set(false);
+        state.updateAndGet(previous -> new State(
+                collectionId, bookId, Math.max(0L, totalTextLength), null, false, previous.generation() + 1));
     }
 
     void mark(ReaderPosition position) {
-        if (position == null || bookId == null) return;
-        latest.set(position);
-        dirty.set(true);
+        if (position == null) return;
+        state.updateAndGet(current -> current.bookId() == null
+                ? current
+                : new State(current.collectionId(), current.bookId(), current.totalTextLength(), position, true, current.generation()));
     }
 
     boolean flush() {
@@ -52,28 +52,49 @@ final class ReaderPositionAutosaver implements AutoCloseable {
     }
 
     private boolean flushIfDirty() {
-        String id = bookId;
-        ReaderPosition pos = latest.get();
-        if (id == null || pos == null || !dirty.compareAndSet(true, false)) return true;
+        State snapshot;
+        while (true) {
+            snapshot = state.get();
+            if (snapshot.bookId() == null || snapshot.latest() == null || !snapshot.dirty()) return true;
+            State clean = new State(snapshot.collectionId(), snapshot.bookId(), snapshot.totalTextLength(),
+                    snapshot.latest(), false, snapshot.generation());
+            if (state.compareAndSet(snapshot, clean)) break;
+        }
+
         try {
-            if (persistence.savePosition(id, pos, totalTextLength)) return true;
-            dirty.set(true);
-            log.warn("Reader autosave failed for {}; position remains dirty for retry", id);
+            if (persistence.savePosition(snapshot.collectionId(), snapshot.bookId(), snapshot.latest(), snapshot.totalTextLength())) return true;
+            restoreDirty(snapshot);
+            log.warn("Reader autosave failed for {}; position remains dirty for retry", snapshot.bookId());
             return false;
         } catch (Exception e) {
-            dirty.set(true);
-            log.warn("Reader autosave failed for {}: {}", id, e.getMessage());
+            restoreDirty(snapshot);
+            log.warn("Reader autosave failed for {}: {}", snapshot.bookId(), e.getMessage());
             return false;
         }
+    }
+
+    private void restoreDirty(State failed) {
+        state.updateAndGet(current -> current.generation() != failed.generation()
+                ? current
+                : new State(current.collectionId(), current.bookId(), current.totalTextLength(),
+                        current.latest(), true, current.generation()));
     }
 
     @Override
     public void close() {
         flush();
         executor.shutdown();
-        try { executor.awaitTermination(2, TimeUnit.SECONDS); }
-        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
-        bookId = null;
-        totalTextLength = 0L;
+        try {
+            if (!executor.awaitTermination(2, TimeUnit.SECONDS)) executor.shutdownNow();
+        } catch (InterruptedException e) {
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+        state.updateAndGet(previous -> new State(null, null, 0L, null, false, previous.generation() + 1));
+    }
+
+    private record State(String collectionId, String bookId, long totalTextLength, ReaderPosition latest,
+                         boolean dirty, long generation) {
+        private static State empty() { return new State(null, null, 0L, null, false, 0L); }
     }
 }

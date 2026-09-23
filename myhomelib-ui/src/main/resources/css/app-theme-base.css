@@ -76,6 +76,19 @@
 .table-view .column-header-background, .tree-table-view .column-header-background { -fx-background-color: -mhl-panel; }
 .table-row-cell, .tree-table-row-cell { -fx-background-color: -mhl-book-row; -fx-text-fill: -mhl-text; }
 .table-row-cell:filled:selected, .tree-table-row-cell:filled:selected { -fx-background-color: -mhl-accent; -fx-text-fill: -mhl-on-accent; }
+/* Keep selected text readable in both focused and unfocused list/tree controls. Modena's
+   unfocused selection defaults can otherwise combine a pale background with white text. */
+.list-cell:filled:selected,
+.list-cell:filled:selected:focused,
+.tree-cell:selected,
+.tree-cell:selected:focused {
+    -fx-background-color: -mhl-accent;
+    -fx-text-fill: -mhl-on-accent;
+}
+.list-cell:filled:selected .label,
+.tree-cell:selected .label {
+    -fx-text-fill: -mhl-on-accent;
+}
 .operation-center-row {
     -fx-border-color: transparent transparent -mhl-border transparent;
     -fx-border-width: 0 0 1 0;
@@ -178,9 +191,15 @@
 /* Iteration 84: compact main toolbar + contextual multi-selection actions. */
 .selection-toolbar {
     -fx-padding: 6 10 6 10;
-    -fx-background-color: derive(-mhl-accent, 88%);
+    -fx-background-color: derive(-mhl-panel, -3%);
     -fx-border-color: -mhl-border;
     -fx-border-width: 1 0 0 0;
+}
+.selection-toolbar .label { -fx-text-fill: -mhl-text; }
+.selection-toolbar .button {
+    -fx-background-color: -mhl-panel;
+    -fx-text-fill: -mhl-text;
+    -fx-border-color: -mhl-border;
 }
 .scope-chip {
     -fx-padding: 3 9 3 9;

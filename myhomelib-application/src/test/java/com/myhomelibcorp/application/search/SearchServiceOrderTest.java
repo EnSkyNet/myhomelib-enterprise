@@ -6,6 +6,8 @@ import com.myhomelibcorp.application.filter.BookFilterStateService;
 import com.myhomelibcorp.application.mapper.AuthorMapper;
 import com.myhomelibcorp.application.mapper.BookMapper;
 import com.myhomelibcorp.application.mapper.GenreMapper;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.cache.SearchCache;
 import com.myhomelibcorp.application.port.out.repository.AuthorRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
@@ -21,6 +23,7 @@ import org.junit.jupiter.api.Test;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class SearchServiceOrderTest {
@@ -106,6 +109,32 @@ class SearchServiceOrderTest {
         assertThat(captor.getValue().offset()).isEqualTo(500);
         assertThat(page.totalElements()).isEqualTo(1203);
         assertThat(page.content()).containsExactly(dto);
+    }
+
+    @Test
+    void applicationBoundaryBlocksSearchWhileCollectionSwitchOwnsLifecycle() {
+        SearchQueryService queryService = mock(SearchQueryService.class);
+        BookQueryRepository books = mock(BookQueryRepository.class);
+        BookFilterStateService filters = mock(BookFilterStateService.class);
+        LibraryOperationCoordinator operations = new LibraryOperationCoordinator();
+        SearchService service = new SearchService(
+                queryService,
+                books,
+                mock(BookMapper.class),
+                mock(SearchCache.class),
+                mock(GenreRepository.class),
+                mock(SeriesRepository.class),
+                mock(AuthorRepository.class),
+                mock(AuthorMapper.class),
+                mock(GenreMapper.class),
+                filters,
+                operations);
+
+        try (var ignored = operations.acquireDetached(LibraryOperationType.SWITCH)) {
+            assertThatThrownBy(() -> service.search("needle", 10))
+                    .isInstanceOf(RuntimeException.class);
+        }
+        verifyNoInteractions(queryService, books, filters);
     }
 
 }

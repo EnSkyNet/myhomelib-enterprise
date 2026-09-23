@@ -15,6 +15,8 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 
 class LocalDictionaryProviderTest {
     @TempDir Path tempDir;
@@ -55,6 +57,28 @@ class LocalDictionaryProviderTest {
         assertThat(entries).isNotEmpty();
         assertThat(entries.getFirst().providerId()).isEqualTo(LocalDictionaryProvider.PROVIDER_ID);
         assertThat(entries.getFirst().source()).isEqualTo("builtin");
+    }
+
+    @Test
+    void rejectsCustomDictionaryReachedThroughSymlinkedParent() throws Exception {
+        Path outside = Files.createDirectories(tempDir.resolve("outside-dictionary"));
+        Path dictionary = outside.resolve("dictionary.tsv");
+        Files.writeString(dictionary, "uk\tтест\tіменник\tНебезпечний шлях.\t\n", StandardCharsets.UTF_8);
+        Path alias = tempDir.resolve("dictionary-alias");
+        try {
+            Files.createSymbolicLink(alias, outside);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException e) {
+            assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+        MapSettings settings = new MapSettings();
+        settings.put("dictionary.local.path", alias.resolve("dictionary.tsv").toString());
+        LocalDictionaryProvider provider = new LocalDictionaryProvider(settings);
+
+        assertThatThrownBy(() -> provider.lookup(
+                DictionaryQuery.of("тест", "uk-UA"),
+                TextProviderRequestContext.create(Duration.ofSeconds(1), new AtomicBoolean(false))))
+                .isInstanceOf(com.myhomelibcorp.application.textprovider.TextProviderException.class)
+                .hasMessageContaining("Local dictionary cannot be read");
     }
 
     private static final class MapSettings implements ApplicationSettingsPort {

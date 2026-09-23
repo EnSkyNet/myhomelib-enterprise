@@ -16,7 +16,7 @@ class PortableSnapshotConflictServiceTest {
     private final PortableSnapshotConflictService service = new PortableSnapshotConflictService(mapper);
 
     @Test
-    void exposesOnlyChangedUserSectionsAndUsesUkrainianLabels() throws Exception {
+    void exposesOnlyChangedUserSectionsAsLocalizationDescriptors() throws Exception {
         byte[] local = json("""
                 {"schemaVersion":4,"format":"myhomelib-user-data",
                  "readingProgress":[{"bookId":"a","percent":10}],
@@ -32,11 +32,14 @@ class PortableSnapshotConflictServiceTest {
 
         assertThat(conflicts).extracting(c -> c.logicalKey())
                 .containsExactly("portable-user-data:readingProgress", "portable-user-data:filterSettings");
-        assertThat(conflicts).extracting(c -> c.entityType())
-                .containsExactly("Прогрес читання", "Налаштування фільтрів");
+        assertThat(conflicts).extracting(c -> c.entityType().key())
+                .containsExactly("ui.sync.conflict.entity.reading_progress", "ui.sync.conflict.entity.filter_settings");
         assertThat(conflicts).allSatisfy(c -> {
-            assertThat(c.localSnapshot()).contains("SHA-256:");
-            assertThat(c.remoteSnapshot()).contains("SHA-256:");
+            assertThat(c.reason().key()).isEqualTo("ui.sync.conflict.reason.portable_section_changed");
+            assertThat(c.localSnapshot().key()).startsWith("ui.sync.conflict.snapshot.");
+            assertThat(c.remoteSnapshot().key()).startsWith("ui.sync.conflict.snapshot.");
+            assertThat(c.localSnapshot().arguments().getLast()).matches("[0-9a-f]{64}");
+            assertThat(c.remoteSnapshot().arguments().getLast()).matches("[0-9a-f]{64}");
         });
     }
 

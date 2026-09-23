@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.dictionary;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.dictionary.DictionaryEntry;
 import com.myhomelibcorp.application.dictionary.DictionaryProvider;
 import com.myhomelibcorp.application.dictionary.DictionaryQuery;
@@ -16,6 +17,7 @@ import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.text.Normalizer;
 import java.util.ArrayList;
@@ -55,7 +57,7 @@ public final class LocalDictionaryProvider implements DictionaryProvider {
 
         List<DictionaryEntry> result = new ArrayList<>();
         Path custom = customPath();
-        if (custom != null && Files.isRegularFile(custom)) {
+        if (custom != null && Files.isRegularFile(custom, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
             scanFile(custom, query, context, result);
         }
         if (result.size() < query.limit()) {
@@ -77,8 +79,12 @@ public final class LocalDictionaryProvider implements DictionaryProvider {
             DictionaryQuery query,
             TextProviderRequestContext context,
             List<DictionaryEntry> result) throws TextProviderException {
-        try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
-            scan(reader, file.toString(), query, context, result);
+        try {
+            Path safe = SafeFilePublication.requireSafeRegularFile(file, "Local dictionary");
+            try (InputStream input = Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS);
+                 BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                scan(reader, safe.toString(), query, context, result);
+            }
         } catch (IOException error) {
             throw new TextProviderException(
                     TextProviderErrorKind.UNAVAILABLE,

@@ -71,6 +71,7 @@ class RemoveLocalBookCopyUseCaseTest {
         BookDto book = dto(id, root, "", "book.fb2", "");
         BookResourcePort.StagedDeletion staged = mock(BookResourcePort.StagedDeletion.class);
 
+        when(queries.findById(id)).thenReturn(java.util.Optional.of(domainBook(id, root, "", "book.fb2", "")));
         when(resources.locateBookFile("book.fb2", "", root.toString(), "")).thenReturn(java.util.Optional.of(physical));
         when(tracking.hasDownloadedBaseline(id)).thenReturn(true);
         when(resources.stagePhysicalFileForDeletion(physical, root, "collection-test", List.of(id))).thenReturn(staged);
@@ -93,6 +94,7 @@ class RemoveLocalBookCopyUseCaseTest {
         Path physical = root.resolve("imported-original.fb2");
         BookDto book = dto(id, root, "", "imported-original.fb2", "");
 
+        when(queries.findById(id)).thenReturn(java.util.Optional.of(domainBook(id, root, "", "imported-original.fb2", "")));
         when(resources.locateBookFile("imported-original.fb2", "", root.toString(), ""))
                 .thenReturn(java.util.Optional.of(physical));
         when(tracking.hasDownloadedBaseline(id)).thenReturn(false);
@@ -116,6 +118,7 @@ class RemoveLocalBookCopyUseCaseTest {
         Book row2 = domainBook(second, root, "shared.zip", "two.fb2", "two.fb2");
         BookResourcePort.StagedDeletion staged = mock(BookResourcePort.StagedDeletion.class);
 
+        when(queries.findById(first)).thenReturn(java.util.Optional.of(row1));
         when(resources.locateBookFile("one.fb2", "shared.zip", root.toString(), "one.fb2"))
                 .thenReturn(java.util.Optional.of(archive));
         when(queries.findByArchiveContainer(root.toString(), "shared.zip", archive.toString()))
@@ -136,6 +139,72 @@ class RemoveLocalBookCopyUseCaseTest {
         verify(staged).rollback();
         verify(staged, never()).commit();
         verify(statistics, never()).invalidate();
+    }
+
+
+    @Test
+    void batchStagesSharedStandalonePhysicalFileOnceButMarksEverySelectedRowNonLocal() throws Exception {
+        BookId first = BookId.generate();
+        BookId second = BookId.generate();
+        Path root = temp.resolve("library");
+        Path physical = root.resolve("shared.fb2");
+        BookDto firstBook = dto(first, root, "", "shared.fb2", "");
+        BookDto secondBook = dto(second, root, "", "shared.fb2", "");
+        BookResourcePort.StagedDeletion staged = mock(BookResourcePort.StagedDeletion.class);
+
+        when(queries.findById(first)).thenReturn(java.util.Optional.of(domainBook(first, root, "", "shared.fb2", "")));
+        when(queries.findById(second)).thenReturn(java.util.Optional.of(domainBook(second, root, "", "shared.fb2", "")));
+        when(resources.locateBookFile("shared.fb2", "", root.toString(), ""))
+                .thenReturn(java.util.Optional.of(physical));
+        when(tracking.hasDownloadedBaseline(first)).thenReturn(true);
+        when(tracking.hasDownloadedBaseline(second)).thenReturn(true);
+        when(resources.stagePhysicalFileForDeletion(physical, root, "collection-test", List.of(first, second)))
+                .thenReturn(staged);
+
+        assertThat(useCase.executeBatch(List.of(firstBook, secondBook))).isEqualTo(2);
+
+        verify(resources).stagePhysicalFileForDeletion(physical, root, "collection-test", List.of(first, second));
+        verify(commands).updateStorage(first, root.toString(), "", "shared.fb2", "", false);
+        verify(commands).updateStorage(second, root.toString(), "", "shared.fb2", "", false);
+        verify(staged).commit();
+        verify(staged, never()).rollback();
+    }
+
+    @Test
+    void batchDatabaseFailureRollsBackEveryStagedPhysicalFile() throws Exception {
+        BookId first = BookId.generate();
+        BookId second = BookId.generate();
+        Path root = temp.resolve("library");
+        Path firstPhysical = root.resolve("one.fb2");
+        Path secondPhysical = root.resolve("two.fb2");
+        BookDto firstBook = dto(first, root, "", "one.fb2", "");
+        BookDto secondBook = dto(second, root, "", "two.fb2", "");
+        BookResourcePort.StagedDeletion firstStage = mock(BookResourcePort.StagedDeletion.class);
+        BookResourcePort.StagedDeletion secondStage = mock(BookResourcePort.StagedDeletion.class);
+
+        when(queries.findById(first)).thenReturn(java.util.Optional.of(domainBook(first, root, "", "one.fb2", "")));
+        when(queries.findById(second)).thenReturn(java.util.Optional.of(domainBook(second, root, "", "two.fb2", "")));
+        when(resources.locateBookFile("one.fb2", "", root.toString(), ""))
+                .thenReturn(java.util.Optional.of(firstPhysical));
+        when(resources.locateBookFile("two.fb2", "", root.toString(), ""))
+                .thenReturn(java.util.Optional.of(secondPhysical));
+        when(tracking.hasDownloadedBaseline(first)).thenReturn(true);
+        when(tracking.hasDownloadedBaseline(second)).thenReturn(true);
+        when(resources.stagePhysicalFileForDeletion(firstPhysical, root, "collection-test", List.of(first)))
+                .thenReturn(firstStage);
+        when(resources.stagePhysicalFileForDeletion(secondPhysical, root, "collection-test", List.of(second)))
+                .thenReturn(secondStage);
+        doThrow(new IllegalStateException("db failure"))
+                .when(commands).updateStorage(second, root.toString(), "", "two.fb2", "", false);
+
+        assertThatThrownBy(() -> useCase.executeBatch(List.of(firstBook, secondBook)))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("db failure");
+
+        verify(firstStage).rollback();
+        verify(secondStage).rollback();
+        verify(firstStage, never()).commit();
+        verify(secondStage, never()).commit();
     }
 
     private static BookDto dto(BookId id, Path root, String folder, String fileName, String archiveEntry) {

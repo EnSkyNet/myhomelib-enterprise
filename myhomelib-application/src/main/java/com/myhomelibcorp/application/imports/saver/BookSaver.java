@@ -2,11 +2,15 @@ package com.myhomelibcorp.application.imports.saver;
 
 import com.myhomelibcorp.application.imports.duplicate.DuplicateDetector;
 import com.myhomelibcorp.application.imports.duplicate.DuplicatePolicy;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.BookQueryRepository;
 import com.myhomelibcorp.application.port.out.search.SearchIndexer;
 import com.myhomelibcorp.domain.event.book.BookDeletedEvent;
 import com.myhomelibcorp.domain.model.book.Book;
+import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -29,6 +33,8 @@ public class BookSaver {
     private final DuplicateDetector duplicateDetector;
     private final SearchIndexer searchIndexer;
     private final TransactionTemplate transactionTemplate;
+    private final LibraryOperationCoordinator operationCoordinator;
+    private final CollectionLifecyclePort collectionLifecyclePort;
 
     public BookSaver(
             BookCommandRepository bookCommandRepository,
@@ -36,13 +42,17 @@ public class BookSaver {
             ApplicationEventPublisher eventPublisher,
             DuplicateDetector duplicateDetector,
             SearchIndexer searchIndexer,
-            @Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate) {
+            @Qualifier("collectionTransactionTemplate") TransactionTemplate transactionTemplate,
+            LibraryOperationCoordinator operationCoordinator,
+            CollectionLifecyclePort collectionLifecyclePort) {
         this.bookCommandRepository = bookCommandRepository;
         this.bookQueryRepository = bookQueryRepository;
         this.eventPublisher = eventPublisher;
         this.duplicateDetector = duplicateDetector;
         this.searchIndexer = searchIndexer;
         this.transactionTemplate = transactionTemplate;
+        this.operationCoordinator = operationCoordinator;
+        this.collectionLifecyclePort = collectionLifecyclePort;
     }
 
     public boolean saveBook(Book book, boolean indexAfterSave, DuplicatePolicy policy) {
@@ -168,23 +178,90 @@ public class BookSaver {
      * Видаляє книгу за ID та публікує подію BookDeletedEvent.
      */
     public void deleteBook(BookId bookId) {
+        deleteBook(bookId, null);
+    }
+
+    /**
+     * Deletes a book only if the collection that originated the UI/request is still active
+     * after the EDIT lifecycle barrier has been acquired.
+     */
+    public void deleteBook(BookId bookId, String expectedCollectionId) {
         if (bookId == null) {
             throw new IllegalArgumentException("BookId cannot be null");
         }
+        withEditLease(() -> {
+            assertExpectedCollection(expectedCollectionId);
+            Optional<Book> bookOpt = bookQueryRepository.findById(bookId);
+            if (bookOpt.isEmpty()) {
+                log.warn("Спроба видалити неіснуючу книгу: {}", bookId);
+                return null;
+            }
 
-        Optional<Book> bookOpt = bookQueryRepository.findById(bookId);
-        if (bookOpt.isEmpty()) {
-            log.warn("Спроба видалити неіснуючу книгу: {}", bookId);
-            return;
-        }
+            transactionTemplate.execute(status -> {
+                bookCommandRepository.deleteById(bookId);
+                eventPublisher.publishEvent(new BookDeletedEvent(bookId));
+                return null;
+            });
 
-        transactionTemplate.execute(status -> {
-            bookCommandRepository.deleteById(bookId);
-            eventPublisher.publishEvent(new BookDeletedEvent(bookId));
+            log.debug("Книгу видалено: {}", bookId);
             return null;
         });
+    }
 
-        log.debug("Книгу видалено: {}", bookId);
+    /**
+     * Deletes a selected set as one collection-DB transaction. A failure in any delete rolls back
+     * the whole batch; BookDeletedEvent handlers run only after the transaction commits.
+     * Missing IDs are ignored to preserve the single-delete compatibility contract.
+     */
+    public int deleteBooks(List<BookId> bookIds) {
+        return deleteBooks(bookIds, null);
+    }
+
+    public int deleteBooks(List<BookId> bookIds, String expectedCollectionId) {
+        if (bookIds == null || bookIds.isEmpty()) return 0;
+        if (bookIds.stream().anyMatch(java.util.Objects::isNull)) {
+            throw new IllegalArgumentException("BookIds cannot contain null values");
+        }
+        return withEditLease(() -> {
+            assertExpectedCollection(expectedCollectionId);
+            List<BookId> requested = bookIds.stream().distinct().toList();
+            Integer deleted = transactionTemplate.execute(status -> {
+                List<Book> existing = bookQueryRepository.findByIds(requested);
+                if (existing.isEmpty()) return 0;
+                List<BookId> existingIds = existing.stream().map(Book::getId).distinct().toList();
+                for (BookId id : existingIds) {
+                    bookCommandRepository.deleteById(id);
+                    eventPublisher.publishEvent(new BookDeletedEvent(id));
+                }
+                return existingIds.size();
+            });
+            int count = deleted == null ? 0 : deleted;
+            log.debug("Пакетно видалено {} книг", count);
+            return count;
+        });
+    }
+
+    private void assertExpectedCollection(String expectedCollectionId) {
+        if (expectedCollectionId == null || expectedCollectionId.isBlank()) return;
+        Collection active = collectionLifecyclePort.getCurrentCollection();
+        if (active == null || active.getId() == null
+                || !expectedCollectionId.trim().equals(active.getId().trim())) {
+            throw new IllegalStateException("Активна колекція змінилася до видалення книги");
+        }
+    }
+
+    private <T> T withEditLease(java.util.function.Supplier<T> action) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
     }
 
     public record BatchSaveResult(List<Book> insertedBooks,

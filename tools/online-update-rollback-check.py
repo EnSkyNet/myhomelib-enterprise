@@ -13,7 +13,7 @@ def require(cond, message):
     if not cond:
         errors.append(message)
 
-snapshot = usecase.find('collectionBackupPort.createDatabaseSnapshot')
+snapshot = usecase.find('collectionBackupPort.createRecoveryCheckpoint')
 mutation = usecase.find('mutationMayHaveCommitted = true')
 import_call = usecase.find('importer.execute(')
 preflight = usecase.find('RemoteCatalogPackage unchangedFullSnapshot')
@@ -42,15 +42,22 @@ require('keepCheckpoint = rollback.attempted() && !rollback.succeeded()' in usec
 
 require('AtomicFileSupport.moveReplacing' in adapter,
         'database restore must use atomic replacing moves')
-require('validateDatabaseFile(snapshotFile)' in adapter and 'validateDatabaseFile(staged)' in adapter,
-        'checkpoint and staged restore candidate must be validated')
+require('validateRecoveryCheckpoint(staged)' in adapter
+        and 'validateDatabaseFile(snapshotFile)' in adapter
+        and 'validateDatabaseFile(staged)' in adapter,
+        'checkpoint creation and staged restore candidate must be validated')
 require('collectionManager.closeCurrentCollection()' in adapter and 'collectionManager.switchToCollection(collection)' in adapter,
         'database swap must close and reopen active collection')
 
 for field in ('stage', 'source', 'lastAppliedVersion', 'mutationMayHaveCommitted', 'rollbackAttempted', 'rollbackSucceeded'):
     require(field in exc, f'structured catalog update failure missing {field}')
-for marker in ('Етап:', 'Джерело:', 'Технічна причина:', 'Остання успішна версія:', 'Стан локальної колекції:'):
-    require(marker in ui, f'error UI missing {marker}')
+for key in (
+        'ui.java.collection_update_ui_service.c5336b90c9',
+        'ui.java.collection_update_ui_service.bc4327c7ce',
+        'ui.java.collection_update_ui_service.37dda9a987',
+        'ui.java.collection_update_ui_service.05c04ee8d7',
+        'ui.java.collection_update_ui_service.e826ebcdb6'):
+    require(key in ui, f'localized error UI key missing {key}')
 require('showErrorWithRetry' in ui, 'safe online update failures must expose Retry')
 require('safeToRetry = !failure.mutationMayHaveCommitted() || failure.rollbackSucceeded()' in ui,
         'Retry must be blocked when rollback did not restore a mutated catalog')

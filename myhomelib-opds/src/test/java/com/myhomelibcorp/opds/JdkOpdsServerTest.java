@@ -132,7 +132,8 @@ class JdkOpdsServerTest {
 
         assertThat(status.running()).isFalse();
         assertThat(status.exposedBeyondLocalhost()).isTrue();
-        assertThat(status.message()).contains("TLS/HTTPS");
+        assertThat(status.messageKey()).isEqualTo("ui.opds.status.start_failed");
+        assertThat(status.technicalDetail()).contains("TLS/HTTPS");
         assertThat(server.status().running()).isFalse();
     }
 
@@ -419,15 +420,44 @@ class JdkOpdsServerTest {
 
         OpdsServerStatus failed = server.start(broken);
         assertThat(failed.running()).isFalse();
-        assertThat(failed.message()).contains("does not exist");
+        assertThat(failed.messageKey()).isEqualTo("ui.opds.status.start_failed");
+        assertThat(failed.technicalDetail()).contains("does not exist");
 
         OpdsServerStatus restarted = server.start(new OpdsServerSettings("127.0.0.1", port, false, "", "", false));
         assertThat(restarted.running()).isTrue();
         assertThat(get(HttpClient.newHttpClient(), "http://127.0.0.1:" + port + "/opds").statusCode()).isEqualTo(200);
     }
 
+    @Test
+    void localizesOpdsFeedsAndProtocolErrorsFromAcceptLanguage() throws Exception {
+        var catalog = new OpdsCatalogService(new FakeCatalog());
+        server = new JdkOpdsServer(catalog, null);
+        int port = freePort();
+        assertThat(server.start(new OpdsServerSettings("127.0.0.1", port, false, "", "", false)).running()).isTrue();
+        HttpClient client = HttpClient.newHttpClient();
+        String base = "http://127.0.0.1:" + port;
+
+        var en = getLanguage(client, base + "/opds", "en-US,en;q=0.9");
+        assertThat(en.statusCode()).isEqualTo(200);
+        assertThat(en.headers().firstValue("Content-Language")).contains("en");
+        assertThat(en.body()).contains("Authors", "Series", "Genres", "Search").doesNotContain("Автори", "Жанри");
+
+        var bg = getLanguage(client, base + "/opds/v2", "bg-BG");
+        assertThat(bg.headers().firstValue("Content-Language")).contains("bg");
+        assertThat(bg.body()).contains("Библиотека", "Търсене", "Колекции", "Продължи четенето");
+
+        var missing = getLanguage(client, base + "/no-such-path", "en");
+        assertThat(missing.statusCode()).isEqualTo(404);
+        assertThat(missing.body()).contains("Not found");
+    }
+
     private static HttpResponse<String> get(HttpClient client, String uri) throws Exception {
         return client.send(HttpRequest.newBuilder(URI.create(uri)).GET().build(), HttpResponse.BodyHandlers.ofString());
+    }
+
+    private static HttpResponse<String> getLanguage(HttpClient client, String uri, String language) throws Exception {
+        return client.send(HttpRequest.newBuilder(URI.create(uri)).header("Accept-Language", language).GET().build(),
+                HttpResponse.BodyHandlers.ofString());
     }
 
     private static HttpResponse<String> get(HttpClient client, String uri, String authorization) throws Exception {

@@ -1,5 +1,7 @@
 package com.myhomelibcorp.application.usecase.collection;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.repository.CollectionRepository;
 import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.domain.model.collection.Collection;
@@ -12,8 +14,15 @@ public class RenameCollectionUseCase {
 
     private final CollectionRepository collectionRepository;
     private final CollectionLifecyclePort collectionLifecyclePort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public Collection execute(String id, String newName) {
+        try (var ignored = operationCoordinator.acquire(LibraryOperationType.EDIT)) {
+            return executeLocked(id, newName);
+        }
+    }
+
+    private Collection executeLocked(String id, String newName) {
         if (id == null || id.isBlank()) {
             throw new IllegalArgumentException("Collection id cannot be empty");
         }

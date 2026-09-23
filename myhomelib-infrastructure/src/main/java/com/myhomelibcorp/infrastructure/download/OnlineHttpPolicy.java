@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.download;
 
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.shared.util.EncryptionUtil;
 
@@ -12,7 +13,7 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Locale;
 import java.util.Arrays;
-import java.io.InputStream;
+import java.io.ByteArrayInputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
@@ -22,6 +23,7 @@ import javax.net.ssl.TrustManagerFactory;
 
 /** Single network policy for catalog/book HTTP. TLS remains JVM-validated; there is deliberately no trust-all mode. */
 public final class OnlineHttpPolicy {
+    private static final int MAX_TRUST_STORE_BYTES = 32 * 1024 * 1024;
     private final ApplicationSettingsPort settings;
 
     public OnlineHttpPolicy(ApplicationSettingsPort settings) { this.settings = settings; }
@@ -54,7 +56,7 @@ public final class OnlineHttpPolicy {
         if (trustStorePath.isBlank()) return; // Normal JVM trust validation.
 
         Path path = Path.of(trustStorePath).toAbsolutePath().normalize();
-        if (!Files.isRegularFile(path) || !Files.isReadable(path)) {
+        if (!Files.isRegularFile(path, java.nio.file.LinkOption.NOFOLLOW_LINKS) || !Files.isReadable(path)) {
             throw new IllegalStateException("TLS trust store недоступний: " + path);
         }
         String type = setting("online.tls.trustStoreType", inferKeyStoreType(path)).trim();
@@ -65,9 +67,18 @@ public final class OnlineHttpPolicy {
             if (storedPassword != null && !storedPassword.isBlank()) {
                 password = decryptStoredSecret(storedPassword).toCharArray();
             }
+            Path safePath = SafeFilePublication.requireSafeRegularFile(path, "TLS trust store");
+            if (Files.size(safePath) > MAX_TRUST_STORE_BYTES) {
+                throw new java.io.IOException("TLS trust store exceeds the safety size limit");
+            }
+            String expectedHash = SafeFilePublication.sha256(safePath, "TLS trust store snapshot");
+            byte[] trustStoreBytes = SafeFilePublication.readOwnedBytes(
+                    safePath, expectedHash, MAX_TRUST_STORE_BYTES, "TLS trust store");
             KeyStore keyStore = KeyStore.getInstance(type);
-            try (InputStream input = Files.newInputStream(path)) {
+            try (ByteArrayInputStream input = new ByteArrayInputStream(trustStoreBytes)) {
                 keyStore.load(input, password.length == 0 ? null : password);
+            } finally {
+                Arrays.fill(trustStoreBytes, (byte) 0);
             }
             TrustManagerFactory trustManagers = TrustManagerFactory.getInstance(TrustManagerFactory.getDefaultAlgorithm());
             trustManagers.init(keyStore);

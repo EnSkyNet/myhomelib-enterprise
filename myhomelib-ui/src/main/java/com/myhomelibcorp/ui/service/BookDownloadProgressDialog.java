@@ -15,18 +15,18 @@ import javafx.util.Duration;
 /** Compact non-blocking progress window for one or many online book downloads. */
 public final class BookDownloadProgressDialog {
     private final Stage stage = new Stage();
-    private final Label statusLabel = new Label("Підключення до онлайн-бібліотеки…");
-    private final Label processedLabel = new Label("Оброблено: 0 / 0");
-    private final Label downloadedLabel = new Label("Завантажено: 0 / 0 книг");
-    private final Label savedLabel = new Label("Збережено до бібліотеки: 0");
-    private final Label localLabel = new Label("Уже локальні: 0");
-    private final Label failedLabel = new Label("Помилок: 0");
+    private final Label statusLabel = new Label(UiText.text("ui.java.book_download_progress_dialog.4258f771b1"));
+    private final Label processedLabel = new Label(UiText.text("ui.java.book_download_progress_dialog.cbdb5b46bc"));
+    private final Label downloadedLabel = new Label(UiText.text("ui.java.book_download_progress_dialog.7bc13ee166"));
+    private final Label savedLabel = new Label(UiText.text("ui.java.book_download_progress_dialog.d6cbdcd070"));
+    private final Label localLabel = new Label(UiText.text("ui.java.book_download_progress_dialog.4a8bf619ca"));
+    private final Label failedLabel = new Label(UiText.text("ui.java.book_download_progress_dialog.556eb820b7"));
     private final ProgressBar progressBar = new ProgressBar(0);
-    private final Button closeButton = new Button("Закрити");
+    private final Button closeButton = new Button(UiText.text("common.close"));
     private PauseTransition autoClose;
 
     public BookDownloadProgressDialog(Window owner, int total) {
-        stage.setTitle("Завантаження книг");
+        stage.setTitle(UiText.text("ui.opds.tokens.scope.download"));
         stage.initModality(Modality.NONE);
         if (owner != null) stage.initOwner(owner);
         progressBar.setMaxWidth(Double.MAX_VALUE);
@@ -37,7 +37,7 @@ public final class BookDownloadProgressDialog {
         root.setPadding(new Insets(14));
         root.setPrefWidth(430);
         stage.setScene(new Scene(root));
-        update(0, Math.max(0, total), 0, 0, 0, "Підключення до онлайн-бібліотеки…");
+        update(0, Math.max(0, total), 0, 0, 0, UiText.text("ui.java.book_download_progress_dialog.4258f771b1"));
     }
 
     public void show() {
@@ -49,17 +49,17 @@ public final class BookDownloadProgressDialog {
         int safeCompleted = Math.max(0, Math.min(completed, safeTotal));
         int safeDownloaded = Math.max(0, downloaded);
         progressBar.setProgress(safeTotal == 0 ? 0 : (double) safeCompleted / safeTotal);
-        processedLabel.setText("Оброблено: " + safeCompleted + " / " + safeTotal);
-        downloadedLabel.setText("Завантажено: " + safeDownloaded + " / " + safeTotal + " книг");
-        savedLabel.setText("Збережено до бібліотеки: " + safeDownloaded);
-        localLabel.setText("Уже локальні: " + Math.max(0, alreadyLocal));
-        failedLabel.setText("Помилок: " + Math.max(0, failed));
+        processedLabel.setText(UiText.text("ui.java.book_download_progress_dialog.b077de9d62") + safeCompleted + " / " + safeTotal);
+        downloadedLabel.setText(UiText.text("ui.java.book_download_progress_dialog.491361bc90") + safeDownloaded + " / " + safeTotal + UiText.text("ui.java.book_download_progress_dialog.faf0c7e42c"));
+        savedLabel.setText(UiText.text("ui.java.book_download_progress_dialog.6126a2c620") + safeDownloaded);
+        localLabel.setText(UiText.text("ui.java.book_download_progress_dialog.9dca3fac75") + Math.max(0, alreadyLocal));
+        failedLabel.setText(UiText.text("ui.java.book_download_progress_dialog.40a22f36ad") + Math.max(0, failed));
         if (status != null && !status.isBlank()) statusLabel.setText(status);
     }
 
     public void complete(int total, int downloaded, int alreadyLocal, int failed) {
         update(total, total, downloaded, alreadyLocal, failed,
-                failed == 0 ? "Готово. Книги збережено до бібліотеки." : "Завершено з помилками.");
+                failed == 0 ? UiText.text("ui.java.book_download_progress_dialog.e5bb5c8529") : UiText.text("ui.java.book_download_progress_dialog.0580b2a211"));
         closeButton.setDisable(false);
         stage.toFront();
         if (autoClose != null) autoClose.stop();

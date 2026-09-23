@@ -61,7 +61,17 @@ public class ClassicLibraryActionsService {
     }
 
     public List<BookDto> newBooks(int limit) {
-        return query.findRecentlyAdded(limit).stream().map(mapper::toDto).toList();
+        var lease = operations.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            List<BookDto> result = query.findRecentlyAdded(limit).stream().map(mapper::toDto).toList();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
     }
 
     /**
@@ -72,9 +82,9 @@ public class ClassicLibraryActionsService {
         if (id == null) return;
         LibraryOperationCoordinator.Lease lease;
         try {
-            lease = operations.acquireDetached(LibraryOperationType.UPDATE);
+            lease = operations.acquireDetachedShared(LibraryOperationType.EDIT);
         } catch (RuntimeException conflict) {
-            dialogs.showError("Помилка редагування", UiExceptionMessages.root(conflict));
+            dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(conflict));
             return;
         }
         var token = UiAsyncRequestGuard.next(editGeneration, state);
@@ -86,19 +96,19 @@ public class ClassicLibraryActionsService {
                     }
                     if (loadError != null) {
                         lease.close();
-                        dialogs.showError("Помилка редагування", UiExceptionMessages.root(loadError));
+                        dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(loadError));
                         return;
                     }
                     if (book == null) {
                         lease.close();
-                        dialogs.showWarning("Книгу не знайдено", "Запис уже відсутній у колекції.");
+                        dialogs.showWarning(UiText.text("ui.java.classic_library_actions_service.457c748374"), UiText.text("ui.java.classic_library_actions_service.933f4f45c4"));
                         return;
                     }
                     try {
                         showEditDialog(owner, book, onSuccess, lease, token);
                     } catch (RuntimeException failure) {
                         lease.close();
-                        dialogs.showError("Помилка редагування", UiExceptionMessages.root(failure));
+                        dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(failure));
                     }
                 }));
     }
@@ -106,10 +116,11 @@ public class ClassicLibraryActionsService {
     private void showEditDialog(Window owner, Book book, Runnable onSuccess,
                                 LibraryOperationCoordinator.Lease lease, UiAsyncRequestToken token) {
         Dialog<ButtonType> d = new Dialog<>();
-        d.setTitle("Редагування книги");
+        DialogLocalization.prepare(d);
+        d.setTitle(UiText.text("ui.java.classic_library_actions_service.1dbaaf6a09"));
         d.setHeaderText(book.getTitle());
         if (owner != null) d.initOwner(owner);
-        ButtonType onlineMetadata = new ButtonType("Онлайн-метадані…", ButtonBar.ButtonData.LEFT);
+        ButtonType onlineMetadata = new ButtonType(UiText.text("ui.java.classic_library_actions_service.6cc06cadde"), ButtonBar.ButtonData.LEFT);
         d.getDialogPane().getButtonTypes().addAll(onlineMetadata, ButtonType.OK, ButtonType.CANCEL);
 
         GridPane g = new GridPane();
@@ -125,11 +136,11 @@ public class ClassicLibraryActionsService {
         TextArea annotation = ta(book.getAnnotation());
         TextArea review = ta(book.getReview());
         int r = 0;
-        r = add(g, r, "Назва", title); r = add(g, r, "Автори (;)", authors);
-        r = add(g, r, "Серія", series); r = add(g, r, "№ у серії", seq);
-        r = add(g, r, "Мова", lang); r = add(g, r, "Рік", year);
-        r = add(g, r, "Видавець", publisher); r = add(g, r, "Ключові слова", keywords);
-        r = add(g, r, "Анотація", annotation); add(g, r, "Відгук", review);
+        r = add(g, r, UiText.text("ui.bulkedit.field.title"), title); r = add(g, r, UiText.text("ui.java.classic_library_actions_service.d2dabe5730"), authors);
+        r = add(g, r, UiText.text("ui.bulkedit.field.series"), series); r = add(g, r, UiText.text("ui.java.classic_library_actions_service.247f6f7bf4"), seq);
+        r = add(g, r, UiText.text("ui.bulkedit.field.language"), lang); r = add(g, r, UiText.text("ui.bulkedit.field.year"), year);
+        r = add(g, r, UiText.text("ui.smart_collection.field.publisher"), publisher); r = add(g, r, UiText.text("ui.fxml.details.keywords"), keywords);
+        r = add(g, r, UiText.text("ui.bulkedit.field.annotation"), annotation); add(g, r, UiText.text("ui.java.classic_library_actions_service.ee742d1c37"), review);
         d.getDialogPane().setContent(g);
         d.setResizable(true);
 
@@ -142,7 +153,7 @@ public class ClassicLibraryActionsService {
         if (result != ButtonType.OK) { lease.close(); return; }
         if (title.getText() == null || title.getText().isBlank()) {
             lease.close();
-            dialogs.showWarning("Некоректні дані", "Назва не може бути порожньою.");
+            dialogs.showWarning(UiText.text("ui.java.classic_library_actions_service.73fa190726"), UiText.text("ui.java.classic_library_actions_service.286ea1d3e6"));
             return;
         }
 
@@ -165,7 +176,7 @@ public class ClassicLibraryActionsService {
                     Platform.runLater(() -> {
                         if (!UiAsyncRequestGuard.isCurrent(token, editGeneration, state)) return;
                         if (saveError != null) {
-                            dialogs.showError("Помилка редагування", UiExceptionMessages.root(saveError));
+                            dialogs.showError(UiText.text("ui.java.classic_library_actions_service.8d560155bf"), UiExceptionMessages.root(saveError));
                             return;
                         }
                         if (onSuccess != null) onSuccess.run();
@@ -174,13 +185,35 @@ public class ClassicLibraryActionsService {
     }
 
     public boolean deleteBook(BookId id) {
-        Book book = query.findById(id).orElse(null);
-        if (book == null) return false;
-        if (settings.getBoolean("ui.confirmDelete", true)
-                && !dialogs.showConfirmation("Видалити книгу?", book.getTitle(),
-                "Запис буде видалено з каталогу. Файл на диску не видаляється.")) return false;
-        bookSaver.deleteBook(id);
-        return true;
+        if (id == null) return false;
+        var lease = operations.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            String expectedCollectionId = currentCollectionId();
+            Book book = query.findById(id).orElse(null);
+            if (book == null) {
+                lease.markCompleted("");
+                return false;
+            }
+            if (settings.getBoolean("ui.confirmDelete", true)
+                    && !dialogs.showConfirmation(UiText.text("ui.java.classic_library_actions_service.0422aa8a6f"), book.getTitle(),
+                    UiText.text("ui.java.classic_library_actions_service.4d475e7478"))) {
+                lease.markCancelled("");
+                return false;
+            }
+            bookSaver.deleteBook(id, expectedCollectionId);
+            lease.markCompleted("");
+            return true;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private String currentCollectionId() {
+        var collection = state.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     private List<Author> parseAuthors(String value, List<Author> fallback) {

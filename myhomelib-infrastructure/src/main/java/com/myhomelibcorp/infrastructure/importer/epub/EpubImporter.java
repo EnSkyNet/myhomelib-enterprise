@@ -6,6 +6,7 @@ import com.myhomelibcorp.domain.model.genre.Genre;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.service.LanguageResolver;
+import com.myhomelibcorp.infrastructure.archive.SafeZipArchive;
 import com.myhomelibcorp.infrastructure.importer.AbstractBookImporter;
 import com.myhomelibcorp.infrastructure.util.LimitedInputStream;
 import com.myhomelibcorp.shared.archive.ArchiveSafetyLimits;
@@ -21,14 +22,15 @@ import javax.xml.stream.XMLStreamReader;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
-import java.time.LocalDateTime;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Locale;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipFile;
+import org.apache.commons.compress.archivers.zip.ZipArchiveEntry;
+import org.apache.commons.compress.archivers.zip.ZipFile;
 
 @Component
 @Slf4j
@@ -52,13 +54,14 @@ public class EpubImporter extends AbstractBookImporter {
         String series = "";
         int sequence = 0;
 
-        try (ZipFile zip = new ZipFile(file.toFile())) {
+        try (SafeZipArchive opened = SafeZipArchive.open(file, java.nio.charset.StandardCharsets.UTF_8, "EPUB source")) {
+            ZipFile zip = opened.zip();
             validateArchive(zip);
             String opfPath = locatePackageDocument(zip);
             if (opfPath == null || opfPath.isBlank()) {
                 throw new IOException("EPUB META-INF/container.xml does not declare a package document");
             }
-            ZipEntry opf = findZip(zip, opfPath);
+            ZipArchiveEntry opf = findZip(zip, opfPath);
             if (opf == null) throw new IOException("EPUB package document not found: " + opfPath);
             checkEntry(opf, "EPUB package document");
 
@@ -82,7 +85,6 @@ public class EpubImporter extends AbstractBookImporter {
             }
         }
 
-        if (authors.isEmpty()) authors.add(new Author("", "", "Невідомий автор"));
         BookMetadata metadata = BookMetadata.builder()
                 .annotation("")
                 .keywords("")
@@ -90,18 +92,20 @@ public class EpubImporter extends AbstractBookImporter {
                 .rate(0)
                 .progress(0)
                 .build();
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isRegularFile()) throw new IOException("EPUB source is not a regular file: " + file);
         BookFile bookFile = new BookFile(
                 file.getFileName().toString(),
                 file.getParent() != null ? file.getParent().toString() : "",
                 "",
-                Files.size(file),
+                attributes.size(),
                 null
         );
-        return createBook(title, authors, genres, series, sequence, metadata, bookFile, LocalDateTime.now());
+        return createBook(title, authors, genres, series, sequence, metadata, bookFile, fileUpdateTime(file));
     }
 
     private String locatePackageDocument(ZipFile zip) throws Exception {
-        ZipEntry container = findZip(zip, "META-INF/container.xml");
+        ZipArchiveEntry container = findZip(zip, "META-INF/container.xml");
         if (container == null) throw new IOException("EPUB META-INF/container.xml not found");
         checkEntry(container, "EPUB container.xml");
         try (InputStream raw = zip.getInputStream(container);
@@ -225,9 +229,9 @@ public class EpubImporter extends AbstractBookImporter {
 
     private void validateArchive(ZipFile zip) throws IOException {
         int entries = 0;
-        Enumeration<? extends ZipEntry> iterator = zip.entries();
+        Enumeration<ZipArchiveEntry> iterator = zip.getEntries();
         while (iterator.hasMoreElements()) {
-            ZipEntry entry = iterator.nextElement();
+            ZipArchiveEntry entry = iterator.nextElement();
             if (++entries > ArchiveSafetyLimits.MAX_ENTRY_COUNT) {
                 throw new IOException("EPUB contains too many ZIP entries");
             }
@@ -235,27 +239,26 @@ public class EpubImporter extends AbstractBookImporter {
         }
     }
 
-    private void checkEntry(ZipEntry entry, String role) throws IOException {
+    private void checkEntry(ZipArchiveEntry entry, String role) throws IOException {
         if (entry == null || entry.isDirectory()) return;
         long size = entry.getSize();
         if (ArchiveSafetyLimits.declaredEntryTooLarge(size)) {
             throw new IOException(role + " exceeds archive safety limit: " + entry.getName());
         }
         long compressed = entry.getCompressedSize();
-        if (compressed > 0 && size > 0
-                && size / Math.max(1, compressed) > ArchiveSafetyLimits.MAX_COMPRESSION_RATIO) {
+        if (ArchiveSafetyLimits.exceedsCompressionRatio(size, compressed)) {
             throw new IOException(role + " has suspicious compression ratio: " + entry.getName());
         }
     }
 
-    private ZipEntry findZip(ZipFile zip, String wanted) {
+    private ZipArchiveEntry findZip(ZipFile zip, String wanted) {
         if (wanted == null || wanted.isBlank()) return null;
         String normalized = normalizeZipPath(wanted);
-        ZipEntry direct = zip.getEntry(normalized);
+        ZipArchiveEntry direct = zip.getEntry(normalized);
         if (direct != null) return direct;
-        Enumeration<? extends ZipEntry> iterator = zip.entries();
+        Enumeration<ZipArchiveEntry> iterator = zip.getEntries();
         while (iterator.hasMoreElements()) {
-            ZipEntry entry = iterator.nextElement();
+            ZipArchiveEntry entry = iterator.nextElement();
             if (normalizeZipPath(entry.getName()).equalsIgnoreCase(normalized)) return entry;
         }
         return null;

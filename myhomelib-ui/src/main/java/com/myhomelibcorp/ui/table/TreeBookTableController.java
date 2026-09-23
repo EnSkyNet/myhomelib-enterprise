@@ -1,5 +1,9 @@
 package com.myhomelibcorp.ui.table;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.usecase.book.MarkAsReadBatchUseCase;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.ui.controller.ExportController;
@@ -205,10 +209,10 @@ public class TreeBookTableController {
         Map<String, Map<String, List<BookViewModel>>> grouped = page.stream()
                 .filter(book -> book != null && book.getId() != null && !book.getId().isBlank())
                 .collect(Collectors.groupingBy(
-                        book -> blankToDefault(book.getAuthorsText(), "Невідомий Автор"),
+                        book -> blankToDefault(book.getAuthorsText(), UiText.text("ui.java.tree_book_table_controller.0109ddee82")),
                         java.util.LinkedHashMap::new,
                         Collectors.groupingBy(
-                                book -> blankToDefault(book.getSeries(), "Без серії"),
+                                book -> blankToDefault(book.getSeries(), UiText.text("ui.java.tree_book_table_controller.7a66622005")),
                                 java.util.LinkedHashMap::new,
                                 Collectors.toList())));
 
@@ -222,7 +226,7 @@ public class TreeBookTableController {
                     authorItem.setExpanded(true);
 
                     authorEntry.getValue().entrySet().stream()
-                            .filter(entry -> !"Без серії".equals(entry.getKey()))
+                            .filter(entry -> !UiText.text("ui.java.tree_book_table_controller.7a66622005").equals(entry.getKey()))
                             .sorted(Map.Entry.comparingByKey(String.CASE_INSENSITIVE_ORDER))
                             .forEach(entry -> {
                                 TreeItem<BookViewModel> seriesItem = new TreeItem<>(header(entry.getKey()));
@@ -235,7 +239,7 @@ public class TreeBookTableController {
                                 authorItem.getChildren().add(seriesItem);
                             });
 
-                    authorEntry.getValue().getOrDefault("Без серії", List.of()).stream()
+                    authorEntry.getValue().getOrDefault(UiText.text("ui.java.tree_book_table_controller.7a66622005"), List.of()).stream()
                             .sorted(Comparator.comparing(BookViewModel::getTitle, Comparator.nullsLast(String.CASE_INSENSITIVE_ORDER)))
                             .forEach(book -> authorItem.getChildren().add(new TreeItem<>(book)));
                     root.getChildren().add(authorItem);
@@ -306,13 +310,13 @@ public class TreeBookTableController {
     @FXML
     public void selectAll() {
         selectAllBooks(true);
-        showAlert("Інформація", "✅ Всі книги вибрано (" + getSelectedBooks().size() + " книг)");
+        showAlert(UiText.text("ui.java.tree_book_table_controller.455cfc2d2f"), UiText.text("ui.java.tree_book_table_controller.67bae0ef3c") + getSelectedBooks().size() + UiText.text("ui.java.tree_book_table_controller.de7370facb"));
     }
 
     @FXML
     public void deselectAll() {
         selectAllBooks(false);
-        showAlert("Інформація", "❌ Вибір знято з усіх книг");
+        showAlert(UiText.text("ui.java.tree_book_table_controller.455cfc2d2f"), UiText.text("ui.java.tree_book_table_controller.e8a2f775f3"));
     }
 
     @FXML
@@ -324,29 +328,32 @@ public class TreeBookTableController {
     public void markSelectedAsRead() {
         List<BookId> ids = bookSelectionService.snapshot();
         if (ids.isEmpty()) {
-            showAlert("Немає вибраних книг", "Відмітьте книги checkbox.");
+            showAlert(UiText.text("ui.java.tree_book_table_controller.ac1e0c3aad"), UiText.text("ui.java.tree_book_table_controller.37febfe5aa"));
             return;
         }
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION);
-        confirm.setTitle("Позначити прочитаними");
-        confirm.setHeaderText("Позначити " + ids.size() + " книг як прочитані?");
-        confirm.setContentText("Прогрес буде встановлено на 100%.");
+        DialogLocalization.prepare(confirm);
+        confirm.setTitle(UiText.text("ui.java.tree_book_table_controller.fe2c585c28"));
+        confirm.setHeaderText(UiText.text("ui.java.tree_book_table_controller.3ea918ac24") + ids.size() + UiText.text("ui.java.tree_book_table_controller.bd36c446a8"));
+        confirm.setContentText(UiText.text("ui.java.tree_book_table_controller.58e7a89a74"));
         if (confirm.showAndWait().orElse(ButtonType.CANCEL) != ButtonType.OK) return;
         try {
             markAsReadBatchUseCase.execute(ids);
             getSelectedBooks().forEach(book -> book.setProgress(100));
             bookSelectionService.clear();
             treeTableView.refresh();
-            showAlert("Готово", ids.size() + " книг позначено як прочитані.");
+            showAlert(UiText.text("ui.java.tree_book_table_controller.398c7d4f7b"), ids.size() + UiText.text("ui.java.tree_book_table_controller.d6cb37f8ba"));
         } catch (Exception e) {
             log.error("Не вдалося позначити книги як прочитані", e);
             Alert error = new Alert(Alert.AlertType.ERROR);
-            error.setTitle("Помилка"); error.setHeaderText(null); error.setContentText(e.getMessage()); error.showAndWait();
+            DialogLocalization.prepare(error);
+            error.setTitle(UiText.text("common.error")); error.setHeaderText(null); error.setContentText(UiExceptionSupport.message(e)); error.showAndWait();
         }
     }
 
     private void showAlert(String title, String message) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        DialogLocalization.prepare(alert);
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);

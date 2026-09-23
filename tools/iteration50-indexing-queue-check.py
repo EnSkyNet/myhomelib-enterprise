@@ -45,7 +45,8 @@ check("indexing performance settings persist profile and battery preference",
                "content.indexing.profile", "content.indexing.pauseOnBattery", "settings.put", "putBoolean"))
 check("Settings UI exposes indexing profile and pause-on-battery",
       contains("myhomelib-ui/src/main/java/com/myhomelibcorp/ui/service/ApplicationSettingsDialog.java",
-               'tab("Індексування"', "IndexingSettingsEditor", "IndexingResourceProfile", "pauseOnBattery"))
+               'localizationService.text("ui.settings.tab.indexing")',
+               "IndexingSettingsEditor", "IndexingResourceProfile", "pauseOnBattery"))
 check("queue contract tests cover priority/restart/cancel/battery limits",
       contains("myhomelib-application/src/test/java/com/myhomelibcorp/application/content/indexing/ContentIndexingQueueServiceTest.java",
                "priorityQueueRunsOffCallerThread", "checkpointRestoresUnfinishedTasksAfterRestart",

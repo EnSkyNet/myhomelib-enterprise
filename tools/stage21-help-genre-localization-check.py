@@ -31,7 +31,7 @@ need('is legacy; supported with fallback' in lang_service, 'legacy schema fallba
 need('genreName(String genreCode, String fallback)' in loc_service, 'LocalizationService genre API missing')
 need('localizationService.genreName(node.id(), node.label())' in nav, 'navigation genres are not localized by stable code')
 need('localizationService.genreName(genre.getCode()' in details, 'details genres are not localized by stable code')
-need('Діагностика мов...' in settings and 'showLanguageDiagnostics()' in settings, 'Settings language diagnostics UI missing')
+need('ui.java.application_settings_dialog.35c487ded3' in settings and 'showLanguageDiagnostics()' in settings, 'Settings language diagnostics UI missing')
 
 md=list((ROOT/'myhomelib-ui/src/main/resources/help').rglob('*.md'))
 need(len(md) >= 63, f'expected at least 63 Markdown help pages, got {len(md)}')

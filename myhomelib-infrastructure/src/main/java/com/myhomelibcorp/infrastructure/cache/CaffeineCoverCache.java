@@ -2,7 +2,9 @@ package com.myhomelibcorp.infrastructure.cache;
 
 import com.github.benmanes.caffeine.cache.Caffeine;
 import com.myhomelibcorp.application.port.out.cover.CoverCache;
+import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.TimeUnit;
@@ -11,9 +13,16 @@ import java.util.concurrent.TimeUnit;
 @Slf4j
 public class CaffeineCoverCache implements CoverCache {
 
+    private final CollectionManager collectionManager;
     private final com.github.benmanes.caffeine.cache.Cache<String, byte[]> cache;
 
     public CaffeineCoverCache() {
+        this(null);
+    }
+
+    @Autowired
+    public CaffeineCoverCache(CollectionManager collectionManager) {
+        this.collectionManager = collectionManager;
         this.cache = Caffeine.newBuilder()
                 // Covers vary by orders of magnitude in size. Bound the cache by
                 // retained bytes instead of entry count so large covers cannot
@@ -28,7 +37,8 @@ public class CaffeineCoverCache implements CoverCache {
 
     @Override
     public byte[] get(String key) {
-        return cache.getIfPresent(key);
+        if (key == null) return null;
+        return cache.getIfPresent(scopedKey(key));
     }
 
     @Override
@@ -36,15 +46,19 @@ public class CaffeineCoverCache implements CoverCache {
         if (key != null && imageData != null && imageData.length > 0) {
             // Do not retain pathological single covers. They can still be served
             // to the caller; they simply bypass the in-memory cache.
-            if (imageData.length <= 16 * 1024 * 1024) cache.put(key, imageData);
+            if (imageData.length <= 16 * 1024 * 1024) cache.put(scopedKey(key), imageData);
         }
     }
 
     @Override
     public void invalidate(String key) {
         if (key != null) {
-            cache.invalidate(key);
+            cache.invalidate(scopedKey(key));
         }
+    }
+
+    private String scopedKey(String key) {
+        return CollectionScopedCacheKey.of(collectionManager, key);
     }
 
     @Override

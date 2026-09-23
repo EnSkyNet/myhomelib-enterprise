@@ -7,6 +7,10 @@ import com.myhomelibcorp.startup.StartupReport;
 import com.myhomelibcorp.shared.util.AppPaths;
 import com.myhomelibcorp.shared.util.RuntimeEncodingGuard;
 import com.myhomelibcorp.ui.service.ApplicationThemeService;
+import com.myhomelibcorp.ui.service.DialogLocalization;
+import com.myhomelibcorp.ui.service.LocalizationService;
+import com.myhomelibcorp.ui.service.UiText;
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
 import com.myhomelibcorp.ui.controller.MainController;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -42,6 +46,10 @@ public class MyHomeLibApp extends Application {
             log.info("Запуск Spring Boot контексту...");
             context = SpringApplication.run(MyHomeLibApp.class);
             applicationContext = context;
+            // Resolve the selected UI language before JavaFX creates its first Control.
+            // JavaFX caches internal control resource bundles, so setting Locale afterwards
+            // can leave built-in context menus/placeholders/dialog strings in English.
+            context.getBean(LocalizationService.class).language();
             log.info("Spring Boot контекст завантажено");
         } catch (Exception e) {
             log.error("Помилка ініціалізації Spring Boot", e);
@@ -87,13 +95,13 @@ public class MyHomeLibApp extends Application {
     private Stage buildSplashStage() {
         Stage splash = new Stage();
         ProgressIndicator indicator = new ProgressIndicator();
-        Label label = new Label("Завантаження бібліотеки...");
+        Label label = new Label(UiText.text("ui.bootstrap.loading_library"));
         VBox box = new VBox(15, indicator, label);
         box.setAlignment(javafx.geometry.Pos.CENTER);
         box.setPadding(new javafx.geometry.Insets(30));
         Scene scene = new Scene(box, 320, 180);
         splash.setScene(scene);
-        splash.setTitle("MyHomeLib");
+        splash.setTitle(UiText.text("common.app_name"));
         splash.setAlwaysOnTop(true);
         return splash;
     }
@@ -105,14 +113,25 @@ public class MyHomeLibApp extends Application {
         }
         loader.setControllerFactory(context::getBean);
         SessionService sessionService = context.getBean(SessionService.class);
-        SessionService.WorkspaceState restoreState = sessionService.getWorkspaceState();
+
+        // Startup may race with a background INDEX operation. Workspace restoration is a
+        // best-effort optimization; a coordinator conflict must not prevent the main window
+        // from opening. Read the workspace state defensively and continue without it on conflict.
+        SessionService.WorkspaceState restoreState = null;
+        try {
+            restoreState = sessionService.getWorkspaceState();
+        } catch (com.myhomelibcorp.application.operation.LibraryOperationConflictException conflict) {
+            log.warn("Не вдалося відновити workspace під час старту ({}); продовжуємо без відновлення",
+                    conflict.getMessage());
+        }
+
         Parent root = loader.load();
         MainController mainController = loader.getController();
         if (restoreState != null) mainController.restoreSessionWorkspace(restoreState);
 
         Collection activeCollection = startupReport.activeCollection();
-        String collectionName = activeCollection != null ? activeCollection.getName() : "Без колекції";
-        primaryStage.setTitle("MyHomeLib — " + collectionName);
+        String collectionName = activeCollection != null ? activeCollection.getName() : UiText.text("ui.bootstrap.no_collection");
+        primaryStage.setTitle(UiText.format("ui.bootstrap.main_window_title", collectionName));
         primaryStage.setScene(new Scene(root, 1100, 750));
         context.getBean(ApplicationThemeService.class).start();
         primaryStage.setMinWidth(800);
@@ -127,10 +146,10 @@ public class MyHomeLibApp extends Application {
     }
 
     private void showErrorAndExit(Throwable ex) {
-        Alert alert = new Alert(Alert.AlertType.ERROR);
-        alert.setTitle("Помилка запуску");
-        alert.setHeaderText("Не вдалося запустити програму");
-        alert.setContentText("Деталі: " + ex.getMessage() + "\n\nПеревірте логи.");
+        Alert alert = DialogLocalization.prepare(new Alert(Alert.AlertType.ERROR));
+        alert.setTitle(UiText.text("ui.bootstrap.startup_error_title"));
+        alert.setHeaderText(UiText.text("ui.bootstrap.startup_error_header"));
+        alert.setContentText(UiText.format("ui.bootstrap.startup_error_content", UiExceptionSupport.message(ex)));
         alert.showAndWait();
         Platform.exit();
     }

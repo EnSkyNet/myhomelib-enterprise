@@ -328,17 +328,47 @@ public class SqliteNavigationFacetRepository implements NavigationFacetRepositor
 
     @Override
     public List<Facet> findSeries(BookFilterSpec filter) {
+        // The series table is a derived identity table. Legacy and directly attached
+        // collections can legitimately contain books.series values without matching rows
+        // in series. Repair it lazily when the user actually opens the Series facet, so
+        // startup remains fast while display, IDs and counts stay correct.
+        synchronizeMissingSeries();
         BookFilterSqlAdapter.FilterSql f = BookFilterSqlAdapter.build(filter, "b");
         String sql = """
-                SELECT s.id AS facet_id, s.name AS facet_label, COUNT(DISTINCT b.id) AS book_count
-                FROM series s
-                JOIN books b ON LOWER(TRIM(COALESCE(b.series, ''))) = LOWER(TRIM(s.name))
-                WHERE b.deleted = 0
-                  %s
-                GROUP BY s.id, s.name
+                WITH series_counts AS (
+                    SELECT LOWER(TRIM(b.series)) AS series_key, COUNT(*) AS book_count
+                    FROM books b
+                    WHERE b.deleted = 0
+                      AND b.series IS NOT NULL
+                      AND TRIM(b.series) <> ''
+                      %s
+                    GROUP BY LOWER(TRIM(b.series))
+                )
+                SELECT s.id AS facet_id, s.name AS facet_label, counts.book_count AS book_count
+                FROM series_counts counts
+                JOIN series s ON LOWER(TRIM(s.name)) = counts.series_key
                 ORDER BY LOWER(s.name), s.id
                 """.formatted(andFilter(f));
         return queryFacets(sql, f.params());
+    }
+
+    private void synchronizeMissingSeries() {
+        jdbc().update("""
+                INSERT OR IGNORE INTO series (id, name)
+                SELECT
+                    lower(hex(randomblob(4))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                    lower(hex(randomblob(2))) || '-' || lower(hex(randomblob(2))) || '-' ||
+                    lower(hex(randomblob(6))),
+                    MIN(TRIM(b.series))
+                FROM books b
+                WHERE b.series IS NOT NULL
+                  AND TRIM(b.series) <> ''
+                  AND NOT EXISTS (
+                      SELECT 1 FROM series s
+                      WHERE LOWER(TRIM(s.name)) = LOWER(TRIM(b.series))
+                  )
+                GROUP BY LOWER(TRIM(b.series))
+                """);
     }
 
     @Override

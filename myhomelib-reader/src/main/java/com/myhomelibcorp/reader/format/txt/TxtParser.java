@@ -69,12 +69,12 @@ public final class TxtParser implements BookParser {
 
     private BookMetadata metadata(BookSource source, String title) {
         OptionalLong size = source.size();
-        return new BookMetadata(source.id(), title, List.of("Невідомий автор"), "", null, null,
+        return new BookMetadata(source.id(), title, List.of(), "und", null, null,
                 List.of(), "", "", "", null, size.orElse(0));
     }
 
     private String fallbackTitle(String name) {
-        if (name == null || name.isBlank()) return "Без назви";
+        if (name == null || name.isBlank()) return "";
         int dot = name.lastIndexOf('.');
         return (dot > 0 ? name.substring(0, dot) : name).strip();
     }

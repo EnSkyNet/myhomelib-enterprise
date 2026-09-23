@@ -5,9 +5,11 @@ import com.myhomelibcorp.application.action.BookActionProfile;
 import com.myhomelibcorp.application.action.BookActionProfileService;
 import com.myhomelibcorp.application.action.BookActionRunResult;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.executor.ExecutorPort;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.nio.file.Path;
@@ -17,7 +19,6 @@ import java.util.concurrent.CompletableFuture;
 
 /** Runs one named book action off the JavaFX thread against a fully loaded catalogue book. */
 @Component
-@RequiredArgsConstructor
 public class RunBookActionUseCase {
     private final ExecutorPort executorPort;
     private final LoadBookByIdUseCase loadBookByIdUseCase;
@@ -25,40 +26,93 @@ public class RunBookActionUseCase {
     private final BookActionProfileService profileService;
     private final BookActionExecutionService executionService;
     private final ExternalReaderMaterializationCache externalReaderCache;
+    private final LibraryOperationCoordinator operationCoordinator;
 
-    public CompletableFuture<BookActionRunResult> execute(BookId bookId, String profileId) {
-        return executorPort.submit(() -> run(bookId, profileId));
+    /** Compatibility constructor for focused tests without lifecycle wiring. */
+    public RunBookActionUseCase(ExecutorPort executorPort,
+                                LoadBookByIdUseCase loadBookByIdUseCase,
+                                ResolveBookContentUseCase resolveBookContentUseCase,
+                                BookActionProfileService profileService,
+                                BookActionExecutionService executionService,
+                                ExternalReaderMaterializationCache externalReaderCache) {
+        this(executorPort, loadBookByIdUseCase, resolveBookContentUseCase, profileService,
+                executionService, externalReaderCache, null);
     }
 
-    private BookActionRunResult run(BookId bookId, String profileId) {
-        BookActionProfile profile = profileService.findById(profileId).orElse(null);
-        if (profile == null) return BookActionRunResult.failure(0, "Профіль дії не знайдений");
-        BookDto book = loadBookByIdUseCase.execute(bookId).orElse(null);
-        if (book == null) return BookActionRunResult.failure(0, "Книга не знайдена");
+    @Autowired
+    public RunBookActionUseCase(ExecutorPort executorPort,
+                                LoadBookByIdUseCase loadBookByIdUseCase,
+                                ResolveBookContentUseCase resolveBookContentUseCase,
+                                BookActionProfileService profileService,
+                                BookActionExecutionService executionService,
+                                ExternalReaderMaterializationCache externalReaderCache,
+                                LibraryOperationCoordinator operationCoordinator) {
+        this.executorPort = executorPort;
+        this.loadBookByIdUseCase = loadBookByIdUseCase;
+        this.resolveBookContentUseCase = resolveBookContentUseCase;
+        this.profileService = profileService;
+        this.executionService = executionService;
+        this.externalReaderCache = externalReaderCache;
+        this.operationCoordinator = operationCoordinator;
+    }
 
-        ResolvedBookContent content = null;
-        ExternalReaderMaterializationCache.Lease lease = null;
+    public CompletableFuture<BookActionRunResult> execute(BookId bookId, String profileId) {
+        if (operationCoordinator == null) return executorPort.submit(() -> run(bookId, profileId, null));
+        final LibraryOperationCoordinator.Lease lifecycleLease;
         try {
+            lifecycleLease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        } catch (RuntimeException lifecycleBusy) {
+            return CompletableFuture.failedFuture(lifecycleBusy);
+        }
+        try {
+            return executorPort.submit(() -> run(bookId, profileId, lifecycleLease));
+        } catch (RuntimeException | Error schedulingFailure) {
+            lifecycleLease.markFailed(schedulingFailure);
+            lifecycleLease.close();
+            return CompletableFuture.failedFuture(schedulingFailure);
+        }
+    }
+
+    private BookActionRunResult run(BookId bookId, String profileId, LibraryOperationCoordinator.Lease lifecycleLease) {
+        ResolvedBookContent content = null;
+        ExternalReaderMaterializationCache.Lease materializationLease = null;
+        boolean lifecycleReleased = lifecycleLease == null;
+        try {
+            BookActionProfile profile = profileService.findById(profileId).orElse(null);
+            if (profile == null) return BookActionRunResult.failure(0, "Профіль дії не знайдений");
+            BookDto book = loadBookByIdUseCase.execute(bookId).orElse(null);
+            if (book == null) return BookActionRunResult.failure(0, "Книга не знайдена");
+
             content = resolveBookContentUseCase.execute(book, ResolveBookContentUseCase.DETAILS_EXTENSIONS);
             Path file;
             if (content.temporary()) {
-                lease = externalReaderCache.adopt(content.path());
+                materializationLease = externalReaderCache.adopt(content.path());
                 content.close(); // the source path has been moved into the managed cache
                 content = null;
-                file = lease.path().toAbsolutePath().normalize();
+                file = materializationLease.path().toAbsolutePath().normalize();
             } else {
                 file = content.path().toAbsolutePath().normalize();
             }
 
             Map<String, String> placeholders = placeholders(book, file);
-            ExternalReaderMaterializationCache.Lease processLease = lease;
+            // No active-collection access is needed after this point. Do not keep SWITCH/RESTORE
+            // blocked while a user command waits for an external process.
+            if (lifecycleLease != null) {
+                lifecycleLease.markCompleted("");
+                lifecycleLease.close();
+                lifecycleReleased = true;
+            }
+
+            ExternalReaderMaterializationCache.Lease processLease = materializationLease;
             return executionService.execute(profile, placeholders, process -> {
                 if (processLease != null) processLease.retainUntil(process);
             });
         } catch (Exception e) {
+            if (lifecycleLease != null && !lifecycleReleased) lifecycleLease.markFailed(e);
             return BookActionRunResult.failure(0, e.getMessage());
         } finally {
-            if (lease != null) lease.close();
+            if (lifecycleLease != null && !lifecycleReleased) lifecycleLease.close();
+            if (materializationLease != null) materializationLease.close();
             if (content != null) content.close();
         }
     }

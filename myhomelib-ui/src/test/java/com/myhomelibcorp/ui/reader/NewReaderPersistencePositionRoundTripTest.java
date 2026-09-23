@@ -28,7 +28,7 @@ class NewReaderPersistencePositionRoundTripTest {
             stored.set(value);
             return null;
         }).when(progress).save(any(ReadingProgressDto.class));
-        NewReaderPersistenceService service = new NewReaderPersistenceService(
+        NewReaderPersistenceService service = newPersistence(
                 progress, mock(BookmarkRepository.class), mock(LocalizationService.class));
 
         ReaderPosition expected = new ReaderPosition(9, 123_456L, 37, 18);
@@ -40,5 +40,16 @@ class NewReaderPersistencePositionRoundTripTest {
         assertThat(stored.get().getParagraphIndex()).isEqualTo(37);
         assertThat(stored.get().getCharOffset()).isEqualTo(18);
         assertThat(stored.get().getPercent()).isCloseTo(24.6912, org.assertj.core.data.Offset.offset(0.0001));
+    }
+
+    private static NewReaderPersistenceService newPersistence(
+            ReadingProgressRepository progress, BookmarkRepository bookmarks, LocalizationService i18n) {
+        var lifecycle = org.mockito.Mockito.mock(
+                com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort.class);
+        org.mockito.Mockito.when(lifecycle.getCurrentCollection()).thenReturn(
+                new com.myhomelibcorp.domain.model.collection.Collection(
+                        "c1", "Test", null, null, 0, null, null, null, null));
+        return new NewReaderPersistenceService(progress, bookmarks, i18n, lifecycle,
+                new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
     }
 }

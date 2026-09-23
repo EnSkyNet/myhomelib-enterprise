@@ -5,6 +5,7 @@ import com.myhomelibcorp.application.integrity.ArtifactIntegrityReport;
 import com.myhomelibcorp.application.integrity.ArtifactIntegrityStatus;
 import com.myhomelibcorp.application.port.out.integrity.ArtifactIntegrityPort;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.infrastructure.collection.CollectionManager;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -15,7 +16,9 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
@@ -93,13 +96,16 @@ public class ArtifactIntegrityService implements ArtifactIntegrityPort {
         if (!candidate.archiveEntry().isBlank() && !displayPath.isBlank()) {
             displayPath = displayPath + "!/" + candidate.archiveEntry();
         }
-        if (physical == null || !Files.isRegularFile(physical)) {
+        if (physical == null || !Files.exists(physical, LinkOption.NOFOLLOW_LINKS)) {
             return missing(candidate, displayPath, "Фізичний файл або архів не знайдено");
         }
 
         try {
-            long physicalSize = Files.size(physical);
-            long physicalMtime = Files.getLastModifiedTime(physical).toMillis();
+            Path safePhysical = SafeFilePublication.requireSafeRegularFile(physical, "Artifact integrity source");
+            BasicFileAttributes attrs = Files.readAttributes(
+                    safePhysical, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            long physicalSize = attrs.size();
+            long physicalMtime = attrs.lastModifiedTime().toMillis();
             Baseline baseline = effectiveBaseline(candidate);
 
             if (candidate.hasState()
@@ -112,9 +118,9 @@ public class ArtifactIntegrityService implements ArtifactIntegrityPort {
                         baseline.sha(), candidate.observedSha(), verdict.detail(), physicalSize, physicalMtime, 0L, true);
             }
 
-            if (resources.isArchive(physical.toString())) {
+            if (resources.isArchive(safePhysical.toString())) {
                 try {
-                    resources.listArchiveEntries(physical);
+                    resources.listArchiveEntries(safePhysical);
                 } catch (RuntimeException archiveFailure) {
                     return new AuditOutcome(ArtifactIntegrityStatus.CORRUPT_ARCHIVE, displayPath,
                             baseline.size(), -1L, baseline.sha(), "", rootMessage(archiveFailure),
@@ -183,9 +189,12 @@ public class ArtifactIntegrityService implements ArtifactIntegrityPort {
         long physicalMtime = -1L;
         try {
             Path physical = physicalPath(candidate);
-            if (physical != null && Files.isRegularFile(physical)) {
-                physicalSize = Files.size(physical);
-                physicalMtime = Files.getLastModifiedTime(physical).toMillis();
+            if (physical != null && Files.exists(physical, LinkOption.NOFOLLOW_LINKS)) {
+                Path safe = SafeFilePublication.requireSafeRegularFile(physical, "Artifact integrity source");
+                BasicFileAttributes attrs = Files.readAttributes(
+                        safe, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                physicalSize = attrs.size();
+                physicalMtime = attrs.lastModifiedTime().toMillis();
             }
         } catch (IOException ignored) { }
         return new AuditOutcome(ArtifactIntegrityStatus.UNREADABLE, path, baseline.size(), -1L,

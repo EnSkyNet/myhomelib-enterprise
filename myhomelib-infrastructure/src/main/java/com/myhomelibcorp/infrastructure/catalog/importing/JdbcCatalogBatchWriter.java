@@ -1,5 +1,6 @@
 package com.myhomelibcorp.infrastructure.catalog.importing;
 
+import com.myhomelibcorp.infrastructure.persistence.sqlite.helper.SqliteDateTimeCodec;
 import com.myhomelibcorp.application.catalog.importing.CatalogArtifact;
 import com.myhomelibcorp.application.catalog.importing.CatalogDatasetInfo;
 import com.myhomelibcorp.application.catalog.importing.CatalogPerson;
@@ -90,7 +91,7 @@ final class JdbcCatalogBatchWriter {
                     annotation=excluded.annotation,
                     rate=books.rate,
                     progress=books.progress,
-                    update_date=excluded.update_date,
+                    update_date=COALESCE(excluded.update_date, books.update_date),
                     isbn=excluded.isbn,
                     deleted=excluded.deleted,
                     local=CASE WHEN books.local=1 THEN 1 ELSE excluded.local END,
@@ -114,17 +115,18 @@ final class JdbcCatalogBatchWriter {
             CatalogRecord r = state.record;
             String archive = normalizeRelative(r.archive());
             String archiveEntry = normalizeRelative(r.archiveEntry());
-            String fileName = firstNonBlank(r.fileName(), r.artifacts().isEmpty() ? "" : r.artifacts().getFirst().name(), "unknown");
+            String fileName = normalizeRelative(firstNonBlank(
+                    r.fileName(), r.artifacts().isEmpty() ? "" : r.artifacts().getFirst().name(), r.sourceBookId()));
             String folder = archive;
             String language = LanguageResolver.resolveValue(r.language());
             String libId = flibustaBookId(r);
             int libraryRate = r.rating() == null ? 0 : (int) Math.round(r.rating());
             String root = context.getRootDirectory() == null ? "" : context.getRootDirectory().toAbsolutePath().normalize().toString();
             books.add(new Object[]{
-                    state.bookId, firstNonBlank(r.title(), "Без назви"), blankToNull(r.series()),
+                    state.bookId, firstNonBlank(r.title(), r.fileName(), r.sourceBookId()), blankToNull(r.series()),
                     r.sequence() == null ? 0 : r.sequence().intValue(), fileName, folder, archiveEntry,
                     language, r.size() == null ? 0L : Math.max(0L, r.size()), String.join(",", r.keywords()),
-                    blankToNull(r.annotation()), 0, 0, now, blankToNull(r.isbn()), r.deleted() ? 1 : 0,
+                    blankToNull(r.annotation()), 0, 0, SqliteDateTimeCodec.format(r.sourceUpdatedAt()), blankToNull(r.isbn()), r.deleted() ? 1 : 0,
                     0, "", now, root, r.publicationYear(), blankToNull(r.publisher()), blankToNull(libId),
                     libraryRate, translators(r.translators()), blankToNull(r.publicationCity()),
                     firstNonBlank(context.getCatalogSourceLocation(), sourceKey), normalizeFormat(r.fileFormat(), fileName),
@@ -157,11 +159,6 @@ final class JdbcCatalogBatchWriter {
         for (RecordState state : states) {
             for (CatalogPerson person : state.record.authors()) people.putIfAbsent(PersonKey.of(person), person);
         }
-        if (people.isEmpty()) {
-            CatalogPerson unknown = new CatalogPerson("", "", "Невідомий Автор", "", "Невідомий Автор", "", List.of());
-            people.put(PersonKey.of(unknown), unknown);
-        }
-
         Map<PersonKey, String> resolved = new HashMap<>();
         Map<IdentityKey, PersonKey> identityOwners = new LinkedHashMap<>();
         List<PersonKey> noIdentity = new ArrayList<>();
@@ -293,7 +290,6 @@ final class JdbcCatalogBatchWriter {
         List<Object[]> links = new ArrayList<>();
         for (RecordState state : states) {
             List<CatalogPerson> authors = state.record.authors();
-            if (authors.isEmpty()) authors = List.of(new CatalogPerson("", "", "Невідомий Автор", "", "Невідомий Автор", "", List.of()));
             for (CatalogPerson author : authors) {
                 String id = authorIds.get(PersonKey.of(author));
                 if (id != null) links.add(new Object[]{state.bookId, id});
@@ -510,7 +506,7 @@ final class JdbcCatalogBatchWriter {
     private static String authorSort(List<CatalogPerson> authors) {
         return authors.stream().map(JdbcCatalogBatchWriter::searchName).filter(s -> !s.isBlank())
                 .map(s -> s.toLowerCase(Locale.ROOT).replaceAll("\\s+", " ").trim()).min(String::compareTo)
-                .orElse("невідомий автор");
+                .orElse("");
     }
     private static String searchName(CatalogPerson p) {
         return String.join(" ", List.of(safe(p.lastName()), safe(p.firstName()), safe(p.middleName()))
@@ -528,7 +524,14 @@ final class JdbcCatalogBatchWriter {
     private static String normalizeRelative(String value) {
         String v = safe(value).replace('\\', '/').trim();
         while (v.startsWith("/")) v = v.substring(1);
-        return v.equals("..") || v.contains("../") ? "" : v;
+        if (v.isBlank() || v.matches("(?i)^[a-z]:/.*") || v.indexOf('\0') >= 0) return "";
+        java.util.ArrayList<String> parts = new java.util.ArrayList<>();
+        for (String part : v.split("/")) {
+            if (part.isBlank() || ".".equals(part)) continue;
+            if ("..".equals(part)) return "";
+            parts.add(part);
+        }
+        return String.join("/", parts);
     }
     private static int parseInt(String value, int fallback) {
         if (value == null || value.isBlank()) return fallback;

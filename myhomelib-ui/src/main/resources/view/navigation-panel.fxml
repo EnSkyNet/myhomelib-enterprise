@@ -9,27 +9,27 @@
       style="-fx-padding: 5; -fx-background-color: -mhl-background; -fx-pref-width: 250; -fx-max-width: 300;"
       VBox.vgrow="ALWAYS">
 
-    <Label fx:id="navigationTitleLabel" text="Навігація" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
+    <Label fx:id="navigationTitleLabel" text="ui.fxml.navigation_panel.navigation" style="-fx-font-weight: bold; -fx-font-size: 14px;"/>
 
     <!-- Scalable mode selector: stage 3+ can add modes without redesigning the panel. -->
     <ComboBox fx:id="navigationModeComboBox"
               maxWidth="1.7976931348623157E308"
-              promptText="Режим навігації"/>
+              promptText="ui.fxml.navigation_panel.navigation_mode"/>
 
     <Separator/>
 
     <HBox spacing="4">
-        <TextField fx:id="listSearchField" promptText="🔍 Пошук..."
+        <TextField fx:id="listSearchField" promptText="ui.fxml.navigation_panel.search"
                    HBox.hgrow="ALWAYS"
                    style="-fx-background-radius: 4; -fx-border-radius: 4;"/>
-        <Button text="✕" accessibleText="Очистити пошук навігації" onAction="#onClearListSearch">
-            <tooltip><Tooltip text="Очистити пошук"/></tooltip>
+        <Button text="ui.fxml.navigation_panel.value" accessibleText="ui.fxml.navigation_panel.clear_navigation_search" onAction="#onClearListSearch">
+            <tooltip><Tooltip text="ui.fxml.navigation_panel.clear_search"/></tooltip>
         </Button>
     </HBox>
 
     <ListView fx:id="navigationListView" VBox.vgrow="ALWAYS"/>
     <Button fx:id="loadMoreAuthorsButton"
-            text="Завантажити ще"
+            text="ui.fxml.navigation_panel.load_more"
             onAction="#onLoadMoreAuthors"
             maxWidth="1.7976931348623157E308"
             visible="false" managed="false"/>

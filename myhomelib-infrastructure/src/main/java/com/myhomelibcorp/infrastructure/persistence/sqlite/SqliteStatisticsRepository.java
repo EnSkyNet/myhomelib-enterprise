@@ -29,31 +29,15 @@ public class SqliteStatisticsRepository implements StatisticsRepository {
         // create it; a missing row (for example after an older build deleted it) is repaired with
         // defaults rather than triggering a catalog-wide COUNT/SUM/GROUP BY on the caller thread.
 
-        // Спроба прочитати статистику
         LibraryStatistics stats = readCachedStatistics();
         if (stats != null) return stats;
 
-        // Якщо запису немає - створюємо його з retry
-        createStatisticsRowWithRetry();
-
-        stats = readCachedStatistics();
-        if (stats == null) {
-            throw new IllegalStateException("Statistics cache is unavailable for the active collection");
-        }
-        log.warn("Statistics cache row was missing and has been recreated without a startup catalog scan");
-        return stats;
-    }
-
-    private void createStatisticsRowWithRetry() {
-        busyRetry.run("create statistics cache row", () -> getJdbcTemplate().update("""
-                INSERT OR IGNORE INTO library_statistics
-                (id, books_count, authors_count, series_count, genres_count,
-                 languages_count, publishers_count, total_size_bytes,
-                 duplicates_count, missing_covers_count, local_books_count,
-                 remote_books_count, read_books_count, unread_books_count,
-                 favorites_count, deleted_books_count, sources_count, last_updated)
-                VALUES (1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, NULL)
-                """));
+        // getStatistics() is used under the read-only QUERY lifecycle barrier. Do not repair the
+        // database from a read path: a missing legacy/cache row is represented as stale data and
+        // the caller can schedule refreshStatistics() under an EDIT barrier. refreshStatistics()
+        // uses INSERT OR REPLACE and therefore also recreates the row when necessary.
+        log.warn("Statistics cache row is missing; returning a stale read-only snapshot until refresh");
+        return LibraryStatistics.builder().stale(true).build();
     }
 
     private LibraryStatistics readCachedStatistics() {

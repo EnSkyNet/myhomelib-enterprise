@@ -2,6 +2,7 @@ package com.myhomelibcorp.infrastructure.importengine;
 
 import com.myhomelibcorp.application.catalog.CatalogBookSnapshot;
 import com.myhomelibcorp.application.catalog.LegacyOnlineBookLocation;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.author.AuthorNameKey;
 import com.myhomelibcorp.domain.model.genre.Genre;
@@ -12,7 +13,7 @@ import com.myhomelibcorp.shared.util.Sha256Support;
 import lombok.extern.slf4j.Slf4j;
 
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Files;
+import java.io.IOException;
 import java.nio.file.Path;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -28,7 +29,6 @@ import java.util.regex.Pattern;
 /** Converts raw INPX records into the explicit JDBC row contract plus catalog/search fingerprints. */
 @Slf4j
 final class InpxBookNormalizer {
-    static final String WITHOUT_AUTHOR_NAME = "Без автора";
 
     private static final DateTimeFormatter DATE_FORMATTER =
             DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS");
@@ -66,16 +66,20 @@ final class InpxBookNormalizer {
         try {
             ParsedAuthors parsedAuthors = parseAuthors(raw.field("AUTHOR"), pendingAuthors);
             boolean withoutAuthor = parsedAuthors.ids().isEmpty();
-            if (withoutAuthor) parsedAuthors = ensureUnknownAuthor(pendingAuthors);
             List<String> genreCodes = parseGenres(raw.field("GENRE"), pendingGenres);
             boolean withoutGenre = genreCodes.isEmpty();
 
-            String title = defaultIfBlank(raw.field("TITLE"), "Без назви");
+            String libId = raw.field("LIBID");
+            String sourceFileKey = firstNonBlank(raw.field("FILE"), libId);
+            if (sourceFileKey.isBlank()) {
+                throw new IllegalArgumentException("INPX record has neither FILE nor LIBID");
+            }
+            String title = firstNonBlank(raw.field("TITLE"), sourceFileKey);
             String series = raw.field("SERIES");
             int seq = parseInt(raw.field("SERNO"), 0);
             long size = parseLong(raw.field("SIZE"), 0L);
             String ext = normalizeExt(raw.field("EXT"));
-            String fileName = defaultIfBlank(raw.field("FILE"), "unknown");
+            String fileName = sourceFileKey;
             if (!ext.isBlank() && !fileName.toLowerCase(Locale.ROOT).endsWith("." + ext.toLowerCase(Locale.ROOT))) {
                 fileName += "." + ext;
             }
@@ -90,10 +94,12 @@ final class InpxBookNormalizer {
                 // online.zip/extra.zip are never the physical archive of every book.
                 // Each book gets its own generated archive location.
                 AuthorNameKey primary = parsedAuthors.keys().isEmpty()
-                        ? new AuthorNameKey("", "", WITHOUT_AUTHOR_NAME)
+                        ? null
                         : parsedAuthors.keys().get(0);
-                String authorFullName = joinName(primary.lastName(), primary.firstName(), primary.middleName());
-                folder = LegacyOnlineBookLocation.archivePath(authorFullName, title, raw.field("LIBID"), fileName);
+                String authorFullName = primary == null ? ""
+                        : joinName(primary.lastName(), primary.firstName(), primary.middleName());
+                String legacyTitle = raw.field("TITLE");
+                folder = LegacyOnlineBookLocation.archivePath(authorFullName, legacyTitle, raw.field("LIBID"), fileName);
                 archiveEntry = fileName;
                 if (indexedLocalFiles != null && indexedLocalFiles.isEmpty()) {
                     // A pre-scan already proved that no local book archives exist. Avoid creating a
@@ -105,14 +111,14 @@ final class InpxBookNormalizer {
                     local = archivePath.startsWith(root)
                             && (indexedLocalFiles != null
                                 ? indexedLocalFiles.contains(archivePath)
-                                : localCache.computeIfAbsent(folder, key -> Files.isRegularFile(archivePath)));
+                                : localCache.computeIfAbsent(folder, key -> isSafeLocalFile(root, archivePath)));
                 }
             } else if (!archiveName.isBlank()) {
                 folder = archiveName;
                 archiveEntry = fileName;
                 Path archivePath = root.resolve(archiveName).normalize();
                 local = archivePath.startsWith(root)
-                        && localCache.computeIfAbsent(archiveName, key -> Files.isRegularFile(archivePath));
+                        && localCache.computeIfAbsent(archiveName, key -> isSafeLocalFile(root, archivePath));
             } else {
                 folder = explicitFolder;
                 archiveEntry = "";
@@ -120,21 +126,22 @@ final class InpxBookNormalizer {
                         ? root.resolve(fileName)
                         : root.resolve(explicitFolder).resolve(fileName);
                 loosePath = loosePath.normalize();
-                local = loosePath.startsWith(root) && Files.isRegularFile(loosePath);
+                local = isSafeLocalFile(root, loosePath);
             }
 
             String language = LanguageResolver.resolveValue(raw.field("LANG"));
             String keywords = raw.field("KEYWORDS");
             String annotation = raw.field("ANNOTATION");
             boolean deleted = parseDeleted(raw.field("DEL"));
-            String libId = raw.field("LIBID");
             String identity = !libId.isBlank()
                     ? "inpx:libid:" + libId
                     : sourceMarker + ":" + archiveName + ":" + fileName;
             String bookId = UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
+            LocalDateTime sourceUpdatedAt = InpxDateSupport.parseCatalogDate(raw.field("DATE"));
+            String updateDate = sourceUpdatedAt == null ? null : sourceUpdatedAt.format(DATE_FORMATTER);
             String now = LocalDateTime.now().format(DATE_FORMATTER);
 
-            int year = parseYear(firstNonBlank(raw.field("YEAR"), raw.field("PUBYEAR"), raw.field("DATE")));
+            int year = parseYear(firstNonBlank(raw.field("YEAR"), raw.field("PUBYEAR")));
             String publisher = firstNonBlank(raw.field("PUBLISHER"), raw.field("PUBLISH"));
             int libraryRate = parseInt(firstNonBlank(raw.field("LIBRATE"), raw.field("LIBRARYRATE")), 0);
             String translators = firstNonBlank(raw.field("TRANSLATORS"), raw.field("TRANSLATOR"));
@@ -155,7 +162,7 @@ final class InpxBookNormalizer {
             row[i++] = annotation;
             row[i++] = 0; // user rate is preserved by UPSERT
             row[i++] = 0; // progress is preserved by UPSERT
-            row[i++] = now;
+            row[i++] = updateDate;
             row[i++] = Isbn.tryParse(raw.field("ISBN")).map(Isbn::value).orElse(null);
             row[i++] = deleted ? 1 : 0;
             row[i++] = local ? 1 : 0;
@@ -192,7 +199,11 @@ final class InpxBookNormalizer {
     CatalogPreview preview(InpxRecord raw, String sourceMarker) {
         try {
             String ext = normalizeExt(raw.field("EXT"));
-            String fileName = defaultIfBlank(raw.field("FILE"), "unknown");
+            String libId = raw.field("LIBID");
+            String fileName = firstNonBlank(raw.field("FILE"), libId);
+            if (fileName.isBlank()) {
+                throw new IllegalArgumentException("INPX record has neither FILE nor LIBID");
+            }
             if (!ext.isBlank() && !fileName.toLowerCase(Locale.ROOT).endsWith("." + ext.toLowerCase(Locale.ROOT))) {
                 fileName += "." + ext;
             }
@@ -200,7 +211,6 @@ final class InpxBookNormalizer {
             String explicitFolder = normalizeRelative(raw.field("FOLDER"));
             long size = parseLong(raw.field("SIZE"), 0L);
             boolean deleted = parseDeleted(raw.field("DEL"));
-            String libId = raw.field("LIBID");
             String identity = !libId.isBlank()
                     ? "inpx:libid:" + libId
                     : sourceMarker + ":" + archiveName + ":" + fileName;
@@ -227,27 +237,41 @@ final class InpxBookNormalizer {
         if (onlineCollection && "fb2".equalsIgnoreCase(preview.ext())) {
             if (indexedLocalFiles != null && indexedLocalFiles.isEmpty()) return false;
             AuthorNameKey primary = firstImportableAuthor(preview.raw().field("AUTHOR"));
-            if (primary == null) primary = new AuthorNameKey("", "", WITHOUT_AUTHOR_NAME);
-            String authorFullName = joinName(primary.lastName(), primary.firstName(), primary.middleName());
-            String title = defaultIfBlank(preview.raw().field("TITLE"), "Без назви");
+            String authorFullName = primary == null ? ""
+                    : joinName(primary.lastName(), primary.firstName(), primary.middleName());
+            String title = preview.raw().field("TITLE");
             String folder = LegacyOnlineBookLocation.archivePath(
                     authorFullName, title, preview.raw().field("LIBID"), preview.fileName());
             Path archivePath = root.resolve(folder).toAbsolutePath().normalize();
             return archivePath.startsWith(root)
                     && (indexedLocalFiles != null
                         ? indexedLocalFiles.contains(archivePath)
-                        : localCache.computeIfAbsent(folder, key -> Files.isRegularFile(archivePath)));
+                        : localCache.computeIfAbsent(folder, key -> isSafeLocalFile(root, archivePath)));
         }
         if (!preview.archiveName().isBlank()) {
             Path archivePath = root.resolve(preview.archiveName()).normalize();
             return archivePath.startsWith(root)
-                    && localCache.computeIfAbsent(preview.archiveName(), key -> Files.isRegularFile(archivePath));
+                    && localCache.computeIfAbsent(preview.archiveName(), key -> isSafeLocalFile(root, archivePath));
         }
         Path loosePath = preview.explicitFolder().isBlank()
                 ? root.resolve(preview.fileName())
                 : root.resolve(preview.explicitFolder()).resolve(preview.fileName());
         loosePath = loosePath.normalize();
-        return loosePath.startsWith(root) && Files.isRegularFile(loosePath);
+        return isSafeLocalFile(root, loosePath);
+    }
+
+    private static boolean isSafeLocalFile(Path root, Path candidate) {
+        if (root == null || candidate == null) return false;
+        Path normalizedRoot = root.toAbsolutePath().normalize();
+        Path normalizedCandidate = candidate.toAbsolutePath().normalize();
+        if (!normalizedCandidate.startsWith(normalizedRoot)) return false;
+        try {
+            SafeFilePublication.requireSafeDirectoryPath(normalizedRoot, "INPX collection root");
+            SafeFilePublication.requireSafeRegularFile(normalizedCandidate, "INPX local book resource");
+            return true;
+        } catch (IOException | SecurityException unsafeOrMissing) {
+            return false;
+        }
     }
 
     String previewSearchFingerprint(CatalogPreview preview) {
@@ -335,14 +359,6 @@ final class InpxBookNormalizer {
             start = end + 1;
         }
         return new ParsedAuthors(ids, keys);
-    }
-
-    private ParsedAuthors ensureUnknownAuthor(Map<AuthorNameKey, Author> pending) {
-        AuthorNameKey key = new AuthorNameKey("", "", WITHOUT_AUTHOR_NAME);
-        String existingId = authorCache.get(key);
-        if (existingId != null) return new ParsedAuthors(List.of(existingId), List.of(key));
-        Author candidate = pending.computeIfAbsent(key, ignored -> new Author("", "", WITHOUT_AUTHOR_NAME));
-        return new ParsedAuthors(List.of(candidate.getId().asString()), List.of(key));
     }
 
     private List<String> parseGenres(String value, Map<String, Genre> pending) {

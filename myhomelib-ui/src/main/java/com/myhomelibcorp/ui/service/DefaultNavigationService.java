@@ -6,8 +6,12 @@ import com.myhomelibcorp.application.navigation.ArchiveNavigationKey;
 import com.myhomelibcorp.application.navigation.NavigationNodeDto;
 import com.myhomelibcorp.application.navigation.NavigationMode;
 import com.myhomelibcorp.application.navigation.ReviewNavigationFilter;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationConflictException;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.resource.BookResourcePort;
 import com.myhomelibcorp.application.port.out.repository.SeriesRepository;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.domain.model.valueobject.GenreId;
@@ -16,8 +20,8 @@ import com.myhomelibcorp.domain.model.valueobject.SeriesId;
 import com.myhomelibcorp.ui.navigation.NavigationPanelController;
 import com.myhomelibcorp.ui.navigation.WorkspaceManager;
 import jakarta.annotation.PostConstruct;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import javafx.application.Platform;
 
@@ -28,7 +32,6 @@ import java.util.List;
 import java.util.Locale;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
 public class DefaultNavigationService implements NavigationService {
 
@@ -38,6 +41,35 @@ public class DefaultNavigationService implements NavigationService {
     private final BookResourcePort bookResourcePort;
     private final BookDownloadCoordinator bookDownloadCoordinator;
     private final ExternalBookLauncher externalBookLauncher;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for focused UI tests/non-Spring embedding. */
+    public DefaultNavigationService(WorkspaceManager workspaceManager,
+                                    SeriesRepository seriesRepository,
+                                    NavigationPanelController navigationPanelController,
+                                    BookResourcePort bookResourcePort,
+                                    BookDownloadCoordinator bookDownloadCoordinator,
+                                    ExternalBookLauncher externalBookLauncher) {
+        this(workspaceManager, seriesRepository, navigationPanelController, bookResourcePort,
+                bookDownloadCoordinator, externalBookLauncher, null);
+    }
+
+    @Autowired
+    public DefaultNavigationService(WorkspaceManager workspaceManager,
+                                    SeriesRepository seriesRepository,
+                                    NavigationPanelController navigationPanelController,
+                                    BookResourcePort bookResourcePort,
+                                    BookDownloadCoordinator bookDownloadCoordinator,
+                                    ExternalBookLauncher externalBookLauncher,
+                                    LibraryOperationCoordinator operationCoordinator) {
+        this.workspaceManager = java.util.Objects.requireNonNull(workspaceManager, "workspaceManager");
+        this.seriesRepository = java.util.Objects.requireNonNull(seriesRepository, "seriesRepository");
+        this.navigationPanelController = java.util.Objects.requireNonNull(navigationPanelController, "navigationPanelController");
+        this.bookResourcePort = java.util.Objects.requireNonNull(bookResourcePort, "bookResourcePort");
+        this.bookDownloadCoordinator = java.util.Objects.requireNonNull(bookDownloadCoordinator, "bookDownloadCoordinator");
+        this.externalBookLauncher = java.util.Objects.requireNonNull(externalBookLauncher, "externalBookLauncher");
+        this.operationCoordinator = operationCoordinator;
+    }
 
     @PostConstruct
     public void init() {
@@ -81,13 +113,31 @@ public class DefaultNavigationService implements NavigationService {
     public void navigateToSeriesByName(String seriesName) {
         log.info("Навігація до серії за назвою: {}", seriesName);
         if (seriesName == null || seriesName.isBlank()) return;
-        seriesRepository.findByName(seriesName)
-                .ifPresentOrElse(
-                        series -> workspaceManager.showSeriesWorkspace(series.getId()),
-                        () -> {
-                            log.warn("Серію не знайдено: {}", seriesName);
-                            workspaceManager.showSearchResults(List.of());
-                        });
+        try {
+            java.util.Optional<com.myhomelibcorp.domain.model.series.Series> series;
+            if (operationCoordinator == null) {
+                series = seriesRepository.findByName(seriesName);
+            } else {
+                var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+                try {
+                    series = seriesRepository.findByName(seriesName);
+                    lease.markCompleted("");
+                } catch (RuntimeException | Error failure) {
+                    lease.markFailed(failure);
+                    throw failure;
+                } finally {
+                    lease.close();
+                }
+            }
+            series.ifPresentOrElse(
+                    value -> workspaceManager.showSeriesWorkspace(value.getId()),
+                    () -> {
+                        log.warn("Серію не знайдено: {}", seriesName);
+                        workspaceManager.showSearchResults(List.of());
+                    });
+        } catch (LibraryOperationConflictException busy) {
+            log.debug("Навігацію до серії відкладено: активна операція {}", busy.activeOperation());
+        }
     }
 
     @Override
@@ -229,16 +279,17 @@ public class DefaultNavigationService implements NavigationService {
                 book.getFileName(), book.getFolder(), book.getCollectionRoot(), book.getArchiveEntry())
                 .orElseGet(() -> bookResourcePort.buildFilePath(
                         book.getCollectionRoot(), book.getFolder(), book.getFileName()));
-        Path directory = physical != null && java.nio.file.Files.isDirectory(physical)
+        Path directory = physical != null && java.nio.file.Files.isDirectory(physical, java.nio.file.LinkOption.NOFOLLOW_LINKS)
                 ? physical
                 : physical == null ? null : physical.getParent();
-        if (directory == null || !java.nio.file.Files.isDirectory(directory)) {
+        if (directory == null) {
             log.warn("Папку книги не знайдено: {}", physical);
             return;
         }
         try {
-            Desktop.getDesktop().open(directory.toFile());
-            log.info("Відкрито папку: {}", directory);
+            Path safeDirectory = SafeFilePublication.requireSafeDirectoryPath(directory, "Book folder open target");
+            Desktop.getDesktop().open(safeDirectory.toFile());
+            log.info("Відкрито папку: {}", safeDirectory);
         } catch (IOException | UnsupportedOperationException e) {
             log.error("Не вдалося відкрити папку: {}", directory, e);
         }

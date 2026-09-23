@@ -21,6 +21,6 @@ class ExportControllerSendToDeviceContractTest {
                 .contains("exportToDeviceUseCase.execute(request, exportCancelFlag, progress ->")
                 .contains("this::resolveCollision")
                 .contains("exportCancelFlag.set(true)")
-                .contains("перед фізичним від’єднанням скористайтеся безпечним вилученням ОС");
+                .contains("UiText.text(\"ui.java.export_controller.a7c94edeb8\")");
     }
 }

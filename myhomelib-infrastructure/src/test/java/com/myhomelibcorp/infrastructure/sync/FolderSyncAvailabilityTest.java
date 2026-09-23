@@ -57,6 +57,34 @@ class FolderSyncAvailabilityTest {
         verifyNoInteractions(f.importers);
     }
 
+    @Test
+    void resourceBehindSymlinkedParentIsMarkedUnavailableWhenSupported() throws Exception {
+        Fixture f = new Fixture();
+        Path root = Files.createDirectories(temp.resolve("sync-root"));
+        Path real = Files.createDirectories(root.resolve("real"));
+        Files.writeString(real.resolve("book.fb2"), "content");
+        Path alias = root.resolve("alias");
+        try {
+            Files.createSymbolicLink(alias, real);
+        } catch (UnsupportedOperationException | java.io.IOException | SecurityException unsupported) {
+            org.junit.jupiter.api.Assumptions.assumeTrue(false, "Symbolic links are unavailable on this filesystem");
+        }
+        Book local = Book.builder()
+                .id(BookId.generate())
+                .title("Book")
+                .metadata(BookMetadata.empty())
+                .file(new BookFile("book.fb2", "alias", "", 1, root.toString()))
+                .local(true)
+                .build();
+        when(f.scanner.streamSupportedFiles(any(), anyBoolean(), anyInt(), anyLong()))
+                .thenReturn(Stream.empty());
+        when(f.books.streamAll()).thenReturn(Stream.of(local));
+
+        f.service.syncFolder(root, SyncOptions.builder().deleteOrphans(true).build());
+
+        verify(f.mutations).updateAvailability(local, false);
+    }
+
     private Book book(boolean local, Path file) {
         return Book.builder()
                 .id(BookId.generate())

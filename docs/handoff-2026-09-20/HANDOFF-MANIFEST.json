@@ -1,0 +1,33 @@
+{
+  "handoff_date": "2026-09-20",
+  "project": "MyHomeLib 8.0.0 final development handoff",
+  "baseline": {
+    "file": "MyHomeLib-8.0.0-DEVELOPER-SOURCE-R4-CORRECTED-2026-09-19.zip",
+    "sha256": "150b97d203666bc82ec9b15dcf28effd3872d1942d11eea4d9f4a165d7cbb740"
+  },
+  "verification_status": {
+    "final_static_audit_complete": true,
+    "clean_package_exit_code": 0,
+    "reactor_modules": 20,
+    "tests": 1309,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 14,
+    "real_fb2_fixtures_passed": 2,
+    "real_inpx_records": 707154,
+    "real_epub_standard_reader_reopen_passed": true,
+    "clean_release_static_check_passed": true,
+    "status": "conditionally_verified_external_runtime_prerequisites_pending"
+  },
+  "external_runtime_prerequisites_pending": [
+    "Pandoc >= 3.11",
+    "fbc/fb2cng",
+    "libmobi plus real MOBI/AZW fixtures",
+    "EPUBCheck",
+    "Windows runtime for Calibre ebook-convert.exe and DPAPI"
+  ],
+  "continue_from": "CONTINUE-HERE-UA.md",
+  "final_verification": "docs/handoff-2026-09-20/FINAL-VERIFICATION-2026-09-20.md",
+  "next_session_prompt": "docs/handoff-2026-09-20/NEXT-SESSION-PROMPT-UA.txt",
+  "master_plan": "docs/handoff-2026-09-20/MASTER-PLAN-v3-UA-2026-09-20.md"
+}

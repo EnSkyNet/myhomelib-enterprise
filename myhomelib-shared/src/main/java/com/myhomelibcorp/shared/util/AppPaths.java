@@ -1,6 +1,7 @@
 package com.myhomelibcorp.shared.util;
 
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -42,7 +43,14 @@ public final class AppPaths {
 
     public static boolean portableMode() {
         if (Boolean.parseBoolean(System.getProperty("myhomelib.portable", "false"))) return true;
-        return Files.isRegularFile(launchDir().resolve(PORTABLE_MARKER));
+        Path marker = launchDir().resolve(PORTABLE_MARKER).toAbsolutePath().normalize();
+        if (!Files.exists(marker, LinkOption.NOFOLLOW_LINKS)) return false;
+        try {
+            AtomicFileSupport.requireSafeRegularFile(marker, "portable-mode marker");
+            return true;
+        } catch (Exception unsafe) {
+            return false;
+        }
     }
 
     public static Path dataDir() {
@@ -68,6 +76,11 @@ public final class AppPaths {
         return contentIndexDir().resolve(safePathSegment(collectionId));
     }
 
+    /** Freshness marker for the independently rebuildable full-text content index. */
+    public static Path collectionContentIndexStateFile(String collectionId) {
+        return contentIndexDir().resolve(safePathSegment(collectionId) + ".state");
+    }
+
     /** Per-collection Lucene index directory. Collection ids are restricted to filesystem-safe characters. */
     public static Path collectionSearchIndexDir(String collectionId) {
         return searchIndexDir().resolve(safePathSegment(collectionId));
@@ -82,6 +95,14 @@ public final class AppPaths {
     public static Path cacheDir() { return dataDir().resolve("cache"); }
     public static Path logsDir() { return dataDir().resolve("logs"); }
     public static Path backupsDir() { return dataDir().resolve("backups"); }
+
+    /** Durable journal for crash-recoverable collection deletion. */
+    public static Path collectionDeleteRecoveryDir() { return cacheDir().resolve("collection-delete-recovery"); }
+
+    /** Pending deletion marker written before the collection database is detached. */
+    public static Path collectionDeleteRecoveryMarker(String collectionId) {
+        return collectionDeleteRecoveryDir().resolve(safePathSegment(collectionId) + ".pending");
+    }
 
     /** Durable files used to roll back an online catalog update after an abrupt process termination. */
     public static Path catalogUpdateRecoveryDir() { return cacheDir().resolve("catalog-update-recovery"); }
@@ -106,13 +127,13 @@ public final class AppPaths {
     /** Set Spring-compatible system properties before the context is created. */
     public static void configureSystemProperties() {
         try {
-            Files.createDirectories(dataDir());
-            Files.createDirectories(librariesDir());
-            Files.createDirectories(configDir());
-            Files.createDirectories(downloadsDir());
-            Files.createDirectories(cacheDir());
-            Files.createDirectories(logsDir());
-            Files.createDirectories(backupsDir());
+            AtomicFileSupport.createDirectoriesNoLinks(dataDir(), "application data directory");
+            AtomicFileSupport.createDirectoriesNoLinks(librariesDir(), "application libraries directory");
+            AtomicFileSupport.createDirectoriesNoLinks(configDir(), "application config directory");
+            AtomicFileSupport.createDirectoriesNoLinks(downloadsDir(), "application downloads directory");
+            AtomicFileSupport.createDirectoriesNoLinks(cacheDir(), "application cache directory");
+            AtomicFileSupport.createDirectoriesNoLinks(logsDir(), "application logs directory");
+            AtomicFileSupport.createDirectoriesNoLinks(backupsDir(), "application backups directory");
         } catch (Exception e) {
             throw new IllegalStateException("Cannot create MyHomeLib data directories: " + dataDir(), e);
         }

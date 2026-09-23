@@ -1,5 +1,7 @@
-Импорт
+# Импорт
 
-Импортирайте отделни файлове, папки или INPX. Поддържат се FB2, FBD, EPUB и TXT. PDF, DJVU, MOBI/AZW, DOC/DOCX, ODT, RTF, HTML, MD и CHM могат да се каталогизират и отварят с външна програма.
+Може да импортирате отделен файл, директория, INPX или архив. Регистърът на форматите обхваща FB2/FBD, EPUB, TXT/TEXT/Markdown, PDF, MP3, M4B, MOBI/PRC, AZW/AZW3, DjVu, DOC/DOCX, ODT, RTF, HTML/XHTML, CHM, CBZ/CBR и други регистрирани типове с различни възможности за metadata, cover, full-text и Reader. Вграденото четене на MOBI/PRC/AZW/AZW3 без DRM работи при некомпресирано съдържание или PalmDOC; HUFF/CDIC изисква конвертиране.
 
-Архиви: ZIP/FB2ZIP/CBZ/JAR, 7z, RAR/CBR, TAR, TAR.GZ, TAR.BZ2, TAR.XZ и CPIO.
+Архивите включват ZIP/FB2ZIP/CBZ/JAR, 7z, RAR/CBR, TAR, TAR.GZ/TGZ, TAR.BZ2/TBZ2, TAR.XZ/TXZ и CPIO. Книга може да се пази като entry в контейнер. Големите записи се обработват потоково или чрез ограничени временни файлове.
+
+Импортът на директории и големи INPX се изпълнява на ограничени batch-ове, за да не се натрупва цялата библиотека в паметта. Search index се преизгражда веднъж след масова операция.

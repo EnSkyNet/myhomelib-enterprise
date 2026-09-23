@@ -45,13 +45,14 @@ class ExportToDeviceUseCaseSendToDeviceTest {
             assertThat(Files.isRegularFile(target)).isTrue();
             assertThat(Files.readString(target)).isEqualTo("One");
             return null;
-        }).when(f.completion).complete(any(Path.class), eq(ExportRequest.CompletionPolicy.EJECT_SAFE));
+        }).when(f.completion).complete(any(Path.class), eq(ExportRequest.CompletionPolicy.EJECT_SAFE), anyString());
 
         ExportToDeviceUseCase.ExportResult result = f.useCase.execute(request);
 
         assertThat(result.exported()).isEqualTo(1);
         assertThat(result.failed()).isZero();
-        verify(f.completion).complete(f.destination.resolve("safe/One.fb2"), ExportRequest.CompletionPolicy.EJECT_SAFE);
+        verify(f.completion).complete(eq(f.destination.resolve("safe/One.fb2")),
+                eq(ExportRequest.CompletionPolicy.EJECT_SAFE), anyString());
     }
 
     @Test
@@ -107,10 +108,11 @@ class ExportToDeviceUseCaseSendToDeviceTest {
         when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
         ExportToDeviceUseCase useCase = new ExportToDeviceUseCase(books, List.of(), resources, settings,
                 mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
-                mock(ExportHistoryService.class), completion, mock(ConvertBookUseCase.class));
+                mock(ExportHistoryService.class), completion, mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
 
         Path destination = temp.resolve("batch");
         ExportRequest request = ExportRequest.builder()
+                .collectionId("c1")
                 .bookIds(List.of(firstId, secondId))
                 .destinationFolder(destination)
                 .format(ExportRequest.ExportFormat.FB2)
@@ -141,7 +143,7 @@ class ExportToDeviceUseCaseSendToDeviceTest {
         ExportRequest request = f.request(ExportRequest.CollisionPolicy.RENAME, false,
                 ExportRequest.CompletionPolicy.EJECT_SAFE);
         doThrow(new java.io.IOException("flush failed")).when(f.completion)
-                .complete(any(Path.class), eq(ExportRequest.CompletionPolicy.EJECT_SAFE));
+                .complete(any(Path.class), eq(ExportRequest.CompletionPolicy.EJECT_SAFE), anyString());
 
         ExportToDeviceUseCase.ExportResult result = f.useCase.execute(request);
 
@@ -180,12 +182,13 @@ class ExportToDeviceUseCaseSendToDeviceTest {
             when(settings.getBoolean(anyString(), anyBoolean())).thenAnswer(inv -> inv.getArgument(1));
             useCase = new ExportToDeviceUseCase(books, List.of(), resources, settings,
                     mock(BookActionProfileService.class), mock(BookActionExecutionService.class),
-                    mock(ExportHistoryService.class), completion, mock(ConvertBookUseCase.class));
+                    mock(ExportHistoryService.class), completion, mock(ConvertBookUseCase.class), activeLifecycle(), new com.myhomelibcorp.application.operation.LibraryOperationCoordinator());
         }
 
         ExportRequest request(ExportRequest.CollisionPolicy collisionPolicy, boolean overwriteExisting,
                               ExportRequest.CompletionPolicy completionPolicy) {
             return ExportRequest.builder()
+                .collectionId("c1")
                     .bookIds(List.of(id))
                     .destinationFolder(destination)
                     .format(ExportRequest.ExportFormat.FB2)
@@ -196,5 +199,14 @@ class ExportToDeviceUseCaseSendToDeviceTest {
                     .subfolderTemplate("safe")
                     .build();
         }
+    }
+
+    private static com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort activeLifecycle() {
+        var lifecycle = org.mockito.Mockito.mock(
+                com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort.class);
+        org.mockito.Mockito.when(lifecycle.getCurrentCollection()).thenReturn(
+                new com.myhomelibcorp.domain.model.collection.Collection(
+                        "c1", "Test", null, null, 0, null, null, null, null));
+        return lifecycle;
     }
 }

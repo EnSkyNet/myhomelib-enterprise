@@ -2,12 +2,17 @@ package com.myhomelibcorp.application.usecase.download;
 
 import com.myhomelibcorp.shared.util.ThrowableMessages;
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.application.port.out.download.OnlineBookDownloadPort;
 import com.myhomelibcorp.application.port.out.download.DownloadQueuePort;
+import com.myhomelibcorp.application.port.out.infrastructure.CollectionLifecyclePort;
 import com.myhomelibcorp.application.port.out.repository.BookCommandRepository;
 import com.myhomelibcorp.application.port.out.repository.StatisticsRepository;
 import com.myhomelibcorp.application.search.SearchIndexSynchronizer;
+import com.myhomelibcorp.application.content.indexing.ContentIndexAutoSchedulingService;
+import com.myhomelibcorp.application.imports.statistics.ImportChangeSet;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
@@ -29,6 +34,9 @@ public class DownloadBookUseCase {
     private final CatalogUpdateTrackingPort catalogUpdateTrackingPort;
     private final StatisticsRepository statisticsRepository;
     private final SearchIndexSynchronizer searchIndexSynchronizer;
+    private final ContentIndexAutoSchedulingService contentIndexScheduling;
+    private final CollectionLifecyclePort collectionLifecyclePort;
+    private final LibraryOperationCoordinator operationCoordinator;
 
     public Path execute(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress) throws Exception {
         return execute(book, collection, cancelFlag, progress, false);
@@ -36,9 +44,28 @@ public class DownloadBookUseCase {
 
     public Path execute(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress,
                         boolean forceRefresh) throws Exception {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.DOWNLOAD);
+        try {
+            Path result = executeLocked(book, collection, cancelFlag, progress, forceRefresh);
+            lease.markCompleted("");
+            return result;
+        } catch (Exception failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private Path executeLocked(BookDto book, Collection collection, AtomicBoolean cancelFlag, DoubleConsumer progress,
+                               boolean forceRefresh) throws Exception {
         if (book == null) throw new IllegalArgumentException("Book is required");
         if (collection == null) throw new IllegalStateException("Активну колекцію не вибрано");
         if (collection.getId() == null || collection.getId().isBlank()) throw new IllegalStateException("Колекція не має stable ID");
+        Collection active = collectionLifecyclePort.getCurrentCollection();
+        if (active == null || active.getId() == null || !collection.getId().equals(active.getId())) {
+            throw new IllegalStateException("Активна колекція змінилася до початку завантаження");
+        }
         BookId bookId = BookId.fromString(book.getId());
         AtomicBoolean cancel = cancelFlag == null ? new AtomicBoolean(false) : cancelFlag;
         String archiveIdentity = physicalIdentity(book);
@@ -52,6 +79,7 @@ public class DownloadBookUseCase {
                     bookId, result.root().toString(), result.folder(), result.fileName(), result.archiveEntry(), true);
             catalogUpdateTrackingPort.markDownloadedBaseline(bookId);
             searchIndexSynchronizer.synchronizeSafelyNow(java.util.List.of(bookId));
+            synchronizeContentIndexSafely(collection.getId(), bookId);
             downloadQueuePort.markCompleted(collection.getId(), bookId.asString(), result.physicalPath());
             invalidateStatisticsSafely();
             return result.physicalPath();
@@ -63,6 +91,20 @@ public class DownloadBookUseCase {
                         SensitiveDataSanitizer.sanitizeText(ThrowableMessages.rootMessage(error)), resumeHint);
             }
             throw error;
+        }
+    }
+
+    private void synchronizeContentIndexSafely(String collectionId, BookId bookId) {
+        try {
+            var result = contentIndexScheduling.schedule(collectionId, new ImportChangeSet(
+                    java.util.Set.of(), java.util.Set.of(bookId.asString()), java.util.Set.of(), true));
+            if (result.rebuildRequired()) {
+                log.info("Full-text index remains stale after download: {}", result.detail());
+            }
+        } catch (RuntimeException error) {
+            try { contentIndexScheduling.markStale(collectionId); }
+            catch (RuntimeException markerFailure) { error.addSuppressed(markerFailure); }
+            log.error("Не вдалося поставити завантажену книгу в чергу full-text індексації", error);
         }
     }
 

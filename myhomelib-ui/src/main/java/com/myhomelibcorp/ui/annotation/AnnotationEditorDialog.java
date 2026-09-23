@@ -1,5 +1,6 @@
 package com.myhomelibcorp.ui.annotation;
 
+import com.myhomelibcorp.ui.service.DialogLocalization;
 import com.myhomelibcorp.application.annotation.AnnotationManagerType;
 import com.myhomelibcorp.application.annotation.AnnotationService;
 import com.myhomelibcorp.ui.service.LocalizationService;
@@ -69,6 +70,7 @@ public class AnnotationEditorDialog {
             Collection<String> knownTags
     ) {
         Dialog<Result> dialog = new Dialog<>();
+        DialogLocalization.prepare(dialog);
         if (owner != null) dialog.initOwner(owner);
         dialog.setTitle(i18n.text(mode == Mode.CREATE
                 ? "ui.reader.annotation.editor.create_title"

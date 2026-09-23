@@ -1,5 +1,7 @@
 package com.myhomelibcorp.ui.action;
 
+
+import com.myhomelibcorp.ui.service.UiText;
 import com.myhomelibcorp.application.action.ActionPreference;
 import com.myhomelibcorp.application.action.ActionSettingsService;
 import javafx.scene.Scene;
@@ -102,10 +104,10 @@ public class ActionRegistry {
                 String normalized = combination.getName();
                 String previous = byAccelerator.putIfAbsent(normalized, action.definition.id());
                 if (previous != null && !previous.equals(action.definition.id())) {
-                    errors.add("Конфлікт " + normalized + ": " + previous + " ↔ " + action.definition.id());
+                    errors.add(UiText.text("ui.java.action_registry.a5becafe05") + normalized + ": " + previous + " ↔ " + action.definition.id());
                 }
             } catch (RuntimeException ex) {
-                errors.add("Некоректна комбінація для " + action.definition.id() + ": " + pref.shortcut());
+                errors.add(UiText.text("ui.java.action_registry.dc26c7fcd0") + action.definition.id() + ": " + pref.shortcut());
             }
         }
         return List.copyOf(errors);

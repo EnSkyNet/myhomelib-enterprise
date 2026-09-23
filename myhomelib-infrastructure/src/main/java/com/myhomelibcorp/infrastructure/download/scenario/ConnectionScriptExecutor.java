@@ -3,9 +3,11 @@ package com.myhomelibcorp.infrastructure.download.scenario;
 import com.myhomelibcorp.shared.security.SensitiveDataSanitizer;
 
 import com.myhomelibcorp.application.dto.BookDto;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.application.port.out.settings.ApplicationSettingsPort;
 import com.myhomelibcorp.domain.model.collection.Collection;
 import com.myhomelibcorp.infrastructure.download.DownloadPayloadValidator;
+import com.myhomelibcorp.infrastructure.download.CredentialTransportPolicy;
 import com.myhomelibcorp.infrastructure.download.OnlineHttpPolicy;
 import com.myhomelibcorp.infrastructure.download.OnlineRequestLimiter;
 import com.myhomelibcorp.infrastructure.download.OnlineProgressThrottle;
@@ -24,6 +26,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.LinkOption;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -84,13 +87,15 @@ public final class ConnectionScriptExecutor {
         CookieManager cookies = new CookieManager(null, CookiePolicy.ACCEPT_ALL);
         HttpClient client = httpPolicy.create(cookies);
         List<FormField> fields = new ArrayList<>();
-        Path responseFile = target.resolveSibling(target.getFileName() + ".script.part");
+        SafeFilePublication.createDirectoriesNoLinks(target.toAbsolutePath().normalize().getParent(),
+                "ConnectionScript response directory");
+        Path responseFile = target.resolveSibling("." + target.getFileName() + ".script-"
+                + UUID.randomUUID() + ".part").toAbsolutePath().normalize();
         ResponseState state = null;
         boolean checked = false;
         String resolvedArchiveEntry = "";
 
         try {
-            Files.createDirectories(responseFile.getParent());
             for (DownloadScenarioCommand command : commands) {
                 checkCancelled(cancel);
                 log.debug("Executing command: {}", command.type());
@@ -161,7 +166,15 @@ public final class ConnectionScriptExecutor {
 
         } catch (Exception e) {
             log.error("ConnectionScript FAILED: {}", e.getMessage(), e);
-            Files.deleteIfExists(responseFile);
+            // responseFile has a random per-execution name. If it was concurrently replaced,
+            // preserve the unexpected bytes rather than deleting an unverified filesystem entry.
+            if (Files.exists(responseFile, LinkOption.NOFOLLOW_LINKS)) {
+                try {
+                    SafeFilePublication.requireSafeRegularFile(responseFile, "ConnectionScript failed response");
+                } catch (IOException unsafe) {
+                    e.addSuppressed(unsafe);
+                }
+            }
             throw e;
         }
     }
@@ -179,7 +192,7 @@ public final class ConnectionScriptExecutor {
             HttpRequest.Builder request = HttpRequest.newBuilder(uri)
                     .timeout(httpPolicy.requestTimeout())
                     .header("User-Agent", httpPolicy.userAgent());
-            addBasicAuth(request, collection);
+            addBasicAuth(request, collection, uri);
 
             if (method.equals("POST")) {
                 String boundary = "----MHL71" + UUID.randomUUID().toString().replace("-", "");
@@ -240,9 +253,13 @@ public final class ConnectionScriptExecutor {
                 long nextSpaceCheck = FREE_SPACE_RECHECK_BYTES;
                 OnlineProgressThrottle progressThrottle = new OnlineProgressThrottle(0L);
 
+                if (Files.exists(responseFile, LinkOption.NOFOLLOW_LINKS)) {
+                    String priorHash = SafeFilePublication.sha256(responseFile, "ConnectionScript prior response");
+                    SafeFilePublication.removeIfOwned(responseFile, priorHash, "ConnectionScript prior response cleanup");
+                }
                 try (InputStream in = response.body();
-                     OutputStream out = Files.newOutputStream(responseFile,
-                             StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING, StandardOpenOption.WRITE)) {
+                     OutputStream out = SafeFilePublication.openFreshOutputStream(
+                             responseFile, "ConnectionScript response payload")) {
                     byte[] buffer = new byte[64 * 1024];
                     int n;
                     while ((n = in.read(buffer)) >= 0) {
@@ -302,8 +319,9 @@ public final class ConnectionScriptExecutor {
         return body.toString().getBytes(StandardCharsets.UTF_8);
     }
 
-    private void addBasicAuth(HttpRequest.Builder request, Collection collection) {
+    private void addBasicAuth(HttpRequest.Builder request, Collection collection, URI uri) {
         if (collection.getUser() == null || collection.getUser().isBlank()) return;
+        CredentialTransportPolicy.requireHttpsWhenCredentialsPresent(uri, collection.getUser());
         String secret = decryptPassword(collection);
         String token = Base64.getEncoder().encodeToString(
                 (collection.getUser() + ":" + (secret == null ? "" : secret)).getBytes(StandardCharsets.UTF_8));
@@ -332,7 +350,7 @@ public final class ConnectionScriptExecutor {
             log.debug("  safe URI: {}", SensitiveDataSanitizer.sanitizeUri(uri));
             return uri;
         } catch (IllegalArgumentException e) {
-            throw new DownloadScenarioException("Некоректний ConnectionScript URL: " + raw);
+            throw new DownloadScenarioException("Некоректний ConnectionScript URL");
         }
     }
 

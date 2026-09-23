@@ -1,6 +1,7 @@
 package com.myhomelibcorp.shared.security;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.charset.StandardCharsets;
@@ -99,6 +100,53 @@ class CredentialMasterKeyManagerTest {
 
         assertThat(resolved).isEqualTo(KEY_A);
         assertThat(legacy).exists();
+    }
+
+    @Test
+    void portableModeRejectsSymlinkedLocalKeyWithoutReadingTarget() throws Exception {
+        Path outside = tempDir.resolve("outside-key.txt");
+        Files.writeString(outside, KEY_A, StandardCharsets.US_ASCII);
+        Path link = tempDir.resolve(CredentialMasterKeyManager.LOCAL_KEY_FILE);
+        Assumptions.assumeTrue(canCreateSymlink(link, outside));
+
+        SecretStoreContext context = new SecretStoreContext(tempDir, true, "Linux", "tester");
+
+        assertThatThrownBy(() -> CredentialMasterKeyManager.loadOrCreate(context, List.of(), () -> KEY_B, false))
+                .isInstanceOf(SecretStoreException.class)
+                .hasMessageContaining("Credential encryption key is unavailable");
+        assertThat(Files.readString(outside, StandardCharsets.US_ASCII)).isEqualTo(KEY_A);
+    }
+
+    @Test
+    void nativeMigrationDoesNotDeleteLegacyKeyReplacedAfterRead() throws Exception {
+        Path legacy = tempDir.resolve(CredentialMasterKeyManager.LOCAL_KEY_FILE);
+        Files.writeString(legacy, KEY_A, StandardCharsets.US_ASCII);
+        InMemorySecretStore store = new InMemorySecretStore("native-test") {
+            @Override public void write(String key, String secret) {
+                super.write(key, secret);
+                try {
+                    Files.writeString(legacy, KEY_B, StandardCharsets.US_ASCII);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            }
+        };
+        SecretStoreContext context = new SecretStoreContext(tempDir, false, "Windows 11", "tester");
+
+        assertThatThrownBy(() -> CredentialMasterKeyManager.loadOrCreate(context, List.of(provider(store)), () -> KEY_B, true))
+                .isInstanceOf(SecretStoreException.class)
+                .hasMessageContaining("Native credential store is unavailable");
+        assertThat(legacy).exists();
+        assertThat(Files.readString(legacy, StandardCharsets.US_ASCII)).isEqualTo(KEY_B);
+    }
+
+    private static boolean canCreateSymlink(Path link, Path target) {
+        try {
+            Files.createSymbolicLink(link, target);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     private static SecretStoreProvider provider(SecretStore store) {

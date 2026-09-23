@@ -45,8 +45,13 @@ public class Book {
         this.cover = Objects.requireNonNullElse(builder.cover, Cover.empty());
         this.series = builder.series;
         this.sequenceNumber = builder.sequenceNumber;
-        this.updateDate = Objects.requireNonNullElse(builder.updateDate, LocalDateTime.now());
-        this.createdAt = Objects.requireNonNullElse(builder.createdAt, LocalDateTime.now());
+        // Preserve the semantic difference between "record creation time" and an unknown
+        // source/catalog update date. Legacy rows are allowed to have update_date = NULL;
+        // inventing createdAt (or now) as updateDate corrupts exported metadata and sync logic.
+        this.createdAt = builder.createdAt != null
+                ? builder.createdAt
+                : (builder.updateDate != null ? builder.updateDate : LocalDateTime.now());
+        this.updateDate = builder.updateDate;
         this.deleted = builder.deleted;
         this.local = builder.local;
         this.missingSince = builder.missingSince;
@@ -111,10 +116,23 @@ public class Book {
 
     // === ІНШІ ЗРУЧНІ МЕТОДИ ===
     public String authorsText() {
-        if (authors.isEmpty()) return "Невідомий Автор";
         return authors.stream()
                 .map(Author::getFullName)
+                .filter(name -> name != null && !name.isBlank())
+                .filter(name -> !isLegacyUnknownAuthorPlaceholder(name))
                 .collect(java.util.stream.Collectors.joining(", "));
+    }
+
+    /**
+     * Older importers used a localized fake author as a sentinel for missing metadata.
+     * Keep the domain representation language-neutral while remaining compatible with
+     * collections that may still contain those legacy rows.
+     */
+    public static boolean isLegacyUnknownAuthorPlaceholder(String value) {
+        if (value == null) return false;
+        String normalized = value.strip();
+        return normalized.equalsIgnoreCase("Невідомий автор")
+                || normalized.equalsIgnoreCase("Без автора");
     }
 
     public String genresText() {
@@ -134,7 +152,6 @@ public class Book {
         }
         return toBuilder()
                 .title(newTitle)
-                .updateDate(LocalDateTime.now())
                 .build();
     }
 
@@ -144,7 +161,6 @@ public class Book {
         }
         return toBuilder()
                 .metadata(newMetadata)
-                .updateDate(LocalDateTime.now())
                 .build();
     }
 
@@ -154,7 +170,6 @@ public class Book {
         }
         return toBuilder()
                 .file(newFile)
-                .updateDate(LocalDateTime.now())
                 .build();
     }
 
@@ -166,7 +181,6 @@ public class Book {
     public Book withLocalAvailability(boolean local, LocalDateTime missingSince) {
         if (this.local == local && Objects.equals(this.missingSince, missingSince)) return this;
         return toBuilder()
-                .updateDate(LocalDateTime.now())
                 .local(local)
                 .missingSince(missingSince)
                 .build();

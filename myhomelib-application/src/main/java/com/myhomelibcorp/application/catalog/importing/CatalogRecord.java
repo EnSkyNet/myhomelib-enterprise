@@ -2,6 +2,7 @@ package com.myhomelibcorp.application.catalog.importing;
 
 import com.myhomelibcorp.application.imports.diagnostics.ImportIssue;
 
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -31,6 +32,7 @@ public record CatalogRecord(
         String annotation,
         List<String> keywords,
         Double rating,
+        LocalDateTime sourceUpdatedAt,
         Map<String, String> sourceMetadata,
         List<CatalogArtifact> artifacts,
         List<ExternalIdentity> externalIdentities,

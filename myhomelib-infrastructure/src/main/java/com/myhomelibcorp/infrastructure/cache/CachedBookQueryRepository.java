@@ -71,27 +71,37 @@ public class CachedBookQueryRepository implements BookQueryRepository {
             return List.of();
         }
 
-        List<Book> result = new ArrayList<>();
-        List<BookId> missingIds = new ArrayList<>();
+        // Keep repository results stable regardless of which requested IDs happened to be cached.
+        // The previous implementation appended cache hits first and DB misses afterwards, so the
+        // same request could return a different order after the cache warmed up.
+        java.util.LinkedHashMap<BookId, Book> resolved = new java.util.LinkedHashMap<>();
+        java.util.LinkedHashSet<BookId> missingIds = new java.util.LinkedHashSet<>();
         for (BookId id : ids) {
-            if (id == null) {
+            if (id == null || resolved.containsKey(id)) {
                 continue;
             }
             Optional<Book> cached = bookCache.get(id);
             if (cached.isPresent()) {
-                result.add(cached.get());
+                resolved.put(id, cached.get());
             } else {
                 missingIds.add(id);
             }
         }
         if (!missingIds.isEmpty()) {
-            List<Book> loaded = delegate.findByIds(missingIds);
+            List<Book> loaded = delegate.findByIds(new ArrayList<>(missingIds));
             for (Book book : loaded) {
                 if (book != null && book.getId() != null) {
+                    resolved.put(book.getId(), book);
                     bookCache.put(book.getId(), book);
                 }
             }
-            result.addAll(loaded);
+        }
+
+        List<Book> result = new ArrayList<>(ids.size());
+        for (BookId id : ids) {
+            if (id == null) continue;
+            Book book = resolved.get(id);
+            if (book != null) result.add(book);
         }
         return result;
     }

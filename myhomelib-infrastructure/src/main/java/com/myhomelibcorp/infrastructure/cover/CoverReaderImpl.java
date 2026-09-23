@@ -20,6 +20,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
@@ -42,7 +43,7 @@ public class CoverReaderImpl implements CoverReader {
         if (book == null) return null;
         try {
             Path filePath = coverLocator.locateCoverFile(book).orElse(null);
-            if (filePath == null || !Files.exists(filePath)) return null;
+            if (filePath == null || !Files.isRegularFile(filePath, LinkOption.NOFOLLOW_LINKS)) return null;
             if (archiveReader.isArchive(filePath)) return extractFromArchive(filePath, book);
             return extractFromDocument(filePath, FileNameSupport.extension(filePath.getFileName().toString()), book);
         } catch (Exception e) {
@@ -55,7 +56,7 @@ public class CoverReaderImpl implements CoverReader {
         String normalized = ext.toLowerCase(Locale.ROOT);
         return switch (normalized) {
             case "fb2", "fbd" -> {
-                try (InputStream in = Files.newInputStream(path)) { yield fb2CoverParser.parseToBytes(in); }
+                try (InputStream in = Files.newInputStream(path, LinkOption.NOFOLLOW_LINKS)) { yield fb2CoverParser.parseToBytes(in); }
             }
             case "epub" -> epubCoverParser.parse(path);
             case "mobi", "prc", "azw", "azw3" -> fallbackIfEmpty(mobiCoverParser.parse(path), normalized, book);

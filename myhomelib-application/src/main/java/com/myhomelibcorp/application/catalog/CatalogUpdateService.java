@@ -1,9 +1,11 @@
 package com.myhomelibcorp.application.catalog;
 
+import com.myhomelibcorp.application.operation.LibraryOperationCoordinator;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.port.out.catalog.CatalogUpdateTrackingPort;
 import com.myhomelibcorp.domain.model.valueobject.AuthorId;
 import com.myhomelibcorp.domain.model.valueobject.BookId;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -11,44 +13,56 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Supplier;
 
 /** Application facade for followed-author state and pending catalog updates. */
 @Service
-@RequiredArgsConstructor
 public class CatalogUpdateService {
     private static final int PAGE_SIZE = 2_000;
 
     private final CatalogUpdateTrackingPort tracking;
+    private final LibraryOperationCoordinator operationCoordinator;
+
+    /** Compatibility constructor for focused tests. */
+    public CatalogUpdateService(CatalogUpdateTrackingPort tracking) {
+        this(tracking, new LibraryOperationCoordinator());
+    }
+
+    @Autowired
+    public CatalogUpdateService(CatalogUpdateTrackingPort tracking, LibraryOperationCoordinator operationCoordinator) {
+        this.tracking = tracking;
+        this.operationCoordinator = operationCoordinator;
+    }
 
     public void setAuthorFollowed(AuthorId authorId, boolean followed) {
         if (authorId == null) throw new IllegalArgumentException("authorId cannot be null");
-        tracking.setAuthorFollowed(authorId, followed);
+        withEditLease(() -> tracking.setAuthorFollowed(authorId, followed));
     }
 
     public boolean isAuthorFollowed(AuthorId authorId) {
-        return authorId != null && tracking.isAuthorFollowed(authorId);
+        return authorId != null && withQueryLease(() -> tracking.isAuthorFollowed(authorId));
     }
 
     public long pendingUpdateCount() {
-        return tracking.countPendingUpdates();
+        return withQueryLease(tracking::countPendingUpdates);
     }
 
     public List<FollowedAuthorSummary> followedAuthors() {
-        return tracking.findFollowedAuthors();
+        return withQueryLease(tracking::findFollowedAuthors);
     }
 
     public void acknowledgeUpdate(BookId bookId, CatalogUpdateType type) {
         if (bookId == null || type == null) return;
-        tracking.acknowledgeUpdate(bookId, type);
+        withEditLease(() -> tracking.acknowledgeUpdate(bookId, type));
     }
 
     public void acknowledgeAuthorUpdates(AuthorId authorId) {
         if (authorId == null) return;
-        tracking.acknowledgeAuthorUpdates(authorId);
+        withEditLease(() -> tracking.acknowledgeAuthorUpdates(authorId));
     }
 
     public void acknowledgeAllUpdates() {
-        tracking.acknowledgeAllUpdates();
+        withEditLease(tracking::acknowledgeAllUpdates);
     }
 
     /**
@@ -56,6 +70,10 @@ public class CatalogUpdateService {
      * pending queue never requires one giant SQL result set. The UI still owns the final tree.
      */
     public CatalogUpdateSnapshot pendingUpdateSnapshot() {
+        return withQueryLease(this::pendingUpdateSnapshotLocked);
+    }
+
+    private CatalogUpdateSnapshot pendingUpdateSnapshotLocked() {
         long expected = tracking.countPendingUpdates();
         if (expected <= 0) return CatalogUpdateSnapshot.empty();
 
@@ -103,10 +121,37 @@ public class CatalogUpdateService {
         return new CatalogUpdateSnapshot(loaded, newCount, updatedCount, authors);
     }
 
+    private <T> T withQueryLease(Supplier<T> action) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.QUERY);
+        try {
+            T result = action.get();
+            lease.markCompleted("");
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
+    private void withEditLease(Runnable action) {
+        var lease = operationCoordinator.acquireDetachedShared(LibraryOperationType.EDIT);
+        try {
+            action.run();
+            lease.markCompleted("");
+        } catch (RuntimeException | Error failure) {
+            lease.markFailed(failure);
+            throw failure;
+        } finally {
+            lease.close();
+        }
+    }
+
     private record AuthorKey(String id, String name) {
         private AuthorKey {
             id = id == null ? "" : id;
-            name = name == null || name.isBlank() ? "Без автора" : name;
+            name = name == null ? "" : name;
         }
     }
 

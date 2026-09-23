@@ -1,6 +1,8 @@
 package com.myhomelibcorp.infrastructure.importer;
 
+import java.io.IOException;
 import com.myhomelibcorp.application.port.out.importer.BookImporterPort;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 import com.myhomelibcorp.domain.model.author.Author;
 import com.myhomelibcorp.domain.model.book.Book;
 import com.myhomelibcorp.domain.model.genre.Genre;
@@ -10,8 +12,12 @@ import com.myhomelibcorp.domain.model.valueobject.BookMetadata;
 import com.myhomelibcorp.domain.model.valueobject.BookFile;
 import lombok.extern.slf4j.Slf4j;
 
+import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.util.List;
 import java.util.stream.Stream;
 
@@ -51,16 +57,25 @@ public abstract class AbstractBookImporter implements BookImporterPort {
                 .sequenceNumber(sequenceNumber != null ? sequenceNumber : 0)
                 .metadata(metadata != null ? metadata : BookMetadata.empty())
                 .file(file != null ? file : BookFile.empty())
-                .updateDate(updateDate != null ? updateDate : LocalDateTime.now())
+                .updateDate(updateDate)
                 .local(true)
                 .build();
+    }
+
+    protected LocalDateTime fileUpdateTime(Path file) throws IOException {
+        BasicFileAttributes attributes = Files.readAttributes(file, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+        if (!attributes.isRegularFile()) {
+            throw new IOException("Import source is not a regular file: " + file);
+        }
+        return LocalDateTime.ofInstant(attributes.lastModifiedTime().toInstant(), ZoneId.systemDefault());
     }
 
     @Override
     public Stream<Book> importBooks(Path file) {
         log.info("📚 Імпорт {} з: {}", getFormatName(), file);
         try {
-            Book book = parseBook(file);
+            Path safeFile = SafeFilePublication.requireSafeRegularFile(file, getFormatName() + " import source");
+            Book book = parseBook(safeFile);
             log.info("✅ Успішно імпортовано книгу: '{}', авторів: {}, серія: '{}'",
                     book.getTitle(),
                     book.getAuthors().size(),
@@ -74,7 +89,13 @@ public abstract class AbstractBookImporter implements BookImporterPort {
 
     @Override
     public long countBooks(Path file) {
-        return 1;
+        if (file == null) return 0;
+        try {
+            SafeFilePublication.requireSafeRegularFile(file, getFormatName() + " import source");
+            return 1;
+        } catch (IOException unsafe) {
+            return 0;
+        }
     }
 
     /**

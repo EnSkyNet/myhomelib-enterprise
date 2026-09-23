@@ -1,9 +1,13 @@
 package com.myhomelibcorp.reader.api;
 
+import com.myhomelibcorp.shared.util.AtomicFileSupport;
+
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.OptionalLong;
 import java.util.Locale;
 
@@ -24,13 +28,16 @@ public class FileBookSource implements BookSource {
 
     @Override
     public InputStream openStream() throws IOException {
-        return Files.newInputStream(path);
+        Path safe = AtomicFileSupport.requireSafeRegularFile(path, "Reader file source");
+        return Files.newInputStream(safe, LinkOption.NOFOLLOW_LINKS);
     }
 
     @Override
     public OptionalLong size() {
         try {
-            return OptionalLong.of(Files.size(path));
+            Path safe = AtomicFileSupport.requireSafeRegularFile(path, "Reader file source");
+            BasicFileAttributes attrs = Files.readAttributes(safe, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+            return attrs.isRegularFile() ? OptionalLong.of(attrs.size()) : OptionalLong.empty();
         } catch (IOException e) {
             return OptionalLong.empty();
         }
@@ -55,7 +62,12 @@ public class FileBookSource implements BookSource {
 
     @Override
     public boolean exists() {
-        return Files.exists(path) && Files.isReadable(path);
+        try {
+            Path safe = AtomicFileSupport.requireSafeRegularFile(path, "Reader file source");
+            return Files.isReadable(safe);
+        } catch (IOException e) {
+            return false;
+        }
     }
 
     public Path getPath() {

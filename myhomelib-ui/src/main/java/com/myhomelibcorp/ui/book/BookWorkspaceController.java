@@ -1,7 +1,12 @@
 package com.myhomelibcorp.ui.book;
 
+import com.myhomelibcorp.ui.util.UiExceptionSupport;
+
+import com.myhomelibcorp.ui.service.UiText;
+import com.myhomelibcorp.ui.service.BookDisplayText;
 import com.myhomelibcorp.application.dto.BookDto;
 import com.myhomelibcorp.application.imports.saver.BookSaver;
+import com.myhomelibcorp.application.operation.LibraryOperationType;
 import com.myhomelibcorp.application.usecase.book.LoadBookByIdUseCase;
 import com.myhomelibcorp.application.usecase.group.AddBookToGroupUseCase;
 import com.myhomelibcorp.application.usecase.group.LoadGroupsUseCase;
@@ -86,15 +91,15 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
         if (bookId == null) {
             UiExecutor.runOnUiThread(() -> {
                 clearUI();
-                setLoadState("Книгу не вибрано", true);
+                setLoadState(UiText.text("ui.java.book_workspace_controller.1215889a21"), true);
             });
             return;
         }
 
         UiAsyncRequestToken requestToken = UiAsyncRequestGuard.next(loadGeneration, appState);
-        UiExecutor.runOnUiThread(() -> setLoadState("Завантаження…", true));
+        UiExecutor.runOnUiThread(() -> setLoadState(UiText.text("ui.fxml.book_workspace.loading"), true));
         try {
-            pendingLoad = backgroundExecutor.submitCancellable(() -> {
+            pendingLoad = backgroundExecutor.submitCollectionScopedCancellable(LibraryOperationType.QUERY, () -> {
                 try {
                     Optional<BookDto> result = loadBookByIdUseCase.execute(bookId);
                     UiExecutor.runOnUiThread(() -> applyLoadedBook(bookId, requestToken, result));
@@ -116,7 +121,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
             log.warn("Book not found: {}", bookId);
             currentBook = null;
             clearUI();
-            setLoadState("Книгу не знайдено", true);
+            setLoadState(UiText.text("ui.java.book_workspace_controller.457c748374"), true);
             return;
         }
         currentBook = result.get();
@@ -131,7 +136,7 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
         currentBook = null;
         log.error("Failed to load book {}", bookId, error);
         clearUI();
-        setLoadState("Не вдалося завантажити книгу", true);
+        setLoadState(UiText.text("ui.java.book_workspace_controller.b1ab2d5954"), true);
     }
 
     private void setLoadState(String text, boolean visible) {
@@ -143,17 +148,19 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
 
     private void updateUI(BookDto book) {
         titleLabel.setText(book.getTitle());
-        authorLabel.setText("Автор: " + book.getAuthorsText());
-        seriesLabel.setText("Серія: " + (book.getSeries() != null ? book.getSeries() : "—"));
+        String authors = book.getAuthorsText();
+        authorLabel.setText(UiText.text("ui.java.book_workspace_controller.d8cfdbaf40")
+                + (authors == null || authors.isBlank() ? UiText.text("common.author.unknown") : authors));
+        seriesLabel.setText(UiText.text("ui.java.book_workspace_controller.629c14f6e5") + (book.getSeries() != null ? book.getSeries() : "—"));
         String localizedGenres = bookViewModelMapper.toViewModel(book).getGenresText();
-        genresLabel.setText("Жанри: " + (localizedGenres == null || localizedGenres.isBlank() ? "—" : localizedGenres));
-        languageLabel.setText("Мова: " + book.getLanguage());
-        yearLabel.setText("Рік: " + (book.getYear() != null && book.getYear() > 0 ? String.valueOf(book.getYear()) : "—"));
-        publisherLabel.setText("Видавництво: " + (book.getPublisher() != null ? book.getPublisher() : "—"));
-        isbnLabel.setText("ISBN: " + (book.getIsbn() != null ? book.getIsbn() : "—"));
-        formatLabel.setText("Формат: " + displayFormat(book.getFileName(), book.getArchiveEntry()));
-        sizeLabel.setText("Розмір: " + book.getFileSizeFormatted());
-        ratingLabel.setText("Рейтинг: " + book.getRateStars());
+        genresLabel.setText(UiText.text("ui.java.book_workspace_controller.bb25f108fa") + (localizedGenres == null || localizedGenres.isBlank() ? "—" : localizedGenres));
+        languageLabel.setText(UiText.text("ui.java.book_workspace_controller.05fc3de293") + book.getLanguage());
+        yearLabel.setText(UiText.text("ui.java.book_workspace_controller.71400a276c") + (book.getYear() != null && book.getYear() > 0 ? String.valueOf(book.getYear()) : "—"));
+        publisherLabel.setText(UiText.text("ui.java.book_workspace_controller.1ee47fe5c7") + (book.getPublisher() != null ? book.getPublisher() : "—"));
+        isbnLabel.setText(UiText.text("ui.common.isbn_prefix") + (book.getIsbn() != null ? book.getIsbn() : "—"));
+        formatLabel.setText(UiText.text("ui.java.book_workspace_controller.e7c843a4f1") + displayFormat(book.getFileName(), book.getArchiveEntry()));
+        sizeLabel.setText(UiText.text("ui.java.book_workspace_controller.173f73a83f") + BookDisplayText.fileSize(book.getFileSize()));
+        ratingLabel.setText(UiText.text("ui.java.book_workspace_controller.f72f596b66") + book.getRateStars());
         annotationLabel.setText(book.getAnnotation() != null ? book.getAnnotation() : "");
         readingProgress.setProgress(book.getProgress() / 100.0);
         progressLabel.setText(book.getProgress() + "%");
@@ -170,17 +177,17 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     }
 
     private void clearUI() {
-        titleLabel.setText("Назва");
-        authorLabel.setText("Автор");
-        seriesLabel.setText("Серія");
-        genresLabel.setText("Жанри");
-        languageLabel.setText("Мова");
-        yearLabel.setText("Рік");
-        publisherLabel.setText("Видавництво");
-        isbnLabel.setText("ISBN");
-        formatLabel.setText("Формат");
-        sizeLabel.setText("Розмір");
-        ratingLabel.setText("Рейтинг");
+        titleLabel.setText(UiText.text("ui.bulkedit.field.title"));
+        authorLabel.setText(UiText.text("ui.annotations.digest_author"));
+        seriesLabel.setText(UiText.text("ui.bulkedit.field.series"));
+        genresLabel.setText(UiText.text("ui.bulkedit.field.genres"));
+        languageLabel.setText(UiText.text("ui.bulkedit.field.language"));
+        yearLabel.setText(UiText.text("ui.bulkedit.field.year"));
+        publisherLabel.setText(UiText.text("ui.bulkedit.field.publisher"));
+        isbnLabel.setText(UiText.text("ui.common.isbn"));
+        formatLabel.setText(UiText.text("ui.annotations.export_format"));
+        sizeLabel.setText(UiText.text("ui.fxml.author_workspace.size"));
+        ratingLabel.setText(UiText.text("ui.fxml.book_workspace.rating"));
         annotationLabel.setText("");
         readingProgress.setProgress(0);
         progressLabel.setText("0%");
@@ -229,29 +236,31 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     @FXML
     private void onAddToCollection() {
         if (currentBook == null) {
-            dialogService.showWarning("Немає книги", "Спочатку відкрийте книгу.");
+            dialogService.showWarning(UiText.text("ui.java.book_workspace_controller.5c79bfb614"), UiText.text("ui.java.book_workspace_controller.321ae2807b"));
             return;
         }
+        String expectedCollectionId = currentCollectionId();
         var groups = loadGroupsUseCase.execute();
         if (groups.isEmpty()) {
-            dialogService.showWarning("Немає груп", "Створіть групу перед додаванням книги.");
+            dialogService.showWarning(UiText.text("ui.java.book_workspace_controller.005249e3a0"), UiText.text("ui.java.book_workspace_controller.02a4c0cfab"));
             return;
         }
         Optional<com.myhomelibcorp.application.dto.GroupDto> selected = dialogService.showChoiceDialog(
                 groups,
                 groups.get(0),
-                "Додати до групи",
-                "Виберіть групу для книги \"" + currentBook.getTitle() + "\"",
-                "Група:"
+                UiText.text("ui.fxml.book_workspace.add_to_group"),
+                UiText.text("ui.java.book_workspace_controller.db070d47ad") + currentBook.getTitle() + "\"",
+                UiText.text("ui.java.book_workspace_controller.483dbb9035"),
+                com.myhomelibcorp.application.dto.GroupDto::getName
         );
         selected.ifPresent(group -> {
             try {
-                addBookToGroupUseCase.execute(group.getId(), currentBook.getId());
-                dialogService.showInfo("Успішно", "Книгу додано до групи \"" + group.getName() + "\".");
+                addBookToGroupUseCase.execute(group.getId(), currentBook.getId(), expectedCollectionId);
+                dialogService.showInfo(UiText.text("common.success"), UiText.text("ui.java.book_workspace_controller.279310e5a2") + group.getName() + "\".");
                 log.info("Книгу {} додано до групи {}", currentBook.getId(), group.getId());
             } catch (Exception e) {
                 log.error("Помилка додавання книги до групи", e);
-                dialogService.showError("Помилка", "Не вдалося додати книгу: " + e.getMessage());
+                dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.book_workspace_controller.c44c9a561c") + UiExceptionSupport.message(e));
             }
         });
     }
@@ -259,19 +268,20 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     @FXML
     private void onDeleteBook() {
         if (currentBook == null) return;
+        String expectedCollectionId = currentCollectionId();
         boolean confirmed = dialogService.showConfirmation(
-                "Видалення книги",
-                "Видалити запис із каталогу?",
-                "Файл на диску не видаляється. Книга: " + currentBook.getTitle());
+                UiText.text("ui.java.book_workspace_controller.295e234538"),
+                UiText.text("ui.java.book_workspace_controller.08c1c4bbf8"),
+                UiText.text("ui.java.book_workspace_controller.60adda3a47") + currentBook.getTitle());
         if (!confirmed) return;
         try {
-            bookSaver.deleteBook(BookId.fromString(currentBook.getId()));
-            dialogService.showInfo("Готово", "Книгу видалено з каталогу.");
+            bookSaver.deleteBook(BookId.fromString(currentBook.getId()), expectedCollectionId);
+            dialogService.showInfo(UiText.text("ui.java.book_workspace_controller.398c7d4f7b"), UiText.text("ui.java.book_workspace_controller.676b8a160f"));
             currentBook = null;
             navigateBackOrToAllBooks();
         } catch (Exception e) {
             log.error("Помилка видалення книги", e);
-            dialogService.showError("Помилка", "Не вдалося видалити книгу: " + e.getMessage());
+            dialogService.showError(UiText.text("common.error"), UiText.text("ui.java.book_workspace_controller.35801b1742") + UiExceptionSupport.message(e));
         }
     }
 
@@ -279,6 +289,11 @@ public class BookWorkspaceController implements WorkspaceLifecycle {
     @FXML
     private void onBack() {
         navigateBackOrToAllBooks();
+    }
+
+    private String currentCollectionId() {
+        var collection = appState.getCurrentLibraryCollection();
+        return collection == null ? null : collection.getId();
     }
 
     private void navigateBackOrToAllBooks() {

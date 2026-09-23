@@ -113,7 +113,7 @@ public class Fb2StreamingParser implements BookParser {
     private ReaderDocument readDocument(XMLStreamReader reader, BookSource source, ParseOptions options)
             throws XMLStreamException, IOException {
 
-        String title = "Без назви";
+        String title = sourceTitle(source);
         List<String> authors = new ArrayList<>();
         List<String> genres = new ArrayList<>();
         String language = "und";
@@ -515,14 +515,13 @@ public class Fb2StreamingParser implements BookParser {
         if (chapters.isEmpty()) {
             chapters.add(new ChapterIndex(
                     "ch_1",
-                    title != null && !title.isBlank() ? title : "Зміст",
+                    title != null && !title.isBlank() ? title : "#1",
                     0,
                     textStorage.length(),
                     textStorage.getParagraphCount()
             ));
         }
 
-        if (authors.isEmpty()) authors.add("Невідомий автор");
         OptionalLong size = source.size();
         BookMetadata metadata = new BookMetadata(
                 source.id(),
@@ -565,6 +564,19 @@ public class Fb2StreamingParser implements BookParser {
                 System.currentTimeMillis() - started);
     }
 
+    private static String sourceTitle(BookSource source) {
+        if (source == null) return "";
+        String name = source.name();
+        if (name != null && !name.isBlank()) {
+            String value = name.strip();
+            int dot = value.lastIndexOf('.');
+            if (dot > 0) value = value.substring(0, dot).strip();
+            if (!value.isBlank()) return value;
+        }
+        String id = source.id();
+        return id == null ? "" : id.strip();
+    }
+
     private static final class SectionState {
         private final int number;
         private final int level;
@@ -578,7 +590,7 @@ public class Fb2StreamingParser implements BookParser {
             this.level = level;
             this.startOffset = startOffset;
             this.startParagraphIndex = startParagraphIndex;
-            this.title = "Розділ " + number;
+            this.title = "#" + number;
         }
     }
 }

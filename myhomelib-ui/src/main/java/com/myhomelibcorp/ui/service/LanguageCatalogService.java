@@ -1,6 +1,6 @@
 package com.myhomelibcorp.ui.service;
 
-import com.myhomelibcorp.shared.util.AtomicFileSupport;
+import com.myhomelibcorp.application.util.SafeFilePublication;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -221,12 +221,12 @@ public class LanguageCatalogService {
 
     private void initializeFirstRunCatalogues() {
         try {
-            Files.createDirectories(AppPaths.configDir());
-            Files.createDirectories(languageDir);
+            SafeFilePublication.createDirectoriesNoLinks(AppPaths.configDir(), "Language configuration directory");
+            SafeFilePublication.createDirectoriesNoLinks(languageDir, "Language catalogue directory");
         } catch (Exception e) {
             log.warn("Cannot create language directories: {}", e.getMessage());
         }
-        boolean firstRun = !Files.isRegularFile(availableLanguagesFile);
+        boolean firstRun = !Files.isRegularFile(availableLanguagesFile, LinkOption.NOFOLLOW_LINKS);
         for (String code : BUNDLED_DEFAULTS) synchronizeBundledCatalogue(code, firstRun);
     }
 
@@ -246,7 +246,7 @@ public class LanguageCatalogService {
                 return;
             }
             byte[] bundledBytes = in.readAllBytes();
-            if (!Files.isRegularFile(target)) {
+            if (!Files.exists(target, LinkOption.NOFOLLOW_LINKS)) {
                 if (createIfMissing) {
                     atomicWrite(target, new String(bundledBytes, StandardCharsets.UTF_8));
                     log.info("Created default language file {}", target);
@@ -255,7 +255,8 @@ public class LanguageCatalogService {
             }
 
             Map<String, Object> bundled = mapper.readValue(bundledBytes, new TypeReference<>() {});
-            Map<String, Object> existing = mapper.readValue(target.toFile(), new TypeReference<>() {});
+            Map<String, Object> existing = mapper.readValue(
+                    readSafeLanguageBytes(target, "language catalogue upgrade"), new TypeReference<>() {});
             boolean changed = false;
             for (String field : List.of("translations", "genres", "genreAliases", "genreGroups",
                     "genreParents", "legacyBaseAliases")) {
@@ -312,9 +313,15 @@ public class LanguageCatalogService {
 
     private Map<String, Catalog> loadCatalogs(Path dir, List<String> messages) {
         Map<String, Catalog> result = new LinkedHashMap<>();
-        if (!Files.isDirectory(dir)) return result;
+        if (!Files.isDirectory(dir, LinkOption.NOFOLLOW_LINKS)) return result;
+        try {
+            dir = SafeFilePublication.requireSafeDirectoryPath(dir, "Language catalogue scan directory");
+        } catch (Exception unsafe) {
+            messages.add("ERROR unsafe language directory: " + unsafe.getMessage());
+            return result;
+        }
         try (var stream = Files.list(dir)) {
-            stream.filter(Files::isRegularFile)
+            stream.filter(path -> Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS))
                     .filter(path -> path.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".json"))
                     .sorted(Comparator.comparing(path -> path.getFileName().toString(), String.CASE_INSENSITIVE_ORDER))
                     .forEach(path -> loadCatalog(path, messages).ifPresent(catalog -> {
@@ -329,8 +336,8 @@ public class LanguageCatalogService {
 
     private Optional<Catalog> loadCatalog(Path json, List<String> messages) {
         try {
-            if (Files.size(json) > MAX_LANGUAGE_FILE_BYTES) throw new IllegalArgumentException("language file is too large");
-            Map<String, Object> root = mapper.readValue(json.toFile(), new TypeReference<>() {});
+            byte[] jsonBytes = readSafeLanguageBytes(json, "language catalogue");
+            Map<String, Object> root = mapper.readValue(jsonBytes, new TypeReference<>() {});
             String fileCode = stripExtension(json.getFileName().toString());
             String code = normalizeCode(String.valueOf(root.getOrDefault("code", fileCode)));
             if (code.isBlank()) throw new IllegalArgumentException("invalid language code");
@@ -426,7 +433,7 @@ public class LanguageCatalogService {
 
     private void writeAvailableLanguagesFile(Map<String, Catalog> currentCatalogs) {
         try {
-            Files.createDirectories(availableLanguagesFile.getParent());
+            SafeFilePublication.createDirectoriesNoLinks(availableLanguagesFile.getParent(), "Language generated-files directory");
             StringBuilder text = new StringBuilder()
                     .append("# MyHomeLib available UI languages. UTF-8.\n")
                     .append("# Auto-generated from: ").append(languageDir).append('\n')
@@ -448,21 +455,44 @@ public class LanguageCatalogService {
         } catch (Exception e) { log.warn("Cannot write language diagnostics {}: {}", diagnosticsFile, e.getMessage()); }
     }
 
+    private static byte[] readSafeLanguageBytes(Path file, String role) throws Exception {
+        Path safe = SafeFilePublication.requireSafeRegularFile(file, role);
+        long size = Files.size(safe);
+        if (size > MAX_LANGUAGE_FILE_BYTES) throw new IllegalArgumentException("language file is too large");
+        String hash = SafeFilePublication.sha256(safe, role + " snapshot");
+        return SafeFilePublication.readOwnedBytes(safe, hash, (int) MAX_LANGUAGE_FILE_BYTES, role);
+    }
+
     private static void atomicWrite(Path target, String text) throws Exception {
-        Files.createDirectories(target.getParent());
-        Path temp = target.resolveSibling(target.getFileName() + ".tmp");
-        Files.writeString(temp, text, StandardCharsets.UTF_8, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING);
-        AtomicFileSupport.moveReplacing(temp, target);
+        String expectedTargetHash = SafeFilePublication.snapshotExistingTarget(target, "language catalogue generated file");
+        Path workspace = SafeFilePublication.createPrivateWorkspace(
+                target.getParent(), ".lang-write-work-", "language catalogue generated-file workspace");
+        try {
+            Path temp = workspace.resolve("catalogue.txt");
+            try (var out = SafeFilePublication.openFreshOutputStream(temp, "staged language catalogue file")) {
+                out.write(text.getBytes(StandardCharsets.UTF_8));
+            }
+            SafeFilePublication.publishReplacingIfUnchanged(
+                    temp, target, expectedTargetHash, "language catalogue generated-file publication");
+        } finally {
+            try { SafeFilePublication.cleanupPrivateWorkspace(workspace); }
+            catch (Exception ignored) { }
+        }
     }
 
     private static Path resolveLanguageDirectory() {
         String explicit = System.getProperty("myhomelib.langDir");
         if (explicit != null && !explicit.isBlank()) return Paths.get(explicit).toAbsolutePath().normalize();
         Path besideLauncher = AppPaths.launchDir().resolve("Lang").toAbsolutePath().normalize();
-        if (Files.isDirectory(besideLauncher)) return besideLauncher;
-        if (AppPaths.portableMode()) {
-            try { Files.createDirectories(besideLauncher); if (Files.isWritable(besideLauncher)) return besideLauncher; }
+        if (Files.isDirectory(besideLauncher, LinkOption.NOFOLLOW_LINKS)) {
+            try { return SafeFilePublication.requireSafeDirectoryPath(besideLauncher, "Launcher language directory"); }
             catch (Exception ignored) { }
+        }
+        if (AppPaths.portableMode()) {
+            try {
+                Path safe = SafeFilePublication.createDirectoriesNoLinks(besideLauncher, "Portable language directory");
+                if (Files.isWritable(safe)) return safe;
+            } catch (Exception ignored) { }
         }
         return AppPaths.dataDir().resolve("Lang").toAbsolutePath().normalize();
     }

@@ -14,7 +14,7 @@ class LibraryHealthUiContractTest {
             assertThat(in).isNotNull();
             fxml = new String(in.readAllBytes(), StandardCharsets.UTF_8);
         }
-        assertThat(fxml).contains("Стан бібліотеки", "#onCheckIntegrity", "#onShowMissing", "#onShowCorrupt",
+        assertThat(fxml).contains("ui.fxml.integrity_check.library_health", "#onCheckIntegrity", "#onShowMissing", "#onShowCorrupt",
                 "#onShowChanged", "#onShowDuplicates", "#onShowMetadata", "#onShowIndex", "#onShowBackup",
                 "#onExportReport", "issueTable", "detailArea");
 
@@ -25,6 +25,6 @@ class LibraryHealthUiContractTest {
         }
         controller = java.nio.file.Files.readString(java.nio.file.Path.of(
                 "src/main/java/com/myhomelibcorp/ui/controller/IntegrityCheckController.java"), StandardCharsets.UTF_8);
-        assertThat(controller).contains("executor.submit(healthService::refresh)", "UiExecutor.runOnUiThread");
+        assertThat(controller).contains("executor.submit(() -> healthService.refresh(expectedCollectionId))", "UiExecutor.runOnUiThread");
     }
 }

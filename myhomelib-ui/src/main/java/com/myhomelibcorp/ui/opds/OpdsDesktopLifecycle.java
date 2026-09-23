@@ -21,7 +21,7 @@ public class OpdsDesktopLifecycle {
         var settings = settingsService.load();
         if (!settings.autostart()) return;
         var result = serverControl.start(settings);
-        if (!result.running()) log.warn("OPDS autostart failed: {}", result.message());
+        if (!result.running()) log.warn("OPDS autostart failed [{}]: {}", result.messageKey(), result.technicalDetail());
     }
 
     @PreDestroy

@@ -24,6 +24,6 @@ class ContentIndexHealthUiContractTest {
         assertThat(controller).contains("ContentIndexMaintenanceService", "health.schemaVersion()",
                 "health.documentCount()", "health.sizeBytes()", "contentIndexMaintenance.rebuild",
                 "contentIndexCancel::get", "updateContentProgress",
-                "Індекс метаданих перебудовується окремо через «Інструменти бази даних»");
+                "UiText.text(\"ui.java.integrity_check_controller.64b1151103\")");
     }
 }
